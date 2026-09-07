@@ -359,6 +359,7 @@ jobs:
                   node scripts/tests/validate-publish-lifecycle.mjs
                   node scripts/tests/sync-version.test.mjs
                   node scripts/tests/release-packages.test.mjs
+                  node scripts/tests/ios-test-actions.test.mjs
                   bash ./scripts/tests/validate-generated-bindings.sh
 
             - name: Validate native artifact fixtures
@@ -413,11 +414,14 @@ jobs:
         needs: build-package
         runs-on: macos-latest
         timeout-minutes: 25
+        env:
+            NATIVE_EDITOR_IOS_DERIVED_DATA: ${{ github.workspace }}/.ci/ios-security
         steps:
             - name: Checkout
               uses: actions/checkout@v5
 
             - name: Setup iOS compiler cache
+              id: ios-toolchain
               uses: ./.github/actions/ios-build-cache
 
             - name: Setup Node
@@ -440,14 +444,41 @@ jobs:
                   name: ${{ env.RELEASE_ARTIFACT_NAME }}
                   path: .
 
+            - name: Identify iOS codegen inputs
+              id: ios-codegen
+              run: |
+                  codegen_hash="$(node -p 'JSON.stringify(require("./package.json").codegenConfig)' | shasum -a 256 | cut -d ' ' -f 1)"
+                  echo "hash=$codegen_hash" >> "$GITHUB_OUTPUT"
+
+            - name: Restore compiled iOS test host
+              id: ios-test-build
+              uses: actions/cache/restore@v5
+              with:
+                  path: .ci/ios-security/Build/Products
+                  key: ios-security-host-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.ios-toolchain.outputs.xcode }}-${{ steps.ios-codegen.outputs.hash }}-${{ hashFiles('ios/**', 'ios-tests/**', 'common/cpp/**', 'ReactNativeProseEditor.podspec', 'src/specs/**', 'react-native.config.js', 'example/package-lock.json', 'scripts/run-ios-tests.sh', 'scripts/require-native-artifacts.sh') }}
+
             - name: Install iOS test dependencies
               run: npm run install:ios-test-pods
 
+
+            - name: Build iOS security test host
+              if: steps.ios-test-build.outputs.cache-hit != 'true'
+              run: bash scripts/run-ios-tests.sh -only-testing:NativeEditorTests/RenderBridgeTests/testSharedWhitespaceBase64AndTrickleFixturesExecuteAgainstIOSBoundary
+              env:
+                  NATIVE_EDITOR_IOS_TEST_ACTION: build-for-testing
+
+            - name: Save compiled iOS test host
+              if: steps.ios-test-build.outputs.cache-hit != 'true'
+              uses: actions/cache/save@v5
+              with:
+                  path: .ci/ios-security/Build/Products
+                  key: ${{ steps.ios-test-build.outputs.cache-primary-key }}
 
             - name: Validate iOS security behavior
               run: npm run validate:security -- --release --behavior
               env:
                   SECURITY_BEHAVIOR_TARGETS: ios
+                  NATIVE_EDITOR_IOS_TEST_ACTION: test-without-building
 
     security-android:
         needs: build-package

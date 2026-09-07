@@ -452,3 +452,15 @@ for (const name of ['security-ios', 'ios-consumer-positive', 'ios-consumer-negat
 const androidBuildSource = await readFile(path.join(repoRoot, 'android/build.gradle'), 'utf8');
 assert.match(androidBuildSource, /outputs\.cacheIf\s*\{\s*false\s*\}/, 'Fixture-driven JVM tests must execute instead of restoring cached results');
 assert.match(androidBuildSource, /outputs\.upToDateWhen\s*\{\s*false\s*\}/, 'JVM tests must re-read external security fixtures');
+const iosSecurityJob = requireJob('security-ios');
+const iosTestRestore = iosSecurityJob.split('- name: Restore compiled iOS test host')[1]?.split('\n            - name:')[0];
+assert.ok(iosTestRestore);
+assert.match(iosTestRestore, /ios-security-host-v1-.*steps\.ios-toolchain\.outputs\.xcode.*hashFiles/);
+assert.doesNotMatch(iosTestRestore, /restore-keys:|github\.sha/);
+for (const input of ['ios/**', 'ios-tests/**', 'common/cpp/**', 'ReactNativeProseEditor.podspec', 'src/specs/**', 'react-native.config.js', 'example/package-lock.json', 'scripts/run-ios-tests.sh']) {
+  assert.ok(iosTestRestore.includes(`'${input}'`), `iOS test host cache must include ${input}`);
+}
+assert.match(iosSecurityJob, /NATIVE_EDITOR_IOS_TEST_ACTION: build-for-testing/);
+const iosTestStep = iosSecurityJob.split('- name: Validate iOS security behavior')[1];
+assert.match(iosTestStep, /NATIVE_EDITOR_IOS_TEST_ACTION: test-without-building/);
+assert.doesNotMatch(iosTestStep, /\bif:/, 'iOS security tests must run on every cache hit');

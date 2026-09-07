@@ -1,5 +1,9 @@
 name: iOS compiler cache
 description: Reuse C and C++ compiler outputs while running native validations normally.
+outputs:
+    xcode:
+        description: Selected Xcode toolchain fingerprint.
+        value: ${{ steps.toolchain.outputs.xcode }}
 runs:
     using: composite
     steps:

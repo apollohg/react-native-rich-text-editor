@@ -197,12 +197,22 @@ fi
 
 echo "Running iOS tests with destination: $destination"
 
+test_action="${NATIVE_EDITOR_IOS_TEST_ACTION:-test}"
+case "$test_action" in
+  test|build-for-testing|test-without-building) ;;
+  *) echo "Unsupported iOS test action: $test_action" >&2; exit 2 ;;
+esac
+
 xcodebuild_args=(
-  test
+  "$test_action"
   -workspace "$workspace"
   -scheme "$scheme"
   -destination "$destination"
 )
+
+if [[ -n "${NATIVE_EDITOR_IOS_DERIVED_DATA:-}" ]]; then
+  xcodebuild_args+=(-derivedDataPath "$NATIVE_EDITOR_IOS_DERIVED_DATA")
+fi
 
 device_build_settings=()
 if is_physical_device_destination "$destination"; then
