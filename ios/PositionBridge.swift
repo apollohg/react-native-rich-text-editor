@@ -1,5 +1,5 @@
-import UIKit
 import ObjectiveC
+import UIKit
 
 // MARK: - PositionBridge
 
@@ -186,7 +186,6 @@ final class PositionBridge {
         let nsString = text as NSString
         let clampedOffset = min(max(utf16Offset, 0), nsString.length)
 
-        // If we're at the very start or end, already on a boundary.
         if clampedOffset == 0 || clampedOffset == nsString.length {
             return clampedOffset
         }
@@ -196,12 +195,10 @@ final class PositionBridge {
         // (forward bias) since that's what a user moving the cursor expects.
         let range = nsString.rangeOfComposedCharacterSequence(at: clampedOffset)
 
-        // If the offset is already at the start of a grapheme cluster, it's on a boundary.
         if range.location == clampedOffset {
             return clampedOffset
         }
 
-        // Otherwise, snap to the end of this cluster.
         return NSMaxRange(range)
     }
 
@@ -249,8 +246,7 @@ final class PositionBridge {
     /// - Returns: The scalar offset of the cursor, or 0 if no selection exists.
     static func cursorScalarOffset(in textView: UITextView) -> UInt32 {
         if let editorTextView = textView as? EditorTextView,
-           let selection = editorTextView.currentLogicalScalarSelection()
-        {
+           let selection = editorTextView.currentLogicalScalarSelection() {
             return selection.head
         }
         guard let selectedRange = textView.selectedTextRange else { return 0 }
@@ -580,7 +576,7 @@ enum EditorV2PositionBridge {
     static func rangeEnvelope(from: UInt32, to: UInt32) -> [String: Any] {
         [
             "from": positionEnvelope(scalar: from),
-            "to": positionEnvelope(scalar: to),
+            "to": positionEnvelope(scalar: to)
         ]
     }
 
@@ -588,7 +584,7 @@ enum EditorV2PositionBridge {
         [
             "type": "text",
             "anchor": positionEnvelope(scalar: anchor, affinity: affinity),
-            "head": positionEnvelope(scalar: head, affinity: affinity),
+            "head": positionEnvelope(scalar: head, affinity: affinity)
         ]
     }
 

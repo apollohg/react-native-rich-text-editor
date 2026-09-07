@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
 
@@ -9,7 +9,7 @@ extension RichTextEditorViewTests {
             "title": "Alice Chen",
             "subtitle": "Design",
             "label": "@alice",
-            "attrs": ["id": "user_alice", "label": "@alice"],
+            "attrs": ["id": "user_alice", "label": "@alice"]
         ])!
     }
 

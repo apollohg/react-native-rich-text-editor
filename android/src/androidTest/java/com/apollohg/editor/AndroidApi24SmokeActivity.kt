@@ -29,16 +29,18 @@ class AndroidApi24SmokeActivity : Activity() {
             }
             install(preparedLayout())
         }
-        setContentView(FrameLayout(this).apply {
-            addView(editor, FrameLayout.LayoutParams(320, 96))
-            addView(
-                viewer,
-                FrameLayout.LayoutParams(200, 48).apply {
-                    leftMargin = 12
-                    topMargin = 108
-                },
-            )
-        })
+        setContentView(
+            FrameLayout(this).apply {
+                addView(editor, FrameLayout.LayoutParams(320, 96))
+                addView(
+                    viewer,
+                    FrameLayout.LayoutParams(200, 48).apply {
+                        leftMargin = 12
+                        topMargin = 108
+                    }
+                )
+            }
+        )
     }
 
     fun runApi24SmokeAssertions() {
@@ -67,14 +69,14 @@ class AndroidApi24SmokeActivity : Activity() {
             !viewer.accessibilityNodeProvider.performAction(
                 2,
                 android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK,
-                null,
+                null
             )
         )
         check(
             !viewer.accessibilityNodeProvider.performAction(
                 2,
                 android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
-                null,
+                null
             )
         )
         check(viewerActivations == 0)
@@ -82,7 +84,7 @@ class AndroidApi24SmokeActivity : Activity() {
             viewer.accessibilityNodeProvider.performAction(
                 1,
                 android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
-                null,
+                null
             )
         )
         viewer.visibility = android.view.View.INVISIBLE
@@ -102,7 +104,7 @@ class AndroidApi24SmokeActivity : Activity() {
             fontEnvironmentRevision = 0,
             densityBits = resources.displayMetrics.density.toRawBits().toLong(),
             attachmentRevision = 0,
-            generationIdentity = "api-24-smoke",
+            generationIdentity = "api-24-smoke"
         ),
         widthPx = 176,
         heightPx = 48,
@@ -113,30 +115,30 @@ class AndroidApi24SmokeActivity : Activity() {
                 rects = listOf(Rect(12, 0, 80, 40)),
                 href = "https://example.test",
                 visibleText = "link",
-                label = "link",
+                label = "link"
             ),
             PreparedProseInteraction(
                 kind = PreparedProseInteraction.Kind.LINK,
                 rects = listOf(Rect(12, 56, 80, 80)),
                 href = "https://example.test/clipped",
                 visibleText = "clipped",
-                label = "clipped",
-            ),
+                label = "clipped"
+            )
         ),
         accessibilityNodes = listOf(
             PreparedProseAccessibilityNode(
                 interactionIndex = 0,
                 role = PreparedProseAccessibilityNode.Role.LINK,
                 label = "link",
-                bounds = Rect(12, 0, 80, 40),
+                bounds = Rect(12, 0, 80, 40)
             ),
             PreparedProseAccessibilityNode(
                 interactionIndex = 1,
                 role = PreparedProseAccessibilityNode.Role.LINK,
                 label = "clipped",
-                bounds = Rect(12, 56, 80, 80),
-            ),
+                bounds = Rect(12, 56, 80, 80)
+            )
         ),
-        retainedBytes = 0,
+        retainedBytes = 0
     )
 }

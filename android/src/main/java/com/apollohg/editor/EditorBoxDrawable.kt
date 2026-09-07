@@ -10,6 +10,7 @@ internal class EditorBoxDrawable(private val box: EditorBoxStyle) : Drawable() {
     override fun draw(canvas: Canvas) = EditorBoxDrawing.draw(canvas, RectF(bounds), box)
     override fun setAlpha(alpha: Int) = Unit
     override fun setColorFilter(colorFilter: ColorFilter?) = Unit
+
     @Deprecated("Drawable opacity is no longer used")
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 }

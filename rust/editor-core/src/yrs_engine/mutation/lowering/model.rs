@@ -336,12 +336,6 @@ pub(crate) struct MutationLookupPromotion {
     next_pending_traversal_work: usize,
 }
 
-impl MutationLookupPromotion {
-    pub(crate) fn request_id(&self) -> u64 {
-        self.request_id
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MutationLookupPromotionSource {
     ExistingInsert,

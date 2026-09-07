@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testReturnAtCodeBlockEndKeepsBlankLineInsideCodeThenExits() throws {
@@ -117,8 +117,8 @@ extension RichTextEditorViewTests {
     func testCaretRectAtParagraphStartDoesNotDropByOneLineHeight() {
         let theme = EditorTheme(dictionary: [
             "paragraph": [
-                "lineHeight": 32,
-            ],
+                "lineHeight": 32
+            ]
         ])
         let json = """
         [
@@ -233,8 +233,8 @@ extension RichTextEditorViewTests {
 
         let theme = EditorTheme(dictionary: [
             "paragraph": [
-                "lineHeight": 32,
-            ],
+                "lineHeight": 32
+            ]
         ])
 
         let textView = EditorTextView(frame: CGRect(x: 0, y: 0, width: 220, height: 200))
@@ -275,8 +275,8 @@ extension RichTextEditorViewTests {
 
         let theme = EditorTheme(dictionary: [
             "paragraph": [
-                "lineHeight": 32,
-            ],
+                "lineHeight": 32
+            ]
         ])
 
         let textView = EditorTextView(frame: CGRect(x: 0, y: 0, width: 220, height: 200))

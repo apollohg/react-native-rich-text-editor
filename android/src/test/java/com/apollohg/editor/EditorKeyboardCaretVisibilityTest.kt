@@ -4,7 +4,8 @@ import android.app.Activity
 import android.os.Looper
 import android.view.View
 import android.widget.FrameLayout
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -36,7 +37,8 @@ internal class EditorKeyboardCaretVisibilityTest {
         editor.setText((1..100).joinToString("\n") { "Line $it" })
         measureHost(host)
         assertTrue(editor.requestFocus())
-        val caretOffset = editor.text.toString().indexOf("Line $lineNumber") + "Line $lineNumber".length
+        val caretOffset =
+            editor.text.toString().indexOf("Line $lineNumber") + "Line $lineNumber".length
         editor.setSelection(caretOffset)
         shadowOf(Looper.getMainLooper()).idle()
         view.editorScrollView.scrollTo(0, editor.height)
@@ -53,13 +55,16 @@ internal class EditorKeyboardCaretVisibilityTest {
 
         val caret = requireNotNull(view.caretRect())
         assertEquals(caretOffset, editor.selectionEnd)
-        assertTrue("caret=$caret keyboardTop=$keyboardTop scroll=${view.editorScrollView.scrollY} padding=${view.editorScrollView.paddingBottom}", caret.bottom <= keyboardTop)
+        assertTrue(
+            "caret=$caret keyboardTop=$keyboardTop scroll=${view.editorScrollView.scrollY} padding=${view.editorScrollView.paddingBottom}",
+            caret.bottom <= keyboardTop
+        )
     }
 
     private fun measureHost(host: FrameLayout) {
         host.measure(
             View.MeasureSpec.makeMeasureSpec(360, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY)
         )
         host.layout(0, 0, 360, 600)
     }

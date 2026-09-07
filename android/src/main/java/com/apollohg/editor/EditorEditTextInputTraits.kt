@@ -1,17 +1,17 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.EditorEditText.ImeInitialSurroundingText
-import com.apollohg.editor.EditorEditText.Companion.DEFAULT_KEYBOARD_TYPE
-import com.apollohg.editor.EditorEditText.Companion.DEFAULT_AUTO_CORRECT
-import com.apollohg.editor.EditorEditText.Companion.DEFAULT_AUTO_CAPITALIZE
 import android.os.Build
 import android.provider.Settings
 import android.text.Annotation
 import android.text.InputType
-import android.text.Spanned
 import android.text.SpannableStringBuilder
-import android.view.inputmethod.InputConnection
+import android.text.Spanned
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import com.apollohg.editor.EditorEditText.Companion.DEFAULT_AUTO_CAPITALIZE
+import com.apollohg.editor.EditorEditText.Companion.DEFAULT_AUTO_CORRECT
+import com.apollohg.editor.EditorEditText.Companion.DEFAULT_KEYBOARD_TYPE
+import com.apollohg.editor.EditorEditText.ImeInitialSurroundingText
 
 internal fun EditorEditText.setAutoCapitalizeImpl(autoCapitalize: String?) {
     val next = when (autoCapitalize) {
@@ -19,6 +19,7 @@ internal fun EditorEditText.setAutoCapitalizeImpl(autoCapitalize: String?) {
         "sentences",
         "words",
         "characters" -> autoCapitalize
+
         else -> DEFAULT_AUTO_CAPITALIZE
     }
     if (nativeAutoCapitalize == next) return
@@ -49,6 +50,7 @@ internal fun EditorEditText.setKeyboardTypeImpl(keyboardType: String?) {
         "web-search",
         "visible-password",
         "ascii-capable-number-pad" -> keyboardType
+
         else -> DEFAULT_KEYBOARD_TYPE
     }
     if (nativeKeyboardType == next) return
@@ -90,19 +92,31 @@ internal fun EditorEditText.applyInputTraits() {
 
 internal fun EditorEditText.resolvedInputType(): Int {
     var nextInputType = when (nativeKeyboardType) {
-        "email-address" -> InputType.TYPE_CLASS_TEXT or
-            InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
-        "url" -> InputType.TYPE_CLASS_TEXT or
-            InputType.TYPE_TEXT_VARIATION_URI
+        "email-address" ->
+            InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+
+        "url" ->
+            InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_URI
+
         "phone-pad" -> InputType.TYPE_CLASS_PHONE
+
         "number-pad" -> InputType.TYPE_CLASS_NUMBER
-        "decimal-pad" -> InputType.TYPE_CLASS_NUMBER or
-            InputType.TYPE_NUMBER_FLAG_DECIMAL
-        "numeric" -> InputType.TYPE_CLASS_NUMBER or
-            InputType.TYPE_NUMBER_FLAG_DECIMAL or
-            InputType.TYPE_NUMBER_FLAG_SIGNED
-        "visible-password" -> InputType.TYPE_CLASS_TEXT or
-            InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+
+        "decimal-pad" ->
+            InputType.TYPE_CLASS_NUMBER or
+                InputType.TYPE_NUMBER_FLAG_DECIMAL
+
+        "numeric" ->
+            InputType.TYPE_CLASS_NUMBER or
+                InputType.TYPE_NUMBER_FLAG_DECIMAL or
+                InputType.TYPE_NUMBER_FLAG_SIGNED
+
+        "visible-password" ->
+            InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+
         else -> InputType.TYPE_CLASS_TEXT
     }
 
@@ -126,7 +140,7 @@ internal fun EditorEditText.resolvedInputType(): Int {
 
 internal fun EditorEditText.applyInitialSurroundingTextForIme(
     outAttrs: EditorInfo,
-    mapper: ImeTextCoordinateMapper,
+    mapper: ImeTextCoordinateMapper
 ): ImeInitialSurroundingText? {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
     val initialText = initialSurroundingTextForImeForEditor(mapper) ?: return null
@@ -148,10 +162,15 @@ private fun String.toImeTraceSnippet(): String {
     forEach { ch ->
         when (ch) {
             '\n' -> builder.append("\\n")
+
             '\r' -> builder.append("\\r")
+
             '\t' -> builder.append("\\t")
+
             '\\' -> builder.append("\\\\")
+
             '"' -> builder.append("\\\"")
+
             else -> {
                 if (ch.code < 0x20 || ch == LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER[0]) {
                     builder.append("\\u")
@@ -165,10 +184,14 @@ private fun String.toImeTraceSnippet(): String {
     return builder.toString()
 }
 
-internal fun EditorEditText.samsungSentenceCapsComposingTextForEditorImpl(composingText: String?): String? {
+internal fun EditorEditText.samsungSentenceCapsComposingTextForEditorImpl(
+    composingText: String?
+): String? {
     if (composingText.isNullOrEmpty()) return composingText
     if (!isSamsungKeyboardActiveForEditor()) return composingText
-    if ((inputType and InputType.TYPE_TEXT_FLAG_CAP_SENTENCES) != InputType.TYPE_TEXT_FLAG_CAP_SENTENCES) {
+    if ((inputType and InputType.TYPE_TEXT_FLAG_CAP_SENTENCES) !=
+        InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+    ) {
         return composingText
     }
     val (replacementStart, replacementEnd) = compositionReplacementRange() ?: return composingText
@@ -201,7 +224,7 @@ internal fun EditorEditText.cursorCapsModeForEditorImpl(reqModes: Int, baseCapsM
 }
 
 internal fun EditorEditText.initialSurroundingTextForImeForEditorImpl(
-    mapper: ImeTextCoordinateMapper? = null,
+    mapper: ImeTextCoordinateMapper? = null
 ): ImeInitialSurroundingText? {
     val coordinateMapper = mapper ?: imeTextCoordinateMapperForEditor() ?: return null
     val rawText = text ?: return null
@@ -233,7 +256,10 @@ internal fun EditorEditText.isCursorAtRenderedLineStartForSentenceCaps(): Boolea
     return isRenderedLineStartForSentenceCaps(currentText, cursor)
 }
 
-internal fun EditorEditText.isRenderedLineStartForSentenceCaps(text: Spanned, cursor: Int): Boolean {
+internal fun EditorEditText.isRenderedLineStartForSentenceCaps(
+    text: Spanned,
+    cursor: Int
+): Boolean {
     val cursor = cursor.coerceIn(0, text.length)
     if (cursor == 0) return true
 
@@ -272,13 +298,16 @@ internal fun EditorEditText.lastRenderedLineBreakBefore(text: CharSequence, curs
     return -1
 }
 
-internal fun EditorEditText.isIgnoredSentenceCapsLinePrefix(ch: Char): Boolean =
-    ch == ' ' ||
-        ch == '\t' ||
-        ch == '\u00A0' ||
-        ch == LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER[0]
+internal fun EditorEditText.isIgnoredSentenceCapsLinePrefix(ch: Char): Boolean = ch == ' ' ||
+    ch == '\t' ||
+    ch == '\u00A0' ||
+    ch == LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER[0]
 
-internal fun EditorEditText.renderedListMarkerEnd(text: Spanned, start: Int, endExclusive: Int): Int? {
+internal fun EditorEditText.renderedListMarkerEnd(
+    text: Spanned,
+    start: Int,
+    endExclusive: Int
+): Int? {
     if (start >= endExclusive) return null
     if (renderedTaskListMarkerEnd(text, start, endExclusive) != null) {
         return start + 2
@@ -298,12 +327,18 @@ internal fun EditorEditText.renderedListMarkerEnd(text: Spanned, start: Int, end
     }
 }
 
-internal fun EditorEditText.renderedTaskListMarkerEnd(text: Spanned, start: Int, endExclusive: Int): Int? {
+internal fun EditorEditText.renderedTaskListMarkerEnd(
+    text: Spanned,
+    start: Int,
+    endExclusive: Int
+): Int? {
     if (start + 1 >= endExclusive) return null
     val marker = text[start]
     if (marker != LayoutConstants.TASK_LIST_MARKER_UNCHECKED[0] &&
         marker != LayoutConstants.TASK_LIST_MARKER_CHECKED[0]
-    ) return null
+    ) {
+        return null
+    }
     if (text[start + 1] != ' ') return null
     val isMarker = text.getSpans(start, start + 1, Annotation::class.java)
         .any { it.key == RenderBridge.NATIVE_TASK_LIST_MARKER_ANNOTATION }
@@ -312,7 +347,7 @@ internal fun EditorEditText.renderedTaskListMarkerEnd(text: Spanned, start: Int,
 
 internal fun EditorEditText.configureInputConnection(
     baseConnection: InputConnection,
-    outAttrs: EditorInfo,
+    outAttrs: EditorInfo
 ): InputConnection? {
     val originalInitialCapsMode = outAttrs.initialCapsMode
     outAttrs.initialCapsMode = cursorCapsModeForEditor(
@@ -325,10 +360,16 @@ internal fun EditorEditText.configureInputConnection(
     NativeEditorViewRegistry.registerInputView(editorId, this)
     recordImeTraceForTesting(
         "createInputConnection",
-        "boundEditor=$editorId boundGen=$generation inputType=$inputType initialCaps=$originalInitialCapsMode->${outAttrs.initialCapsMode} " +
-            "imeContextPlaceholdersRemoved=${initialSurroundingText?.removedPlaceholderCount ?: 0} " +
-            "imeContextSel=${initialSurroundingText?.selectionStart ?: outAttrs.initialSelStart}..${initialSurroundingText?.selectionEnd ?: outAttrs.initialSelEnd} " +
-            "imeContextRawSel=${initialSurroundingText?.originalSelectionStart ?: selectionStart}..${initialSurroundingText?.originalSelectionEnd ?: selectionEnd} " +
+        "boundEditor=$editorId boundGen=$generation inputType=$inputType " +
+            "initialCaps=$originalInitialCapsMode->${outAttrs.initialCapsMode} " +
+            "imeContextPlaceholdersRemoved=" +
+            "${initialSurroundingText?.removedPlaceholderCount ?: 0} " +
+            "imeContextSel=" +
+            "${initialSurroundingText?.selectionStart ?: outAttrs.initialSelStart}.." +
+            "${initialSurroundingText?.selectionEnd ?: outAttrs.initialSelEnd} " +
+            "imeContextRawSel=" +
+            "${initialSurroundingText?.originalSelectionStart ?: selectionStart}.." +
+            "${initialSurroundingText?.originalSelectionEnd ?: selectionEnd} " +
             "imeContextBeforeTail=\"${initialSurroundingText?.textBeforeSelectionTailForImeLog() ?: ""}\""
     )
     return EditorInputConnection(
@@ -336,7 +377,7 @@ internal fun EditorEditText.configureInputConnection(
         baseConnection,
         editorId,
         generation,
-        mapper.generation,
+        mapper.generation
     ).also {
         activeInputConnection = it
     }

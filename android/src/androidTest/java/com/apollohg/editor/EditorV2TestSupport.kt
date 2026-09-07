@@ -7,10 +7,11 @@ internal fun createPairedV2TestEditor(): Pair<EditorV2Adapter, Long> {
     val created = when (
         val result = UniffiEditorV2Backend.create(
             """{"initialization":{"type":"localEmpty"}}""",
-            snapshotState = null,
+            snapshotState = null
         )
     ) {
         is EditorV2CallResult.Ok -> result.value
+
         is EditorV2CallResult.Err ->
             error("v2 editor create failed: ${result.error.code}: ${result.error.message}")
     }

@@ -10,7 +10,8 @@ import android.view.inputmethod.ExtractedText
 import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -30,10 +31,21 @@ internal class EditorInputReportingTest : EditorInputConnectionTestFixture() {
     class RecordingInputMethodManager : ShadowInputMethodManager() {
         val extracted = mutableListOf<Pair<Int, ExtractedText>>()
         val selections = mutableListOf<List<Int>>()
+
         @Implementation
-        fun updateExtractedText(view: View, token: Int, text: ExtractedText) { extracted += token to text }
+        fun updateExtractedText(view: View, token: Int, text: ExtractedText) {
+            extracted +=
+                token to text
+        }
+
         @Implementation
-        fun updateSelection(view: View, start: Int, end: Int, composingStart: Int, composingEnd: Int) {
+        fun updateSelection(
+            view: View,
+            start: Int,
+            end: Int,
+            composingStart: Int,
+            composingEnd: Int
+        ) {
             selections += listOf(start, end, composingStart, composingEnd)
         }
     }
@@ -44,10 +56,19 @@ internal class EditorInputReportingTest : EditorInputConnectionTestFixture() {
         try {
             val editor = harness.editText
             val input = requireNotNull(editor.onCreateInputConnection(EditorInfo()))
-            val manager = editor.context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            val manager = editor.context.getSystemService(
+                Context.INPUT_METHOD_SERVICE
+            ) as InputMethodManager
             val recorder = Shadow.extract<RecordingInputMethodManager>(manager)
-            input.getExtractedText(ExtractedTextRequest().apply { token = 71 }, InputConnection.GET_EXTRACTED_TEXT_MONITOR)
-            val visible = requireNotNull(editor.imeTextCoordinateMapperForEditor()).visibleText.toString()
+            input.getExtractedText(
+                ExtractedTextRequest().apply {
+                    token = 71
+                },
+                InputConnection.GET_EXTRACTED_TEXT_MONITOR
+            )
+            val visible = requireNotNull(
+                editor.imeTextCoordinateMapperForEditor()
+            ).visibleText.toString()
             val start = visible.indexOf("Alpha")
             input.setSelection(start, start + 5)
             input.setComposingText("日本", 1)
@@ -61,17 +82,31 @@ internal class EditorInputReportingTest : EditorInputConnectionTestFixture() {
             recorder.extracted.clear()
             next.commitText("!", 1)
             assertTrue(recorder.extracted.isEmpty())
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
     fun `cursor report follows owned line bounds and physical padding after scrolling`() {
         val editor = EditorEditText(RuntimeEnvironment.getApplication())
         val text = SpannableStringBuilder("first\nsecond")
-        text.setSpan(EditorBlockBoxSpan(EditorBoxStyle(padding = EditorEdges(top = 23f, bottom = 41f, left = 19f)), EditorEdges(), 0), 0, 5, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        text.setSpan(
+            EditorBlockBoxSpan(
+                EditorBoxStyle(padding = EditorEdges(top = 23f, bottom = 41f, left = 19f)),
+                EditorEdges(),
+                0
+            ),
+            0,
+            5,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
         editor.setText(text)
         editor.setPadding(11, 13, 17, 7)
-        editor.measure(View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY))
+        editor.measure(
+            View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY)
+        )
         editor.layout(0, 0, 320, 400)
         editor.setSelection(2)
         editor.scrollTo(3, 31)
@@ -79,7 +114,11 @@ internal class EditorInputReportingTest : EditorInputConnectionTestFixture() {
         val report = editor.buildSurfaceCursorAnchorInfo()
         assertEquals(2, report.selectionEnd)
         assertTrue(report.insertionMarkerFlags and CursorAnchorInfo.FLAG_HAS_VISIBLE_REGION != 0)
-        assertEquals(11f - 3f + layout.getPrimaryHorizontal(2), report.insertionMarkerHorizontal, 0.01f)
+        assertEquals(
+            11f - 3f + layout.getPrimaryHorizontal(2),
+            report.insertionMarkerHorizontal,
+            0.01f
+        )
         assertEquals(13f - 31f + 23f, report.insertionMarkerTop, 0.01f)
         assertEquals(13f - 31f + layout.textLineBottom(0), report.insertionMarkerBottom, 0.01f)
         assertEquals(13f - 31f + layout.getLineBaseline(0), report.insertionMarkerBaseline, 0.01f)

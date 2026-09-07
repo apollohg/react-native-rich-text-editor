@@ -19,8 +19,7 @@ extension NativeEditorExpoView {
         accessoryToolbar.apply(mentionTheme: theme?.mentions ?? addons.mentions?.theme)
         refreshSystemAssistantToolbarIfNeeded()
         if richTextView.textView.isFirstResponder,
-           (richTextView.textView.inputAccessoryView === accessoryToolbar || shouldUseSystemAssistantToolbar)
-        {
+           richTextView.textView.inputAccessoryView === accessoryToolbar || shouldUseSystemAssistantToolbar {
             reloadInputViewsAfterPreparingOrRetry()
         }
     }
@@ -94,8 +93,7 @@ extension NativeEditorExpoView {
         if !editable,
            richTextView.textView.isEditable,
            richTextView.editorId != 0,
-           !richTextView.textView.prepareForExternalEditorUpdate()
-        {
+           !richTextView.textView.prepareForExternalEditorUpdate() {
             scheduleEditableRetry(editable)
             return
         }
@@ -222,8 +220,8 @@ extension NativeEditorExpoView {
                 "positions": richTextView.atomLayoutPositions(),
                 "viewport": [
                     "y": Double(richTextView.textView.contentOffset.y),
-                    "height": Double(richTextView.textView.bounds.height),
-                ],
+                    "height": Double(richTextView.textView.bounds.height)
+                ]
             ],
             originatingEditorId: richTextView.editorId
         ) else { return }
@@ -245,8 +243,7 @@ extension NativeEditorExpoView {
     private func publishAutoGrowStyleHeight(_ height: CGFloat?) {
         if let height {
             if let lastPublishedAutoGrowHeight,
-               abs(height - lastPublishedAutoGrowHeight) <= Self.layoutEpsilon
-            {
+               abs(height - lastPublishedAutoGrowHeight) <= Self.layoutEpsilon {
                 return
             }
             lastPublishedAutoGrowHeight = height

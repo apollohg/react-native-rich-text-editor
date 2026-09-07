@@ -4,8 +4,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
-import android.util.Log
 import android.text.style.ReplacementSpan
+import android.util.Log
 import android.view.View
 import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicBoolean
@@ -17,7 +17,7 @@ internal class AtomBlockSpan(
     val docPos: Int,
     var reservedHeightPx: Int,
     val hasStableAtomId: Boolean,
-    val isDirectRootChild: Boolean,
+    val isDirectRootChild: Boolean
 ) : ReplacementSpan() {
     override fun getSize(
         paint: Paint,
@@ -71,6 +71,7 @@ internal class BlockImageSpan(
     private val retired = AtomicBoolean(false)
     private val bitmapLease = AtomicReference<DecodedBitmapLease?>()
     private val loadHandle = AtomicReference<RenderImageLoader.LoadHandle?>()
+
     @Volatile
     private var lastDrawRect: RectF? = null
 
@@ -79,13 +80,15 @@ internal class BlockImageSpan(
             val handle = NativeImagePipeline.load(
                 preparedSource,
                 ownerId,
-                DecodedBitmapPriority.VISIBLE,
+                DecodedBitmapPriority.VISIBLE
             ) { loaded ->
                 val currentHost = hostRef.get()
                 if (
                     retired.get() ||
-                    currentHost is EditorEditText &&
-                    !canReuseFor(currentHost)
+                    (
+                        currentHost is EditorEditText &&
+                            !canReuseFor(currentHost)
+                        )
                 ) {
                     loaded?.close()
                     return@load
@@ -128,11 +131,19 @@ internal class BlockImageSpan(
         }
     }
 
-    internal fun matches(source: String, width: Float?, height: Float?): Boolean = !retired.get() && this.source == source && preferredWidthDp == width && preferredHeightDp == height
+    internal fun matches(source: String, width: Float?, height: Float?): Boolean =
+        !retired.get() && this.source == source && preferredWidthDp == width &&
+            preferredHeightDp == height
 
     internal fun canReuseFor(host: EditorEditText): Boolean {
-        val sameDriver = if (hadBoundDriver) boundDriver.get()?.let { it === host.v2Driver } == true else host.v2Driver == null
-        return !retired.get() && hostRef.get() === host && sameDriver && boundEditorId == host.editorId &&
+        val sameDriver = if (hadBoundDriver) {
+            boundDriver.get()?.let { it === host.v2Driver } == true
+        } else {
+            host.v2Driver ==
+                null
+        }
+        return !retired.get() && hostRef.get() === host && sameDriver &&
+            boundEditorId == host.editorId &&
             generation == host.currentImageLoadGeneration() && policy == host.imageLoadingPolicy
     }
 
@@ -182,17 +193,29 @@ internal class BlockImageSpan(
     ) {
         val rect = boxRect(x, y.toFloat())
         val host = hostRef.get()
-        val documentRect = ((host as? EditorTextSurface)?.layout as? EditorDocumentLayout)?.imageBounds(this)
+        val documentRect =
+            ((host as? EditorTextSurface)?.layout as? EditorDocumentLayout)?.imageBounds(
+                this
+            )
         lastDrawRect = RectF(documentRect ?: rect).apply {
             if (host != null) {
-                offset((host as? android.widget.TextView)?.compoundPaddingLeft?.toFloat() ?: host.paddingLeft.toFloat(), (host as? android.widget.TextView)?.extendedPaddingTop?.toFloat() ?: host.paddingTop.toFloat())
+                offset(
+                    (host as? android.widget.TextView)?.compoundPaddingLeft?.toFloat()
+                        ?: host.paddingLeft.toFloat(),
+                    (host as? android.widget.TextView)?.extendedPaddingTop?.toFloat()
+                        ?: host.paddingTop.toFloat()
+                )
             }
         }
         val loadedBitmap = bitmapLease.get()?.bitmap
         imageStyle?.let {
             val box = it.box.scaled(density)
             EditorBoxDrawing.draw(canvas, rect, box)
-            if (loadedBitmap != null) EditorBoxDrawing.drawImage(canvas, loadedBitmap, rect, box, it.resizeMode)
+            if (loadedBitmap !=
+                null
+            ) {
+                EditorBoxDrawing.drawImage(canvas, loadedBitmap, rect, box, it.resizeMode)
+            }
             return
         }
         if (loadedBitmap != null) {
@@ -219,14 +242,16 @@ internal class BlockImageSpan(
             x + box.margin.left,
             baseline - heightPx - box.inset.top - box.inset.bottom - box.margin.bottom,
             x + box.margin.left + widthPx + box.inset.left + box.inset.right,
-            baseline - box.margin.bottom,
+            baseline - box.margin.bottom
         )
     }
 
     internal fun currentSizePx(): Pair<Int, Int> {
         val maxWidth = resolvedMaxWidth()
         val loadedBitmap = bitmapLease.get()?.bitmap
-        val fallbackAspectRatio = if (loadedBitmap != null && loadedBitmap.width > 0 && loadedBitmap.height > 0) {
+        val fallbackAspectRatio = if (loadedBitmap != null && loadedBitmap.width > 0 &&
+            loadedBitmap.height > 0
+        ) {
             loadedBitmap.height.toFloat() / loadedBitmap.width.toFloat()
         } else {
             0.56f
@@ -235,7 +260,9 @@ internal class BlockImageSpan(
         var widthPx = checkedPixels(preferredWidthDp)
         var heightPx = checkedPixels(preferredHeightDp)
 
-        if (widthPx == null && heightPx == null && loadedBitmap != null && loadedBitmap.width > 0 && loadedBitmap.height > 0) {
+        if (widthPx == null && heightPx == null && loadedBitmap != null && loadedBitmap.width > 0 &&
+            loadedBitmap.height > 0
+        ) {
             widthPx = loadedBitmap.width.toFloat()
             heightPx = loadedBitmap.height.toFloat()
         } else if (widthPx == null && heightPx != null) {
@@ -275,10 +302,15 @@ internal class BlockImageSpan(
     private fun resolvedMaxWidth(): Float {
         val host = hostRef.get()
         val hostWidth = host?.let {
-            maxOf(it.width, it.measuredWidth) - ((it as? android.widget.TextView)?.totalPaddingLeft ?: it.paddingLeft) - ((it as? android.widget.TextView)?.totalPaddingRight ?: it.paddingRight)
+            maxOf(it.width, it.measuredWidth) -
+                ((it as? android.widget.TextView)?.totalPaddingLeft ?: it.paddingLeft) -
+                ((it as? android.widget.TextView)?.totalPaddingRight ?: it.paddingRight)
         } ?: 0
         val inset = imageStyle?.box?.outerInset?.scaled(density) ?: EditorEdges()
-        val candidate = (if (hostWidth > 0) hostWidth.toDouble() else 240.0 * density.toDouble()) - inset.left - inset.right - ancestorWidthInset
+        val candidate =
+            (if (hostWidth > 0) hostWidth.toDouble() else 240.0 * density.toDouble()) - inset.left -
+                inset.right -
+                ancestorWidthInset
         return candidate
             .takeIf { it.isFinite() && it > 0.0 }
             ?.coerceAtMost(policy.maxDecodeDimensionPx.toDouble())
@@ -290,7 +322,9 @@ internal class BlockImageSpan(
         val value = preferredDp ?: return null
         if (!value.isFinite() || value <= 0f || !density.isFinite() || density <= 0f) return null
         val pixels = value.toDouble() * density.toDouble()
-        return pixels.takeIf { it.isFinite() && it > 0.0 && it <= Int.MAX_VALUE.toDouble() }?.toFloat()
+        return pixels.takeIf {
+            it.isFinite() && it > 0.0 && it <= Int.MAX_VALUE.toDouble()
+        }?.toFloat()
     }
 
     private fun checkedPositiveInt(value: Float): Int = value

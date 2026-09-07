@@ -1,23 +1,5 @@
 import Foundation
 
-// MARK: - v2 editor adapter (the only construction path; Task 16 production cutover)
-//
-// `EditorV2Adapter` owns one v2 editor session (decimal-string handle) and
-// translates the existing native view operations into the typed v2
-// transactions/results (`editorV2*`). Every mutation is one typed
-// transaction against the tracked base document revision. Transient
-// IME/composing state never reaches the adapter — only final commits do.
-//
-// Render derivation (Task 16B): the v2 render accessor
-// (`editorV2RenderUpdate` / `editorV2ResolveScalarSelection` /
-// `editorV2DocToScalar` / `editorV2ScalarToDoc`) returns everything the
-// retired legacy stateless render probe provided — full render blocks,
-// toolbar active state, the mirrored scalar selection resolved to doc
-// positions, and the lenient doc↔scalar position mapping (including the
-// document's scalar extent) — derived directly from the live v2 session.
-// No legacy editor is ever created for derivation, and no legacy call
-// touches the v2 session.
-
 /// Normalized v2 string-result (exactly one of value/error).
 enum EditorV2ValueResult {
     case success(String)
@@ -182,11 +164,6 @@ final class EditorV2Adapter {
 
     // MARK: - Construction
 
-    /// Attach to an existing v2 session created through the module's
-    /// JS-facing `editorV2Create` entry. The session is NOT re-created; the
-    /// adapter routes the bound view's interactions through the shared
-    /// session (the TS document handle and collaboration controller drive
-    /// the same session over the module surface).
     static func attach(
         editorId: String,
         roomBound: Bool,
@@ -212,10 +189,7 @@ final class EditorV2Adapter {
             setAwarenessSelection: setAwarenessSelection,
             collaborationWake: collaborationWake
         )
-        // Attachment only establishes that the handle is live. It must not
-        // render (a render resolves an otherwise absent selection) or stamp
-        // a state revision; the first actual refresh atomically adopts the
-        // complete render snapshot before input is enabled.
+
         guard case .success = normalizeJsonResult(editorV2GetState(editorId: editorId)) else {
             return nil
         }
@@ -232,9 +206,6 @@ final class EditorV2Adapter {
         return UInt64(editorId) != nil
     }
 
-    /// Execute one destroy FFI call and preserve its exact terminal result.
-    /// The public module transaction owns pairing removal and view teardown;
-    /// this adapter owns only its local lifecycle and autonomous-error owner.
     @discardableResult
     func destroyForModuleTransaction(
         beforeDestroy: () -> Void = {}
@@ -315,10 +286,6 @@ final class EditorV2Adapter {
         }
     }
 
-    // MARK: - Envelopes and result normalization
-
-    // MARK: - Exclusive autonomous-error owner
-
     // MARK: - Render derivation (v2 render accessor)
 
     static let atomicRenderSnapshotKeys: Set<String> = [
@@ -330,7 +297,7 @@ final class EditorV2Adapter {
         "documentVersion",
         "stateRevision",
         "scalarLength",
-        "documentIsEmpty",
+        "documentIsEmpty"
     ]
 
     static let activeStateKeys: Set<String> = [
@@ -339,13 +306,13 @@ final class EditorV2Adapter {
         "nodes",
         "commands",
         "allowedMarks",
-        "insertableNodes",
+        "insertableNodes"
     ]
 
     static let mentionNodeStringKeys: Set<String> = [
         "textColor",
         "backgroundColor",
-        "borderColor",
+        "borderColor"
     ]
 
     static let mentionOptionStringKeys: Set<String> = [
@@ -354,23 +321,23 @@ final class EditorV2Adapter {
         "backgroundColor",
         "borderColor",
         "highlightedBackgroundColor",
-        "highlightedTextColor",
+        "highlightedTextColor"
     ]
 
     static let mentionSuggestionsStringKeys: Set<String> = [
         "backgroundColor",
         "borderColor",
-        "shadowColor",
+        "shadowColor"
     ]
 
     static let mentionThemeNumberKeys: Set<String> = [
         "borderWidth",
-        "borderRadius",
+        "borderRadius"
     ]
 
     static let mentionThemeFontWeights: Set<String> = [
         "normal", "bold", "100", "200", "300", "400",
-        "500", "600", "700", "800", "900",
+        "500", "600", "700", "800", "900"
     ]
 
     var cacheStateForTesting: String {
@@ -378,7 +345,7 @@ final class EditorV2Adapter {
         if let cachedAuthoritativeScalarSelection {
             selection = [
                 "anchor": cachedAuthoritativeScalarSelection.anchor,
-                "head": cachedAuthoritativeScalarSelection.head,
+                "head": cachedAuthoritativeScalarSelection.head
             ]
         } else {
             selection = NSNull()
@@ -396,21 +363,13 @@ final class EditorV2Adapter {
             "selection": selection,
             "activeState": cachedActiveState ?? NSNull(),
             "historyState": history,
-            "viewUpdateJSON": cachedViewUpdateJSON ?? NSNull(),
+            "viewUpdateJSON": cachedViewUpdateJSON ?? NSNull()
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
             return ""
         }
         return String(data: data, encoding: .utf8) ?? ""
     }
-
-    // MARK: - Selection sync and position mapping
-
-    // MARK: - Mutation driver
-
-    // MARK: - Native transport wake
-
-    // MARK: - Typed verbs (one method per legacy choke point)
 
     // MARK: - Controlled content (local-API, passes read-only per Source::Api parity)
 

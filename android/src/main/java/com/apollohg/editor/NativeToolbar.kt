@@ -1,7 +1,7 @@
 package com.apollohg.editor
 
-import org.json.JSONObject
 import kotlin.math.roundToInt
+import org.json.JSONObject
 
 internal fun physicalToolbarBorderWidth(widthDp: Float, density: Float): Int = when {
     widthDp <= 0f -> 0
@@ -69,11 +69,17 @@ internal data class NativeToolbarState(
     }
 }
 
-internal enum class ToolbarCommand {
-    indentList,
-    outdentList,
-    undo,
-    redo,
+internal enum class ToolbarCommand(val wireValue: String) {
+    INDENT_LIST("indentList"),
+    OUTDENT_LIST("outdentList"),
+    UNDO("undo"),
+    REDO("redo");
+
+    companion object {
+        fun fromWireValue(value: String): ToolbarCommand =
+            entries.firstOrNull { it.wireValue == value }
+                ?: throw IllegalArgumentException("Unknown ToolbarCommand: $value")
+    }
 }
 
 internal object EditorNodeTypes {
@@ -90,9 +96,8 @@ internal object EditorNodeTypes {
     fun isHorizontalRule(nodeType: String?): Boolean =
         nodeType == "horizontalRule" || nodeType == "horizontal_rule"
 
-    fun isListItem(nodeType: String): Boolean =
-        nodeType == "listItem" || nodeType == "list_item" ||
-            nodeType == "taskItem" || nodeType == "task_item"
+    fun isListItem(nodeType: String): Boolean = nodeType == "listItem" || nodeType == "list_item" ||
+        nodeType == "taskItem" || nodeType == "task_item"
 
     fun isListContainer(nodeType: String): Boolean =
         nodeType == "bulletList" || nodeType == "bullet_list" ||
@@ -103,56 +108,86 @@ internal object EditorNodeTypes {
         if (insertableNodes.contains("hard_break")) "hard_break" else "hardBreak"
 }
 
-internal enum class ToolbarListType {
-    bullet_list,
-    ordered_list,
-    bulletList,
-    orderedList,
+internal enum class ToolbarListType(val wireValue: String) {
+    BULLET_LIST("bullet_list"),
+    ORDERED_LIST("ordered_list"),
+    CAMEL_CASE_BULLET_LIST("bulletList"),
+    CAMEL_CASE_ORDERED_LIST("orderedList");
+
+    companion object {
+        fun fromWireValue(value: String): ToolbarListType =
+            entries.firstOrNull { it.wireValue == value }
+                ?: throw IllegalArgumentException("Unknown ToolbarListType: $value")
+    }
 }
 
-internal enum class ToolbarDefaultIconId {
-    bold,
-    italic,
-    underline,
-    strike,
-    link,
-    image,
-    h1,
-    h2,
-    h3,
-    h4,
-    h5,
-    h6,
-    blockquote,
-    bulletList,
-    orderedList,
-    indentList,
-    outdentList,
-    lineBreak,
-    horizontalRule,
-    undo,
-    redo,
+internal enum class ToolbarDefaultIconId(val wireValue: String) {
+    BOLD("bold"),
+    ITALIC("italic"),
+    UNDERLINE("underline"),
+    STRIKE("strike"),
+    LINK("link"),
+    IMAGE("image"),
+    H1("h1"),
+    H2("h2"),
+    H3("h3"),
+    H4("h4"),
+    H5("h5"),
+    H6("h6"),
+    BLOCKQUOTE("blockquote"),
+    BULLET_LIST("bulletList"),
+    ORDERED_LIST("orderedList"),
+    INDENT_LIST("indentList"),
+    OUTDENT_LIST("outdentList"),
+    LINE_BREAK("lineBreak"),
+    HORIZONTAL_RULE("horizontalRule"),
+    UNDO("undo"),
+    REDO("redo");
+
+    companion object {
+        fun fromWireValue(value: String): ToolbarDefaultIconId =
+            entries.firstOrNull { it.wireValue == value }
+                ?: throw IllegalArgumentException("Unknown ToolbarDefaultIconId: $value")
+    }
 }
 
-internal enum class ToolbarItemKind {
-    mark,
-    heading,
-    blockquote,
-    list,
-    command,
-    node,
-    action,
-    group,
-    separator,
+internal enum class ToolbarItemKind(val wireValue: String) {
+    MARK("mark"),
+    HEADING("heading"),
+    BLOCKQUOTE("blockquote"),
+    LIST("list"),
+    COMMAND("command"),
+    NODE("node"),
+    ACTION("action"),
+    GROUP("group"),
+    SEPARATOR("separator");
+
+    companion object {
+        fun fromWireValue(value: String): ToolbarItemKind =
+            entries.firstOrNull { it.wireValue == value }
+                ?: throw IllegalArgumentException("Unknown ToolbarItemKind: $value")
+    }
 }
 
-internal enum class ToolbarGroupPresentation {
-    expand,
-    menu,
+internal enum class ToolbarGroupPresentation(val wireValue: String) {
+    EXPAND("expand"),
+    MENU("menu");
+
+    companion object {
+        fun fromWireValue(value: String): ToolbarGroupPresentation =
+            entries.firstOrNull { it.wireValue == value }
+                ?: throw IllegalArgumentException("Unknown ToolbarGroupPresentation: $value")
+    }
 }
 
-internal enum class ToolbarItemPlacement {
-    start,
-    scroll,
-    end,
+internal enum class ToolbarItemPlacement(val wireValue: String) {
+    START("start"),
+    SCROLL("scroll"),
+    END("end");
+
+    companion object {
+        fun fromWireValue(value: String): ToolbarItemPlacement =
+            entries.firstOrNull { it.wireValue == value }
+                ?: throw IllegalArgumentException("Unknown ToolbarItemPlacement: $value")
+    }
 }

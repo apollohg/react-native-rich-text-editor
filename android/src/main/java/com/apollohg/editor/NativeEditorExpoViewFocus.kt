@@ -1,10 +1,10 @@
 package com.apollohg.editor
 
+import android.content.Context
+import android.view.inputmethod.InputMethodManager
 import com.apollohg.editor.NativeEditorExpoView.Companion.MAX_PENDING_UPDATE_RETRY_ATTEMPTS
 import com.apollohg.editor.NativeEditorExpoView.Companion.NATIVE_ACTION_RETRY_DELAY_MS
 import com.apollohg.editor.NativeEditorExpoView.Companion.OUTSIDE_TAP_BLUR_DELAY_MS
-import android.content.Context
-import android.view.inputmethod.InputMethodManager
 
 internal fun NativeEditorExpoView.canFocusCurrentEditor(): Boolean {
     val editorId = richTextView.editorId
@@ -64,7 +64,9 @@ internal fun NativeEditorExpoView.completeBlur(deferKeyboardDismiss: Boolean) {
         val dismiss = Runnable {
             pendingKeyboardDismiss = null
             if (!richTextView.editorEditText.hasFocus()) {
-                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                val imm = context.getSystemService(
+                    Context.INPUT_METHOD_SERVICE
+                ) as? InputMethodManager
                 imm?.hideSoftInputFromWindow(richTextView.editorEditText.windowToken, 0)
             }
         }

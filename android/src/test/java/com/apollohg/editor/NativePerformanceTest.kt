@@ -65,7 +65,12 @@ class NativePerformanceTest {
 
         val stats = measureOperation("applyUpdateJsonLargeDocument") {
             editText.applyUpdateJSON(updateJson, notifyListener = false)
-            layoutView(editText, widthPx = 1080, heightPx = 2400, heightMode = View.MeasureSpec.AT_MOST)
+            layoutView(
+                editText,
+                widthPx = 1080,
+                heightPx = 2400,
+                heightMode = View.MeasureSpec.AT_MOST
+            )
             editText.lastApplyUpdateTrace()?.let(traceSamples::add)
 
             assertFalse("edit text should contain rendered content", editText.text.isNullOrEmpty())
@@ -99,11 +104,21 @@ class NativePerformanceTest {
             name = "applyRenderPatchLargeDocument",
             beforeEach = {
                 editText.applyUpdateJSON(initialUpdateJson, notifyListener = false)
-                layoutView(editText, widthPx = 1080, heightPx = 2400, heightMode = View.MeasureSpec.AT_MOST)
+                layoutView(
+                    editText,
+                    widthPx = 1080,
+                    heightPx = 2400,
+                    heightMode = View.MeasureSpec.AT_MOST
+                )
             }
         ) {
             editText.applyUpdateJSON(patchedUpdateJson, notifyListener = false)
-            layoutView(editText, widthPx = 1080, heightPx = 2400, heightMode = View.MeasureSpec.AT_MOST)
+            layoutView(
+                editText,
+                widthPx = 1080,
+                heightPx = 2400,
+                heightMode = View.MeasureSpec.AT_MOST
+            )
             editText.lastApplyUpdateTrace()?.let(traceSamples::add)
 
             assertFalse("edit text should contain rendered content", editText.text.isNullOrEmpty())
@@ -122,13 +137,22 @@ class NativePerformanceTest {
     fun `performance - remote selection overlay refresh multi peer large document`() {
         val updateJson = NativePerformanceFixtureFactory.largeUpdateJson()
         val richTextView = RichTextEditorView(context).apply {
-            configure(textSizePx = baseFontSize, textColor = textColor, backgroundColor = Color.WHITE)
+            configure(
+                textSizePx = baseFontSize,
+                textColor = textColor,
+                backgroundColor = Color.WHITE
+            )
             setRemoteSelectionEditorIdForTesting(1L)
             setRemoteSelectionScalarResolverForTesting { _, docPos -> docPos }
         }
 
         richTextView.editorEditText.applyUpdateJSON(updateJson, notifyListener = false)
-        layoutView(richTextView, widthPx = 1080, heightPx = 1600, heightMode = View.MeasureSpec.EXACTLY)
+        layoutView(
+            richTextView,
+            widthPx = 1080,
+            heightPx = 1600,
+            heightMode = View.MeasureSpec.EXACTLY
+        )
 
         val totalScalar = richTextView.editorEditText.text?.length ?: 0
         val selections = NativePerformanceFixtureFactory.remoteSelections(
@@ -137,7 +161,12 @@ class NativePerformanceTest {
             selectionWidth = 24
         )
         richTextView.setRemoteSelections(selections)
-        layoutView(richTextView, widthPx = 1080, heightPx = 1600, heightMode = View.MeasureSpec.EXACTLY)
+        layoutView(
+            richTextView,
+            widthPx = 1080,
+            heightPx = 1600,
+            heightMode = View.MeasureSpec.EXACTLY
+        )
 
         val bitmap = Bitmap.createBitmap(1080, 1600, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -145,7 +174,12 @@ class NativePerformanceTest {
         val stats = measureOperation("remoteSelectionOverlayRefreshMultiPeerLargeDocument") {
             bitmap.eraseColor(Color.TRANSPARENT)
             richTextView.setRemoteSelections(selections)
-            layoutView(richTextView, widthPx = 1080, heightPx = 1600, heightMode = View.MeasureSpec.EXACTLY)
+            layoutView(
+                richTextView,
+                widthPx = 1080,
+                heightPx = 1600,
+                heightMode = View.MeasureSpec.EXACTLY
+            )
             richTextView.draw(canvas)
 
             val snapshots = richTextView.remoteSelectionDebugSnapshotsForTesting()
@@ -156,15 +190,13 @@ class NativePerformanceTest {
             assertEquals("expected one snapshot per peer", selections.size, snapshots.size)
         }
 
-        assertTrue("average remote selection refresh time should be positive", stats.averageMillis > 0.0)
+        assertTrue(
+            "average remote selection refresh time should be positive",
+            stats.averageMillis > 0.0
+        )
     }
 
-    private fun layoutView(
-        view: View,
-        widthPx: Int,
-        heightPx: Int,
-        heightMode: Int
-    ) {
+    private fun layoutView(view: View, widthPx: Int, heightPx: Int, heightMode: Int) {
         val widthSpec = View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY)
         val heightSpec = View.MeasureSpec.makeMeasureSpec(heightPx, heightMode)
         view.measure(widthSpec, heightSpec)

@@ -6,7 +6,7 @@ internal object FabricLeaseHandleBridge {
     internal data class FinalLayout(
         val leaseHandle: Long,
         val contentOriginXPx: Int,
-        val contentOriginYPx: Int,
+        val contentOriginYPx: Int
     )
     private val finalLayout = ThreadLocal<FinalLayout>()
 
@@ -15,11 +15,8 @@ internal object FabricLeaseHandleBridge {
         if (leaseHandle > 0) current.set(leaseHandle) else current.remove()
     }
 
-    @JvmStatic fun beginNativeFinalLayout(
-        leaseHandle: Long,
-        contentOriginXPx: Int,
-        contentOriginYPx: Int,
-    ) {
+    @JvmStatic
+    fun beginNativeFinalLayout(leaseHandle: Long, contentOriginXPx: Int, contentOriginYPx: Int) {
         if (leaseHandle <= 0) {
             current.remove()
             finalLayout.remove()
@@ -47,7 +44,7 @@ internal object FabricLeaseHandleBridge {
         if (surfaceId <= 0 || componentTag <= 0 || leaseHandle <= 0) return
         PreparedProseLayoutRegistry.shared.registerFabricLease(
             FabricSurfaceToken(surfaceId, componentTag),
-            leaseHandle,
+            leaseHandle
         )
     }
 
@@ -56,7 +53,7 @@ internal object FabricLeaseHandleBridge {
         if (surfaceId <= 0 || componentTag <= 0 || leaseHandle <= 0) return
         PreparedProseLayoutRegistry.shared.finalizeFabricLease(
             FabricSurfaceToken(surfaceId, componentTag),
-            leaseHandle,
+            leaseHandle
         )
     }
 }

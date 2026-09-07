@@ -8,13 +8,12 @@ import android.icu.text.BreakIterator
  * cursor inside a composed character.
  */
 object PositionBridge {
-    private data class ConversionTable(
-        val utf16ToScalar: IntArray,
-        val scalarToUtf16: IntArray,
-    )
+    private data class ConversionTable(val utf16ToScalar: IntArray, val scalarToUtf16: IntArray)
 
     private val cacheLock = Any()
+
     @Volatile private var cachedText: String? = null
+
     @Volatile private var cachedTable: ConversionTable? = null
 
     /**
@@ -65,11 +64,7 @@ object PositionBridge {
      * Snaps a UTF-16 offset out of the middle of a surrogate pair without
      * applying full grapheme-cluster expansion.
      */
-    fun snapToScalarBoundary(
-        utf16Offset: Int,
-        text: String,
-        biasForward: Boolean
-    ): Int {
+    fun snapToScalarBoundary(utf16Offset: Int, text: String, biasForward: Boolean): Int {
         val clampedOffset = utf16Offset.coerceIn(0, text.length)
         if (clampedOffset <= 0 || clampedOffset >= text.length) return clampedOffset
 
@@ -123,7 +118,7 @@ object PositionBridge {
 
             return ConversionTable(
                 utf16ToScalar = utf16ToScalar,
-                scalarToUtf16 = scalarToUtf16,
+                scalarToUtf16 = scalarToUtf16
             ).also {
                 cachedText = text
                 cachedTable = it

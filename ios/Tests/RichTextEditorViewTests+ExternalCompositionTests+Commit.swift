@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testExternalTextCompositionCommitsFinalTextOnce() throws {
@@ -169,10 +169,16 @@ extension RichTextEditorViewTests {
     }
 
     func testExternalTextCompositionReplacesUnicodeSelectionsByScalarRange() {
-        let cases: [(source: String, range: NSRange, replacement: String, expected: String)] = [
-            ("A\u{1F600}B", NSRange(location: 1, length: 2), "X", "AXB"),
-            ("Cafe\u{301}", NSRange(location: 3, length: 2), "Z", "CafZ"),
-            ("abc אבג def", NSRange(location: 4, length: 3), "RTL", "abc RTL def"),
+        struct CompositionCase {
+            let source: String
+            let range: NSRange
+            let replacement: String
+            let expected: String
+        }
+        let cases: [CompositionCase] = [
+            CompositionCase(source: "A\u{1F600}B", range: NSRange(location: 1, length: 2), replacement: "X", expected: "AXB"),
+            CompositionCase(source: "Cafe\u{301}", range: NSRange(location: 3, length: 2), replacement: "Z", expected: "CafZ"),
+            CompositionCase(source: "abc אבג def", range: NSRange(location: 4, length: 3), replacement: "RTL", expected: "abc RTL def")
         ]
 
         for (index, testCase) in cases.enumerated() {

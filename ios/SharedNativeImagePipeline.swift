@@ -1,6 +1,6 @@
-import UIKit
-import ImageIO
 import CryptoKit
+import ImageIO
+import UIKit
 
 final class RenderImageLoadOwner {
     typealias Delivery = (@escaping () -> Void) -> Void
@@ -41,12 +41,13 @@ final class RenderImageLoadOwner {
         }
     }
 
+    private enum DeliveryState { case pending, running, cancelled, finished }
+
     private final class DeliveryTicket {
         // All transitions happen on stateQueue. Once a ticket is running, the
         // callback owns delivery; cancellation suppresses pending tickets but
         // never waits on arbitrary user code.
-        private enum State { case pending, running, cancelled, finished }
-        private var state: State = .pending
+        private var state: DeliveryState = .pending
 
         func begin() -> Bool {
             guard state == .pending else { return false }
@@ -281,8 +282,7 @@ final class RenderImageLoadOwner {
 
     private func scheduleDeadlineLocked(for request: Request) {
         let remaining = max(0, request.deadline - now())
-        deadlineTasks[request.id] = scheduleTimeout(remaining) {
-            [weak self] in
+        deadlineTasks[request.id] = scheduleTimeout(remaining) { [weak self] in
             self?.expire(request)
         }
     }
@@ -294,8 +294,7 @@ final class RenderImageLoadOwner {
             if request.generation == generation,
                active[request.id] != nil,
                isWithinDeadline(request),
-               let image
-            {
+               let image {
                 let cost = RenderImageCache.retainedCost(image)
                 if isWithinDeadline(request) {
                     RenderImageCache.cache.insert(image, forKey: cacheKey, cost: cost)
@@ -303,8 +302,7 @@ final class RenderImageLoadOwner {
             }
             if request.generation == generation,
                active[request.id] != nil,
-               isWithinDeadline(request)
-            {
+               isWithinDeadline(request) {
                 finishLocked(request, image: image)
             } else {
                 expireLocked(request)

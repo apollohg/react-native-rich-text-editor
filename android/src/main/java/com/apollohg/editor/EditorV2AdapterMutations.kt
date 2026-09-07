@@ -1,8 +1,7 @@
 package com.apollohg.editor
 
-import org.json.JSONObject
 import org.json.JSONArray
-
+import org.json.JSONObject
 
 internal sealed interface MutationOutcome {
     data class Transaction(val changed: Boolean, val revision: ULong) : MutationOutcome
@@ -16,13 +15,16 @@ internal fun EditorV2Adapter.parseMutationOutcome(json: String): MutationOutcome
         when (outcome.getString("type")) {
             "transaction" -> MutationOutcome.Transaction(
                 changed = outcome.getBoolean("changed"),
-                revision = ulongField(outcome, "documentRevision") ?: return null,
+                revision = ulongField(outcome, "documentRevision") ?: return null
             )
+
             "notApplicable" -> MutationOutcome.NotApplicable
+
             "replacement" -> MutationOutcome.Replacement(
                 changed = outcome.getBoolean("changed"),
-                revision = ulongField(outcome, "documentRevision") ?: return null,
+                revision = ulongField(outcome, "documentRevision") ?: return null
             )
+
             else -> null
         }
     } catch (error: Exception) {
@@ -42,7 +44,7 @@ internal fun EditorV2Adapter.handleMutationError(error: EditorV2Error): String? 
 
 internal fun EditorV2Adapter.performNativeIntent(
     intent: JSONObject,
-    reportPositionEpochInvalid: Boolean = false,
+    reportPositionEpochInvalid: Boolean = false
 ): EditorV2NativeIntentResult {
     if (destroyed) {
         emit(EditorV2Adapter.destroyedError())
@@ -58,7 +60,7 @@ internal fun EditorV2Adapter.performNativeIntent(
             .put("ownerId", ownerId)
             .put("positionEpoch", epoch)
             .put("intent", intent),
-        includeBaseRevision = false,
+        includeBaseRevision = false
     ) { requestJson -> backend.applyNativeIntent(editorId, requestJson) }
     return when (result) {
         is EditorV2CallResult.Err -> {
@@ -76,24 +78,38 @@ internal fun EditorV2Adapter.performNativeIntent(
                 EditorV2NativeIntentResult.Rejected
             }
         }
+
         is EditorV2CallResult.Ok -> {
             val outcome = parseMutationOutcome(result.value)
             if (outcome == null) {
-                emit(EditorV2Adapter.contractError("v2 native intent outcome violates the frozen shape"))
+                emit(
+                    EditorV2Adapter.contractError(
+                        "v2 native intent outcome violates the frozen shape"
+                    )
+                )
                 return EditorV2NativeIntentResult.Rejected
             }
             val resultObject = try {
                 JSONObject(result.value)
             } catch (_: Exception) {
-                emit(EditorV2Adapter.contractError("v2 native intent outcome violates the frozen shape"))
+                emit(
+                    EditorV2Adapter.contractError(
+                        "v2 native intent outcome violates the frozen shape"
+                    )
+                )
                 return EditorV2NativeIntentResult.Rejected
             }
             val documentChanged = when (outcome) {
                 MutationOutcome.NotApplicable -> false
+
                 is MutationOutcome.Transaction,
                 is MutationOutcome.Replacement ->
                     exactBool(resultObject.opt("documentChanged")) ?: run {
-                        emit(EditorV2Adapter.contractError("v2 native intent outcome violates the frozen shape"))
+                        emit(
+                            EditorV2Adapter.contractError(
+                                "v2 native intent outcome violates the frozen shape"
+                            )
+                        )
                         return EditorV2NativeIntentResult.Rejected
                     }
             }
@@ -112,7 +128,7 @@ internal fun EditorV2Adapter.performNativeIntent(
                         notifyCollaborationMutation()
                     }
                     return EditorV2NativeIntentResult.Applied(
-                        EditorV2NativeMutationRender(recovery, changed, documentChanged),
+                        EditorV2NativeMutationRender(recovery, changed, documentChanged)
                     )
                 }
                 return EditorV2NativeIntentResult.Rejected
@@ -122,7 +138,7 @@ internal fun EditorV2Adapter.performNativeIntent(
                 notifyCollaborationMutation()
             }
             EditorV2NativeIntentResult.Applied(
-                EditorV2NativeMutationRender(update, changed, documentChanged),
+                EditorV2NativeMutationRender(update, changed, documentChanged)
             )
         }
     }
@@ -145,7 +161,7 @@ internal fun EditorV2Adapter.performMutation(
     postSelectionMirror: IntArray? = null,
     includeSelectionInUpdate: Boolean = false,
     adoptEngineSelection: Boolean = false,
-    call: () -> EditorV2CallResult<String>,
+    call: () -> EditorV2CallResult<String>
 ): String? {
     if (destroyed) {
         emit(EditorV2Adapter.destroyedError())
@@ -162,52 +178,59 @@ internal fun EditorV2Adapter.performMutation(
     }
     return when (val result = call()) {
         is EditorV2CallResult.Err -> handleMutationError(result.error)
+
         is EditorV2CallResult.Ok -> {
-                val outcome = parseMutationOutcome(result.value)
-                if (outcome == null) {
-                    emit(EditorV2Adapter.contractError("v2 mutation outcome violates the frozen shape"))
-                    return null
+            val outcome = parseMutationOutcome(result.value)
+            if (outcome == null) {
+                emit(
+                    EditorV2Adapter.contractError(
+                        "v2 mutation outcome violates the frozen shape"
+                    )
+                )
+                return null
+            }
+            val changed = when (outcome) {
+                is MutationOutcome.Transaction -> {
+                    baseDocumentRevision = outcome.revision
+                    invalidateCachedAtomicState(post ?: pre)
+                    outcome.changed
                 }
-                val changed = when (outcome) {
-                    is MutationOutcome.Transaction -> {
-                        baseDocumentRevision = outcome.revision
-                        invalidateCachedAtomicState(post ?: pre)
-                        outcome.changed
-                    }
-                    is MutationOutcome.NotApplicable -> {
-                        val fallbackMirror = if (adoptEngineSelection) null else post ?: pre
-                        return refreshInternal(
-                            fallbackMirror,
-                            stripViewSelection = !adoptEngineSelection && fallbackMirror == null,
-                        )
-                    }
-                    is MutationOutcome.Replacement -> {
-                        baseDocumentRevision = outcome.revision
-                        // Whole-root replacement resets the engine-side selection.
-                        lastSyncedScalarSelection = null
-                        invalidateCachedAtomicState(null)
-                        outcome.changed
-                    }
+
+                is MutationOutcome.NotApplicable -> {
+                    val fallbackMirror = if (adoptEngineSelection) null else post ?: pre
+                    return refreshInternal(
+                        fallbackMirror,
+                        stripViewSelection = !adoptEngineSelection && fallbackMirror == null
+                    )
                 }
-                val mirror = if (adoptEngineSelection) {
-                    null
-                } else if (includeSelectionInUpdate) {
-                    post ?: pre
-                } else {
-                    null
+
+                is MutationOutcome.Replacement -> {
+                    baseDocumentRevision = outcome.revision
+                    // Whole-root replacement resets the engine-side selection.
+                    lastSyncedScalarSelection = null
+                    invalidateCachedAtomicState(null)
+                    outcome.changed
                 }
-                val update = refreshInternal(
-                    mirror,
-                    stripViewSelection = !adoptEngineSelection && mirror == null,
-                ) ?: return null
-                if (outcome is MutationOutcome.Transaction && mirror != null && post != null) {
-                    lastSyncedScalarSelection = post
-                }
-                if (changed) {
-                    publishCachedCollaborationSelection()
-                    notifyCollaborationMutation()
-                }
-                update
+            }
+            val mirror = if (adoptEngineSelection) {
+                null
+            } else if (includeSelectionInUpdate) {
+                post ?: pre
+            } else {
+                null
+            }
+            val update = refreshInternal(
+                mirror,
+                stripViewSelection = !adoptEngineSelection && mirror == null
+            ) ?: return null
+            if (outcome is MutationOutcome.Transaction && mirror != null && post != null) {
+                lastSyncedScalarSelection = post
+            }
+            if (changed) {
+                publishCachedCollaborationSelection()
+                notifyCollaborationMutation()
+            }
+            update
         }
     }
 }
@@ -220,7 +243,7 @@ internal fun EditorV2Adapter.performMutation(
 internal fun EditorV2Adapter.performSplitMutation(
     preSelection: IntArray,
     postSelectionMirror: IntArray,
-    call: () -> EditorV2CallResult<String>,
+    call: () -> EditorV2CallResult<String>
 ): EditorV2SplitRender? {
     if (destroyed) {
         emit(EditorV2Adapter.destroyedError())
@@ -229,63 +252,81 @@ internal fun EditorV2Adapter.performSplitMutation(
     val mirror = postSelectionMirror
     when (val sync = ensureSelection(preSelection[0], preSelection[1])) {
         is SelectionSyncOutcome.Ok -> Unit
+
         is SelectionSyncOutcome.Refreshed ->
             return EditorV2SplitRender(sync.updateJson, committed = false)
+
         is SelectionSyncOutcome.Failed -> return null
     }
     return when (val result = call()) {
         is EditorV2CallResult.Err -> handleMutationError(result.error)
             ?.let { EditorV2SplitRender(it, committed = false) }
+
         is EditorV2CallResult.Ok -> {
-                val outcome = parseMutationOutcome(result.value)
-                if (outcome == null) {
-                    emit(EditorV2Adapter.contractError("v2 mutation outcome violates the frozen shape"))
-                    return null
-                }
-                return when (outcome) {
-                    is MutationOutcome.NotApplicable ->
-                        refreshInternal(mirror)
-                            ?.let { EditorV2SplitRender(it, committed = false) }
-                    is MutationOutcome.Transaction -> {
-                        baseDocumentRevision = outcome.revision
-                        invalidateCachedAtomicState(mirror)
-                        val update = refreshInternal(
-                            mirror,
-                            stripViewSelection = false,
-                        ) ?: return null
-                        lastSyncedScalarSelection = mirror
-                        if (outcome.changed) {
-                            publishCachedCollaborationSelection()
-                            notifyCollaborationMutation()
-                        }
-                        EditorV2SplitRender(update, committed = outcome.changed)
+            val outcome = parseMutationOutcome(result.value)
+            if (outcome == null) {
+                emit(
+                    EditorV2Adapter.contractError(
+                        "v2 mutation outcome violates the frozen shape"
+                    )
+                )
+                return null
+            }
+            return when (outcome) {
+                is MutationOutcome.NotApplicable ->
+                    refreshInternal(mirror)
+                        ?.let { EditorV2SplitRender(it, committed = false) }
+
+                is MutationOutcome.Transaction -> {
+                    baseDocumentRevision = outcome.revision
+                    invalidateCachedAtomicState(mirror)
+                    val update = refreshInternal(
+                        mirror,
+                        stripViewSelection = false
+                    ) ?: return null
+                    lastSyncedScalarSelection = mirror
+                    if (outcome.changed) {
+                        publishCachedCollaborationSelection()
+                        notifyCollaborationMutation()
                     }
-                    is MutationOutcome.Replacement -> {
-                        baseDocumentRevision = outcome.revision
-                        lastSyncedScalarSelection = null
-                        invalidateCachedAtomicState(null)
-                        val update = refreshInternal(mirror) ?: return null
-                        if (outcome.changed) {
-                            publishCachedCollaborationSelection()
-                            notifyCollaborationMutation()
-                        }
-                        EditorV2SplitRender(update, committed = outcome.changed)
-                    }
+                    EditorV2SplitRender(update, committed = outcome.changed)
                 }
+
+                is MutationOutcome.Replacement -> {
+                    baseDocumentRevision = outcome.revision
+                    lastSyncedScalarSelection = null
+                    invalidateCachedAtomicState(null)
+                    val update = refreshInternal(mirror) ?: return null
+                    if (outcome.changed) {
+                        publishCachedCollaborationSelection()
+                        notifyCollaborationMutation()
+                    }
+                    EditorV2SplitRender(update, committed = outcome.changed)
+                }
+            }
         }
     }
 }
 
-internal fun EditorV2Adapter.performHistoryMutation(call: (String) -> EditorV2CallResult<String>): String? {
+internal fun EditorV2Adapter.performHistoryMutation(
+    call: (String) -> EditorV2CallResult<String>
+): String? {
     if (destroyed) {
         emit(EditorV2Adapter.destroyedError())
         return null
     }
-    return when (val result = callWithEnvelope(JSONObject(), includeBaseRevision = false, call = call)) {
+    return when (
+        val result = callWithEnvelope(
+            JSONObject(),
+            includeBaseRevision = false,
+            call = call
+        )
+    ) {
         is EditorV2CallResult.Err -> {
             emit(result.error)
             null
         }
+
         is EditorV2CallResult.Ok -> {
             val changed = try {
                 JSONObject(result.value).getBoolean("changed")
@@ -307,18 +348,16 @@ internal fun EditorV2Adapter.performHistoryMutation(call: (String) -> EditorV2Ca
     }
 }
 
-
 internal fun EditorV2Adapter.notifyCollaborationMutation() {
     if (!roomBound) return
     collaborationWake(
         editorId,
-        CollaborationWakeReason.LOCAL_MUTATION,
+        CollaborationWakeReason.LOCAL_MUTATION
     )
 }
 
-
 internal fun EditorV2Adapter.refreshUnchangedNativeOutcome(
-    outcome: EditorV2NativeIntentResult,
+    outcome: EditorV2NativeIntentResult
 ): EditorV2NativeIntentResult {
     val applied = outcome as? EditorV2NativeIntentResult.Applied ?: return outcome
     if (applied.render.documentChanged) return outcome
@@ -333,26 +372,31 @@ internal fun EditorV2Adapter.refreshUnchangedNativeOutcome(
         return recoverNativeRender()
             ?.let { recovery ->
                 EditorV2NativeIntentResult.Applied(
-                    applied.render.copy(updateJson = recovery),
+                    applied.render.copy(updateJson = recovery)
                 )
             }
             ?: EditorV2NativeIntentResult.Rejected
     }
     return EditorV2NativeIntentResult.Applied(
-        applied.render.copy(updateJson = updateJson),
+        applied.render.copy(updateJson = updateJson)
     )
 }
 
-internal fun EditorV2Adapter.commandAtSelection(command: JSONObject, anchor: Int, head: Int): String? =
-    if (nativeOwnerId != null) {
-        performNativeIntent(
-            nativeIntent("command", anchor, head).put("command", command)
-        ).updateJsonOrNull()
-    } else performMutation(
+internal fun EditorV2Adapter.commandAtSelection(
+    command: JSONObject,
+    anchor: Int,
+    head: Int
+): String? = if (nativeOwnerId != null) {
+    performNativeIntent(
+        nativeIntent("command", anchor, head).put("command", command)
+    ).updateJsonOrNull()
+} else {
+    performMutation(
         preSelection = intArrayOf(anchor, head),
-        postSelectionMirror = intArrayOf(anchor, head),
+        postSelectionMirror = intArrayOf(anchor, head)
     ) {
         callWithEnvelope(JSONObject().put("command", command)) { requestJson ->
             backend.applyCommand(editorId, requestJson)
         }
     }
+}

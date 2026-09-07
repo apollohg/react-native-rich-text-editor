@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testAdjustedCaretRectUsesBaselineAndFontMetrics() {
@@ -142,11 +142,11 @@ extension RichTextEditorViewTests {
             "text": [
                 "fontFamily": "Courier",
                 "fontSize": 21,
-                "color": "#224466",
+                "color": "#224466"
             ],
             "paragraph": [
-                "lineHeight": 30,
-            ],
+                "lineHeight": 30
+            ]
         ])
 
         textView.applyTheme(theme)
@@ -164,28 +164,28 @@ extension RichTextEditorViewTests {
     func testAppearanceChangeForcesFullRenderForEmptyRenderPatch() {
         let textView = EditorTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 120))
         textView.applyTheme(EditorTheme(dictionary: [
-            "text": ["color": "#112233"],
+            "text": ["color": "#112233"]
         ]))
         textView.applyUpdateJSON("""
         {
-          "renderBlocks": [[
+        "renderBlocks": [[
             {"type":"blockStart","nodeType":"paragraph","depth":0},
             {"type":"textRun","text":"Alpha","marks":[]},
             {"type":"blockEnd"}
-          ]]
+        ]]
         }
         """, notifyDelegate: false)
 
         textView.applyTheme(EditorTheme(dictionary: [
-            "text": ["color": "#DDEEFF"],
+            "text": ["color": "#DDEEFF"]
         ]))
         textView.applyUpdateJSON("""
         {
-          "renderPatch": {
+        "renderPatch": {
             "startIndex": 0,
             "deleteCount": 0,
             "renderBlocks": []
-          }
+        }
         }
         """, notifyDelegate: false)
 

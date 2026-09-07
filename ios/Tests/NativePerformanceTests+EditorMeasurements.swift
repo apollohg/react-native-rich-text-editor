@@ -1,5 +1,5 @@
-import XCTest
 import UIKit
+import XCTest
 
 extension NativePerformanceTests {
     func testPerformance_renderBridgeLargeDocument() {

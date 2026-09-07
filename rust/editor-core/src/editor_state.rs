@@ -8,7 +8,7 @@ use crate::model::{Document, Fragment, Mark, Node};
 use crate::schema::content_rule::WorkBudget;
 use crate::schema::{NodeRole, Schema};
 use crate::selection::Selection;
-use crate::transform::{Source, Step, Transaction};
+use crate::transform::{Step, Transaction};
 
 /// Which marks and node types are active at the current selection.
 #[derive(Debug, Clone, PartialEq)]

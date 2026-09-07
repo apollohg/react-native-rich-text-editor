@@ -2,7 +2,9 @@ package com.apollohg.editor.prototype
 
 import android.graphics.RectF
 import android.text.TextPaint
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -20,7 +22,18 @@ class PrototypeBlockLayoutTest {
         val paragraph = "One paragraph with enough words to wrap across several lines."
         val text = "$paragraph\n$paragraph"
         val ordinary = PrototypeBlockLayout(text, 240, paint) { PrototypeInsets(12, 12) }
-        val inset = PrototypeBlockLayout(text, 240, paint) { PrototypeInsets(12, if (it == 0) 112 else 12) }
+        val inset = PrototypeBlockLayout(text, 240, paint) {
+            PrototypeInsets(
+                12,
+                if (it ==
+                    0
+                ) {
+                    112
+                } else {
+                    12
+                }
+            )
+        }
         val narrowLast = inset.caret(paragraph.length)
         val ordinaryLast = ordinary.caret(paragraph.length)
         assertTrue(narrowLast.top > ordinaryLast.top)
@@ -28,7 +41,7 @@ class PrototypeBlockLayoutTest {
         assertEquals(
             ordinary.caret(text.length).top - ordinary.caret(secondStart).top,
             inset.caret(text.length).top - inset.caret(secondStart).top,
-            0.01f,
+            0.01f
         )
         for (offset in 0..paragraph.length) assertTrue(inset.caret(offset).left <= 128f)
     }
@@ -36,7 +49,18 @@ class PrototypeBlockLayoutTest {
     @Test
     fun `drawing geometry maps back to global offsets in both blocks`() {
         val text = "abc def ghi\nSecond paragraph"
-        val layout = PrototypeBlockLayout(text, 400, paint) { PrototypeInsets(if (it == 0) 16 else 70, 30) }
+        val layout = PrototypeBlockLayout(text, 400, paint) {
+            PrototypeInsets(
+                if (it ==
+                    0
+                ) {
+                    16
+                } else {
+                    70
+                },
+                30
+            )
+        }
         for (offset in text.indices.filter { text[it] != '\n' }) {
             val caret = layout.caret(offset)
             assertEquals("offset $offset", offset, layout.offsetAt(caret.left, caret.centerY()))

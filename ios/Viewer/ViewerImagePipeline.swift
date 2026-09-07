@@ -34,14 +34,20 @@ struct ViewerImageAttachment: Hashable {
 
     var hasDeclaredSize: Bool { (declaredSize?.width ?? 0) > 0 && (declaredSize?.height ?? 0) > 0 }
 
-    static func sourceAndDeclaredSize(in block: ViewerBlock) -> (id: String, source: String, declaredSize: CGSize?)? {
-        guard let atom = block.inlines.compactMap({ inline -> (UInt32, String, String)? in
+    struct SourceMetadata {
+        let id: String
+        let source: String
+        let declaredSize: CGSize?
+    }
+
+    static func sourceAndDeclaredSize(in block: ViewerBlock) -> SourceMetadata? {
+        guard let atom = block.inlines.compactMap({ inline -> (UInt32, String)? in
             guard case let .atom(nodeType, docPos, attrsJSON, _) = inline,
                   nodeType == "image" else { return nil }
-            return (docPos, attrsJSON, nodeType)
+            return (docPos, attrsJSON)
         }).first,
-        let values = try? JSONSerialization.jsonObject(with: Data(atom.1.utf8)) as? [String: Any],
-        let source = values["src"] as? String, !source.isEmpty else { return nil }
+            let values = try? JSONSerialization.jsonObject(with: Data(atom.1.utf8)) as? [String: Any],
+            let source = values["src"] as? String, !source.isEmpty else { return nil }
         func dimension(_ name: String) -> CGFloat? {
             guard let value = values[name] as? NSNumber else { return nil }
             let dimension = CGFloat(truncating: value)
@@ -49,8 +55,8 @@ struct ViewerImageAttachment: Hashable {
         }
         let width = dimension("width")
         let height = dimension("height")
-        let declared = width.flatMap { w in height.map { CGSize(width: w, height: $0) } }
-        return ("\(atom.0):\(source)", source, declared)
+        let declared = width.flatMap { declaredWidth in height.map { CGSize(width: declaredWidth, height: $0) } }
+        return SourceMetadata(id: "\(atom.0):\(source)", source: source, declaredSize: declared)
     }
 }
 
@@ -111,8 +117,7 @@ final class ViewerImageIntrinsicStore {
         while values.count > entryLimit,
               let oldest = values.min(by: { lhs, rhs in
                   lhs.value.access == rhs.value.access ? lhs.key < rhs.key : lhs.value.access < rhs.value.access
-              })
-        {
+              }) {
             values.removeValue(forKey: oldest.key)
         }
     }
@@ -280,8 +285,7 @@ final class FabricAttachmentSidecars {
         let previous = dictionary[measurementStateKey]
         dictionary[measurementStateKey] = state
         defer {
-            if let previous { dictionary[measurementStateKey] = previous }
-            else { dictionary.removeObject(forKey: measurementStateKey) }
+            if let previous { dictionary[measurementStateKey] = previous } else { dictionary.removeObject(forKey: measurementStateKey) }
         }
         return try body()
     }
@@ -376,39 +380,45 @@ final class ViewerImagePipeline {
         let expanded = visibleRect.insetBy(dx: -Self.prefetchMargin, dy: -Self.prefetchMargin)
         let eligible = attachments.filter { $0.ordinal >= 0 && !$0.source.isEmpty && $0.bounds.intersects(expanded) }
         let eligibleIDs = Set(eligible.map(\.id))
-        let start: (String, [ViewerImageAttachment], [NativeImagePipeline.ImageLoadReceipt])? = lock.withLock {
+        struct PendingLoads {
+            let generation: String
+            let attachments: [ViewerImageAttachment]
+            let cancellations: [NativeImagePipeline.ImageLoadReceipt]
+        }
+        let start: PendingLoads? = lock.withLock {
             guard enabled, !generation.isEmpty else { return nil }
             let leaving = requested.subtracting(eligibleIDs)
             let cancellations = leaving.compactMap { receipts.removeValue(forKey: $0) }
             requested.subtract(leaving)
             let next = eligible.filter { requested.insert($0.id).inserted }
             requestCountForTesting += next.count
-            return (generation, next, cancellations)
+            return PendingLoads(generation: generation, attachments: next, cancellations: cancellations)
         }
-        guard let (currentGeneration, toStart, cancellations) = start else { return eligibleIDs }
-        cancellations.forEach { $0.cancel() }
-        for attachment in toStart {
+        guard let start else { return eligibleIDs }
+        let currentGeneration = start.generation
+        start.cancellations.forEach { $0.cancel() }
+        for attachment in start.attachments {
             let receipt = owner.startImageLoad(
                 source: attachment.source,
                 completion: { [weak self] image in
-                guard let self,
-                      self.acceptsCompletion(generation: currentGeneration, attachmentID: attachment.id)
-                else { return }
-                guard let image else {
-                    self.reportFailure(attachment, generation: currentGeneration)
-                    return
-                }
-                let size = image.size.applying(CGAffineTransform(scaleX: image.scale, y: image.scale))
-                guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else {
-                    self.reportFailure(attachment, generation: currentGeneration)
-                    return
-                }
-                PreparedProseInstrumentation.imageMetadataRead()
-                self.onIntrinsicMetadata?(attachment, size)
-                guard self.acceptsCompletion(generation: currentGeneration, attachmentID: attachment.id)
-                else { return }
-                PreparedProseInstrumentation.imageDecoded()
-                self.onPixels?(attachment, image)
+                    guard let self,
+                          self.acceptsCompletion(generation: currentGeneration, attachmentID: attachment.id)
+                    else { return }
+                    guard let image else {
+                        self.reportFailure(attachment, generation: currentGeneration)
+                        return
+                    }
+                    let size = image.size.applying(CGAffineTransform(scaleX: image.scale, y: image.scale))
+                    guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else {
+                        self.reportFailure(attachment, generation: currentGeneration)
+                        return
+                    }
+                    PreparedProseInstrumentation.imageMetadataRead()
+                    self.onIntrinsicMetadata?(attachment, size)
+                    guard self.acceptsCompletion(generation: currentGeneration, attachmentID: attachment.id)
+                    else { return }
+                    PreparedProseInstrumentation.imageDecoded()
+                    self.onPixels?(attachment, image)
                 },
                 onAcceptedStart: PreparedProseInstrumentation.imageRequested
             )

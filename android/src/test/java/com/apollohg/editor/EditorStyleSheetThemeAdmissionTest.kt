@@ -1,6 +1,8 @@
 package com.apollohg.editor
 
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -17,7 +19,11 @@ class EditorStyleSheetThemeAdmissionTest : NativeEditorExpoViewTestSupport() {
         val valid = """{"version":1,"styles":{"paragraph":{"fontSize":21}}}"""
         view.applyThemeJson(valid)
         val previous = view.richTextView.editorEditText.theme
-        for (invalid in listOf("""{"version":2,"styles":{}}""", """{"version":"1","styles":{}}""", """{"version":1,"styles":[]}""")) {
+        for (invalid in listOf(
+            """{"version":2,"styles":{}}""",
+            """{"version":"1","styles":{}}""",
+            """{"version":1,"styles":[]}"""
+        )) {
             assertThrows(IllegalArgumentException::class.java) { view.applyThemeJson(invalid) }
             assertEquals(valid, view.lastThemeJson)
             assertSame(previous, view.richTextView.editorEditText.theme)

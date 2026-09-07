@@ -1,16 +1,19 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.NativeEditorExpoView.PreflightUpdateEvent
+import com.apollohg.editor.NativeEditorExpoView.Companion.EDITOR_UPDATE_EVENT_DEBOUNCE_MS
+import com.apollohg.editor.NativeEditorExpoView.Companion.nanosToMicros
 import com.apollohg.editor.NativeEditorExpoView.NativeCommitKey
 import com.apollohg.editor.NativeEditorExpoView.PendingEditorUpdateEvent
-import com.apollohg.editor.NativeEditorExpoView.Companion.nanosToMicros
-import com.apollohg.editor.NativeEditorExpoView.Companion.EDITOR_UPDATE_EVENT_DEBOUNCE_MS
+import com.apollohg.editor.NativeEditorExpoView.PreflightUpdateEvent
 import org.json.JSONObject
 
 internal fun NativeEditorExpoView.documentVersionFromUpdateJSON(updateJSON: String?): String? =
     try {
-        if (updateJSON == null) null
-        else canonicalV2U64(JSONObject(updateJSON).opt("documentVersion") as? String)
+        if (updateJSON == null) {
+            null
+        } else {
+            canonicalV2U64(JSONObject(updateJSON).opt("documentVersion") as? String)
+        }
     } catch (_: Throwable) {
         null
     }
@@ -27,7 +30,9 @@ internal fun NativeEditorExpoView.isSupersededEditorUpdate(updateJson: String): 
     return incoming < rendered
 }
 
-internal fun NativeEditorExpoView.preflightUpdateEventFromJSON(updateJSON: String?): PreflightUpdateEvent? {
+internal fun NativeEditorExpoView.preflightUpdateEventFromJSON(
+    updateJSON: String?
+): PreflightUpdateEvent? {
     val update = updateJSON ?: return null
     val documentRevision = documentVersionFromUpdateJSON(update) ?: return null
     return PreflightUpdateEvent(updateJSON = update, documentRevision = documentRevision)
@@ -69,7 +74,9 @@ internal fun NativeEditorExpoView.drainPendingEditorUpdateEvents() {
         if (event.editorId != eventEditorId(richTextView.editorId)) {
             richTextView.editorEditText.recordImeTraceForTesting(
                 "nativeViewEditorUpdateSkipped",
-                "reason=staleEditor queuedEditor=${event.editorId} currentEditor=${eventEditorId(richTextView.editorId)}"
+                "reason=staleEditor queuedEditor=${event.editorId} currentEditor=${eventEditorId(
+                    richTextView.editorId
+                )}"
             )
             continue
         }
@@ -86,7 +93,7 @@ internal fun NativeEditorExpoView.drainPendingEditorUpdateEvents() {
 internal fun NativeEditorExpoView.dispatchEditorUpdate(
     event: PendingEditorUpdateEvent,
     emitToJS: Boolean,
-    applyViewState: Boolean = true,
+    applyViewState: Boolean = true
 ) {
     val updateJSON = event.viewUpdateJSON
     val startedAt = System.nanoTime()
@@ -121,13 +128,23 @@ internal fun NativeEditorExpoView.dispatchEditorUpdate(
         val payload = mapOf<String, Any>(
             "updateJson" to event.atomicUpdateJSON,
             "editorId" to event.editorId,
-            "documentRevision" to event.documentRevision,
+            "documentRevision" to event.documentRevision
         )
         onEditorUpdateForTesting?.invoke(payload) ?: onEditorUpdate(payload)
     }
     val totalNanos = System.nanoTime() - startedAt
     richTextView.editorEditText.recordImeTraceForTesting(
         "nativeViewEditorUpdateDispatch",
-        "emitToJS=$emitToJS jsonLength=${updateJSON.length} noteUs=${nanosToMicros(noteNanos)} toolbarUs=${nanosToMicros(toolbarNanos)} mentionUs=${nanosToMicros(mentionNanos)} retryUs=${nanosToMicros(retryNanos)} emitUs=${nanosToMicros(System.nanoTime() - emitStartedAt)} totalUs=${nanosToMicros(totalNanos)}"
+        "emitToJS=$emitToJS jsonLength=${updateJSON.length} noteUs=${nanosToMicros(
+            noteNanos
+        )} toolbarUs=${nanosToMicros(
+            toolbarNanos
+        )} mentionUs=${nanosToMicros(
+            mentionNanos
+        )} retryUs=${nanosToMicros(
+            retryNanos
+        )} emitUs=${nanosToMicros(
+            System.nanoTime() - emitStartedAt
+        )} totalUs=${nanosToMicros(totalNanos)}"
     )
 }

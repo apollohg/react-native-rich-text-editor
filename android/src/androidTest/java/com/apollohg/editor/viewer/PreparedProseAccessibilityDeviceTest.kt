@@ -46,14 +46,16 @@ class PreparedProseAccessibilityDeviceTest {
                         // selected level-0 and level-1 runs genuinely gapped.
                         ViewerInline.Text(
                             "Latin \u05d0\u05d1\u05d2",
-                            listOf(FfiViewerMark("link", "{\"href\":\"https://example.test/bidi\"}")),
+                            listOf(
+                                FfiViewerMark("link", "{\"href\":\"https://example.test/bidi\"}")
+                            )
                         ),
-                        ViewerInline.Text(" ABC \u05d3\u05d4\u05d5 tail", emptyList()),
-                    ),
-                ),
+                        ViewerInline.Text(" ABC \u05d3\u05d4\u05d5 tail", emptyList())
+                    )
+                )
             ),
             isEmpty = false,
-            retainedBytes = 64,
+            retainedBytes = 64
         )
         val layout = StaticLayoutAndroidProseLayoutEngine().prepare(
             document = document,
@@ -65,22 +67,29 @@ class PreparedProseAccessibilityDeviceTest {
                 fontEnvironmentRevision = 0,
                 densityBits = 1f.toRawBits().toLong(),
                 attachmentRevision = 0,
-                generationIdentity = "device-fixture",
+                generationIdentity = "device-fixture"
             ),
             theme = PreparedProseTheme.resolve(null, 1f),
             widthPx = 300,
             density = 1f,
-            collapsesWhenEmpty = false,
+            collapsesWhenEmpty = false
         )
         val link = layout.interactions.single { it.kind == PreparedProseInteraction.Kind.LINK }
 
         assertTrue("device shaping must retain separate visual Bidi contours", link.rects.size >= 2)
-        assertEquals(link.rects.sortedWith(compareBy<Rect> { it.top }.thenBy { it.left }), link.rects)
+        assertEquals(
+            link.rects.sortedWith(
+                compareBy<Rect> {
+                    it.top
+                }.thenBy { it.left }
+            ),
+            link.rects
+        )
         assertTrue(
             "selected Bidi contours must remain separated by unlinked visual text",
             link.rects.zipWithNext().any { (left, right) ->
                 left.top == right.top && left.bottom == right.bottom && left.right < right.left
-            },
+            }
         )
     }
 
@@ -98,14 +107,16 @@ class PreparedProseAccessibilityDeviceTest {
                     inlines = listOf(
                         ViewerInline.Text(
                             "linked ".repeat(12),
-                            listOf(FfiViewerMark("link", "{\"href\":\"https://example.test/wrapped\"}")),
+                            listOf(
+                                FfiViewerMark("link", "{\"href\":\"https://example.test/wrapped\"}")
+                            )
                         ),
-                        ViewerInline.Atom("mention", UInt.MAX_VALUE.toLong(), "{}", "@Ada"),
-                    ),
-                ),
+                        ViewerInline.Atom("mention", UInt.MAX_VALUE.toLong(), "{}", "@Ada")
+                    )
+                )
             ),
             isEmpty = false,
-            retainedBytes = 64,
+            retainedBytes = 64
         )
         val layout = StaticLayoutAndroidProseLayoutEngine().prepare(
             document = document,
@@ -117,18 +128,27 @@ class PreparedProseAccessibilityDeviceTest {
                 fontEnvironmentRevision = 0,
                 densityBits = 1f.toRawBits().toLong(),
                 attachmentRevision = 0,
-                generationIdentity = "device-fixture",
+                generationIdentity = "device-fixture"
             ),
             theme = PreparedProseTheme.resolve(null, 1f),
             widthPx = 90,
             density = 1f,
-            collapsesWhenEmpty = false,
+            collapsesWhenEmpty = false
         )
         val link = layout.interactions.single { it.kind == PreparedProseInteraction.Kind.LINK }
-        val mention = layout.interactions.single { it.kind == PreparedProseInteraction.Kind.MENTION }
+        val mention = layout.interactions.single {
+            it.kind == PreparedProseInteraction.Kind.MENTION
+        }
 
         assertTrue("device shaping must split wrapped link contours", link.rects.size >= 2)
-        assertEquals(link.rects.sortedWith(compareBy<Rect> { it.top }.thenBy { it.left }), link.rects)
+        assertEquals(
+            link.rects.sortedWith(
+                compareBy<Rect> {
+                    it.top
+                }.thenBy { it.left }
+            ),
+            link.rects
+        )
         assertEquals(UInt.MAX_VALUE.toLong(), mention.docPos)
     }
 }

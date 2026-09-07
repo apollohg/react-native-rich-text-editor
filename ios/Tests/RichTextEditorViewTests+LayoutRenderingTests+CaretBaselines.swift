@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testCaretAfterInvalidatingEarlierLayoutKeepsItsPosition() throws {
@@ -12,7 +12,7 @@ extension RichTextEditorViewTests {
             "paragraph": ["lineHeight": 27, "marginBottom": 12],
             "orderedList": ["indent": 20, "baseIndentMultiplier": 1, "marginBottom": 12],
             "listItem": ["marginBottom": 4],
-            "codeBlock": ["paddingTop": 12, "paddingBottom": 12, "marginTop": 12, "marginBottom": 12],
+            "codeBlock": ["paddingTop": 12, "paddingBottom": 12, "marginTop": 12, "marginBottom": 12]
         ]])
         textView.bindEditor(id: editorId, initialHTML: "<h1>Field notes</h1>" +
             String(repeating: "<p>A native editor with a Rust core. Everything below is editable: headings, emphasis, underline, strikethrough, and links.</p>", count: 5) +
@@ -59,16 +59,16 @@ extension RichTextEditorViewTests {
     func testCaretRectInTallLineHeightListItemUsesResolvedGlyphBaseline() {
         let theme = EditorTheme(dictionary: [
             "paragraph": [
-                "lineHeight": 32,
+                "lineHeight": 32
             ],
             "list": [
-                "markerScale": 2,
-            ],
+                "markerScale": 2
+            ]
         ])
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Bullet item", "marks": []},
             {"type": "blockEnd"},
@@ -112,8 +112,8 @@ extension RichTextEditorViewTests {
     func testCaretRectUsesResolvedGlyphBaselineAcrossWrappedParagraphLines() {
         let theme = EditorTheme(dictionary: [
             "paragraph": [
-                "lineHeight": 32,
-            ],
+                "lineHeight": 32
+            ]
         ])
         let json = """
         [
@@ -165,8 +165,8 @@ extension RichTextEditorViewTests {
     func testCaretRectUsesCorrectVisualLineAtWrappedParagraphBoundaries() {
         let theme = EditorTheme(dictionary: [
             "paragraph": [
-                "lineHeight": 32,
-            ],
+                "lineHeight": 32
+            ]
         ])
         let json = """
         [
@@ -234,8 +234,8 @@ extension RichTextEditorViewTests {
                 "blockquote": [
                     "indent": 20,
                     "borderWidth": 4,
-                    "markerGap": 10,
-                ],
+                    "markerGap": 10
+                ]
             ])
         )
 
@@ -290,8 +290,8 @@ extension RichTextEditorViewTests {
                 "blockquote": [
                     "indent": 20,
                     "borderWidth": 4,
-                    "markerGap": 10,
-                ],
+                    "markerGap": 10
+                ]
             ])
         )
 
@@ -301,8 +301,8 @@ extension RichTextEditorViewTests {
 
         let offset = (attributed.string as NSString).range(of: "World").location + 4
         guard let position = textView.position(from: textView.beginningOfDocument, offset: offset),
-              let nextPosition = textView.position(from: position, offset: 1),
-              let range = textView.textRange(from: position, to: nextPosition)
+            let nextPosition = textView.position(from: position, offset: 1),
+            let range = textView.textRange(from: position, to: nextPosition)
         else {
             XCTFail("expected caret and next character positions after blockquote")
             return
@@ -388,7 +388,7 @@ extension RichTextEditorViewTests {
         plainTextView.layoutIfNeeded()
 
         guard let position = textView.position(from: textView.beginningOfDocument, offset: caretOffset),
-              let plainPosition = plainTextView.position(from: plainTextView.beginningOfDocument, offset: caretOffset)
+            let plainPosition = plainTextView.position(from: plainTextView.beginningOfDocument, offset: caretOffset)
         else {
             XCTFail("expected caret positions after typing at paragraph end")
             return

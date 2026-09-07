@@ -1,21 +1,24 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.EditorEditText.ApplyUpdateTrace
-import com.apollohg.editor.EditorEditText.Companion.IME_TRACE_LOG_TAG
-import com.apollohg.editor.EditorEditText.Companion.IME_TRACE_LIMIT_FOR_TESTING
 import android.os.SystemClock
 import android.util.Log
+import com.apollohg.editor.EditorEditText.ApplyUpdateTrace
+import com.apollohg.editor.EditorEditText.Companion.IME_TRACE_LIMIT_FOR_TESTING
+import com.apollohg.editor.EditorEditText.Companion.IME_TRACE_LOG_TAG
 
 internal fun EditorEditText.ownsNativeBindingImpl(adapter: EditorV2Adapter): Boolean =
     adapter.isNativeBindingOwner(nativeBindingToken)
 
 internal fun EditorEditText.lastRenderAppliedPatchImpl(): Boolean = lastRenderAppliedPatchForTesting
 
-internal fun EditorEditText.lastApplyUpdateTraceImpl(): ApplyUpdateTrace? = lastApplyUpdateTraceForTesting
+internal fun EditorEditText.lastApplyUpdateTraceImpl(): ApplyUpdateTrace? =
+    lastApplyUpdateTraceForTesting
 
-internal fun EditorEditText.hasDeferredRustUpdateApplicationForTestingImpl(): Boolean = deferredRustUpdateJSON != null
+internal fun EditorEditText.hasDeferredRustUpdateApplicationForTestingImpl(): Boolean =
+    deferredRustUpdateJSON != null
 
-internal fun EditorEditText.inputConnectionGenerationForTestingImpl(): Long = inputConnectionGeneration
+internal fun EditorEditText.inputConnectionGenerationForTestingImpl(): Long =
+    inputConnectionGeneration
 
 internal fun EditorEditText.authorizedTextForTestingImpl(): String = lastAuthorizedText
 
@@ -36,7 +39,7 @@ internal fun EditorEditText.recordImeTraceForTestingImpl(event: String, details:
         lastImeTraceUptimeMs = now
         imeTraceSequence += 1L
         val textLength = text?.length ?: -1
-        val selection = "${selectionStart}..${selectionEnd}"
+        val selection = "$selectionStart..$selectionEnd"
         val composingRange = "${composingReplacementStartUtf16 ?: -1}.." +
             "${composingReplacementEndUtf16 ?: -1}"
         val composingRevisionMatches =

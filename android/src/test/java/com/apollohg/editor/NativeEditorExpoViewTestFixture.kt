@@ -7,6 +7,8 @@ import android.view.Window
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.ScrollView
+import java.time.Duration
+import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -22,10 +24,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
-import java.util.concurrent.atomic.AtomicBoolean
 
-internal abstract class NativeEditorExpoViewTestFixture : NativeEditorExpoViewTestSupport(){
+internal abstract class NativeEditorExpoViewTestFixture : NativeEditorExpoViewTestSupport() {
     protected companion object {
         const val AUTO_GROW_MIN_HEIGHT_PX = 900
     }

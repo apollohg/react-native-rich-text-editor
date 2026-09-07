@@ -1,5 +1,5 @@
-import UIKit
 import os
+import UIKit
 
 extension EditorTextView {
     func ownsNativeBinding(_ adapter: EditorV2Adapter) -> Bool {

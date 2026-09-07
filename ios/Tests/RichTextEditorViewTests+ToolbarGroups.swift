@@ -1,50 +1,50 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testAccessoryToolbarExpandsGroupedButtonsInline() {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
         toolbar.setItemsJSONForTesting("""
         [
-          {
+        {
             "type": "group",
             "key": "headings",
             "label": "Headings",
             "icon": { "type": "glyph", "text": "H" },
             "presentation": "expand",
             "items": [
-              {
+            {
                 "type": "heading",
                 "level": 1,
                 "label": "Heading 1",
                 "icon": { "type": "default", "id": "h1" }
-              },
-              {
+            },
+            {
                 "type": "heading",
                 "level": 2,
                 "label": "Heading 2",
                 "icon": { "type": "default", "id": "h2" }
-              }
+            }
             ]
-          }
+        }
         ]
         """)
         toolbar.applyStateJSONForTesting("""
         {
-          "activeState": {
+        "activeState": {
             "marks": {},
             "nodes": {},
             "commands": {
-              "toggleHeading1": true,
-              "toggleHeading2": true
+            "toggleHeading1": true,
+            "toggleHeading2": true
             },
             "allowedMarks": [],
             "insertableNodes": []
-          },
-          "historyState": {
+        },
+        "historyState": {
             "canUndo": false,
             "canRedo": false
-          }
+        }
         }
         """)
 
@@ -70,51 +70,51 @@ extension RichTextEditorViewTests {
         }
         toolbar.setItemsJSONForTesting("""
         [
-          {
+        {
             "type": "group",
             "key": "headings",
             "label": "Headings",
             "icon": { "type": "glyph", "text": "H" },
             "presentation": "menu",
             "items": [
-              {
+            {
                 "type": "heading",
                 "level": 1,
                 "label": "Heading 1",
                 "icon": { "type": "default", "id": "h1" }
-              }
+            }
             ]
-          },
-          {
+        },
+        {
             "type": "group",
             "key": "insert",
             "label": "Insert",
             "icon": { "type": "glyph", "text": "+" },
             "presentation": "menu",
             "items": [
-              {
+            {
                 "type": "action",
                 "key": "custom",
                 "label": "Custom",
                 "icon": { "type": "glyph", "text": "+" }
-              }
+            }
             ]
-          }
+        }
         ]
         """)
         toolbar.applyStateJSONForTesting("""
         {
-          "activeState": {
+        "activeState": {
             "marks": {},
             "nodes": { "h1": true },
             "commands": { "toggleHeading1": true },
             "allowedMarks": [],
             "insertableNodes": []
-          },
-          "historyState": {
+        },
+        "historyState": {
             "canUndo": false,
             "canRedo": false
-          }
+        }
         }
         """)
         toolbar.layoutIfNeeded()
@@ -177,7 +177,7 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
         toolbar.setItemsJSONForTesting("""
         [
-          {
+        {
             "type": "group",
             "key": "headings",
             "label": "Headings",
@@ -185,21 +185,21 @@ extension RichTextEditorViewTests {
             "presentation": "expand",
             "placement": "start",
             "items": [
-              {
+            {
                 "type": "action",
                 "key": "inherited",
                 "label": "Inherited",
                 "icon": { "type": "glyph", "text": "I" }
-              },
-              {
+            },
+            {
                 "type": "action",
                 "key": "pinned",
                 "label": "Pinned",
                 "icon": { "type": "glyph", "text": "P" },
                 "placement": "end"
-              }
+            }
             ]
-          }
+        }
         ]
         """)
 
@@ -216,39 +216,39 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
         toolbar.setItemsJSONForTesting("""
         [
-          {
+        {
             "type": "command",
             "command": "indentList",
             "label": "Indent",
             "icon": { "type": "default", "id": "indentList" }
-          },
-          {
+        },
+        {
             "type": "command",
             "command": "outdentList",
             "label": "Outdent",
             "icon": { "type": "default", "id": "outdentList" }
-          }
+        }
         ]
         """)
         toolbar.applyStateJSONForTesting("""
         {
-          "activeState": {
+        "activeState": {
             "marks": {},
             "nodes": {
-              "taskList": true,
-              "taskItem": true
+            "taskList": true,
+            "taskItem": true
             },
             "commands": {
-              "indentList": true,
-              "outdentList": true
+            "indentList": true,
+            "outdentList": true
             },
             "allowedMarks": [],
             "insertableNodes": []
-          },
-          "historyState": {
+        },
+        "historyState": {
             "canUndo": false,
             "canRedo": false
-          }
+        }
         }
         """)
 
@@ -260,39 +260,39 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
         toolbar.setItemsJSONForTesting("""
         [
-          {
+        {
             "type": "group",
             "key": "headings",
             "label": "Headings",
             "icon": { "type": "glyph", "text": "H" },
             "items": [
-              {
+            {
                 "type": "heading",
                 "level": 2,
                 "label": "Heading 2",
                 "icon": { "type": "default", "id": "h2" }
-              }
+            }
             ]
-          }
+        }
         ]
         """)
         toolbar.applyStateJSONForTesting("""
         {
-          "activeState": {
+        "activeState": {
             "marks": {},
             "nodes": {
-              "h2": true
+            "h2": true
             },
             "commands": {
-              "toggleHeading2": true
+            "toggleHeading2": true
             },
             "allowedMarks": [],
             "insertableNodes": []
-          },
-          "historyState": {
+        },
+        "historyState": {
             "canUndo": false,
             "canRedo": false
-          }
+        }
         }
         """)
 
@@ -303,57 +303,57 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: CGRect(x: 0, y: 0, width: 180, height: 56))
         toolbar.setItemsJSONForTesting("""
         [
-          {
+        {
             "type": "action",
             "key": "bold",
             "label": "Bold",
             "icon": { "type": "default", "id": "bold" }
-          },
-          {
+        },
+        {
             "type": "action",
             "key": "italic",
             "label": "Italic",
             "icon": { "type": "default", "id": "italic" }
-          },
-          {
+        },
+        {
             "type": "action",
             "key": "underline",
             "label": "Underline",
             "icon": { "type": "default", "id": "underline" }
-          },
-          {
+        },
+        {
             "type": "group",
             "key": "headings",
             "label": "Headings",
             "icon": { "type": "glyph", "text": "H" },
             "presentation": "expand",
             "items": [
-              {
+            {
                 "type": "action",
                 "key": "h1",
                 "label": "Heading 1",
                 "icon": { "type": "default", "id": "h1" }
-              },
-              {
+            },
+            {
                 "type": "action",
                 "key": "h2",
                 "label": "Heading 2",
                 "icon": { "type": "default", "id": "h2" }
-              }
+            }
             ]
-          },
-          {
+        },
+        {
             "type": "action",
             "key": "undo",
             "label": "Undo",
             "icon": { "type": "default", "id": "undo" }
-          },
-          {
+        },
+        {
             "type": "action",
             "key": "redo",
             "label": "Redo",
             "icon": { "type": "default", "id": "redo" }
-          }
+        }
         ]
         """)
         toolbar.layoutIfNeeded()

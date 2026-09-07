@@ -80,8 +80,8 @@ enum ToolbarCommand: String {
 }
 
 enum ToolbarListType: String {
-    case bullet_list
-    case ordered_list
+    case legacyBulletList = "bullet_list"
+    case legacyOrderedList = "ordered_list"
     case bulletList
     case orderedList
 }
@@ -160,7 +160,7 @@ struct NativeToolbarIcon {
         .h5: "paragraphsign",
         .h6: "paragraphsign",
         .undo: "arrow.uturn.backward",
-        .redo: "arrow.uturn.forward",
+        .redo: "arrow.uturn.forward"
     ]
 
     private static let defaultGlyphs: [ToolbarDefaultIconId: String] = [
@@ -184,7 +184,7 @@ struct NativeToolbarIcon {
         .lineBreak: "↵",
         .horizontalRule: "—",
         .undo: "↩",
-        .redo: "↪",
+        .redo: "↪"
     ]
 
     static func defaultIcon(_ id: ToolbarDefaultIconId) -> NativeToolbarIcon {
@@ -266,21 +266,21 @@ struct NativeToolbarIcon {
 
 struct NativeToolbarItem {
     let type: ToolbarItemKind
-    var key: String? = nil
-    var label: String? = nil
-    var icon: NativeToolbarIcon? = nil
-    var mark: String? = nil
-    var headingLevel: Int? = nil
-    var listType: ToolbarListType? = nil
-    var command: ToolbarCommand? = nil
-    var nodeType: String? = nil
+    var key: String?
+    var label: String?
+    var icon: NativeToolbarIcon?
+    var mark: String?
+    var headingLevel: Int?
+    var listType: ToolbarListType?
+    var command: ToolbarCommand?
+    var nodeType: String?
     var isActive: Bool = false
     var isDisabled: Bool = false
-    var placement: ToolbarItemPlacement? = nil
-    var presentation: ToolbarGroupPresentation? = nil
+    var placement: ToolbarItemPlacement?
+    var presentation: ToolbarGroupPresentation?
     var items: [NativeToolbarItem] = []
-    var buttonStyle: EditorToolbarButtonStyle? = nil
-    var parentGroupKey: String? = nil
+    var buttonStyle: EditorToolbarButtonStyle?
+    var parentGroupKey: String?
 
     static let defaults: [NativeToolbarItem] = [
         NativeToolbarItem(type: .mark, label: "Bold", icon: .defaultIcon(.bold), mark: "bold"),
@@ -289,15 +289,15 @@ struct NativeToolbarItem {
         NativeToolbarItem(type: .mark, label: "Strikethrough", icon: .defaultIcon(.strike), mark: "strike"),
         NativeToolbarItem(type: .blockquote, label: "Blockquote", icon: .defaultIcon(.blockquote)),
         NativeToolbarItem(type: .separator),
-        NativeToolbarItem(type: .list, label: "Bullet List", icon: .defaultIcon(.bulletList), listType: .bullet_list),
-        NativeToolbarItem(type: .list, label: "Ordered List", icon: .defaultIcon(.orderedList), listType: .ordered_list),
+        NativeToolbarItem(type: .list, label: "Bullet List", icon: .defaultIcon(.bulletList), listType: .legacyBulletList),
+        NativeToolbarItem(type: .list, label: "Ordered List", icon: .defaultIcon(.orderedList), listType: .legacyOrderedList),
         NativeToolbarItem(type: .command, label: "Indent List", icon: .defaultIcon(.indentList), command: .indentList),
         NativeToolbarItem(type: .command, label: "Outdent List", icon: .defaultIcon(.outdentList), command: .outdentList),
         NativeToolbarItem(type: .node, label: "Line Break", icon: .defaultIcon(.lineBreak), nodeType: "hard_break"),
         NativeToolbarItem(type: .node, label: "Horizontal Rule", icon: .defaultIcon(.horizontalRule), nodeType: "horizontal_rule"),
         NativeToolbarItem(type: .separator),
         NativeToolbarItem(type: .command, label: "Undo", icon: .defaultIcon(.undo), command: .undo),
-        NativeToolbarItem(type: .command, label: "Redo", icon: .defaultIcon(.redo), command: .redo),
+        NativeToolbarItem(type: .command, label: "Redo", icon: .defaultIcon(.redo), command: .redo)
     ]
 
     private static func parse(

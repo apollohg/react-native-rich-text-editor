@@ -2,10 +2,10 @@ package com.apollohg.editor.viewer
 
 import android.content.Context
 import android.graphics.Rect
+import com.apollohg.editor.ImageLoadingPolicy
 import com.apollohg.editor.ProseViewerConfiguration
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.ProseViewerSource
-import com.apollohg.editor.ImageLoadingPolicy
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableMap
@@ -54,13 +54,17 @@ internal class PreparedProseViewerManager :
             view.onCodeHighlightsReady = { state.publishFontRevision(1) }
             view.onUsableMetricsChanged = { installCachedLayout(view) }
             view.onVisibleRectChanged = { visible -> state.requestVisibleImages(view, visible) }
-            view.onFontConfigurationChanged = { configuration -> state.fontEnvironment.onConfigurationChanged(configuration) }
+            view.onFontConfigurationChanged =
+                { configuration -> state.fontEnvironment.onConfigurationChanged(configuration) }
             view.onInteractionActivated = { interaction -> dispatchInteraction(view, interaction) }
-            state.fontEnvironment.onInvalidated = { revision -> state.publishFontRevision(revision) }
+            state.fontEnvironment.onInvalidated =
+                { revision -> state.publishFontRevision(revision) }
             state.fontEnvironment.activate(deliverPending = true)
             state.imagePipeline.onPixels = { attachment, lease ->
                 val request = state.requestOrNull()
-                if (request != null && state.imagePipeline.acceptsCompletion(request.semanticGenerationIdentity)) {
+                if (request != null &&
+                    state.imagePipeline.acceptsCompletion(request.semanticGenerationIdentity)
+                ) {
                     view.putImageLease(attachment.id, lease)
                 } else {
                     lease.close()
@@ -72,7 +76,8 @@ internal class PreparedProseViewerManager :
                     state.publishAttachmentRevision()
                 }
             }
-            state.imagePipeline.onResourceFailure = { attachment -> dispatchResourceError(view, attachment) }
+            state.imagePipeline.onResourceFailure =
+                { attachment -> dispatchResourceError(view, attachment) }
         }
 
     override fun onDropViewInstance(view: PreparedProseDrawingView) {
@@ -113,7 +118,7 @@ internal class PreparedProseViewerManager :
     override fun updateState(
         view: PreparedProseDrawingView,
         props: ReactStylesDiffMap,
-        stateWrapper: StateWrapper,
+        stateWrapper: StateWrapper
     ): Any? {
         val state = states.getOrPut(view, ::ViewState)
         state.fontEnvironment.activate(deliverPending = true)
@@ -173,7 +178,7 @@ internal class PreparedProseViewerManager :
         widthMode: YogaMeasureMode,
         height: Float,
         heightMode: YogaMeasureMode,
-        attachmentsPositions: FloatArray?,
+        attachmentsPositions: FloatArray?
     ): Long {
         val density = context.resources.displayMetrics.density
         val fontScale = context.resources.configuration.fontScale
@@ -184,7 +189,9 @@ internal class PreparedProseViewerManager :
         // native thread-local handle proves this Yoga callback still belongs
         // to an active exact state incarnation.
         if (surface != null && leaseHandle <= 0L) {
-            PreparedProseInstrumentation.trace("measure") { "declined: $surface has no live native lease handle" }
+            PreparedProseInstrumentation.trace("measure") {
+                "declined: $surface has no live native lease handle"
+            }
             return YogaMeasureOutput.make(0f, 0f)
         }
         val request = requestFrom(props, state, leaseHandle)
@@ -192,7 +199,9 @@ internal class PreparedProseViewerManager :
             // An incomplete/stale Yoga callback has not named an exact
             // generation. It must never tear down a newer incarnation on the
             // same surface; recycle and surface-stop own terminal cleanup.
-            PreparedProseInstrumentation.trace("measure") { "declined: state named no exact generation (surface=$surface, handle=$leaseHandle)" }
+            PreparedProseInstrumentation.trace("measure") {
+                "declined: state named no exact generation (surface=$surface, handle=$leaseHandle)"
+            }
             return YogaMeasureOutput.make(0f, 0f)
         }
         val widthPx = fabricConstraintPixels(width)
@@ -207,26 +216,44 @@ internal class PreparedProseViewerManager :
                 finalLayout.contentOriginYPx,
                 surface,
                 leaseHandle,
-                fontScale,
+                fontScale
             )
         } else if (
             (widthMode != YogaMeasureMode.EXACTLY && widthMode != YogaMeasureMode.AT_MOST) ||
             widthPx == null
         ) {
-            PreparedProseLayoutRegistry.shared.measure(request, 0, density, fabricSurface = surface, fabricLeaseHandle = leaseHandle, fontScale = fontScale)
+            PreparedProseLayoutRegistry.shared.measure(
+                request,
+                0,
+                density,
+                fabricSurface = surface,
+                fabricLeaseHandle = leaseHandle,
+                fontScale = fontScale
+            )
         } else {
-            PreparedProseLayoutRegistry.shared.measure(request, widthPx, density, fabricSurface = surface, fabricLeaseHandle = leaseHandle, fontScale = fontScale)
+            PreparedProseLayoutRegistry.shared.measure(
+                request,
+                widthPx,
+                density,
+                fabricSurface = surface,
+                fabricLeaseHandle = leaseHandle,
+                fontScale = fontScale
+            )
         }
         val measuredWidth = fabricPixelsToDp(artifact.widthPx.toFloat(), density) ?: 0f
         val intrinsicHeight = fabricPixelsToDp(artifact.heightPx.toFloat(), density) ?: 0f
         val constrainedHeight = fabricPixelsToDp(height, density)
         val measuredHeight = when (heightMode) {
             YogaMeasureMode.EXACTLY -> constrainedHeight ?: 0f
-            YogaMeasureMode.AT_MOST -> constrainedHeight?.let { minOf(intrinsicHeight, it) } ?: intrinsicHeight
+
+            YogaMeasureMode.AT_MOST -> constrainedHeight?.let { minOf(intrinsicHeight, it) }
+                ?: intrinsicHeight
+
             else -> intrinsicHeight
         }
         PreparedProseInstrumentation.trace("measure") {
-            "surface=$surface handle=$leaseHandle $widthMode widthPx=$widthPx $heightMode heightPx=$height " +
+            "surface=$surface handle=$leaseHandle $widthMode widthPx=$widthPx " +
+                "$heightMode heightPx=$height " +
                 "-> artifact ${artifact.widthPx}x${artifact.heightPx}px, yoga ${measuredWidth}x${measuredHeight}dp"
         }
         return YogaMeasureOutput.make(measuredWidth, measuredHeight)
@@ -239,16 +266,22 @@ internal class PreparedProseViewerManager :
 
     private fun installCachedLayout(view: PreparedProseDrawingView) {
         val state = states[view] ?: run {
-            PreparedProseInstrumentation.trace("mount") { "declined: no view state (tag=${view.id})" }
+            PreparedProseInstrumentation.trace("mount") {
+                "declined: no view state (tag=${view.id})"
+            }
             return
         }
         val request = state.requestOrNull() ?: run {
-            PreparedProseInstrumentation.trace("mount") { "declined: props/state have not yet named a request (tag=${view.id})" }
+            PreparedProseInstrumentation.trace("mount") {
+                "declined: props/state have not yet named a request (tag=${view.id})"
+            }
             return
         }
         val surfaceId = UIManagerHelper.getSurfaceId(view)
         if (surfaceId < 0 || view.id <= 0) {
-            PreparedProseInstrumentation.trace("mount") { "declined: surfaceId=$surfaceId tag=${view.id}" }
+            PreparedProseInstrumentation.trace("mount") {
+                "declined: surfaceId=$surfaceId tag=${view.id}"
+            }
             state.finishWithoutMountedReplacement(view)
             return
         }
@@ -257,10 +290,12 @@ internal class PreparedProseViewerManager :
         state.bindFabricAttachmentState(generation)
         val ticket = PreparedProseLayoutRegistry.shared.acquirePreparedMountTicket(
             generation,
-            request.nativeFontRevision,
+            request.nativeFontRevision
         )
         if (ticket == null) {
-            PreparedProseInstrumentation.trace("mount") { "miss: no final layout ticket for $generation" }
+            PreparedProseInstrumentation.trace("mount") {
+                "miss: no final layout ticket for $generation"
+            }
             PreparedProseLayoutRegistry.shared.prepareForFabricMount(generation) {
                 view.post {
                     val current = states[view] ?: return@post
@@ -268,7 +303,7 @@ internal class PreparedProseViewerManager :
                     val currentRequest = current.requestOrNull() ?: return@post
                     val prepared = PreparedProseLayoutRegistry.shared.acquirePreparedMountTicket(
                         generation,
-                        currentRequest.nativeFontRevision,
+                        currentRequest.nativeFontRevision
                     )
                         ?: return@post
                     installPreparedTicket(view, current, prepared)
@@ -282,7 +317,7 @@ internal class PreparedProseViewerManager :
     private fun installPreparedTicket(
         view: PreparedProseDrawingView,
         state: ViewState,
-        ticket: PreparedMountTicket,
+        ticket: PreparedMountTicket
     ) {
         val currentRequest = state.requestOrNull() ?: return
         if (ticket.nativeFontRevision != currentRequest.nativeFontRevision) {
@@ -296,12 +331,23 @@ internal class PreparedProseViewerManager :
         state.beginImages(view, ticket.artifact, currentRequest)
         ViewerAtomConfiguration.parse(currentRequest.configuration.themeJson)?.let { atoms ->
             val density = view.resources.displayMetrics.density
-            dispatchViewerEvent(view, "topAtomLayout", Arguments.createMap().apply {
-                putString("generation", atoms.generation)
-                putString("revision", atoms.revision)
-                putDouble("layoutWidth", ticket.artifact.widthPx.toDouble() / density)
-                putString("atomsJson", ticket.artifact.atomsJson(density, ticket.contentOriginXPx, ticket.contentOriginYPx))
-            })
+            dispatchViewerEvent(
+                view,
+                "topAtomLayout",
+                Arguments.createMap().apply {
+                    putString("generation", atoms.generation)
+                    putString("revision", atoms.revision)
+                    putDouble("layoutWidth", ticket.artifact.widthPx.toDouble() / density)
+                    putString(
+                        "atomsJson",
+                        ticket.artifact.atomsJson(
+                            density,
+                            ticket.contentOriginXPx,
+                            ticket.contentOriginYPx
+                        )
+                    )
+                }
+            )
         }
         ticket.artifact.error?.let { dispatchError(view, currentRequest, it) }
     }
@@ -316,7 +362,7 @@ internal class PreparedProseViewerManager :
                 val request = current.requestOrNull() ?: return@post
                 val ticket = PreparedProseLayoutRegistry.shared.acquirePreparedMountTicket(
                     generation,
-                    request.nativeFontRevision,
+                    request.nativeFontRevision
                 )
                     ?: return@post
                 installPreparedTicket(view, current, ticket)
@@ -327,31 +373,45 @@ internal class PreparedProseViewerManager :
     private fun dispatchError(
         view: PreparedProseDrawingView,
         request: ProseViewerRequest,
-        error: ProseViewerError,
+        error: ProseViewerError
     ) {
         val state = states[view] ?: return
         if (!state.errorReporter.shouldReport(request.semanticGenerationIdentity)) return
-        dispatchViewerEvent(view, EVENT_ERROR, Arguments.createMap().apply {
-            putString("domain", error.domain)
-            putString("code", error.code.value)
-            putString("message", error.message)
-            putBoolean("fatal", true)
-        })
+        dispatchViewerEvent(
+            view,
+            EVENT_ERROR,
+            Arguments.createMap().apply {
+                putString("domain", error.domain)
+                putString("code", error.code.value)
+                putString("message", error.message)
+                putBoolean("fatal", true)
+            }
+        )
     }
 
-    private fun dispatchResourceError(view: PreparedProseDrawingView, attachment: ViewerImageAttachment) {
+    private fun dispatchResourceError(
+        view: PreparedProseDrawingView,
+        attachment: ViewerImageAttachment
+    ) {
         val state = states[view] ?: return
         state.requestOrNull() ?: return
         if (!state.recordResourceFailure(attachment.ordinal)) return
-        dispatchViewerEvent(view, EVENT_ERROR, Arguments.createMap().apply {
-            putString("domain", "viewer.resource")
-            putString("code", "RESOURCE_LOAD_FAILED")
-            putString("message", "An image resource could not be loaded.")
-            putBoolean("fatal", false)
-        })
+        dispatchViewerEvent(
+            view,
+            EVENT_ERROR,
+            Arguments.createMap().apply {
+                putString("domain", "viewer.resource")
+                putString("code", "RESOURCE_LOAD_FAILED")
+                putString("message", "An image resource could not be loaded.")
+                putBoolean("fatal", false)
+            }
+        )
     }
 
-    private fun dispatchInteraction(view: PreparedProseDrawingView, interaction: PreparedProseInteraction): Boolean {
+    private fun dispatchInteraction(
+        view: PreparedProseDrawingView,
+        interaction: PreparedProseInteraction
+    ): Boolean {
         val isLink = interaction.kind == PreparedProseInteraction.Kind.LINK
         val payload = Arguments.createMap().apply {
             if (isLink) {
@@ -367,19 +427,35 @@ internal class PreparedProseViewerManager :
         return true
     }
 
-    private fun dispatchViewerEvent(view: PreparedProseDrawingView, eventName: String, payload: WritableMap) {
+    private fun dispatchViewerEvent(
+        view: PreparedProseDrawingView,
+        eventName: String,
+        payload: WritableMap
+    ) {
         val context = UIManagerHelper.getReactContext(view)
         UIManagerHelper.getEventDispatcherForReactTag(context, view.id)?.dispatchEvent(
-            PreparedProseViewerEvent(UIManagerHelper.getSurfaceId(view), view.id, eventName, payload)
+            PreparedProseViewerEvent(
+                UIManagerHelper.getSurfaceId(view),
+                view.id,
+                eventName,
+                payload
+            )
         )
     }
 
-    private fun requestFrom(props: ReadableMap?, state: ReadableMap?, nativeLeaseHandle: Long = 0): ProseViewerRequest? {
+    private fun requestFrom(
+        props: ReadableMap?,
+        state: ReadableMap?,
+        nativeLeaseHandle: Long = 0
+    ): ProseViewerRequest? {
         val revisions = state?.fabricRevisionsOrNull(nativeLeaseHandle) ?: return null
         return requestFrom(props, revisions)
     }
 
-    private fun requestFrom(props: ReadableMap?, revisions: FabricStateRevisions): ProseViewerRequest {
+    private fun requestFrom(
+        props: ReadableMap?,
+        revisions: FabricStateRevisions
+    ): ProseViewerRequest {
         val sourceKind = props?.stringOrNull("sourceKind") ?: "json"
         val source = if (sourceKind == "html") {
             ProseViewerSource.Html(props?.stringOrNull("source").orEmpty())
@@ -393,11 +469,11 @@ internal class PreparedProseViewerManager :
                 themeJson = props?.stringOrNull("themeJson"),
                 imagePolicyJson = props?.stringOrNull("imagePolicyJson"),
                 imagesEnabled = props?.booleanOrDefault("imagesEnabled", true) ?: true,
-                collapsesWhenEmpty = props?.booleanOrDefault("collapsesWhenEmpty", true) ?: true,
+                collapsesWhenEmpty = props?.booleanOrDefault("collapsesWhenEmpty", true) ?: true
             ),
             attachmentRevision = revisions.attachmentRevision,
             nativeFontRevision = revisions.nativeFontRevision,
-            fontEnvironmentRevision = props?.longOrZero("fontEnvironmentRevision") ?: 0,
+            fontEnvironmentRevision = props?.longOrZero("fontEnvironmentRevision") ?: 0
         )
     }
 
@@ -414,7 +490,13 @@ internal class PreparedProseViewerManager :
     private fun surfaceToken(data: ReadableMap): FabricSurfaceToken? {
         val surfaceId = data.longOrZero("surfaceId").toInt()
         val componentTag = data.longOrZero("componentTag").toInt()
-        return if (surfaceId > 0 && componentTag > 0) FabricSurfaceToken(surfaceId, componentTag) else null
+        return if (surfaceId > 0 &&
+            componentTag > 0
+        ) {
+            FabricSurfaceToken(surfaceId, componentTag)
+        } else {
+            null
+        }
     }
 
     private fun ReadableMap.stringOrNull(key: String): String? =
@@ -426,14 +508,20 @@ internal class PreparedProseViewerManager :
     private fun ReadableMap.longOrZero(key: String): Long =
         if (!hasKey(key) || isNull(key)) 0 else getDouble(key).toLong().coerceAtLeast(0)
 
-    private fun ReadableMap.fabricRevisionsOrNull(nativeLeaseHandle: Long = 0): FabricStateRevisions? {
+    private fun ReadableMap.fabricRevisionsOrNull(
+        nativeLeaseHandle: Long = 0
+    ): FabricStateRevisions? {
         val attachmentRevision = longOrNull("attachmentRevision") ?: return null
         val nativeFontRevision = longOrNull("nativeFontRevision") ?: return null
         // State's optional decimal representation is exact. The hot native
         // measurement path receives this same handle as a JNI jlong above.
         val stateHandle = stringOrNull("leaseHandle")?.toLongOrNull()?.takeIf { it > 0 } ?: 0L
         val handle = stateHandle.takeIf { it > 0 } ?: nativeLeaseHandle
-        if (nativeLeaseHandle > 0 && stateHandle > 0 && stateHandle != nativeLeaseHandle) return null
+        if (nativeLeaseHandle > 0 && stateHandle > 0 &&
+            stateHandle != nativeLeaseHandle
+        ) {
+            return null
+        }
         return FabricStateRevisions(attachmentRevision, nativeFontRevision, handle)
     }
 
@@ -443,7 +531,7 @@ internal class PreparedProseViewerManager :
     internal data class FabricStateRevisions(
         val attachmentRevision: Long,
         val nativeFontRevision: Long,
-        val leaseHandle: Long,
+        val leaseHandle: Long
     )
 
     internal class ViewState(
@@ -465,22 +553,28 @@ internal class PreparedProseViewerManager :
         val errorReporter: FabricErrorReporter = FabricErrorReporter(),
         private val replacementAccessibilityTransaction: FabricReplacementAccessibilityTransaction =
             FabricReplacementAccessibilityTransaction(),
-        private val createStateMap: () -> WritableMap = { Arguments.createMap() },
+        private val createStateMap: () -> WritableMap = { Arguments.createMap() }
     ) {
         private var pendingFontRevision = 0L
         fun requestOrNull(): ProseViewerRequest? = revisions?.let { revisions ->
             ProseViewerRequest(
-                source = if (sourceKind == "html") ProseViewerSource.Html(source) else ProseViewerSource.Json(source),
+                source = if (sourceKind ==
+                    "html"
+                ) {
+                    ProseViewerSource.Html(source)
+                } else {
+                    ProseViewerSource.Json(source)
+                },
                 configuration = ProseViewerConfiguration(
                     configJson,
                     themeJson,
                     imagePolicyJson,
                     imagesEnabled,
-                    collapsesWhenEmpty,
+                    collapsesWhenEmpty
                 ),
                 attachmentRevision = revisions.attachmentRevision,
                 nativeFontRevision = revisions.nativeFontRevision,
-                fontEnvironmentRevision = fontEnvironmentRevision,
+                fontEnvironmentRevision = fontEnvironmentRevision
             )
         }
 
@@ -496,13 +590,13 @@ internal class PreparedProseViewerManager :
                     incoming.copy(
                         attachmentRevision = maxOf(
                             incoming.attachmentRevision,
-                            prior.attachmentRevision,
+                            prior.attachmentRevision
                         ),
                         nativeFontRevision = maxOf(
                             incoming.nativeFontRevision,
-                            prior.nativeFontRevision,
+                            prior.nativeFontRevision
                         ),
-                        leaseHandle = leaseHandle,
+                        leaseHandle = leaseHandle
                     )
                 } else {
                     incoming.copy(leaseHandle = leaseHandle)
@@ -515,7 +609,7 @@ internal class PreparedProseViewerManager :
                     FabricStateRevisions(
                         current.attachmentRevision,
                         current.nativeFontRevision + 1,
-                        current.leaseHandle,
+                        current.leaseHandle
                     )
                 )
             }
@@ -526,19 +620,32 @@ internal class PreparedProseViewerManager :
         val imagePipeline = ViewerImagePipeline()
         private var visibleRect: android.graphics.Rect = android.graphics.Rect()
 
-        fun beginImages(view: PreparedProseDrawingView, artifact: PreparedProseLayout, request: ProseViewerRequest) {
+        fun beginImages(
+            view: PreparedProseDrawingView,
+            artifact: PreparedProseLayout,
+            request: ProseViewerRequest
+        ) {
             // The semantic reset happens when props/state are accepted, before
             // Yoga can prepare a replacement. Mount binds only this artifact's
             // ordinal descriptors and must preserve a permitted revision.
             attachmentRevisions.admit(artifact.imageAttachments.size)
             fontEnvironment.activate()
-            imagePipeline.begin(request.semanticGenerationIdentity, request.configuration.imagesEnabled, ImageLoadingPolicy.fromJson(request.configuration.imagePolicyJson))
+            imagePipeline.begin(
+                request.semanticGenerationIdentity,
+                request.configuration.imagesEnabled,
+                ImageLoadingPolicy.fromJson(request.configuration.imagePolicyJson)
+            )
         }
 
         /** Phase one of Fabric image setup: no artifact is required yet. */
         fun beginSemanticImageGeneration(view: PreparedProseDrawingView) {
             val request = requestOrNull() ?: return
-            if (!attachmentRevisions.beginSemanticGeneration(request.semanticGenerationIdentity)) return
+            if (!attachmentRevisions.beginSemanticGeneration(
+                    request.semanticGenerationIdentity
+                )
+            ) {
+                return
+            }
             imagePipeline.cancel()
             view.clearImageLeases()
         }
@@ -547,14 +654,17 @@ internal class PreparedProseViewerManager :
             attachmentRevisions = FabricAttachmentSidecars.state(generation) ?: attachmentRevisions
         }
 
-        fun recordIntrinsicSize(attachment: ViewerImageAttachment, width: Int, height: Int): Boolean =
-            attachmentRevisions.recordIntrinsicSize(
-                attachment.id,
-                attachment.ordinal,
-                width,
-                height,
-                attachment.declaredSize,
-            )
+        fun recordIntrinsicSize(
+            attachment: ViewerImageAttachment,
+            width: Int,
+            height: Int
+        ): Boolean = attachmentRevisions.recordIntrinsicSize(
+            attachment.id,
+            attachment.ordinal,
+            width,
+            height,
+            attachment.declaredSize
+        )
 
         fun recordResourceFailure(ordinal: Int): Boolean =
             attachmentRevisions.recordResourceFailure(ordinal)
@@ -576,7 +686,13 @@ internal class PreparedProseViewerManager :
 
         fun publishAttachmentRevision() {
             val current = revisions ?: return
-            publishRevisions(FabricStateRevisions(current.attachmentRevision + 1, current.nativeFontRevision, current.leaseHandle))
+            publishRevisions(
+                FabricStateRevisions(
+                    current.attachmentRevision + 1,
+                    current.nativeFontRevision,
+                    current.leaseHandle
+                )
+            )
         }
 
         fun publishFontRevision(revision: Long) {
@@ -586,22 +702,28 @@ internal class PreparedProseViewerManager :
                 pendingFontRevision = maxOf(pendingFontRevision, revision)
                 return
             }
-            publishRevisions(FabricStateRevisions(current.attachmentRevision, current.nativeFontRevision + 1, current.leaseHandle))
+            publishRevisions(
+                FabricStateRevisions(
+                    current.attachmentRevision,
+                    current.nativeFontRevision + 1,
+                    current.leaseHandle
+                )
+            )
         }
 
         private fun publishRevisions(next: FabricStateRevisions) {
             val current = revisions
             if (current == next) return
             revisions = next
-            stateWrapper?.updateState(createStateMap().apply {
-                putDouble("attachmentRevision", next.attachmentRevision.toDouble())
-                putDouble("nativeFontRevision", next.nativeFontRevision.toDouble())
-            })
+            stateWrapper?.updateState(
+                createStateMap().apply {
+                    putDouble("attachmentRevision", next.attachmentRevision.toDouble())
+                    putDouble("nativeFontRevision", next.nativeFontRevision.toDouble())
+                }
+            )
         }
 
-        fun releaseGeneration(
-            view: PreparedProseDrawingView,
-        ) {
+        fun releaseGeneration(view: PreparedProseDrawingView) {
             generation?.let(PreparedProseLayoutRegistry.shared::releaseFabricGeneration)
             generation = null
             releaseSidecarOwnership()
@@ -619,10 +741,7 @@ internal class PreparedProseViewerManager :
             replacementAccessibilityTransaction.finishWithoutMountedReplacement(view)
         }
 
-        fun adopt(
-            surface: FabricSurfaceToken,
-            request: ProseViewerRequest,
-        ): FabricGenerationToken {
+        fun adopt(surface: FabricSurfaceToken, request: ProseViewerRequest): FabricGenerationToken {
             val handle = revisions?.leaseHandle ?: 0L
             require(handle > 0) { "Fabric mount attempted without an exact native lease handle." }
             val next = FabricGenerationToken(surface, request.generationIdentity, handle)
@@ -654,7 +773,10 @@ internal class PreparedProseViewerManager :
             val terminalOwner = generation?.let { FabricLeaseOwner(it.surface, it.leaseHandle) }
                 ?: sidecarGeneration?.let { FabricLeaseOwner(it.surface, it.leaseHandle) }
             terminalOwner?.let { owner ->
-                PreparedProseLayoutRegistry.shared.deactivateFabricLease(owner.surface, owner.leaseHandle)
+                PreparedProseLayoutRegistry.shared.deactivateFabricLease(
+                    owner.surface,
+                    owner.leaseHandle
+                )
             }
             generation = null
             sidecarGeneration = null
@@ -698,7 +820,7 @@ private class PreparedProseViewerEvent(
     surfaceId: Int,
     viewTag: Int,
     private val name: String,
-    private val payload: WritableMap,
+    private val payload: WritableMap
 ) : Event<PreparedProseViewerEvent>(surfaceId, viewTag) {
     override fun getEventName(): String = name
 
@@ -716,7 +838,7 @@ internal class FabricReplacementAccessibilityTransaction {
     private enum class NotificationOwner {
         NONE,
         FINAL_INSTALL,
-        REMOVED_SUBTREE,
+        REMOVED_SUBTREE
     }
 
     private var notificationOwner = NotificationOwner.NONE
@@ -732,7 +854,7 @@ internal class FabricReplacementAccessibilityTransaction {
             view,
             ticket.artifact,
             ticket.contentOriginXPx,
-            ticket.contentOriginYPx,
+            ticket.contentOriginYPx
         )
     }
 
@@ -744,13 +866,13 @@ internal class FabricReplacementAccessibilityTransaction {
         view: PreparedProseDrawingView,
         artifact: PreparedProseLayout,
         contentOriginXPx: Int,
-        contentOriginYPx: Int,
+        contentOriginYPx: Int
     ) {
         view.install(
             artifact,
             announceAccessibilitySubtree = notificationOwner != NotificationOwner.REMOVED_SUBTREE,
             contentOriginXPx = contentOriginXPx,
-            contentOriginYPx = contentOriginYPx,
+            contentOriginYPx = contentOriginYPx
         )
         notificationOwner = NotificationOwner.NONE
     }

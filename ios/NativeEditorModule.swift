@@ -27,7 +27,7 @@ private func v2FfiErrorDictionary(_ error: FfiError) -> [String: Any] {
     var dictionary: [String: Any] = [
         "domain": error.domain,
         "code": error.code,
-        "message": error.message,
+        "message": error.message
     ]
     if let requestId = error.requestId { dictionary["requestId"] = requestId }
     if let operationIndex = error.operationIndex { dictionary["operationIndex"] = operationIndex }
@@ -43,7 +43,7 @@ private func v2ContractErrorDictionary(_ message: String) -> [String: Any] {
     [
         "domain": "boundary",
         "code": "FFI_RESULT_INVALID",
-        "message": message,
+        "message": message
     ]
 }
 
@@ -138,7 +138,7 @@ private func v2SnapshotExportResultDictionary(_ result: FfiSnapshotExportResult)
     v2ResultDictionary(value: result.value, error: result.error) { value in
         [
             "metadataJson": value.metadataJson,
-            "encodedState": value.encodedState,
+            "encodedState": value.encodedState
         ]
     }
 }
@@ -540,7 +540,7 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
                     queue: nil
                 ) { _ in
                     NativeCollaborationTransportRegistry.enterForeground()
-                },
+                }
             ]
         }
 
@@ -562,8 +562,7 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
         Function("editorV2Create") { (configJson: String, snapshotState: Data?) -> [String: Any] in
             let result = createEditorV2SessionFromModule(configJson: configJson, snapshotState: snapshotState)
             if let value = result["value"] as? String,
-               let handle = createdV2SessionHandle(value)
-            {
+               let handle = createdV2SessionHandle(value) {
                 self.sessionOwner.insert(handle.handle)
             }
             return result
@@ -667,8 +666,7 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
                 }
             )
         }
-        Function("editorV2CollaborationConfigureTransport") {
-            (editorId: String, configJsonOrNull: String?) -> [String: Any] in
+        Function("editorV2CollaborationConfigureTransport") { (editorId: String, configJsonOrNull: String?) -> [String: Any] in
             guard let nativeEditorId = v2UInt64Argument(editorId), nativeEditorId > 0 else {
                 return v2InvalidResultDictionary("invalid editorId")
             }
@@ -682,13 +680,7 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
                 error: error
             ))
         }
-        Function("editorV2CollaborationResolveProtocolAdapter") {
-            (
-                editorId: String,
-                attemptId: String,
-                eventId: String,
-                responseJson: String
-            ) -> [String: Any] in
+        Function("editorV2CollaborationResolveProtocolAdapter") { (editorId: String, attemptId: String, eventId: String, responseJson: String) -> [String: Any] in
             guard let nativeEditorId = v2UInt64Argument(editorId), nativeEditorId > 0 else {
                 return v2InvalidResultDictionary("invalid editorId")
             }
@@ -711,8 +703,7 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
                 )
             }
             if result.value == true, result.error == nil,
-               let nativeEditorId = v2UInt64Argument(editorId)
-            {
+               let nativeEditorId = v2UInt64Argument(editorId) {
                 NativeCollaborationTransportRegistry.notifyOutboundAvailable(
                     editorId: nativeEditorId,
                     reason: .awareness
@@ -838,20 +829,16 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
             AsyncFunction("applyEditorUpdate") { (view: NativeEditorExpoView, updateJson: String) -> Bool in
                 view.applyEditorUpdate(updateJson)
             }
-            AsyncFunction("beginExternalTextComposition") {
-                (view: NativeEditorExpoView, sessionId: String) -> String in
+            AsyncFunction("beginExternalTextComposition") { (view: NativeEditorExpoView, sessionId: String) -> String in
                 view.beginExternalTextComposition(sessionId: sessionId)
             }
-            AsyncFunction("updateExternalTextComposition") {
-                (view: NativeEditorExpoView, sessionId: String, text: String) -> String in
+            AsyncFunction("updateExternalTextComposition") { (view: NativeEditorExpoView, sessionId: String, text: String) -> String in
                 view.updateExternalTextComposition(sessionId: sessionId, text: text)
             }
-            AsyncFunction("commitExternalTextComposition") {
-                (view: NativeEditorExpoView, sessionId: String, text: String) -> String in
+            AsyncFunction("commitExternalTextComposition") { (view: NativeEditorExpoView, sessionId: String, text: String) -> String in
                 view.commitExternalTextComposition(sessionId: sessionId, finalText: text)
             }
-            AsyncFunction("cancelExternalTextComposition") {
-                (view: NativeEditorExpoView, sessionId: String, cause: String) -> String in
+            AsyncFunction("cancelExternalTextComposition") { (view: NativeEditorExpoView, sessionId: String, cause: String) -> String in
                 view.cancelExternalTextComposition(sessionId: sessionId, cause: cause)
             }
             AsyncFunction("focus") { (view: NativeEditorExpoView) in

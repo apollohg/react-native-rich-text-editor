@@ -1,5 +1,5 @@
-import XCTest
 import UIKit
+import XCTest
 
 extension EditorV2AdapterTests {
     func testAttachesDecimalV2HandleAndDetachedLocalState() {
@@ -273,10 +273,6 @@ extension EditorV2AdapterTests {
         XCTAssertEqual((docAfterSplit["content"] as? [[String: Any]])?.count, 2, "Return splits into two blocks")
         XCTAssertEqual(documentText(adapter), "ab")
 
-        // E1 FIX (was Task 15 engine defect): the v2 lowering now accepts a
-        // split at the very END of a block (empty suffix) and delivers the
-        // compiler preview's empty right sibling — Return-at-EOL works.
-        // (Scalar 3 = end of "b": block separators count as one scalar.)
         let endSplit = adapter.splitBlock(atScalar: 3)
         XCTAssertNotNil(endSplit)
         XCTAssertTrue(spy.errors.isEmpty)
@@ -334,7 +330,7 @@ extension EditorV2AdapterTests {
             ("toggleTaskItemChecked", { adapter.toggleTaskItemChecked(anchor: 1, head: 1) }),
             ("resizeImage", { adapter.resizeImage(atDocPos: 0, width: 10, height: 10) }),
             ("undo", { adapter.undo() }),
-            ("redo", { adapter.redo() }),
+            ("redo", { adapter.redo() })
         ]
         for (name, mutate) in mutations {
             let update = mutate()

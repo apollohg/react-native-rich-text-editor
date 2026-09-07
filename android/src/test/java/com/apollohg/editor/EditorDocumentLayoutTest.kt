@@ -8,7 +8,9 @@ import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.TextPaint
 import android.text.style.ReplacementSpan
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -20,16 +22,32 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class EditorDocumentLayoutTest {
     private fun paint() = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 20f }
-    private fun box(text: SpannableStringBuilder, start: Int, end: Int, edges: EditorEdges, depth: Int = 0): EditorBlockBoxSpan {
-        return EditorBlockBoxSpan(EditorBoxStyle(padding = edges), EditorEdges(), depth).also {
+    private fun box(
+        text: SpannableStringBuilder,
+        start: Int,
+        end: Int,
+        edges: EditorEdges,
+        depth: Int = 0
+    ): EditorBlockBoxSpan =
+        EditorBlockBoxSpan(EditorBoxStyle(padding = edges), EditorEdges(), depth).also {
             text.setSpan(it, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-    }
 
     @Test
     fun `empty styled paragraph retains box and text metrics without inserting characters`() {
-        val theme = EditorTheme.fromJson("""{"version":1,"styles":{"paragraph":{"fontSize":31,"lineHeight":50,"paddingTop":7,"paddingBottom":11,"paddingLeft":13,"paddingRight":41}}}""")!!
-        val rendered = RenderBridge.buildSpannable("""[{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"blockEnd"}]""", 20f, android.graphics.Color.BLACK, theme, 1f)
+        val theme = EditorTheme.fromJson(
+
+            """{"version":1,"styles":{"paragraph":{"fontSize":31""" +
+                ""","lineHeight":50,"paddingTop":7,"paddingBottom":11""" +
+                ""","paddingLeft":13,"paddingRight":41}}}"""
+        )!!
+        val rendered = RenderBridge.buildSpannable(
+            """[{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"blockEnd"}]""",
+            20f,
+            android.graphics.Color.BLACK,
+            theme,
+            1f
+        )
         assertEquals("", rendered.toString())
         val layout = EditorDocumentLayout(rendered, paint(), 240)
         assertEquals(7, layout.textLineTop(0))
@@ -50,8 +68,22 @@ class EditorDocumentLayoutTest {
 
     @Test
     fun `empty block styles do not leak into the following paragraph`() {
-        val theme = EditorTheme.fromJson("""{"version":1,"styles":{"h1":{"fontSize":31,"lineHeight":50,"paddingLeft":13,"paddingTop":7},"paragraph":{"fontSize":20}}}""")!!
-        val rendered = RenderBridge.buildSpannable("""[{"type":"blockStart","nodeType":"h1","depth":0},{"type":"blockEnd"},{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"textRun","text":"body","marks":[]},{"type":"blockEnd"}]""", 20f, android.graphics.Color.BLACK, theme, 1f)
+        val theme = EditorTheme.fromJson(
+
+            """{"version":1,"styles":{"h1":{"fontSize":31,"lineHeight":50""" +
+                ""","paddingLeft":13,"paddingTop":7},"paragraph":{"fontSize":20}}}"""
+        )!!
+        val rendered = RenderBridge.buildSpannable(
+
+            """[{"type":"blockStart","nodeType":"h1","depth":0},""" +
+                """{"type":"blockEnd"},{"type":"blockStart","nodeType":"paragrap""" +
+                """h","depth":0},{"type":"textRun","text":"body","marks":[]},""" +
+                """{"type":"blockEnd"}]""",
+            20f,
+            android.graphics.Color.BLACK,
+            theme,
+            1f
+        )
         assertEquals("\nbody", rendered.toString())
         val layout = EditorDocumentLayout(rendered, paint(), 240)
         assertEquals(13f, layout.getPrimaryHorizontal(0), 0.01f)
@@ -64,17 +96,34 @@ class EditorDocumentLayoutTest {
     fun `empty paragraph placeholder uses paragraph content width`() {
         val editor = EditorEditText(org.robolectric.RuntimeEnvironment.getApplication())
         editor.placeholderText = "A placeholder that wraps inside the paragraph"
-        editor.applyTheme(EditorTheme.fromJson("""{"version":1,"styles":{"paragraph":{"paddingTop":7,"paddingBottom":11,"paddingLeft":13,"paddingRight":41},"placeholder":{"fontSize":20}}}"""))
-        editor.applyRenderJSON("""[{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"blockEnd"}]""")
+        editor.applyTheme(
+            EditorTheme.fromJson(
+
+                """{"version":1,"styles":{"paragraph":{"paddingTop":7""" +
+                    ""","paddingBottom":11,"paddingLeft":13,"paddingRight":41}""" +
+                    ""","placeholder":{"fontSize":20}}}"""
+            )
+        )
+        editor.applyRenderJSON(
+            """[{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"blockEnd"}]"""
+        )
         val placeholder = editor.buildPlaceholderLayout(240)!!
         assertEquals(186, placeholder.width)
-        assertEquals(placeholder.height + 18 + editor.compoundPaddingTop + editor.compoundPaddingBottom, editor.resolvePlaceholderHeightForAvailableWidth(240))
+        assertEquals(
+            placeholder.height + 18 + editor.compoundPaddingTop + editor.compoundPaddingBottom,
+            editor.resolvePlaceholderHeightForAvailableWidth(240)
+        )
     }
 
     @Test
     fun `negative vertical margins hit the last painted overlapping line`() {
         val text = SpannableStringBuilder("a\nb\nc")
-        text.setSpan(EditorBlockBoxSpan(EditorBoxStyle(margin = EditorEdges(top = -35f)), EditorEdges(), 0), 4, 5, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        text.setSpan(
+            EditorBlockBoxSpan(EditorBoxStyle(margin = EditorEdges(top = -35f)), EditorEdges(), 0),
+            4,
+            5,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
         val layout = EditorDocumentLayout(text, paint(), 240)
         assertTrue(layout.textLineTop(2) < layout.textLineTop(1))
         assertEquals(2, layout.getLineForVertical(layout.textLineTop(2) + 2))
@@ -83,24 +132,94 @@ class EditorDocumentLayoutTest {
     @Test
     fun `negative horizontal margin paints inside available host padding`() {
         val text = SpannableStringBuilder("x")
-        text.setSpan(EditorBlockBoxSpan(EditorBoxStyle(margin = EditorEdges(left = -10f)), EditorEdges(), 0), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        text.setSpan(object : ReplacementSpan() {
-            override fun getSize(paint: Paint, text: CharSequence, start: Int, end: Int, fm: Paint.FontMetricsInt?) = 10
-            override fun draw(canvas: Canvas, text: CharSequence, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {
-                canvas.drawRect(x, top.toFloat(), x + 10, bottom.toFloat(), Paint().apply { color = android.graphics.Color.RED })
-            }
-        }, 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        text.setSpan(
+            EditorBlockBoxSpan(EditorBoxStyle(margin = EditorEdges(left = -10f)), EditorEdges(), 0),
+            0,
+            1,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        text.setSpan(
+            object : ReplacementSpan() {
+                override fun getSize(
+                    paint: Paint,
+                    text: CharSequence,
+                    start: Int,
+                    end: Int,
+                    fm: Paint.FontMetricsInt?
+                ) = 10
+                override fun draw(
+                    canvas: Canvas,
+                    text: CharSequence,
+                    start: Int,
+                    end: Int,
+                    x: Float,
+                    top: Int,
+                    y: Int,
+                    bottom: Int,
+                    paint: Paint
+                ) {
+                    canvas.drawRect(
+                        x,
+                        top.toFloat(),
+                        x + 10,
+                        bottom.toFloat(),
+                        Paint().apply {
+                            color =
+                                android.graphics.Color.RED
+                        }
+                    )
+                }
+            },
+            0,
+            1,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
         val layout = EditorDocumentLayout(text, paint(), 200)
-        val bitmap = android.graphics.Bitmap.createBitmap(240, 80, android.graphics.Bitmap.Config.ARGB_8888)
-        Canvas(bitmap).apply { translate(20f, 0f); layout.draw(this) }
+        val bitmap = android.graphics.Bitmap.createBitmap(
+            240,
+            80,
+            android.graphics.Bitmap.Config.ARGB_8888
+        )
+        Canvas(bitmap).apply {
+            translate(20f, 0f)
+            layout.draw(this)
+        }
         assertEquals(android.graphics.Color.RED, bitmap.getPixel(15, layout.textLineTop(0) + 3))
     }
 
     @Test
     fun `list container styles surround the group and cascade into child text`() {
-        val theme = EditorTheme.fromJson("""{"version":1,"styles":{"bulletList":{"paddingLeft":13,"paddingRight":41,"paddingTop":7,"paddingBottom":11,"fontSize":29,"backgroundColor":"#ff0000ff"},"paragraph":{"lineHeight":36}}}""")!!
-        val rendered = RenderBridge.buildSpannable("""[{"type":"blockStart","nodeType":"listItem","depth":0,"listContext":{"ordered":false,"isFirst":true,"isLast":false}},{"type":"blockStart","nodeType":"paragraph","depth":1},{"type":"textRun","text":"first","marks":[]},{"type":"blockEnd"},{"type":"blockEnd"},{"type":"blockStart","nodeType":"listItem","depth":0,"listContext":{"ordered":false,"isFirst":false,"isLast":true}},{"type":"blockStart","nodeType":"paragraph","depth":1},{"type":"textRun","text":"second","marks":[]},{"type":"blockEnd"},{"type":"blockEnd"}]""", 20f, android.graphics.Color.BLACK, theme, 1f)
-        val group = rendered.getSpans(0, rendered.length, EditorBlockBoxSpan::class.java).singleOrNull { it.box.backgroundColor == android.graphics.Color.RED }
+        val theme = EditorTheme.fromJson(
+
+            """{"version":1,"styles":{"bulletList":{"paddingLeft":13""" +
+                ""","paddingRight":41,"paddingTop":7,"paddingBottom":11""" +
+                ""","fontSize":29,"backgroundColor":"#ff0000ff"}""" +
+                ""","paragraph":{"lineHeight":36}}}"""
+        )!!
+        val rendered = RenderBridge.buildSpannable(
+
+            """[{"type":"blockStart","nodeType":"listItem","depth":0""" +
+                ""","listContext":{"ordered":false,"isFirst":true,"isLast":false}},""" +
+                """{"type":"blockStart","nodeType":"paragraph","depth":1},""" +
+                """{"type":"textRun","text":"first","marks":[]},{"type":"blockEnd"},""" +
+                """{"type":"blockEnd"},{"type":"blockStart","nodeType":"listIte""" +
+                """m","depth":0,"listContext":{"ordered":false,"isFirst":false""" +
+                ""","isLast":true}},{"type":"blockStart","nodeType":"paragrap""" +
+                """h","depth":1},{"type":"textRun","text":"second","marks":[]},""" +
+                """{"type":"blockEnd"},{"type":"blockEnd"}]""",
+            20f,
+            android.graphics.Color.BLACK,
+            theme,
+            1f
+        )
+        val group = rendered.getSpans(
+            0,
+            rendered.length,
+            EditorBlockBoxSpan::class.java
+        ).singleOrNull {
+            it.box.backgroundColor ==
+                android.graphics.Color.RED
+        }
         assertNotNull("The Rust render sequence omits explicit list container nodes", group)
         val first = rendered.indexOf("first")
         val styled = rendered.getSpans(first, first + 1, EditorResolvedTextSpan::class.java).last()
@@ -109,13 +228,22 @@ class EditorDocumentLayoutTest {
         assertEquals(7, layout.textLineTop(0))
         assertEquals(0f, layout.boxBounds(group!!)!!.top, 0.01f)
         assertEquals(layout.height.toFloat(), layout.boxBounds(group)!!.bottom, 0.01f)
-        assertEquals(layout.textLineBottom(layout.lineCount - 1) + 11 + theme.styleSheet!!.box("listItem").outerInset.bottom.toInt(), layout.height)
+        assertEquals(
+            layout.textLineBottom(layout.lineCount - 1) + 11 +
+                theme.styleSheet!!.box("listItem").outerInset.bottom.toInt(),
+            layout.height
+        )
     }
 
     @Test
     fun `asymmetric physical insets wrap only their own paragraph`() {
         val text = SpannableStringBuilder("one two three four five six seven eight nine\nplain")
-        box(text, 0, text.indexOf('\n'), EditorEdges(left = 17f, right = 91f, top = 11f, bottom = 13f))
+        box(
+            text,
+            0,
+            text.indexOf('\n'),
+            EditorEdges(left = 17f, right = 91f, top = 11f, bottom = 13f)
+        )
         val layout = EditorDocumentLayout(text, paint(), 240)
         val last = layout.getLineForOffset(text.indexOf('\n') - 1)
         assertTrue(last >= 2)
@@ -155,7 +283,10 @@ class EditorDocumentLayoutTest {
         assertEquals(179f, layout.getPrimaryHorizontal(4), 0.01f)
         for (offset in listOf(0, 1, 4, 5, 6, 12, 13)) {
             val current = layout.getLineForOffset(offset)
-            assertEquals(offset, layout.getOffsetForHorizontal(current, layout.getPrimaryHorizontal(offset)))
+            assertEquals(
+                offset,
+                layout.getOffsetForHorizontal(current, layout.getPrimaryHorizontal(offset))
+            )
             assertEquals(current, layout.getLineForVertical(layout.textLineTop(current)))
         }
         val path = Path()
@@ -174,11 +305,32 @@ class EditorDocumentLayoutTest {
     fun `replacement span height and shifted paragraph offsets remain authoritative`() {
         val text = SpannableStringBuilder("x\n\uFFFC\nlast")
         val atom = object : ReplacementSpan() {
-            override fun getSize(paint: Paint, text: CharSequence, start: Int, end: Int, fm: Paint.FontMetricsInt?): Int {
-                fm?.apply { ascent = -83; top = -83; descent = 0; bottom = 0 }
+            override fun getSize(
+                paint: Paint,
+                text: CharSequence,
+                start: Int,
+                end: Int,
+                fm: Paint.FontMetricsInt?
+            ): Int {
+                fm?.apply {
+                    ascent = -83
+                    top = -83
+                    descent = 0
+                    bottom = 0
+                }
                 return 60
             }
-            override fun draw(canvas: Canvas, text: CharSequence, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) = Unit
+            override fun draw(
+                canvas: Canvas,
+                text: CharSequence,
+                start: Int,
+                end: Int,
+                x: Float,
+                top: Int,
+                y: Int,
+                bottom: Int,
+                paint: Paint
+            ) = Unit
         }
         text.setSpan(atom, 2, 3, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         val first = EditorDocumentLayout(text, paint(), 200)
@@ -206,7 +358,10 @@ class EditorDocumentLayoutTest {
 
     @Test
     fun `physical alignment and justification respect both sides`() {
-        val text = SpannableStringBuilder("אבג\nleft right centered\none two three four five six seven eight")
+        val text =
+            SpannableStringBuilder(
+                "אבג\nleft right centered\none two three four five six seven eight"
+            )
         box(text, 0, 3, EditorEdges(left = 21f, right = 63f))
         text.applyPhysicalTextAlignment("left", 0, 3)
         text.applyPhysicalTextAlignment("center", 4, 23)
@@ -220,11 +375,27 @@ class EditorDocumentLayoutTest {
 
     @Test
     fun `unmounted measurement uses the same physical wrapping as document layout`() {
-        val themeJson = """{"version":1,"styles":{"text":{"fontSize":20},"paragraph":{"paddingLeft":13,"paddingRight":109,"paddingTop":7,"paddingBottom":11}}}"""
-        val json = """[{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"textRun","text":"one two three four five six seven eight nine ten eleven twelve","marks":[]},{"type":"blockEnd"}]"""
-        val text = RenderBridge.buildSpannable(json, 20f, android.graphics.Color.BLACK, EditorTheme.fromJson(themeJson), 1f)
+        val themeJson =
+            """{"version":1,"styles":{"text":{"fontSize":20}""" +
+                ""","paragraph":{"paddingLeft":13,"paddingRight":109,"paddingTop":7""" +
+                ""","paddingBottom":11}}}"""
+        val json =
+            """[{"type":"blockStart","nodeType":"paragraph","depth":0},""" +
+                """{"type":"textRun","text":"one two three four five six seven eight""" +
+                """ nine ten eleven twelve","marks":[]},{"type":"blockEnd"}]"""
+        val text = RenderBridge.buildSpannable(
+            json,
+            20f,
+            android.graphics.Color.BLACK,
+            EditorTheme.fromJson(themeJson),
+            1f
+        )
         val layout = EditorDocumentLayout(text, paint(), 240, includeFontPadding = true)
-        assertEquals(layout.height.toFloat(), RenderBridge.measureHeight(json, themeJson, 240f, 1f), 0.01f)
+        assertEquals(
+            layout.height.toFloat(),
+            RenderBridge.measureHeight(json, themeJson, 240f, 1f),
+            0.01f
+        )
     }
 
     @Test
@@ -232,7 +403,15 @@ class EditorDocumentLayoutTest {
         val text = "first\nsecond\nthird"
         val native = android.text.StaticLayout.Builder.obtain(text, 0, text.length, paint(), 240)
             .setIncludePad(true).setLineSpacing(3f, 1.1f).build()
-        val layout = EditorDocumentLayout(text, paint(), 240, includeFontPadding = true, spacingMultiplier = 1.1f, spacingAdd = 3f)
+        val layout =
+            EditorDocumentLayout(
+                text,
+                paint(),
+                240,
+                includeFontPadding = true,
+                spacingMultiplier = 1.1f,
+                spacingAdd = 3f
+            )
         assertEquals(native.height, layout.height)
         for (line in 0 until native.lineCount) {
             assertEquals(native.getLineBaseline(line), layout.getLineBaseline(line))
@@ -241,7 +420,8 @@ class EditorDocumentLayoutTest {
 
     @Test
     fun `selection excludes font padding removed between paragraphs`() {
-        val layout = EditorDocumentLayout("first\nsecond\nthird", paint(), 240, includeFontPadding = true)
+        val layout =
+            EditorDocumentLayout("first\nsecond\nthird", paint(), 240, includeFontPadding = true)
         val path = Path()
         layout.getSelectionPath(6, 12, path)
         val bounds = RectF()
@@ -252,7 +432,12 @@ class EditorDocumentLayoutTest {
 
     @Test
     fun `large document edits reuse shifted paragraphs with equivalent geometry`() {
-        val text = SpannableStringBuilder((0 until 500).joinToString("\n") { "Paragraph $it has enough words to wrap at this bounded width." })
+        val text =
+            SpannableStringBuilder(
+                (0 until 500).joinToString("\n") {
+                    "Paragraph $it has enough words to wrap at this bounded width."
+                }
+            )
         val start = System.nanoTime()
         val first = EditorDocumentLayout(text, paint(), 260)
         val cold = System.nanoTime() - start
@@ -268,7 +453,9 @@ class EditorDocumentLayoutTest {
             assertEquals(fresh.getLineStart(line), edited.getLineStart(line))
             assertEquals(fresh.getLineBaseline(line), edited.getLineBaseline(line))
         }
-        println("EditorDocumentLayout 500 paragraphs/${text.length} UTF16: cold=${cold / 1_000_000.0}ms, edited=${incremental / 1_000_000.0}ms, reused=${edited.reusedFragmentCount}")
+        println(
+            "EditorDocumentLayout 500 paragraphs/${text.length} UTF16: cold=${cold / 1_000_000.0}ms, edited=${incremental / 1_000_000.0}ms, reused=${edited.reusedFragmentCount}"
+        )
     }
 
     @Test

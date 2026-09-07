@@ -1,17 +1,17 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.EditorEditText.ApplyUpdateTrace
 import android.text.SpannableStringBuilder
+import com.apollohg.editor.EditorEditText.ApplyUpdateTrace
 import org.json.JSONObject
 
 /**
-     * Apply a full render update from Rust to the EditText.
-     *
-     * Parses the update JSON, converts render elements to [android.text.SpannableStringBuilder]
-     * via [RenderBridge], and replaces the EditText's content.
-     *
-     * @param updateJSON The JSON string from an [EditorV2Driver] transaction result.
-     */
+ * Apply a full render update from Rust to the EditText.
+ *
+ * Parses the update JSON, converts render elements to [android.text.SpannableStringBuilder]
+ * via [RenderBridge], and replaces the EditText's content.
+ *
+ * @param updateJSON The JSON string from an [EditorV2Driver] transaction result.
+ */
 internal fun EditorEditText.applyUpdateJSONImpl(
     updateJSON: String,
     notifyListener: Boolean = true,
@@ -61,7 +61,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
     ) {
         return recoverRenderPatchBaseMismatch(
             notifyListener,
-            refreshInputConnectionForExternalUpdate,
+            refreshInputConnectionForExternalUpdate
         )
     }
 
@@ -103,7 +103,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         retainCurrentRenderBlocks(
             resolvedRenderBlocks,
             updateDocumentVersion,
-            needFullApply = false,
+            needFullApply = false
         )
         clearNativeTextMutationAdoptionSuppression()
         clearNativeTextMutationAfterBlurWindow()
@@ -114,7 +114,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         retainCurrentRenderBlocks(
             resolvedRenderBlocks,
             updateDocumentVersion,
-            needFullApply = false,
+            needFullApply = false
         )
         lastAppliedRenderAppearanceRevision = renderAppearanceRevision
         buildRenderNanos = patchTrace?.buildRenderNanos ?: 0L
@@ -152,12 +152,12 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         retainCurrentRenderBlocks(
             resolvedRenderBlocks,
             updateDocumentVersion,
-            needFullApply = false,
+            needFullApply = false
         )
         val applyStartedAt = System.nanoTime()
         val optimisticText = pendingOptimisticRenderText
         val canReuseOptimisticVisibleText =
-                optimisticText != null &&
+            optimisticText != null &&
                 text?.toString() == optimisticText &&
                 fullSpannable.toString() == optimisticText &&
                 !spannedContainsImageSpan(fullSpannable)
@@ -175,13 +175,12 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         lastAppliedRenderAppearanceRevision = renderAppearanceRevision
     }
 
-    // Apply the selection from the update.
     val selectionStartedAt = System.nanoTime()
     val selection = update.optJSONObject("selection")
     if (selection != null) {
         applySelectionFromJSON(
             selection,
-            updateDocumentVersion,
+            updateDocumentVersion
         )
     } else {
         logicalSelectionSnapshot = null
@@ -212,7 +211,19 @@ internal fun EditorEditText.applyUpdateJSONImpl(
     val totalNanos = System.nanoTime() - totalStartedAt
     recordImeTraceForTesting(
         "applyUpdateJSON",
-        "notify=$notifyListener skippedRender=$shouldSkipRender attemptedPatch=${renderPatch != null} jsonLength=${updateJSON.length} parseUs=${nanosToMicros(parseNanos)} resolveUs=${nanosToMicros(resolveRenderBlocksNanos)} buildUs=${nanosToMicros(buildRenderNanos)} applyUs=${nanosToMicros(applyRenderNanos)} selectionUs=${nanosToMicros(selectionNanos)} postUs=${nanosToMicros(postApplyNanos)} totalUs=${nanosToMicros(totalNanos)}"
+        "notify=$notifyListener skippedRender=$shouldSkipRender " +
+            "attemptedPatch=${renderPatch != null} jsonLength=${updateJSON.length} " +
+            "parseUs=${nanosToMicros(
+                parseNanos
+            )} resolveUs=${nanosToMicros(
+                resolveRenderBlocksNanos
+            )} buildUs=${nanosToMicros(
+                buildRenderNanos
+            )} applyUs=${nanosToMicros(
+                applyRenderNanos
+            )} selectionUs=${nanosToMicros(
+                selectionNanos
+            )} postUs=${nanosToMicros(postApplyNanos)} totalUs=${nanosToMicros(totalNanos)}"
     )
 
     if (captureApplyUpdateTraceForTesting) {

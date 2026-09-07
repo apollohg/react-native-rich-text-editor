@@ -19,8 +19,14 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
     @Test
     fun `atomic admission accepts language and rejects malformed language`() {
         fun snapshot(language: Any) = JSONObject(atomicRenderSnapshot("base", "7")).apply {
-            getJSONArray("renderBlocks").getJSONArray(0).put(0, JSONObject()
-                .put("type", "blockStart").put("nodeType", "codeBlock").put("depth", 0).put("language", language))
+            getJSONArray("renderBlocks").getJSONArray(0).put(
+                0,
+                JSONObject()
+                    .put(
+                        "type",
+                        "blockStart"
+                    ).put("nodeType", "codeBlock").put("depth", 0).put("language", language)
+            )
         }.toString()
         assertNotNull(adoptExternalRender(makeAdapter(), snapshot("rust")))
         assertNotNull(adoptExternalRender(makeAdapter(), snapshot(JSONObject.NULL)))
@@ -30,17 +36,44 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
 
     @Test
     fun `atomic admission accepts canonical mention style and rejects malformed style`() {
-        fun snapshot(style: Any) = JSONObject(atomicRenderSnapshot("base", "7")).put("renderBlocks",
-            org.json.JSONArray().put(org.json.JSONArray().put(JSONObject()
-                .put("type", "opaqueInlineAtom").put("nodeType", "mention").put("label", "Ada").put("docPos", 1)
-                .put("mentionTheme", JSONObject().put("node", JSONObject().put("style", style)))))).toString()
-        val valid = JSONObject().put("color", "#123456ff").put("fontWeight", "700").put("fontSize", 18)
-            .put("borderTopWidth", 2).put("borderTopColor", "#abcdef88").put("borderTopLeftRadius", 5)
-            .put("textDecorationLine", "underline line-through").put("textDecorationStyle", "double")
+        fun snapshot(style: Any) = JSONObject(atomicRenderSnapshot("base", "7")).put(
+            "renderBlocks",
+            org.json.JSONArray().put(
+                org.json.JSONArray().put(
+                    JSONObject()
+                        .put(
+                            "type",
+                            "opaqueInlineAtom"
+                        ).put("nodeType", "mention").put("label", "Ada").put("docPos", 1)
+                        .put(
+                            "mentionTheme",
+                            JSONObject().put("node", JSONObject().put("style", style))
+                        )
+                )
+            )
+        ).toString()
+        val valid = JSONObject().put(
+            "color",
+            "#123456ff"
+        ).put("fontWeight", "700").put("fontSize", 18)
+            .put(
+                "borderTopWidth",
+                2
+            ).put("borderTopColor", "#abcdef88").put("borderTopLeftRadius", 5)
+            .put(
+                "textDecorationLine",
+                "underline line-through"
+            ).put("textDecorationStyle", "double")
         assertNotNull(adoptExternalRender(makeAdapter(), snapshot(valid)))
-        listOf<Any>("bad", JSONObject().put("unknown", 1), JSONObject().put("fontSize", -1),
-            JSONObject().put("color", "red"), JSONObject().put("borderLeftWidth", "2"),
-            JSONObject().put("fontWeight", 700), JSONObject().put("fontStyle", "oblique"))
+        listOf<Any>(
+            "bad",
+            JSONObject().put("unknown", 1),
+            JSONObject().put("fontSize", -1),
+            JSONObject().put("color", "red"),
+            JSONObject().put("borderLeftWidth", "2"),
+            JSONObject().put("fontWeight", 700),
+            JSONObject().put("fontStyle", "oblique")
+        )
             .forEach { assertNull(adoptExternalRender(makeAdapter(), snapshot(it))) }
     }
 
@@ -82,11 +115,11 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
             listOf(
                 "collaborationSetAwarenessSelection",
                 "wake:awareness",
-                "wake:localMutation",
+                "wake:localMutation"
             ),
             backend.calls.filter {
                 it == "collaborationSetAwarenessSelection" || it.startsWith("wake:")
-            },
+            }
         )
         val awarenessSelection = JSONObject(backend.lastAwarenessSelectionJson!!)
         assertEquals(3, awarenessSelection.length())
@@ -111,7 +144,7 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
             listOf("collaborationSetAwarenessSelection", "wake:awareness"),
             backend.calls.filter {
                 it == "collaborationSetAwarenessSelection" || it.startsWith("wake:")
-            },
+            }
         )
     }
 
@@ -124,8 +157,8 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
             EditorV2Error(
                 domain = "transport",
                 code = "TRANSPORT_RESOURCE_EXHAUSTED",
-                message = "awareness outbox is full",
-            ),
+                message = "awareness outbox is full"
+            )
         )
 
         val update = adapter.insertText("X", 4)
@@ -249,7 +282,8 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
         val session = sessionOf(adapter)
         session.text.insert(0, "EXT")
         session.revision += 1u
-        val snapshot = atomicRenderSnapshot("EXTbase", session.revision.toString(), selectionScalar = 0)
+        val snapshot =
+            atomicRenderSnapshot("EXTbase", session.revision.toString(), selectionScalar = 0)
 
         backend.calls.clear()
         val adopted = adoptExternalRender(adapter, snapshot)
@@ -277,12 +311,12 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
         val errors = mutableListOf<EditorV2Error>()
         adapter.onAutonomousError = errors::add
         val snapshotB = JSONObject(
-            atomicRenderSnapshot("bb", (revisionA + 1u).toString(), selectionScalar = 1),
+            atomicRenderSnapshot("bb", (revisionA + 1u).toString(), selectionScalar = 1)
         )
             .put("historyState", JSONObject().put("canUndo", false).put("canRedo", true))
             .toString()
         backend.nextPinPositionEpochResult = EditorV2CallResult.Err(
-            EditorV2Error("operation", "REVISION_MISMATCH", "stale"),
+            EditorV2Error("operation", "REVISION_MISMATCH", "stale")
         )
 
         assertNull(adoptExternalRender(adapter, snapshotB))
@@ -292,7 +326,11 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
         val cachedA = requireNotNull(adapter.atomicRenderJson(revisionA.toString()))
         assertEquals("a", renderedText(cachedA))
         assertEquals(0, JSONObject(cachedA).getJSONObject("selection").getInt("anchorScalar"))
-        assertFalse(JSONObject(cachedA).getJSONObject("activeState").getJSONObject("marks").getBoolean("bold"))
+        assertFalse(
+            JSONObject(
+                cachedA
+            ).getJSONObject("activeState").getJSONObject("marks").getBoolean("bold")
+        )
         assertEquals(true, adapter.historyCanUndo())
         assertEquals(false, adapter.historyCanRedo())
         assertNull(adapter.atomicRenderJson((revisionA + 1u).toString()))
@@ -317,8 +355,8 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
         assertNull(
             adoptExternalRender(
                 adapter,
-                atomicRenderSnapshot("bb", (revisionA + 1u).toString(), selectionScalar = 1),
-            ),
+                atomicRenderSnapshot("bb", (revisionA + 1u).toString(), selectionScalar = 1)
+            )
         )
 
         assertEquals(revisionA, adapter.baseDocumentRevision)

@@ -94,10 +94,6 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
     var pendingEditorUpdateRetryScheduled = false
     var pendingEditorUpdateRetryEditorId: UInt64?
     var pendingEditorUpdateRetryGeneration: UInt64 = 0
-    /// Internal-only fallback for boundary rejections that cannot reach an
-    /// adapter callback because the paired adapter is absent. Task 15 owns
-    /// application-visible event wiring; these deterministic records do not
-    /// dispatch an Expo event.
     var editorUpdateInternalRejections: [String] = []
     var pendingViewCommandUpdateJSON: String?
     var pendingViewCommandUpdateEditorId: UInt64?
@@ -219,7 +215,6 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
         }
         configureAccessoryToolbar()
 
-        // Observe UITextView focus changes via NotificationCenter.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(textViewDidBeginEditing(_:)),
@@ -339,19 +334,11 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
         }
     }
 
-    // MARK: - Editor Binding
-
     // MARK: - Autonomous adapter errors
 
     var imageLoadingPolicy: ImageLoadingPolicy {
         imageLoadOwner.policy
     }
-
-    // MARK: - View Commands
-
-    // MARK: - Focus Commands
-
-    // MARK: - Focus Notifications
 
     // MARK: - EditorTextViewDelegate
 

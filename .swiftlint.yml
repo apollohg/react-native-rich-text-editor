@@ -1,0 +1,52 @@
+included:
+  - ios
+  - ios-tests/TestHost
+  - packages/code-highlighting/ios
+
+excluded:
+  - "**/Generated_*.swift"
+  - "**/Pods"
+  - "**/build"
+  - "**/.build"
+  - "**/DerivedData"
+  - "**/*.xcframework"
+
+disabled_rules:
+  - line_length
+  - function_body_length
+  - type_body_length
+  - file_length
+  - cyclomatic_complexity
+  - function_parameter_count
+
+opt_in_rules:
+  - indentation_width
+  - empty_count
+  - empty_string
+  - sorted_imports
+
+indentation_width:
+  indentation_width: 4
+  include_comments: false
+
+identifier_name:
+  min_length: 2
+  max_length:
+    warning: 60
+    error: 100
+  excluded:
+    - id
+    - x
+    - y
+    - z
+    - i
+    - j
+    # XCTest methods use descriptive names with underscores.
+    - "^test.*"
+
+type_name:
+  max_length:
+    warning: 60
+    error: 100
+
+reporter: xcode

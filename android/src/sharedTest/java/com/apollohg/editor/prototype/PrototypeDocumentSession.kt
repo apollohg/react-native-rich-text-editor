@@ -28,18 +28,32 @@ internal class PrototypeDocumentSession(initialParagraphs: List<String>) : AutoC
     private var commitPending = false
 
     init {
-        val created = UniffiEditorV2Backend.create("""{"initialization":{"type":"localEmpty"}}""", null)
-        check(created is EditorV2CallResult.Ok) { "Could not create prototype Rust document: $created" }
+        val created = UniffiEditorV2Backend.create(
+            """{"initialization":{"type":"localEmpty"}}""",
+            null
+        )
+        check(created is EditorV2CallResult.Ok) {
+            "Could not create prototype Rust document: $created"
+        }
         val editorId = JSONObject(created.value).getString("editorId")
         adapter = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend, editorId, false))
         try {
             val paragraphs = JSONArray()
             initialParagraphs.ifEmpty { listOf("") }.flatMap { it.split('\n') }.forEach { text ->
                 val content = JSONArray()
-                if (text.isNotEmpty()) content.put(JSONObject().put("type", "text").put("text", text))
+                if (text.isNotEmpty()) {
+                    content.put(
+                        JSONObject().put("type", "text").put("text", text)
+                    )
+                }
                 paragraphs.put(JSONObject().put("type", "paragraph").put("content", content))
             }
-            check(adapter.setContentJson(JSONObject().put("type", "doc").put("content", paragraphs).toString()) != null)
+            check(
+                adapter.setContentJson(
+                    JSONObject().put("type", "doc").put("content", paragraphs).toString()
+                ) !=
+                    null
+            )
             readCommittedDocument()
             editable.append(committedText)
             Selection.setSelection(editable, 0)
@@ -67,7 +81,8 @@ internal class PrototypeDocumentSession(initialParagraphs: List<String>) : AutoC
         return connectionGeneration
     }
 
-    internal fun isCurrent(generation: Long): Boolean = !closed && generation == connectionGeneration
+    internal fun isCurrent(generation: Long): Boolean =
+        !closed && generation == connectionGeneration
 
     internal fun retireConnection(generation: Long) {
         if (!isCurrent(generation)) return
@@ -115,30 +130,63 @@ internal class PrototypeDocumentSession(initialParagraphs: List<String>) : AutoC
         val head = selectionEnd
         return runCatching {
             var prefix = 0
-            while (prefix < committedText.length && prefix < desired.length && committedText[prefix] == desired[prefix]) prefix++
+            while (prefix < committedText.length && prefix < desired.length &&
+                committedText[prefix] == desired[prefix]
+            ) {
+                prefix++
+            }
             prefix = boundaryIn(committedText, prefix)
             var oldEnd = committedText.length
             var newEnd = desired.length
-            while (oldEnd > prefix && newEnd > prefix && committedText[oldEnd - 1] == desired[newEnd - 1]) { oldEnd--; newEnd-- }
-            if (oldEnd < committedText.length && oldEnd > 0 && Character.isLowSurrogate(committedText[oldEnd])) { oldEnd++; newEnd++ }
+            while (oldEnd > prefix && newEnd > prefix &&
+                committedText[oldEnd - 1] == desired[newEnd - 1]
+            ) {
+                oldEnd--
+                newEnd--
+            }
+            if (oldEnd < committedText.length && oldEnd > 0 &&
+                Character.isLowSurrogate(committedText[oldEnd])
+            ) {
+                oldEnd++
+                newEnd++
+            }
             val from = PositionBridge.utf16ToScalar(prefix, committedText)
             val to = PositionBridge.utf16ToScalar(oldEnd, committedText)
             val inserted = desired.substring(prefix, newEnd)
             if ('\n' !in inserted) {
-                check(adapter.replaceTextRange(from, to, inserted) != null) { "Rust rejected text replacement." }
+                check(adapter.replaceTextRange(from, to, inserted) != null) {
+                    "Rust rejected text replacement."
+                }
             } else {
-                if (to > from) check(adapter.deleteScalarRange(from, to) != null) { "Rust rejected range deletion." }
+                if (to >
+                    from
+                ) {
+                    check(adapter.deleteScalarRange(from, to) != null) {
+                        "Rust rejected range deletion."
+                    }
+                }
                 var caret = from
                 inserted.split('\n').forEachIndexed { index, text ->
-                    if (index > 0) { check(adapter.splitBlockAt(caret) != null) { "Rust rejected paragraph split." }; caret++ }
+                    if (index >
+                        0
+                    ) {
+                        check(adapter.splitBlockAt(caret) != null) {
+                            "Rust rejected paragraph split."
+                        }
+                        caret++
+                    }
                     if (text.isNotEmpty()) {
-                        check(adapter.insertText(text, caret) != null) { "Rust rejected text insertion." }
+                        check(adapter.insertText(text, caret) != null) {
+                            "Rust rejected text insertion."
+                        }
                         caret += text.codePointCount(0, text.length)
                     }
                 }
             }
             readCommittedDocument()
-            check(committedText == desired) { "Rust reconciliation differs: expected $desired, got $committedText" }
+            check(committedText == desired) {
+                "Rust reconciliation differs: expected $desired, got $committedText"
+            }
             Selection.setSelection(editable, boundary(anchor), boundary(head))
             lastError = null
             true
@@ -153,7 +201,10 @@ internal class PrototypeDocumentSession(initialParagraphs: List<String>) : AutoC
     }
 
     private fun syncCoreSelection() {
-        adapter.syncSelection(PositionBridge.utf16ToScalar(selectionStart, committedText), PositionBridge.utf16ToScalar(selectionEnd, committedText))
+        adapter.syncSelection(
+            PositionBridge.utf16ToScalar(selectionStart, committedText),
+            PositionBridge.utf16ToScalar(selectionEnd, committedText)
+        )
     }
 
     private fun readCommittedDocument() {
@@ -163,28 +214,44 @@ internal class PrototypeDocumentSession(initialParagraphs: List<String>) : AutoC
         val paragraphs = JSONObject(committedJson).getJSONArray("content")
         committedText = (0 until paragraphs.length()).joinToString("\n") { index ->
             val nodes = paragraphs.getJSONObject(index).optJSONArray("content") ?: JSONArray()
-            (0 until nodes.length()).joinToString("") { nodes.getJSONObject(it).optString("text", "") }
+            (0 until nodes.length()).joinToString("") {
+                nodes.getJSONObject(it).optString("text", "")
+            }
         }
     }
 
     private fun cancelTransient() {
-        val hadChanges = editable.toString() != committedText || BaseInputConnection.getComposingSpanStart(editable) >= 0
+        val hadChanges =
+            editable.toString() != committedText ||
+                BaseInputConnection.getComposingSpanStart(editable) >= 0
         val anchor = selectionStart
         val head = selectionEnd
         batchDepth = 0
         changed = false
         commitPending = false
         BaseInputConnection.removeComposingSpans(editable)
-        if (editable.toString() != committedText) editable.replace(0, editable.length, committedText)
+        if (editable.toString() !=
+            committedText
+        ) {
+            editable.replace(0, editable.length, committedText)
+        }
         Selection.setSelection(editable, boundary(anchor), boundary(head))
         if (hadChanges) onChange?.invoke()
     }
 
-    internal fun boundary(offset: Int, forward: Boolean = false): Int = boundaryIn(editable, offset, forward)
+    internal fun boundary(offset: Int, forward: Boolean = false): Int =
+        boundaryIn(editable, offset, forward)
 
     private fun boundaryIn(text: CharSequence, offset: Int, forward: Boolean = false): Int {
         val clamped = offset.coerceIn(0, text.length)
-        return if (clamped > 0 && clamped < text.length && Character.isHighSurrogate(text[clamped - 1]) && Character.isLowSurrogate(text[clamped])) clamped + if (forward) 1 else -1 else clamped
+        return if (clamped > 0 && clamped < text.length &&
+            Character.isHighSurrogate(text[clamped - 1]) &&
+            Character.isLowSurrogate(text[clamped])
+        ) {
+            clamped + if (forward) 1 else -1
+        } else {
+            clamped
+        }
     }
 
     override fun close() {

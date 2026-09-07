@@ -7,6 +7,7 @@ import android.view.KeyEvent
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.CorrectionInfo
 import android.view.inputmethod.EditorInfo
+import java.time.Duration
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -15,11 +16,10 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.robolectric.Shadows.shadowOf
-import org.robolectric.RuntimeEnvironment
-import java.time.Duration
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -103,7 +103,7 @@ internal class EditorInputConnectionLifecycleTest : EditorInputConnectionTestSup
     }
 
     @Test
-    fun `finish composing text after unchanged composing region moves default cursor to range end`() {
+    fun `finish unchanged composing region moves default cursor to range end`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson("abc"), notifyListener = false)
         editText.setSelection(0)
@@ -198,7 +198,7 @@ internal class EditorInputConnectionLifecycleTest : EditorInputConnectionTestSup
     }
 
     @Test
-    fun `commit text after authorized render change is consumed without inserting stale composition`() {
+    fun `commit after authorized render is consumed without inserting stale composition`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson("Hello world"), notifyListener = false)
         editText.setSelection(6)
@@ -538,7 +538,7 @@ internal class EditorInputConnectionLifecycleTest : EditorInputConnectionTestSup
     }
 
     @Test
-    fun `composition commit adopts already visible correction instead of inserting duplicate word`() {
+    fun `composition commit adopts visible correction without duplicating word`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson("wouldnt"), notifyListener = false)
         editText.setSelection(7)
@@ -741,7 +741,7 @@ internal class EditorInputConnectionLifecycleTest : EditorInputConnectionTestSup
     }
 
     @Test
-    fun `focused native autocorrect with stray composing span commits when no composition is tracked`() {
+    fun `focused autocorrect with stray composing span commits without tracked composition`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson("teh "), notifyListener = false)
         assertTrue(editText.requestFocus())
@@ -855,7 +855,7 @@ internal class EditorInputConnectionLifecycleTest : EditorInputConnectionTestSup
     }
 
     @Test
-    fun `focused native composing diff with tracked composing text is not adopted as final mutation`() {
+    fun `focused composing diff with tracked text is not adopted as final mutation`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson("Hello world"), notifyListener = false)
         assertTrue(editText.requestFocus())

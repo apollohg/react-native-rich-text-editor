@@ -6,18 +6,17 @@ extension EditorV2Adapter {
         defer { endRuntimeOperation() }
         guard let update = performMutation(adoptEngineSelection: true, publishMutation: false, {
             self.callWithEnvelope([
-                "selection": ["type": "atom", "docPos": Int(docPos), "edge": "node"],
+                "selection": ["type": "atom", "docPos": Int(docPos), "edge": "node"]
             ]) { requestJSON in
                 editorV2SetSelection(editorId: self.editorId, requestJson: requestJSON)
             }
         }),
-              let data = update.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let selection = object["selection"] as? [String: Any]
+            let data = update.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let selection = object["selection"] as? [String: Any]
         else { return nil }
         if selection["type"] as? String == "node",
-           let pos = Self.uint32Field(selection, "pos")
-        {
+           let pos = Self.uint32Field(selection, "pos") {
             publishCollaborationSelection(docAnchor: pos, docHead: pos + 1)
             return EditorV2SelectionSync(docAnchor: pos, docHead: pos, refreshedUpdateJSON: update)
         }
@@ -60,17 +59,17 @@ extension EditorV2Adapter {
         // retry.
         let collapsed = clampedAnchor == clampedHead
         var result = callWithEnvelope(
-                selectionEnvelope(
-                    anchor: clampedAnchor,
-                    head: clampedHead,
-                    affinity: collapsed ? "after" : "before"
-                )
+            selectionEnvelope(
+                anchor: clampedAnchor,
+                head: clampedHead,
+                affinity: collapsed ? "after" : "before"
+            )
         ) { requestJson in
             editorV2SetSelection(editorId: self.editorId, requestJson: requestJson)
         }
         if collapsed, let error = result.error, error.code == "POSITION_INVALID" {
             result = callWithEnvelope(
-                    selectionEnvelope(anchor: clampedAnchor, head: clampedHead, affinity: "before")
+                selectionEnvelope(anchor: clampedAnchor, head: clampedHead, affinity: "before")
             ) { requestJson in
                 editorV2SetSelection(editorId: self.editorId, requestJson: requestJson)
             }
@@ -123,7 +122,7 @@ extension EditorV2Adapter {
             guard let update = performNativeIntent(
                 nativeIntent("setSelection", anchor: anchor, head: head)
             )?.updateJSON,
-                  let mapping = Self.textDocumentSelection(from: update)
+                let mapping = Self.textDocumentSelection(from: update)
             else {
                 return nil
             }
@@ -261,7 +260,7 @@ extension EditorV2Adapter {
         let selection: [String: Any] = [
             "type": "text",
             "anchor": Int(docAnchor),
-            "head": Int(docHead),
+            "head": Int(docHead)
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: selection),
               let selectionJSON = String(data: data, encoding: .utf8)

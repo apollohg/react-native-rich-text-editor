@@ -1,7 +1,6 @@
 package com.apollohg.editor
 
 import android.os.Handler
-import androidx.annotation.RequiresApi
 import android.os.Looper
 import android.os.SystemClock
 import android.text.Selection
@@ -10,13 +9,14 @@ import android.view.KeyEvent
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.CompletionInfo
 import android.view.inputmethod.CorrectionInfo
-import android.view.inputmethod.InputConnection
-import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.ExtractedText
 import android.view.inputmethod.ExtractedTextRequest
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.SurroundingText
 import android.view.inputmethod.TextAttribute
 import android.view.inputmethod.TextSnapshot
+import androidx.annotation.RequiresApi
 
 /**
  * Custom [InputConnectionWrapper] that intercepts all text input from the soft keyboard
@@ -46,7 +46,7 @@ class EditorInputConnection(
     baseConnection: InputConnection,
     internal val boundEditorId: Long,
     internal val boundGeneration: Long,
-    internal val boundMapperGeneration: Long,
+    internal val boundMapperGeneration: Long
 ) : InputConnectionWrapper(baseConnection, true) {
     companion object {
         private fun textTraceSummary(text: CharSequence?): String {
@@ -104,29 +104,56 @@ class EditorInputConnection(
     internal var lastPublishedExtractedText: ExtractedText? = null
     internal var lastPublishedSelection: List<Int>? = null
 
-    override fun commitText(text: CharSequence, newCursorPosition: Int, textAttribute: TextAttribute?): Boolean =
-        commitText(text, newCursorPosition)
+    override fun commitText(
+        text: CharSequence,
+        newCursorPosition: Int,
+        textAttribute: TextAttribute?
+    ): Boolean = commitText(text, newCursorPosition)
 
-    override fun setComposingText(text: CharSequence, newCursorPosition: Int, textAttribute: TextAttribute?): Boolean =
-        setComposingText(text, newCursorPosition)
+    override fun setComposingText(
+        text: CharSequence,
+        newCursorPosition: Int,
+        textAttribute: TextAttribute?
+    ): Boolean = setComposingText(text, newCursorPosition)
 
     override fun setComposingRegion(start: Int, end: Int, textAttribute: TextAttribute?): Boolean =
         setComposingRegion(start, end)
 
-    override fun replaceText(start: Int, end: Int, text: CharSequence, newCursorPosition: Int, textAttribute: TextAttribute?): Boolean {
+    override fun replaceText(
+        start: Int,
+        end: Int,
+        text: CharSequence,
+        newCursorPosition: Int,
+        textAttribute: TextAttribute?
+    ): Boolean {
         if (!isCurrentInputSessionFor("replaceText") || !editorView.isEditable) return true
         if (start < 0 || end < 0) return false
         val requestedText = currentMapper()?.visibleText?.toString() ?: return false
         if (!editorView.prepareForExternalEditorUpdate()) return true
-        if (!isCurrentInputSession() || currentMapper()?.visibleText?.toString() != requestedText) return true
-        val range = rawRangeForIme(start.coerceAtMost(requestedText.length), end.coerceAtMost(requestedText.length)) ?: return false
+        if (!isCurrentInputSession() ||
+            currentMapper()?.visibleText?.toString() != requestedText
+        ) {
+            return true
+        }
+        val range =
+            rawRangeForIme(
+                start.coerceAtMost(requestedText.length),
+                end.coerceAtMost(requestedText.length)
+            )
+                ?: return false
         val raw = editorView.editableText.toString()
         val normalized = if (range.first == range.second) {
-            PositionBridge.snapToScalarBoundary(range.first, raw, biasForward = true).let { it to it }
-        } else PositionBridge.snapRangeToScalarBoundaries(range.first, range.second, raw)
+            PositionBridge.snapToScalarBoundary(range.first, raw, biasForward = true).let {
+                it to it
+            }
+        } else {
+            PositionBridge.snapRangeToScalarBoundaries(range.first, range.second, raw)
+        }
         pendingDuplicateCorrectionCommit = null
         pendingCompositionCorrectionCommit = null
-        editorView.runWithTransientInputMutationGuard { super.setSelection(normalized.first, normalized.second) }
+        editorView.runWithTransientInputMutationGuard {
+            super.setSelection(normalized.first, normalized.second)
+        }
         commitTextToEditor(text.toString(), newCursorPosition)
         return true
     }
@@ -135,8 +162,11 @@ class EditorInputConnection(
         extractedTextForIme(request, flags)
 
     @RequiresApi(31)
-    override fun getSurroundingText(beforeLength: Int, afterLength: Int, flags: Int): SurroundingText? =
-        surroundingTextForIme(beforeLength, afterLength, flags)
+    override fun getSurroundingText(
+        beforeLength: Int,
+        afterLength: Int,
+        flags: Int
+    ): SurroundingText? = surroundingTextForIme(beforeLength, afterLength, flags)
 
     @RequiresApi(33)
     override fun takeSnapshot(): TextSnapshot? = snapshotForIme()
@@ -262,7 +292,7 @@ class EditorInputConnection(
             mapper,
             start,
             minOf(mapper.visibleText.length, start + n.coerceAtLeast(0)),
-            flags,
+            flags
         )
     }
 
@@ -279,7 +309,7 @@ class EditorInputConnection(
             mapper,
             imeStart,
             imeEnd,
-            flags,
+            flags
         )
     }
 
@@ -334,11 +364,11 @@ class EditorInputConnection(
             ) {
                 val rawStart = mapper.imeToRaw(
                     imeOffset,
-                    ImeTextCoordinateMapper.Affinity.AFTER,
+                    ImeTextCoordinateMapper.Affinity.AFTER
                 )
                 val rawEnd = mapper.imeToRaw(
                     imeEnd,
-                    ImeTextCoordinateMapper.Affinity.BEFORE,
+                    ImeTextCoordinateMapper.Affinity.BEFORE
                 )
                 val renderedOldText = editorView.text
                     ?.subSequence(rawStart, rawEnd)
@@ -348,12 +378,12 @@ class EditorInputConnection(
                     rawStart,
                     rawEnd,
                     renderedOldText,
-                    newText,
+                    newText
                 )
             } else {
                 editorView.recordImeTraceForTesting(
                     "correctionExplicitNoop",
-                    "reason=staleVisibleText offset=$imeOffset oldLength=${oldText.length}",
+                    "reason=staleVisibleText offset=$imeOffset oldLength=${oldText.length}"
                 )
                 false
             }
@@ -365,11 +395,11 @@ class EditorInputConnection(
             if (mapper != null && tokenRange != null) {
                 val rawStart = mapper.imeToRaw(
                     tokenRange.first,
-                    ImeTextCoordinateMapper.Affinity.AFTER,
+                    ImeTextCoordinateMapper.Affinity.AFTER
                 )
                 val rawEnd = mapper.imeToRaw(
                     tokenRange.second,
-                    ImeTextCoordinateMapper.Affinity.BEFORE,
+                    ImeTextCoordinateMapper.Affinity.BEFORE
                 )
                 val renderedOldText = editorView.text
                     ?.subSequence(rawStart, rawEnd)
@@ -379,12 +409,12 @@ class EditorInputConnection(
                     rawStart,
                     rawEnd,
                     renderedOldText,
-                    newText,
+                    newText
                 )
             } else {
                 editorView.recordImeTraceForTesting(
                     "correctionInferredNoop",
-                    "reason=noVisibleToken offset=$imeOffset newLength=${newText.length}",
+                    "reason=noVisibleToken offset=$imeOffset newLength=${newText.length}"
                 )
                 false
             }
@@ -431,10 +461,11 @@ class EditorInputConnection(
                 ) {
                     editorView.runWithDeferredRustUpdateApplication {
                         didCommitAlreadyVisibleMutation =
-                            editorView.commitAlreadyVisibleCompositionMutationForPendingImeOperationForEditor(
-                                committedText,
-                                newCursorPosition
-                            )
+                            editorView
+                                .commitVisibleCompositionMutationForPendingImeOperation(
+                                    committedText,
+                                    newCursorPosition
+                                )
                     }
                 }
                 if (!didCommitAlreadyVisibleMutation) {
@@ -475,7 +506,9 @@ class EditorInputConnection(
         }
         editorView.recordImeTraceForTesting(
             "commitTextRouteDone",
-            "textLength=${committedText?.length ?: 0} totalUs=${nanosToMicros(System.nanoTime() - startedAt)}"
+            "textLength=${committedText?.length ?: 0} totalUs=${nanosToMicros(
+                System.nanoTime() - startedAt
+            )}"
         )
     }
 
@@ -511,7 +544,7 @@ class EditorInputConnection(
             return performMappedCompositionSurroundingDelete(
                 beforeLength,
                 afterLength,
-                deleteInCodePoints = false,
+                deleteInCodePoints = false
             )
         }
         if (shouldDeferPlainSurroundingDelete(beforeLength, afterLength)) {
@@ -549,7 +582,7 @@ class EditorInputConnection(
             return performMappedCompositionSurroundingDelete(
                 beforeLength,
                 afterLength,
-                deleteInCodePoints = true,
+                deleteInCodePoints = true
             )
         }
         if (shouldDeferPlainSurroundingDelete(beforeLength, afterLength)) {
@@ -578,7 +611,6 @@ class EditorInputConnection(
         return true
     }
 
-
     /**
      * Called when the IME sets composing (in-progress) text for CJK/swipe input.
      *
@@ -603,7 +635,9 @@ class EditorInputConnection(
         val textForBaseConnection = adjustedComposingText ?: text
         editorView.recordImeTraceForTesting(
             "setComposingText",
-            "${textTraceSummary(text)} cursor=$newCursorPosition adjusted=${textForBaseConnection.toString() != text?.toString()}"
+            "${textTraceSummary(
+                text
+            )} cursor=$newCursorPosition adjusted=${textForBaseConnection.toString() != text?.toString()}"
         )
         editorView.setComposingTextForEditor(adjustedComposingText)
         val trackedRange = trackedCompositionReplacementRange()
@@ -785,7 +819,6 @@ class EditorInputConnection(
             super.finishComposingText()
         }
 
-        // Now route the composed text through Rust.
         if (
             replacementRange != null &&
             (!composed.isNullOrEmpty() || replacementRange.first != replacementRange.second)
@@ -812,9 +845,8 @@ class EditorInputConnection(
         editorView.captureCompositionReplacementRangeIfNeeded()
     }
 
-    private fun trackedCompositionReplacementRange(): Pair<Int, Int>? {
-        return editorView.compositionReplacementRange()
-    }
+    private fun trackedCompositionReplacementRange(): Pair<Int, Int>? =
+        editorView.compositionReplacementRange()
 
     private fun clearCompositionTracking() {
         generatedCompositionAdjustment = null
@@ -858,12 +890,15 @@ class EditorInputConnection(
         ) {
             return true
         }
-        if (!editorView.isEditable && event?.let { editorView.isReadOnlyTextMutationKeyEvent(it) } == true) {
+        if (!editorView.isEditable &&
+            event?.let { editorView.isReadOnlyTextMutationKeyEvent(it) } == true
+        ) {
             return true
         }
         if (event != null && editorView.handleCompositionKeyEvent(event) {
                 super.sendKeyEvent(event)
-            }) {
+            }
+        ) {
             return true
         }
         if (event != null && editorView.handleHardwareKeyEvent(event)) {
@@ -871,7 +906,8 @@ class EditorInputConnection(
         }
         if (event != null && editorView.handlePrintableHardwareKeyEvent(event) {
                 super.sendKeyEvent(event)
-            }) {
+            }
+        ) {
             return true
         }
         return super.sendKeyEvent(event)

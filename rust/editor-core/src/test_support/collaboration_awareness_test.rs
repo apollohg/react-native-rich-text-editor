@@ -722,8 +722,7 @@ fn query_awareness_replies_are_bounded_and_reserved_like_every_protocol_reply() 
     );
     destroy_session(id);
 
-    // Outbox saturation is retryable per the Task 9 saturation ruling: the
-    // shared queue drains on delivery, so retry can change the result.
+    // Delivery drains the queue, so retrying after saturation can succeed.
     let (id, snapshot) = create_ready_room();
     let generation = synchronize_ready_room(id, &snapshot);
     bridge::set_outbox_ceilings(id, 0, 0).unwrap();

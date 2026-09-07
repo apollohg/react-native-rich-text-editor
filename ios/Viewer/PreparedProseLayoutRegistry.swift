@@ -8,7 +8,7 @@ public final class PreparedProseLayoutRegistry: NSObject {
     typealias DocumentCompiler = (ProseViewerRequest) throws -> ViewerDocument
     typealias LayoutPreparation = (ViewerDocument, ProseLayoutKey, CGFloat, CGFloat) throws -> PreparedProseLayout
 
-    @objc public class var sharedRegistry: PreparedProseLayoutRegistry { shared }
+    @objc public static var sharedRegistry: PreparedProseLayoutRegistry { shared }
     static let shared = PreparedProseLayoutRegistry()
 
     private final class Compilation {
@@ -68,10 +68,10 @@ public final class PreparedProseLayoutRegistry: NSObject {
 
     // XCTest-only lock-step hook for the mount-miss/measure ownership race.
     // It is deliberately absent from release binaries.
-#if DEBUG
-    var fabricMountMissAfterExactLeaseCleanupForTesting: (() -> Void)?
-    var fabricSidecarRegisteredForTesting: (() -> Void)?
-#endif
+    #if DEBUG
+        var fabricMountMissAfterExactLeaseCleanupForTesting: (() -> Void)?
+        var fabricSidecarRegisteredForTesting: (() -> Void)?
+    #endif
 
     var preparedLayoutCacheCountForTesting: Int { layoutCache.countForTesting }
     var compiledDocumentBytesForTesting: Int {
@@ -248,9 +248,9 @@ public final class PreparedProseLayoutRegistry: NSObject {
                 leaseHandle: fabricLeaseHandle,
                 semanticIdentity: request.semanticGenerationIdentity
             )
-#if DEBUG
-            fabricSidecarRegisteredForTesting?()
-#endif
+            #if DEBUG
+                fabricSidecarRegisteredForTesting?()
+            #endif
             // Release may race validation and create a stale exact sidecar.
             // Remove only this handle; a replacement family has another one.
             guard isFabricLeaseActive(token) else {
@@ -283,42 +283,43 @@ public final class PreparedProseLayoutRegistry: NSObject {
                 shouldCreateFabricLease: {
                     guard let ownedGeneration else { return true }
                     return self.isFabricLeaseActive(ownedGeneration)
-                }
-            ) {
-                let layoutStarted = PreparedProseInstrumentation.now()
-                self.lock.lock()
-                self.layoutPreparationCount += 1
-                self.lock.unlock()
-                do {
-                    var prepared: Result<PreparedProseLayout, Error>!
-                    request.appearance.traits.performAsCurrent {
-                        prepared = Result {
-                            if let imageMeasurementState {
-                                return try FabricAttachmentSidecars.withMeasurementState(imageMeasurementState) {
-                                    try self.prepare(document, key, canonicalWidth, scale)
+                },
+                build: {
+                    let layoutStarted = PreparedProseInstrumentation.now()
+                    self.lock.lock()
+                    self.layoutPreparationCount += 1
+                    self.lock.unlock()
+                    do {
+                        var prepared: Result<PreparedProseLayout, Error>!
+                        request.appearance.traits.performAsCurrent {
+                            prepared = Result {
+                                if let imageMeasurementState {
+                                    return try FabricAttachmentSidecars.withMeasurementState(imageMeasurementState) {
+                                        try self.prepare(document, key, canonicalWidth, scale)
+                                    }
                                 }
+                                return try self.prepare(document, key, canonicalWidth, scale)
                             }
-                            return try self.prepare(document, key, canonicalWidth, scale)
                         }
+                        let artifact = try prepared.get()
+                        PreparedProseInstrumentation.laidOut(layoutStarted, generation: request.generationIdentity)
+                        return artifact
+                    } catch let error as ProseViewerError {
+                        return self.errorArtifact(key: key, width: canonicalWidth, error: error)
+                    } catch {
+                        return self.errorArtifact(
+                            key: key,
+                            width: canonicalWidth,
+                            error: .layout(message: String(describing: error))
+                        )
                     }
-                    let artifact = try prepared.get()
-                    PreparedProseInstrumentation.laidOut(layoutStarted, generation: request.generationIdentity)
-                    return artifact
-                } catch let error as ProseViewerError {
-                    return self.errorArtifact(key: key, width: canonicalWidth, error: error)
-                } catch {
-                    return self.errorArtifact(
-                        key: key,
-                        width: canonicalWidth,
-                        error: .layout(message: String(describing: error))
-                    )
                 }
-            }
+            )
             if let generation = ownedGeneration,
                !retainFabricGenerationOwnership(
-                    generation,
-                    document: document,
-                    request: request
+                   generation,
+                   document: document,
+                   request: request
                ) {
                 discardCancelledFabricMeasurement(
                     generation,

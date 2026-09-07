@@ -96,8 +96,12 @@ final class NativeCodeHighlightingSession {
         lock.unlock()
     }
 
-    func update(provider id: String, theme: String, blocks: [NativeCodeHighlightBlock],
-                completion: @escaping (Result<[NativeHighlightedCodeBlock], Error>) -> Void) throws {
+    func update(
+        provider id: String,
+        theme: String,
+        blocks: [NativeCodeHighlightBlock],
+        completion: @escaping (Result<[NativeHighlightedCodeBlock], Error>) -> Void
+    ) throws {
         cancel()
         let provider = try NativeCodeHighlightingRegistry.provider(id: id)
         lock.lock()

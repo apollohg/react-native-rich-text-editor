@@ -155,11 +155,6 @@ pub fn transport_state(id: u64) -> Result<TransportState, TestError> {
     })
 }
 
-/// Test-only transport injection, reserved for policy-matrix cells that
-/// are unreachable through real transitions (`LocalReady` sessions are
-/// permanently `Detached` yet the Task 5 replacement gate deliberately
-/// covers every transport state). Room-bound tests must drive
-/// [`collaboration_drive`] and its socket directives instead.
 pub fn set_transport_state_for_test(id: u64, state: TransportState) -> Result<(), TestError> {
     let internal = match state {
         TransportState::Detached => InternalTransportState::Detached,
@@ -376,8 +371,6 @@ pub fn transport_reattach(id: u64, request_id: u64) -> Result<(), TestError> {
     with_live(id, |session| session.reattach(request_id))
 }
 
-/// Direct exposure of the crate-private Task 9 seam so the matrix can
-/// cover `Synchronized` rows without pretending protocol work happened.
 pub fn mark_synchronized_for_test(
     id: u64,
     request_id: u64,
@@ -445,8 +438,6 @@ fn map_receive_outcome(
     }
 }
 
-/// Task 9 protocol entry point: one bounded inbound y-sync message for
-/// the given raw generation value.
 pub fn receive_message(
     id: u64,
     request_id: u64,
@@ -501,8 +492,6 @@ pub fn desired_awareness(id: u64) -> Result<Option<serde_json::Value>, TestError
     with_live(id, |session| session.desired_awareness())
 }
 
-/// Task 10: awareness peer projections (tombstones excluded, cursors
-/// resolved against the current document on every read).
 pub fn awareness_peers(id: u64) -> Result<Vec<AwarenessPeerInfo>, TestError> {
     with_live(id, |session| {
         Ok(session
@@ -532,10 +521,6 @@ pub fn set_collaboration_limit_for_test(
     })
 }
 
-/// Pre-acquired session handle for destroy-interleaving coverage,
-/// mirroring the Task 3 lifecycle-test idiom: it keeps working after
-/// the registry entry disappears, so it proves `with_alive` refuses
-/// transport transitions during and after destroy.
 pub struct TransportHandle {
     slot: std::sync::Arc<crate::registry::EditorSessionSlot>,
 }
@@ -746,14 +731,10 @@ pub struct SnapshotRestoreOutcome {
     pub document_revision: u64,
 }
 
-/// Task 11: session-level snapshot export (read-only, allowed while
-/// connected).
 pub fn export_snapshot(id: u64, request_id: u64) -> Result<DocumentSnapshot, TestError> {
     with_live(id, |session| session.export_snapshot(request_id))
 }
 
-/// Task 11: session-level snapshot restore behind the lifecycle policy
-/// gate.
 pub fn restore_snapshot(
     id: u64,
     request_id: u64,
@@ -769,8 +750,6 @@ pub fn restore_snapshot(
     })
 }
 
-/// `(pending protocol reply count, bytes)`; `None` when the session has
-/// no attached runtime (and therefore no protocol queue).
 pub fn pending_protocol_replies(id: u64) -> Result<Option<(usize, usize)>, TestError> {
     with_live(id, |session| {
         Ok(session.collaboration_outbox().map(|outbox| {

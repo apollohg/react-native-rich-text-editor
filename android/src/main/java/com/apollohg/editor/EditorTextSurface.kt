@@ -42,11 +42,12 @@ import android.widget.TextView.BufferType
 open class EditorTextSurface @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
-    defStyleAttr: Int = 0,
+    defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
     val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         density = resources.displayMetrics.density
-        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 16f, resources.displayMetrics)
+        textSize =
+            TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 16f, resources.displayMetrics)
         color = Color.BLACK
     }
     private var buffer = SpannableStringBuilder()
@@ -79,16 +80,38 @@ open class EditorTextSurface @JvmOverloads constructor(
 
     var text: Editable
         get() = buffer
-        set(value) { setText(value as CharSequence) }
+        set(value) {
+            setText(value as CharSequence)
+        }
     val editableText: Editable get() = buffer
     val selectionStart: Int get() = Selection.getSelectionStart(buffer)
     val selectionEnd: Int get() = Selection.getSelectionEnd(buffer)
     val layout: Layout
         get() {
-            val available = ((if (measuredWidth > 0) measuredWidth else width) - compoundPaddingLeft - compoundPaddingRight).coerceAtLeast(1)
+            val available = (
+                (
+                    if (measuredWidth >
+                        0
+                    ) {
+                        measuredWidth
+                    } else {
+                        width
+                    }
+                    ) - compoundPaddingLeft -
+                    compoundPaddingRight
+                ).coerceAtLeast(1)
             if (layoutDirty || layoutWidth != available || cachedLayout == null) {
                 documentLayoutBuildCount++
-                cachedLayout = EditorDocumentLayout(buffer, paint, available, includeFontPadding, lineSpacingMultiplier, lineSpacingExtra, cachedLayout)
+                cachedLayout =
+                    EditorDocumentLayout(
+                        buffer,
+                        paint,
+                        available,
+                        includeFontPadding,
+                        lineSpacingMultiplier,
+                        lineSpacingExtra,
+                        cachedLayout
+                    )
                 layoutWidth = available
                 layoutDirty = false
             }
@@ -96,13 +119,22 @@ open class EditorTextSurface @JvmOverloads constructor(
         }
     var textSize: Float
         get() = paint.textSize
-        set(value) { paint.textSize = value; invalidateTextLayout() }
+        set(value) {
+            paint.textSize = value
+            invalidateTextLayout()
+        }
     var typeface: Typeface?
         get() = paint.typeface
-        set(value) { paint.typeface = value; invalidateTextLayout() }
+        set(value) {
+            paint.typeface = value
+            invalidateTextLayout()
+        }
     var letterSpacing: Float
         get() = paint.letterSpacing
-        set(value) { paint.letterSpacing = value; invalidateTextLayout() }
+        set(value) {
+            paint.letterSpacing = value
+            invalidateTextLayout()
+        }
     var inputType: Int = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
     var imeOptions: Int = EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN
     var privateImeOptions: String? = null
@@ -111,12 +143,23 @@ open class EditorTextSurface @JvmOverloads constructor(
     var linksClickable = false
     var showSoftInputOnFocus = true
     var includeFontPadding = false
-        set(value) { if (field != value) { field = value; invalidateTextLayout() } }
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidateTextLayout()
+            }
+        }
     var isCursorVisible = true
-        set(value) { field = value; invalidate() }
+        set(value) {
+            field = value
+            invalidate()
+        }
     var textCursorDrawable: Drawable? = null
     var highlightColor: Int = context.obtainStyledAttributes(
-        attrs, intArrayOf(android.R.attr.textColorHighlight), defStyleAttr, 0,
+        attrs,
+        intArrayOf(android.R.attr.textColorHighlight),
+        defStyleAttr,
+        0
     ).let { attributes ->
         try {
             attributes.getColor(0, 0x6633B5E5)
@@ -124,26 +167,43 @@ open class EditorTextSurface @JvmOverloads constructor(
             attributes.recycle()
         }
     }
-        set(value) { field = value; invalidate() }
+        set(value) {
+            field = value
+            invalidate()
+        }
     var textColors: ColorStateList = ColorStateList.valueOf(Color.BLACK)
         private set
     var hintTextColors: ColorStateList = ColorStateList.valueOf(Color.GRAY)
         private set
     val currentTextColor get() = textColors.getColorForState(drawableState, textColors.defaultColor)
-    val currentHintTextColor get() = hintTextColors.getColorForState(drawableState, hintTextColors.defaultColor)
+    val currentHintTextColor get() = hintTextColors.getColorForState(
+        drawableState,
+        hintTextColors.defaultColor
+    )
     var hint: CharSequence? = null
     var minHeight: Int
         get() = minimumHeight
-        set(value) { minimumHeight = value }
+        set(value) {
+            minimumHeight = value
+        }
     var minLines = 1
-        set(value) { field = value.coerceAtLeast(0); requestLayout() }
+        set(value) {
+            field = value.coerceAtLeast(0)
+            requestLayout()
+        }
     var maxLines = Int.MAX_VALUE
-        set(value) { field = value.coerceAtLeast(1); requestLayout() }
+        set(value) {
+            field = value.coerceAtLeast(1)
+            requestLayout()
+        }
     var lineSpacingMultiplier = 1f
         private set
     var lineSpacingExtra = 0f
         private set
-    val lineHeight get() = (paint.fontMetricsInt.run { descent - ascent } * lineSpacingMultiplier + lineSpacingExtra).toInt().coerceAtLeast(1)
+    val lineHeight get() = (
+        paint.fontMetricsInt.run { descent - ascent } * lineSpacingMultiplier +
+            lineSpacingExtra
+        ).toInt().coerceAtLeast(1)
     val lineCount get() = layout.lineCount
     val compoundPaddingLeft get() = paddingLeft
     val compoundPaddingRight get() = paddingRight
@@ -173,20 +233,34 @@ open class EditorTextSurface @JvmOverloads constructor(
             sendSurfaceAccessibilityEvent(event)
         }
         override fun afterTextChanged(s: Editable?) {
-            try { watchers.toList().forEach { it.afterTextChanged(s) } }
-            finally {
+            try {
+                watchers.toList().forEach { it.afterTextChanged(s) }
+            } finally {
                 textChangeDepth = (textChangeDepth - 1).coerceAtLeast(0)
                 notifySelectionChanged()
                 notifyInputStateChanged()
             }
         }
-        override fun onSpanAdded(text: Spannable?, what: Any?, start: Int, end: Int) = spanChanged(text, what)
-        override fun onSpanRemoved(text: Spannable?, what: Any?, start: Int, end: Int) = spanChanged(text, what)
-        override fun onSpanChanged(text: Spannable?, what: Any?, oldStart: Int, oldEnd: Int, newStart: Int, newEnd: Int) = spanChanged(text, what)
+        override fun onSpanAdded(text: Spannable?, what: Any?, start: Int, end: Int) =
+            spanChanged(text, what)
+        override fun onSpanRemoved(text: Spannable?, what: Any?, start: Int, end: Int) =
+            spanChanged(text, what)
+        override fun onSpanChanged(
+            text: Spannable?,
+            what: Any?,
+            oldStart: Int,
+            oldEnd: Int,
+            newStart: Int,
+            newEnd: Int
+        ) = spanChanged(text, what)
         private fun spanChanged(text: Spannable?, what: Any?) {
             if (what === this || replacingBuffer) return
             if (what === Selection.SELECTION_START || what === Selection.SELECTION_END) {
-                if ((text?.getSpanFlags(what) ?: 0) and Spanned.SPAN_INTERMEDIATE == 0) notifySelectionChanged()
+                if ((text?.getSpanFlags(what) ?: 0) and Spanned.SPAN_INTERMEDIATE ==
+                    0
+                ) {
+                    notifySelectionChanged()
+                }
             } else {
                 invalidateTextLayout()
                 notifyInputStateChanged()
@@ -225,13 +299,17 @@ open class EditorTextSurface @JvmOverloads constructor(
             buffer = next
             buffer.setSpan(changeWatcher, 0, buffer.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
             if (Selection.getSelectionStart(buffer) < 0) Selection.setSelection(buffer, 0)
-        } finally { replacingBuffer = false }
+        } finally {
+            replacingBuffer = false
+        }
         invalidateTextLayout()
         textChangeDepth++
         try {
             watchers.toList().forEach { it.onTextChanged(buffer, 0, before, buffer.length) }
             watchers.toList().forEach { it.afterTextChanged(buffer) }
-        } finally { textChangeDepth-- }
+        } finally {
+            textChangeDepth--
+        }
         if (previousText != buffer.toString()) {
             val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED)
             event.beforeText = previousText
@@ -252,17 +330,55 @@ open class EditorTextSurface @JvmOverloads constructor(
     }
     fun selectAll() = setSelection(0, buffer.length)
     fun extendSelection(index: Int) = Selection.extendSelection(buffer, index)
-    fun addTextChangedListener(watcher: TextWatcher) { if (watcher !in watchers) watchers += watcher }
-    fun removeTextChangedListener(watcher: TextWatcher) { watchers -= watcher }
-    fun setRawInputType(value: Int) { inputType = value }
-    fun setTextColor(value: Int) { textColors = ColorStateList.valueOf(value); paint.color = value; invalidateTextLayout() }
-    fun setTextColor(value: ColorStateList) { textColors = value; paint.color = currentTextColor; invalidateTextLayout() }
-    fun setHintTextColor(value: Int) { hintTextColors = ColorStateList.valueOf(value); invalidate() }
-    fun setTextSize(unit: Int, value: Float) { textSize = TypedValue.applyDimension(unit, value, resources.displayMetrics) }
-    fun setTypeface(value: Typeface?, style: Int) { typeface = Typeface.create(value, style) }
-    fun setLineSpacing(add: Float, mult: Float) { lineSpacingExtra = add; lineSpacingMultiplier = mult; invalidateTextLayout() }
-    fun setCompoundDrawablesRelativeWithIntrinsicBounds(start: Drawable?, top: Drawable?, end: Drawable?, bottom: Drawable?) {
-        require(start == null && top == null && end == null && bottom == null) { "Editor content insets own text padding." }
+    fun addTextChangedListener(watcher: TextWatcher) {
+        if (watcher !in
+            watchers
+        ) {
+            watchers += watcher
+        }
+    }
+    fun removeTextChangedListener(watcher: TextWatcher) {
+        watchers -= watcher
+    }
+    fun setRawInputType(value: Int) {
+        inputType = value
+    }
+    fun setTextColor(value: Int) {
+        textColors = ColorStateList.valueOf(value)
+        paint.color = value
+        invalidateTextLayout()
+    }
+    fun setTextColor(value: ColorStateList) {
+        textColors = value
+        paint.color = currentTextColor
+        invalidateTextLayout()
+    }
+    fun setHintTextColor(value: Int) {
+        hintTextColors = ColorStateList.valueOf(value)
+        invalidate()
+    }
+    fun setTextSize(unit: Int, value: Float) {
+        textSize =
+            TypedValue.applyDimension(unit, value, resources.displayMetrics)
+    }
+    fun setTypeface(value: Typeface?, style: Int) {
+        typeface = Typeface.create(value, style)
+    }
+    fun setLineSpacing(add: Float, mult: Float) {
+        lineSpacingExtra = add
+        lineSpacingMultiplier =
+            mult
+        invalidateTextLayout()
+    }
+    fun setCompoundDrawablesRelativeWithIntrinsicBounds(
+        start: Drawable?,
+        top: Drawable?,
+        end: Drawable?,
+        bottom: Drawable?
+    ) {
+        require(start == null && top == null && end == null && bottom == null) {
+            "Editor content insets own text padding."
+        }
     }
 
     internal fun invalidateTextLayout() {
@@ -288,7 +404,10 @@ open class EditorTextSurface @JvmOverloads constructor(
     protected open fun onSelectionChanged(selStart: Int, selEnd: Int) = Unit
     protected open fun onSurfaceInputStateChanged() = Unit
 
-    fun beginBatchEdit(): Boolean { batchDepth++; return true }
+    fun beginBatchEdit(): Boolean {
+        batchDepth++
+        return true
+    }
     fun endBatchEdit(): Boolean {
         if (batchDepth == 0) return false
         batchDepth--
@@ -297,14 +416,25 @@ open class EditorTextSurface @JvmOverloads constructor(
     }
 
     internal fun notifyInputStateChanged() {
-        if (batchDepth > 0 || textChangeDepth > 0 || replacingBuffer) { pendingInputState = true; return }
+        if (batchDepth > 0 || textChangeDepth > 0 ||
+            replacingBuffer
+        ) {
+            pendingInputState = true
+            return
+        }
         pendingInputState = false
         onSurfaceInputStateChanged()
         scheduleSurfaceCursorPublication()
     }
 
     internal fun requestSurfaceCursorUpdates(mode: Int): Boolean {
-        if (mode and (InputConnection.CURSOR_UPDATE_IMMEDIATE or InputConnection.CURSOR_UPDATE_MONITOR).inv() != 0) return false
+        if (mode and
+            (InputConnection.CURSOR_UPDATE_IMMEDIATE or InputConnection.CURSOR_UPDATE_MONITOR)
+                .inv() !=
+            0
+        ) {
+            return false
+        }
         monitorCursor = mode and InputConnection.CURSOR_UPDATE_MONITOR != 0
         if (mode and InputConnection.CURSOR_UPDATE_IMMEDIATE != 0) publishSurfaceCursor()
         return true
@@ -328,7 +458,9 @@ open class EditorTextSurface @JvmOverloads constructor(
         inputMethod.updateCursorAnchorInfo(this, info)
     }
 
-    internal val inputMethod get() = context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+    internal val inputMethod get() = context.getSystemService(
+        Context.INPUT_METHOD_SERVICE
+    ) as InputMethodManager
 
     override fun onCheckIsTextEditor() = true
 
@@ -341,7 +473,8 @@ open class EditorTextSurface @JvmOverloads constructor(
         outAttrs.privateImeOptions = privateImeOptions
         outAttrs.initialSelStart = selectionStart.coerceAtLeast(0)
         outAttrs.initialSelEnd = selectionEnd.coerceAtLeast(0)
-        outAttrs.initialCapsMode = TextUtils.getCapsMode(buffer, outAttrs.initialSelStart, inputType)
+        outAttrs.initialCapsMode =
+            TextUtils.getCapsMode(buffer, outAttrs.initialSelStart, inputType)
         outAttrs.packageName = context.packageName
         outAttrs.fieldId = id
         androidx.core.view.inputmethod.EditorInfoCompat.setInitialSurroundingText(outAttrs, buffer)
@@ -353,14 +486,33 @@ open class EditorTextSurface @JvmOverloads constructor(
         val available = (measured - compoundPaddingLeft - compoundPaddingRight).coerceAtLeast(1)
         if (layoutDirty || layoutWidth != available || cachedLayout == null) {
             documentLayoutBuildCount++
-            cachedLayout = EditorDocumentLayout(buffer, paint, available, includeFontPadding, lineSpacingMultiplier, lineSpacingExtra, cachedLayout)
+            cachedLayout =
+                EditorDocumentLayout(
+                    buffer,
+                    paint,
+                    available,
+                    includeFontPadding,
+                    lineSpacingMultiplier,
+                    lineSpacingExtra,
+                    cachedLayout
+                )
             layoutDirty = false
             layoutWidth = available
         }
         val content = requireNotNull(cachedLayout)
-        val textHeight = if (content.lineCount > maxLines) content.getLineTop(maxLines) else content.height
-        val desired = maxOf(textHeight, minLines * lineHeight) + compoundPaddingTop + compoundPaddingBottom
-        setMeasuredDimension(measured, resolveSize(maxOf(desired, suggestedMinimumHeight), heightMeasureSpec))
+        val textHeight = if (content.lineCount >
+            maxLines
+        ) {
+            content.getLineTop(maxLines)
+        } else {
+            content.height
+        }
+        val desired =
+            maxOf(textHeight, minLines * lineHeight) + compoundPaddingTop + compoundPaddingBottom
+        setMeasuredDimension(
+            measured,
+            resolveSize(maxOf(desired, suggestedMinimumHeight), heightMeasureSpec)
+        )
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -375,9 +527,13 @@ open class EditorTextSurface @JvmOverloads constructor(
             layout.getSelectionPath(minOf(start, end), maxOf(start, end), selectionPath)
             selectionPaint.color = highlightColor
             selectionPath
-        } else null
+        } else {
+            null
+        }
         layout.draw(canvas, selection, selectionPaint, 0)
-        if (isCursorVisible && blinkVisible && start >= 0 && start == end && hasFocus() && hasWindowFocus()) {
+        if (isCursorVisible && blinkVisible && start >= 0 && start == end && hasFocus() &&
+            hasWindowFocus()
+        ) {
             val editor = this as? EditorEditText
             editor?.nativeCursorDrawRect()?.let { rect ->
                 selectionPaint.color = editor.caretColor
@@ -391,7 +547,13 @@ open class EditorTextSurface @JvmOverloads constructor(
     fun getOffsetForPosition(x: Float, y: Float): Int {
         val layout = layout
         val line = layout.getLineForVertical((y + scrollY - totalPaddingTop).toInt())
-        return PositionBridge.snapToGraphemeBoundary(layout.getOffsetForHorizontal(line, x + scrollX - totalPaddingLeft), buffer.toString())
+        return PositionBridge.snapToGraphemeBoundary(
+            layout.getOffsetForHorizontal(
+                line,
+                x + scrollX - totalPaddingLeft
+            ),
+            buffer.toString()
+        )
     }
 
     fun bringPointIntoView(offset: Int): Boolean {
@@ -399,13 +561,25 @@ open class EditorTextSurface @JvmOverloads constructor(
         val safe = offset.coerceIn(0, buffer.length)
         val line = layout.getLineForOffset(safe)
         val x = layout.getPrimaryHorizontal(safe).toInt() + totalPaddingLeft
-        val rect = Rect(x, layout.editorTextLineTop(line) + totalPaddingTop, x + 2, layout.editorTextLineBottom(line) + totalPaddingTop)
+        val rect = Rect(
+            x,
+            layout.editorTextLineTop(line) + totalPaddingTop,
+            x + 2,
+            layout.editorTextLineBottom(line) + totalPaddingTop
+        )
         var scrolled = false
         if (!interaction.hasScrollContainer() && height > 0) {
-            val limit = (layout.height + totalPaddingTop + totalPaddingBottom - height).coerceAtLeast(0)
+            val limit =
+                (layout.height + totalPaddingTop + totalPaddingBottom - height).coerceAtLeast(
+                    0
+                )
             val next = when {
                 rect.top < scrollY + totalPaddingTop -> rect.top - totalPaddingTop
-                rect.bottom > scrollY + height - totalPaddingBottom -> rect.bottom - height + totalPaddingBottom
+
+                rect.bottom > scrollY + height - totalPaddingBottom ->
+                    rect.bottom - height +
+                        totalPaddingBottom
+
                 else -> scrollY
             }.coerceIn(0, limit)
             scrolled = next != scrollY
@@ -416,37 +590,66 @@ open class EditorTextSurface @JvmOverloads constructor(
 
     override fun onDragEvent(event: android.view.DragEvent) = dragDrop.onDragEvent(event)
     override fun onTouchEvent(event: MotionEvent) = interaction.onTouchEvent(event)
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean = interaction.onKeyDown(keyCode, event) || super.onKeyDown(keyCode, event)
-    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean = keyListener?.onKeyUp(this, buffer, keyCode, event) == true || super.onKeyUp(keyCode, event)
-    override fun performClick(): Boolean { super.performClick(); return true }
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
+        interaction.onKeyDown(keyCode, event) || super.onKeyDown(keyCode, event)
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean =
+        keyListener?.onKeyUp(this, buffer, keyCode, event) == true || super.onKeyUp(keyCode, event)
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
 
-    open fun onTextContextMenuItem(id: Int): Boolean {
-        return when (id) {
-            android.R.id.selectAll -> { selectAll(); true }
-            android.R.id.copy, android.R.id.cut -> {
+    open fun onTextContextMenuItem(id: Int): Boolean = when (id) {
+        android.R.id.selectAll -> {
+            selectAll()
+            true
+        }
+
+        android.R.id.copy, android.R.id.cut -> {
+            val from = minOf(selectionStart, selectionEnd).coerceAtLeast(0)
+            val to = maxOf(selectionStart, selectionEnd).coerceAtLeast(from)
+            (
+                context.getSystemService(
+                    Context.CLIPBOARD_SERVICE
+                ) as ClipboardManager
+                ).setPrimaryClip(
+                ClipData.newPlainText("", buffer.subSequence(from, to))
+            )
+            if (id == android.R.id.cut) buffer.delete(from, to)
+            true
+        }
+
+        android.R.id.paste, android.R.id.pasteAsPlainText -> {
+            val clip = (
+                context.getSystemService(
+                    Context.CLIPBOARD_SERVICE
+                ) as ClipboardManager
+                ).primaryClip
+            val value = if (clip != null &&
+                clip.itemCount > 0
+            ) {
+                clip.getItemAt(0).coerceToText(context)
+            } else {
+                null
+            }
+            if (value == null) {
+                false
+            } else {
                 val from = minOf(selectionStart, selectionEnd).coerceAtLeast(0)
                 val to = maxOf(selectionStart, selectionEnd).coerceAtLeast(from)
-                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("", buffer.subSequence(from, to)))
-                if (id == android.R.id.cut) buffer.delete(from, to)
+                buffer.replace(from, to, value)
+                setSelection(from + value.length)
                 true
             }
-            android.R.id.paste, android.R.id.pasteAsPlainText -> {
-                val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).primaryClip
-                val value = if (clip != null && clip.itemCount > 0) clip.getItemAt(0).coerceToText(context) else null
-                if (value == null) false else {
-                    val from = minOf(selectionStart, selectionEnd).coerceAtLeast(0)
-                    val to = maxOf(selectionStart, selectionEnd).coerceAtLeast(from)
-                    buffer.replace(from, to, value)
-                    setSelection(from + value.length)
-                    true
-                }
-            }
-            else -> false
         }
+
+        else -> false
     }
 
     internal fun sendSurfaceAccessibilityEvent(event: AccessibilityEvent) {
-        val manager = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager
+        val manager = context.getSystemService(
+            Context.ACCESSIBILITY_SERVICE
+        ) as android.view.accessibility.AccessibilityManager
         if (manager.isEnabled) sendAccessibilityEventUnchecked(event) else event.recycle()
     }
 
@@ -466,7 +669,9 @@ open class EditorTextSurface @JvmOverloads constructor(
         interaction.initializeAccessibility(info)
     }
 
-    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean = interaction.performAccessibilityAction(action, arguments) || super.performAccessibilityAction(action, arguments)
+    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean =
+        interaction.performAccessibilityAction(action, arguments) ||
+            super.performAccessibilityAction(action, arguments)
 
     override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
         super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
@@ -477,7 +682,10 @@ open class EditorTextSurface @JvmOverloads constructor(
         invalidate()
     }
 
-    override fun onAttachedToWindow() { super.onAttachedToWindow(); if (hasFocus()) postDelayed(blink, 500) }
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (hasFocus()) postDelayed(blink, 500)
+    }
     override fun onDetachedFromWindow() {
         removeCallbacks(blink)
         removeCallbacks(publishCursor)
@@ -493,6 +701,12 @@ open class EditorTextSurface @JvmOverloads constructor(
         super.onScrollChanged(l, t, oldl, oldt)
         surfaceViewportChanged()
     }
-    override fun computeVerticalScrollRange() = if (width <= 0 && measuredWidth <= 0) height else layout.height + totalPaddingTop + totalPaddingBottom
+    override fun computeVerticalScrollRange() = if (width <= 0 &&
+        measuredWidth <= 0
+    ) {
+        height
+    } else {
+        layout.height + totalPaddingTop + totalPaddingBottom
+    }
     override fun computeHorizontalScrollRange() = width
 }

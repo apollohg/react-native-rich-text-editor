@@ -6,15 +6,10 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Annotation
 import android.text.Layout
-import android.text.Spanned
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.util.Base64
-import android.view.View
-import android.view.ViewGroup
-import android.widget.TextView
-import kotlin.math.abs
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
@@ -24,6 +19,14 @@ import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.text.style.URLSpan
 import android.text.style.UnderlineSpan
+import android.util.Base64
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -34,9 +37,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -55,7 +55,8 @@ internal class RenderBridgeLayoutTest : RenderBridgeTestFixture() {
 
         assertEquals(
             "Plain paragraph should render as the text content",
-            "Hello, world!", result.toString()
+            "Hello, world!",
+            result.toString()
         )
 
         // Verify foreground color span is present.
@@ -83,7 +84,8 @@ internal class RenderBridgeLayoutTest : RenderBridgeTestFixture() {
 
         assertEquals(
             "Two paragraphs should be separated by a newline",
-            "First\nSecond", result.toString()
+            "First\nSecond",
+            result.toString()
         )
     }
 
@@ -168,7 +170,7 @@ internal class RenderBridgeLayoutTest : RenderBridgeTestFixture() {
     }
 
     @Test
-    fun `render - trailing hard break in blockquote preserves quote span into following paragraph`() {
+    fun `trailing blockquote hard break preserves quote span into following paragraph`() {
         val json = """
         [
             {"type": "blockStart", "nodeType": "blockquote", "depth": 0},
@@ -190,7 +192,7 @@ internal class RenderBridgeLayoutTest : RenderBridgeTestFixture() {
     }
 
     @Test
-    fun `render - trailing hard break in blockquote appends synthetic placeholder with quote styling`() {
+    fun `trailing blockquote hard break appends placeholder with quote styling`() {
         val json = """
         [
             {"type": "blockStart", "nodeType": "blockquote", "depth": 0},
@@ -368,7 +370,10 @@ internal class RenderBridgeLayoutTest : RenderBridgeTestFixture() {
             paint = paint
         )
 
-        assertTrue("Paragraph spacer should inflate line metrics in this reproduction", layout.getLineDescent(line) > paint.fontMetrics.descent)
+        assertTrue(
+            "Paragraph spacer should inflate line metrics in this reproduction",
+            layout.getLineDescent(line) > paint.fontMetrics.descent
+        )
         assertEquals(
             "Final quoted line should trim to font descent even when paragraph spacing inflates layout descent",
             layout.getLineBaseline(line) + paint.fontMetrics.descent,
@@ -407,7 +412,7 @@ internal class RenderBridgeLayoutTest : RenderBridgeTestFixture() {
     }
 
     @Test
-    fun `render - paragraph does not inherit text line height when paragraph line height is unset`() {
+    fun `paragraph with unset line height does not inherit text line height`() {
         val json = """
         [
             {"type": "blockStart", "nodeType": "paragraph", "depth": 0},
@@ -473,15 +478,29 @@ internal class RenderBridgeLayoutTest : RenderBridgeTestFixture() {
         val separatorIndex = result.toString().indexOf('\n')
 
         // Spacer span should be on the inter-block newline character.
-        val spacerSpans = result.getSpans(separatorIndex, separatorIndex + 1, ParagraphSpacerSpan::class.java)
-        assertTrue("Inter-block newline should have a ParagraphSpacerSpan", spacerSpans.isNotEmpty())
+        val spacerSpans = result.getSpans(
+            separatorIndex,
+            separatorIndex + 1,
+            ParagraphSpacerSpan::class.java
+        )
+        assertTrue(
+            "Inter-block newline should have a ParagraphSpacerSpan",
+            spacerSpans.isNotEmpty()
+        )
 
         // No spacer span on paragraph content.
         val firstParaSpans = result.getSpans(0, separatorIndex, ParagraphSpacerSpan::class.java)
         assertTrue("Paragraph content should not have spacer spans", firstParaSpans.isEmpty())
 
-        val secondParaSpans = result.getSpans(separatorIndex + 1, result.length, ParagraphSpacerSpan::class.java)
-        assertTrue("Second paragraph content should not have spacer spans", secondParaSpans.isEmpty())
+        val secondParaSpans = result.getSpans(
+            separatorIndex + 1,
+            result.length,
+            ParagraphSpacerSpan::class.java
+        )
+        assertTrue(
+            "Second paragraph content should not have spacer spans",
+            secondParaSpans.isEmpty()
+        )
     }
 
     @Test
@@ -507,7 +526,15 @@ internal class RenderBridgeLayoutTest : RenderBridgeTestFixture() {
             )
             val result = RenderBridge.buildSpannable(json, baseFontSize, textColor, theme, 1f)
             val layout = StaticLayout.Builder
-                .obtain(result, 0, result.length, TextPaint().apply { textSize = baseFontSize }, 400)
+                .obtain(
+                    result,
+                    0,
+                    result.length,
+                    TextPaint().apply {
+                        textSize = baseFontSize
+                    },
+                    400
+                )
                 .setIncludePad(false)
                 .build()
             val secondParagraphLine = layout.getLineForOffset(result.indexOf("Second paragraph"))
@@ -557,7 +584,9 @@ internal class RenderBridgeLayoutTest : RenderBridgeTestFixture() {
 
     @Test
     fun `measureHeight returns positive height for single paragraph`() {
-        val renderJSON = """[{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"textRun","text":"Hello world"},{"type":"blockEnd"}]"""
+        val renderJSON =
+            """[{"type":"blockStart","nodeType":"paragraph","depth":0},""" +
+                """{"type":"textRun","text":"Hello world"},{"type":"blockEnd"}]"""
         val height = RenderBridge.measureHeight(
             json = renderJSON,
             themeJson = null,
@@ -580,7 +609,9 @@ internal class RenderBridgeLayoutTest : RenderBridgeTestFixture() {
 
     @Test
     fun `measureHeight adds content insets`() {
-        val renderJSON = """[{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"textRun","text":"Hello world"},{"type":"blockEnd"}]"""
+        val renderJSON =
+            """[{"type":"blockStart","nodeType":"paragraph","depth":0},""" +
+                """{"type":"textRun","text":"Hello world"},{"type":"blockEnd"}]"""
         val noInsetHeight = RenderBridge.measureHeight(
             json = renderJSON,
             themeJson = null,
@@ -638,7 +669,8 @@ internal class RenderBridgeLayoutTest : RenderBridgeTestFixture() {
                 {"type": "blockEnd"}
             ]
             """.trimIndent(),
-            baseFontSize, textColor
+            baseFontSize,
+            textColor
         )
         val host = android.text.SpannableStringBuilder("intro\n")
         host.replace(host.length, host.length, fragment)

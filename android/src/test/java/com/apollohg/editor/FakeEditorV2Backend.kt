@@ -16,7 +16,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
     internal class FakeSession(
         val editorId: String,
         val readOnly: Boolean,
-        val roomBound: Boolean,
+        val roomBound: Boolean
     ) {
         var text = StringBuilder("")
         var revision = 0uL
@@ -70,15 +70,18 @@ internal class FakeEditorV2Backend : EditorV2Backend {
     private fun liveSession(editorId: String): FakeSession? =
         sessions[editorId]?.takeUnless { it.destroyed }
 
-    private fun destroyedError(): EditorV2Error =
-        EditorV2Error(domain = "lifecycle", code = "ENGINE_DESTROYED", message = "editor session is not registered")
+    private fun destroyedError(): EditorV2Error = EditorV2Error(
+        domain = "lifecycle",
+        code = "ENGINE_DESTROYED",
+        message = "editor session is not registered"
+    )
 
     private fun configInvalid(message: String, requestId: String? = null): EditorV2Error =
         EditorV2Error(
             domain = "boundary",
             code = "CONFIG_INVALID",
             message = message,
-            requestId = requestId,
+            requestId = requestId
         )
 
     private fun canonicalRequestId(request: JSONObject): String? =
@@ -87,10 +90,13 @@ internal class FakeEditorV2Backend : EditorV2Backend {
     private fun admitBase(
         session: FakeSession,
         request: JSONObject,
-        requestId: String,
+        requestId: String
     ): EditorV2Error? {
         val base = canonicalV2U64(request.opt("baseDocumentRevision") as? String)
-            ?: return configInvalid("baseDocumentRevision must be canonical decimal u64 text", requestId)
+            ?: return configInvalid(
+                "baseDocumentRevision must be canonical decimal u64 text",
+                requestId
+            )
         if (base != session.revision.toString()) {
             return EditorV2Error(
                 domain = "operation",
@@ -100,7 +106,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
                 detailsJson = JSONObject()
                     .put("expectedRevision", base)
                     .put("actualRevision", session.revision.toString())
-                    .toString(),
+                    .toString()
             )
         }
         return null
@@ -112,17 +118,25 @@ internal class FakeEditorV2Backend : EditorV2Backend {
             domain = "boundary",
             code = "MUTATION_REJECTED",
             message = "document is read-only; only selection and local-API requests are allowed",
-            requestId = requestId,
+            requestId = requestId
         )
     }
 
-    private fun admissionError(editorId: String, request: JSONObject, mutation: Boolean): Pair<FakeSession?, EditorV2Error?> {
+    private fun admissionError(
+        editorId: String,
+        request: JSONObject,
+        mutation: Boolean
+    ): Pair<FakeSession?, EditorV2Error?> {
         val session = liveSession(editorId) ?: return null to destroyedError()
         val requestId = canonicalRequestId(request)
             ?: return null to configInvalid("requestId must be canonical decimal u64 text")
         val version = exactV2U32(request.opt("version") as? Number)
         if (version != 1u) {
-            return null to configInvalid("unsupported v2 envelope version ${request.opt("version")}", requestId)
+            return null to
+                configInvalid(
+                    "unsupported v2 envelope version ${request.opt("version")}",
+                    requestId
+                )
         }
         if (mutation) {
             admitWritable(session, requestId)?.let { return null to it }
@@ -134,17 +148,16 @@ internal class FakeEditorV2Backend : EditorV2Backend {
     private fun transactionOutcome(
         session: FakeSession,
         changed: Boolean,
-        documentChanged: Boolean = changed,
-    ): String =
-        JSONObject()
-            .put("type", "transaction")
-            .put("changed", changed)
-            .put("documentChanged", documentChanged)
-            .put("documentRevision", session.revision.toString())
-            .put("stateRevision", session.revision.toString())
-            .put("canUndo", session.undoStack.isNotEmpty())
-            .put("canRedo", session.redoStack.isNotEmpty())
-            .toString()
+        documentChanged: Boolean = changed
+    ): String = JSONObject()
+        .put("type", "transaction")
+        .put("changed", changed)
+        .put("documentChanged", documentChanged)
+        .put("documentRevision", session.revision.toString())
+        .put("stateRevision", session.revision.toString())
+        .put("canUndo", session.undoStack.isNotEmpty())
+        .put("canRedo", session.redoStack.isNotEmpty())
+        .toString()
 
     private fun pushUndo(session: FakeSession) {
         session.undoStack.addLast(Triple(session.text.toString(), session.anchor, session.head))
@@ -189,7 +202,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         val session = FakeSession(
             editorId = editorId,
             readOnly = config.optJSONObject("policy")?.optBoolean("readOnly", false) ?: false,
-            roomBound = roomBound,
+            roomBound = roomBound
         )
         if (roomBound && initialization.has("snapshot")) {
             session.text.append("seed")
@@ -248,7 +261,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
                     domain = "boundary",
                     code = "CONFIG_INVALID",
                     message = "input commits require non-empty text",
-                    requestId = canonicalRequestId(request),
+                    requestId = canonicalRequestId(request)
                 )
             )
         }
@@ -276,12 +289,16 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         }
         when (command.getString("type")) {
             "insertText" -> insertAtSelection(session, command.getString("text"))
+
             "replaceSelectionText" -> insertAtSelection(session, command.getString("text"))
+
             "deleteBackward" -> {
                 val (from, to) = orderedSelection(session)
                 if (from == to) {
                     if (from == 0) {
-                        return EditorV2CallResult.Ok(JSONObject().put("type", "notApplicable").toString())
+                        return EditorV2CallResult.Ok(
+                            JSONObject().put("type", "notApplicable").toString()
+                        )
                     }
                     pushUndo(session)
                     session.text.deleteCharAt(from - 1)
@@ -295,12 +312,17 @@ internal class FakeEditorV2Backend : EditorV2Backend {
                 }
                 session.revision += 1u
             }
+
             "deleteRange" -> {
                 val range = command.getJSONObject("range")
-                val from = range.getJSONObject("from").getInt("offset").coerceIn(0, session.text.length)
+                val from = range.getJSONObject(
+                    "from"
+                ).getInt("offset").coerceIn(0, session.text.length)
                 val to = range.getJSONObject("to").getInt("offset").coerceIn(0, session.text.length)
                 if (from >= to) {
-                    return EditorV2CallResult.Ok(JSONObject().put("type", "notApplicable").toString())
+                    return EditorV2CallResult.Ok(
+                        JSONObject().put("type", "notApplicable").toString()
+                    )
                 }
                 pushUndo(session)
                 session.text.delete(from, to)
@@ -308,6 +330,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
                 session.head = from
                 session.revision += 1u
             }
+
             "splitBlock" -> {
                 val (from, to) = orderedSelection(session)
                 pushUndo(session)
@@ -316,6 +339,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
                 session.head = from + 1
                 session.revision += 1u
             }
+
             "deleteAndSplit" -> {
                 val (from, to) = orderedSelection(session)
                 pushUndo(session)
@@ -325,11 +349,13 @@ internal class FakeEditorV2Backend : EditorV2Backend {
                 session.head = from + 1
                 session.revision += 1u
             }
+
             "insertContentHtml" -> {
                 val html = command.getString("html")
                 val text = html.replace(Regex("<[^>]+>"), "")
                 insertAtSelection(session, text)
             }
+
             "insertContentJson" -> {
                 val fragment = command.getJSONObject("json")
                 val fragmentText = documentTextOf(fragment)
@@ -349,6 +375,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
                 session.head = caret
                 session.revision += 1u
             }
+
             else -> {
                 // Structural commands (marks, blocks, lists, nodes, resize):
                 // recorded above; the fake just bumps the revision.
@@ -370,18 +397,23 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         when {
             request.has("setHtml") -> {
                 val html = request.getString("setHtml")
-                session.text = StringBuilder(html.replace(Regex("</p>\\s*<p>"), "\n").replace(Regex("<[^>]+>"), ""))
+                session.text =
+                    StringBuilder(
+                        html.replace(Regex("</p>\\s*<p>"), "\n").replace(Regex("<[^>]+>"), "")
+                    )
             }
+
             request.has("setJson") -> {
                 session.text = StringBuilder(documentTextOf(request.getJSONObject("setJson")))
             }
+
             else -> {
                 return EditorV2CallResult.Err(
                     EditorV2Error(
                         domain = "boundary",
                         code = "CONFIG_INVALID",
                         message = "local-API requests carry exactly one of setJson or setHtml",
-                        requestId = canonicalRequestId(request),
+                        requestId = canonicalRequestId(request)
                     )
                 )
             }
@@ -399,12 +431,18 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         )
     }
 
-    override fun replaceDocument(editorId: String, requestJson: String): EditorV2CallResult<String> {
+    override fun replaceDocument(
+        editorId: String,
+        requestJson: String
+    ): EditorV2CallResult<String> {
         calls.add("replaceDocument")
         val session = liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
-        val request = JSONObject(requestJson).put("baseDocumentRevision", session.revision.toString())
+        val request = JSONObject(
+            requestJson
+        ).put("baseDocumentRevision", session.revision.toString())
         return when (val result = applyLocalApi(editorId, request.toString())) {
             is EditorV2CallResult.Err -> result
+
             is EditorV2CallResult.Ok -> EditorV2CallResult.Ok(
                 JSONObject(result.value).apply { remove("type") }.toString()
             )
@@ -430,7 +468,9 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         val request = JSONObject(requestJson)
         val session = liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
         val requestId = canonicalRequestId(request)
-            ?: return EditorV2CallResult.Err(configInvalid("requestId must be canonical decimal u64 text"))
+            ?: return EditorV2CallResult.Err(
+                configInvalid("requestId must be canonical decimal u64 text")
+            )
         admitWritable(session, requestId)?.let { return EditorV2CallResult.Err(it) }
         val snapshot = session.undoStack.removeLastOrNull()
             ?: return EditorV2CallResult.Ok(JSONObject().put("changed", false).toString())
@@ -439,7 +479,11 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         session.anchor = snapshot.second
         session.head = snapshot.third
         session.revision += 1u
-        if (session.roomBound) session.outbox.addLast("update-rev-${session.revision}".toByteArray())
+        if (session.roomBound) {
+            session.outbox.addLast(
+                "update-rev-${session.revision}".toByteArray()
+            )
+        }
         return EditorV2CallResult.Ok(JSONObject().put("changed", true).toString())
     }
 
@@ -448,7 +492,9 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         val request = JSONObject(requestJson)
         val session = liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
         val requestId = canonicalRequestId(request)
-            ?: return EditorV2CallResult.Err(configInvalid("requestId must be canonical decimal u64 text"))
+            ?: return EditorV2CallResult.Err(
+                configInvalid("requestId must be canonical decimal u64 text")
+            )
         admitWritable(session, requestId)?.let { return EditorV2CallResult.Err(it) }
         val snapshot = session.redoStack.removeLastOrNull()
             ?: return EditorV2CallResult.Ok(JSONObject().put("changed", false).toString())
@@ -457,13 +503,17 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         session.anchor = snapshot.second
         session.head = snapshot.third
         session.revision += 1u
-        if (session.roomBound) session.outbox.addLast("update-rev-${session.revision}".toByteArray())
+        if (session.roomBound) {
+            session.outbox.addLast(
+                "update-rev-${session.revision}".toByteArray()
+            )
+        }
         return EditorV2CallResult.Ok(JSONObject().put("changed", true).toString())
     }
 
     private fun collaborationDirective(
         transportState: String,
-        generationToOpen: String? = null,
+        generationToOpen: String? = null
     ): String = JSONObject()
         .put("transportState", transportState)
         .put("generationToOpen", generationToOpen ?: JSONObject.NULL)
@@ -474,7 +524,10 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         .put("expiredPeers", JSONArray())
         .toString()
 
-    override fun collaborationDrive(editorId: String, nowMillis: String): EditorV2CallResult<String> {
+    override fun collaborationDrive(
+        editorId: String,
+        nowMillis: String
+    ): EditorV2CallResult<String> {
         calls.add("collaborationDrive")
         liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
         val generationToOpen = collaborationGenerationToOpen ?: return EditorV2CallResult.Ok(
@@ -487,7 +540,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
     override fun collaborationSocketOpen(
         editorId: String,
         generation: String,
-        nowMillis: String,
+        nowMillis: String
     ): EditorV2CallResult<String> {
         calls.add("collaborationSocketOpen")
         liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
@@ -498,7 +551,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         editorId: String,
         generation: String,
         message: ByteArray,
-        nowMillis: String,
+        nowMillis: String
     ): EditorV2CallResult<String> {
         calls.add("collaborationReceive")
         liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
@@ -510,7 +563,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         generation: String,
         code: UInt?,
         reason: String?,
-        nowMillis: String,
+        nowMillis: String
     ): EditorV2CallResult<String> {
         calls.add("collaborationSocketClose")
         liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
@@ -519,7 +572,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
 
     override fun collaborationLeaseOutbound(
         editorId: String,
-        generation: String,
+        generation: String
     ): EditorV2LeaseResult {
         calls.add("collaborationLeaseOutbound")
         val session = liveSession(editorId) ?: return EditorV2LeaseResult.Err(destroyedError())
@@ -536,7 +589,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
     override fun collaborationAckOutbound(
         editorId: String,
         generation: String,
-        leaseId: String,
+        leaseId: String
     ): EditorV2CallResult<String> {
         calls.add("collaborationAckOutbound")
         val session = liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
@@ -547,7 +600,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
     override fun collaborationNackOutbound(
         editorId: String,
         generation: String,
-        leaseId: String,
+        leaseId: String
     ): EditorV2CallResult<String> {
         calls.add("collaborationNackOutbound")
         liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
@@ -581,7 +634,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
 
     override fun collaborationSetAwarenessSelection(
         editorId: String,
-        selectionJson: String,
+        selectionJson: String
     ): EditorV2CallResult<String> {
         calls.add("collaborationSetAwarenessSelection")
         liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
@@ -602,7 +655,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
     override fun renderUpdate(
         editorId: String,
         mirrorAnchor: Int?,
-        mirrorHead: Int?,
+        mirrorHead: Int?
     ): EditorV2CallResult<String> {
         calls.add("renderUpdate")
         nextRenderUpdateResult?.let { result ->
@@ -665,7 +718,10 @@ internal class FakeEditorV2Backend : EditorV2Backend {
             )
             .put(
                 "historyState",
-                JSONObject().put("canUndo", session.undoStack.isNotEmpty()).put("canRedo", session.redoStack.isNotEmpty())
+                JSONObject().put(
+                    "canUndo",
+                    session.undoStack.isNotEmpty()
+                ).put("canRedo", session.redoStack.isNotEmpty())
             )
             .put("documentVersion", session.revision.toString())
             .put("stateRevision", session.revision.toString())
@@ -683,7 +739,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         editorId: String,
         ownerId: String,
         mirrorAnchor: Int?,
-        mirrorHead: Int?,
+        mirrorHead: Int?
     ): EditorV2CallResult<String> {
         calls.add("renderNative")
         val session = liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
@@ -692,13 +748,15 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         val epoch = session.nextPositionEpoch++.toString()
         session.positionEpochs[ownerId] = epoch
         session.positionEpochTexts[ownerId] = session.text.toString()
-        return EditorV2CallResult.Ok(JSONObject(rendered.value).put("positionEpoch", epoch).toString())
+        return EditorV2CallResult.Ok(
+            JSONObject(rendered.value).put("positionEpoch", epoch).toString()
+        )
     }
 
     override fun pinPositionEpoch(
         editorId: String,
         ownerId: String,
-        documentRevision: String,
+        documentRevision: String
     ): EditorV2CallResult<String> {
         calls.add("pinPositionEpoch")
         nextPinPositionEpochResult?.let { result ->
@@ -717,7 +775,10 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         return EditorV2CallResult.Ok(JSONObject().put("positionEpoch", epoch).toString())
     }
 
-    override fun applyNativeIntent(editorId: String, requestJson: String): EditorV2CallResult<String> {
+    override fun applyNativeIntent(
+        editorId: String,
+        requestJson: String
+    ): EditorV2CallResult<String> {
         calls.add("applyNativeIntent")
         onApplyNativeIntent?.invoke()
         nextApplyNativeIntentResult?.let { result ->
@@ -727,14 +788,23 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         val session = liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
         val request = JSONObject(requestJson)
         val requestId = canonicalRequestId(request)
-            ?: return EditorV2CallResult.Err(configInvalid("requestId must be canonical decimal u64 text"))
+            ?: return EditorV2CallResult.Err(
+                configInvalid("requestId must be canonical decimal u64 text")
+            )
         val ownerId = canonicalV2U64(request.optString("ownerId"))
-            ?: return EditorV2CallResult.Err(configInvalid("ownerId must be canonical decimal u64 text", requestId))
+            ?: return EditorV2CallResult.Err(
+                configInvalid("ownerId must be canonical decimal u64 text", requestId)
+            )
         val cached = session.nativeOutcomes[ownerId]?.get(requestId)
         if (cached != null) return EditorV2CallResult.Ok(cached)
         if (session.positionEpochs[ownerId] != request.optString("positionEpoch")) {
             return EditorV2CallResult.Err(
-                EditorV2Error("boundary", "POSITION_EPOCH_INVALID", "position epoch is not pinned", requestId)
+                EditorV2Error(
+                    "boundary",
+                    "POSITION_EPOCH_INVALID",
+                    "position epoch is not pinned",
+                    requestId
+                )
             )
         }
         val intent = request.getJSONObject("intent")
@@ -749,55 +819,84 @@ internal class FakeEditorV2Backend : EditorV2Backend {
             intent.getInt("anchor"),
             epochText,
             session.text.toString(),
-            affinityAfter = collapsed,
+            affinityAfter = collapsed
         )
         session.head = remapEpochOffset(
             intent.getInt("head"),
             epochText,
             session.text.toString(),
-            affinityAfter = collapsed,
+            affinityAfter = collapsed
         )
         val revisionBefore = session.revision
         val outcome = when (intent.getString("type")) {
             "setSelection" -> transactionOutcome(
                 session,
-                changed = selectionBeforeAnchor != session.anchor || selectionBeforeHead != session.head,
-                documentChanged = false,
+                changed =
+                    selectionBeforeAnchor != session.anchor || selectionBeforeHead != session.head,
+                documentChanged = false
             )
+
             "insertText" -> {
                 val documentChanged = insertAtSelection(session, intent.getString("text"))
                 transactionOutcome(
                     session,
                     changed = documentChanged ||
-                        selectionBeforeAnchor != session.anchor || selectionBeforeHead != session.head,
-                    documentChanged = documentChanged,
+                        selectionBeforeAnchor != session.anchor ||
+                        selectionBeforeHead != session.head,
+                    documentChanged = documentChanged
                 )
             }
+
             "replaceSelectionText" -> {
                 val documentChanged = insertAtSelection(session, intent.getString("text"))
                 transactionOutcome(
                     session,
                     changed = documentChanged ||
-                        selectionBeforeAnchor != session.anchor || selectionBeforeHead != session.head,
-                    documentChanged = documentChanged,
+                        selectionBeforeAnchor != session.anchor ||
+                        selectionBeforeHead != session.head,
+                    documentChanged = documentChanged
                 )
             }
+
             "deleteBackward" -> nativeDeleteRange(
                 session,
-                if (session.anchor == session.head) (session.anchor - 1).coerceAtLeast(0) else minOf(session.anchor, session.head),
-                maxOf(session.anchor, session.head),
+                if (session.anchor ==
+                    session.head
+                ) {
+                    (session.anchor - 1).coerceAtLeast(0)
+                } else {
+                    minOf(session.anchor, session.head)
+                },
+                maxOf(session.anchor, session.head)
             )
+
             "deleteForward" -> nativeDeleteRange(
                 session,
                 minOf(session.anchor, session.head),
-                if (session.anchor == session.head) (session.anchor + 1).coerceAtMost(session.text.length) else maxOf(session.anchor, session.head),
+                if (session.anchor ==
+                    session.head
+                ) {
+                    (session.anchor + 1).coerceAtMost(session.text.length)
+                } else {
+                    maxOf(session.anchor, session.head)
+                }
             )
+
             "deleteSurroundingText" -> nativeDeleteRange(
                 session,
                 minOf(session.anchor, session.head).minus(intent.getInt("before")).coerceAtLeast(0),
-                maxOf(session.anchor, session.head).plus(intent.getInt("after")).coerceAtMost(session.text.length),
+                maxOf(
+                    session.anchor,
+                    session.head
+                ).plus(intent.getInt("after")).coerceAtMost(session.text.length)
             )
-            "deleteRange" -> nativeDeleteRange(session, minOf(session.anchor, session.head), maxOf(session.anchor, session.head))
+
+            "deleteRange" -> nativeDeleteRange(
+                session,
+                minOf(session.anchor, session.head),
+                maxOf(session.anchor, session.head)
+            )
+
             else -> {
                 val command = if (intent.getString("type") == "command") {
                     intent.getJSONObject("command")
@@ -814,7 +913,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
                         .put("requestId", requestId)
                         .put("baseDocumentRevision", session.revision.toString())
                         .put("command", command)
-                        .toString(),
+                        .toString()
                 )
                 if (result is EditorV2CallResult.Err) return result
                 (result as EditorV2CallResult.Ok).value
@@ -839,7 +938,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         offset: Int,
         oldText: String,
         newText: String,
-        affinityAfter: Boolean,
+        affinityAfter: Boolean
     ): Int {
         val oldOffset = offset.coerceIn(0, oldText.length)
         var prefix = 0
@@ -876,7 +975,11 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         return transactionOutcome(session, changed = true)
     }
 
-    override fun resolveScalarSelection(editorId: String, anchor: Int, head: Int): EditorV2CallResult<String> {
+    override fun resolveScalarSelection(
+        editorId: String,
+        anchor: Int,
+        head: Int
+    ): EditorV2CallResult<String> {
         calls.add("resolveScalarSelection")
         val session = liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
         val text = session.text.toString()
@@ -895,7 +998,10 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         calls.add("docToScalar")
         val session = liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
         return EditorV2CallResult.Ok(
-            JSONObject().put("scalar", scalarForDocPosition(session.text.toString(), docPos)).toString()
+            JSONObject().put(
+                "scalar",
+                scalarForDocPosition(session.text.toString(), docPos)
+            ).toString()
         )
     }
 

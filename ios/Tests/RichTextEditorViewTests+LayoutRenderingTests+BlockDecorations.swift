@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testBlockquoteStripeRectStaysStableAcrossReturnDrivenLayoutPasses() {
@@ -132,7 +132,7 @@ extension RichTextEditorViewTests {
         let allRenderedPasses = textView.blockquoteStripeDrawPassesForTesting()
 
         guard let firstPass = firstRenderedPasses.first,
-              let settledPass = allRenderedPasses.last
+            let settledPass = allRenderedPasses.last
         else {
             XCTFail("expected recorded blockquote stripe draw passes")
             return

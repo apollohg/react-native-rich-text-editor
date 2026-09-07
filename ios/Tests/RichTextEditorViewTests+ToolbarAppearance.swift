@@ -1,13 +1,13 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testToolbarThemeParsesNativeAppearance() {
         let theme = EditorTheme(dictionary: [
             "toolbar": [
                 "appearance": "native",
-                "height": 44,
-            ],
+                "height": 44
+            ]
         ])
 
         XCTAssertEqual(theme.toolbar?.appearance, .native)
@@ -22,8 +22,8 @@ extension RichTextEditorViewTests {
             "toolbar": [
                 "appearance": "native",
                 "horizontalInset": 10,
-                "borderRadius": 22,
-            ],
+                "borderRadius": 22
+            ]
         ])
 
         XCTAssertEqual(theme.toolbar?.resolvedHorizontalInset ?? -1, 10, accuracy: 0.1)
@@ -35,15 +35,15 @@ extension RichTextEditorViewTests {
 
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
             "appearance": "native",
-            "height": 44,
+            "height": 44
         ]))
         XCTAssertTrue(toolbar.usesNativeAppearanceForTesting)
         if #available(iOS 26.0, *) {
-#if compiler(>=6.2)
-            XCTAssertTrue(toolbar.usesUIGlassEffectForTesting)
-#else
-            XCTAssertFalse(toolbar.usesUIGlassEffectForTesting)
-#endif
+            #if compiler(>=6.2)
+                XCTAssertTrue(toolbar.usesUIGlassEffectForTesting)
+            #else
+                XCTAssertFalse(toolbar.usesUIGlassEffectForTesting)
+            #endif
             XCTAssertEqual(toolbar.chromeBorderWidthForTesting, 1 / UIScreen.main.scale, accuracy: 0.1)
         } else {
             XCTAssertEqual(toolbar.chromeBorderWidthForTesting, 1 / UIScreen.main.scale, accuracy: 0.1)
@@ -55,7 +55,7 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
 
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
+            "appearance": "native"
         ]))
         toolbar.applyBoldStateForTesting(active: true, enabled: true)
 
@@ -66,14 +66,14 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
         toolbar.applyStateJSONForTesting("""
         {
-          "activeState": {
+        "activeState": {
             "marks": {},
             "nodes": { "bullet_list": true, "list_item": true },
             "commands": { "wrapBulletList": true, "wrapOrderedList": true },
             "allowedMarks": [],
             "insertableNodes": ["hard_break", "horizontal_rule"]
-          },
-          "historyState": { "canUndo": false, "canRedo": false }
+        },
+        "historyState": { "canUndo": false, "canRedo": false }
         }
         """)
 
@@ -87,28 +87,28 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
         toolbar.setItemsJSONForTesting("""
         [
-          {
+        {
             "type": "action",
             "key": "global-idle",
             "label": "Global Idle",
             "icon": { "type": "glyph", "text": "G" }
-          },
-          {
+        },
+        {
             "type": "action",
             "key": "idle",
             "label": "Idle",
             "icon": { "type": "glyph", "text": "I" },
             "buttonStyle": { "backgroundColor": "#121212" }
-          },
-          {
+        },
+        {
             "type": "action",
             "key": "global-disabled",
             "label": "Global Disabled",
             "icon": { "type": "glyph", "text": "E" },
             "isActive": true,
             "isDisabled": true
-          },
-          {
+        },
+        {
             "type": "action",
             "key": "disabled",
             "label": "Disabled",
@@ -116,30 +116,30 @@ extension RichTextEditorViewTests {
             "isActive": true,
             "isDisabled": true,
             "buttonStyle": {
-              "disabledColor": "#444444",
-              "disabledBackgroundColor": "#555555"
+            "disabledColor": "#444444",
+            "disabledBackgroundColor": "#555555"
             }
-          },
-          {
+        },
+        {
             "type": "action",
             "key": "global-active",
             "label": "Global Active",
             "icon": { "type": "glyph", "text": "T" },
             "isActive": true
-          },
-          {
+        },
+        {
             "type": "action",
             "key": "active",
             "label": "Active",
             "icon": { "type": "glyph", "text": "A" },
             "isActive": true,
             "buttonStyle": {
-              "iconSize": 26,
-              "activeColor": "#555555",
-              "activeBackgroundColor": "#666666",
-              "borderRadius": 12
+            "iconSize": 26,
+            "activeColor": "#555555",
+            "activeBackgroundColor": "#666666",
+            "borderRadius": 12
             }
-          }
+        }
         ]
         """)
         let theme = EditorToolbarTheme(dictionary: [
@@ -151,11 +151,11 @@ extension RichTextEditorViewTests {
             "buttonDisabledColor": "#333333",
             "buttonActiveBackgroundColor": "#777777",
             "buttonDisabledBackgroundColor": "#888888",
-            "buttonBorderRadius": 9,
+            "buttonBorderRadius": 9
         ])
         let buttonStyle = EditorToolbarButtonStyle(dictionary: [
             "backgroundColor": "#121212",
-            "disabledBackgroundColor": "#555555",
+            "disabledBackgroundColor": "#555555"
         ])
 
         XCTAssertEqual(theme.buttonBackgroundColor, EditorTheme.color(from: "#050505"))
@@ -207,7 +207,7 @@ extension RichTextEditorViewTests {
         for appearance in ["native", "custom"] {
             let toolbar = EditorAccessoryToolbarView(frame: .zero)
             toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-                "appearance": appearance,
+                "appearance": appearance
             ]))
 
             toolbar.applyBoldStateForTesting(active: true, enabled: true)

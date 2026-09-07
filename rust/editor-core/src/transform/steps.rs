@@ -49,14 +49,12 @@ pub(crate) fn merge_adjacent_text_nodes(nodes: Vec<Node>) -> Vec<Node> {
             continue;
         }
 
-        // Skip empty text nodes.
         if node.text_str().is_some_and(|s| s.is_empty()) {
             continue;
         }
 
         if let Some(last) = result.last() {
             if last.is_text() && marks_eq(last.marks(), node.marks()) {
-                // Merge with the previous text node.
                 let merged_text =
                     format!("{}{}", last.text_str().unwrap(), node.text_str().unwrap());
                 let merged = Node::text(merged_text, last.marks().to_vec());

@@ -1,19 +1,21 @@
 package com.apollohg.editor
-import android.graphics.Color
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Rect
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
-import android.widget.LinearLayout
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -26,8 +28,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -35,16 +35,30 @@ internal class RichTextEditorViewRenderPatchesTest : RichTextEditorViewTestFixtu
     @Test
     fun `partial render patch retains collapsed margins against unchanged neighbors`() {
         val editor = EditorEditText(RuntimeEnvironment.getApplication())
-        editor.applyTheme(EditorTheme.fromJson("""{"version":1,"styles":{"paragraph":{"lineHeight":27,"marginTop":8,"marginBottom":12}}}"""))
-        val initial = JSONArray().put(paragraphRenderBlock("First")).put(paragraphRenderBlock("Middle")).put(paragraphRenderBlock("Last"))
+        editor.applyTheme(
+            EditorTheme.fromJson(
+
+                """{"version":1,"styles":{"paragraph":{"lineHeight":27""" +
+                    ""","marginTop":8,"marginBottom":12}}}"""
+            )
+        )
+        val initial = JSONArray().put(
+            paragraphRenderBlock("First")
+        ).put(paragraphRenderBlock("Middle")).put(paragraphRenderBlock("Last"))
         editor.applyUpdateJSON(renderUpdateJson(initial), notifyListener = false)
         val patch = JSONObject().put("startIndex", 1).put("deleteCount", 1)
             .put("renderBlocks", JSONArray().put(paragraphRenderBlock("Changed")))
 
-        editor.applyUpdateJSON(renderUpdateJson(JSONArray(), includeFullRenderBlocks = false, renderPatch = patch), notifyListener = false)
+        editor.applyUpdateJSON(
+            renderUpdateJson(JSONArray(), includeFullRenderBlocks = false, renderPatch = patch),
+            notifyListener = false
+        )
 
         assertTrue(editor.lastRenderAppliedPatch())
-        editor.measure(View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY))
+        editor.measure(
+            View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY)
+        )
         editor.layout(0, 0, 320, 400)
         val layout = editor.layout as EditorDocumentLayout
         val margin = (12 * editor.resources.displayMetrics.density).toInt()
@@ -138,9 +152,13 @@ internal class RichTextEditorViewRenderPatchesTest : RichTextEditorViewTestFixtu
     @Test
     fun `registered atom types do not disable paragraph patching`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
-        assertTrue(editText.applyAtomRenderConfiguration(AtomRenderConfiguration.fromJson(
-            """{"nodeTypes":["counterCard"],"estimatedHeights":{"counterCard":120}}"""
-        )))
+        assertTrue(
+            editText.applyAtomRenderConfiguration(
+                AtomRenderConfiguration.fromJson(
+                    """{"nodeTypes":["counterCard"],"estimatedHeights":{"counterCard":120}}"""
+                )
+            )
+        )
         editText.applyUpdateJSON(
             renderUpdateJson(JSONArray().put(paragraphRenderBlock("Before"))),
             notifyListener = false
@@ -166,9 +184,13 @@ internal class RichTextEditorViewRenderPatchesTest : RichTextEditorViewTestFixtu
     @Test
     fun `atom patch without stable ids falls back to a full render`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
-        assertTrue(editText.applyAtomRenderConfiguration(AtomRenderConfiguration.fromJson(
-            """{"nodeTypes":["counterCard"],"estimatedHeights":{"counterCard":120}}"""
-        )))
+        assertTrue(
+            editText.applyAtomRenderConfiguration(
+                AtomRenderConfiguration.fromJson(
+                    """{"nodeTypes":["counterCard"],"estimatedHeights":{"counterCard":120}}"""
+                )
+            )
+        )
         fun atomBlock(docPos: Int): JSONArray = JSONArray().put(
             JSONObject()
                 .put("type", "voidBlock")
@@ -228,7 +250,9 @@ internal class RichTextEditorViewRenderPatchesTest : RichTextEditorViewTestFixtu
 
         fun quoteSpanEnd(): Int {
             val content = editText.text as Spanned
-            return content.getSpanEnd(content.getSpans(0, content.length, BlockquoteSpan::class.java).single())
+            return content.getSpanEnd(
+                content.getSpans(0, content.length, BlockquoteSpan::class.java).single()
+            )
         }
 
         fun applyListPatch(state: ListRenderState) {
@@ -325,7 +349,10 @@ internal class RichTextEditorViewRenderPatchesTest : RichTextEditorViewTestFixtu
         )
 
         assertTrue(editText.lastRenderAppliedPatch())
-        assertEquals("Before\nEdited\nQuoted\n• First\n• Second\n• Nested", editText.text.toString())
+        assertEquals(
+            "Before\nEdited\nQuoted\n• First\n• Second\n• Nested",
+            editText.text.toString()
+        )
         assertEquals(initialSpanCounts, paragraphSpanCounts())
     }
 

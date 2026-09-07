@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 private final class PendingCaretTapRecognizer: CaretPlacementTapRecognizer {
     var point: CGPoint?

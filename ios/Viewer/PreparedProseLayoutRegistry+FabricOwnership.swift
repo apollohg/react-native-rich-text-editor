@@ -51,7 +51,7 @@ extension PreparedProseLayoutRegistry {
               )],
               lease.active,
               lease.permittedGenerationIdentity == nil ||
-                  lease.permittedGenerationIdentity == generation.generationIdentity
+              lease.permittedGenerationIdentity == generation.generationIdentity
         else { return false }
         return !(fabricMeasurementsInFlight[generation]?.cancelled ?? false)
     }

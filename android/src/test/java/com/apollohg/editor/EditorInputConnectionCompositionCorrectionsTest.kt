@@ -13,16 +13,17 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.robolectric.Shadows.shadowOf
-import org.robolectric.Robolectric
-import org.robolectric.RuntimeEnvironment
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-internal class EditorInputConnectionCompositionCorrectionsTest : EditorInputConnectionTestSupport() {
+internal class EditorInputConnectionCompositionCorrectionsTest :
+    EditorInputConnectionTestSupport() {
     @Test
     fun `commit completion routes autocomplete text through rust`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
@@ -140,7 +141,7 @@ internal class EditorInputConnectionCompositionCorrectionsTest : EditorInputConn
     }
 
     @Test
-    fun `commit correction with missing old text and invalid offset is consumed without inserting`() {
+    fun `correction with missing old text and invalid offset is consumed without insertion`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson("teh "), notifyListener = false)
         editText.setSelection(4)
@@ -491,7 +492,7 @@ internal class EditorInputConnectionCompositionCorrectionsTest : EditorInputConn
     }
 
     @Test
-    fun `single letter composition correction followed by commit text keeps uppercase replacement`() {
+    fun `single letter correction followed by commit text keeps uppercase replacement`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson(""), notifyListener = false)
         editText.setSelection(0)

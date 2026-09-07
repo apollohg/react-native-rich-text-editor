@@ -53,7 +53,7 @@ struct NativeMentionsAddonConfig {
 }
 
 struct NativeEditorAddons {
-    var codeHighlighting: NativeCodeHighlightConfiguration? = nil
+    var codeHighlighting: NativeCodeHighlightConfiguration?
     let mentions: NativeMentionsAddonConfig?
 
     static func from(json: String?) -> NativeEditorAddons {
@@ -105,8 +105,7 @@ func resolveMentionQueryState(
         if previous.properties.isWhitespace
             || previous == "\n"
             || previous == "\u{FFFC}"
-            || (!isMentionIdentifierScalar(previous) && previous != triggerScalar)
-        {
+            || (!isMentionIdentifierScalar(previous) && previous != triggerScalar) {
             break
         }
         start -= 1
@@ -200,7 +199,7 @@ final class MentionSuggestionChipButton: UIButton {
             stackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.horizontalContentInset),
             stackView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.horizontalContentInset),
             stackView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.verticalContentInset),
-            heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 40)
         ])
 
         addTarget(self, action: #selector(handleTouchDown), for: [.touchDown, .touchDragEnter])
@@ -260,29 +259,29 @@ final class MentionSuggestionChipButton: UIButton {
             layer.borderColor = UIColor.clear.cgColor
             layer.borderWidth = 0
             #if compiler(>=6.2)
-            if #available(iOS 26.0, *) {
-                stackView.isHidden = true
-                backgroundColor = .clear
-                var configuration = highlighted
-                    ? UIButton.Configuration.prominentGlass()
-                    : UIButton.Configuration.glass()
-                configuration.cornerStyle = .capsule
-                configuration.contentInsets = NSDirectionalEdgeInsets(
-                    top: Self.verticalContentInset,
-                    leading: Self.horizontalContentInset,
-                    bottom: Self.verticalContentInset,
-                    trailing: Self.horizontalContentInset
-                )
-                configuration.title = displayLabel
-                configuration.subtitle = suggestion.subtitle
-                configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
-                    var outgoing = incoming
-                    outgoing.font = .systemFont(ofSize: 14, weight: .semibold)
-                    return outgoing
+                if #available(iOS 26.0, *) {
+                    stackView.isHidden = true
+                    backgroundColor = .clear
+                    var configuration = highlighted
+                        ? UIButton.Configuration.prominentGlass()
+                        : UIButton.Configuration.glass()
+                    configuration.cornerStyle = .capsule
+                    configuration.contentInsets = NSDirectionalEdgeInsets(
+                        top: Self.verticalContentInset,
+                        leading: Self.horizontalContentInset,
+                        bottom: Self.verticalContentInset,
+                        trailing: Self.horizontalContentInset
+                    )
+                    configuration.title = displayLabel
+                    configuration.subtitle = suggestion.subtitle
+                    configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+                        var outgoing = incoming
+                        outgoing.font = .systemFont(ofSize: 14, weight: .semibold)
+                        return outgoing
+                    }
+                    self.configuration = configuration
+                    return
                 }
-                self.configuration = configuration
-                return
-            }
             #endif
             stackView.isHidden = false
             backgroundColor = highlighted
@@ -329,11 +328,11 @@ final class MentionSuggestionChipButton: UIButton {
 
     func usesNativeGlassTextRenderingForTesting() -> Bool {
         #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            return toolbarAppearance == .native
-                && stackView.isHidden
-                && configuration?.title == displayLabel
-        }
+            if #available(iOS 26.0, *) {
+                return toolbarAppearance == .native
+                    && stackView.isHidden
+                    && configuration?.title == displayLabel
+            }
         #endif
         return false
     }
@@ -344,11 +343,11 @@ final class MentionSuggestionChipButton: UIButton {
 
     func usesNativeGlassSemiboldTitleForTesting() -> Bool {
         #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            return toolbarAppearance == .native
-                && stackView.isHidden
-                && configuration?.titleTextAttributesTransformer != nil
-        }
+            if #available(iOS 26.0, *) {
+                return toolbarAppearance == .native
+                    && stackView.isHidden
+                    && configuration?.titleTextAttributesTransformer != nil
+            }
         #endif
         return false
     }

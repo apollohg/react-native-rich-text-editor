@@ -1,5 +1,5 @@
-import XCTest
 import CoreText
+import XCTest
 
 extension RenderBridgeTests {
     func testHorizontalRuleAttachment_bounds() {

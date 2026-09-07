@@ -567,11 +567,6 @@ fn attached_session_enqueues_local_edits_and_detached_session_has_no_outbox() {
     bridge::destroy_session(detached);
 }
 
-/// Item 5 of the behavioral contract: a session without an attached
-/// collaboration runtime edits with pre-Task-7 semantics. The bridge-driven
-/// session and a directly driven engine produce the same document, selection,
-/// history availability, and revision progression; encoded states differ only
-/// by the random client identity and decode to the same document.
 #[test]
 fn detached_session_editing_matches_direct_engine_behavior() {
     use crate::boundary::ResourceLimits;
@@ -602,9 +597,6 @@ fn detached_session_editing_matches_direct_engine_behavior() {
         .import_json(PLAIN_DOC, TransactionOrigin::DocumentImport)
         .unwrap();
 
-    // Same trace on both: type once, toggle a command, undo, redo. The
-    // engine twin uses the identical pre-Task-7 lowering the bridge froze:
-    // one planner-lowered typed transaction with the local-input origin.
     let revision = bridge::session_audit(id).unwrap().document_revision;
     bridge::submit_input(id, &input_envelope(201, revision, "zz")).unwrap();
     match engine

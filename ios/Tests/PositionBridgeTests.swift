@@ -81,7 +81,7 @@ final class PositionBridgeTests: XCTestCase {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Item", "marks": []},
             {"type": "blockEnd"},
@@ -103,7 +103,7 @@ final class PositionBridgeTests: XCTestCase {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": true, "index": 12, "total": 1, "start": 12, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": true, "index": 12, "total": 1, "start": 12, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Item", "marks": []},
             {"type": "blockEnd"},
@@ -126,7 +126,7 @@ final class PositionBridgeTests: XCTestCase {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "A", "marks": []},
             {"type": "blockEnd"},
@@ -153,7 +153,7 @@ final class PositionBridgeTests: XCTestCase {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "A", "marks": []},
             {"type": "voidInline", "nodeType": "hardBreak", "docPos": 4},
@@ -262,7 +262,7 @@ final class PositionBridgeTests: XCTestCase {
         let replacementJSON = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Item", "marks": []},
             {"type": "blockEnd"},
@@ -513,7 +513,7 @@ final class PositionBridgeTests: XCTestCase {
             ("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}", "family emoji"),
             ("\u{4F60}\u{597D}\u{4E16}\u{754C}", "CJK"),
             ("abc\u{1F600}\u{4F60}xyz", "mixed"),
-            ("\u{0041}\u{0301}", "combining character (A + combining acute)"),
+            ("\u{0041}\u{0301}", "combining character (A + combining acute)")
         ]
 
         for (text, label) in testCases {
@@ -529,7 +529,7 @@ final class PositionBridgeTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(
                     backToUtf16, utf16Offset - 1,
                     "Roundtrip for '\(label)' at UTF-16 offset \(utf16Offset): " +
-                    "scalar=\(scalar), back=\(backToUtf16)"
+                        "scalar=\(scalar), back=\(backToUtf16)"
                 )
             }
         }
@@ -541,7 +541,7 @@ final class PositionBridgeTests: XCTestCase {
             ("Hello, world!", "ASCII"),
             ("A\u{1F600}B", "surrogate pair"),
             ("\u{4F60}\u{597D}", "CJK"),
-            ("abc\u{1F600}\u{4F60}xyz", "mixed"),
+            ("abc\u{1F600}\u{4F60}xyz", "mixed")
         ]
 
         for (text, label) in testCases {
@@ -552,7 +552,7 @@ final class PositionBridgeTests: XCTestCase {
                 XCTAssertEqual(
                     backToScalar, scalarOffset,
                     "Roundtrip for '\(label)' at scalar \(scalarOffset): " +
-                    "utf16=\(utf16), back=\(backToScalar) - should equal original scalar"
+                        "utf16=\(utf16), back=\(backToScalar) - should equal original scalar"
                 )
             }
         }

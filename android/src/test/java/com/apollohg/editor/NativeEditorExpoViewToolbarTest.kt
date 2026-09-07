@@ -7,6 +7,8 @@ import android.view.Window
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.ScrollView
+import java.time.Duration
+import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -22,8 +24,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
-import java.util.concurrent.atomic.AtomicBoolean
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -341,8 +341,14 @@ internal class NativeEditorExpoViewToolbarTest : NativeEditorExpoViewTestFixture
 
         host.addView(view, FrameLayout.LayoutParams(360, 480))
         view.measure(
-            android.view.View.MeasureSpec.makeMeasureSpec(360, android.view.View.MeasureSpec.EXACTLY),
-            android.view.View.MeasureSpec.makeMeasureSpec(480, android.view.View.MeasureSpec.EXACTLY)
+            android.view.View.MeasureSpec.makeMeasureSpec(
+                360,
+                android.view.View.MeasureSpec.EXACTLY
+            ),
+            android.view.View.MeasureSpec.makeMeasureSpec(
+                480,
+                android.view.View.MeasureSpec.EXACTLY
+            )
         )
         view.layout(0, 0, 360, 480)
         view.richTextView.setEditorIdWhileDetached(editorId)
@@ -381,8 +387,14 @@ internal class NativeEditorExpoViewToolbarTest : NativeEditorExpoViewTestFixture
         view.setHeightBehavior("autoGrow")
         host.addView(view, FrameLayout.LayoutParams(360, FrameLayout.LayoutParams.WRAP_CONTENT))
         view.measure(
-            android.view.View.MeasureSpec.makeMeasureSpec(360, android.view.View.MeasureSpec.EXACTLY),
-            android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED)
+            android.view.View.MeasureSpec.makeMeasureSpec(
+                360,
+                android.view.View.MeasureSpec.EXACTLY
+            ),
+            android.view.View.MeasureSpec.makeMeasureSpec(
+                0,
+                android.view.View.MeasureSpec.UNSPECIFIED
+            )
         )
         view.layout(0, 0, 360, view.measuredHeight)
         view.richTextView.setEditorIdWhileDetached(editorId)
@@ -429,8 +441,14 @@ internal class NativeEditorExpoViewToolbarTest : NativeEditorExpoViewTestFixture
         outerContent.addView(view, FrameLayout.LayoutParams(width, 480))
         host.addView(outerScrollView, FrameLayout.LayoutParams(width, scrollViewportHeight))
         host.measure(
-            android.view.View.MeasureSpec.makeMeasureSpec(width, android.view.View.MeasureSpec.EXACTLY),
-            android.view.View.MeasureSpec.makeMeasureSpec(hostHeight, android.view.View.MeasureSpec.EXACTLY)
+            android.view.View.MeasureSpec.makeMeasureSpec(
+                width,
+                android.view.View.MeasureSpec.EXACTLY
+            ),
+            android.view.View.MeasureSpec.makeMeasureSpec(
+                hostHeight,
+                android.view.View.MeasureSpec.EXACTLY
+            )
         )
         host.layout(0, 0, width, hostHeight)
         view.richTextView.setEditorIdWhileDetached(editorId)

@@ -59,7 +59,11 @@ class ImeTextCoordinateMapperTest {
         val visible = ImeTextCoordinateMapper.build(raw, generation = 3).visibleText
 
         assertTrue(visible is Spanned)
-        val span = (visible as Spanned).getSpans(0, visible.length, AbsoluteSizeSpan::class.java).single()
+        val span = (visible as Spanned).getSpans(
+            0,
+            visible.length,
+            AbsoluteSizeSpan::class.java
+        ).single()
         assertEquals(0, visible.getSpanStart(span))
         assertEquals(2, visible.getSpanEnd(span))
     }

@@ -13,8 +13,6 @@ pub enum GenerateError {
     OrderedListIndexOverflow,
 }
 
-// Not reachable from production call paths after the legacy runtime removal;
-// exercised by crate tests.
 #[allow(dead_code)]
 fn render_marks(node: &Node) -> Vec<RenderMark> {
     node.marks()
@@ -32,8 +30,6 @@ fn render_marks(node: &Node) -> Vec<RenderMark> {
 /// around block-level nodes, TextRun for text, and VoidInline/VoidBlock for
 /// atomic nodes. List nodes are transparent containers that provide
 /// `ListContext` to their list-item children.
-// Not reachable from production call paths after the Task 16C legacy runtime
-// removal; exercised by crate tests.
 #[allow(dead_code)]
 pub fn generate(doc: &Document, schema: &Schema) -> Result<Vec<RenderElement>, GenerateError> {
     let mut elements = Vec::new();
@@ -50,8 +46,6 @@ pub fn generate(doc: &Document, schema: &Schema) -> Result<Vec<RenderElement>, G
 /// `depth` is the nesting depth for BlockStart (0 = top-level blocks).
 /// `list_info` is set when `parent` is a list node, carrying
 /// (list_node_type, ordered, start, total_items).
-// Not reachable from production call paths after the Task 16C legacy runtime
-// removal; exercised by crate tests.
 #[allow(dead_code)]
 fn walk_children(
     parent: &Node,
@@ -68,14 +62,12 @@ fn walk_children(
 
         match role {
             Some(NodeRole::Text) => {
-                // Text node: emit TextRun
                 let text = child.text_str().unwrap_or("").to_string();
                 let marks = render_marks(child);
                 elements.push(RenderElement::TextRun { text, marks });
                 *pos += child.node_size();
             }
             Some(NodeRole::HardBreak) => {
-                // Known inline void
                 elements.push(RenderElement::VoidInline {
                     node_type: child.node_type().to_string(),
                     doc_pos: *pos,
@@ -110,7 +102,6 @@ fn walk_children(
                 *pos += 1; // list close tag
             }
             Some(NodeRole::ListItem) => {
-                // ListItem: emit BlockStart with ListContext, walk children, emit BlockEnd
                 let list_context =
                     if let Some((list_node_type, ordered, start, total)) = list_info.as_ref() {
                         let index_0based =
@@ -154,7 +145,6 @@ fn walk_children(
                 elements.push(RenderElement::BlockEnd);
             }
             Some(NodeRole::TextBlock) => {
-                // Paragraph or similar text block: BlockStart, walk inline children, BlockEnd
                 elements.push(RenderElement::BlockStart {
                     node_type: child.node_type().to_string(),
                     language: child
@@ -178,7 +168,6 @@ fn walk_children(
                 elements.push(RenderElement::BlockEnd);
             }
             Some(NodeRole::Block) if child.is_void() => {
-                // Void block (e.g. horizontalRule)
                 elements.push(RenderElement::VoidBlock {
                     node_type: child.node_type().to_string(),
                     doc_pos: *pos,
@@ -187,7 +176,6 @@ fn walk_children(
                 *pos += child.node_size(); // 1 for void
             }
             Some(NodeRole::Block) => {
-                // Non-void block: treat as generic block container
                 elements.push(RenderElement::BlockStart {
                     node_type: child.node_type().to_string(),
                     language: child
@@ -204,7 +192,6 @@ fn walk_children(
                 elements.push(RenderElement::BlockEnd);
             }
             Some(NodeRole::Inline) if child.is_void() => {
-                // Unknown inline void: opaque inline atom
                 elements.push(RenderElement::OpaqueInlineAtom {
                     node_type: child.node_type().to_string(),
                     label: inline_atom_label(child.node_type(), child.attrs()),
@@ -215,19 +202,15 @@ fn walk_children(
                 *pos += child.node_size();
             }
             Some(NodeRole::Inline) => {
-                // Non-void inline (shouldn't normally happen but handle gracefully)
                 *pos += child.node_size();
             }
             Some(NodeRole::Doc) => {
-                // Nested doc (unusual): just walk children
                 *pos += 1;
                 walk_children(child, schema, elements, pos, depth, None)?;
                 *pos += 1;
             }
             None => {
-                // Unknown node type: use heuristics based on node kind
                 if child.is_void() {
-                    // Determine inline vs block by group
                     let is_inline = opaque_node_is_inline(child, schema);
                     if is_inline {
                         elements.push(RenderElement::OpaqueInlineAtom {
@@ -250,13 +233,11 @@ fn walk_children(
                     }
                     *pos += child.node_size();
                 } else if child.is_text() {
-                    // Text node not in schema (unusual): emit TextRun anyway
                     let text = child.text_str().unwrap_or("").to_string();
                     let marks = render_marks(child);
                     elements.push(RenderElement::TextRun { text, marks });
                     *pos += child.node_size();
                 } else {
-                    // Unknown element: skip its tokens
                     *pos += child.node_size();
                 }
             }

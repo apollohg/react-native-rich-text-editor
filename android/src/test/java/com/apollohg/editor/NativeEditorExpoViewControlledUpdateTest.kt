@@ -3,6 +3,10 @@ import android.app.Activity
 import android.os.Handler
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
+import java.time.Duration
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,22 +20,28 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-internal class NativeEditorExpoViewControlledUpdateTest : NativeEditorExpoViewControlledUpdateTestFixture() {
+internal class NativeEditorExpoViewControlledUpdateTest :
+    NativeEditorExpoViewControlledUpdateTestFixture() {
     @Test
     fun `delayed editor updates drain with captured identity across rebind`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
         val backend = FakeEditorV2Backend()
         fun registerAdapter(): Pair<EditorV2Adapter, Long> {
-            val editorId = (backend.create("{\"initialization\":{\"type\":\"localEmpty\"}}", null) as EditorV2CallResult.Ok).value
-            val adapter = EditorV2Adapter.attach(backend, JSONObject(editorId).getString("editorId"), roomBound = false)!!
+            val editorId = (
+                backend.create(
+                    "{\"initialization\":{\"type\":\"localEmpty\"}}",
+                    null
+                ) as EditorV2CallResult.Ok
+                ).value
+            val adapter = EditorV2Adapter.attach(
+                backend,
+                JSONObject(editorId).getString("editorId"),
+                roomBound = false
+            )!!
             return adapter to EditorV2Registry.register(adapter)
         }
         val (adapterA, tokenA) = registerAdapter()
@@ -44,9 +54,13 @@ internal class NativeEditorExpoViewControlledUpdateTest : NativeEditorExpoViewCo
             view.onAddonEventForTesting = {}
 
             view.setEditorId(tokenA)
-            view.onEditorUpdate(JSONObject(renderUpdateJson("A")).put("documentVersion", "7").toString())
+            view.onEditorUpdate(
+                JSONObject(renderUpdateJson("A")).put("documentVersion", "7").toString()
+            )
             view.setEditorId(tokenB)
-            view.onEditorUpdate(JSONObject(renderUpdateJson("B")).put("documentVersion", "8").toString())
+            view.onEditorUpdate(
+                JSONObject(renderUpdateJson("B")).put("documentVersion", "8").toString()
+            )
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(100))
 
             assertEquals(2, payloads.size)
@@ -54,8 +68,11 @@ internal class NativeEditorExpoViewControlledUpdateTest : NativeEditorExpoViewCo
             assertEquals("7", payloads[0]["documentRevision"])
             assertEquals(adapterB.editorId, payloads[1]["editorId"])
             assertEquals("8", payloads[1]["documentRevision"])
-            assertEquals("B", JSONObject(payloads[1]["updateJson"] as String)
-                .getJSONArray("renderBlocks").getJSONArray(0).getJSONObject(1).getString("text"))
+            assertEquals(
+                "B",
+                JSONObject(payloads[1]["updateJson"] as String)
+                    .getJSONArray("renderBlocks").getJSONArray(0).getJSONObject(1).getString("text")
+            )
         } finally {
             EditorV2Registry.remove(adapterA.editorId)
             EditorV2Registry.remove(adapterB.editorId)
@@ -70,8 +87,17 @@ internal class NativeEditorExpoViewControlledUpdateTest : NativeEditorExpoViewCo
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
         val backend = FakeEditorV2Backend()
         fun registerAdapter(): Pair<EditorV2Adapter, Long> {
-            val editorId = (backend.create("{\"initialization\":{\"type\":\"localEmpty\"}}", null) as EditorV2CallResult.Ok).value
-            val adapter = EditorV2Adapter.attach(backend, JSONObject(editorId).getString("editorId"), roomBound = false)!!
+            val editorId = (
+                backend.create(
+                    "{\"initialization\":{\"type\":\"localEmpty\"}}",
+                    null
+                ) as EditorV2CallResult.Ok
+                ).value
+            val adapter = EditorV2Adapter.attach(
+                backend,
+                JSONObject(editorId).getString("editorId"),
+                roomBound = false
+            )!!
             return adapter to EditorV2Registry.register(adapter)
         }
         val (adapterA, tokenA) = registerAdapter()
@@ -83,7 +109,9 @@ internal class NativeEditorExpoViewControlledUpdateTest : NativeEditorExpoViewCo
             view.onAddonEventForTesting = {}
 
             view.setEditorId(tokenA)
-            view.onEditorUpdate(JSONObject(renderUpdateJson("stale A")).put("documentVersion", "7").toString())
+            view.onEditorUpdate(
+                JSONObject(renderUpdateJson("stale A")).put("documentVersion", "7").toString()
+            )
             assertEquals(1, view.pendingEditorUpdateEventCountForTesting())
 
             view.setEditorId(tokenB)
@@ -190,7 +218,9 @@ internal class NativeEditorExpoViewControlledUpdateTest : NativeEditorExpoViewCo
         }
         NativeEditorViewRegistry.register(editorId, view)
 
-        val inputConnection = editText.onCreateInputConnection(android.view.inputmethod.EditorInfo())
+        val inputConnection = editText.onCreateInputConnection(
+            android.view.inputmethod.EditorInfo()
+        )
         assertNotNull(inputConnection)
         assertTrue(inputConnection!!.setComposingText("abc", 1))
 
@@ -219,7 +249,10 @@ internal class NativeEditorExpoViewControlledUpdateTest : NativeEditorExpoViewCo
 
         NativeEditorViewRegistry.markEditorCreated(editorId)
         view.richTextView.setEditorIdWhileDetached(editorId)
-        view.richTextView.editorEditText.applyUpdateJSON(renderUpdateJson(""), notifyListener = false)
+        view.richTextView.editorEditText.applyUpdateJSON(
+            renderUpdateJson(""),
+            notifyListener = false
+        )
         view.richTextView.editorEditText.editorId = editorId
         view.setAttachedToNativeWindowForTesting(true)
         NativeEditorViewRegistry.register(editorId, view)
@@ -249,7 +282,7 @@ internal class NativeEditorExpoViewControlledUpdateTest : NativeEditorExpoViewCo
     }
 
     @Test
-    fun `editor id change preserves pending controlled update until matching update editor id arrives`() {
+    fun `editor id change preserves pending update until matching editor id arrives`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
         val updateJson = """{"renderElements":[],"selection":{"type":"text","anchor":0,"head":0}}"""
@@ -305,7 +338,7 @@ internal class NativeEditorExpoViewControlledUpdateTest : NativeEditorExpoViewCo
     }
 
     @Test
-    fun `pending JS editor update applies again when the unchanged editor id prop is not redelivered`() {
+    fun `pending JS update reapplies without redelivery of unchanged editor id`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
         val editorId = 778849L
@@ -381,7 +414,10 @@ internal class NativeEditorExpoViewControlledUpdateTest : NativeEditorExpoViewCo
 
         NativeEditorViewRegistry.markEditorCreated(editorId)
         view.richTextView.setEditorIdWhileDetached(editorId)
-        view.richTextView.editorEditText.applyUpdateJSON(renderUpdateJson("ready"), notifyListener = false)
+        view.richTextView.editorEditText.applyUpdateJSON(
+            renderUpdateJson("ready"),
+            notifyListener = false
+        )
         view.richTextView.editorEditText.setSelection(0)
         view.richTextView.editorEditText.editorId = editorId
         view.setAttachedToNativeWindowForTesting(true)

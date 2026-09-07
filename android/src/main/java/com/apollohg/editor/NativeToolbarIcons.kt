@@ -12,50 +12,50 @@ internal data class NativeToolbarIcon(
 ) {
     companion object {
         private val defaultGlyphs = mapOf(
-            ToolbarDefaultIconId.bold to "B",
-            ToolbarDefaultIconId.italic to "I",
-            ToolbarDefaultIconId.underline to "U",
-            ToolbarDefaultIconId.strike to "S",
-            ToolbarDefaultIconId.link to "🔗",
-            ToolbarDefaultIconId.image to "🖼",
-            ToolbarDefaultIconId.h1 to "H1",
-            ToolbarDefaultIconId.h2 to "H2",
-            ToolbarDefaultIconId.h3 to "H3",
-            ToolbarDefaultIconId.h4 to "H4",
-            ToolbarDefaultIconId.h5 to "H5",
-            ToolbarDefaultIconId.h6 to "H6",
-            ToolbarDefaultIconId.blockquote to "❝",
-            ToolbarDefaultIconId.bulletList to "•≡",
-            ToolbarDefaultIconId.orderedList to "1.",
-            ToolbarDefaultIconId.indentList to "→",
-            ToolbarDefaultIconId.outdentList to "←",
-            ToolbarDefaultIconId.lineBreak to "↵",
-            ToolbarDefaultIconId.horizontalRule to "—",
-            ToolbarDefaultIconId.undo to "↩",
-            ToolbarDefaultIconId.redo to "↪"
+            ToolbarDefaultIconId.BOLD to "B",
+            ToolbarDefaultIconId.ITALIC to "I",
+            ToolbarDefaultIconId.UNDERLINE to "U",
+            ToolbarDefaultIconId.STRIKE to "S",
+            ToolbarDefaultIconId.LINK to "🔗",
+            ToolbarDefaultIconId.IMAGE to "🖼",
+            ToolbarDefaultIconId.H1 to "H1",
+            ToolbarDefaultIconId.H2 to "H2",
+            ToolbarDefaultIconId.H3 to "H3",
+            ToolbarDefaultIconId.H4 to "H4",
+            ToolbarDefaultIconId.H5 to "H5",
+            ToolbarDefaultIconId.H6 to "H6",
+            ToolbarDefaultIconId.BLOCKQUOTE to "❝",
+            ToolbarDefaultIconId.BULLET_LIST to "•≡",
+            ToolbarDefaultIconId.ORDERED_LIST to "1.",
+            ToolbarDefaultIconId.INDENT_LIST to "→",
+            ToolbarDefaultIconId.OUTDENT_LIST to "←",
+            ToolbarDefaultIconId.LINE_BREAK to "↵",
+            ToolbarDefaultIconId.HORIZONTAL_RULE to "—",
+            ToolbarDefaultIconId.UNDO to "↩",
+            ToolbarDefaultIconId.REDO to "↪"
         )
         private val defaultMaterialIcons = mapOf(
-            ToolbarDefaultIconId.bold to "format-bold",
-            ToolbarDefaultIconId.italic to "format-italic",
-            ToolbarDefaultIconId.underline to "format-underlined",
-            ToolbarDefaultIconId.strike to "strikethrough-s",
-            ToolbarDefaultIconId.link to "link",
-            ToolbarDefaultIconId.image to "image",
-            ToolbarDefaultIconId.blockquote to "format-quote",
-            ToolbarDefaultIconId.bulletList to "format-list-bulleted",
-            ToolbarDefaultIconId.orderedList to "format-list-numbered",
-            ToolbarDefaultIconId.indentList to "format-indent-increase",
-            ToolbarDefaultIconId.outdentList to "format-indent-decrease",
-            ToolbarDefaultIconId.lineBreak to "keyboard-return",
-            ToolbarDefaultIconId.horizontalRule to "horizontal-rule",
-            ToolbarDefaultIconId.h1 to "title",
-            ToolbarDefaultIconId.h2 to "title",
-            ToolbarDefaultIconId.h3 to "title",
-            ToolbarDefaultIconId.h4 to "title",
-            ToolbarDefaultIconId.h5 to "title",
-            ToolbarDefaultIconId.h6 to "title",
-            ToolbarDefaultIconId.undo to "undo",
-            ToolbarDefaultIconId.redo to "redo"
+            ToolbarDefaultIconId.BOLD to "format-bold",
+            ToolbarDefaultIconId.ITALIC to "format-italic",
+            ToolbarDefaultIconId.UNDERLINE to "format-underlined",
+            ToolbarDefaultIconId.STRIKE to "strikethrough-s",
+            ToolbarDefaultIconId.LINK to "link",
+            ToolbarDefaultIconId.IMAGE to "image",
+            ToolbarDefaultIconId.BLOCKQUOTE to "format-quote",
+            ToolbarDefaultIconId.BULLET_LIST to "format-list-bulleted",
+            ToolbarDefaultIconId.ORDERED_LIST to "format-list-numbered",
+            ToolbarDefaultIconId.INDENT_LIST to "format-indent-increase",
+            ToolbarDefaultIconId.OUTDENT_LIST to "format-indent-decrease",
+            ToolbarDefaultIconId.LINE_BREAK to "keyboard-return",
+            ToolbarDefaultIconId.HORIZONTAL_RULE to "horizontal-rule",
+            ToolbarDefaultIconId.H1 to "title",
+            ToolbarDefaultIconId.H2 to "title",
+            ToolbarDefaultIconId.H3 to "title",
+            ToolbarDefaultIconId.H4 to "title",
+            ToolbarDefaultIconId.H5 to "title",
+            ToolbarDefaultIconId.H6 to "title",
+            ToolbarDefaultIconId.UNDO to "undo",
+            ToolbarDefaultIconId.REDO to "redo"
         )
 
         fun fromJson(raw: JSONObject?): NativeToolbarIcon? {
@@ -63,14 +63,16 @@ internal data class NativeToolbarIcon(
             return when (raw.optString("type")) {
                 "default" -> {
                     val id = runCatching {
-                        ToolbarDefaultIconId.valueOf(raw.getString("id"))
+                        ToolbarDefaultIconId.fromWireValue(raw.getString("id"))
                     }.getOrNull() ?: return null
                     NativeToolbarIcon(defaultId = id)
                 }
+
                 "glyph" -> {
                     val text = raw.optString("text")
                     if (text.isBlank()) null else NativeToolbarIcon(glyphText = text)
                 }
+
                 "platform" -> {
                     val materialName = raw.optJSONObject("android")
                         ?.takeIf { it.optString("type") == "material" }
@@ -85,6 +87,7 @@ internal data class NativeToolbarIcon(
                         )
                     }
                 }
+
                 else -> null
             }
         }
@@ -93,15 +96,13 @@ internal data class NativeToolbarIcon(
             defaultId?.let { defaultMaterialIcons[it] }
     }
 
-    fun resolvedGlyphText(): String =
-        glyphText?.takeIf { it.isNotBlank() }
-            ?: fallbackText?.takeIf { it.isNotBlank() }
-            ?: defaultId?.let { defaultGlyphs[it] }
-            ?: "?"
+    fun resolvedGlyphText(): String = glyphText?.takeIf { it.isNotBlank() }
+        ?: fallbackText?.takeIf { it.isNotBlank() }
+        ?: defaultId?.let { defaultGlyphs[it] }
+        ?: "?"
 
-    fun resolvedMaterialIconName(): String? =
-        materialIconName?.takeIf { it.isNotBlank() }
-            ?: Companion.defaultMaterialIconName(defaultId)
+    fun resolvedMaterialIconName(): String? = materialIconName?.takeIf { it.isNotBlank() }
+        ?: Companion.defaultMaterialIconName(defaultId)
 }
 
 internal object MaterialIconRegistry {
@@ -151,10 +152,7 @@ internal object MaterialIconRegistry {
     }
 }
 
-internal data class NativeToolbarResolvedIcon(
-    val text: String,
-    val typeface: Typeface? = null
-)
+internal data class NativeToolbarResolvedIcon(val text: String, val typeface: Typeface? = null)
 
 internal fun NativeToolbarIcon.resolveForAndroid(context: Context): NativeToolbarResolvedIcon {
     val materialName = resolvedMaterialIconName()

@@ -19,7 +19,10 @@ class ViewerDocumentUnitsTest {
         assertNull("an absent key must not produce a value", json.optionalString("absent"))
         // optString(key, null) routes JSONObject.NULL through String.valueOf,
         // which yields the four-character text "null" instead of no value.
-        assertNull("a present JSON null must not coerce to text", json.optionalString("explicitNull"))
+        assertNull(
+            "a present JSON null must not coerce to text",
+            json.optionalString("explicitNull")
+        )
         // A quoted "null" is real content, so it must survive that same guard.
         assertEquals("null", json.optionalString("literal"))
     }
@@ -27,7 +30,13 @@ class ViewerDocumentUnitsTest {
     @Test
     fun `list context kind reads through the same absent and JSON null guard`() {
         assertEquals("task", listContext("""{"ordered":false,"kind":"task"}""")?.kind)
-        assertNull("an absent kind must leave the list unclassified", listContext("""{"ordered":false}""")?.kind)
-        assertNull("a JSON null kind must not classify the list as \"null\"", listContext("""{"ordered":false,"kind":null}""")?.kind)
+        assertNull(
+            "an absent kind must leave the list unclassified",
+            listContext("""{"ordered":false}""")?.kind
+        )
+        assertNull(
+            "a JSON null kind must not classify the list as \"null\"",
+            listContext("""{"ordered":false,"kind":null}""")?.kind
+        )
     }
 }

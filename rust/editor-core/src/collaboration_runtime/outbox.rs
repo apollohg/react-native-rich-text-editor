@@ -25,8 +25,6 @@ thread_local! {
 
 /// Simulate an allocation failure inside the next outbox reservations.
 /// Mirrors the history-module failpoint idiom for atomicity coverage.
-// Not reachable from production call paths after the Task 16C legacy runtime
-// removal; exercised by crate tests.
 #[allow(dead_code)]
 pub fn set_reservation_allocation_failure_for_test(enabled: bool) {
     FAIL_RESERVATION_ALLOCATION.with(|cell| cell.set(enabled));
@@ -129,16 +127,12 @@ pub struct ProtocolReplyReservation {
 
 impl ProtocolReplyReservation {
     /// Number of replies this reservation admits.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn reply_count(&self) -> usize {
         self.reply_count
     }
 
     /// Aggregate byte bound this reservation admits.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn upper_bound_bytes(&self) -> usize {
         self.upper_bound_bytes
@@ -559,12 +553,6 @@ impl CollaborationOutbox {
         self.active_lease = None;
     }
 
-    /// Task 11 teardown-on-restore: drop every pending framed protocol reply
-    /// and awareness broadcast. Both are transport-scoped and minted against
-    /// the prior store, so they can never become deliverable after restore.
-    /// Pending *document* updates are untouched: restore rejects while any
-    /// exist, so none can be here by the time this runs. Infallible by
-    /// construction.
     pub fn clear_protocol_replies(&mut self) {
         if matches!(
             self.active_lease,
@@ -582,8 +570,6 @@ impl CollaborationOutbox {
         self.pending_awareness_bytes = 0;
     }
 
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn pending_protocol_reply_count(&self) -> usize {
         self.pending_protocol.len().saturating_add(
@@ -594,8 +580,6 @@ impl CollaborationOutbox {
         )
     }
 
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn pending_protocol_reply_bytes(&self) -> usize {
         self.pending_protocol_bytes
@@ -608,10 +592,6 @@ impl CollaborationOutbox {
             .any(|message| matches!(message, OutboxOrderedMessage::DocumentUpdate(_)))
     }
 
-    /// Test-only observability for a retained document front. The production
-    /// handoff deliberately exposes bytes and lease identity only; the native
-    /// transaction fixture needs the originating request id to preserve its
-    /// existing assertions while it drives the explicit ACK path.
     #[cfg(test)]
     pub(crate) fn pending_document_update_request_id_for_leased_front(&self) -> Option<u64> {
         match self.active_lease {
@@ -626,8 +606,6 @@ impl CollaborationOutbox {
         }
     }
 
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn pending_document_update_count(&self) -> usize {
         self.pending_ordered
@@ -636,8 +614,6 @@ impl CollaborationOutbox {
             .count()
     }
 
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn pending_document_update_bytes(&self) -> usize {
         self.pending_bytes
@@ -655,8 +631,6 @@ impl CollaborationOutbox {
 
     /// The most recent successfully admitted document-update bound; test
     /// observability for the actual-length-within-bound property.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn last_reserved_upper_bound_for_test(&self) -> Option<usize> {
         self.last_reserved_upper_bound
@@ -664,8 +638,6 @@ impl CollaborationOutbox {
 
     /// Test-only ceiling override for saturation matrices, mirroring the
     /// session `set_transport_state_for_test` idiom.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn set_ceilings_for_test(&mut self, max_pending_messages: usize, max_pending_bytes: usize) {
         self.max_pending_messages = max_pending_messages;

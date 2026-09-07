@@ -8,7 +8,7 @@ final class CodeHighlightingTests: XCTestCase {
         XCTAssertFalse(NativeCodeHighlightingRegistry.validRanges(text: text, ranges: [.init(start: 3, length: 2, color: 0x112233ff, fontStyle: 0)]))
         XCTAssertFalse(NativeCodeHighlightingRegistry.validRanges(text: text, ranges: [
             .init(start: 0, length: 3, color: 0x112233ff, fontStyle: 0),
-            .init(start: 1, length: 2, color: 0x112233ff, fontStyle: 0),
+            .init(start: 1, length: 2, color: 0x112233ff, fontStyle: 0)
         ]))
     }
 

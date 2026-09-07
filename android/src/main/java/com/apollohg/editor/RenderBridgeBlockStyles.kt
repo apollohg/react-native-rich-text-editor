@@ -34,10 +34,18 @@ internal fun RenderBridge.applyBlockStyle(
     } else {
         null
     }
-    val quoteStripeWidth = ((theme?.blockquote?.borderWidth
-        ?: LayoutConstants.BLOCKQUOTE_BORDER_WIDTH) * density).toInt()
-    val quoteGapWidth = ((theme?.blockquote?.markerGap
-        ?: LayoutConstants.BLOCKQUOTE_MARKER_GAP) * density).toInt()
+    val quoteStripeWidth = (
+        (
+            theme?.blockquote?.borderWidth
+                ?: LayoutConstants.BLOCKQUOTE_BORDER_WIDTH
+            ) * density
+        ).toInt()
+    val quoteGapWidth = (
+        (
+            theme?.blockquote?.markerGap
+                ?: LayoutConstants.BLOCKQUOTE_MARKER_GAP
+            ) * density
+        ).toInt()
     val quoteIndent = maxOf(
         theme?.blockquote?.indent ?: LayoutConstants.BLOCKQUOTE_INDENT,
         (theme?.blockquote?.markerGap ?: LayoutConstants.BLOCKQUOTE_MARKER_GAP) +
@@ -45,10 +53,12 @@ internal fun RenderBridge.applyBlockStyle(
     ) * density
     val blockquoteIndentPx = (quoteDepth * quoteIndent).toInt()
     val quoteBaseIndent = if (quoteDepth > 0) {
-        ((currentBlock.depth * indentPerDepth)
-            - (quoteDepth * indentPerDepth)
-            + listBaseIndentAdjustment
-            + ((quoteDepth - 1f) * quoteIndent)).toInt()
+        (
+            (currentBlock.depth * indentPerDepth) -
+                (quoteDepth * indentPerDepth) +
+                listBaseIndentAdjustment +
+                ((quoteDepth - 1f) * quoteIndent)
+            ).toInt()
     } else {
         0
     }
@@ -90,11 +100,18 @@ internal fun RenderBridge.applyBlockStyle(
     }
     annotateTopLevelChild(builder, start, end, currentBlock.topLevelChildIndex)
 
-    val lineHeight = theme?.styleSheet?.resolveText(currentBlock.nodeType, blockStack.dropLast(1).map { it.nodeType })?.lineHeight ?: resolveTextStyle(
-        currentBlock.nodeType,
-        theme,
-        quoteDepth > 0
-    ).lineHeight
+    val lineHeight =
+        theme?.styleSheet?.resolveText(
+            currentBlock.nodeType,
+            blockStack.dropLast(1).map {
+                it.nodeType
+            }
+        )?.lineHeight
+            ?: resolveTextStyle(
+                currentBlock.nodeType,
+                theme,
+                quoteDepth > 0
+            ).lineHeight
     applyLineHeightSpan(builder, start, end, lineHeight, density)
 }
 
@@ -102,9 +119,14 @@ private fun renderedListMarkerWidth(builder: Spanned, paragraphStart: Int): Int 
     val marker = builder.getSpans(paragraphStart, paragraphStart + 1, Annotation::class.java)
         .firstOrNull { it.key == RenderBridge.NATIVE_LIST_MARKER_ANNOTATION }
         ?: return 0
-    val markerText = SpannableStringBuilder(builder, builder.getSpanStart(marker), builder.getSpanEnd(marker))
+    val markerText =
+        SpannableStringBuilder(builder, builder.getSpanStart(marker), builder.getSpanEnd(marker))
     // Desired width includes paragraph margins unless they are removed.
-    markerText.getSpans(0, markerText.length, LeadingMarginSpan::class.java).forEach(markerText::removeSpan)
+    markerText.getSpans(
+        0,
+        markerText.length,
+        LeadingMarginSpan::class.java
+    ).forEach(markerText::removeSpan)
     val width = Layout.getDesiredWidth(markerText, TextPaint())
     return kotlin.math.ceil(width.toDouble()).toInt()
 }
@@ -266,9 +288,19 @@ internal fun RenderBridge.calculateIndent(
         val lists = blockStack.filter { it.listContext != null }
         return lists.mapIndexed { index, block ->
             val context = block.listContext!!
-            val name = if (context.optString("kind") == "task") "taskList" else if (context.optBoolean("ordered")) "orderedList" else "bulletList"
+            val name = if (context.optString("kind") ==
+                "task"
+            ) {
+                "taskList"
+            } else if (context.optBoolean("ordered")) {
+                "orderedList"
+            } else {
+                "bulletList"
+            }
             val style = sheet[name]
-            (style?.indent ?: LayoutConstants.INDENT_PER_DEPTH) * (if (index == 0) style?.baseIndentMultiplier ?: 1f else 1f) * density
+            (style?.indent ?: LayoutConstants.INDENT_PER_DEPTH) *
+                (if (index == 0) style?.baseIndentMultiplier ?: 1f else 1f) *
+                density
         }.sum()
     }
     val indentPerDepth = (theme?.list?.indent ?: LayoutConstants.INDENT_PER_DEPTH) * density
@@ -331,10 +363,7 @@ internal fun RenderBridge.effectiveParagraphStart(blockStack: List<BlockContext>
         ?: currentBlock.renderStart
 }
 
-internal fun RenderBridge.renderedParagraphStart(
-    builder: CharSequence,
-    candidateStart: Int
-): Int {
+internal fun RenderBridge.renderedParagraphStart(builder: CharSequence, candidateStart: Int): Int {
     val boundedStart = candidateStart.coerceIn(0, builder.length)
     if (boundedStart == 0) return 0
 
@@ -361,18 +390,18 @@ internal fun RenderBridge.consumePendingListMarker(
     return null
 }
 
-internal fun RenderBridge.calculateMarkerWidth(density: Float): Float {
-    return LayoutConstants.LIST_MARKER_WIDTH * density
-}
+internal fun RenderBridge.calculateMarkerWidth(density: Float): Float =
+    LayoutConstants.LIST_MARKER_WIDTH * density
 
-internal fun RenderBridge.blockquoteDepth(blockStack: List<BlockContext>): Float {
-    return blockStack.count { it.nodeType == "blockquote" }.toFloat()
-}
+internal fun RenderBridge.blockquoteDepth(blockStack: List<BlockContext>): Float =
+    blockStack.count {
+        it.nodeType == "blockquote"
+    }.toFloat()
 
-internal fun RenderBridge.columnContainerDepth(blockStack: List<BlockContext>): Float {
-    return blockStack.count { it.nodeType == "columns" || it.nodeType == "column" }.toFloat()
-}
+internal fun RenderBridge.columnContainerDepth(blockStack: List<BlockContext>): Float =
+    blockStack.count {
+        it.nodeType == "columns" || it.nodeType == "column"
+    }.toFloat()
 
-internal fun RenderBridge.isTransparentContainer(nodeType: String): Boolean {
-    return nodeType in setOf("blockquote", "columns", "column", "bulletList", "orderedList", "taskList")
-}
+internal fun RenderBridge.isTransparentContainer(nodeType: String): Boolean = nodeType in
+    setOf("blockquote", "columns", "column", "bulletList", "orderedList", "taskList")

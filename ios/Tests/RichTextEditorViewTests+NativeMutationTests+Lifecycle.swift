@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testBlurTimeAutocorrectAfterResignStillCommitsToRust() {
@@ -215,7 +215,7 @@ extension RichTextEditorViewTests {
         )
 
         view.textView.applyTheme(EditorTheme(dictionary: [
-            "textColor": "#123456",
+            "textColor": "#123456"
         ]))
 
         XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), "<p>the </p>")

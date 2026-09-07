@@ -1,10 +1,9 @@
 package com.apollohg.editor
 
-import android.widget.LinearLayout.LayoutParams
-
-import com.apollohg.editor.NativeEditorExpoView.ToolbarPlacement
 import android.graphics.RectF
 import android.os.Build
+import android.widget.LinearLayout.LayoutParams
+import com.apollohg.editor.NativeEditorExpoView.ToolbarPlacement
 import org.json.JSONObject
 
 internal fun NativeEditorExpoView.setThemeJsonImpl(themeJson: String?) {
@@ -23,7 +22,9 @@ internal fun NativeEditorExpoView.setImageLoadingPolicyJsonImpl(policyJson: Stri
 internal fun NativeEditorExpoView.applyThemeJson(themeJson: String?) {
     if (lastThemeJson == themeJson) return
     val theme = EditorTheme.fromJson(themeJson)
-    require(themeJson.isNullOrBlank() || theme != null) { "Invalid editor theme version or payload shape." }
+    require(themeJson.isNullOrBlank() || theme != null) {
+        "Invalid editor theme version or payload shape."
+    }
     lastThemeJson = themeJson
     richTextView.applyTheme(theme)
     keyboardToolbarView.applyTheme(theme?.toolbar)
@@ -76,7 +77,9 @@ internal fun NativeEditorExpoView.setAddonsJsonImpl(addonsJson: String?) {
     richTextView.editorEditText.setCodeHighlighting(next.codeHighlighting)
     lastAddonsJson = addonsJson
     addons = next
-    keyboardToolbarView.applyMentionTheme(richTextView.editorEditText.theme?.mentions ?: addons.mentions?.theme)
+    keyboardToolbarView.applyMentionTheme(
+        richTextView.editorEditText.theme?.mentions ?: addons.mentions?.theme
+    )
     refreshMentionQuery()
 }
 

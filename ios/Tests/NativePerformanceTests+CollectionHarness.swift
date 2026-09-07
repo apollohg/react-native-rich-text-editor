@@ -1,5 +1,5 @@
-import XCTest
 import UIKit
+import XCTest
 
 struct PreparedProseBenchmarkCorpus: Decodable {
     struct Entry: Decodable { let id: String; let category: String; let contentJSON: [String: JSONValue] }
@@ -88,10 +88,10 @@ struct PreparedProseBenchmarkExportContract: Decodable {
         let nominalFrameCount: Int
         let onTimeNominalFrameCount: Int
         let frameCallbackSamples: [FrameCallbackSample]
-        struct FrameCallbackSample: Decodable {
-            let callbackDurationNanos: UInt64
-            let targetLeadNanos: Int64
-        }
+    }
+    struct FrameCallbackSample: Decodable {
+        let callbackDurationNanos: UInt64
+        let targetLeadNanos: Int64
     }
     struct PhaseSamples: Decodable {
         let cold: Phase
@@ -184,7 +184,7 @@ final class PreparedProseCollectionHarness: NSObject, UICollectionViewDataSource
         byID = Dictionary(uniqueKeysWithValues: corpus.documents.map { ($0.id, $0) })
         sourceByID = Dictionary(uniqueKeysWithValues: corpus.documents.map { entry in
             guard let data = try? JSONEncoder().encode(entry.contentJSON),
-                  let source = String(data: data, encoding: .utf8)
+                let source = String(data: data, encoding: .utf8)
             else { preconditionFailure("invalid corpus entry \(entry.id)") }
             return (entry.id, source)
         })
@@ -320,7 +320,7 @@ final class PreparedProseCollectionHarness: NSObject, UICollectionViewDataSource
 
         let destination = traversal.direction == .forward ? orderedEntries.count - 1 : 0
         guard target == (traversal.direction == .forward ? maximumOffset : 0),
-              collectionView.indexPathsForVisibleItems.contains(IndexPath(item: destination, section: 0))
+            collectionView.indexPathsForVisibleItems.contains(IndexPath(item: destination, section: 0))
         else { return }
         finishCurrentWindowPass()
     }
@@ -347,7 +347,11 @@ final class PreparedProseCollectionHarness: NSObject, UICollectionViewDataSource
             residentKeyCount: result.residentKeyCount,
             residentKeyDigest: result.residentKeyDigest,
             cache: PreparedProseInstrumentation.snapshotCache(),
-            counters: (result.compileCount, result.layoutCount, result.cacheMisses)
+            counters: PreparedProseInstrumentation.PhaseCounters(
+                compileCount: result.compileCount,
+                layoutCount: result.layoutCount,
+                cacheMisses: result.cacheMisses
+            )
         )
         if traversal.direction == .forward {
             traversal.prime = result
@@ -405,7 +409,10 @@ final class PreparedProseCollectionHarness: NSObject, UICollectionViewDataSource
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int { orderedEntries.count }
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
-        let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "prepared", for: indexPath) as! PreparedProseCollectionCell
+        guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "prepared", for: indexPath) as? PreparedProseCollectionCell else {
+            XCTFail("Unexpected prepared cell type")
+            return UICollectionViewCell()
+        }
         let entry = orderedEntries[indexPath.item]
         guard let source = sourceByID[entry.id], let activeViewerConfiguration else {
             XCTFail("missing stable benchmark input for \(entry.id)")
@@ -435,7 +442,7 @@ private final class PreparedProseCollectionCell: UICollectionViewCell {
             viewer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             viewer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             viewer.topAnchor.constraint(equalTo: contentView.topAnchor),
-            viewer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            viewer.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
         ])
     }
     required init?(coder: NSCoder) { fatalError("PreparedProseCollectionCell is programmatic") }
@@ -475,7 +482,10 @@ private final class PreparedProseCollectionCell: UICollectionViewCell {
                 kind: .lifecycle
             )
         }
-        let fitted = attributes.copy() as! UICollectionViewLayoutAttributes
+        guard let fitted = attributes.copy() as? UICollectionViewLayoutAttributes else {
+            XCTFail("Unexpected layout attributes copy type")
+            return attributes
+        }
         let width = max(1, attributes.size.width)
         preparedArtifactHeight = max(1, ceil(viewer.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height))
         fitted.size = CGSize(width: width, height: preparedArtifactHeight)

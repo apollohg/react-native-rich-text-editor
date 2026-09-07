@@ -1,5 +1,5 @@
-import XCTest
 import UIKit
+import XCTest
 
 enum NativePerformanceFixtureFactory {
     private static let blockCount = 96
@@ -134,9 +134,12 @@ enum NativePerformanceFixtureFactory {
     private static func largeDocumentJSONString() -> String {
         let jsonObject: [String: Any] = [
             "type": "doc",
-            "content": largeDocumentContent(),
+            "content": largeDocumentContent()
         ]
-        let data = try! JSONSerialization.data(withJSONObject: jsonObject, options: [])
+        guard let data = try? JSONSerialization.data(withJSONObject: jsonObject, options: []) else {
+            XCTFail("Failed to serialize test fixture")
+            return "{}"
+        }
         return String(data: data, encoding: .utf8)!
     }
 
@@ -145,8 +148,8 @@ enum NativePerformanceFixtureFactory {
             [
                 "type": "heading",
                 "attrs": ["level": 1],
-                "content": [textNode(textFragment(seed: 10_000, minCharacterCount: 40))],
-            ],
+                "content": [textNode(textFragment(seed: 10_000, minCharacterCount: 40))]
+            ]
         ]
 
         for index in 0..<blockCount {
@@ -155,8 +158,8 @@ enum NativePerformanceFixtureFactory {
                     "type": "blockquote",
                     "content": [[
                         "type": "paragraph",
-                        "content": richInlineContent(seed: index, totalCharacters: paragraphCharacterCount),
-                    ]],
+                        "content": richInlineContent(seed: index, totalCharacters: paragraphCharacterCount)
+                    ]]
                 ])
                 continue
             }
@@ -165,14 +168,14 @@ enum NativePerformanceFixtureFactory {
                 content.append([
                     "type": "heading",
                     "attrs": ["level": 2],
-                    "content": [textNode(textFragment(seed: index + 2_000, minCharacterCount: 72))],
+                    "content": [textNode(textFragment(seed: index + 2_000, minCharacterCount: 72))]
                 ])
                 continue
             }
 
             content.append([
                 "type": "paragraph",
-                "content": richInlineContent(seed: index, totalCharacters: paragraphCharacterCount),
+                "content": richInlineContent(seed: index, totalCharacters: paragraphCharacterCount)
             ])
         }
 
@@ -200,10 +203,10 @@ enum NativePerformanceFixtureFactory {
                         "target": "_blank",
                         "rel": "noopener noreferrer nofollow",
                         "class": NSNull(),
-                        "title": NSNull(),
-                    ],
+                        "title": NSNull()
+                    ]
                 ]]
-            ),
+            )
         ]
 
         return segments.compactMap { text, marks in
@@ -215,7 +218,7 @@ enum NativePerformanceFixtureFactory {
     static func textNode(_ text: String, marks: [[String: Any]]? = nil) -> [String: Any] {
         var node: [String: Any] = [
             "type": "text",
-            "text": text,
+            "text": text
         ]
         if let marks, !marks.isEmpty {
             node["marks"] = marks
@@ -227,7 +230,7 @@ enum NativePerformanceFixtureFactory {
         let words = [
             "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
             "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo",
-            "sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu",
+            "sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu"
         ]
 
         var result = ""
@@ -249,7 +252,7 @@ enum NativePerformanceFixtureFactory {
             .systemOrange,
             .systemPink,
             .systemPurple,
-            .systemTeal,
+            .systemTeal
         ]
         return colors[index % colors.count]
     }
@@ -277,7 +280,7 @@ enum NativePerformanceFixtureFactory {
 
     private static func editorDocumentContentSize(id: UInt64) -> UInt32 {
         guard let data = EditorV2Shadow.getJson(id: id).data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return 0
         }

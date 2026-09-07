@@ -16,18 +16,18 @@ import android.view.View
 import org.json.JSONObject
 
 /**
-     * Apply spans to a text run based on its mark names and append to the builder.
-     *
-     * Supported marks:
-     * - `bold` / `strong` -> [StyleSpan] with [Typeface.BOLD]
-     * - `italic` / `em` -> [StyleSpan] with [Typeface.ITALIC]
-     * - `underline` -> [UnderlineSpan]
-     * - `strike` / `strikethrough` -> [StrikethroughSpan]
-     * - `code` -> [TypefaceSpan] with "monospace" + [BackgroundColorSpan]
-     * - `link` -> [URLSpan] (when mark is an object with `href`)
-     *
-     * Multiple marks are combined on the same range.
-     */
+ * Apply spans to a text run based on its mark names and append to the builder.
+ *
+ * Supported marks:
+ * - `bold` / `strong` -> [StyleSpan] with [Typeface.BOLD]
+ * - `italic` / `em` -> [StyleSpan] with [Typeface.ITALIC]
+ * - `underline` -> [UnderlineSpan]
+ * - `strike` / `strikethrough` -> [StrikethroughSpan]
+ * - `code` -> [TypefaceSpan] with "monospace" + [BackgroundColorSpan]
+ * - `link` -> [URLSpan] (when mark is an object with `href`)
+ *
+ * Multiple marks are combined on the same range.
+ */
 internal fun RenderBridge.appendStyledText(
     builder: SpannableStringBuilder,
     text: String,
@@ -48,14 +48,52 @@ internal fun RenderBridge.appendStyledText(
 
     theme?.styleSheet?.let { sheet ->
         val node = blockStack.lastOrNull()?.nodeType ?: "paragraph"
-        val style = sheet.resolveText(node, blockStack.dropLast(1).map { it.nodeType }, marks.mapNotNull {
-            when (it) { is String -> it; is JSONObject -> it.optString("type"); else -> null }
-        })
-        builder.setSpan(EditorResolvedTextSpan(EditorTextStyle(fontSize = baseFontSize / density, color = textColor).mergedWith(style), density), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        marks.filterIsInstance<JSONObject>().firstOrNull { it.optString("type") == "link" }?.optNullableString("href")?.let {
-            builder.setSpan(Annotation(NATIVE_LINK_HREF_ANNOTATION, it), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val style = sheet.resolveText(
+            node,
+            blockStack.dropLast(1).map {
+                it.nodeType
+            },
+            marks.mapNotNull {
+                when (it) {
+                    is String -> it
+                    is JSONObject -> it.optString("type")
+                    else -> null
+                }
+            }
+        )
+        builder.setSpan(
+            EditorResolvedTextSpan(
+                EditorTextStyle(
+                    fontSize = baseFontSize / density,
+                    color = textColor
+                ).mergedWith(style),
+                density
+            ),
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        marks.filterIsInstance<JSONObject>().firstOrNull {
+            it.optString("type") == "link"
+        }?.optNullableString("href")?.let {
+            builder.setSpan(
+                Annotation(NATIVE_LINK_HREF_ANNOTATION, it),
+                start,
+                end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
         }
-        if (applyBlockSpans) applyBlockStyle(builder, start, end, blockStack, pendingLeadingMargins, theme, density)
+        if (applyBlockSpans) {
+            applyBlockStyle(
+                builder,
+                start,
+                end,
+                blockStack,
+                pendingLeadingMargins,
+                theme,
+                density
+            )
+        }
         return
     }
 
@@ -69,7 +107,6 @@ internal fun RenderBridge.appendStyledText(
         )
     } ?: theme?.effectiveTextStyle("paragraph", inBlockquote = blockquoteDepth(blockStack) > 0)
 
-    // Determine which marks are active.
     var markBold = false
     var markItalic = false
     var markUnderline = false
@@ -86,6 +123,7 @@ internal fun RenderBridge.appendStyledText(
                 "strike", "strikethrough" -> hasStrike = true
                 "code" -> hasCode = true
             }
+
             mark is JSONObject -> {
                 val markType = mark.optString("type", "")
                 if (markType == "link") {
@@ -105,15 +143,16 @@ internal fun RenderBridge.appendStyledText(
         effectiveTextStyle?.color ?: textColor
     }
 
-    // Apply base styling.
     builder.setSpan(
         ForegroundColorSpan(resolvedTextColor),
-        start, end,
+        start,
+        end,
         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     builder.setSpan(
         AbsoluteSizeSpan(resolvedTextSize.toInt(), false),
-        start, end,
+        start,
+        end,
         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     linkTheme?.backgroundColor?.let { backgroundColor ->
@@ -140,18 +179,26 @@ internal fun RenderBridge.appendStyledText(
         typefaceStyle?.let { it == Typeface.ITALIC || it == Typeface.BOLD_ITALIC } == true
     val hasUnderline = markUnderline || (isLink && (linkTheme?.underline ?: true))
 
-    // Apply bold/italic as a combined StyleSpan.
     if (hasBold && hasItalic) {
         builder.setSpan(
-            StyleSpan(Typeface.BOLD_ITALIC), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            StyleSpan(Typeface.BOLD_ITALIC),
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
     } else if (hasBold) {
         builder.setSpan(
-            StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            StyleSpan(Typeface.BOLD),
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
     } else if (hasItalic) {
         builder.setSpan(
-            StyleSpan(Typeface.ITALIC), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            StyleSpan(Typeface.ITALIC),
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
     }
 
@@ -175,28 +222,32 @@ internal fun RenderBridge.appendStyledText(
 
     if (hasCode || isCodeBlock) {
         builder.setSpan(
-            TypefaceSpan("monospace"), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            TypefaceSpan("monospace"),
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
         if (hasCode && !isCodeBlock) {
             builder.setSpan(
                 BackgroundColorSpan(LayoutConstants.CODE_BACKGROUND_COLOR),
-                start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                start,
+                end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
             )
         }
     }
 
-    // Apply block-level indentation spans if in a block context.
     if (applyBlockSpans) {
         applyBlockStyle(builder, start, end, blockStack, pendingLeadingMargins, theme, density)
     }
 }
 
-    /**
-     * Append a void inline element (e.g. hardBreak) to the builder.
-     *
-     * A hardBreak is rendered as a newline character. Unknown void inlines
-     * are rendered as the object replacement character.
-     */
+/**
+ * Append a void inline element (e.g. hardBreak) to the builder.
+ *
+ * A hardBreak is rendered as a newline character. Unknown void inlines
+ * are rendered as the object replacement character.
+ */
 internal fun RenderBridge.appendVoidInline(
     builder: SpannableStringBuilder,
     nodeType: String,
@@ -214,33 +265,40 @@ internal fun RenderBridge.appendVoidInline(
             val end = builder.length
             builder.setSpan(
                 Annotation("nativeVoidNodeType", nodeType),
-                start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                start,
+                end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
             )
             builder.setSpan(
                 ForegroundColorSpan(resolveInlineTextColor(blockStack, textColor, theme)),
-                start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                start,
+                end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
             )
             applyBlockStyle(builder, start, end, blockStack, pendingLeadingMargins, theme, density)
         }
+
         else -> {
             val start = builder.length
             builder.append(LayoutConstants.OBJECT_REPLACEMENT_CHARACTER)
             val end = builder.length
             builder.setSpan(
                 ForegroundColorSpan(resolveInlineTextColor(blockStack, textColor, theme)),
-                start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                start,
+                end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
             )
             applyBlockStyle(builder, start, end, blockStack, pendingLeadingMargins, theme, density)
         }
     }
 }
 
-    /**
-     * Append a void block element (e.g. horizontalRule) to the builder.
-     *
-     * Horizontal rules are rendered as the object replacement character
-     * with a [HorizontalRuleSpan] that draws a separator line.
-     */
+/**
+ * Append a void block element (e.g. horizontalRule) to the builder.
+ *
+ * Horizontal rules are rendered as the object replacement character
+ * with a [HorizontalRuleSpan] that draws a separator line.
+ */
 internal fun RenderBridge.appendVoidBlock(
     builder: SpannableStringBuilder,
     nodeType: String,
@@ -259,7 +317,7 @@ internal fun RenderBridge.appendVoidBlock(
     isDirectRootChild: Boolean,
     reusableImages: MutableList<BlockImageSpan> = mutableListOf(),
     ancestorBoxInset: EditorEdges = EditorEdges(),
-    containerDepth: Int = 0,
+    containerDepth: Int = 0
 ) {
     if (docPos != null && atomConfiguration?.registeredNodeTypes?.contains(nodeType) == true) {
         val start = builder.length
@@ -272,17 +330,23 @@ internal fun RenderBridge.appendVoidBlock(
                 docPos,
                 atomConfiguration.reservedHeightPx(atomKey, nodeType, density),
                 hasStableAtomId,
-                isDirectRootChild,
+                isDirectRootChild
             ),
-            start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
         builder.setSpan(
             Annotation("nativeVoidNodeType", nodeType),
-            start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
         builder.setSpan(
             Annotation("nativeDocPos", docPos.toUInt().toString()),
-            start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
         annotateTopLevelChild(builder, start, end, topLevelChildIndex)
         return
@@ -292,7 +356,6 @@ internal fun RenderBridge.appendVoidBlock(
             val start = builder.length
             builder.append(LayoutConstants.OBJECT_REPLACEMENT_CHARACTER)
             val end = builder.length
-            // Apply a dim version of the text color for the rule line.
             val ruleColor = theme?.horizontalRule?.color ?: Color.argb(
                 (Color.alpha(textColor) * 0.3f).toInt(),
                 Color.red(textColor),
@@ -302,17 +365,42 @@ internal fun RenderBridge.appendVoidBlock(
             builder.setSpan(
                 HorizontalRuleSpan(
                     lineColor = ruleColor,
-                    lineHeight = (theme?.horizontalRule?.thickness ?: LayoutConstants.HORIZONTAL_RULE_HEIGHT) * density,
-                    verticalPadding = (theme?.horizontalRule?.verticalMargin ?: LayoutConstants.HORIZONTAL_RULE_VERTICAL_PADDING) * density,
-                    boxInset = theme?.styleSheet?.box("horizontalRule")?.outerInset?.scaled(density) ?: EditorEdges()
+                    lineHeight =
+                        (
+                            theme?.horizontalRule?.thickness
+                                ?: LayoutConstants.HORIZONTAL_RULE_HEIGHT
+                            ) *
+                            density,
+                    verticalPadding =
+                        (
+                            theme?.horizontalRule?.verticalMargin
+                                ?: LayoutConstants.HORIZONTAL_RULE_VERTICAL_PADDING
+                            ) *
+                            density,
+                    boxInset =
+                        theme?.styleSheet?.box("horizontalRule")?.outerInset?.scaled(density)
+                            ?: EditorEdges()
                 ),
-                start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                start,
+                end,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
             )
             theme?.styleSheet?.let {
-                builder.setSpan(EditorBlockBoxSpan(it.box("horizontalRule").scaled(density), ancestorBoxInset, containerDepth, "horizontalRule"), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                builder.setSpan(
+                    EditorBlockBoxSpan(
+                        it.box("horizontalRule").scaled(density),
+                        ancestorBoxInset,
+                        containerDepth,
+                        "horizontalRule"
+                    ),
+                    start,
+                    end,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
             }
             annotateTopLevelChild(builder, start, end, topLevelChildIndex)
         }
+
         "image" -> {
             val source = if (attrs != null && attrs.has("src") && !attrs.isNull("src")) {
                 attrs.optString("src", "")
@@ -328,17 +416,46 @@ internal fun RenderBridge.appendVoidBlock(
             val start = builder.length
             builder.append(LayoutConstants.OBJECT_REPLACEMENT_CHARACTER)
             val end = builder.length
-            val imageStyle = theme?.styleSheet?.let { it["image"] ?: EditorElementStyle(EditorTextStyle(), it.box("image")) }
-            val reused = reusableImages.firstOrNull { it.matches(source, preferredWidthDp, preferredHeightDp) }
-            val span = reused?.also { reusableImages.remove(it); it.imageStyle = imageStyle } ?: BlockImageSpan(source, hostView, density, preferredWidthDp, preferredHeightDp, imageStyle)
+            val imageStyle = theme?.styleSheet?.let {
+                it["image"]
+                    ?: EditorElementStyle(EditorTextStyle(), it.box("image"))
+            }
+            val reused = reusableImages.firstOrNull {
+                it.matches(source, preferredWidthDp, preferredHeightDp)
+            }
+            val span =
+                reused?.also {
+                    reusableImages.remove(it)
+                    it.imageStyle = imageStyle
+                }
+                    ?: BlockImageSpan(
+                        source,
+                        hostView,
+                        density,
+                        preferredWidthDp,
+                        preferredHeightDp,
+                        imageStyle
+                    )
             span.ancestorWidthInset = ancestorBoxInset.left + ancestorBoxInset.right
             builder.setSpan(span, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             imageStyle?.let {
                 // Image margins already occupy space in the replacement span.
-                builder.setSpan(EditorBlockBoxSpan(EditorBoxStyle(), ancestorBoxInset, containerDepth, "image", it.box.margin.scaled(density)), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                builder.setSpan(
+                    EditorBlockBoxSpan(
+                        EditorBoxStyle(),
+                        ancestorBoxInset,
+                        containerDepth,
+                        "image",
+                        it.box.margin.scaled(density)
+                    ),
+                    start,
+                    end,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
             }
             annotateTopLevelChild(builder, start, end, topLevelChildIndex)
         }
+
         else -> {
             val start = builder.length
             builder.append(LayoutConstants.OBJECT_REPLACEMENT_CHARACTER)
@@ -368,10 +485,32 @@ internal fun RenderBridge.appendOpaqueInlineAtom(
     val end = builder.length
     if (isMention && theme?.styleSheet != null) {
         val base = EditorTextStyle(fontSize = baseFontSize / density, color = textColor)
-            .mergedWith(theme.styleSheet.resolveText(blockStack.lastOrNull()?.nodeType ?: "paragraph", blockStack.dropLast(1).map { it.nodeType }))
-        builder.setSpan(EditorMentionSpan(resolvedMentionStyle(base, theme, mentionTheme), density), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        builder.setSpan(Annotation("nativeVoidNodeType", nodeType), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        builder.setSpan(Annotation("nativeDocPos", docPos.toString()), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            .mergedWith(
+                theme.styleSheet.resolveText(
+                    blockStack.lastOrNull()?.nodeType ?: "paragraph",
+                    blockStack.dropLast(1).map {
+                        it.nodeType
+                    }
+                )
+            )
+        builder.setSpan(
+            EditorMentionSpan(resolvedMentionStyle(base, theme, mentionTheme), density),
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        builder.setSpan(
+            Annotation("nativeVoidNodeType", nodeType),
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        builder.setSpan(
+            Annotation("nativeDocPos", docPos.toString()),
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
         applyBlockStyle(builder, start, end, blockStack, pendingLeadingMargins, theme, density)
         return
     }
@@ -392,19 +531,25 @@ internal fun RenderBridge.appendOpaqueInlineAtom(
     }
     builder.setSpan(
         ForegroundColorSpan(inlineTextColor),
-        start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        start,
+        end,
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     builder.setSpan(
         AbsoluteSizeSpan(
             (inlineTextStyle.fontSize?.times(density) ?: baseFontSize).toInt(),
             false
         ),
-        start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        start,
+        end,
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     inlineTextStyle.fontFamily?.takeIf { it.isNotBlank() }?.let { fontFamily ->
         builder.setSpan(
             TypefaceSpan(fontFamily),
-            start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
     }
     builder.setSpan(
@@ -415,21 +560,29 @@ internal fun RenderBridge.appendOpaqueInlineAtom(
                 0x20000000
             }
         ),
-        start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        start,
+        end,
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     builder.setSpan(
         Annotation("nativeVoidNodeType", nodeType),
-        start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        start,
+        end,
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     builder.setSpan(
         Annotation("nativeDocPos", docPos.toString()),
-        start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        start,
+        end,
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     val typefaceStyle = inlineTextStyle.typefaceStyle()
     if (typefaceStyle != Typeface.NORMAL) {
         builder.setSpan(
             StyleSpan(typefaceStyle),
-            start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
     }
     applyBlockStyle(builder, start, end, blockStack, pendingLeadingMargins, theme, density)
@@ -452,19 +605,27 @@ internal fun RenderBridge.appendOpaqueBlockAtom(
     val end = builder.length
     builder.setSpan(
         ForegroundColorSpan(theme?.effectiveTextStyle("paragraph")?.color ?: textColor),
-        start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        start,
+        end,
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     builder.setSpan(
         BackgroundColorSpan(0x20000000), // light gray
-        start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        start,
+        end,
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     builder.setSpan(
         Annotation("nativeVoidNodeType", nodeType),
-        start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        start,
+        end,
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     builder.setSpan(
         Annotation("nativeDocPos", docPos.toString()),
-        start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        start,
+        end,
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     annotateTopLevelChild(builder, start, end, topLevelChildIndex)
 }

@@ -654,10 +654,6 @@ mod staging {
             .contains('!'));
     }
 
-    /// Task 7 no-echo extension: remote updates admitted through both the
-    /// one-shot and the sealed prepare/commit paths never produce a
-    /// collaboration outbox entry on an attached session, while an immediate
-    /// local edit on the same session enqueues exactly one bounded entry.
     #[test]
     fn remote_updates_produce_no_outbox_entries_on_attached_sessions() {
         use crate::native_bridge_test_support::{self as bridge, SessionOptions};

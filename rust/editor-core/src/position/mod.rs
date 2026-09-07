@@ -151,7 +151,6 @@ impl PositionMap {
         let eff_scalar_start = self.effective_scalar_start(block_idx);
         let eff_doc_start = self.effective_doc_start(block_idx);
 
-        // Check if this is a void block (doc_start == doc_end).
         if block.is_void_block {
             let visible_len = block.scalar_len;
             let intra_scalar = scalar_offset.saturating_sub(eff_scalar_start);
@@ -165,7 +164,6 @@ impl PositionMap {
             ));
         }
 
-        // Intra-block scalar offset.
         let intra_scalar = scalar_offset.saturating_sub(eff_scalar_start);
         if intra_scalar < block.scalar_prefix_len {
             return Some((eff_doc_start, block_idx));
@@ -203,7 +201,6 @@ impl PositionMap {
             return 0;
         }
 
-        // Find which block contains (or is nearest to) this doc position.
         match self.find_block_for_doc_pos(doc_pos) {
             Some(block_idx) => {
                 let eff_doc_start = self.effective_doc_start(block_idx);
@@ -211,7 +208,6 @@ impl PositionMap {
                 let eff_scalar_start = self.effective_scalar_start(block_idx);
                 let block = &self.blocks[block_idx];
 
-                // Void block: return the block's scalar start.
                 if block.is_void_block {
                     if doc_pos <= eff_doc_start {
                         return eff_scalar_start;
@@ -227,16 +223,13 @@ impl PositionMap {
                 }
 
                 if doc_pos < eff_doc_start {
-                    // Before this block's content — snap to start.
                     return eff_scalar_start + block.scalar_prefix_len;
                 }
 
                 if doc_pos > eff_doc_end {
-                    // After this block's content — snap to end.
                     return eff_scalar_start + block.scalar_prefix_len + block.scalar_len;
                 }
 
-                // Inside the block — compute intra-block offset.
                 let intra_doc = doc_pos - eff_doc_start;
                 let block_node = doc.node_at(&block.node_path);
                 let intra_scalar = match block_node {
@@ -249,15 +242,12 @@ impl PositionMap {
                 eff_scalar_start + block.scalar_prefix_len + intra_scalar
             }
             None => {
-                // Position is beyond all blocks — return total scalars.
                 self.total_scalars()
             }
         }
     }
 
     /// Resolve a doc position to a `ResolvedPos` using the underlying document.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn resolve(&self, doc_pos: u32, doc: &Document) -> Result<ResolvedPos, String> {
         doc.resolve(doc_pos)
@@ -278,33 +268,26 @@ impl PositionMap {
 
         let last_idx = self.blocks.len() - 1;
 
-        // Check if the position is inside a block.
         if let Some(block_idx) = self.find_block_for_doc_pos(doc_pos) {
             let eff_doc_start = self.effective_doc_start(block_idx);
             let eff_doc_end = self.effective_doc_end(block_idx);
             let block = &self.blocks[block_idx];
 
-            // Void block
             if block.doc_start == block.doc_end {
                 return eff_doc_start;
             }
 
             if doc_pos >= eff_doc_start && doc_pos <= eff_doc_end {
-                // Inside block content — already cursorable.
                 return doc_pos;
             }
 
-            // Position is on a structural token near this block.
             if doc_pos < eff_doc_start {
-                // Before block content (on open tag) — snap to start.
                 return eff_doc_start;
             }
 
-            // After block content (on close tag) — snap to end.
             return eff_doc_end;
         }
 
-        // Position is beyond all blocks — snap to the end of the last block.
         self.effective_doc_end(last_idx)
     }
 
@@ -331,7 +314,6 @@ impl PositionMap {
             let eff_end = self.effective_doc_end(i);
             let block = &self.blocks[i];
 
-            // For void blocks, the coverage is exactly at doc_start.
             if block.doc_start == block.doc_end {
                 // Void block: position is at or near the void's position.
                 // The void node occupies 1 doc token at doc_start.
@@ -341,7 +323,6 @@ impl PositionMap {
                     return Some(i);
                 }
                 if doc_pos < eff_start {
-                    // Position is before this void block — use previous block or this one.
                     break;
                 }
                 best_idx = Some(i);
@@ -356,7 +337,6 @@ impl PositionMap {
                 // Position is before this block (on a structural token).
                 // Snap to this block or the previous one.
                 if let Some(prev) = best_idx {
-                    // Between two blocks: snap to whichever is closer.
                     let prev_end = self.effective_doc_end(prev);
                     let dist_to_prev = doc_pos - prev_end;
                     let dist_to_next = eff_start - doc_pos;
@@ -376,8 +356,6 @@ impl PositionMap {
     }
 
     /// Access the internal blocks slice (for testing / debugging).
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn blocks(&self) -> &[BlockMapping] {
         &self.blocks
@@ -441,7 +419,6 @@ impl PositionMap {
     }
 }
 
-// Intra-block scalar ↔ doc offset conversion
 
 /// Walk a text block node's content and convert a scalar offset to a doc
 /// token offset within the block.
@@ -469,7 +446,6 @@ fn scalar_to_doc_intra_block_metered(
             }
             let text_scalars = child.node_size();
             if scalars_consumed.checked_add(text_scalars)? > scalar_offset {
-                // Position is within this text node.
                 let remaining = scalar_offset - scalars_consumed;
                 return doc_offset.checked_add(remaining);
             }
@@ -481,7 +457,6 @@ fn scalar_to_doc_intra_block_metered(
             }
             let visible_len = inline_void_visible_scalar_len(child, hard_break_node_types);
             if scalars_consumed.checked_add(visible_len)? > scalar_offset {
-                // Position is at this void node.
                 return Some(doc_offset);
             }
             scalars_consumed = scalars_consumed.checked_add(visible_len)?;
@@ -492,7 +467,6 @@ fn scalar_to_doc_intra_block_metered(
         }
     }
 
-    // At the end of block content.
     Some(doc_offset)
 }
 

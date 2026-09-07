@@ -25,8 +25,8 @@ import java.lang.ref.WeakReference
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONArray
 import org.json.JSONObject
@@ -63,7 +63,10 @@ class NativeDeviceOutsideTapTest {
                         setOnClickListener { outsideTargetPressed.set(true) }
                     }
                     val expoContext = testExpoContext(activity)
-                    val editor = NativeEditorExpoView(expoContext.context, expoContext.appContext).apply {
+                    val editor = NativeEditorExpoView(
+                        expoContext.context,
+                        expoContext.appContext
+                    ).apply {
                         clipToPadding = false
                         setShowToolbar(false)
                         richTextView.editorEditText.showSoftInputOnFocus = false
@@ -179,7 +182,10 @@ class NativeDeviceOutsideTapTest {
                         setOnClickListener { toolbarTargetPressed.set(true) }
                     }
                     val expoContext = testExpoContext(activity)
-                    val editor = NativeEditorExpoView(expoContext.context, expoContext.appContext).apply {
+                    val editor = NativeEditorExpoView(
+                        expoContext.context,
+                        expoContext.appContext
+                    ).apply {
                         clipToPadding = false
                         setShowToolbar(false)
                         richTextView.editorEditText.showSoftInputOnFocus = false
@@ -298,7 +304,10 @@ class NativeDeviceOutsideTapTest {
                         isFocusableInTouchMode = true
                     }
                     val expoContext = testExpoContext(activity)
-                    val editor = NativeEditorExpoView(expoContext.context, expoContext.appContext).apply {
+                    val editor = NativeEditorExpoView(
+                        expoContext.context,
+                        expoContext.appContext
+                    ).apply {
                         clipToPadding = false
                         setShowToolbar(false)
                         richTextView.editorEditText.showSoftInputOnFocus = false
@@ -412,7 +421,10 @@ class NativeDeviceOutsideTapTest {
                 ) {
                     scrollViewRef.get().scrollY > initialScrollY.get()
                 }
-                assertTrue("outside target should receive the swipe down", outsideTargetTouchCount.get() > 0)
+                assertTrue(
+                    "outside target should receive the swipe down",
+                    outsideTargetTouchCount.get() > 0
+                )
 
                 instrumentation.waitForIdleSync()
                 scenario.onActivity {
@@ -472,7 +484,10 @@ class NativeDeviceOutsideTapTest {
                     }
                     val outsideTarget = TouchRecordingView(activity, outsideTargetTouchCount)
                     val expoContext = testExpoContext(activity)
-                    val editor = NativeEditorExpoView(expoContext.context, expoContext.appContext).apply {
+                    val editor = NativeEditorExpoView(
+                        expoContext.context,
+                        expoContext.appContext
+                    ).apply {
                         clipToPadding = false
                         setShowToolbar(false)
                         setBackgroundColor(Color.WHITE)
@@ -595,7 +610,10 @@ class NativeDeviceOutsideTapTest {
                 ) {
                     scrollViewRef.get().scrollY > initialScrollY.get()
                 }
-                assertTrue("outside target should receive the swipe down", outsideTargetTouchCount.get() > 0)
+                assertTrue(
+                    "outside target should receive the swipe down",
+                    outsideTargetTouchCount.get() > 0
+                )
 
                 instrumentation.waitForIdleSync()
                 scenario.onActivity {
@@ -662,7 +680,9 @@ class NativeDeviceOutsideTapTest {
         val frameReady = CountDownLatch(1)
         val listener = object : android.view.ViewTreeObserver.OnPreDrawListener {
             override fun onPreDraw(): Boolean {
-                if (isVisibleTarget(view, minimumVisibleHeightPx) && view.rootView.hasWindowFocus()) {
+                if (isVisibleTarget(view, minimumVisibleHeightPx) &&
+                    view.rootView.hasWindowFocus()
+                ) {
                     frameReady.countDown()
                 }
                 return true
@@ -718,17 +738,22 @@ class NativeDeviceOutsideTapTest {
         }
         val downTime = SystemClock.uptimeMillis()
         val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
-        val up = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0)
+        val up = MotionEvent.obtain(
+            downTime,
+            SystemClock.uptimeMillis(),
+            MotionEvent.ACTION_UP,
+            x,
+            y,
+            0
+        )
         instrumentation.sendPointerSync(down)
         instrumentation.sendPointerSync(up)
         down.recycle()
         up.recycle()
     }
 
-    private class TouchRecordingView(
-        context: Context,
-        private val touchCount: AtomicInteger
-    ) : View(context) {
+    private class TouchRecordingView(context: Context, private val touchCount: AtomicInteger) :
+        View(context) {
         init {
             isClickable = true
             setBackgroundColor(Color.rgb(238, 238, 238))
@@ -740,19 +765,15 @@ class NativeDeviceOutsideTapTest {
         }
     }
 
-    private fun hasVisibleSwipeRegion(view: View): Boolean {
-        return isVisibleTarget(view, dp(view.context, 48))
-    }
+    private fun hasVisibleSwipeRegion(view: View): Boolean =
+        isVisibleTarget(view, dp(view.context, 48))
 
-    private fun swipeUpFromVisibleRegion(
-        view: View,
-        label: String,
-        trace: MutableList<String>
-    ) {
+    private fun swipeUpFromVisibleRegion(view: View, label: String, trace: MutableList<String>) {
         val visibleBounds = android.graphics.Rect()
         assertTrue(
             "outside target must have a visible swipe region",
-            view.getGlobalVisibleRect(visibleBounds) && visibleBounds.height() >= dp(view.context, 48)
+            view.getGlobalVisibleRect(visibleBounds) &&
+                visibleBounds.height() >= dp(view.context, 48)
         )
         val x = visibleBounds.exactCenterX()
         val startY = visibleBounds.top + visibleBounds.height() * 3f / 4f
@@ -858,36 +879,32 @@ class NativeDeviceOutsideTapTest {
         )
     }
 
-    private fun renderUpdateJson(text: String): String =
-        JSONObject()
-            .put(
-                "renderBlocks",
-                JSONArray().put(
-                    JSONArray()
-                        .put(
-                            JSONObject()
-                                .put("type", "blockStart")
-                                .put("nodeType", "paragraph")
-                                .put("depth", 0)
-                        )
-                        .put(
-                            JSONObject()
-                                .put("type", "textRun")
-                                .put("text", text)
-                                .put("marks", JSONArray())
-                        )
-                        .put(JSONObject().put("type", "blockEnd"))
-                )
+    private fun renderUpdateJson(text: String): String = JSONObject()
+        .put(
+            "renderBlocks",
+            JSONArray().put(
+                JSONArray()
+                    .put(
+                        JSONObject()
+                            .put("type", "blockStart")
+                            .put("nodeType", "paragraph")
+                            .put("depth", 0)
+                    )
+                    .put(
+                        JSONObject()
+                            .put("type", "textRun")
+                            .put("text", text)
+                            .put("marks", JSONArray())
+                    )
+                    .put(JSONObject().put("type", "blockEnd"))
             )
-            .toString()
+        )
+        .toString()
 
     private fun dp(context: Context, value: Int): Int =
         (value * context.resources.displayMetrics.density).toInt()
 
-    private data class TestExpoContext(
-        val context: Context,
-        val appContext: AppContext
-    )
+    private data class TestExpoContext(val context: Context, val appContext: AppContext)
 
     private fun testExpoContext(activity: Activity): TestExpoContext {
         val reactContext = Class

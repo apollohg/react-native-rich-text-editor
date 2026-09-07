@@ -20,10 +20,9 @@ import org.json.JSONObject
  *
  * Registered as the native view component in [NativeEditorModule].
  */
-class NativeEditorExpoView(
-    context: Context,
-    appContext: AppContext
-) : ExpoView(context, appContext), EditorEditText.EditorListener {
+class NativeEditorExpoView(context: Context, appContext: AppContext) :
+    ExpoView(context, appContext),
+    EditorEditText.EditorListener {
 
     override val shouldUseAndroidLayout = true
 
@@ -32,14 +31,14 @@ class NativeEditorExpoView(
         INLINE;
 
         companion object {
-            fun fromRaw(raw: String?): ToolbarPlacement =
-                if (raw == "inline") INLINE else KEYBOARD
+            fun fromRaw(raw: String?): ToolbarPlacement = if (raw == "inline") INLINE else KEYBOARD
         }
     }
 
     internal sealed class PendingNativeAction {
         data class ToolbarItemPress(val item: NativeToolbarItem) : PendingNativeAction()
-        data class MentionSuggestionSelect(val suggestion: NativeMentionSuggestion) : PendingNativeAction()
+        data class MentionSuggestionSelect(val suggestion: NativeMentionSuggestion) :
+            PendingNativeAction()
     }
 
     internal data class PendingNativeActionScope(
@@ -64,17 +63,14 @@ class NativeEditorExpoView(
         val atomicUpdateJSON: String
     )
 
-    internal data class NativeCommitKey(
-        val editorId: String,
-        val documentRevision: String,
-    )
+    internal data class NativeCommitKey(val editorId: String, val documentRevision: String)
 
     internal data class EditorErrorBinding(
         val adapter: EditorV2Adapter,
         val editorId: String,
         val viewToken: Long,
         val callbackToken: Long,
-        val generation: Long,
+        val generation: Long
     )
 
     internal data class PendingEditorErrorEvent(
@@ -84,23 +80,17 @@ class NativeEditorExpoView(
         val viewToken: Long,
         val callbackToken: Long,
         val bindingGeneration: Long,
-        val error: EditorV2Error,
+        val error: EditorV2Error
     )
 
-    internal data class PreflightUpdateEvent(
-        val updateJSON: String,
-        val documentRevision: String
-    )
+    internal data class PreflightUpdateEvent(val updateJSON: String, val documentRevision: String)
 
-    internal data class ActiveExternalTextComposition(
-        val sessionId: String,
-        val editorId: String,
-    )
+    internal data class ActiveExternalTextComposition(val sessionId: String, val editorId: String)
 
     internal enum class PendingPropertyRetryResult {
         STALE,
         EDITOR_CHANGED,
-        READY,
+        READY
     }
 
     internal class PendingPropertyRetry {
@@ -166,8 +156,10 @@ class NativeEditorExpoView(
     internal val onContentHeightChange by EventDispatcher<Map<String, Any>>()
     internal val onAtomLayout by EventDispatcher<Map<String, Any>>()
     internal val onEditorReady by EventDispatcher<Map<String, Any>>()
+
     @Suppress("unused")
     internal val onToolbarAction by EventDispatcher<Map<String, Any>>()
+
     @Suppress("unused")
     internal val onAddonEvent by EventDispatcher<Map<String, Any>>()
 
@@ -226,6 +218,7 @@ class NativeEditorExpoView(
     internal var lastToolbarFrameJson: String? = null
     internal var lastDocumentVersion: String? = null
     internal var renderedDocumentRevision: String? = null
+
     @Volatile
     internal var remoteCommitRebaseScheduled = false
     internal var remoteCommitRebaseEditorId: Long? = null
@@ -236,18 +229,22 @@ class NativeEditorExpoView(
     internal var currentImeBottom = 0
     internal var pendingEditorUpdateResetJson: String? = null
     internal var pendingEditorUpdateJson: String? = null
+
     @set:JvmName("setPendingEditorUpdateEditorIdState")
     internal var pendingEditorUpdateEditorId: Long? = null
     internal var pendingEditorUpdateRevision = 0L
     internal var appliedEditorUpdateRevision = 0L
+
     /** Permanently rejected prop revisions are consumed per bound editor. */
     internal var consumedEditorUpdateRevision = 0L
     internal var consumedEditorUpdateEditorId: Long? = null
     internal var pendingEditorResetUpdateJson: String? = null
+
     @set:JvmName("setPendingEditorResetUpdateEditorIdState")
     internal var pendingEditorResetUpdateEditorId: Long? = null
     internal var pendingEditorResetUpdateRevision = 0L
     internal var appliedEditorResetUpdateRevision = 0L
+
     /** Permanently rejected reset revisions are consumed per bound editor. */
     internal var consumedEditorResetUpdateRevision = 0L
     internal var consumedEditorResetUpdateEditorId: Long? = null
@@ -322,7 +319,6 @@ class NativeEditorExpoView(
             keyboardToolbarImeAnimationController.animationCallback
         )
 
-        // Observe EditText focus changes.
         richTextView.editorEditText.setOnFocusChangeListener { _, hasFocus ->
             if (hasFocus) {
                 cancelPendingToolbarRefocus()
@@ -387,11 +383,13 @@ class NativeEditorExpoView(
 
     fun setKeyboardType(keyboardType: String?) = setKeyboardTypeImpl(keyboardType)
 
-    fun setAndroidInputOptionsJson(optionsJson: String?) = setAndroidInputOptionsJsonImpl(optionsJson)
+    fun setAndroidInputOptionsJson(optionsJson: String?) =
+        setAndroidInputOptionsJsonImpl(optionsJson)
 
     fun setEditable(editable: Boolean) = setEditableImpl(editable)
 
-    fun beginExternalTextComposition(sessionId: String): String = beginExternalTextCompositionImpl(sessionId)
+    fun beginExternalTextComposition(sessionId: String): String =
+        beginExternalTextCompositionImpl(sessionId)
 
     fun updateExternalTextComposition(sessionId: String, text: String): String =
         updateExternalTextCompositionImpl(sessionId, text)
@@ -408,9 +406,11 @@ class NativeEditorExpoView(
 
     fun setShowToolbar(showToolbar: Boolean) = setShowToolbarImpl(showToolbar)
 
-    fun setToolbarPlacement(rawToolbarPlacement: String?) = setToolbarPlacementImpl(rawToolbarPlacement)
+    fun setToolbarPlacement(rawToolbarPlacement: String?) =
+        setToolbarPlacementImpl(rawToolbarPlacement)
 
-    fun setAllowImageResizing(allowImageResizing: Boolean) = setAllowImageResizingImpl(allowImageResizing)
+    fun setAllowImageResizing(allowImageResizing: Boolean) =
+        setAllowImageResizingImpl(allowImageResizing)
 
     fun setToolbarItemsJson(toolbarItemsJson: String?) = setToolbarItemsJsonImpl(toolbarItemsJson)
 
@@ -486,7 +486,10 @@ class NativeEditorExpoView(
         )
         val desiredHeight = richTextView.measuredHeight + paddingTop + paddingBottom
         val measuredHeight = when (MeasureSpec.getMode(heightMeasureSpec)) {
-            MeasureSpec.AT_MOST -> desiredHeight.coerceAtMost(MeasureSpec.getSize(heightMeasureSpec))
+            MeasureSpec.AT_MOST -> desiredHeight.coerceAtMost(
+                MeasureSpec.getSize(heightMeasureSpec)
+            )
+
             else -> desiredHeight
         }
         setMeasuredDimension(measuredWidth, measuredHeight)
@@ -508,7 +511,7 @@ class NativeEditorExpoView(
             richTextView.left,
             paddingTop,
             richTextView.right,
-            paddingTop + available,
+            paddingTop + available
         )
     }
 
@@ -582,11 +585,11 @@ class NativeEditorExpoView(
             return
         }
         val event = PendingEditorUpdateEvent(
-                editorId = sourceEditorId,
-                documentRevision = documentRevision,
-                viewUpdateJSON = updateJSON,
-                atomicUpdateJSON = atomicUpdateJSON
-            )
+            editorId = sourceEditorId,
+            documentRevision = documentRevision,
+            viewUpdateJSON = updateJSON,
+            atomicUpdateJSON = atomicUpdateJSON
+        )
         val key = NativeCommitKey(event.editorId, event.documentRevision)
         if (!pendingEditorUpdateKeys.add(key)) return
         pendingEditorUpdateEvents.addLast(event)
@@ -609,7 +612,7 @@ class NativeEditorExpoView(
         }
         val payload = mapOf<String, Any>(
             "editorId" to (matchingComposition?.editorId ?: eventEditorId(richTextView.editorId)),
-            "resultJson" to resultJson,
+            "resultJson" to resultJson
         )
         onExternalTextCompositionEndForTesting?.invoke(payload)
             ?: onExternalTextCompositionEnd(payload)
@@ -619,20 +622,25 @@ class NativeEditorExpoView(
     internal fun pendingEditorUpdateEventCountForTesting(): Int =
         pendingEditorUpdateEventCountForTestingImpl()
 
-    internal fun pendingEditorErrorEventCountForTesting(): Int = pendingEditorErrorEventCountForTestingImpl()
+    internal fun pendingEditorErrorEventCountForTesting(): Int =
+        pendingEditorErrorEventCountForTestingImpl()
 
-    internal fun editorErrorCallbackTokenForTesting(): Long? = editorErrorCallbackTokenForTestingImpl()
+    internal fun editorErrorCallbackTokenForTesting(): Long? =
+        editorErrorCallbackTokenForTestingImpl()
 
-    internal fun prepareOutsideTapDecisionForWindowEvent(event: MotionEvent): NativeEditorOutsideTapDecision =
-        prepareOutsideTapDecisionForWindowEventImpl(event)
+    internal fun prepareOutsideTapDecisionForWindowEvent(
+        event: MotionEvent
+    ): NativeEditorOutsideTapDecision = prepareOutsideTapDecisionForWindowEventImpl(event)
 
-    internal fun handleOutsideTapDecisionFromWindowDispatcher(decision: NativeEditorOutsideTapDecision) =
-        handleOutsideTapDecisionFromWindowDispatcherImpl(decision)
+    internal fun handleOutsideTapDecisionFromWindowDispatcher(
+        decision: NativeEditorOutsideTapDecision
+    ) = handleOutsideTapDecisionFromWindowDispatcherImpl(decision)
 
     internal fun scheduleOutsideTapBlurFromWindowDispatcher() =
         scheduleOutsideTapBlurFromWindowDispatcherImpl()
 
-    internal fun cancelOutsideTapBlurFromWindowDispatcher() = cancelOutsideTapBlurFromWindowDispatcherImpl()
+    internal fun cancelOutsideTapBlurFromWindowDispatcher() =
+        cancelOutsideTapBlurFromWindowDispatcherImpl()
 
     internal fun markRecentToolbarTouchForTesting() = markRecentToolbarTouchForTestingImpl()
 
@@ -654,27 +662,34 @@ class NativeEditorExpoView(
     internal fun performBlurForTesting(deferKeyboardDismiss: Boolean = false) =
         performBlurForTestingImpl(deferKeyboardDismiss)
 
-    internal fun pendingBlurRetryAttemptsForTesting(): Int = pendingBlurRetryAttemptsForTestingImpl()
+    internal fun pendingBlurRetryAttemptsForTesting(): Int =
+        pendingBlurRetryAttemptsForTestingImpl()
 
     internal fun pendingDetachPreflightRetryAttemptsForTesting(): Int =
         pendingDetachPreflightRetryAttemptsForTestingImpl()
 
-    internal fun hasPendingOutsideTapBlurForTesting(): Boolean = hasPendingOutsideTapBlurForTestingImpl()
+    internal fun hasPendingOutsideTapBlurForTesting(): Boolean =
+        hasPendingOutsideTapBlurForTestingImpl()
 
     internal fun isOutsideTapBlurHandlerInstalledForTesting(): Boolean =
         isOutsideTapBlurHandlerInstalledForTestingImpl()
 
-    internal fun hasPendingKeyboardDismissForTesting(): Boolean = hasPendingKeyboardDismissForTestingImpl()
+    internal fun hasPendingKeyboardDismissForTesting(): Boolean =
+        hasPendingKeyboardDismissForTestingImpl()
 
-    internal fun hasPendingPreflightWakeForTesting(): Boolean = hasPendingPreflightWakeForTestingImpl()
+    internal fun hasPendingPreflightWakeForTesting(): Boolean =
+        hasPendingPreflightWakeForTestingImpl()
 
-    internal fun hasPendingToolbarRefocusForTesting(): Boolean = hasPendingToolbarRefocusForTestingImpl()
+    internal fun hasPendingToolbarRefocusForTesting(): Boolean =
+        hasPendingToolbarRefocusForTestingImpl()
 
-    internal fun isKeyboardToolbarAttachedForTesting(): Boolean = isKeyboardToolbarAttachedForTestingImpl()
+    internal fun isKeyboardToolbarAttachedForTesting(): Boolean =
+        isKeyboardToolbarAttachedForTestingImpl()
 
     internal fun currentImeBottomForTesting(): Int = currentImeBottomForTestingImpl()
 
-    internal fun setCurrentImeBottomForTesting(bottom: Int) = setCurrentImeBottomForTestingImpl(bottom)
+    internal fun setCurrentImeBottomForTesting(bottom: Int) =
+        setCurrentImeBottomForTestingImpl(bottom)
 
     internal fun updateAttachedKeyboardToolbarForInsetsForTesting() =
         updateAttachedKeyboardToolbarForInsetsForTestingImpl()
@@ -685,14 +700,15 @@ class NativeEditorExpoView(
 
     internal fun applyAutoFocusForTesting() = applyAutoFocusForTestingImpl()
 
-    internal fun installOutsideTapBlurHandlerForTesting() = installOutsideTapBlurHandlerForTestingImpl()
+    internal fun installOutsideTapBlurHandlerForTesting() =
+        installOutsideTapBlurHandlerForTestingImpl()
 
-    internal fun uninstallOutsideTapBlurHandlerForTesting() = uninstallOutsideTapBlurHandlerForTestingImpl()
+    internal fun uninstallOutsideTapBlurHandlerForTesting() =
+        uninstallOutsideTapBlurHandlerForTestingImpl()
 
     internal fun setOutsideTapCycleBreakDispatcherForTesting(
         dispatcher: ((MotionEvent) -> Boolean)?
-    ): Boolean =
-        setOutsideTapCycleBreakDispatcherForTestingImpl(dispatcher)
+    ): Boolean = setOutsideTapCycleBreakDispatcherForTestingImpl(dispatcher)
 
     internal fun clearOutsideTapRouteViewReferenceAndReconcileForTesting():
         NativeEditorOutsideTapRouteTestState =
@@ -701,9 +717,11 @@ class NativeEditorExpoView(
     internal fun dispatchOutsideTapWindowEventForTesting(event: MotionEvent): Boolean =
         dispatchOutsideTapWindowEventForTestingImpl(event)
 
-    internal fun schedulePendingPreflightWakeForTesting() = schedulePendingPreflightWakeForTestingImpl()
+    internal fun schedulePendingPreflightWakeForTesting() =
+        schedulePendingPreflightWakeForTestingImpl()
 
-    internal fun hasPendingNativeActionForTesting(): Boolean = hasPendingNativeActionForTestingImpl()
+    internal fun hasPendingNativeActionForTesting(): Boolean =
+        hasPendingNativeActionForTestingImpl()
 
     internal fun pendingNativeActionRetryAttemptsForTesting(): Int =
         pendingNativeActionRetryAttemptsForTestingImpl()
@@ -727,9 +745,11 @@ class NativeEditorExpoView(
     internal fun emitEditorReadyForTesting(editorUpdateRevision: Long? = null): Boolean =
         emitEditorReadyForTestingImpl(editorUpdateRevision)
 
-    internal fun pendingEditorUpdateJsonForTesting(): String? = pendingEditorUpdateJsonForTestingImpl()
+    internal fun pendingEditorUpdateJsonForTesting(): String? =
+        pendingEditorUpdateJsonForTestingImpl()
 
-    internal fun pendingEditorUpdateRevisionForTesting(): Long = pendingEditorUpdateRevisionForTestingImpl()
+    internal fun pendingEditorUpdateRevisionForTesting(): Long =
+        pendingEditorUpdateRevisionForTestingImpl()
 
     internal fun pendingEditorResetUpdateJsonForTesting(): String? =
         pendingEditorResetUpdateJsonForTestingImpl()
@@ -740,7 +760,8 @@ class NativeEditorExpoView(
     internal fun setAppliedEditorUpdateRevisionForTesting(editorUpdateRevision: Long) =
         setAppliedEditorUpdateRevisionForTestingImpl(editorUpdateRevision)
 
-    internal fun pendingEditorUpdateEditorIdForTesting(): Long? = pendingEditorUpdateEditorIdForTestingImpl()
+    internal fun pendingEditorUpdateEditorIdForTesting(): Long? =
+        pendingEditorUpdateEditorIdForTestingImpl()
 
     internal fun pendingEditorResetUpdateEditorIdForTesting(): Long? =
         pendingEditorResetUpdateEditorIdForTestingImpl()
@@ -762,7 +783,8 @@ class NativeEditorExpoView(
 
     internal fun lastThemeJsonForTesting(): String? = lastThemeJsonForTestingImpl()
 
-    internal fun pendingThemeRetryAttemptsForTesting(): Int = pendingThemeRetryAttemptsForTestingImpl()
+    internal fun pendingThemeRetryAttemptsForTesting(): Int =
+        pendingThemeRetryAttemptsForTestingImpl()
 
     internal fun applyPendingThemeForTesting() = applyPendingThemeForTestingImpl()
 
@@ -770,8 +792,7 @@ class NativeEditorExpoView(
         rawX: Float,
         rawY: Float,
         windowOriginOnScreen: Point
-    ): Boolean =
-        isPointInsideStandaloneToolbarForTestingImpl(rawX, rawY, windowOriginOnScreen)
+    ): Boolean = isPointInsideStandaloneToolbarForTestingImpl(rawX, rawY, windowOriginOnScreen)
 
     internal companion object {
         internal const val TOOLBAR_HIT_SLOP_DP = 8f
@@ -789,6 +810,4 @@ class NativeEditorExpoView(
     }
 
     internal fun addNativeAtomView(child: View, index: Int) = super.addView(child, index)
-
-
 }

@@ -58,14 +58,14 @@ final class PreparedProseLayoutCache {
     private var oversizedLeaseCount = 0
     private var benchmarkCensusKeys: Set<ProseLayoutKey>?
     private var mountIndex: [ProseMountKey: ProseLayoutKey] = [:]
-#if DEBUG
-    /// A live generation must publish an artifact once for its complete
-    /// semantic/physical-width/revision key. Eviction retires only unmounted
-    /// entries, so a mounted owner can never be republished accidentally.
-    private var publishedKeys: Set<ProseLayoutKey> = []
-    private var livePublicationCounts: [ProseLayoutKey: Int] = [:]
-    private var publicationRetirementCandidates: Set<ProseLayoutKey> = []
-#endif
+    #if DEBUG
+        /// A live generation must publish an artifact once for its complete
+        /// semantic/physical-width/revision key. Eviction retires only unmounted
+        /// entries, so a mounted owner can never be republished accidentally.
+        private var publishedKeys: Set<ProseLayoutKey> = []
+        private var livePublicationCounts: [ProseLayoutKey: Int] = [:]
+        private var publicationRetirementCandidates: Set<ProseLayoutKey> = []
+    #endif
     private let byteBudget: Int
     init(byteBudget: Int = 32 * 1024 * 1024) {
         self.byteBudget = byteBudget
@@ -98,7 +98,7 @@ final class PreparedProseLayoutCache {
         }
         if let layout = completed[key] {
             touch(key)
-            if let fabricSurface, let fabricLeaseHandle, (shouldCreateFabricLease?() ?? true) {
+            if let fabricSurface, let fabricLeaseHandle, shouldCreateFabricLease?() ?? true {
                 createPendingLeaseLocked(layout, for: key, surface: fabricSurface, leaseHandle: fabricLeaseHandle)
             }
             condition.unlock()
@@ -112,7 +112,7 @@ final class PreparedProseLayoutCache {
         // lease; UIKit simply reuses the immutable value without inventing a
         // Fabric owner.
         if let layout = liveLayoutLocked(for: key) {
-            if let fabricSurface, let fabricLeaseHandle, (shouldCreateFabricLease?() ?? true) {
+            if let fabricSurface, let fabricLeaseHandle, shouldCreateFabricLease?() ?? true {
                 createPendingLeaseLocked(layout, for: key, surface: fabricSurface, leaseHandle: fabricLeaseHandle)
             }
             condition.unlock()
@@ -123,7 +123,7 @@ final class PreparedProseLayoutCache {
             while preparation.result == nil { condition.wait() }
             let result = preparation.result!
             if case let .success(layout) = result, let fabricSurface, let fabricLeaseHandle,
-               (shouldCreateFabricLease?() ?? true) {
+               shouldCreateFabricLease?() ?? true {
                 createPendingLeaseLocked(layout, for: key, surface: fabricSurface, leaseHandle: fabricLeaseHandle)
             }
             condition.unlock()
@@ -139,21 +139,21 @@ final class PreparedProseLayoutCache {
 
         condition.lock()
         if case let .success(layout) = result {
-#if DEBUG
-            if !publishedKeys.insert(key).inserted {
-                PreparedProseInstrumentation.duplicatePublication()
-                preconditionFailure("Prepared prose layout published twice for a live semantic/width/revision key.")
-            }
-            // A build that is neither completed nor leased must retire before
-            // a later publication of the same key. Role insertion removes this
-            // candidate, so handoff transfers never transiently retire live
-            // publication state.
-            publicationRetirementCandidates.insert(key)
-#endif
+            #if DEBUG
+                if !publishedKeys.insert(key).inserted {
+                    PreparedProseInstrumentation.duplicatePublication()
+                    preconditionFailure("Prepared prose layout published twice for a live semantic/width/revision key.")
+                }
+                // A build that is neither completed nor leased must retire before
+                // a later publication of the same key. Role insertion removes this
+                // candidate, so handoff transfers never transiently retire live
+                // publication state.
+                publicationRetirementCandidates.insert(key)
+            #endif
             if layout.retainedBytes <= byteBudget {
                 insertCompletedLocked(layout, for: key)
             }
-            if let fabricSurface, let fabricLeaseHandle, (shouldCreateFabricLease?() ?? true) {
+            if let fabricSurface, let fabricLeaseHandle, shouldCreateFabricLease?() ?? true {
                 createPendingLeaseLocked(layout, for: key, surface: fabricSurface, leaseHandle: fabricLeaseHandle)
             } else {
                 enforceBudgetLocked()
@@ -311,12 +311,12 @@ final class PreparedProseLayoutCache {
         let leaseKeys = (pendingLeaseKeysBySurface[surface] ?? [])
             .union(mountedLeaseKeysBySurface[surface] ?? [])
         return Set(leaseKeys.map {
-                FabricGenerationToken(
-                    surface: $0.surface,
-                    generationIdentity: $0.layout.generationIdentity,
-                    leaseHandle: $0.leaseHandle
-                )
-            })
+            FabricGenerationToken(
+                surface: $0.surface,
+                generationIdentity: $0.layout.generationIdentity,
+                leaseHandle: $0.leaseHandle
+            )
+        })
     }
 
     func registerDirectMount(_ owner: String, layout: PreparedProseLayout) {
@@ -537,12 +537,12 @@ final class PreparedProseLayoutCache {
     }
 
     private func retireUnownedPublicationKeysLocked() {
-#if DEBUG
-        for key in publicationRetirementCandidates where livePublicationCounts[key, default: 0] == 0 {
-            publishedKeys.remove(key)
-        }
-        publicationRetirementCandidates.removeAll()
-#endif
+        #if DEBUG
+            for key in publicationRetirementCandidates where livePublicationCounts[key, default: 0] == 0 {
+                publishedKeys.remove(key)
+            }
+            publicationRetirementCandidates.removeAll()
+        #endif
     }
 
     private func publishOwnerBytesLocked() {
@@ -716,18 +716,18 @@ final class PreparedProseLayoutCache {
         } else {
             ownershipByIdentifier[identifier] = ownership
         }
-#if DEBUG
-        let previousLiveCount = livePublicationCounts[publicationKey, default: 0]
-        let nextLiveCount = previousLiveCount + completedDelta + pendingDelta + mountedDelta + directDelta
-        precondition(nextLiveCount >= 0, "Prepared prose publication references must not underflow.")
-        if nextLiveCount == 0 {
-            livePublicationCounts.removeValue(forKey: publicationKey)
-            publicationRetirementCandidates.insert(publicationKey)
-        } else {
-            livePublicationCounts[publicationKey] = nextLiveCount
-            publicationRetirementCandidates.remove(publicationKey)
-        }
-#endif
+        #if DEBUG
+            let previousLiveCount = livePublicationCounts[publicationKey, default: 0]
+            let nextLiveCount = previousLiveCount + completedDelta + pendingDelta + mountedDelta + directDelta
+            precondition(nextLiveCount >= 0, "Prepared prose publication references must not underflow.")
+            if nextLiveCount == 0 {
+                livePublicationCounts.removeValue(forKey: publicationKey)
+                publicationRetirementCandidates.insert(publicationKey)
+            } else {
+                livePublicationCounts[publicationKey] = nextLiveCount
+                publicationRetirementCandidates.remove(publicationKey)
+            }
+        #endif
     }
 
     private func applyOwnershipContributionDelta(from previous: LayoutOwnership, to next: LayoutOwnership) {

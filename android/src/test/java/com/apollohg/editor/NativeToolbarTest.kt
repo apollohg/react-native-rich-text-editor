@@ -1,8 +1,8 @@
 package com.apollohg.editor
 
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Rect
-import android.content.res.Configuration
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
@@ -15,9 +15,10 @@ import androidx.appcompat.R as AppCompatR
 import androidx.appcompat.view.ContextThemeWrapper
 import com.google.android.material.R as MaterialR
 import com.google.android.material.color.MaterialColors
-import org.junit.Assert.assertNotEquals
+import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -27,7 +28,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import kotlin.math.roundToInt
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -37,7 +37,7 @@ class NativeToolbarTest {
     fun `default toolbar uses ProseMirror node names`() {
         assertEquals(
             listOf("bullet_list", "ordered_list"),
-            NativeToolbarItem.defaults.mapNotNull { it.listType?.name }
+            NativeToolbarItem.defaults.mapNotNull { it.listType?.wireValue }
         )
         assertEquals(
             listOf("hard_break", "horizontal_rule"),
@@ -64,6 +64,29 @@ class NativeToolbarTest {
     }
 
     @Test
+    fun `toolbar list parsing preserves supported wire spellings`() {
+        val spellings = listOf("bullet_list", "ordered_list", "bulletList", "orderedList")
+        for (spelling in spellings) {
+            val items = NativeToolbarItem.fromJson(
+                """
+                [{
+                  "type": "list",
+                  "listType": "$spelling",
+                  "label": "List",
+                  "icon": { "type": "default", "id": "bulletList" }
+                }]
+                """.trimIndent()
+            )
+            assertEquals(spelling, items.single().listType?.wireValue)
+            assertEquals("•≡", items.single().icon?.resolvedGlyphText())
+        }
+        assertEquals(
+            NativeToolbarItem.defaults,
+            NativeToolbarItem.fromJson("""[{"type":"SEPARATOR"}]""")
+        )
+    }
+
+    @Test
     fun `toolbar items parse platform material icons and action state`() {
         val items = NativeToolbarItem.fromJson(
             """
@@ -85,7 +108,7 @@ class NativeToolbarTest {
         )
 
         assertEquals(1, items.size)
-        assertEquals(ToolbarItemKind.action, items[0].type)
+        assertEquals(ToolbarItemKind.ACTION, items[0].type)
         assertEquals("alternate-email", items[0].icon?.resolvedMaterialIconName())
         assertTrue(items[0].isActive)
         assertFalse(items[0].isDisabled)
@@ -107,7 +130,7 @@ class NativeToolbarTest {
         )
 
         assertEquals(1, items.size)
-        assertEquals(ToolbarItemKind.heading, items[0].type)
+        assertEquals(ToolbarItemKind.HEADING, items[0].type)
         assertEquals(3, items[0].headingLevel)
         assertEquals("H3", items[0].icon?.resolvedGlyphText())
     }
@@ -145,12 +168,12 @@ class NativeToolbarTest {
         )
 
         assertEquals(1, items.size)
-        assertEquals(ToolbarItemKind.group, items[0].type)
-        assertEquals(ToolbarGroupPresentation.menu, items[0].presentation)
-        assertEquals(ToolbarItemPlacement.start, items[0].placement)
+        assertEquals(ToolbarItemKind.GROUP, items[0].type)
+        assertEquals(ToolbarGroupPresentation.MENU, items[0].presentation)
+        assertEquals(ToolbarItemPlacement.START, items[0].placement)
         assertEquals(2, items[0].items.size)
-        assertEquals(ToolbarItemKind.heading, items[0].items[0].type)
-        assertEquals(ToolbarItemPlacement.end, items[0].items[1].placement)
+        assertEquals(ToolbarItemKind.HEADING, items[0].items[0].type)
+        assertEquals(ToolbarItemPlacement.END, items[0].items[1].placement)
     }
 
     @Test
@@ -200,9 +223,9 @@ class NativeToolbarTest {
         toolbar.setItems(
             listOf(
                 NativeToolbarItem(
-                    type = ToolbarItemKind.heading,
+                    type = ToolbarItemKind.HEADING,
                     label = "Heading 2",
-                    icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.h2),
+                    icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.H2),
                     headingLevel = 2
                 )
             )
@@ -231,16 +254,16 @@ class NativeToolbarTest {
         toolbar.setItems(
             listOf(
                 NativeToolbarItem(
-                    type = ToolbarItemKind.command,
+                    type = ToolbarItemKind.COMMAND,
                     label = "Indent",
-                    icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.indentList),
-                    command = ToolbarCommand.indentList
+                    icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.INDENT_LIST),
+                    command = ToolbarCommand.INDENT_LIST
                 ),
                 NativeToolbarItem(
-                    type = ToolbarItemKind.command,
+                    type = ToolbarItemKind.COMMAND,
                     label = "Outdent",
-                    icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.outdentList),
-                    command = ToolbarCommand.outdentList
+                    icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.OUTDENT_LIST),
+                    command = ToolbarCommand.OUTDENT_LIST
                 )
             )
         )
@@ -267,22 +290,22 @@ class NativeToolbarTest {
         toolbar.setItems(
             listOf(
                 NativeToolbarItem(
-                    type = ToolbarItemKind.group,
+                    type = ToolbarItemKind.GROUP,
                     key = "headings",
                     label = "Headings",
                     icon = NativeToolbarIcon(glyphText = "H"),
-                    presentation = ToolbarGroupPresentation.expand,
+                    presentation = ToolbarGroupPresentation.EXPAND,
                     items = listOf(
                         NativeToolbarItem(
-                            type = ToolbarItemKind.heading,
+                            type = ToolbarItemKind.HEADING,
                             label = "Heading 1",
-                            icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.h1),
+                            icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.H1),
                             headingLevel = 1
                         ),
                         NativeToolbarItem(
-                            type = ToolbarItemKind.heading,
+                            type = ToolbarItemKind.HEADING,
                             label = "Heading 2",
-                            icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.h2),
+                            icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.H2),
                             headingLevel = 2
                         )
                     )
@@ -317,41 +340,50 @@ class NativeToolbarTest {
         toolbar.setItems(
             listOf(
                 NativeToolbarItem(
-                    type = ToolbarItemKind.group,
+                    type = ToolbarItemKind.GROUP,
                     key = "headings",
                     label = "Headings",
                     icon = NativeToolbarIcon(glyphText = "H"),
-                    placement = ToolbarItemPlacement.start,
-                    presentation = ToolbarGroupPresentation.expand,
+                    placement = ToolbarItemPlacement.START,
+                    presentation = ToolbarGroupPresentation.EXPAND,
                     items = listOf(
                         NativeToolbarItem(
-                            type = ToolbarItemKind.action,
+                            type = ToolbarItemKind.ACTION,
                             key = "inherited",
                             label = "Inherited",
                             icon = NativeToolbarIcon(glyphText = "I")
                         ),
                         NativeToolbarItem(
-                            type = ToolbarItemKind.action,
+                            type = ToolbarItemKind.ACTION,
                             key = "pinned",
                             label = "Pinned",
                             icon = NativeToolbarIcon(glyphText = "P"),
-                            placement = ToolbarItemPlacement.end
+                            placement = ToolbarItemPlacement.END
                         )
                     )
                 )
             )
         )
 
-        assertEquals(listOf("Headings"), toolbar.buttonLabelsForPlacementForTesting(ToolbarItemPlacement.start))
-        assertEquals(emptyList<String>(), toolbar.buttonLabelsForPlacementForTesting(ToolbarItemPlacement.end))
+        assertEquals(
+            listOf("Headings"),
+            toolbar.buttonLabelsForPlacementForTesting(ToolbarItemPlacement.START)
+        )
+        assertEquals(
+            emptyList<String>(),
+            toolbar.buttonLabelsForPlacementForTesting(ToolbarItemPlacement.END)
+        )
 
         requireNotNull(toolbar.buttonAtForTesting(0)).performClick()
 
         assertEquals(
             listOf("Headings", "Inherited"),
-            toolbar.buttonLabelsForPlacementForTesting(ToolbarItemPlacement.start)
+            toolbar.buttonLabelsForPlacementForTesting(ToolbarItemPlacement.START)
         )
-        assertEquals(listOf("Pinned"), toolbar.buttonLabelsForPlacementForTesting(ToolbarItemPlacement.end))
+        assertEquals(
+            listOf("Pinned"),
+            toolbar.buttonLabelsForPlacementForTesting(ToolbarItemPlacement.END)
+        )
     }
 
     @Test
@@ -359,7 +391,7 @@ class NativeToolbarTest {
         val context = RuntimeEnvironment.getApplication()
         val toolbar = EditorKeyboardToolbarView(context)
         fun actionItem(key: String, placement: ToolbarItemPlacement? = null) = NativeToolbarItem(
-            type = ToolbarItemKind.action,
+            type = ToolbarItemKind.ACTION,
             key = key,
             label = key,
             icon = NativeToolbarIcon(glyphText = key),
@@ -373,7 +405,7 @@ class NativeToolbarTest {
                 actionItem("four"),
                 actionItem("five"),
                 actionItem("six"),
-                actionItem("end", ToolbarItemPlacement.end)
+                actionItem("end", ToolbarItemPlacement.END)
             )
         )
 
@@ -407,7 +439,7 @@ class NativeToolbarTest {
         val context = RuntimeEnvironment.getApplication()
         val toolbar = EditorKeyboardToolbarView(context)
         fun actionItem(key: String, label: String) = NativeToolbarItem(
-            type = ToolbarItemKind.action,
+            type = ToolbarItemKind.ACTION,
             key = key,
             label = label,
             icon = NativeToolbarIcon(glyphText = label)
@@ -418,11 +450,11 @@ class NativeToolbarTest {
                 actionItem("italic", "I"),
                 actionItem("underline", "U"),
                 NativeToolbarItem(
-                    type = ToolbarItemKind.group,
+                    type = ToolbarItemKind.GROUP,
                     key = "headings",
                     label = "Headings",
                     icon = NativeToolbarIcon(glyphText = "H"),
-                    presentation = ToolbarGroupPresentation.expand,
+                    presentation = ToolbarGroupPresentation.EXPAND,
                     items = listOf(
                         actionItem("h1", "H1"),
                         actionItem("h2", "H2")

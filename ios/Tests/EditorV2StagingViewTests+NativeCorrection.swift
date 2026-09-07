@@ -1,9 +1,12 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension EditorV2StagingViewTests {
     func testStagingMarkedTextTransientNeverReachesRustAndCommitsOnce() {
-        let (view, adapter, window) = makeBoundView(html: "<p>ab</p>")
+        let bound = makeBoundView(html: "<p>ab</p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         setCollapsedCaret(in: view.textView, utf16Offset: 2)
         flushMain()
@@ -29,7 +32,10 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingAutocorrectAcceptCommitsOneTransaction() {
-        let (view, adapter, window) = makeBoundView(html: "<p>teh </p>")
+        let bound = makeBoundView(html: "<p>teh </p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         setCollapsedCaret(in: view.textView, utf16Offset: 4)
         flushMain()
@@ -48,7 +54,9 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingNativeCorrectionUpdateCarriesAuthoritativePostSelection() throws {
-        let (view, _, window) = makeBoundView(html: "<p></p>")
+        let bound = makeBoundView(html: "<p></p>")
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let delegate = EditorTextViewDelegateSpy()
         view.textView.editorDelegate = delegate
@@ -81,7 +89,10 @@ extension EditorV2StagingViewTests {
     }
 
     func testNativeCorrectionProjectsRustCaretAfterLengthChange() {
-        let (view, adapter, window) = makeBoundView(html: "<p></p>")
+        let bound = makeBoundView(html: "<p></p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         flushMain()
         XCTAssertTrue(view.textView.becomeFirstResponder())
@@ -103,7 +114,10 @@ extension EditorV2StagingViewTests {
     }
 
     func testNativeCorrectionDoesNotAdoptTransientBeginningSelection() {
-        let (view, adapter, window) = makeBoundView(html: "<p></p>")
+        let bound = makeBoundView(html: "<p></p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         flushMain()
         XCTAssertTrue(view.textView.becomeFirstResponder())
@@ -127,7 +141,10 @@ extension EditorV2StagingViewTests {
     }
 
     func testNativeCorrectionAdoptsSubsequentBeginningSelection() {
-        let (view, adapter, window) = makeBoundView(html: "<p></p>")
+        let bound = makeBoundView(html: "<p></p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         flushMain()
         XCTAssertTrue(view.textView.becomeFirstResponder())
@@ -149,7 +166,10 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingAutocorrectPreservesAcceptedSpaceWhenNativeReplacementConsumesIt() {
-        let (view, adapter, window) = makeBoundView(html: "<p></p>")
+        let bound = makeBoundView(html: "<p></p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         flushMain()
         XCTAssertTrue(view.textView.becomeFirstResponder())
@@ -171,7 +191,10 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingAutocorrectQueuesSpaceDeliveredDuringRustRender() {
-        let (view, adapter, window) = makeBoundView(html: "<p></p>")
+        let bound = makeBoundView(html: "<p></p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         flushMain()
         XCTAssertTrue(view.textView.becomeFirstResponder())
@@ -201,7 +224,10 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingAutocorrectDoesNotLetFollowingInputOvertakeDeferredSpace() {
-        let (view, adapter, window) = makeBoundView(html: "<p></p>")
+        let bound = makeBoundView(html: "<p></p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         flushMain()
         XCTAssertTrue(view.textView.becomeFirstResponder())
@@ -234,7 +260,10 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingAutocorrectReplacePreservesAcceptedSpaceImmediately() throws {
-        let (view, adapter, window) = makeBoundView(html: "<p></p>")
+        let bound = makeBoundView(html: "<p></p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         flushMain()
         XCTAssertTrue(view.textView.becomeFirstResponder())
@@ -256,7 +285,10 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingSelectedReplacementCanRemoveTrailingSpace() throws {
-        let (view, adapter, window) = makeBoundView(html: "<p></p>")
+        let bound = makeBoundView(html: "<p></p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         flushMain()
         XCTAssertTrue(view.textView.becomeFirstResponder())

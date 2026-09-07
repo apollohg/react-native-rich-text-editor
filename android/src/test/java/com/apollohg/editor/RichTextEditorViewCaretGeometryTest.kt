@@ -1,21 +1,24 @@
 package com.apollohg.editor
-import android.graphics.Color
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Rect
+import android.graphics.drawable.Drawable
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
-import android.widget.LinearLayout
+import android.view.ContextThemeWrapper
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.widget.FrameLayout
 import android.widget.EditText
-import android.view.ContextThemeWrapper
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -30,9 +33,6 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.util.ReflectionHelpers
 import org.robolectric.util.ReflectionHelpers.ClassParameter
-import android.graphics.drawable.Drawable
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -40,12 +40,19 @@ internal class RichTextEditorViewCaretGeometryTest : RichTextEditorViewTestFixtu
     @Test
     @Config(qualifiers = "xxhdpi")
     fun `caret horizontal bounds match native cursor placement`() {
-        val context = ContextThemeWrapper(RuntimeEnvironment.getApplication(), android.R.style.Theme_Material_Light_NoActionBar)
+        val context =
+            ContextThemeWrapper(
+                RuntimeEnvironment.getApplication(),
+                android.R.style.Theme_Material_Light_NoActionBar
+            )
         val native = EditText(context)
         val editor = EditorEditText(context)
         for (view in listOf<View>(native, editor)) {
             view.setPadding(12, 0, 12, 0)
-            view.measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(240, View.MeasureSpec.EXACTLY))
+            view.measure(
+                View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(240, View.MeasureSpec.EXACTLY)
+            )
             view.layout(0, 0, 600, 240)
         }
         val nativeCursor = requireNotNull(native.textCursorDrawable)
@@ -58,10 +65,18 @@ internal class RichTextEditorViewCaretGeometryTest : RichTextEditorViewTestFixtu
             native.scrollTo(scroll, 0)
             editor.scrollTo(scroll, 0)
             val horizontal = editor.layout.getPrimaryHorizontal(editor.selectionEnd)
-            val nativeLeft: Int = ReflectionHelpers.callInstanceMethod(nativeEditor, "clampHorizontalPosition",
+            val nativeLeft: Int = ReflectionHelpers.callInstanceMethod(
+                nativeEditor,
+                "clampHorizontalPosition",
                 ClassParameter.from(Drawable::class.java, nativeCursor),
-                ClassParameter.from(Float::class.javaPrimitiveType, horizontal))
-            assertEquals("scroll=$scroll", (nativeLeft + padding.left).toFloat(), editor.nativeCursorDrawRect()!!.left, 0.01f)
+                ClassParameter.from(Float::class.javaPrimitiveType, horizontal)
+            )
+            assertEquals(
+                "scroll=$scroll",
+                (nativeLeft + padding.left).toFloat(),
+                editor.nativeCursorDrawRect()!!.left,
+                0.01f
+            )
         }
     }
 
@@ -80,7 +95,7 @@ internal class RichTextEditorViewCaretGeometryTest : RichTextEditorViewTestFixtu
     private fun assertNativeCaretThickness() {
         val context = ContextThemeWrapper(
             RuntimeEnvironment.getApplication(),
-            android.R.style.Theme_Material_Light_NoActionBar,
+            android.R.style.Theme_Material_Light_NoActionBar
         )
         val nativeCursor = requireNotNull(EditText(context).textCursorDrawable)
         val padding = Rect()
@@ -92,7 +107,7 @@ internal class RichTextEditorViewCaretGeometryTest : RichTextEditorViewTestFixtu
         editor.setText("Hello")
         editor.measure(
             View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(240, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(240, View.MeasureSpec.EXACTLY)
         )
         editor.layout(0, 0, editor.measuredWidth, editor.measuredHeight)
         editor.setSelection(2)
@@ -174,7 +189,10 @@ internal class RichTextEditorViewCaretGeometryTest : RichTextEditorViewTestFixtu
 
         val layout = editText.layout!!
         val inflatedLineHeight = (layout.getLineTop(1) - layout.getLineTop(0)).toFloat()
-        assertTrue("paragraph gap remains outside the text line", layout.getLineTop(1) - layout.editorTextLineBottom(0) >= 60)
+        assertTrue(
+            "paragraph gap remains outside the text line",
+            layout.getLineTop(1) - layout.editorTextLineBottom(0) >= 60
+        )
         val caret = editText.nativeCursorDrawRect()
 
         assertNotNull("a caret rect should be produced for a collapsed selection", caret)
@@ -265,7 +283,10 @@ internal class RichTextEditorViewCaretGeometryTest : RichTextEditorViewTestFixtu
         val layout = editText.layout!!
         val line = 0
         val inflatedLineHeight = (layout.getLineTop(line + 1) - layout.getLineTop(line)).toFloat()
-        assertTrue("paragraph gap remains outside the text line", layout.getLineTop(line + 1) - layout.editorTextLineBottom(line) >= 60)
+        assertTrue(
+            "paragraph gap remains outside the text line",
+            layout.getLineTop(line + 1) - layout.editorTextLineBottom(line) >= 60
+        )
         val rect = editText.caretRect()!!
 
         assertTrue(
@@ -300,7 +321,7 @@ internal class RichTextEditorViewCaretGeometryTest : RichTextEditorViewTestFixtu
                     head = 6,
                     color = Color.parseColor("#ff6b35"),
                     name = "Alice",
-                    isFocused = true,
+                    isFocused = true
                 )
             )
         )
@@ -332,7 +353,7 @@ internal class RichTextEditorViewCaretGeometryTest : RichTextEditorViewTestFixtu
                     head = 6,
                     color = Color.parseColor("#007aff"),
                     name = "Alice",
-                    isFocused = false,
+                    isFocused = false
                 )
             )
         )
@@ -368,7 +389,7 @@ internal class RichTextEditorViewCaretGeometryTest : RichTextEditorViewTestFixtu
                     head = 12,
                     color = Color.parseColor("#ff9500"),
                     name = "Range",
-                    isFocused = true,
+                    isFocused = true
                 )
             )
         )
@@ -408,7 +429,7 @@ internal class RichTextEditorViewCaretGeometryTest : RichTextEditorViewTestFixtu
                 head = 12,
                 color = Color.parseColor("#34c759"),
                 name = "Range",
-                isFocused = true,
+                isFocused = true
             )
         )
         view.setRemoteSelections(initialSelections)
@@ -422,7 +443,7 @@ internal class RichTextEditorViewCaretGeometryTest : RichTextEditorViewTestFixtu
                 head = 12,
                 color = Color.parseColor("#34c759"),
                 name = "Range",
-                isFocused = true,
+                isFocused = true
             )
         )
         view.setRemoteSelections(identicalSelections)

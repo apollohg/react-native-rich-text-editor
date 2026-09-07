@@ -2,9 +2,6 @@ pub mod apply;
 pub mod mapping;
 pub mod steps;
 
-// Re-export apply_step for use by the backend module. Not reachable from
-// production call paths after the legacy runtime removal; exercised by crate
-// tests.
 #[allow(unused_imports)]
 pub use apply::apply_step;
 pub(crate) use apply::DocumentStats;
@@ -33,11 +30,6 @@ pub enum TransformError {
     InvalidRange(String),
     /// The resulting document violates schema content rules.
     ContentViolation(String),
-    /// The step type is declared but not yet implemented.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
-    #[allow(dead_code)]
-    NotImplemented(String),
     /// The position does not resolve to a text-containing node.
     InvalidTarget(String),
 }
@@ -48,30 +40,9 @@ impl std::fmt::Display for TransformError {
             TransformError::OutOfBounds(msg) => write!(f, "out of bounds: {msg}"),
             TransformError::InvalidRange(msg) => write!(f, "invalid range: {msg}"),
             TransformError::ContentViolation(msg) => write!(f, "content violation: {msg}"),
-            TransformError::NotImplemented(msg) => write!(f, "not implemented: {msg}"),
             TransformError::InvalidTarget(msg) => write!(f, "invalid target: {msg}"),
         }
     }
-}
-
-/// The origin of a transaction, used for filtering and history bookkeeping.
-#[derive(Debug, Clone, PartialEq, Eq)]
-// Not reachable from production call paths after the legacy runtime removal;
-// exercised by crate tests.
-#[allow(dead_code)]
-pub enum Source {
-    /// User keyboard/IME input.
-    Input,
-    /// Formatting toggles (bold, italic, etc.).
-    Format,
-    /// Content pasted from clipboard.
-    Paste,
-    /// Undo/redo operations.
-    History,
-    /// Programmatic API calls.
-    Api,
-    /// CRDT reconciliation with remote peers.
-    Reconciliation,
 }
 
 /// A single atomic document transformation.
@@ -175,21 +146,16 @@ pub enum Step {
 /// validated against the schema. If validation fails, the entire transaction
 /// is rejected.
 #[derive(Debug)]
-// Not reachable from production call paths after the legacy runtime removal;
-// exercised by crate tests.
-#[allow(dead_code)]
 pub struct Transaction {
     pub steps: Vec<Step>,
-    pub source: Source,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub meta: HashMap<String, serde_json::Value>,
 }
 
 impl Transaction {
-    /// Create a new empty transaction with the given source.
-    pub fn new(source: Source) -> Self {
+    pub fn new() -> Self {
         Self {
             steps: Vec::new(),
-            source,
             meta: HashMap::new(),
         }
     }
@@ -202,8 +168,6 @@ impl Transaction {
 
     /// Apply all steps sequentially to `doc`, then validate the result against
     /// `schema`. Returns the new document and a composed `StepMap` on success.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn apply(
         &self,

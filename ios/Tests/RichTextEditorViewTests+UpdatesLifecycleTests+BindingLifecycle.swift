@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testApplyEditorUpdateRetriesAfterBlockedCompositionOnSameEditor() {
@@ -19,11 +19,11 @@ extension RichTextEditorViewTests {
 
         _ = EditorV2Shadow.replaceHtml(id: editorId, html: "<p>Remote</p>")
         guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
-              let updateJSON = editorV2RenderUpdate(
+            let updateJSON = editorV2RenderUpdate(
                 editorId: adapter.editorId,
                 mirrorScalarAnchor: nil,
                 mirrorScalarHead: nil
-              ).value
+            ).value
         else {
             XCTFail("expected atomic render snapshot")
             return

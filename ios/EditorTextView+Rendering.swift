@@ -1,5 +1,5 @@
-import UIKit
 import os
+import UIKit
 
 extension EditorTextView {
     func withImageLoadOwner<T>(_ body: () -> T) -> T {
@@ -163,8 +163,7 @@ extension EditorTextView {
         let snapshotReplacementAttributedText = authorizedReplacementAttributedText ?? attrStr
         if let snapshotReplaceRange,
            snapshotReplaceRange.location >= 0,
-           snapshotReplaceRange.location + snapshotReplaceRange.length <= lastAuthorizedTextStorage.length
-        {
+           snapshotReplaceRange.location + snapshotReplaceRange.length <= lastAuthorizedTextStorage.length {
             lastAuthorizedTextStorage.replaceCharacters(
                 in: snapshotReplaceRange,
                 with: snapshotReplacementText
@@ -223,8 +222,7 @@ extension EditorTextView {
             if let replaceRange, canPatchPositionCache {
                 let patchedPositionCache: Bool
                 if !textStorageRangeContainsPositionAdjustments(replaceRange),
-                   !attributedStringContainsPositionAdjustments(attrStr)
-                {
+                   !attributedStringContainsPositionAdjustments(attrStr) {
                     patchedPositionCache = PositionBridge.applyPlainTextPatchIfPossible(
                         for: self,
                         replaceRange: replaceRange,
@@ -303,15 +301,13 @@ extension EditorTextView {
         if renderBlocks == nil,
            renderElements == nil,
            explicitRenderPatch != nil,
-           resolvedRenderBlocks == nil
-        {
+           resolvedRenderBlocks == nil {
             return recoverRenderPatchBaseMismatch(notifyDelegate: notifyDelegate)
         }
 
         let derivedRenderPatch: DerivedRenderPatch? =
             if let currentRenderBlocks,
-               let resolvedRenderBlocks
-            {
+            let resolvedRenderBlocks {
                 deriveRenderPatch(from: currentRenderBlocks, to: resolvedRenderBlocks)
             } else {
                 nil
@@ -332,8 +328,7 @@ extension EditorTextView {
 
         let patchTrace: PatchApplyTrace? = if !shouldSkipRender
             && textStorage.string == lastAuthorizedText
-            && lastAppliedRenderAppearanceRevision == renderAppearanceRevision
-        {
+            && lastAppliedRenderAppearanceRevision == renderAppearanceRevision {
             renderPatch.map(applyRenderPatchIfPossible)
         } else {
             nil
@@ -424,8 +419,7 @@ extension EditorTextView {
            !refreshRetainedPositionalMetadata(
                startingAt: renderPatch.startIndex + renderPatch.renderBlocks.count,
                updatedRenderBlocks: resolvedRenderBlocks
-           )
-        {
+           ) {
             // The preflight is deliberately conservative: a partial metadata
             // refresh must never leave a retained atom targeting stale state.
             // The next update will take the full safe path after cache reset.
@@ -440,7 +434,6 @@ extension EditorTextView {
             "[applyUpdateJSON.rendered] mode=\(appliedPatch ? "patch" : "full", privacy: .public) after=\(self.textSnapshotSummary(), privacy: .public)"
         )
 
-        // Apply the selection from the update.
         let selectionTrace: SelectionApplyTrace
         if let selection = update["selection"] as? [String: Any] {
             selectionTrace = applySelectionFromJSON(selection)
@@ -494,7 +487,7 @@ extension EditorTextView {
                 postApplyHeightNotifyContentSizeNanos: postApplyTrace.heightNotifyContentSizeNanos,
                 postApplyHeightNotifySizeThatFitsNanos: postApplyTrace.heightNotifySizeThatFitsNanos,
                 postApplySelectionOrContentCallbackNanos:
-                    postApplyTrace.selectionOrContentCallbackNanos
+                postApplyTrace.selectionOrContentCallbackNanos
             )
         }
         recordAuthorizedSelectionIfPossible()
@@ -502,7 +495,6 @@ extension EditorTextView {
             "[applyUpdateJSON.end] finalSelection=\(self.selectionSummary(), privacy: .public) textState=\(self.textSnapshotSummary(), privacy: .public)"
         )
 
-        // Notify the delegate.
         if notifyDelegate {
             editorDelegate?.editorTextView(self, didReceiveUpdate: updateJSON)
         }

@@ -1,6 +1,6 @@
-import UIKit
-import ImageIO
 import CryptoKit
+import ImageIO
+import UIKit
 
 struct ImageLoadingPolicy: Equatable {
     static let `default` = ImageLoadingPolicy(
@@ -132,8 +132,7 @@ final class RenderImageCostCache {
         entries[key] = Entry(image: image, cost: boundedCost, access: access)
         totalCost += boundedCost
         while totalCost > costLimit,
-              let oldest = entries.min(by: { $0.value.access < $1.value.access })
-        {
+              let oldest = entries.min(by: { $0.value.access < $1.value.access }) {
             entries.removeValue(forKey: oldest.key)
             totalCost -= oldest.value.cost
         }
@@ -152,7 +151,7 @@ enum RenderImageCache {
             String(policy.requestTimeout.bitPattern),
             String(policy.maxConcurrentRequests),
             String(policy.maxPendingRequests),
-            String(policy.maxDecodeDimension),
+            String(policy.maxDecodeDimension)
         ].joined(separator: "|")
         var input = Data(source.utf8)
         input.append(0)

@@ -1,5 +1,5 @@
-import XCTest
 import UIKit
+import XCTest
 
 struct ApplyUpdateTraceStats {
     let name: String

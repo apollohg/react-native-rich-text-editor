@@ -12,7 +12,7 @@ struct EditorOrderedListMarkerTheme {
     static let defaultSchemes: [EditorOrderedListNumberingScheme] = [
         .decimal,
         .lowerAlpha,
-        .lowerRoman,
+        .lowerRoman
     ]
 
     let schemes: [EditorOrderedListNumberingScheme]
@@ -88,7 +88,7 @@ enum OrderedListMarkerFormatter {
             (9, "ix"),
             (5, "v"),
             (4, "iv"),
-            (1, "i"),
+            (1, "i")
         ]
         var value = index
         var result = ""

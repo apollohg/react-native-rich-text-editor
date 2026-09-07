@@ -7,9 +7,9 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Looper
 import android.provider.Settings
+import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
-import android.text.InputType
 import android.text.style.AbsoluteSizeSpan
 import android.view.MotionEvent
 import android.view.View
@@ -28,10 +28,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Shadows.shadowOf
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -254,7 +254,10 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
             harness.editText.commitExternalTextComposition("speech-$index", "Z")
 
             assertEquals(case.expected, harness.editText.text.toString())
-            assertEquals(case.expected, harness.backend.sessions.getValue(harness.editorId).text.toString())
+            assertEquals(
+                case.expected,
+                harness.backend.sessions.getValue(harness.editorId).text.toString()
+            )
         }
     }
 
@@ -324,7 +327,10 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
         assertEquals("active", second.getString("type"))
         assertEquals("draft", harness.backend.sessions.getValue(harness.editorId).text.toString())
         assertEquals(1, listener.externalCompositionEnds.size)
-        assertEquals("consumer", JSONObject(listener.externalCompositionEnds.single()).getString("cause"))
+        assertEquals(
+            "consumer",
+            JSONObject(listener.externalCompositionEnds.single()).getString("cause")
+        )
     }
 
     @Test
@@ -362,7 +368,10 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
         harness.editText.performToolbarToggleMark("bold")
 
         assertEquals("draft", harness.backend.sessions.getValue(harness.editorId).text.toString())
-        assertEquals("interaction", JSONObject(listener.externalCompositionEnds.single()).getString("cause"))
+        assertEquals(
+            "interaction",
+            JSONObject(listener.externalCompositionEnds.single()).getString("cause")
+        )
         assertEquals(2, harness.backend.calls.count { it == "applyNativeIntent" })
         assertEquals(1, harness.backend.calls.count { it == "applyCommand" })
     }
@@ -399,7 +408,9 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
         val context = RuntimeEnvironment.getApplication()
         val harness = realExternalCompositionHarness(
             initialText = "Hello",
-            configJson = """{"initialization":{"type":"localEmpty"},"policy":{"inputFilter":"[0-9]"}}"""
+            configJson =
+                """{"initialization":{"type":"localEmpty"}""" +
+                    ""","policy":{"inputFilter":"[0-9]"}}"""
         )
         try {
             val listener = RecordingEditorListener()
@@ -475,7 +486,10 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
         assertTrue(harness.editText.prepareForExternalEditorUpdate())
 
         assertEquals("draft", harness.backend.sessions.getValue(harness.editorId).text.toString())
-        assertEquals("documentChange", JSONObject(listener.externalCompositionEnds.single()).getString("cause"))
+        assertEquals(
+            "documentChange",
+            JSONObject(listener.externalCompositionEnds.single()).getString("cause")
+        )
     }
 
     @Test
@@ -498,7 +512,10 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
 
         assertEquals("draft remote", harness.editText.text.toString())
         assertEquals(1, listener.externalCompositionEnds.size)
-        assertEquals("documentChange", JSONObject(listener.externalCompositionEnds.single()).getString("cause"))
+        assertEquals(
+            "documentChange",
+            JSONObject(listener.externalCompositionEnds.single()).getString("cause")
+        )
     }
 
     @Test
@@ -519,7 +536,10 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
         assertEquals(7, harness.editText.selectionEnd)
         assertEquals("arrival", session.text.toString())
         assertEquals(revisionBefore, session.revision)
-        assertEquals("lifecycle", JSONObject(listener.externalCompositionEnds.single()).getString("cause"))
+        assertEquals(
+            "lifecycle",
+            JSONObject(listener.externalCompositionEnds.single()).getString("cause")
+        )
     }
 
     @Test
@@ -573,7 +593,10 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
         assertEquals(7, harness.editText.selectionEnd)
         assertEquals("arrival", session.text.toString())
         assertEquals(revisionBefore, session.revision)
-        assertEquals("lifecycle", JSONObject(listener.externalCompositionEnds.single()).getString("cause"))
+        assertEquals(
+            "lifecycle",
+            JSONObject(listener.externalCompositionEnds.single()).getString("cause")
+        )
     }
 
     @Test
@@ -617,12 +640,12 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
         harness.editText.beginExternalTextComposition("speech-render-recovery")
         harness.editText.updateExternalTextComposition("speech-render-recovery", "Y")
         harness.backend.nextRenderUpdateResult = EditorV2CallResult.Err(
-            EditorV2Error("render", "RENDER_FAILED", "transient"),
+            EditorV2Error("render", "RENDER_FAILED", "transient")
         )
 
         val resultJson = harness.editText.commitExternalTextComposition(
             "speech-render-recovery",
-            "Y",
+            "Y"
         )
 
         assertEquals("committed", JSONObject(resultJson).getString("outcome"))
@@ -636,7 +659,9 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
     fun `external composition valid input filter commits accepted partial text`() {
         val harness = realExternalCompositionHarness(
             initialText = "ab",
-            configJson = """{"initialization":{"type":"localEmpty"},"policy":{"inputFilter":"[0-9]"}}"""
+            configJson =
+                """{"initialization":{"type":"localEmpty"}""" +
+                    ""","policy":{"inputFilter":"[0-9]"}}"""
         )
         try {
             val listener = RecordingEditorListener()
@@ -666,7 +691,9 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
     fun `external composition valid input filter commits fully filtered no op`() {
         val harness = realExternalCompositionHarness(
             initialText = "12",
-            configJson = """{"initialization":{"type":"localEmpty"},"policy":{"inputFilter":"[0-9]"}}"""
+            configJson =
+                """{"initialization":{"type":"localEmpty"}""" +
+                    ""","policy":{"inputFilter":"[0-9]"}}"""
         )
         try {
             val listener = RecordingEditorListener()
@@ -746,7 +773,7 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
         editText.applyTransientComposingTextStyleForEditor()
 
         val selected = requireNotNull(
-            inputConnection.getSelectedText(InputConnection.GET_TEXT_WITH_STYLES),
+            inputConnection.getSelectedText(InputConnection.GET_TEXT_WITH_STYLES)
         ) as Spanned
         assertEquals(1, selected.getSpans(0, selected.length, AbsoluteSizeSpan::class.java).size)
     }
@@ -759,7 +786,10 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
         editText.setSelection(editText.text?.length ?: 0)
         editText.editorId = 1
 
-        withDefaultInputMethod(context, "com.samsung.android.honeyboard/.service.HoneyBoardService") {
+        withDefaultInputMethod(
+            context,
+            "com.samsung.android.honeyboard/.service.HoneyBoardService"
+        ) {
             val inputConnection = editText.onCreateInputConnection(EditorInfo())
             assertNotNull(inputConnection)
 
@@ -798,7 +828,7 @@ internal class EditorInputConnectionExternalCompositionTest : EditorInputConnect
     }
 
     @Test
-    fun `input trait change during active composition restores authorized text before fresh input`() {
+    fun `input trait change during composition restores authorized text before input`() {
         val traitChanges: List<(EditorEditText) -> Unit> = listOf(
             { it.setAutoCorrect(false) },
             { it.setKeyboardType("email-address") }

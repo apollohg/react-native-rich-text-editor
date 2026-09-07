@@ -116,7 +116,7 @@ pub(crate) struct DerivedStateCache {
     pub render_blocks: Arc<crate::render::incremental::CachedRenderBlocks>,
     pub mutation_lookup_seed: Arc<super::mutation::MutationLookupSeed>,
     pub validation_certificate: DocumentValidationCertificate,
-    #[cfg_attr(not(test), allow(dead_code))]
+
     pub localized_text_index: Option<LocalizedTextLeafIndex>,
     active_state_certificate: Option<Arc<ActiveStateCertificate>>,
 }

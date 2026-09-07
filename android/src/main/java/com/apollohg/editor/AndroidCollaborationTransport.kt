@@ -1,10 +1,6 @@
 package com.apollohg.editor
 
 import android.os.SystemClock
-import okhttp3.Request
-import okio.ByteString.Companion.toByteString
-import org.json.JSONArray
-import org.json.JSONObject
 import java.net.URI
 import java.util.ArrayDeque
 import java.util.concurrent.CompletableFuture
@@ -15,12 +11,16 @@ import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import okhttp3.Request
+import okio.ByteString.Companion.toByteString
+import org.json.JSONArray
+import org.json.JSONObject
 
 internal data class NativeCollaborationTransportConfig(
     val url: String,
     val connect: Boolean,
     val protocolAdapter: NativeCollaborationProtocolAdapterConfig?,
-    val diagnosticEndpoint: String,
+    val diagnosticEndpoint: String
 ) {
     companion object {
         const val MAXIMUM_URL_BYTES = 4_096
@@ -28,12 +28,16 @@ internal data class NativeCollaborationTransportConfig(
         fun parse(
             url: String,
             connect: Boolean,
-            protocolAdapter: NativeCollaborationProtocolAdapterConfig?,
+            protocolAdapter: NativeCollaborationProtocolAdapterConfig?
         ): NativeCollaborationTransportConfig? {
             if (url.toByteArray(Charsets.UTF_8).size !in 1..MAXIMUM_URL_BYTES) return null
             val uri = runCatching { URI(url) }.getOrNull() ?: return null
             if (uri.scheme?.lowercase() !in setOf("ws", "wss")) return null
-            if (uri.host.isNullOrEmpty() || uri.rawUserInfo != null || uri.rawFragment != null) return null
+            if (uri.host.isNullOrEmpty() || uri.rawUserInfo != null ||
+                uri.rawFragment != null
+            ) {
+                return null
+            }
             if (runCatching { Request.Builder().url(url).build() }.isFailure) return null
             val endpoint = runCatching {
                 URI(uri.scheme.lowercase(), null, uri.host, uri.port, uri.rawPath, null, null)
@@ -47,7 +51,7 @@ internal data class NativeCollaborationTransportConfig(
 internal data class NativeCollaborationProtocolAdapterConfig(
     val protocols: List<String>,
     val timeoutMillis: Long,
-    val terminalCloseCodes: Set<Int>,
+    val terminalCloseCodes: Set<Int>
 ) {
     companion object {
         const val MAXIMUM_FRAME_BYTES = 64 * 1_024
@@ -63,12 +67,12 @@ internal sealed interface NativeCollaborationProtocolFrame {
 internal enum class NativeCollaborationProtocolAdapterAction {
     CONTINUE,
     READY,
-    REJECT,
+    REJECT
 }
 
 internal data class NativeCollaborationProtocolAdapterResponse(
     val action: NativeCollaborationProtocolAdapterAction,
-    val frames: List<NativeCollaborationProtocolFrame>,
+    val frames: List<NativeCollaborationProtocolFrame>
 )
 
 internal sealed interface NativeCollaborationProtocolAdapterPhase {
@@ -82,7 +86,7 @@ internal data class NativeCollaborationProtocolAdapterEvent(
     val eventId: String,
     val generation: String,
     val negotiatedProtocol: String?,
-    val phase: NativeCollaborationProtocolAdapterPhase,
+    val phase: NativeCollaborationProtocolAdapterPhase
 )
 
 internal enum class CollaborationWakeReason(val wireValue: String) {
@@ -92,7 +96,7 @@ internal enum class CollaborationWakeReason(val wireValue: String) {
     TIMER("timer"),
     OPEN("open"),
     REATTACH("reattach"),
-    AWARENESS("awareness"),
+    AWARENESS("awareness")
 }
 
 internal data class AndroidCollaborationDirective(
@@ -102,24 +106,21 @@ internal data class AndroidCollaborationDirective(
     val remoteCommitApplied: Boolean,
     val peersChanged: Boolean,
     val renewedLocal: Boolean,
-    val expiredPeers: List<String>,
+    val expiredPeers: List<String>
 )
 
 internal sealed interface AndroidCollaborationTransportEvent {
     data class Directive(
         val directive: AndroidCollaborationDirective,
         val generation: String?,
-        val wakeReason: CollaborationWakeReason,
+        val wakeReason: CollaborationWakeReason
     ) : AndroidCollaborationTransportEvent
 
-    data class Error(
-        val error: EditorV2Error,
-        val generation: String?,
-    ) : AndroidCollaborationTransportEvent
+    data class Error(val error: EditorV2Error, val generation: String?) :
+        AndroidCollaborationTransportEvent
 
-    data class ProtocolAdapter(
-        val event: NativeCollaborationProtocolAdapterEvent,
-    ) : AndroidCollaborationTransportEvent
+    data class ProtocolAdapter(val event: NativeCollaborationProtocolAdapterEvent) :
+        AndroidCollaborationTransportEvent
 }
 
 internal fun interface CollaborationMonotonicClock {
@@ -132,7 +133,7 @@ internal class AndroidCollaborationTransport(
     private val socketFactory: CollaborationSocketFactory = OkHttpCollaborationSocketFactory(),
     private val clock: CollaborationMonotonicClock =
         CollaborationMonotonicClock(SystemClock::elapsedRealtime),
-    private val eventSink: (AndroidCollaborationTransportEvent) -> Unit = {},
+    private val eventSink: (AndroidCollaborationTransportEvent) -> Unit = {}
 ) {
     internal enum class HostState { FOREGROUND, BACKGROUND, DETACHED }
 
@@ -221,7 +222,7 @@ internal class AndroidCollaborationTransport(
     fun resolveProtocolAdapter(
         attemptId: String,
         eventId: String,
-        response: NativeCollaborationProtocolAdapterResponse,
+        response: NativeCollaborationProtocolAdapterResponse
     ): EditorV2Error? {
         if (terminal.get()) return lifecycleError("collaboration transport is destroyed")
         return onWorker({ lifecycleError("collaboration transport is destroyed") }) {
@@ -246,10 +247,12 @@ internal class AndroidCollaborationTransport(
             when (response.action) {
                 NativeCollaborationProtocolAdapterAction.CONTINUE ->
                     emitNextBufferedProtocolFrame(socketToken, activeGeneration)
+
                 NativeCollaborationProtocolAdapterAction.READY -> {
                     activateYjs(socketToken, activeGeneration)
                     drainBufferedFramesAfterReady(socketToken, activeGeneration)
                 }
+
                 NativeCollaborationProtocolAdapterAction.REJECT ->
                     failCurrentSocket(socketToken, activeGeneration, 1008)
             }
@@ -334,26 +337,32 @@ internal class AndroidCollaborationTransport(
         consumeDirective(
             backend.collaborationDrive(editorId, clock.nowMillis().toString()),
             generation,
-            reason,
+            reason
         )
     }
 
     private fun consumeDirective(
         result: EditorV2CallResult<String>,
         eventGeneration: String?,
-        reason: CollaborationWakeReason,
+        reason: CollaborationWakeReason
     ): Boolean = when (result) {
         is EditorV2CallResult.Err -> {
             emit(result.error, eventGeneration)
             false
         }
+
         is EditorV2CallResult.Ok -> {
             val directive = parseDirective(result.value)
             if (directive == null) {
-                emit(contractError("collaboration directive violates the frozen shape"), eventGeneration)
+                emit(
+                    contractError("collaboration directive violates the frozen shape"),
+                    eventGeneration
+                )
                 false
             } else {
-                eventSink(AndroidCollaborationTransportEvent.Directive(directive, eventGeneration, reason))
+                eventSink(
+                    AndroidCollaborationTransportEvent.Directive(directive, eventGeneration, reason)
+                )
                 scheduleDeadline(directive.nextDeadlineMillis)
                 if (directive.generationToOpen != null) {
                     openSocket(directive.generationToOpen)
@@ -373,7 +382,14 @@ internal class AndroidCollaborationTransport(
         closeReported = false
         networkSocketOpened = false
         socketOpened = false
-        protocolAttemptId = if (activeConfig.protocolAdapter == null) null else java.util.UUID.randomUUID().toString()
+        protocolAttemptId =
+            if (activeConfig.protocolAdapter ==
+                null
+            ) {
+                null
+            } else {
+                java.util.UUID.randomUUID().toString()
+            }
         protocolEventSequence = 0uL
         pendingProtocolEventId = null
         negotiatedProtocol = null
@@ -398,18 +414,14 @@ internal class AndroidCollaborationTransport(
                 },
                 onFailure = {
                     enqueue { failCurrentSocket(token, newGeneration, null) }
-                },
-            ),
+                }
+            )
         )
         socket = newSocket
         newSocket.connect()
     }
 
-    private fun socketDidOpen(
-        token: Long,
-        callbackGeneration: String,
-        selectedProtocol: String?,
-    ) {
+    private fun socketDidOpen(token: Long, callbackGeneration: String, selectedProtocol: String?) {
         if (!isCurrent(token, callbackGeneration) || networkSocketOpened) return
         networkSocketOpened = true
         negotiatedProtocol = selectedProtocol
@@ -421,7 +433,7 @@ internal class AndroidCollaborationTransport(
         emitProtocolAdapterEvent(
             NativeCollaborationProtocolAdapterPhase.Open,
             token,
-            callbackGeneration,
+            callbackGeneration
         )
     }
 
@@ -430,7 +442,9 @@ internal class AndroidCollaborationTransport(
             !isCurrent(token, callbackGeneration) ||
             !networkSocketOpened ||
             socketOpened
-        ) return
+        ) {
+            return
+        }
         protocolAdapterDeadline?.cancel(false)
         protocolAdapterDeadline = null
         pendingProtocolEventId = null
@@ -439,10 +453,10 @@ internal class AndroidCollaborationTransport(
             backend.collaborationSocketOpen(
                 editorId,
                 callbackGeneration,
-                clock.nowMillis().toString(),
+                clock.nowMillis().toString()
             ),
             callbackGeneration,
-            CollaborationWakeReason.OPEN,
+            CollaborationWakeReason.OPEN
         )
         if (!accepted) failCurrentSocket(token, callbackGeneration, 1008)
     }
@@ -453,7 +467,7 @@ internal class AndroidCollaborationTransport(
             receiveProtocolAdapterFrame(
                 NativeCollaborationProtocolFrame.Binary(bytes),
                 token,
-                callbackGeneration,
+                callbackGeneration
             )
             return
         }
@@ -462,25 +476,21 @@ internal class AndroidCollaborationTransport(
                 editorId,
                 callbackGeneration,
                 bytes,
-                clock.nowMillis().toString(),
+                clock.nowMillis().toString()
             ),
             callbackGeneration,
-            CollaborationWakeReason.RECEIVE,
+            CollaborationWakeReason.RECEIVE
         )
         if (!accepted) failCurrentSocket(token, callbackGeneration, 1008)
     }
 
-    private fun socketDidReceiveText(
-        token: Long,
-        callbackGeneration: String,
-        text: String,
-    ) {
+    private fun socketDidReceiveText(token: Long, callbackGeneration: String, text: String) {
         if (!isCurrent(token, callbackGeneration)) return
         if (!socketOpened) {
             receiveProtocolAdapterFrame(
                 NativeCollaborationProtocolFrame.Text(text),
                 token,
-                callbackGeneration,
+                callbackGeneration
             )
         } else {
             failCurrentSocket(token, callbackGeneration, 1008)
@@ -494,10 +504,12 @@ internal class AndroidCollaborationTransport(
 
         when (val result = backend.collaborationLeaseOutbound(editorId, activeGeneration)) {
             EditorV2LeaseResult.Empty -> Unit
+
             is EditorV2LeaseResult.Err -> {
                 emit(result.error, activeGeneration)
                 failCurrentSocket(socketToken, activeGeneration, 1008)
             }
+
             is EditorV2LeaseResult.Value -> {
                 val lease = result.lease
                 inFlightLease = lease
@@ -507,15 +519,20 @@ internal class AndroidCollaborationTransport(
                         val ack = backend.collaborationAckOutbound(
                             editorId,
                             activeGeneration,
-                            lease.leaseId,
+                            lease.leaseId
                         )
                     ) {
                         is EditorV2CallResult.Err -> {
                             emit(ack.error, activeGeneration)
                             failCurrentSocket(socketToken, activeGeneration, 1008)
                         }
+
                         is EditorV2CallResult.Ok -> enqueue {
-                            if (generation == activeGeneration) drive(CollaborationWakeReason.LOCAL_MUTATION)
+                            if (generation ==
+                                activeGeneration
+                            ) {
+                                drive(CollaborationWakeReason.LOCAL_MUTATION)
+                            }
                         }
                     }
                 } else {
@@ -524,7 +541,7 @@ internal class AndroidCollaborationTransport(
                         val nack = backend.collaborationNackOutbound(
                             editorId,
                             activeGeneration,
-                            lease.leaseId,
+                            lease.leaseId
                         )
                     ) {
                         is EditorV2CallResult.Err -> emit(nack.error, activeGeneration)
@@ -578,10 +595,10 @@ internal class AndroidCollaborationTransport(
                 callbackGeneration,
                 code?.takeIf { it >= 0 }?.toUInt(),
                 null,
-                clock.nowMillis().toString(),
+                clock.nowMillis().toString()
             ),
             callbackGeneration,
-            CollaborationWakeReason.TIMER,
+            CollaborationWakeReason.TIMER
         )
     }
 
@@ -599,7 +616,7 @@ internal class AndroidCollaborationTransport(
                 drive(CollaborationWakeReason.TIMER)
             },
             boundedDelay,
-            TimeUnit.MILLISECONDS,
+            TimeUnit.MILLISECONDS
         )
     }
 
@@ -612,14 +629,14 @@ internal class AndroidCollaborationTransport(
                 failCurrentSocket(token, callbackGeneration, 1008)
             },
             timeoutMillis,
-            TimeUnit.MILLISECONDS,
+            TimeUnit.MILLISECONDS
         )
     }
 
     private fun receiveProtocolAdapterFrame(
         frame: NativeCollaborationProtocolFrame,
         token: Long,
-        callbackGeneration: String,
+        callbackGeneration: String
     ) {
         if (config?.protocolAdapter == null) {
             failCurrentSocket(token, callbackGeneration, 1008)
@@ -628,6 +645,7 @@ internal class AndroidCollaborationTransport(
         val frameSize = when (frame) {
             is NativeCollaborationProtocolFrame.Text ->
                 frame.data.toByteArray(Charsets.UTF_8).size
+
             is NativeCollaborationProtocolFrame.Binary -> frame.data.size
         }
         if (frameSize > NativeCollaborationProtocolAdapterConfig.MAXIMUM_FRAME_BYTES) {
@@ -648,14 +666,14 @@ internal class AndroidCollaborationTransport(
         emitProtocolAdapterEvent(
             NativeCollaborationProtocolAdapterPhase.Message(frame),
             token,
-            callbackGeneration,
+            callbackGeneration
         )
     }
 
     private fun emitProtocolAdapterEvent(
         phase: NativeCollaborationProtocolAdapterPhase,
         token: Long,
-        callbackGeneration: String,
+        callbackGeneration: String
     ) {
         val attemptId = protocolAttemptId
         if (
@@ -678,9 +696,9 @@ internal class AndroidCollaborationTransport(
                     eventId = eventId,
                     generation = callbackGeneration,
                     negotiatedProtocol = negotiatedProtocol,
-                    phase = phase,
-                ),
-            ),
+                    phase = phase
+                )
+            )
         )
     }
 
@@ -690,7 +708,7 @@ internal class AndroidCollaborationTransport(
         emitProtocolAdapterEvent(
             NativeCollaborationProtocolAdapterPhase.Message(next),
             token,
-            callbackGeneration,
+            callbackGeneration
         )
     }
 
@@ -704,6 +722,7 @@ internal class AndroidCollaborationTransport(
                 is NativeCollaborationProtocolFrame.Text -> {
                     failCurrentSocket(token, callbackGeneration, 1008)
                 }
+
                 is NativeCollaborationProtocolFrame.Binary -> {
                     socketDidReceive(token, callbackGeneration, frame.data)
                 }
@@ -713,10 +732,11 @@ internal class AndroidCollaborationTransport(
 
     private fun sendProtocolAdapterFrames(
         activeSocket: CollaborationSocket,
-        frames: List<NativeCollaborationProtocolFrame>,
+        frames: List<NativeCollaborationProtocolFrame>
     ): Boolean = frames.all { frame ->
         when (frame) {
             is NativeCollaborationProtocolFrame.Text -> activeSocket.send(frame.data)
+
             is NativeCollaborationProtocolFrame.Binary ->
                 activeSocket.send(frame.data.toByteString())
         }
@@ -746,8 +766,10 @@ internal class AndroidCollaborationTransport(
 
     private fun parseDirective(json: String): AndroidCollaborationDirective? {
         val objectValue = runCatching { JSONObject(json) }.getOrNull() ?: return null
-        val generationToOpen = nullableCanonicalString(objectValue, "generationToOpen") ?: return null
-        val nextDeadlineMillis = nullableCanonicalString(objectValue, "nextDeadlineMillis") ?: return null
+        val generationToOpen =
+            nullableCanonicalString(objectValue, "generationToOpen") ?: return null
+        val nextDeadlineMillis =
+            nullableCanonicalString(objectValue, "nextDeadlineMillis") ?: return null
         val expired = objectValue.optJSONArray("expiredPeers") ?: return null
         val expiredPeers = buildList {
             for (index in 0 until expired.length()) {
@@ -764,17 +786,14 @@ internal class AndroidCollaborationTransport(
                 remoteCommitApplied = objectValue.getBoolean("remoteCommitApplied"),
                 peersChanged = objectValue.getBoolean("peersChanged"),
                 renewedLocal = objectValue.getBoolean("renewedLocal"),
-                expiredPeers = expiredPeers,
+                expiredPeers = expiredPeers
             )
         }.getOrNull()
     }
 
     private data class NullableCanonicalString(val value: String?)
 
-    private fun nullableCanonicalString(
-        value: JSONObject,
-        key: String,
-    ): NullableCanonicalString? {
+    private fun nullableCanonicalString(value: JSONObject, key: String): NullableCanonicalString? {
         if (!value.has(key)) return null
         if (value.isNull(key)) return NullableCanonicalString(null)
         val raw = value.opt(key) as? String ?: return null
@@ -827,9 +846,13 @@ internal class AndroidCollaborationTransport(
     internal fun awaitDestroyedForTesting(): Boolean =
         runCatching { destroyedFuture.get(2, TimeUnit.SECONDS) }.isSuccess
 
-    internal fun hostStateForTesting(): HostState = onWorker({ desiredHostState.get() }) { hostState }
+    internal fun hostStateForTesting(): HostState = onWorker({
+        desiredHostState.get()
+    }) { hostState }
 
-    internal fun configForTesting(): NativeCollaborationTransportConfig? = onWorker({ null }) { config }
+    internal fun configForTesting(): NativeCollaborationTransportConfig? = onWorker({
+        null
+    }) { config }
 
     internal companion object {
         const val WEBSOCKET_CLOSE_GOING_AWAY = 1001

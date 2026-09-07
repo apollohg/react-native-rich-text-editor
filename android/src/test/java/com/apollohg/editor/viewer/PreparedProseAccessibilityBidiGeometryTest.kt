@@ -3,15 +3,19 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.text.Layout
 import android.text.StaticLayout
-import android.text.TextPaint
 import android.text.TextDirectionHeuristics
+import android.text.TextPaint
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.MotionEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
+import java.text.Bidi
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.min
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -23,14 +27,11 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import uniffi.editor_core.FfiViewerMark
-import java.text.Bidi
-import kotlin.math.ceil
-import kotlin.math.max
-import kotlin.math.min
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessibilityTestFixture() {
+internal class PreparedProseAccessibilityBidiGeometryTest :
+    PreparedProseAccessibilityTestFixture() {
     @Test
     fun `selection fragments merge edge-touching pieces on one visual line`() {
         assertEquals(
@@ -55,7 +56,7 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
     fun `logical caret affinity selects secondary at nested LTR level boundaries`() {
         val geometry = affinityGeometry(
             paragraphDirection = Layout.DIR_LEFT_TO_RIGHT,
-            levels = listOf(0, 1, 2, 1, 0),
+            levels = listOf(0, 1, 2, 1, 0)
         )
 
         assertTrue(primaryIsTrailingPrevious(2, geometry))
@@ -64,8 +65,8 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
             fallbackHorizontalForLogicalCaret(
                 geometry,
                 2,
-                FallbackLogicalCaretAffinity.LEADING_NEXT,
-            ),
+                FallbackLogicalCaretAffinity.LEADING_NEXT
+            )
         )
         assertEquals(false, primaryIsTrailingPrevious(3, geometry))
         assertEquals(
@@ -73,8 +74,8 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
             fallbackHorizontalForLogicalCaret(
                 geometry,
                 3,
-                FallbackLogicalCaretAffinity.TRAILING_PREVIOUS,
-            ),
+                FallbackLogicalCaretAffinity.TRAILING_PREVIOUS
+            )
         )
     }
 
@@ -82,11 +83,11 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
     fun `logical caret affinity selects secondary for embedded parity transitions`() {
         val ltr = affinityGeometry(
             paragraphDirection = Layout.DIR_LEFT_TO_RIGHT,
-            levels = listOf(0, 1, 0),
+            levels = listOf(0, 1, 0)
         )
         val rtl = affinityGeometry(
             paragraphDirection = Layout.DIR_RIGHT_TO_LEFT,
-            levels = listOf(1, 2, 3, 2, 1),
+            levels = listOf(1, 2, 3, 2, 1)
         )
 
         for ((geometry, start, end) in listOf(Triple(ltr, 1, 2), Triple(rtl, 2, 3))) {
@@ -96,8 +97,8 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
                 fallbackHorizontalForLogicalCaret(
                     geometry,
                     start,
-                    FallbackLogicalCaretAffinity.LEADING_NEXT,
-                ),
+                    FallbackLogicalCaretAffinity.LEADING_NEXT
+                )
             )
             assertEquals(false, primaryIsTrailingPrevious(end, geometry))
             assertEquals(
@@ -105,8 +106,8 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
                 fallbackHorizontalForLogicalCaret(
                     geometry,
                     end,
-                    FallbackLogicalCaretAffinity.TRAILING_PREVIOUS,
-                ),
+                    FallbackLogicalCaretAffinity.TRAILING_PREVIOUS
+                )
             )
         }
     }
@@ -118,7 +119,7 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
             runs = listOf(FallbackLogicalBidiRun(0, 0, 3, 0)),
             text = "abc",
             primaryHorizontal = { 17f },
-            secondaryHorizontal = { 17f },
+            secondaryHorizontal = { 17f }
         )
 
         assertEquals(false, primaryIsTrailingPrevious(1, geometry))
@@ -127,16 +128,16 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
             fallbackHorizontalForLogicalCaret(
                 geometry,
                 1,
-                FallbackLogicalCaretAffinity.LEADING_NEXT,
-            ),
+                FallbackLogicalCaretAffinity.LEADING_NEXT
+            )
         )
         assertEquals(
             17f,
             fallbackHorizontalForLogicalCaret(
                 geometry,
                 1,
-                FallbackLogicalCaretAffinity.TRAILING_PREVIOUS,
-            ),
+                FallbackLogicalCaretAffinity.TRAILING_PREVIOUS
+            )
         )
     }
 
@@ -153,7 +154,9 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
                 check(offset != 1) { "outer soft-wrap terminal must not query a public horizontal" }
                 0f
             },
-            secondaryHorizontal = { error("LTR outer terminal must not query secondary horizontal") },
+            secondaryHorizontal = {
+                error("LTR outer terminal must not query secondary horizontal")
+            }
         )
         val rtl = affinityGeometry(
             paragraphDirection = Layout.DIR_RIGHT_TO_LEFT,
@@ -166,7 +169,9 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
                 check(offset != 1) { "outer soft-wrap terminal must not query a public horizontal" }
                 40f
             },
-            secondaryHorizontal = { error("RTL outer terminal must not query secondary horizontal") },
+            secondaryHorizontal = {
+                error("RTL outer terminal must not query secondary horizontal")
+            }
         )
 
         assertEquals(listOf(Rect(0, 0, 40, 20)), fallbackSelectionRectsForGeometry(ltr, 0, 1))
@@ -176,7 +181,9 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
     @Test
     fun `fallback final and hard-break line ends do not leak into a next line`() {
         fun horizontal(offset: Int): Float {
-            check(offset != 2) { "final and hard-break boundaries must not use the next-line offset" }
+            check(offset != 2) {
+                "final and hard-break boundaries must not use the next-line offset"
+            }
             return if (offset == 0) 0f else 10f
         }
         val finalLine = affinityGeometry(
@@ -184,7 +191,7 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
             levels = listOf(0),
             text = "x",
             primaryHorizontal = ::horizontal,
-            secondaryHorizontal = ::horizontal,
+            secondaryHorizontal = ::horizontal
         )
         val hardBreak = affinityGeometry(
             paragraphDirection = Layout.DIR_LEFT_TO_RIGHT,
@@ -193,7 +200,7 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
             rawLineEnd = 2,
             nextLineStart = 2,
             primaryHorizontal = ::horizontal,
-            secondaryHorizontal = ::horizontal,
+            secondaryHorizontal = ::horizontal
         )
 
         assertEquals(listOf(Rect(0, 0, 10, 20)), fallbackSelectionRectsForGeometry(finalLine, 0, 1))
@@ -209,7 +216,7 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
             0,
             text.length,
             TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 18f },
-            width,
+            width
         ).build()
         val bidi = Bidi(text, Bidi.DIRECTION_LEFT_TO_RIGHT)
         val run = (0 until bidi.runCount).single { (bidi.getRunLevel(it) and 1) == 1 }
@@ -223,7 +230,7 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
                 runEnd = end,
                 runIsRtl = true,
                 line = layout.getLineForOffset(start),
-                width = width,
+                width = width
             )
         )
 
@@ -248,7 +255,7 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
 
         assertEquals(
             listOf(Rect(286, 0, 291, 39), Rect(291, 0, 296, 39)),
-            fallbackSelectionRectsForLine(layout, start, end, line = 0, width = 300),
+            fallbackSelectionRectsForLine(layout, start, end, line = 0, width = 300)
         )
     }
 
@@ -261,7 +268,7 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
 
         assertEquals(
             listOf(Rect(6, 0, 9, 41), Rect(9, 0, 15, 41)),
-            fallbackSelectionRectsForLine(layout, start, end, line = 0, width = 300),
+            fallbackSelectionRectsForLine(layout, start, end, line = 0, width = 300)
         )
     }
 
@@ -301,7 +308,7 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
                 // This pure visual-run fixture explicitly supplies the
                 // ambiguous shared line-end and its current-line edge.
                 softWrapLineEnd = terminal.documentEnd,
-                softWrapTerminalBoundary = layout.getLineRight(0),
+                softWrapTerminalBoundary = layout.getLineRight(0)
             )
         )
 
@@ -312,7 +319,7 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
     }
 
     @Test
-    fun `fallback keeps an internal LTR terminal in an RTL paragraph out of adjacent visual text`() {
+    fun `fallback keeps internal LTR terminal in RTL paragraph outside adjacent text`() {
         assertInternalMixedSoftWrapTerminalBoundary(
             // Do not put whitespace after the LTR isolate content: Java Bidi
             // resets trailing whitespace to the RTL paragraph direction.
@@ -321,12 +328,12 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
             continuation = "\u2069next",
             paragraphDirection = Layout.DIR_RIGHT_TO_LEFT,
             terminalRunIsRtl = false,
-            expectedVisualLogicalOrder = listOf(1, 0),
+            expectedVisualLogicalOrder = listOf(1, 0)
         )
     }
 
     @Test
-    fun `fallback keeps an internal RTL terminal in an LTR paragraph out of adjacent visual text`() {
+    fun `fallback keeps internal RTL terminal in LTR paragraph outside adjacent text`() {
         assertInternalMixedSoftWrapTerminalBoundary(
             // Likewise, omit trailing whitespace so Java Bidi leaves the RTL
             // content as the terminal run selected below.
@@ -334,7 +341,7 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
             continuation = "\u2069next",
             paragraphDirection = Layout.DIR_LEFT_TO_RIGHT,
             terminalRunIsRtl = true,
-            expectedVisualLogicalOrder = listOf(0, 1),
+            expectedVisualLogicalOrder = listOf(0, 1)
         )
     }
 
@@ -345,7 +352,7 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
 
         assertEquals(
             listOf("base", "rtl-tail", "ltr-inner", "rtl-outer", "base-tail"),
-            logical.toList(),
+            logical.toList()
         )
     }
 
@@ -363,13 +370,15 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
                     inlines = listOf(
                         ViewerInline.Text(
                             "Latin \u05e2\u05d1\u05e8\u05d9\u05ea Latin",
-                            listOf(FfiViewerMark("link", "{\"href\":\"https://example.test/bidi\"}")),
-                        ),
-                    ),
-                ),
+                            listOf(
+                                FfiViewerMark("link", "{\"href\":\"https://example.test/bidi\"}")
+                            )
+                        )
+                    )
+                )
             ),
             isEmpty = false,
-            retainedBytes = 64,
+            retainedBytes = 64
         )
 
         val link = StaticLayoutAndroidProseLayoutEngine().prepare(
@@ -378,10 +387,17 @@ internal class PreparedProseAccessibilityBidiGeometryTest : PreparedProseAccessi
             PreparedProseTheme.resolve(null, 1f),
             300,
             1f,
-            false,
+            false
         ).interactions.single { it.kind == PreparedProseInteraction.Kind.LINK }
 
         assertTrue(link.rects.isNotEmpty())
-        assertEquals(link.rects.sortedWith(compareBy<android.graphics.Rect> { it.top }.thenBy { it.left }), link.rects)
+        assertEquals(
+            link.rects.sortedWith(
+                compareBy<android.graphics.Rect> {
+                    it.top
+                }.thenBy { it.left }
+            ),
+            link.rects
+        )
     }
 }

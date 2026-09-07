@@ -12,11 +12,11 @@ internal object NativeImagePipeline {
         source: RenderImageLoader.PreparedSource,
         ownerId: Long,
         priority: DecodedBitmapPriority,
-        callback: (DecodedBitmapLease?) -> Unit,
+        callback: (DecodedBitmapLease?) -> Unit
     ): RenderImageLoader.LoadHandle = RenderImageLoader.loadLease(
         source,
         ownerId,
         priority,
-        callback,
+        callback
     )
 }

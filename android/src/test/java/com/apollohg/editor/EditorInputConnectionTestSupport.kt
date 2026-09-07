@@ -5,17 +5,15 @@ import org.json.JSONObject
 import org.robolectric.RuntimeEnvironment
 
 abstract class EditorInputConnectionTestSupport {
-    protected fun renderUpdateJson(text: String): String =
-        renderBlocksUpdateJson(text)
-    protected fun renderBlocksUpdateJson(vararg texts: String): String =
-        JSONObject()
-            .put(
-                "renderBlocks",
-                JSONArray().apply {
-                    texts.forEach { put(paragraphRenderBlock(it)) }
-                }
-            )
-            .toString()
+    protected fun renderUpdateJson(text: String): String = renderBlocksUpdateJson(text)
+    protected fun renderBlocksUpdateJson(vararg texts: String): String = JSONObject()
+        .put(
+            "renderBlocks",
+            JSONArray().apply {
+                texts.forEach { put(paragraphRenderBlock(it)) }
+            }
+        )
+        .toString()
 
     protected fun renderPatchUpdateJson(startIndex: Int, replacementText: String): String =
         JSONObject()
@@ -28,21 +26,20 @@ abstract class EditorInputConnectionTestSupport {
             )
             .toString()
 
-    protected fun paragraphRenderBlock(text: String): JSONArray =
-        JSONArray()
-            .put(
-                JSONObject()
-                    .put("type", "blockStart")
-                    .put("nodeType", "paragraph")
-                    .put("depth", 0)
-            )
-            .put(
-                JSONObject()
-                    .put("type", "textRun")
-                    .put("text", text)
-                    .put("marks", JSONArray())
-            )
-            .put(JSONObject().put("type", "blockEnd"))
+    protected fun paragraphRenderBlock(text: String): JSONArray = JSONArray()
+        .put(
+            JSONObject()
+                .put("type", "blockStart")
+                .put("nodeType", "paragraph")
+                .put("depth", 0)
+        )
+        .put(
+            JSONObject()
+                .put("type", "textRun")
+                .put("text", text)
+                .put("marks", JSONArray())
+        )
+        .put(JSONObject().put("type", "blockEnd"))
 
     @ConsistentCopyVisibility
     protected data class ExternalCompositionHarness internal constructor(

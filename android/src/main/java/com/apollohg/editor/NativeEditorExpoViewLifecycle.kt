@@ -1,10 +1,10 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.NativeEditorExpoView.Companion.MAX_PENDING_UPDATE_RETRY_ATTEMPTS
-import com.apollohg.editor.NativeEditorExpoView.Companion.NATIVE_ACTION_RETRY_DELAY_MS
 import android.content.Context
 import android.view.View
 import android.view.inputmethod.InputMethodManager
+import com.apollohg.editor.NativeEditorExpoView.Companion.MAX_PENDING_UPDATE_RETRY_ATTEMPTS
+import com.apollohg.editor.NativeEditorExpoView.Companion.NATIVE_ACTION_RETRY_DELAY_MS
 import org.json.JSONObject
 
 internal fun NativeEditorExpoView.getCaretRectJsonImpl(): String? {
@@ -173,7 +173,9 @@ internal fun NativeEditorExpoView.schedulePendingDetachPreflightRetry(editorId: 
     mainHandler.postDelayed({
         if (retryGeneration != pendingDetachPreflightRetryGeneration) return@postDelayed
         pendingDetachPreflightRetryScheduled = false
-        if (isAttachedToNativeWindow || pendingDetachPreflightRetryEditorId != richTextView.editorId) {
+        if (isAttachedToNativeWindow ||
+            pendingDetachPreflightRetryEditorId != richTextView.editorId
+        ) {
             cancelPendingDetachPreflightRetry()
             return@postDelayed
         }
@@ -248,12 +250,14 @@ internal fun NativeEditorExpoView.emitContentHeightIfNeeded(force: Boolean) {
                     resolvedContainerHeight
                 )
             }
+
             richTextView.measuredHeight > 0 -> {
                 maxOf(
                     richTextView.measuredHeight + paddingTop + paddingBottom,
                     resolvedContainerHeight
                 )
             }
+
             editText.measuredHeight > 0 -> {
                 maxOf(
                     editText.measuredHeight +
@@ -264,11 +268,12 @@ internal fun NativeEditorExpoView.emitContentHeightIfNeeded(force: Boolean) {
                     resolvedContainerHeight
                 )
             }
+
             else -> {
                 resolvedContainerHeight
             }
         }
-    ).coerceAtLeast(0)
+        ).coerceAtLeast(0)
     if (contentHeight <= 0) return
     publishAutoGrowStyleHeight(contentHeight)
     val editorId = richTextView.editorId

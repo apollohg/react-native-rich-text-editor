@@ -4,7 +4,7 @@ use crate::model::{Document, Fragment, Node};
 use crate::position::PositionMap;
 use crate::schema::presets::tiptap_schema;
 use crate::selection::Selection;
-use crate::transform::{Source, Step, StepMap, Transaction};
+use crate::transform::{Step, StepMap, Transaction};
 
 // Helper builders (matching conventions from other test files)
 
@@ -373,7 +373,7 @@ fn test_map_cursor_after_insert_text() {
     let document = Document::new(doc(vec![paragraph(vec![text("Hello")])]));
     let schema = tiptap_schema();
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 3,
         text: "XX".to_string(),
@@ -403,7 +403,7 @@ fn test_map_cursor_at_insertion_point() {
     let document = Document::new(doc(vec![paragraph(vec![text("Hello")])]));
     let schema = tiptap_schema();
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 3,
         text: "XX".to_string(),
@@ -432,7 +432,7 @@ fn test_map_cursor_before_insertion_unaffected() {
     let document = Document::new(doc(vec![paragraph(vec![text("Hello")])]));
     let schema = tiptap_schema();
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 3,
         text: "XX".to_string(),
@@ -464,7 +464,7 @@ fn test_map_text_range_spanning_insertion() {
     let document = Document::new(doc(vec![paragraph(vec![text("Hello")])]));
     let schema = tiptap_schema();
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 3,
         text: "XX".to_string(),
@@ -497,7 +497,7 @@ fn test_map_cursor_after_delete() {
     let document = Document::new(doc(vec![paragraph(vec![text("Hello")])]));
     let schema = tiptap_schema();
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::DeleteRange { from: 2, to: 4 });
 
     let (new_doc, step_map) = tx.apply(&document, &schema).expect("delete should succeed");
@@ -528,7 +528,7 @@ fn test_map_cursor_inside_deleted_range_collapses() {
     let document = Document::new(doc(vec![paragraph(vec![text("Hello")])]));
     let schema = tiptap_schema();
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::DeleteRange { from: 2, to: 4 });
 
     let (_new_doc, step_map) = tx.apply(&document, &schema).expect("delete should succeed");
@@ -555,7 +555,7 @@ fn test_map_selection_spanning_deleted_range() {
     let document = Document::new(doc(vec![paragraph(vec![text("Hello")])]));
     let schema = tiptap_schema();
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::DeleteRange { from: 2, to: 4 });
 
     let (_new_doc, step_map) = tx.apply(&document, &schema).expect("delete should succeed");

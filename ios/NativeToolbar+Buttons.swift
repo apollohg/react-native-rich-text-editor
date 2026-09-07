@@ -68,8 +68,7 @@ extension EditorAccessoryToolbarView {
             visible.append(item)
             if item.type == .group,
                (item.presentation ?? .expand) == .expand,
-               expandedGroupKey == item.key
-            {
+               expandedGroupKey == item.key {
                 visible.append(contentsOf: item.items.map {
                     $0.with(parentGroupKey: item.key, inheritedPlacement: item.placement)
                 })
@@ -108,8 +107,7 @@ extension EditorAccessoryToolbarView {
         default:
             onPressItem?(item.with(parentGroupKey: nil))
             if let parentGroupKey = item.parentGroupKey,
-               expandedGroupKey == parentGroupKey
-            {
+               expandedGroupKey == parentGroupKey {
                 expandedGroupKey = nil
                 rebuildButtons()
             }
@@ -180,8 +178,7 @@ extension EditorAccessoryToolbarView {
             button.contentEdgeInsets = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
         }
         if let symbolName = item.icon?.resolvedSFSymbolName(),
-           let symbolImage = UIImage(systemName: symbolName)
-        {
+           let symbolImage = UIImage(systemName: symbolName) {
             button.setImage(symbolImage, for: .normal)
             button.setTitle(nil, for: .normal)
         } else {
@@ -195,8 +192,7 @@ extension EditorAccessoryToolbarView {
         heightConstraint.isActive = true
         if item.type == .group,
            (item.presentation ?? .expand) == .menu,
-           #available(iOS 16.0, *)
-        {
+           #available(iOS 16.0, *) {
             button.accessibilityHint = "Shows menu"
             button.addAction(UIAction { [weak self, weak button] _ in
                 guard let button else { return }

@@ -7,12 +7,12 @@ import android.util.LruCache
 import java.security.MessageDigest
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
-import java.util.concurrent.RejectedExecutionException
-import java.util.concurrent.Semaphore
 import java.util.concurrent.Future
 import java.util.concurrent.FutureTask
 import java.util.concurrent.PriorityBlockingQueue
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.Semaphore
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -54,7 +54,9 @@ internal object RenderImageLoader {
 
         fun onFinished(listener: () -> Unit) {
             val invokeNow = synchronized(finishListeners) {
-                if (finished.get()) true else {
+                if (finished.get()) {
+                    true
+                } else {
                     finishListeners += listener
                     false
                 }
@@ -78,7 +80,7 @@ internal object RenderImageLoader {
         val ownerId: Long?,
         val ownerLimitBytes: Long,
         val priority: DecodedBitmapPriority,
-        val deliver: (DecodedBitmapLease?) -> Unit,
+        val deliver: (DecodedBitmapLease?) -> Unit
     )
     private class PendingRequest(
         val key: RequestKey,
@@ -100,8 +102,14 @@ internal object RenderImageLoader {
     private class PrioritizedTask(
         private val request: PendingRequest,
         private val sequence: Long,
-        action: () -> Unit,
-    ) : FutureTask<Unit>(Callable { action(); Unit }), Comparable<PrioritizedTask> {
+        action: () -> Unit
+    ) : FutureTask<Unit>(
+        Callable {
+            action()
+            Unit
+        }
+    ),
+        Comparable<PrioritizedTask> {
         override fun compareTo(other: PrioritizedTask): Int {
             val priority = request.priority.compareTo(other.request.priority)
             return if (priority != 0) priority else sequence.compareTo(other.sequence)
@@ -155,7 +163,7 @@ internal object RenderImageLoader {
             evicted: Boolean,
             key: CacheKey,
             oldValue: DecodedBitmapLease,
-            newValue: DecodedBitmapLease?,
+            newValue: DecodedBitmapLease?
         ) {
             if (oldValue !== newValue) oldValue.close()
         }
@@ -167,9 +175,15 @@ internal object RenderImageLoader {
         if (allocation != null && allocation >= 0) return allocation
         val pixels = bitmap.width.coerceAtLeast(0).toLong()
         val rows = bitmap.height.coerceAtLeast(0).toLong()
-        return if (pixels == 0L || rows == 0L) 0L
-        else if (pixels > Long.MAX_VALUE / rows || pixels * rows > Long.MAX_VALUE / 4L) Long.MAX_VALUE
-        else pixels * rows * 4L
+        return if (pixels == 0L || rows == 0L) {
+            0L
+        } else if (pixels > Long.MAX_VALUE / rows ||
+            pixels * rows > Long.MAX_VALUE / 4L
+        ) {
+            Long.MAX_VALUE
+        } else {
+            pixels * rows * 4L
+        }
     }
 
     private fun saturatingAdd(left: Long, right: Long): Long =
@@ -235,7 +249,9 @@ internal object RenderImageLoader {
     ): PreparedSource? {
         if (source.regionMatches(0, "data:image/", 0, "data:image/".length, ignoreCase = true) &&
             RenderImageDecoder.preflightDataUrl(source, policy) == null
-        ) return null
+        ) {
+            return null
+        }
         return PreparedSource(source, policy)
     }
 
@@ -316,28 +332,28 @@ internal object RenderImageLoader {
         policy: ImageLoadingPolicy = ImageLoadingPolicy.DEFAULT,
         ownerId: Long,
         priority: DecodedBitmapPriority,
-        onLoaded: (DecodedBitmapLease?) -> Unit,
+        onLoaded: (DecodedBitmapLease?) -> Unit
     ): LoadHandle = loadInternal(
         source,
         policy,
         null,
         ownerId,
         priority,
-        onLoaded,
+        onLoaded
     )
 
     internal fun loadLease(
         prepared: PreparedSource,
         ownerId: Long,
         priority: DecodedBitmapPriority,
-        onLoaded: (DecodedBitmapLease?) -> Unit,
+        onLoaded: (DecodedBitmapLease?) -> Unit
     ): LoadHandle = loadInternal(
         prepared.source,
         prepared.policy,
         prepared,
         ownerId,
         priority,
-        onLoaded,
+        onLoaded
     )
 
     private fun loadInternal(
@@ -346,7 +362,7 @@ internal object RenderImageLoader {
         prepared: PreparedSource?,
         ownerId: Long?,
         priority: DecodedBitmapPriority,
-        onLoaded: (DecodedBitmapLease?) -> Unit,
+        onLoaded: (DecodedBitmapLease?) -> Unit
     ): LoadHandle {
         val cancelled = AtomicBoolean(false)
         var requestKey: RequestKey? = null
@@ -363,7 +379,7 @@ internal object RenderImageLoader {
             ownerId,
             policy.maxDecodedBytes.toLong(),
             priority,
-            onLoaded,
+            onLoaded
         )
         val admitted = synchronized(lock) {
             if (admissionCount >= GLOBAL_ADMISSION_LIMIT) {
@@ -404,7 +420,9 @@ internal object RenderImageLoader {
             return handle
         }
         synchronized(cache) {
-            cache.get(resolvedRequestKey.digest)?.let { cached -> leaseForCallback(cached, callback) }
+            cache.get(resolvedRequestKey.digest)?.let { cached ->
+                leaseForCallback(cached, callback)
+            }
         }?.let { lease ->
             scheduleCachedDelivery(callback, lease, deadlineMs)
             return handle
@@ -441,6 +459,7 @@ internal object RenderImageLoader {
                         enqueueReadyLocked(pending)
                         drain = true
                     }
+
                     state.pending.size < policy.maxPendingRequests -> {
                         createdRequest = pending
                         inFlight[resolvedRequestKey] = pending
@@ -450,6 +469,7 @@ internal object RenderImageLoader {
                             state.pending.addLast(pending)
                         }
                     }
+
                     else -> reject = true
                 }
             }
@@ -487,8 +507,11 @@ internal object RenderImageLoader {
     }
 
     private fun enqueueReadyLocked(request: PendingRequest) {
-        if (request.priority == DecodedBitmapPriority.VISIBLE) readyToSubmit.addFirst(request)
-        else readyToSubmit.addLast(request)
+        if (request.priority == DecodedBitmapPriority.VISIBLE) {
+            readyToSubmit.addFirst(request)
+        } else {
+            readyToSubmit.addLast(request)
+        }
     }
 
     private fun drainSubmissions() {
@@ -514,7 +537,7 @@ internal object RenderImageLoader {
         try {
             val future = PrioritizedTask(
                 request,
-                submissionSequence.incrementAndGet(),
+                submissionSequence.incrementAndGet()
             ) {
                 request.started.set(true)
                 var bitmap: DecodedBitmapLease? = null
@@ -648,7 +671,7 @@ internal object RenderImageLoader {
     private fun scheduleCachedDelivery(
         callback: Callback,
         lease: DecodedBitmapLease,
-        deadlineMs: Long,
+        deadlineMs: Long
     ) {
         val terminal = AtomicBoolean(false)
         val delayMs = (deadlineMs - monotonicNowMs()).coerceAtLeast(0L)
@@ -743,13 +766,12 @@ internal object RenderImageLoader {
         takeRejectionNotifications().forEach { deliverCallback(it, null) }
     }
 
-    private fun takeRejectionNotifications(): List<Callback> =
-        synchronized(rejectionLock) {
-            rejectionNotifications.toList().also {
-                rejectionNotifications.clear()
-                rejectionDrainPosted = false
-            }
+    private fun takeRejectionNotifications(): List<Callback> = synchronized(rejectionLock) {
+        rejectionNotifications.toList().also {
+            rejectionNotifications.clear()
+            rejectionDrainPosted = false
         }
+    }
 
     private fun deliverCallback(callback: Callback, lease: DecodedBitmapLease?) {
         try {
@@ -829,8 +851,6 @@ internal object RenderImageLoader {
     ) {
         override fun afterExecute(runnable: Runnable?, throwable: Throwable?) {
             super.afterExecute(runnable, throwable)
-            // A transient rejection is requeued. Signal again only after a worker task
-            // has returned; posting to main lets the worker dequeue its next task first.
             mainHandler.post { drainSubmissions() }
         }
     }.apply { allowCoreThreadTimeOut(true) }
@@ -845,23 +865,23 @@ internal object RenderImageLoader {
             val bytes = decodedAllocationBytes(bitmap)
             val reservation = DecodedBitmapBudget.shared().reserve(
                 bytes,
-                request.priority,
+                request.priority
             ) ?: return null
             return reservation.commit(bitmap, bytes)
         }
         return RenderImageDecoder.decodeSourceLease(
-                request.source,
-                request.key.policy,
-                request.cancellation,
-                monotonicClockOverride ?: systemMonotonicClock,
-                request.deadlineMs,
-                request.priority,
-            )
+            request.source,
+            request.key.policy,
+            request.cancellation,
+            monotonicClockOverride ?: systemMonotonicClock,
+            request.deadlineMs,
+            request.priority
+        )
     }
 
     private fun leaseForCallback(
         lease: DecodedBitmapLease,
-        callback: Callback,
+        callback: Callback
     ): DecodedBitmapLease? = callback.ownerId?.let { ownerId ->
         lease.fork(ownerId, callback.ownerLimitBytes, callback.priority)
     } ?: lease.forkUnowned()

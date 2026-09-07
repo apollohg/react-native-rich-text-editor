@@ -1,13 +1,17 @@
 package com.apollohg.editor
-import android.os.Looper
 import android.content.Context
+import android.os.Looper
 import android.view.inputmethod.EditorInfo
-import java.math.BigDecimal
-import java.lang.ref.WeakReference
 import expo.modules.core.ModuleRegistry
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.ModulesProvider
 import expo.modules.kotlin.modules.Module
+import java.lang.ref.WeakReference
+import java.math.BigDecimal
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
@@ -22,10 +26,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import uniffi.editor_core.FfiError
 import uniffi.editor_core.FfiJsonResult
 import uniffi.editor_core.FfiUnitResult
@@ -38,7 +38,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"room\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val editorId = JSONObject(created.value).getString("editorId")
         NativeCollaborationTransportRegistry.transportFactoryForTesting = { id, sink ->
@@ -46,19 +46,19 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
                 editorId = id,
                 backend = backend,
                 socketFactory = neverSocketFactory(),
-                eventSink = sink,
+                eventSink = sink
             )
         }
         val events = mutableListOf<Map<String, Any?>>()
         NativeCollaborationTransportRegistry.setEventEmitter(
             collaborationRuntimeToken,
-            events::add,
+            events::add
         )
         assertNull(
             NativeCollaborationTransportRegistry.configure(
                 collaborationRuntimeToken,
                 editorId,
-                "{\"url\":\"wss://collab.example/room\",\"connect\":false}",
+                "{\"url\":\"wss://collab.example/room\",\"connect\":false}"
             )
         )
         val identity = requireNotNull(
@@ -67,7 +67,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
         val retainedConfig = identity.configForTesting()
         NativeCollaborationTransportRegistry.emitErrorForTesting(
             editorId,
-            EditorV2Error("transport", "FIRST", "first"),
+            EditorV2Error("transport", "FIRST", "first")
         )
 
         NativeCollaborationTransportRegistry.detachHost(collaborationRuntimeToken)
@@ -75,7 +75,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
         NativeCollaborationTransportRegistry.awaitIdleForTesting(editorId)
         NativeCollaborationTransportRegistry.emitErrorForTesting(
             editorId,
-            EditorV2Error("transport", "SECOND", "second"),
+            EditorV2Error("transport", "SECOND", "second")
         )
 
         assertEquals(identity, NativeCollaborationTransportRegistry.identityForTesting(editorId))
@@ -92,25 +92,25 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
                     "nested",
                     JSONArray()
                         .put(JSONObject().put("values", JSONArray().put(1).put(JSONObject.NULL)))
-                        .put(true),
+                        .put(true)
                 )
         ) as Map<*, *>
         val peers = jsonValueToJs(
             JSONArray().put(
                 JSONObject().put(
                     "awareness",
-                    JSONObject().put("cursor", JSONArray().put(4).put(7)),
+                    JSONObject().put("cursor", JSONArray().put(4).put(7))
                 )
             )
         ) as List<*>
 
         assertEquals(
             listOf(mapOf("values" to listOf(1, null)), true),
-            state["nested"],
+            state["nested"]
         )
         assertEquals(
             listOf(mapOf("awareness" to mapOf("cursor" to listOf(4, 7)))),
-            peers,
+            peers
         )
         assertFalse(containsOrgJsonValue(state))
         assertFalse(containsOrgJsonValue(peers))
@@ -126,7 +126,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"room\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val editorId = JSONObject(created.value).getString("editorId")
         NativeCollaborationTransportRegistry.transportFactoryForTesting = { id, sink ->
@@ -134,7 +134,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
                 editorId = id,
                 backend = backend,
                 socketFactory = neverSocketFactory(),
-                eventSink = sink,
+                eventSink = sink
             )
         }
         val currentEvents = mutableListOf<Map<String, Any?>>()
@@ -144,14 +144,14 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
             NativeCollaborationTransportRegistry.configure(
                 currentToken,
                 editorId,
-                "{\"url\":\"wss://collab.example/room\",\"connect\":false}",
+                "{\"url\":\"wss://collab.example/room\",\"connect\":false}"
             )
         )
 
         NativeCollaborationTransportRegistry.setEventEmitter(staleToken, staleEvents::add)
         assertEquals(
             "ENGINE_DESTROYED",
-            NativeCollaborationTransportRegistry.configure(staleToken, editorId, null)?.code,
+            NativeCollaborationTransportRegistry.configure(staleToken, editorId, null)?.code
         )
         assertEquals(
             "ENGINE_DESTROYED",
@@ -160,8 +160,8 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
                 editorId,
                 "stale-attempt",
                 "1",
-                "{\"action\":\"reject\"}",
-            )?.code,
+                "{\"action\":\"reject\"}"
+            )?.code
         )
         NativeCollaborationTransportRegistry.detachHost(staleToken)
         NativeCollaborationTransportRegistry.destroyRuntime(staleToken)
@@ -171,13 +171,13 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
         ) as AndroidCollaborationTransport
         NativeCollaborationTransportRegistry.emitErrorForTesting(
             editorId,
-            EditorV2Error("transport", "CURRENT", "current"),
+            EditorV2Error("transport", "CURRENT", "current")
         )
 
         assertTrue(NativeCollaborationTransportRegistry.containsForTesting(editorId))
         assertEquals(
             AndroidCollaborationTransport.HostState.FOREGROUND,
-            transport.hostStateForTesting(),
+            transport.hostStateForTesting()
         )
         assertEquals(1, currentEvents.size)
         assertTrue(staleEvents.isEmpty())
@@ -188,7 +188,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"room\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val editorId = JSONObject(created.value).getString("editorId")
         val transports = mutableListOf<AndroidCollaborationTransport>()
@@ -197,7 +197,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
                 editorId = id,
                 backend = backend,
                 socketFactory = neverSocketFactory(),
-                eventSink = sink,
+                eventSink = sink
             ).also(transports::add)
         }
         val config = "{\"url\":\"wss://collab.example/room\",\"connect\":true}"
@@ -205,7 +205,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
             NativeCollaborationTransportRegistry.configure(
                 collaborationRuntimeToken,
                 editorId,
-                config,
+                config
             )
         )
         val entered = CountDownLatch(1)
@@ -219,7 +219,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
             NativeCollaborationTransportRegistry.configure(
                 collaborationRuntimeToken,
                 editorId,
-                null,
+                null
             )
         )
 
@@ -230,7 +230,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
                 NativeCollaborationTransportRegistry.configure(
                     collaborationRuntimeToken,
                     editorId,
-                    config,
+                    config
                 )
             )
             replacementDone.countDown()
@@ -248,7 +248,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"room\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val editorId = JSONObject(created.value).getString("editorId")
         NativeCollaborationTransportRegistry.transportFactoryForTesting = { id, sink ->
@@ -256,7 +256,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
                 editorId = id,
                 backend = backend,
                 socketFactory = neverSocketFactory(),
-                eventSink = sink,
+                eventSink = sink
             )
         }
         val reattachEntered = CountDownLatch(1)
@@ -264,7 +264,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
         backend.nextCollaborationReattachError = EditorV2Error(
             "transport",
             "REATTACH_FAILED",
-            "retry",
+            "retry"
         )
         backend.onCollaborationReattach = {
             backend.onCollaborationReattach = null
@@ -280,7 +280,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
                 NativeCollaborationTransportRegistry.configure(
                     collaborationRuntimeToken,
                     editorId,
-                    "{\"url\":\"wss://collab.example/first\",\"connect\":true}",
+                    "{\"url\":\"wss://collab.example/first\",\"connect\":true}"
                 )
             )
             firstDone.countDown()
@@ -291,7 +291,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
                 NativeCollaborationTransportRegistry.configure(
                     collaborationRuntimeToken,
                     editorId,
-                    "{\"url\":\"wss://collab.example/second\",\"connect\":true}",
+                    "{\"url\":\"wss://collab.example/second\",\"connect\":true}"
                 )
             )
             secondDone.countDown()
@@ -310,12 +310,12 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"localEmpty\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val adapter = EditorV2Adapter.attach(
             backend,
             JSONObject(created.value).getString("editorId"),
-            roomBound = false,
+            roomBound = false
         )!!
         val viewToken = EditorV2Registry.register(adapter)
         NativeEditorViewRegistry.markEditorCreated(viewToken)
@@ -367,12 +367,12 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"localEmpty\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val adapter = EditorV2Adapter.attach(
             backend,
             JSONObject(created.value).getString("editorId"),
-            roomBound = false,
+            roomBound = false
         )!!
         val viewToken = EditorV2Registry.register(adapter)
         NativeEditorViewRegistry.markEditorCreated(viewToken)
@@ -439,12 +439,12 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"localEmpty\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val adapter = EditorV2Adapter.attach(
             backend,
             JSONObject(created.value).getString("editorId"),
-            roomBound = false,
+            roomBound = false
         )!!
         val viewToken = EditorV2Registry.register(adapter)
         NativeEditorViewRegistry.markEditorCreated(viewToken)
@@ -456,7 +456,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
             "3",
             null,
             null,
-            "{\"source\":\"test\"}",
+            "{\"source\":\"test\"}"
         )
 
         try {
@@ -503,8 +503,8 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
                         null,
                         null,
                         null,
-                        null,
-                    ),
+                        null
+                    )
                 )
             } else {
                 FfiUnitResult(true, null)
@@ -547,7 +547,7 @@ internal class NativeEditorModuleContractsTest : NativeEditorModuleTestFixture()
             Double.NaN,
             Double.POSITIVE_INFINITY,
             4_294_967_296L,
-            BigDecimal("1.0000000000000000001"),
+            BigDecimal("1.0000000000000000001")
         )) {
             assertNull("u32 $value must be rejected", exactV2U32(value))
         }

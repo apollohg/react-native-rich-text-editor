@@ -7,18 +7,19 @@ import android.util.Base64
 import android.util.Log
 import android.util.Xml
 import com.caverock.androidsvg.SVG
-import org.xmlpull.v1.XmlPullParser
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
+import org.xmlpull.v1.XmlPullParser
 
 internal object RenderImageDecoder {
     internal const val LOG_TAG = "NativeEditorImage"
 
     @Volatile
     internal var connectionFactoryOverride: ((URL) -> HttpURLConnection)? = null
+
     @Volatile
     internal var bitmapDecoderOverride: ((ByteArray, ImageLoadingPolicy) -> Bitmap?)? = null
 
@@ -30,7 +31,9 @@ internal object RenderImageDecoder {
 
     internal class Cancellation {
         private val cancelled = AtomicBoolean(false)
+
         @Volatile private var connection: HttpURLConnection? = null
+
         @Volatile private var stream: InputStream? = null
 
         fun isCancelled(): Boolean = cancelled.get()
@@ -58,7 +61,7 @@ internal object RenderImageDecoder {
         cancellation: Cancellation? = null,
         clock: MonotonicClock = systemMonotonicClock,
         deadlineMs: Long = deadlineAfter(clock.elapsedRealtime(), policy.requestTimeoutMs),
-        priority: DecodedBitmapPriority = DecodedBitmapPriority.VISIBLE,
+        priority: DecodedBitmapPriority = DecodedBitmapPriority.VISIBLE
     ): DecodedBitmapLease? {
         if (unavailable(cancellation, clock, deadlineMs)) return null
         if (source.regionMatches(0, "data:image/", 0, "data:image/".length, ignoreCase = true)) {
@@ -66,11 +69,16 @@ internal object RenderImageDecoder {
             if (unavailable(cancellation, clock, deadlineMs)) return null
             val decoded = decodeBitmapLease(bytes, policy, priority)
             if (decoded == null) {
-                Log.w(LOG_TAG, "decodeSource: failed to decode data URL bytes (${sourceSummary(source)})")
+                Log.w(
+                    LOG_TAG,
+                    "decodeSource: failed to decode data URL bytes (${sourceSummary(source)})"
+                )
             } else {
                 Log.d(
                     LOG_TAG,
-                    "decodeSource: decoded data URL ${sourceSummary(source)} -> ${decoded.bitmap.width}x${decoded.bitmap.height}"
+                    "decodeSource: decoded data URL ${sourceSummary(
+                        source
+                    )} -> ${decoded.bitmap.width}x${decoded.bitmap.height}"
                 )
             }
             return decoded
@@ -87,7 +95,8 @@ internal object RenderImageDecoder {
                 clock,
                 deadlineMs
             )
-            connection.readTimeout = boundedTransportTimeout(policy.readTimeoutMs, clock, deadlineMs)
+            connection.readTimeout =
+                boundedTransportTimeout(policy.readTimeoutMs, clock, deadlineMs)
             connection.instanceFollowRedirects = true
             val status = connection.responseCode
             if (unavailable(cancellation, clock, deadlineMs) || status !in 200..299 ||
@@ -157,7 +166,9 @@ internal object RenderImageDecoder {
     ): DataUrlAdmission? {
         if (cancellation?.isCancelled() == true ||
             !source.regionMatches(0, "data:image/", 0, "data:image/".length, ignoreCase = true)
-        ) return null
+        ) {
+            return null
+        }
         var commaIndex = -1
         var metadataUtf8Bytes = 0
         var index = 0
@@ -172,7 +183,11 @@ internal object RenderImageDecoder {
             if (metadataUtf8Bytes > MAX_DATA_URL_METADATA_BYTES) return null
             index += if (Character.isHighSurrogate(character) &&
                 index + 1 < source.length && Character.isLowSurrogate(source[index + 1])
-            ) 2 else 1
+            ) {
+                2
+            } else {
+                1
+            }
         }
         if (commaIndex <= 0) return null
         if (!hasBase64MetadataToken(source, commaIndex)) return null
@@ -209,7 +224,9 @@ internal object RenderImageDecoder {
                         "base64".length,
                         ignoreCase = true
                     ) && (tokenEnd == commaIndex || source[tokenEnd] == ';')
-                ) return true
+                ) {
+                    return true
+                }
             }
             index += 1
         }
@@ -283,9 +300,12 @@ internal object RenderImageDecoder {
         val character = value[index]
         return when {
             character.code <= 0x7f -> 1
+
             character.code <= 0x7ff -> 2
+
             Character.isHighSurrogate(character) && index + 1 < value.length &&
                 Character.isLowSurrogate(value[index + 1]) -> 4
+
             else -> 3
         }
     }
@@ -295,7 +315,7 @@ internal object RenderImageDecoder {
         height: Int,
         maxWidth: Int = ImageLoadingPolicy.DEFAULT.maxDecodeDimensionPx,
         maxHeight: Int = ImageLoadingPolicy.DEFAULT.maxDecodeDimensionPx,
-        maxDecodedBytes: Long = ImageLoadingPolicy.DEFAULT.maxDecodedBytes.toLong(),
+        maxDecodedBytes: Long = ImageLoadingPolicy.DEFAULT.maxDecodedBytes.toLong()
     ): Int {
         if (width <= 0 || height <= 0) return 1
 
@@ -324,7 +344,7 @@ internal object RenderImageDecoder {
     private fun decodeBitmapLease(
         bytes: ByteArray,
         policy: ImageLoadingPolicy,
-        priority: DecodedBitmapPriority,
+        priority: DecodedBitmapPriority
     ): DecodedBitmapLease? {
         bitmapDecoderOverride?.let {
             val bitmap = try {
@@ -335,7 +355,7 @@ internal object RenderImageDecoder {
             val bytesRetained = decodedAllocationBytes(bitmap)
             val reservation = DecodedBitmapBudget.shared().reserve(
                 bytesRetained,
-                priority,
+                priority
             ) ?: return constrainUnbudgetedBitmap(bitmap, bytesRetained, policy, priority)
             val lease = reservation.commit(bitmap, bytesRetained)
                 ?: return constrainUnbudgetedBitmap(bitmap, bytesRetained, policy, priority)
@@ -350,24 +370,24 @@ internal object RenderImageDecoder {
         }
 
         val sampleSize = calculateInSampleSize(
-                bounds.outWidth,
-                bounds.outHeight,
-                policy.maxDecodeDimensionPx,
-                policy.maxDecodeDimensionPx,
-                policy.maxDecodedBytes.toLong(),
-            )
+            bounds.outWidth,
+            bounds.outHeight,
+            policy.maxDecodeDimensionPx,
+            policy.maxDecodeDimensionPx,
+            policy.maxDecodedBytes.toLong()
+        )
         val estimatedBytes = estimatedArgbBytes(bounds.outWidth, bounds.outHeight, sampleSize)
         if (estimatedBytes > policy.maxDecodedBytes.toLong()) return null
         val reservation = DecodedBitmapBudget.shared().reserve(
             estimatedBytes,
-            priority,
+            priority
         ) ?: return null
         val bitmap = try {
             BitmapFactory.decodeByteArray(
                 bytes,
                 0,
                 bytes.size,
-                BitmapFactory.Options().apply { inSampleSize = sampleSize },
+                BitmapFactory.Options().apply { inSampleSize = sampleSize }
             )
         } catch (_: OutOfMemoryError) {
             null
@@ -384,7 +404,7 @@ internal object RenderImageDecoder {
     private fun decodeSvgLease(
         bytes: ByteArray,
         policy: ImageLoadingPolicy,
-        priority: DecodedBitmapPriority,
+        priority: DecodedBitmapPriority
     ): DecodedBitmapLease? {
         val svg = try {
             if (!isSelfContainedSvg(bytes)) return null
@@ -404,18 +424,21 @@ internal object RenderImageDecoder {
         if (height <= 0) height = viewBox?.height()?.toDouble() ?: 150.0
         if (!width.isFinite() || !height.isFinite() || width <= 0 || height <= 0 ||
             policy.maxDecodedBytes < 4 || policy.maxDecodeDimensionPx <= 0
-        ) return null
+        ) {
+            return null
+        }
         val scale = minOf(
             1.0,
             policy.maxDecodeDimensionPx / width,
             policy.maxDecodeDimensionPx / height,
-            kotlin.math.sqrt(policy.maxDecodedBytes.toDouble() / 4.0 / width / height),
+            kotlin.math.sqrt(policy.maxDecodedBytes.toDouble() / 4.0 / width / height)
         )
         val targetWidth = kotlin.math.floor(width * scale).toInt().coerceAtLeast(1)
         val targetHeight = kotlin.math.floor(height * scale).toInt().coerceAtLeast(1)
         val estimatedBytes = estimatedArgbBytes(targetWidth, targetHeight, 1)
         if (estimatedBytes > policy.maxDecodedBytes) return null
-        val reservation = DecodedBitmapBudget.shared().reserve(estimatedBytes, priority) ?: return null
+        val reservation =
+            DecodedBitmapBudget.shared().reserve(estimatedBytes, priority) ?: return null
         var bitmap: Bitmap? = null
         try {
             bitmap = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
@@ -461,15 +484,23 @@ internal object RenderImageDecoder {
         while (true) {
             when (parser.nextToken()) {
                 XmlPullParser.END_DOCUMENT -> break
+
                 // Reject declarations before AndroidSVG can expand entities or load CSS.
                 XmlPullParser.DOCDECL, XmlPullParser.PROCESSING_INSTRUCTION -> return false
+
                 XmlPullParser.START_TAG -> {
-                    if (nodes.isEmpty() && (parser.name != "svg" ||
-                            parser.namespace != "http://www.w3.org/2000/svg")
-                    ) return false
+                    if (nodes.isEmpty() && (
+                            parser.name != "svg" ||
+                                parser.namespace != "http://www.w3.org/2000/svg"
+                            )
+                    ) {
+                        return false
+                    }
                     if (nodes.size >= MAX_SVG_ELEMENTS || stack.size >= MAX_SVG_DEPTH ||
                         parser.name in setOf("script", "foreignObject", "image")
-                    ) return false
+                    ) {
+                        return false
+                    }
                     val node = SvgNode()
                     val index = nodes.size
                     stack.lastOrNull()?.let { nodes[it].children.add(index) }
@@ -483,23 +514,33 @@ internal object RenderImageDecoder {
                         if (name.startsWith("on", ignoreCase = true) ||
                             (name == "href" && !value.trim().startsWith("#")) ||
                             (!literal && !hasOnlyLocalSvgReferences(value))
-                        ) return false
+                        ) {
+                            return false
+                        }
                         if (name == "id" && ids.put(value, index) != null) return false
                         if (name == "href") node.references.add(value.trim().removePrefix("#"))
                         if (!literal) {
                             svgUrlReference.findAll(value).forEach {
-                                node.references.add(it.groupValues[1].trim().trim('\'', '"').removePrefix("#"))
+                                node.references.add(
+                                    it.groupValues[1].trim().trim('\'', '"').removePrefix("#")
+                                )
                             }
                         }
                     }
                 }
+
                 XmlPullParser.TEXT, XmlPullParser.CDSECT, XmlPullParser.ENTITY_REF ->
                     styleText?.append(parser.text.orEmpty())
+
                 XmlPullParser.END_TAG -> {
                     if (parser.name == "style") {
                         val css = styleText.toString()
                         // Stylesheet selectors obscure reference cycles; inline styles remain supported.
-                        if (!hasOnlyLocalSvgReferences(css) || svgUrlReference.containsMatchIn(css)) return false
+                        if (!hasOnlyLocalSvgReferences(css) ||
+                            svgUrlReference.containsMatchIn(css)
+                        ) {
+                            return false
+                        }
                         styleText = null
                     }
                     stack.removeLast()
@@ -513,8 +554,11 @@ internal object RenderImageDecoder {
         fun expandedCost(index: Int, depth: Int): Int {
             if (depth > MAX_SVG_DEPTH || visiting[index]) return MAX_SVG_ELEMENTS + 1
             if (costs[index] != 0) {
-                return if (depth + heights[index] - 1 <= MAX_SVG_DEPTH) costs[index]
-                else MAX_SVG_ELEMENTS + 1
+                return if (depth + heights[index] - 1 <= MAX_SVG_DEPTH) {
+                    costs[index]
+                } else {
+                    MAX_SVG_ELEMENTS + 1
+                }
             }
             visiting[index] = true
             var cost = 1
@@ -538,20 +582,22 @@ internal object RenderImageDecoder {
         if (!svgUrlReference.findAll(value).all {
                 it.groupValues[1].trim().trim('\'', '"').startsWith("#")
             }
-        ) return false
+        ) {
+            return false
+        }
         return !svgUrlStart.containsMatchIn(svgUrlReference.replace(value, ""))
     }
 
     private data class ConstrainedBitmapTarget(
         val width: Int,
         val height: Int,
-        val estimatedBytes: Long,
+        val estimatedBytes: Long
     )
 
     private fun constrainedBitmapTarget(
         bitmap: Bitmap,
         decodedBytes: Long,
-        policy: ImageLoadingPolicy,
+        policy: ImageLoadingPolicy
     ): ConstrainedBitmapTarget? {
         val maximumDimension = policy.maxDecodeDimensionPx
         val dimensionScale = minOf(
@@ -575,7 +621,7 @@ internal object RenderImageDecoder {
         return ConstrainedBitmapTarget(
             targetWidth,
             targetHeight,
-            estimatedArgbBytes(targetWidth, targetHeight, 1),
+            estimatedArgbBytes(targetWidth, targetHeight, 1)
         )
     }
 
@@ -583,12 +629,12 @@ internal object RenderImageDecoder {
         bitmap: Bitmap,
         decodedBytes: Long,
         policy: ImageLoadingPolicy,
-        priority: DecodedBitmapPriority,
+        priority: DecodedBitmapPriority
     ): DecodedBitmapLease? {
         val target = constrainedBitmapTarget(bitmap, decodedBytes, policy) ?: return null
         val reservation = DecodedBitmapBudget.shared().reserve(
             target.estimatedBytes,
-            priority,
+            priority
         ) ?: return null
         val constrained = try {
             Bitmap.createScaledBitmap(bitmap, target.width, target.height, true)
@@ -604,7 +650,8 @@ internal object RenderImageDecoder {
             reservation.close()
             return null
         }
-        val lease = reservation.commit(constrained, decodedAllocationBytes(constrained)) ?: return null
+        val lease =
+            reservation.commit(constrained, decodedAllocationBytes(constrained)) ?: return null
         if (lease.byteCount > policy.maxDecodedBytes.toLong()) {
             lease.close()
             return null
@@ -615,14 +662,14 @@ internal object RenderImageDecoder {
     private fun constrainDecodedLease(
         lease: DecodedBitmapLease,
         policy: ImageLoadingPolicy,
-        priority: DecodedBitmapPriority = DecodedBitmapPriority.VISIBLE,
+        priority: DecodedBitmapPriority = DecodedBitmapPriority.VISIBLE
     ): DecodedBitmapLease? {
         val bitmap = lease.bitmap
         val decodedBytes = lease.byteCount
         val target = constrainedBitmapTarget(bitmap, decodedBytes, policy) ?: return lease
         val reservation = DecodedBitmapBudget.shared().reserve(
             target.estimatedBytes,
-            priority,
+            priority
         ) ?: run {
             lease.close()
             return constrainUnbudgetedBitmap(bitmap, decodedBytes, policy, priority)

@@ -19,13 +19,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
-/**
- * Compiler-backed geometry fixtures for the complete Android prepared renderer.
- *
- * These tests intentionally exercise the same semantic source corpus as the
- * final iOS renderer. They are authored before the Android renderer and are
- * deferred, unexecuted, to the Task 10 validation milestone.
- */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class PreparedProseRenderingTest {
@@ -41,12 +34,22 @@ class PreparedProseRenderingTest {
         // for this compiler-backed source at density 1. One pixel permits only
         // integer rounding at StaticLayout's visual replacement-slot boundary.
         assertTrueLazy(
-            kotlin.math.abs(expected.heightPx - first.heightPx) <= expected.tolerancePx,
+            kotlin.math.abs(expected.heightPx - first.heightPx) <= expected.tolerancePx
         ) {
-            "fixture=${Fixture.finalAndroidEdge.name} artifact height expected=${expected.heightPx} actual=${first.heightPx} tolerance=${expected.tolerancePx} ${layoutProjection(document, first)}"
+            "fixture=${Fixture.finalAndroidEdge.name} artifact height " +
+                "expected=${expected.heightPx} actual=${first.heightPx} " +
+                "tolerance=${expected.tolerancePx} ${layoutProjection(
+                    document,
+                    first
+                )}"
         }
         expected.blockBounds.forEachIndexed { index, bounds ->
-            assertRectEquals("block $index", bounds, first.blocks[index].bounds, expected.tolerancePx)
+            assertRectEquals(
+                "block $index",
+                bounds,
+                first.blocks[index].bounds,
+                expected.tolerancePx
+            )
         }
         expected.fragmentBounds.forEach { expectedFragment ->
             val actual = first.blocks[expectedFragment.blockIndex].fragments
@@ -56,16 +59,31 @@ class PreparedProseRenderingTest {
                 "block ${expectedFragment.blockIndex} ${expectedFragment.kind} ${expectedFragment.ordinal}",
                 expectedFragment.bounds,
                 actual.bounds,
-                expected.tolerancePx,
+                expected.tolerancePx
             )
         }
 
-        val outerMarker = first.blocks[0].fragments.single { it.kind == PreparedProseFragmentKind.MARKER }
-        val nestedMarker = first.blocks[3].fragments.single { it.kind == PreparedProseFragmentKind.MARKER }
-        val outerAnchor = first.blocks[0].fragments.single { it.kind == PreparedProseFragmentKind.TEXT }.bounds.left
-        val nestedAnchor = first.blocks[3].fragments.single { it.kind == PreparedProseFragmentKind.TEXT }.bounds.left
+        val outerMarker = first.blocks[0].fragments.single {
+            it.kind ==
+                PreparedProseFragmentKind.MARKER
+        }
+        val nestedMarker = first.blocks[3].fragments.single {
+            it.kind ==
+                PreparedProseFragmentKind.MARKER
+        }
+        val outerAnchor = first.blocks[0].fragments.single {
+            it.kind ==
+                PreparedProseFragmentKind.TEXT
+        }.bounds.left
+        val nestedAnchor = first.blocks[3].fragments.single {
+            it.kind ==
+                PreparedProseFragmentKind.TEXT
+        }.bounds.left
         val atom = first.blocks[0].fragments.single { it.kind == PreparedProseFragmentKind.ATOM }
-        val atomLayout = first.blocks[0].fragments.single { it.kind == PreparedProseFragmentKind.TEXT }.layout!!
+        val atomLayout = first.blocks[0].fragments.single {
+            it.kind ==
+                PreparedProseFragmentKind.TEXT
+        }.layout!!
         val atomOffset = atomLayout.text.indexOf('\uFFFC')
         val visualStart = atomLayout.getPrimaryHorizontal(atomOffset)
         val visualEnd = atomLayout.getPrimaryHorizontal(atomOffset + 1)
@@ -73,10 +91,28 @@ class PreparedProseRenderingTest {
         assertEquals("4294967295.", outerMarker.label)
         assertEquals("•", nestedMarker.label)
         assertTrue("nested anchor must retain the outer marker gutter", nestedAnchor > outerAnchor)
-        assertTrue("nested marker must not move left of the outer text anchor", nestedMarker.bounds.left >= outerAnchor)
-        assertTrue("nested marker must stay outside the outer text column", nestedMarker.bounds.right <= nestedAnchor)
-        assertEquals(kotlin.math.min(visualStart, visualEnd).toInt(), atom.bounds.left - first.blocks[0].fragments.single { it.kind == PreparedProseFragmentKind.TEXT }.bounds.left)
-        assertEquals(kotlin.math.max(visualStart, visualEnd).toInt(), atom.bounds.right - first.blocks[0].fragments.single { it.kind == PreparedProseFragmentKind.TEXT }.bounds.left)
+        assertTrue(
+            "nested marker must not move left of the outer text anchor",
+            nestedMarker.bounds.left >= outerAnchor
+        )
+        assertTrue(
+            "nested marker must stay outside the outer text column",
+            nestedMarker.bounds.right <= nestedAnchor
+        )
+        assertEquals(
+            kotlin.math.min(visualStart, visualEnd).toInt(),
+            atom.bounds.left -
+                first.blocks[0].fragments.single {
+                    it.kind == PreparedProseFragmentKind.TEXT
+                }.bounds.left
+        )
+        assertEquals(
+            kotlin.math.max(visualStart, visualEnd).toInt(),
+            atom.bounds.right -
+                first.blocks[0].fragments.single {
+                    it.kind == PreparedProseFragmentKind.TEXT
+                }.bounds.left
+        )
         assertPreparedLayoutsEqual(first, second, Fixture.finalAndroidEdge.name)
     }
 
@@ -118,41 +154,95 @@ class PreparedProseRenderingTest {
         leavesByItem.values.forEach { leaves ->
             assertEquals(1, leaves.count { it.value.listItemBoundary!!.isFirstRenderableLeaf })
             assertEquals(1, leaves.count { it.value.listItemBoundary!!.isFinalRenderableLeaf })
-            assertEquals(1, leaves.sumOf { layout.blocks[it.index].fragments.count { fragment -> fragment.kind == PreparedProseFragmentKind.MARKER } })
+            assertEquals(
+                1,
+                leaves.sumOf {
+                    layout.blocks[it.index].fragments.count { fragment ->
+                        fragment.kind ==
+                            PreparedProseFragmentKind.MARKER
+                    }
+                }
+            )
 
             val anchors = leaves.mapNotNull { leaf ->
                 layout.blocks[leaf.index].fragments.firstOrNull {
-                    it.kind == PreparedProseFragmentKind.TEXT || it.kind == PreparedProseFragmentKind.ATOM
+                    it.kind == PreparedProseFragmentKind.TEXT ||
+                        it.kind == PreparedProseFragmentKind.ATOM
                 }?.let { fragment ->
-                    fragment.bounds.left - if (leaf.value.nodeType == "codeBlock") Fixture.codePaddingPx else 0
+                    fragment.bounds.left -
+                        if (leaf.value.nodeType == "codeBlock") Fixture.CODE_PADDING_PX else 0
                 }
             }
             assertEquals(leaves.size, anchors.size)
             assertTrue(anchors.all { it == anchors.first() })
         }
 
-        val outer = leavesByItem.values.first { leaves -> leaves.any { it.value.listContext?.index == 7L } }
-        val nested = leavesByItem.values.first { leaves -> leaves.any { it.value.listContext?.index == 12L } }
-        val empty = leavesByItem.values.first { leaves -> leaves.any { it.value.listContext?.index == 8L } }
-        assertEquals("7.", layout.blocks[outer.first().index].fragments.single { it.kind == PreparedProseFragmentKind.MARKER }.label)
-        assertEquals("l.", layout.blocks[nested.first().index].fragments.single { it.kind == PreparedProseFragmentKind.MARKER }.label)
-        assertEquals("8.", layout.blocks[empty.first().index].fragments.single { it.kind == PreparedProseFragmentKind.MARKER }.label)
+        val outer = leavesByItem.values.first { leaves ->
+            leaves.any {
+                it.value.listContext?.index ==
+                    7L
+            }
+        }
+        val nested = leavesByItem.values.first { leaves ->
+            leaves.any {
+                it.value.listContext?.index ==
+                    12L
+            }
+        }
+        val empty = leavesByItem.values.first { leaves ->
+            leaves.any {
+                it.value.listContext?.index ==
+                    8L
+            }
+        }
+        assertEquals(
+            "7.",
+            layout.blocks[outer.first().index].fragments.single {
+                it.kind ==
+                    PreparedProseFragmentKind.MARKER
+            }.label
+        )
+        assertEquals(
+            "l.",
+            layout.blocks[nested.first().index].fragments.single {
+                it.kind ==
+                    PreparedProseFragmentKind.MARKER
+            }.label
+        )
+        assertEquals(
+            "8.",
+            layout.blocks[empty.first().index].fragments.single {
+                it.kind ==
+                    PreparedProseFragmentKind.MARKER
+            }.label
+        )
 
         val outerBlocks = outer.map { layout.blocks[it.index] }.sortedBy { it.bounds.top }
         assertEquals(3, outerBlocks.size)
         assertEquals(outerBlocks[0].bounds.bottom, outerBlocks[1].bounds.top)
         assertEquals(outerBlocks[1].bounds.bottom, outerBlocks[2].bounds.top)
-        assertEquals(Fixture.listItemSpacingPx, nested.minOf { layout.blocks[it.index].bounds.top } - outerBlocks[2].bounds.bottom)
+        assertEquals(
+            Fixture.LIST_ITEM_SPACING_PX,
+            nested.minOf { layout.blocks[it.index].bounds.top } - outerBlocks[2].bounds.bottom
+        )
     }
 
     @Test
     fun `scaled list markers stay centered without changing item spacing`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}""",
-            Fixture.structural.first().configJson,
+            Fixture.structural.first().configJson
         )
-        val regular = prepare(document, PreparedProseTheme.resolve("""{"list":{"markerScale":1,"itemSpacing":7}}""", 1f))
-        val scaled = prepare(document, PreparedProseTheme.resolve("""{"list":{"markerScale":3,"itemSpacing":7}}""", 1f))
+        val regular =
+            prepare(
+                document,
+                PreparedProseTheme.resolve("""{"list":{"markerScale":1,"itemSpacing":7}}""", 1f)
+            )
+        val scaled =
+            prepare(
+                document,
+                PreparedProseTheme.resolve("""{"list":{"markerScale":3,"itemSpacing":7}}""", 1f)
+            )
 
         listOf(regular, scaled).forEach { layout ->
             val itemBlocks = layout.blocks.filter { block ->
@@ -169,15 +259,24 @@ class PreparedProseRenderingTest {
                 val firstLineBottom = text.bounds.top + textLayout.getLineBottom(0)
                 val glyphBounds = Rect()
                 markerLayout.paint.getTextBounds(markerLabel, 0, markerLabel.length, glyphBounds)
-                val ink = preparedMarkerInk(glyphBounds, markerLayout.getLineAscent(0), markerLayout.getLineDescent(0))
+                val ink =
+                    preparedMarkerInk(
+                        glyphBounds,
+                        markerLayout.getLineAscent(0),
+                        markerLayout.getLineDescent(0)
+                    )
                 assertTrue(
                     "marker=${marker.bounds} firstLine=[$firstLineTop,$firstLineBottom]",
-                    kotlin.math.abs((marker.bounds.top + marker.bounds.bottom) - (firstLineTop + firstLineBottom)) <= 1,
+                    kotlin.math.abs(
+                        (marker.bounds.top + marker.bounds.bottom) -
+                            (firstLineTop + firstLineBottom)
+                    ) <=
+                        1
                 )
                 assertEquals(ink.heightPx, marker.bounds.height())
                 assertEquals(
                     marker.bounds.top + ink.ascentPx,
-                    marker.layoutY + markerLayout.getLineBaseline(0),
+                    marker.layoutY + markerLayout.getLineBaseline(0)
                 )
             }
         }
@@ -191,7 +290,7 @@ class PreparedProseRenderingTest {
         assertEquals(2, scaledLines.size)
         assertEquals(
             regularLines[1].bounds.top - regularLines[0].bounds.bottom,
-            scaledLines[1].bounds.top - scaledLines[0].bounds.bottom,
+            scaledLines[1].bounds.top - scaledLines[0].bounds.bottom
         )
     }
 
@@ -201,13 +300,13 @@ class PreparedProseRenderingTest {
             Triple(
                 """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]},{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}""",
                 """{"paragraph":{"spacingAfter":13},"contentInsets":{"bottom":7}}""",
-                13,
+                13
             ),
             Triple(
                 """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}""",
                 """{"list":{"itemSpacing":11,"spacingAfter":20},"contentInsets":{"bottom":7}}""",
-                11,
-            ),
+                11
+            )
         )
 
         fixtures.forEach { (source, themeJson, expectedGap) ->
@@ -224,12 +323,12 @@ class PreparedProseRenderingTest {
     fun `collapse trailing empty paragraphs preserves interior blocks`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]},{"type":"paragraph"},{"type":"paragraph","content":[{"type":"text","text":"second"}]},{"type":"paragraph"},{"type":"paragraph"}]}""",
-            Fixture.structural.first().configJson,
+            Fixture.structural.first().configJson
         )
         val engine = StaticLayoutAndroidProseLayoutEngine()
 
-        val collapsed = engine.prepare(document, key(), theme(), Fixture.widthPx, 1f, true)
-        val expanded = engine.prepare(document, key(), theme(), Fixture.widthPx, 1f, false)
+        val collapsed = engine.prepare(document, key(), theme(), Fixture.WIDTH_PX, 1f, true)
+        val expanded = engine.prepare(document, key(), theme(), Fixture.WIDTH_PX, 1f, false)
 
         assertEquals(3, collapsed.blocks.size)
         assertEquals(5, expanded.blocks.size)
@@ -239,11 +338,11 @@ class PreparedProseRenderingTest {
     fun `list spacingAfter replaces terminal item spacing before following content`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]},{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"third"}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}""",
-            Fixture.structural.first().configJson,
+            Fixture.structural.first().configJson
         )
         val layout = prepare(
             document,
-            PreparedProseTheme.resolve("""{"list":{"itemSpacing":6,"spacingAfter":20}}""", 1f),
+            PreparedProseTheme.resolve("""{"list":{"itemSpacing":6,"spacingAfter":20}}""", 1f)
         )
 
         assertEquals(4, layout.blocks.size)
@@ -254,12 +353,25 @@ class PreparedProseRenderingTest {
 
     @Test
     fun `list spacingAfter supports taskItem node names`() {
-        val source = """{"type":"doc","content":[{"type":"taskList","content":[{"type":"taskItem","attrs":{"checked":false},"content":[{"type":"paragraph","content":[{"type":"text","text":"task"}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
-        val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"taskList","content":"taskItem+","group":"block","role":"list"},{"name":"taskItem","content":"paragraph block*","role":"listItem","attrs":{"checked":{"default":false}}},{"name":"text","group":"inline","role":"text"}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
+        val source =
+            """{"type":"doc","content":[{"type":"taskList",""" +
+                """"content":[{"type":"taskItem","attrs":{"checked":false},""" +
+                """"content":[{"type":"paragraph","content":[{"type":"text",""" +
+                """"text":"task"}]}]}]},{"type":"paragraph",""" +
+                """"content":[{"type":"text","text":"after"}]}]}"""
+        val config =
+            """{"schema":{"nodes":[{"name":"doc","content":"block+",""" +
+                """"role":"doc"},{"name":"paragraph","content":"inline*",""" +
+                """"group":"block","role":"textBlock"},{"name":"taskList",""" +
+                """"content":"taskItem+","group":"block","role":"list"},""" +
+                """{"name":"taskItem","content":"paragraph block*",""" +
+                """"role":"listItem","attrs":{"checked":{"default":false}}},""" +
+                """{"name":"text","group":"inline","role":"text"}],"marks":[]},""" +
+                """"initialization":{"type":"localEmpty"}}"""
         val document = compileSource(source, config)
         val layout = prepare(
             document,
-            PreparedProseTheme.resolve("""{"list":{"itemSpacing":6,"spacingAfter":20}}""", 1f),
+            PreparedProseTheme.resolve("""{"list":{"itemSpacing":6,"spacingAfter":20}}""", 1f)
         )
 
         assertEquals(2, layout.blocks.size)
@@ -270,11 +382,11 @@ class PreparedProseRenderingTest {
     fun `nested list spacingAfter applies before parent content`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"parent"}]},{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after nested"}]}]}]}]}""",
-            Fixture.structural.first().configJson,
+            Fixture.structural.first().configJson
         )
         val layout = prepare(
             document,
-            PreparedProseTheme.resolve("""{"list":{"itemSpacing":6,"spacingAfter":20}}""", 1f),
+            PreparedProseTheme.resolve("""{"list":{"itemSpacing":6,"spacingAfter":20}}""", 1f)
         )
 
         assertEquals(3, layout.blocks.size)
@@ -285,11 +397,11 @@ class PreparedProseRenderingTest {
     fun `nested and outer list spacingAfter stack at a shared ending`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"parent"}]},{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}""",
-            Fixture.structural.first().configJson,
+            Fixture.structural.first().configJson
         )
         val layout = prepare(
             document,
-            PreparedProseTheme.resolve("""{"list":{"itemSpacing":6,"spacingAfter":20}}""", 1f),
+            PreparedProseTheme.resolve("""{"list":{"itemSpacing":6,"spacingAfter":20}}""", 1f)
         )
 
         assertEquals(3, layout.blocks.size)
@@ -300,11 +412,11 @@ class PreparedProseRenderingTest {
     fun `nested list ending with a non-final parent keeps parent item spacing`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"parent"}]},{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]},{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}""",
-            Fixture.structural.first().configJson,
+            Fixture.structural.first().configJson
         )
         val layout = prepare(
             document,
-            PreparedProseTheme.resolve("""{"list":{"itemSpacing":6,"spacingAfter":20}}""", 1f),
+            PreparedProseTheme.resolve("""{"list":{"itemSpacing":6,"spacingAfter":20}}""", 1f)
         )
 
         assertEquals(3, layout.blocks.size)
@@ -313,7 +425,8 @@ class PreparedProseRenderingTest {
 
     @Test
     fun `marker ink box follows signed glyph bounds so a bullet is not stretched below its ink`() {
-        val bullet = preparedMarkerInk(Rect(0, -9, 5, -3), layoutAscentPx = -12, layoutDescentPx = 4)
+        val bullet =
+            preparedMarkerInk(Rect(0, -9, 5, -3), layoutAscentPx = -12, layoutDescentPx = 4)
         assertEquals(9, bullet.ascentPx)
         assertEquals(6, bullet.heightPx)
 
@@ -321,10 +434,12 @@ class PreparedProseRenderingTest {
         assertEquals(10, digit.ascentPx)
         assertEquals(10, digit.heightPx)
 
-        val descending = preparedMarkerInk(Rect(0, -10, 6, 3), layoutAscentPx = -12, layoutDescentPx = 4)
+        val descending =
+            preparedMarkerInk(Rect(0, -10, 6, 3), layoutAscentPx = -12, layoutDescentPx = 4)
         assertEquals(13, descending.heightPx)
 
-        val withoutGlyphBounds = preparedMarkerInk(Rect(), layoutAscentPx = -12, layoutDescentPx = 4)
+        val withoutGlyphBounds =
+            preparedMarkerInk(Rect(), layoutAscentPx = -12, layoutDescentPx = 4)
         assertEquals(12, withoutGlyphBounds.ascentPx)
         assertEquals(16, withoutGlyphBounds.heightPx)
     }
@@ -343,12 +458,18 @@ class PreparedProseRenderingTest {
     fun `list markerGap sets the space between the marker and the text`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}""",
-            Fixture.structural.first().configJson,
+            Fixture.structural.first().configJson
         )
 
         listOf(4, 20).forEach { gap ->
-            val layout = prepare(document, PreparedProseTheme.resolve("""{"list":{"markerGap":$gap}}""", 1f))
-            val block = layout.blocks.single { block -> block.fragments.any { it.kind == PreparedProseFragmentKind.MARKER } }
+            val layout =
+                prepare(document, PreparedProseTheme.resolve("""{"list":{"markerGap":$gap}}""", 1f))
+            val block = layout.blocks.single { block ->
+                block.fragments.any {
+                    it.kind ==
+                        PreparedProseFragmentKind.MARKER
+                }
+            }
             val marker = block.fragments.single { it.kind == PreparedProseFragmentKind.MARKER }
             val text = block.fragments.single { it.kind == PreparedProseFragmentKind.TEXT }
 
@@ -360,14 +481,21 @@ class PreparedProseRenderingTest {
     fun `list markerGap keeps the marker column left edge fixed`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}""",
-            Fixture.structural.first().configJson,
+            Fixture.structural.first().configJson
         )
-        val narrow = prepare(document, PreparedProseTheme.resolve("""{"list":{"markerGap":4}}""", 1f))
-        val wide = prepare(document, PreparedProseTheme.resolve("""{"list":{"markerGap":20}}""", 1f))
+        val narrow =
+            prepare(document, PreparedProseTheme.resolve("""{"list":{"markerGap":4}}""", 1f))
+        val wide =
+            prepare(document, PreparedProseTheme.resolve("""{"list":{"markerGap":20}}""", 1f))
         fun markerLeft(layout: PreparedProseLayout) =
-            layout.blocks.flatMap { it.fragments }.single { it.kind == PreparedProseFragmentKind.MARKER }.bounds.left
-        fun textLeft(layout: PreparedProseLayout) =
-            layout.blocks.flatMap { it.fragments }.single { it.kind == PreparedProseFragmentKind.TEXT }.bounds.left
+            layout.blocks.flatMap { it.fragments }.single {
+                it.kind ==
+                    PreparedProseFragmentKind.MARKER
+            }.bounds.left
+        fun textLeft(layout: PreparedProseLayout) = layout.blocks.flatMap { it.fragments }.single {
+            it.kind ==
+                PreparedProseFragmentKind.TEXT
+        }.bounds.left
 
         assertEquals(markerLeft(narrow), markerLeft(wide))
         assertEquals(16, textLeft(wide) - textLeft(narrow))
@@ -377,20 +505,34 @@ class PreparedProseRenderingTest {
     fun `list marker scale does not resize ordered numbers`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"ordered_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}""",
-            Fixture.structural.first().configJson,
+            Fixture.structural.first().configJson
         )
-        val regular = prepare(document, PreparedProseTheme.resolve("""{"list":{"markerScale":1}}""", 1f))
-        val scaled = prepare(document, PreparedProseTheme.resolve("""{"list":{"markerScale":3}}""", 1f))
-        val regularMarker = regular.blocks.flatMap { it.fragments }.single { it.kind == PreparedProseFragmentKind.MARKER }
-        val scaledMarker = scaled.blocks.flatMap { it.fragments }.single { it.kind == PreparedProseFragmentKind.MARKER }
+        val regular =
+            prepare(document, PreparedProseTheme.resolve("""{"list":{"markerScale":1}}""", 1f))
+        val scaled =
+            prepare(document, PreparedProseTheme.resolve("""{"list":{"markerScale":3}}""", 1f))
+        val regularMarker = regular.blocks.flatMap { it.fragments }.single {
+            it.kind ==
+                PreparedProseFragmentKind.MARKER
+        }
+        val scaledMarker = scaled.blocks.flatMap { it.fragments }.single {
+            it.kind ==
+                PreparedProseFragmentKind.MARKER
+        }
 
-        assertEquals(requireNotNull(regularMarker.layout).paint.textSize, requireNotNull(scaledMarker.layout).paint.textSize)
+        assertEquals(
+            requireNotNull(regularMarker.layout).paint.textSize,
+            requireNotNull(scaledMarker.layout).paint.textSize
+        )
     }
 
     @Test
     fun `prepared mark spans affect static layout and paint only geometry is explicit`() {
         val layout = prepare(compile(Fixture.marks))
-        val text = layout.blocks.flatMap { it.fragments }.filter { it.kind == PreparedProseFragmentKind.TEXT }
+        val text = layout.blocks.flatMap { it.fragments }.filter {
+            it.kind ==
+                PreparedProseFragmentKind.TEXT
+        }
         val spans = text.flatMap { (it.layout!!.text as android.text.Spanned).allSpans<Any>() }
 
         assertTrue(spans.any { it is ResolvedTextStyleSpan })
@@ -419,28 +561,58 @@ class PreparedProseRenderingTest {
         assertEquals(2f, atom.strokeWidth)
         assertEquals(9f, atom.cornerRadius)
         assertNotNull(atom.labelLayout)
-        assertEquals(mention.attrsJson, layout.interactions.single { it.kind == PreparedProseInteraction.Kind.MENTION }.attrsJson)
+        assertEquals(
+            mention.attrsJson,
+            layout.interactions.single {
+                it.kind ==
+                    PreparedProseInteraction.Kind.MENTION
+            }.attrsJson
+        )
     }
 
     @Test
-    fun `Fabric pins compiler semantics while density one to two resolves fresh bounded theme paints`() {
+    fun `Fabric pins semantics while doubled density resolves fresh bounded theme paints`() {
         var compilations = 0
         val engine = CountingRendererEngine()
         val registry = PreparedProseLayoutRegistry(
-            compiler = { request -> compilations += 1; compileWithRust(request) },
-            layoutEngine = engine,
+            compiler = { request ->
+                compilations += 1
+                compileWithRust(request)
+            },
+            layoutEngine = engine
         )
         val fixture = Fixture.structural[2]
-        val request = ProseViewerRequest(fixture.source, ProseViewerConfiguration(configJson = fixture.configJson, themeJson = Fixture.themeJson))
+        val request =
+            ProseViewerRequest(
+                fixture.source,
+                ProseViewerConfiguration(
+                    configJson = fixture.configJson,
+                    themeJson = Fixture.themeJson
+                )
+            )
         val surface = FabricSurfaceToken(77, 701)
         val leaseHandle = 1L
         val generation = FabricGenerationToken(surface, request.generationIdentity, leaseHandle)
         registry.registerFabricLease(surface, leaseHandle)
         registry.activateFabricGeneration(generation)
 
-        val densityOne = registry.measure(request, Fixture.widthPx, 1f, surface, fabricLeaseHandle = leaseHandle)
-        val densityTwo = registry.measure(request, Fixture.widthPx, 2f, surface, fabricLeaseHandle = leaseHandle)
-        val sourceAtoms = compile(fixture).blocks.flatMap { it.inlines }.filterIsInstance<ViewerInline.Atom>()
+        val densityOne = registry.measure(
+            request,
+            Fixture.WIDTH_PX,
+            1f,
+            surface,
+            fabricLeaseHandle = leaseHandle
+        )
+        val densityTwo = registry.measure(
+            request,
+            Fixture.WIDTH_PX,
+            2f,
+            surface,
+            fabricLeaseHandle = leaseHandle
+        )
+        val sourceAtoms = compile(fixture).blocks.flatMap {
+            it.inlines
+        }.filterIsInstance<ViewerInline.Atom>()
         val mention = sourceAtoms.single { it.nodeType == "mention" && it.label == "Ada" }
         val opaque = sourceAtoms.single { it.nodeType == "opaque" && it.label == "opaque" }
         fun PreparedProseLayout.mentionAtom() = blocks.flatMap { it.fragments }.single {
@@ -482,9 +654,10 @@ class PreparedProseRenderingTest {
     fun `oversized marker reserves a nonnegative top and shares the first text baseline`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"marker"}]}]}]}]}""",
-            Fixture.structural[2].configJson,
+            Fixture.structural[2].configJson
         )
-        val layout = prepare(document, PreparedProseTheme.resolve("""{"list":{"markerScale":4}}""", 1f))
+        val layout =
+            prepare(document, PreparedProseTheme.resolve("""{"list":{"markerScale":4}}""", 1f))
         val block = layout.blocks.single()
         val marker = block.fragments.single { it.kind == PreparedProseFragmentKind.MARKER }
         val text = block.fragments.single { it.kind == PreparedProseFragmentKind.TEXT }
@@ -492,7 +665,7 @@ class PreparedProseRenderingTest {
         assertTrue(marker.bounds.top >= 0)
         assertEquals(
             text.bounds.top + text.layout!!.getLineBaseline(0) - marker.layout!!.getLineBaseline(0),
-            marker.bounds.top,
+            marker.bounds.top
         )
         assertTrue(marker.bounds.bottom <= block.bounds.bottom)
     }
@@ -501,94 +674,147 @@ class PreparedProseRenderingTest {
     fun `nested list and quote rule right edge excludes both insets`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"blockquote","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"lead"}]},{"type":"horizontal_rule"}]}]}]}]}""",
-            Fixture.structural[2].configJson,
+            Fixture.structural[2].configJson
         )
-        val rule = prepare(document).blocks.flatMap { it.fragments }.single { it.kind == PreparedProseFragmentKind.RULE }
+        val rule = prepare(document).blocks.flatMap { it.fragments }.single {
+            it.kind ==
+                PreparedProseFragmentKind.RULE
+        }
 
         assertTrue(rule.bounds.left > 0)
-        assertEquals(Fixture.widthPx - rule.bounds.left, rule.bounds.right)
+        assertEquals(Fixture.WIDTH_PX - rule.bounds.left, rule.bounds.right)
     }
 
     @Test
     fun `atom descenders remain inside metric line and atom bounds`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"opaque","attrs":{"label":"gy"}}]}]}""",
-            Fixture.structural[2].configJson,
+            Fixture.structural[2].configJson
         )
-        val atom = prepare(document).blocks.flatMap { it.fragments }.single { it.kind == PreparedProseFragmentKind.ATOM }
+        val atom = prepare(document).blocks.flatMap { it.fragments }.single {
+            it.kind ==
+                PreparedProseFragmentKind.ATOM
+        }
 
         assertTrue(atom.bounds.bottom >= atom.labelY + atom.labelLayout!!.height)
         assertTrue(atom.bounds.height() > atom.labelLayout!!.getLineBaseline(0))
     }
 
     @Test
-    fun `compiler backed fixed line heights cover single final heading code list and density metrics`() {
+    fun `compiler fixed line heights cover final heading code list and density metrics`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"single"}]},{"type":"paragraph","content":[{"type":"text","text":"wrapped final line needs enough words to wrap at this fixed width"}]},{"type":"paragraph","content":[{"type":"text","text":"hard"},{"type":"hard_break"},{"type":"text","text":"break"}]},{"type":"heading","attrs":{"level":1},"content":[{"type":"text","text":"heading"}]},{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"list leaf"}]}]}]}]}""",
-            Fixture.structural[1].configJson,
+            Fixture.structural[1].configJson
         )
         val codeDocument = compileSource(
             """{"type":"doc","content":[{"type":"codeBlock","content":[{"type":"text","text":"code"}]}]}""",
-            Fixture.multiBlockList.configJson,
+            Fixture.multiBlockList.configJson
         )
         val densityOneTheme = PreparedProseTheme.resolve(
             """{"paragraph":{"fontSize":16,"lineHeight":48},"headings":{"h1":{"lineHeight":64}},"codeBlock":{"text":{"fontSize":14,"lineHeight":48}}}""",
-            1f,
+            1f
         )
         val densityOne = prepare(document, densityOneTheme, 160)
         val densityOneCode = prepare(codeDocument, densityOneTheme, 160)
         val naturalTheme = PreparedProseTheme.resolve(
             """{"paragraph":{"fontSize":16},"codeBlock":{"text":{"fontSize":14}}}""",
-            1f,
+            1f
         )
         val natural = prepare(document, naturalTheme, 160)
         val naturalCode = prepare(codeDocument, naturalTheme, 160)
         val naturalAtomDocument = compileSource(
             """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"opaque","attrs":{"label":"atom"}}]}]}""",
-            Fixture.structural[2].configJson,
+            Fixture.structural[2].configJson
         )
         val naturalAtom = prepare(
             naturalAtomDocument,
             PreparedProseTheme.resolve("""{"paragraph":{"fontSize":16}}""", 1f),
-            160,
-        ).blocks.single().fragments.single { it.kind == PreparedProseFragmentKind.ATOM }.labelLayout!!
-        val paragraphs = document.blocks.withIndex().filter { it.value.nodeType == "paragraph" && it.value.listContext == null }
+            160
+        ).blocks.single().fragments.single {
+            it.kind == PreparedProseFragmentKind.ATOM
+        }.labelLayout!!
+        val paragraphs = document.blocks.withIndex().filter {
+            it.value.nodeType == "paragraph" &&
+                it.value.listContext == null
+        }
         val heading = document.blocks.indexOfFirst { it.nodeType == "h1" }
         val list = document.blocks.indexOfLast { it.listContext != null }
 
         assertEquals(3, paragraphs.size)
         val single = textLayout(densityOne, paragraphs[0].index)
         val naturalSingle = textLayout(natural, paragraphs[0].index)
-        assertEqualsLazy(48, lineHeight(single, 0)) { "single paragraph ${metricProjection(document, densityOne)}" }
+        assertEqualsLazy(48, lineHeight(single, 0)) {
+            "single paragraph ${metricProjection(document, densityOne)}"
+        }
         assertEquals(
             (48 - lineHeight(naturalSingle, 0)) / 2,
-            single.getLineBaseline(0) - naturalSingle.getLineBaseline(0),
+            single.getLineBaseline(0) - naturalSingle.getLineBaseline(0)
         )
-        assertEquals(1, (single.text as android.text.Spanned).getSpans(0, single.text.length, FixedLineHeightMetricSpan::class.java).size)
+        assertEquals(
+            1,
+            (single.text as android.text.Spanned).getSpans(
+                0,
+                single.text.length,
+                FixedLineHeightMetricSpan::class.java
+            ).size
+        )
         val wideParagraph = textLayout(densityOne, paragraphs[1].index)
         assertTrue("wide fixture must have a final line", wideParagraph.lineCount >= 1)
-        assertEqualsLazy(48, lineHeight(wideParagraph, wideParagraph.lineCount - 1)) { "wide paragraph ${metricProjection(document, densityOne)}" }
+        assertEqualsLazy(48, lineHeight(wideParagraph, wideParagraph.lineCount - 1)) {
+            "wide paragraph ${metricProjection(document, densityOne)}"
+        }
         val hardBreak = textLayout(densityOne, paragraphs[2].index)
         assertTrue("hard-break fixture must have a final line", hardBreak.lineCount >= 2)
-        assertEqualsLazy(48, lineHeight(hardBreak, hardBreak.lineCount - 1)) { "hard-break final paragraph ${metricProjection(document, densityOne)}" }
-        assertEqualsLazy(64, lineHeight(textLayout(densityOne, heading), 0)) { "heading ${metricProjection(document, densityOne)}" }
-        assertEqualsLazy(48, lineHeight(textLayout(densityOneCode, 0), 0)) { "code ${metricProjection(codeDocument, densityOneCode)}" }
-        assertEqualsLazy(48, lineHeight(textLayout(densityOne, list), 0)) { "list text ${metricProjection(document, densityOne)}" }
-        assertEqualsLazy(48, densityOne.blocks[list].fragments.single { it.kind == PreparedProseFragmentKind.MARKER }.bounds.height()) { "list marker ${metricProjection(document, densityOne)}" }
+        assertEqualsLazy(48, lineHeight(hardBreak, hardBreak.lineCount - 1)) {
+            "hard-break final paragraph ${metricProjection(document, densityOne)}"
+        }
+        assertEqualsLazy(64, lineHeight(textLayout(densityOne, heading), 0)) {
+            "heading ${metricProjection(document, densityOne)}"
+        }
+        assertEqualsLazy(48, lineHeight(textLayout(densityOneCode, 0), 0)) {
+            "code ${metricProjection(codeDocument, densityOneCode)}"
+        }
+        assertEqualsLazy(48, lineHeight(textLayout(densityOne, list), 0)) {
+            "list text ${metricProjection(document, densityOne)}"
+        }
+        assertEqualsLazy(
+            48,
+            densityOne.blocks[list].fragments.single {
+                it.kind ==
+                    PreparedProseFragmentKind.MARKER
+            }.bounds.height()
+        ) { "list marker ${metricProjection(document, densityOne)}" }
 
         val densityTwoTheme = PreparedProseTheme.resolve(
             """{"paragraph":{"fontSize":16,"lineHeight":48},"headings":{"h1":{"lineHeight":64}},"codeBlock":{"text":{"fontSize":14,"lineHeight":48}}}""",
-            2f,
+            2f
         )
         val densityTwo = prepare(document, densityTwoTheme, 320)
         val densityTwoCode = prepare(codeDocument, densityTwoTheme, 320)
-        assertEqualsLazy(96, lineHeight(textLayout(densityTwo, paragraphs[0].index), 0)) { "density-two paragraph ${metricProjection(document, densityTwo)}" }
+        assertEqualsLazy(96, lineHeight(textLayout(densityTwo, paragraphs[0].index), 0)) {
+            "density-two paragraph ${metricProjection(document, densityTwo)}"
+        }
         val densityTwoHardBreak = textLayout(densityTwo, paragraphs[2].index)
-        assertTrue("density-two hard-break fixture must have a final line", densityTwoHardBreak.lineCount >= 2)
-        assertEqualsLazy(96, lineHeight(densityTwoHardBreak, densityTwoHardBreak.lineCount - 1)) { "density-two hard-break final paragraph ${metricProjection(document, densityTwo)}" }
-        assertEqualsLazy(128, lineHeight(textLayout(densityTwo, heading), 0)) { "density-two heading ${metricProjection(document, densityTwo)}" }
-        assertEqualsLazy(96, lineHeight(textLayout(densityTwoCode, 0), 0)) { "density-two code ${metricProjection(codeDocument, densityTwoCode)}" }
-        assertEqualsLazy(96, densityTwo.blocks[list].fragments.single { it.kind == PreparedProseFragmentKind.MARKER }.bounds.height()) { "density-two list marker ${metricProjection(document, densityTwo)}" }
+        assertTrue(
+            "density-two hard-break fixture must have a final line",
+            densityTwoHardBreak.lineCount >= 2
+        )
+        assertEqualsLazy(96, lineHeight(densityTwoHardBreak, densityTwoHardBreak.lineCount - 1)) {
+            "density-two hard-break final paragraph ${metricProjection(document, densityTwo)}"
+        }
+        assertEqualsLazy(128, lineHeight(textLayout(densityTwo, heading), 0)) {
+            "density-two heading ${metricProjection(document, densityTwo)}"
+        }
+        assertEqualsLazy(96, lineHeight(textLayout(densityTwoCode, 0), 0)) {
+            "density-two code ${metricProjection(codeDocument, densityTwoCode)}"
+        }
+        assertEqualsLazy(
+            96,
+            densityTwo.blocks[list].fragments.single {
+                it.kind ==
+                    PreparedProseFragmentKind.MARKER
+            }.bounds.height()
+        ) { "density-two list marker ${metricProjection(document, densityTwo)}" }
         assertTrueLazy(
             natural.blocks.flatMap { it.fragments }
                 .filter { it.kind == PreparedProseFragmentKind.TEXT }
@@ -598,7 +824,7 @@ class PreparedProseRenderingTest {
                             .getSpans(0, layout.text.length, FixedLineHeightMetricSpan::class.java)
                             .isEmpty()
                     }
-                },
+                }
         ) { "natural text line-height spans ${metricProjection(document, natural)}" }
         assertTrueLazy(
             naturalCode.blocks.flatMap { it.fragments }
@@ -609,10 +835,15 @@ class PreparedProseRenderingTest {
                             .getSpans(0, layout.text.length, FixedLineHeightMetricSpan::class.java)
                             .isEmpty()
                     }
-                },
+                }
         ) { "natural code line-height spans ${metricProjection(codeDocument, naturalCode)}" }
-        val naturalMarker = natural.blocks[list].fragments.single { it.kind == PreparedProseFragmentKind.MARKER }.layout!!
-        assertNaturalStaticLayoutMetrics(naturalMarker) { "natural list marker ${metricProjection(document, natural)}" }
+        val naturalMarker = natural.blocks[list].fragments.single {
+            it.kind ==
+                PreparedProseFragmentKind.MARKER
+        }.layout!!
+        assertNaturalStaticLayoutMetrics(naturalMarker) {
+            "natural list marker ${metricProjection(document, natural)}"
+        }
         assertNaturalStaticLayoutMetrics(naturalAtom) { "natural atom label layout=$naturalAtom" }
     }
 
@@ -620,29 +851,57 @@ class PreparedProseRenderingTest {
     fun `reduced line height preserves natural extreme text and atom metrics without clipping`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"large"},{"type":"opaque","attrs":{"label":"atom"}}]}]}""",
-            Fixture.structural[2].configJson,
+            Fixture.structural[2].configJson
         )
-        val natural = prepare(document, PreparedProseTheme.resolve("""{"paragraph":{"fontSize":64}}""", 1f), 320)
-        val reduced = prepare(document, PreparedProseTheme.resolve("""{"paragraph":{"fontSize":64,"lineHeight":16}}""", 1f), 320)
+        val natural =
+            prepare(
+                document,
+                PreparedProseTheme.resolve("""{"paragraph":{"fontSize":64}}""", 1f),
+                320
+            )
+        val reduced =
+            prepare(
+                document,
+                PreparedProseTheme.resolve("""{"paragraph":{"fontSize":64,"lineHeight":16}}""", 1f),
+                320
+            )
         val naturalLayout = textLayout(natural, 0)
         val reducedLayout = textLayout(reduced, 0)
-        val atom = reduced.blocks.single().fragments.single { it.kind == PreparedProseFragmentKind.ATOM }
+        val atom = reduced.blocks.single().fragments.single {
+            it.kind ==
+                PreparedProseFragmentKind.ATOM
+        }
 
         assertEquals(lineHeight(naturalLayout, 0), lineHeight(reducedLayout, 0))
         assertTrue(atom.bounds.height() >= atom.labelLayout!!.height)
         assertTrue(reduced.blocks.single().bounds.contains(atom.bounds))
         assertTrue(reducedLayout.text is android.text.Spanned)
-        assertEquals(1, (reducedLayout.text as android.text.Spanned).getSpans(0, reducedLayout.text.length, FixedLineHeightMetricSpan::class.java).size)
+        assertEquals(
+            1,
+            (reducedLayout.text as android.text.Spanned).getSpans(
+                0,
+                reducedLayout.text.length,
+                FixedLineHeightMetricSpan::class.java
+            ).size
+        )
     }
 
     @Test
     fun `link typography resolves before mark traits and RTL strike keeps its run foreground`() {
-        val themed = """{"links":{"fontFamily":"monospace","fontSize":23,"fontWeight":"700","fontStyle":"italic","color":"#13579B"}}"""
+        val themed =
+            """{"links":{"fontFamily":"monospace","fontSize":23,""" +
+                """"fontWeight":"700","fontStyle":"italic","color":"#13579B"}}"""
         val document = compileSource(
             """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"שלום","marks":[{"type":"link","attrs":{"href":"https://example.test"}},{"type":"strike"},{"type":"bold"}]}]}]}""",
-            Fixture.structural[2].configJson,
+            Fixture.structural[2].configJson
         )
-        val text = prepare(document, PreparedProseTheme.resolve(themed, 1f)).blocks.single().fragments.single { it.kind == PreparedProseFragmentKind.TEXT }.layout!!
+        val text = prepare(
+            document,
+            PreparedProseTheme.resolve(themed, 1f)
+        ).blocks.single().fragments.single {
+            it.kind ==
+                PreparedProseFragmentKind.TEXT
+        }.layout!!
         val spans = text.text as android.text.Spanned
         val style = spans.getSpans(0, spans.length, ResolvedTextStyleSpan::class.java).single()
         val foreground = spans.getSpans(0, spans.length, ForegroundColorSpan::class.java).single()
@@ -658,28 +917,59 @@ class PreparedProseRenderingTest {
     fun `compiler u32 maximum ordered index and semantic atom position never narrow or wrap`() {
         val document = compileSource(
             """{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4294967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"max"}]}]}]}]}""",
-            Fixture.structural[2].configJson,
+            Fixture.structural[2].configJson
         )
         val compilerIndex = document.blocks.single().listContext!!.index
         val semanticAtom = ViewerInline.Atom("opaque", 0xFFFF_FFFFL, "{}", "max")
-        val atomDocument = ViewerDocument("u32-atom", listOf(ViewerBlock("paragraph", 0, false, null, null, listOf(semanticAtom))), false, 0)
-        val marker = prepare(document).blocks.single().fragments.single { it.kind == PreparedProseFragmentKind.MARKER }
+        val atomDocument =
+            ViewerDocument(
+                "u32-atom",
+                listOf(ViewerBlock("paragraph", 0, false, null, null, listOf(semanticAtom))),
+                false,
+                0
+            )
+        val marker = prepare(document).blocks.single().fragments.single {
+            it.kind ==
+                PreparedProseFragmentKind.MARKER
+        }
 
         assertEquals(0xFFFF_FFFFL, compilerIndex)
         assertEquals("4294967295.", marker.label)
-        assertEquals(0xFFFF_FFFFL, (atomDocument.blocks.single().inlines.single() as ViewerInline.Atom).docPos)
-        assertTrue(prepare(atomDocument).blocks.single().fragments.any { it.kind == PreparedProseFragmentKind.ATOM })
+        assertEquals(
+            0xFFFF_FFFFL,
+            (atomDocument.blocks.single().inlines.single() as ViewerInline.Atom).docPos
+        )
+        assertTrue(
+            prepare(atomDocument).blocks.single().fragments.any {
+                it.kind ==
+                    PreparedProseFragmentKind.ATOM
+            }
+        )
     }
 
     @Test
     fun `drawing is culling and paint only after preparation`() {
         val engine = CountingRendererEngine()
-        val layout = engine.prepare(compile(Fixture.unicode), key(), theme(), Fixture.widthPx, 1f, false)
+        val layout = engine.prepare(
+            compile(Fixture.unicode),
+            key(),
+            theme(),
+            Fixture.WIDTH_PX,
+            1f,
+            false
+        )
         val preparedStaticLayouts = engine.staticLayoutsBuilt
         val view = PreparedProseDrawingView(RuntimeEnvironment.getApplication())
         view.install(layout)
-        view.layout(0, 0, Fixture.widthPx, layout.heightPx.coerceAtLeast(1))
-        val canvas = Canvas(Bitmap.createBitmap(Fixture.widthPx, layout.heightPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888))
+        view.layout(0, 0, Fixture.WIDTH_PX, layout.heightPx.coerceAtLeast(1))
+        val canvas =
+            Canvas(
+                Bitmap.createBitmap(
+                    Fixture.WIDTH_PX,
+                    layout.heightPx.coerceAtLeast(1),
+                    Bitmap.Config.ARGB_8888
+                )
+            )
 
         view.draw(canvas)
         view.draw(canvas)
@@ -687,40 +977,88 @@ class PreparedProseRenderingTest {
         assertEquals(1, engine.prepareCount)
         assertEquals(preparedStaticLayouts, engine.staticLayoutsBuilt)
         var offscreenFragments = 0
-        layout.forEachFragmentIntersecting(Rect(0, layout.heightPx + 1, Fixture.widthPx, layout.heightPx + 2)) {
+        layout.forEachFragmentIntersecting(
+            Rect(
+                0,
+                layout.heightPx + 1,
+                Fixture.WIDTH_PX,
+                layout.heightPx + 2
+            )
+        ) {
             offscreenFragments += 1
         }
         assertEquals(0, offscreenFragments)
     }
 
     private fun compile(fixture: Fixture): ViewerDocument = compileWithRust(
-        ProseViewerRequest(fixture.source, ProseViewerConfiguration(configJson = fixture.configJson, themeJson = Fixture.themeJson))
+        ProseViewerRequest(
+            fixture.source,
+            ProseViewerConfiguration(configJson = fixture.configJson, themeJson = Fixture.themeJson)
+        )
     )
 
     private fun compileSource(source: String, configJson: String): ViewerDocument = compileWithRust(
-        ProseViewerRequest(ProseViewerSource.Json(source), ProseViewerConfiguration(configJson = configJson, themeJson = Fixture.themeJson))
+        ProseViewerRequest(
+            ProseViewerSource.Json(source),
+            ProseViewerConfiguration(configJson = configJson, themeJson = Fixture.themeJson)
+        )
     )
 
     private fun compileHtml(source: String): ViewerDocument = compileWithRust(
-        ProseViewerRequest(ProseViewerSource.Html(source), ProseViewerConfiguration(configJson = Fixture.structural[1].configJson, themeJson = Fixture.themeJson))
+        ProseViewerRequest(
+            ProseViewerSource.Html(source),
+            ProseViewerConfiguration(
+                configJson = Fixture.structural[1].configJson,
+                themeJson = Fixture.themeJson
+            )
+        )
     )
 
-    private fun theme(density: Float = 1f): PreparedProseTheme = PreparedProseTheme.resolve(Fixture.themeJson, density)
+    private fun theme(density: Float = 1f): PreparedProseTheme =
+        PreparedProseTheme.resolve(Fixture.themeJson, density)
 
     private fun prepare(document: ViewerDocument): PreparedProseLayout =
-        StaticLayoutAndroidProseLayoutEngine().prepare(document, key(), theme(), Fixture.widthPx, 1f, false)
+        StaticLayoutAndroidProseLayoutEngine().prepare(
+            document,
+            key(),
+            theme(),
+            Fixture.WIDTH_PX,
+            1f,
+            false
+        )
 
     private fun prepare(document: ViewerDocument, theme: PreparedProseTheme): PreparedProseLayout =
-        StaticLayoutAndroidProseLayoutEngine().prepare(document, key(), theme, Fixture.widthPx, theme.density, false)
+        StaticLayoutAndroidProseLayoutEngine().prepare(
+            document,
+            key(),
+            theme,
+            Fixture.WIDTH_PX,
+            theme.density,
+            false
+        )
 
-    private fun prepare(document: ViewerDocument, theme: PreparedProseTheme, widthPx: Int): PreparedProseLayout =
-        StaticLayoutAndroidProseLayoutEngine().prepare(document, key(), theme, widthPx, theme.density, false)
+    private fun prepare(
+        document: ViewerDocument,
+        theme: PreparedProseTheme,
+        widthPx: Int
+    ): PreparedProseLayout = StaticLayoutAndroidProseLayoutEngine().prepare(
+        document,
+        key(),
+        theme,
+        widthPx,
+        theme.density,
+        false
+    )
 
-    private fun key() = ProseLayoutKey("fixture", Fixture.widthPx, "fixture", 0, 0, 0, 0, "fixture")
+    private fun key() =
+        ProseLayoutKey("fixture", Fixture.WIDTH_PX, "fixture", 0, 0, 0, 0, "fixture")
 
     private fun assertGeometryContained(layout: PreparedProseLayout, name: String) {
         layout.blocks.forEach { block ->
-            assertTrue("block escapes artifact: $name", block.bounds.top >= 0 && block.bounds.bottom <= layout.heightPx)
+            assertTrue(
+                "block escapes artifact: $name",
+                block.bounds.top >= 0 && block.bounds.bottom <= layout.heightPx
+            )
             block.fragments.forEach { fragment ->
                 assertTrue("fragment escapes block: $name", block.bounds.contains(fragment.bounds))
             }
@@ -729,7 +1067,10 @@ class PreparedProseRenderingTest {
 
     private fun assertDocumentProjection(fixture: Fixture, document: ViewerDocument) {
         assertTrueLazy(fixture.assertDocument(document)) {
-            "fixture=${fixture.name} expectedDocument=${fixture.documentExpectation} actualDocument=${documentProjection(document)}"
+            "fixture=${fixture.name} expectedDocument=${fixture.documentExpectation} " +
+                "actualDocument=${documentProjection(
+                    document
+                )}"
         }
     }
 
@@ -741,16 +1082,22 @@ class PreparedProseRenderingTest {
         if (expected != actual) assertEquals(message(), expected, actual)
     }
 
-    private inline fun assertNaturalStaticLayoutMetrics(layout: StaticLayout, message: () -> String) {
+    private inline fun assertNaturalStaticLayoutMetrics(
+        layout: StaticLayout,
+        message: () -> String
+    ) {
         val text = layout.text as? android.text.Spanned
         assertTrueLazy(text != null) { message() }
         assertTrueLazy(
-            text!!.getSpans(0, text.length, FixedLineHeightMetricSpan::class.java).isEmpty(),
+            text!!.getSpans(0, text.length, FixedLineHeightMetricSpan::class.java).isEmpty()
         ) { message() }
         assertEqualsLazy(layout.height, lineHeight(layout, 0)) { message() }
     }
 
-    private fun documentProjection(document: ViewerDocument): String = document.blocks.mapIndexed { index, block ->
+    private fun documentProjection(document: ViewerDocument): String = document.blocks.mapIndexed {
+            index,
+            block
+        ->
         "block[$index]{type=${block.nodeType},blockquote=${block.inBlockquote},list=${block.listContext},ancestors=${block.listItemAncestors},boundary=${block.listItemBoundary},inlines=${block.inlines}}"
     }.joinToString(prefix = "[", postfix = "]")
 
@@ -762,25 +1109,42 @@ class PreparedProseRenderingTest {
             val nodeType = document.blocks.getOrNull(index)?.nodeType ?: "missing"
             val fragments = block.fragments.joinToString(prefix = "[", postfix = "]") { fragment ->
                 val lineHeights = fragment.layout?.let { staticLayout ->
-                    (0 until staticLayout.lineCount).joinToString(prefix = "(", postfix = ")") { line -> lineHeight(staticLayout, line).toString() }
+                    (0 until staticLayout.lineCount).joinToString(
+                        prefix = "(",
+                        postfix = ")"
+                    ) { line ->
+                        lineHeight(staticLayout, line).toString()
+                    }
                 } ?: "-"
                 "{kind=${fragment.kind},bounds=${fragment.bounds},label=${fragment.label},lines=$lineHeights}"
             }
             "block[$index]{type=$nodeType,bounds=${block.bounds},fragments=$fragments}"
         }.joinToString(prefix = "[", postfix = "]")
 
-    private fun assertPreparedLayoutsEqual(first: PreparedProseLayout, second: PreparedProseLayout, name: String) {
+    private fun assertPreparedLayoutsEqual(
+        first: PreparedProseLayout,
+        second: PreparedProseLayout,
+        name: String
+    ) {
         assertEquals("height: $name", first.heightPx, second.heightPx)
         assertEquals("block count: $name", first.blocks.size, second.blocks.size)
         first.blocks.zip(second.blocks).forEachIndexed { blockIndex, (left, right) ->
             assertEquals("block $blockIndex bounds: $name", left.bounds, right.bounds)
-            assertEquals("block $blockIndex fragment count: $name", left.fragments.size, right.fragments.size)
+            assertEquals(
+                "block $blockIndex fragment count: $name",
+                left.fragments.size,
+                right.fragments.size
+            )
             left.fragments.zip(right.fragments).forEachIndexed { fragmentIndex, (a, b) ->
                 assertEquals("fragment $fragmentIndex kind: $name", a.kind, b.kind)
                 assertEquals("fragment $fragmentIndex bounds: $name", a.bounds, b.bounds)
                 assertEquals("fragment $fragmentIndex label: $name", a.label, b.label)
                 assertEquals("fragment $fragmentIndex checked: $name", a.checked, b.checked)
-                assertEquals("fragment $fragmentIndex text: $name", a.layout?.text?.toString(), b.layout?.text?.toString())
+                assertEquals(
+                    "fragment $fragmentIndex text: $name",
+                    a.layout?.text?.toString(),
+                    b.layout?.text?.toString()
+                )
             }
         }
     }
@@ -789,16 +1153,31 @@ class PreparedProseRenderingTest {
         val diagnostics = "$name expected=$expected actual=$actual tolerance=$tolerance"
         assertTrue("$diagnostics left", kotlin.math.abs(expected.left - actual.left) <= tolerance)
         assertTrue("$diagnostics top", kotlin.math.abs(expected.top - actual.top) <= tolerance)
-        assertTrue("$diagnostics right", kotlin.math.abs(expected.right - actual.right) <= tolerance)
-        assertTrue("$diagnostics bottom", kotlin.math.abs(expected.bottom - actual.bottom) <= tolerance)
+        assertTrue(
+            "$diagnostics right",
+            kotlin.math.abs(expected.right - actual.right) <= tolerance
+        )
+        assertTrue(
+            "$diagnostics bottom",
+            kotlin.math.abs(expected.bottom - actual.bottom) <= tolerance
+        )
     }
 
     private fun textLayout(layout: PreparedProseLayout, blockIndex: Int): StaticLayout {
         val block = layout.blocks.getOrNull(blockIndex)
-        assertNotNull("Expected prepared text block at index $blockIndex; block count=${layout.blocks.size}", block)
-        val textFragment = block!!.fragments.singleOrNull { it.kind == PreparedProseFragmentKind.TEXT }
+        assertNotNull(
+            "Expected prepared text block at index $blockIndex; block count=${layout.blocks.size}",
+            block
+        )
+        val textFragment = block!!.fragments.singleOrNull {
+            it.kind ==
+                PreparedProseFragmentKind.TEXT
+        }
         assertNotNull("Expected exactly one text fragment at block index $blockIndex", textFragment)
-        assertNotNull("Expected text fragment layout at block index $blockIndex", textFragment!!.layout)
+        assertNotNull(
+            "Expected text fragment layout at block index $blockIndex",
+            textFragment!!.layout
+        )
         return textFragment.layout!!
     }
 
@@ -814,7 +1193,14 @@ private class CountingRendererEngine : AndroidProseLayoutEngine {
     var prepareCount = 0
     val staticLayoutsBuilt: Int get() = delegate.staticLayoutsBuilt
 
-    override fun prepare(document: ViewerDocument, key: ProseLayoutKey, theme: PreparedProseTheme, widthPx: Int, density: Float, collapsesWhenEmpty: Boolean): PreparedProseLayout {
+    override fun prepare(
+        document: ViewerDocument,
+        key: ProseLayoutKey,
+        theme: PreparedProseTheme,
+        widthPx: Int,
+        density: Float,
+        collapsesWhenEmpty: Boolean
+    ): PreparedProseLayout {
         prepareCount += 1
         return delegate.prepare(document, key, theme, widthPx, density, collapsesWhenEmpty)
     }
@@ -827,47 +1213,205 @@ private data class Fixture(
     val expectedKinds: Set<PreparedProseFragmentKind>,
     val expectedGeometry: ExpectedGeometry? = null,
     val documentExpectation: String,
-    val assertDocument: (ViewerDocument) -> Boolean,
+    val assertDocument: (ViewerDocument) -> Boolean
 ) {
     companion object {
-        const val widthPx = 640
-        const val codePaddingPx = 12
-        const val listItemSpacingPx = 4
-        val themeJson = """{"mentions":{"textColor":"#102030","backgroundColor":"#DDEEFF","borderColor":"#445566","borderWidth":2,"borderRadius":7},"links":{"color":"#007AFF"}}"""
-        private const val localConfig = """{"initialization":{"type":"localEmpty"}}"""
-        private const val customConfig = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"codeBlock","content":"text*","group":"block","role":"textBlock"},{"name":"blockquote","content":"block+","group":"block","role":"block"},{"name":"bulletList","content":"listItem+","group":"block","role":"list"},{"name":"orderedList","content":"listItem+","group":"block","role":"list","attrs":{"start":{"default":1}}},{"name":"taskList","content":"listItem+","group":"block","role":"list"},{"name":"listItem","content":"paragraph block*","role":"listItem","attrs":{"checked":{"default":false}}},{"name":"horizontal_rule","content":"","group":"block","role":"block","isVoid":true},{"name":"opaqueBlock","content":"","group":"block","role":"block","isVoid":true,"allowUndeclaredAttrs":true},{"name":"hardBreak","content":"","group":"inline","role":"hardBreak","isVoid":true},{"name":"mention","content":"","group":"inline","role":"inline","isVoid":true,"allowUndeclaredAttrs":true,"attrs":{"label":{"default":null}}},{"name":"opaque","content":"","group":"inline","role":"inline","isVoid":true,"allowUndeclaredAttrs":true},{"name":"text","group":"inline","role":"text"}],"marks":[{"name":"bold"},{"name":"italic"},{"name":"underline"},{"name":"strike"},{"name":"code"},{"name":"link","attrs":{"href":{}}},{"name":"textColor","attrs":{"color":{}}},{"name":"highlight","attrs":{"color":{}}},{"name":"textStyle","attrs":{"fontFamily":{},"fontSize":{}}}]},"initialization":{"type":"localEmpty"}}"""
+        const val WIDTH_PX = 640
+        const val CODE_PADDING_PX = 12
+        const val LIST_ITEM_SPACING_PX = 4
+        val themeJson =
+            """{"mentions":{"textColor":"#102030","backgroundColor":"#DDEEFF",""" +
+                """"borderColor":"#445566","borderWidth":2,"borderRadius":7},""" +
+                """"links":{"color":"#007AFF"}}"""
+        private const val LOCAL_CONFIG = """{"initialization":{"type":"localEmpty"}}"""
+        private const val CUSTOM_CONFIG =
+            """{"schema":{"nodes":[{"name":"doc","content":"block+",""" +
+                """"role":"doc"},{"name":"paragraph","content":"inline*",""" +
+                """"group":"block","role":"textBlock"},{"name":"codeBlock",""" +
+                """"content":"text*","group":"block","role":"textBlock"},""" +
+                """{"name":"blockquote","content":"block+","group":"block",""" +
+                """"role":"block"},{"name":"bulletList","content":"listItem+",""" +
+                """"group":"block","role":"list"},{"name":"orderedList",""" +
+                """"content":"listItem+","group":"block","role":"list",""" +
+                """"attrs":{"start":{"default":1}}},{"name":"taskList",""" +
+                """"content":"listItem+","group":"block","role":"list"},""" +
+                """{"name":"listItem","content":"paragraph block*",""" +
+                """"role":"listItem","attrs":{"checked":{"default":false}}},""" +
+                """{"name":"horizontal_rule","content":"","group":"block",""" +
+                """"role":"block","isVoid":true},{"name":"opaqueBlock","content":"",""" +
+                """"group":"block","role":"block","isVoid":true,""" +
+                """"allowUndeclaredAttrs":true},{"name":"hardBreak","content":"",""" +
+                """"group":"inline","role":"hardBreak","isVoid":true},""" +
+                """{"name":"mention","content":"","group":"inline","role":"inline",""" +
+                """"isVoid":true,"allowUndeclaredAttrs":true,""" +
+                """"attrs":{"label":{"default":null}}},{"name":"opaque",""" +
+                """"content":"","group":"inline","role":"inline","isVoid":true,""" +
+                """"allowUndeclaredAttrs":true},{"name":"text","group":"inline",""" +
+                """"role":"text"}],"marks":[{"name":"bold"},{"name":"italic"},""" +
+                """{"name":"underline"},{"name":"strike"},{"name":"code"},""" +
+                """{"name":"link","attrs":{"href":{}}},{"name":"textColor",""" +
+                """"attrs":{"color":{}}},{"name":"highlight","attrs":{"color":{}}},""" +
+                """{"name":"textStyle","attrs":{"fontFamily":{},"fontSize":{}}}]},""" +
+                """"initialization":{"type":"localEmpty"}}"""
 
         val structural: List<Fixture> = listOf(
-            Fixture("nested JSON list and blockquote inheritance", ProseViewerSource.Json("""{"type":"doc","content":[{"type":"blockquote","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"outer"}]},{"type":"ordered_list","attrs":{"start":12},"content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"inner"}]}]}]}]}]}]}]}"""), localConfig, setOf(PreparedProseFragmentKind.TEXT, PreparedProseFragmentKind.MARKER, PreparedProseFragmentKind.BORDER), documentExpectation = "a blockquote nested ordered-list block with list index 12") { it.blocks.any { block -> block.inBlockquote && block.listContext?.index == 12L } },
-            Fixture("HTML headings marks rules and hard breaks", ProseViewerSource.Html("<h1>Heading 1</h1><h2>Heading 2</h2><h3>Heading 3</h3><h4>Heading 4</h4><h5>Heading 5</h5><h6>Heading 6</h6><blockquote><p><strong>bold</strong><br>quote</p></blockquote><ol start=\"3\"><li>third</li></ol><hr>"), localConfig, setOf(PreparedProseFragmentKind.TEXT, PreparedProseFragmentKind.MARKER, PreparedProseFragmentKind.BORDER, PreparedProseFragmentKind.RULE), documentExpectation = "exact h1-h6, quoted bold hard-break paragraph, ordered index-3 leaf, and rule projection") { document ->
-                val expectedTypes = listOf("h1", "h2", "h3", "h4", "h5", "h6", "paragraph", "paragraph", "horizontal_rule")
+            Fixture(
+                "nested JSON list and blockquote inheritance",
+                ProseViewerSource.Json(
+                    """{"type":"doc","content":[{"type":"blockquote","content":[{"type":"bullet_list","content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"outer"}]},{"type":"ordered_list","attrs":{"start":12},"content":[{"type":"list_item","content":[{"type":"paragraph","content":[{"type":"text","text":"inner"}]}]}]}]}]}]}]}"""
+                ),
+                LOCAL_CONFIG,
+                setOf(
+                    PreparedProseFragmentKind.TEXT,
+                    PreparedProseFragmentKind.MARKER,
+                    PreparedProseFragmentKind.BORDER
+                ),
+                documentExpectation = "a blockquote nested ordered-list block with list index 12"
+            ) {
+                it.blocks.any { block ->
+                    block.inBlockquote &&
+                        block.listContext?.index == 12L
+                }
+            },
+            Fixture(
+                "HTML headings marks rules and hard breaks",
+                ProseViewerSource.Html(
+                    "<h1>Heading 1</h1><h2>Heading 2</h2><h3>Heading " +
+                        "3</h3><h4>Heading 4</h4><h5>Heading 5</h5><h6>Heading " +
+                        "6</h6><blockquote><p><strong>bold</strong><br>quote</p></blockquote><ol start=\"3\"><li>third</li></ol><hr>"
+                ),
+                LOCAL_CONFIG,
+                setOf(
+                    PreparedProseFragmentKind.TEXT,
+                    PreparedProseFragmentKind.MARKER,
+                    PreparedProseFragmentKind.BORDER,
+                    PreparedProseFragmentKind.RULE
+                ),
+                documentExpectation = "exact h1-h6, quoted bold hard-break " +
+                    "paragraph, ordered index-3 leaf, and rule " +
+                    "projection"
+            ) { document ->
+                val expectedTypes =
+                    listOf(
+                        "h1",
+                        "h2",
+                        "h3",
+                        "h4",
+                        "h5",
+                        "h6",
+                        "paragraph",
+                        "paragraph",
+                        "horizontal_rule"
+                    )
                 document.blocks.map { it.nodeType } == expectedTypes &&
                     document.blocks[6].inBlockquote &&
-                    document.blocks[6].inlines.any { inline -> inline is ViewerInline.Text && inline.text == "bold" && inline.marks.any { it.markType == "bold" } } &&
-                    document.blocks[6].inlines.any { inline -> inline is ViewerInline.Atom && inline.nodeType == "hard_break" } &&
-                    document.blocks[6].inlines.any { inline -> inline is ViewerInline.Text && inline.text == "quote" } &&
+                    document.blocks[6].inlines.any { inline ->
+                        inline is ViewerInline.Text &&
+                            inline.text == "bold" &&
+                            inline.marks.any { it.markType == "bold" }
+                    } &&
+                    document.blocks[6].inlines.any { inline ->
+                        inline is ViewerInline.Atom &&
+                            inline.nodeType == "hard_break"
+                    } &&
+                    document.blocks[6].inlines.any { inline ->
+                        inline is ViewerInline.Text &&
+                            inline.text == "quote"
+                    } &&
                     document.blocks[7].listContext?.ordered == true &&
                     document.blocks[7].listContext?.index == 3L &&
                     document.blocks[7].listItemBoundary?.isFirstRenderableLeaf == true &&
                     document.blocks[7].listItemBoundary?.isFinalRenderableLeaf == true &&
-                    document.blocks[7].inlines.singleOrNull().let { inline -> inline is ViewerInline.Text && inline.text == "third" } &&
+                    document.blocks[7].inlines.singleOrNull().let { inline ->
+                        inline is ViewerInline.Text &&
+                            inline.text == "third"
+                    } &&
                     document.blocks[8].nodeType == "horizontal_rule"
             },
-            Fixture("custom atoms task list and snake rule", ProseViewerSource.Json("""{"type":"doc","content":[{"type":"paragraph","content":[{"type":"mention","attrs":{"label":"Ada","mentionTheme":{"node":{"textColor":"#FF0000","backgroundColor":"#00FF00","borderColor":"#0000FF","borderWidth":2,"borderRadius":9}}}},{"type":"opaque","attrs":{"label":"opaque"}}]},{"type":"taskList","content":[{"type":"listItem","attrs":{"checked":true},"content":[{"type":"paragraph","content":[{"type":"text","text":"task"}]}]}]},{"type":"horizontal_rule"}]}"""), customConfig, setOf(PreparedProseFragmentKind.ATOM, PreparedProseFragmentKind.RULE), documentExpectation = "a checked task-list block") { document -> document.blocks.any { it.listContext?.kind == "task" && it.listContext.checked } }
+            Fixture(
+                "custom atoms task list and snake rule",
+                ProseViewerSource.Json(
+                    """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"mention","attrs":{"label":"Ada","mentionTheme":{"node":{"textColor":"#FF0000","backgroundColor":"#00FF00","borderColor":"#0000FF","borderWidth":2,"borderRadius":9}}}},{"type":"opaque","attrs":{"label":"opaque"}}]},{"type":"taskList","content":[{"type":"listItem","attrs":{"checked":true},"content":[{"type":"paragraph","content":[{"type":"text","text":"task"}]}]}]},{"type":"horizontal_rule"}]}"""
+                ),
+                CUSTOM_CONFIG,
+                setOf(PreparedProseFragmentKind.ATOM, PreparedProseFragmentKind.RULE),
+                documentExpectation = "a checked task-list block"
+            ) { document ->
+                document.blocks.any {
+                    it.listContext?.kind ==
+                        "task" &&
+                        it.listContext.checked
+                }
+            }
         )
-        val marks = Fixture("all marks", ProseViewerSource.Json("""{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"bold","marks":[{"type":"bold"}]},{"type":"text","text":"italic","marks":[{"type":"italic"}]},{"type":"text","text":"under","marks":[{"type":"underline"}]},{"type":"text","text":"strike","marks":[{"type":"strike"}]},{"type":"text","text":"code","marks":[{"type":"code"}]},{"type":"text","text":"link","marks":[{"type":"link","attrs":{"href":"https://example.test"}}]},{"type":"text","text":"red","marks":[{"type":"textColor","attrs":{"color":"#FF0000"}}]},{"type":"text","text":"highlight","marks":[{"type":"highlight","attrs":{"color":"#FFF176"}}]},{"type":"text","text":"sized","marks":[{"type":"textStyle","attrs":{"fontFamily":"monospace","fontSize":19}}]},{"type":"text","text":"combo","marks":[{"type":"code"},{"type":"bold"},{"type":"italic"}]}]}]}"""), customConfig, setOf(PreparedProseFragmentKind.TEXT), documentExpectation = "any compiler document") { true }
-        val multiBlockList = Fixture("multi block nested ordered list boundaries", ProseViewerSource.Json("""{"type":"doc","content":[{"type":"blockquote","content":[{"type":"orderedList","attrs":{"start":7},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]},{"type":"codeBlock","content":[{"type":"text","text":"second"}]},{"type":"opaqueBlock","attrs":{"label":"third"}},{"type":"orderedList","attrs":{"start":12},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]},{"type":"listItem","content":[{"type":"paragraph"}]}]}]}]}"""), customConfig, setOf(PreparedProseFragmentKind.TEXT, PreparedProseFragmentKind.MARKER, PreparedProseFragmentKind.BORDER, PreparedProseFragmentKind.BACKGROUND, PreparedProseFragmentKind.ATOM), documentExpectation = "a nested ordered-list block with list index 12") { it.blocks.any { block -> block.listContext?.index == 12L } }
-        val unicode = Fixture("unicode emoji bidi hard break and opaque atoms", ProseViewerSource.Json("""{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"שלום 🚀"},{"type":"hardBreak"},{"type":"opaque","attrs":{"label":"inline"}},{"type":"text","text":" café"}]},{"type":"opaqueBlock","attrs":{"label":"block"}}]}"""), customConfig, setOf(PreparedProseFragmentKind.TEXT, PreparedProseFragmentKind.ATOM), documentExpectation = "an opaqueBlock compiler block") { it.blocks.any { block -> block.nodeType == "opaqueBlock" } }
+        val marks =
+            Fixture(
+                "all marks",
+                ProseViewerSource.Json(
+                    """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"bold","marks":[{"type":"bold"}]},{"type":"text","text":"italic","marks":[{"type":"italic"}]},{"type":"text","text":"under","marks":[{"type":"underline"}]},{"type":"text","text":"strike","marks":[{"type":"strike"}]},{"type":"text","text":"code","marks":[{"type":"code"}]},{"type":"text","text":"link","marks":[{"type":"link","attrs":{"href":"https://example.test"}}]},{"type":"text","text":"red","marks":[{"type":"textColor","attrs":{"color":"#FF0000"}}]},{"type":"text","text":"highlight","marks":[{"type":"highlight","attrs":{"color":"#FFF176"}}]},{"type":"text","text":"sized","marks":[{"type":"textStyle","attrs":{"fontFamily":"monospace","fontSize":19}}]},{"type":"text","text":"combo","marks":[{"type":"code"},{"type":"bold"},{"type":"italic"}]}]}]}"""
+                ),
+                CUSTOM_CONFIG,
+                setOf(PreparedProseFragmentKind.TEXT),
+                documentExpectation = "any compiler document"
+            ) {
+                true
+            }
+        val multiBlockList =
+            Fixture(
+                "multi block nested ordered list boundaries",
+                ProseViewerSource.Json(
+                    """{"type":"doc","content":[{"type":"blockquote","content":[{"type":"orderedList","attrs":{"start":7},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]},{"type":"codeBlock","content":[{"type":"text","text":"second"}]},{"type":"opaqueBlock","attrs":{"label":"third"}},{"type":"orderedList","attrs":{"start":12},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]},{"type":"listItem","content":[{"type":"paragraph"}]}]}]}]}"""
+                ),
+                CUSTOM_CONFIG,
+                setOf(
+                    PreparedProseFragmentKind.TEXT,
+                    PreparedProseFragmentKind.MARKER,
+                    PreparedProseFragmentKind.BORDER,
+                    PreparedProseFragmentKind.BACKGROUND,
+                    PreparedProseFragmentKind.ATOM
+                ),
+                documentExpectation = "a nested ordered-list block with list index 12"
+            ) {
+                it.blocks.any { block ->
+                    block.listContext?.index ==
+                        12L
+                }
+            }
+        val unicode =
+            Fixture(
+                "unicode emoji bidi hard break and opaque atoms",
+                ProseViewerSource.Json(
+                    """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"שלום 🚀"},{"type":"hardBreak"},{"type":"opaque","attrs":{"label":"inline"}},{"type":"text","text":" café"}]},{"type":"opaqueBlock","attrs":{"label":"block"}}]}"""
+                ),
+                CUSTOM_CONFIG,
+                setOf(PreparedProseFragmentKind.TEXT, PreparedProseFragmentKind.ATOM),
+                documentExpectation = "an opaqueBlock compiler block"
+            ) {
+                it.blocks.any { block ->
+                    block.nodeType ==
+                        "opaqueBlock"
+                }
+            }
         val finalAndroidEdge = Fixture(
             name = "fixed density max u32 nested quote code rule and RTL atom",
-            source = ProseViewerSource.Json("""{"type":"doc","content":[{"type":"blockquote","content":[{"type":"orderedList","attrs":{"start":4294967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"אב"},{"type":"opaque","attrs":{"label":"atom"}},{"type":"text","text":" tail"}]},{"type":"codeBlock","content":[{"type":"text","text":"code"}]},{"type":"horizontal_rule"},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]}]}]}]}"""),
-            configJson = customConfig,
-            expectedKinds = setOf(PreparedProseFragmentKind.TEXT, PreparedProseFragmentKind.MARKER, PreparedProseFragmentKind.BACKGROUND, PreparedProseFragmentKind.BORDER, PreparedProseFragmentKind.RULE, PreparedProseFragmentKind.ATOM),
-            documentExpectation = "four blocks, a nested-list final block, and a max-u32 ordered-list index",
+            source = ProseViewerSource.Json(
+                """{"type":"doc","content":[{"type":"blockquote","content":[{"type":"orderedList","attrs":{"start":4294967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"אב"},{"type":"opaque","attrs":{"label":"atom"}},{"type":"text","text":" tail"}]},{"type":"codeBlock","content":[{"type":"text","text":"code"}]},{"type":"horizontal_rule"},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]}]}]}]}"""
+            ),
+            configJson = CUSTOM_CONFIG,
+            expectedKinds = setOf(
+                PreparedProseFragmentKind.TEXT,
+                PreparedProseFragmentKind.MARKER,
+                PreparedProseFragmentKind.BACKGROUND,
+                PreparedProseFragmentKind.BORDER,
+                PreparedProseFragmentKind.RULE,
+                PreparedProseFragmentKind.ATOM
+            ),
+            documentExpectation = "four blocks, a nested-list final block, " +
+                "and a max-u32 ordered-list index",
             assertDocument = { document ->
-                document.blocks.size == 4
-                    && document.blocks.last().listItemAncestors.size == 2
-                    && document.blocks.first().listContext?.index == 0xFFFF_FFFFL
+                document.blocks.size == 4 &&
+                    document.blocks.last().listItemAncestors.size == 2 &&
+                    document.blocks.first().listContext?.index == 0xFFFF_FFFFL
             },
             expectedGeometry = ExpectedGeometry(
                 heightPx = 158,
@@ -875,14 +1419,24 @@ private data class Fixture(
                     Rect(0, 0, 640, 43),
                     Rect(0, 43, 640, 94),
                     Rect(0, 94, 640, 119),
-                    Rect(0, 123, 640, 158),
+                    Rect(0, 123, 640, 158)
                 ),
                 fragmentBounds = listOf(
-                    ExpectedFragment(1, PreparedProseFragmentKind.BACKGROUND, 0, Rect(102, 43, 538, 94)),
-                    ExpectedFragment(2, PreparedProseFragmentKind.RULE, 0, Rect(102, 106, 538, 107)),
+                    ExpectedFragment(
+                        1,
+                        PreparedProseFragmentKind.BACKGROUND,
+                        0,
+                        Rect(102, 43, 538, 94)
+                    ),
+                    ExpectedFragment(
+                        2,
+                        PreparedProseFragmentKind.RULE,
+                        0,
+                        Rect(102, 106, 538, 107)
+                    )
                 ),
-                tolerancePx = 1,
-            ),
+                tolerancePx = 1
+            )
         )
         val all: List<Fixture> = structural + listOf(marks, multiBlockList, unicode)
     }
@@ -892,12 +1446,12 @@ private data class ExpectedGeometry(
     val heightPx: Int,
     val blockBounds: List<Rect>,
     val fragmentBounds: List<ExpectedFragment>,
-    val tolerancePx: Int,
+    val tolerancePx: Int
 )
 
 private data class ExpectedFragment(
     val blockIndex: Int,
     val kind: PreparedProseFragmentKind,
     val ordinal: Int,
-    val bounds: Rect,
+    val bounds: Rect
 )

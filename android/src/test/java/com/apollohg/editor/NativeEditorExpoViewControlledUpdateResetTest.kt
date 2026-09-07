@@ -3,6 +3,10 @@ import android.app.Activity
 import android.os.Handler
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
+import java.time.Duration
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,14 +20,11 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-internal class NativeEditorExpoViewControlledUpdateResetTest : NativeEditorExpoViewControlledUpdateTestFixture() {
+internal class NativeEditorExpoViewControlledUpdateResetTest :
+    NativeEditorExpoViewControlledUpdateTestFixture() {
     @Test
     fun `same content reset cancels composition and restarts the focused keyboard`() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
@@ -49,7 +50,11 @@ internal class NativeEditorExpoViewControlledUpdateResetTest : NativeEditorExpoV
             view.applyPendingEditorUpdateIfNeeded()
 
             assertEquals("", editText.text.toString())
-            assertTrue(view.imeTraceSnapshotForTypingTest().any { it.startsWith("restartInput:source=reset") })
+            assertTrue(
+                view.imeTraceSnapshotForTypingTest().any {
+                    it.startsWith("restartInput:source=reset")
+                }
+            )
             connection.commitText("stale", 1)
             assertEquals("", editText.text.toString())
             assertEquals("", backend.sessions.getValue(adapter.editorId).text.toString())
@@ -73,7 +78,8 @@ internal class NativeEditorExpoViewControlledUpdateResetTest : NativeEditorExpoV
             bindFocusedViewForTypingTest(activity, view, viewToken, mutableListOf())
             val resetRender = adapter.refreshFromRustState(null)!!
             val later = adapter.setContentHtml("<p>later</p>")!!
-            adapter.latestJSDrivenDocumentRevision = backend.sessions.getValue(adapter.editorId).revision
+            adapter.latestJSDrivenDocumentRevision =
+                backend.sessions.getValue(adapter.editorId).revision
             view.richTextView.editorEditText.applyUpdateJSON(later)
             assertTrue(commitBoundText(view, "!"))
             val expected = backend.sessions.getValue(adapter.editorId).text.toString()
@@ -123,7 +129,10 @@ internal class NativeEditorExpoViewControlledUpdateResetTest : NativeEditorExpoV
             assertEquals("", view.richTextView.editorEditText.text.toString())
             assertEquals("", backend.sessions.getValue(adapter.editorId).text.toString())
             assertTrue(backend.calls.contains("replaceDocument"))
-            assertEquals(backend.sessions.getValue(adapter.editorId).revision.toString(), payloads.last()["documentRevision"])
+            assertEquals(
+                backend.sessions.getValue(adapter.editorId).revision.toString(),
+                payloads.last()["documentRevision"]
+            )
             assertFalse(backend.sessions.getValue(adapter.editorId).undoStack.isNotEmpty())
         } finally {
             EditorV2Registry.remove(adapter.editorId)
@@ -178,7 +187,7 @@ internal class NativeEditorExpoViewControlledUpdateResetTest : NativeEditorExpoV
     }
 
     @Test
-    fun `pending JS editor reset prop applies through reset path and clears stale pending updates`() {
+    fun `pending JS reset prop uses reset path and clears stale pending updates`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
         val editorId = 778845L
@@ -225,7 +234,7 @@ internal class NativeEditorExpoViewControlledUpdateResetTest : NativeEditorExpoV
     }
 
     @Test
-    fun `malformed pending reset update is classified once and preserves valid ordinary pending update`() {
+    fun `malformed reset is classified once and preserves valid pending update`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
         val backend = FakeEditorV2Backend()

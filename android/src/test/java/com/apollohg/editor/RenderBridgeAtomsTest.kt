@@ -6,15 +6,10 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Annotation
 import android.text.Layout
-import android.text.Spanned
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.util.Base64
-import android.view.View
-import android.view.ViewGroup
-import android.widget.TextView
-import kotlin.math.abs
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
@@ -24,6 +19,14 @@ import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.text.style.URLSpan
 import android.text.style.UnderlineSpan
+import android.util.Base64
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -34,9 +37,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -71,7 +71,7 @@ internal class RenderBridgeAtomsTest : RenderBridgeTestFixture() {
                 atomConfiguration = AtomRenderConfiguration(
                     registeredNodeTypes = setOf(nodeType),
                     estimatedHeightsDp = mapOf(nodeType to 120f),
-                    measuredHeightsPx = emptyMap(),
+                    measuredHeightsPx = emptyMap()
                 )
             )
             val span = result.getSpans(0, result.length, AtomBlockSpan::class.java).single()
@@ -183,7 +183,7 @@ internal class RenderBridgeAtomsTest : RenderBridgeTestFixture() {
         val result = RenderBridge.buildSpannable(json, baseFontSize, textColor)
 
         assertTrue(
-            "Opaque inline atom should render as '[widget]'. Got: '${result}'",
+            "Opaque inline atom should render as '[widget]'. Got: '$result'",
             result.toString().contains("[widget]")
         )
     }
@@ -212,11 +212,11 @@ internal class RenderBridgeAtomsTest : RenderBridgeTestFixture() {
         val result = RenderBridge.buildSpannable(json, baseFontSize, textColor, theme)
 
         assertTrue(
-            "Mention inline atom should render its visible label. Got: '${result}'",
+            "Mention inline atom should render its visible label. Got: '$result'",
             result.toString().contains("@Alice")
         )
         assertTrue(
-            "Mention inline atom should not use generic opaque brackets. Got: '${result}'",
+            "Mention inline atom should not use generic opaque brackets. Got: '$result'",
             !result.toString().contains("[@Alice]")
         )
     }
@@ -275,7 +275,7 @@ internal class RenderBridgeAtomsTest : RenderBridgeTestFixture() {
         val result = RenderBridge.buildSpannable(json, baseFontSize, textColor)
 
         assertTrue(
-            "Opaque block atom should render as '[codeBlock]'. Got: '${result}'",
+            "Opaque block atom should render as '[codeBlock]'. Got: '$result'",
             result.toString().contains("[codeBlock]")
         )
     }
@@ -321,11 +321,17 @@ internal class RenderBridgeAtomsTest : RenderBridgeTestFixture() {
         val headingTextSizes =
             spansOver(headingTextStart, 3, AbsoluteSizeSpan::class.java).map { it.size }
         val headingMentionSizes =
-            spansOver(headingMentionStart, "@Alice".length, AbsoluteSizeSpan::class.java).map { it.size }
+            spansOver(headingMentionStart, "@Alice".length, AbsoluteSizeSpan::class.java).map {
+                it.size
+            }
         val paragraphMentionSizes =
-            spansOver(paragraphMentionStart, "@Bob".length, AbsoluteSizeSpan::class.java).map { it.size }
+            spansOver(paragraphMentionStart, "@Bob".length, AbsoluteSizeSpan::class.java).map {
+                it.size
+            }
         val headingMentionFamilies =
-            spansOver(headingMentionStart, "@Alice".length, TypefaceSpan::class.java).map { it.family }
+            spansOver(headingMentionStart, "@Alice".length, TypefaceSpan::class.java).map {
+                it.family
+            }
         val headingMentionStyles =
             spansOver(headingMentionStart, "@Alice".length, StyleSpan::class.java).map { it.style }
 
@@ -382,7 +388,9 @@ internal class RenderBridgeAtomsTest : RenderBridgeTestFixture() {
         val result = RenderBridge.buildSpannable(json, baseFontSize, textColor, theme, 1f)
 
         val styleSpans = result.getSpans(0, result.length, StyleSpan::class.java).map { it.style }
-        val sizeSpans = result.getSpans(0, result.length, AbsoluteSizeSpan::class.java).map { it.size }
+        val sizeSpans = result.getSpans(0, result.length, AbsoluteSizeSpan::class.java).map {
+            it.size
+        }
 
         assertEquals(
             "A regular-weight mention theme should override the bold heading weight. Spans: $styleSpans",

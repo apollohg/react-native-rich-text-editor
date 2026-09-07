@@ -3,6 +3,10 @@ import android.app.Activity
 import android.os.Handler
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
+import java.time.Duration
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,14 +20,11 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-internal class NativeEditorExpoViewControlledUpdateMalformedUpdatesTest : NativeEditorExpoViewControlledUpdateTestFixture() {
+internal class NativeEditorExpoViewControlledUpdateMalformedUpdatesTest :
+    NativeEditorExpoViewControlledUpdateTestFixture() {
     @Test
     fun `malformed pending editor update is classified once without retrying and is consumed`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
@@ -144,7 +145,8 @@ internal class NativeEditorExpoViewControlledUpdateMalformedUpdatesTest : Native
             view.richTextView.setEditorIdWhileDetached(viewToken)
             view.richTextView.editorEditText.editorId = viewToken
             view.setAttachedToNativeWindowForTesting(true)
-            view.richTextView.editorEditText.throwOnNextApplyUpdateForTesting = IllegalStateException("renderer")
+            view.richTextView.editorEditText.throwOnNextApplyUpdateForTesting =
+                IllegalStateException("renderer")
             view.setPendingEditorUpdateJson(atomicRenderUpdateJson("controlled", "0"))
             view.setPendingEditorUpdateEditorId(viewToken)
             view.setPendingEditorUpdateRevision(44)
@@ -174,7 +176,8 @@ internal class NativeEditorExpoViewControlledUpdateMalformedUpdatesTest : Native
             view.richTextView.setEditorIdWhileDetached(viewToken)
             view.richTextView.editorEditText.editorId = viewToken
             view.setAttachedToNativeWindowForTesting(true)
-            view.richTextView.editorEditText.throwOnNextApplyUpdateForTesting = IllegalStateException("renderer")
+            view.richTextView.editorEditText.throwOnNextApplyUpdateForTesting =
+                IllegalStateException("renderer")
 
             assertFalse(view.applyEditorUpdate(atomicRenderUpdateJson("controlled", "0")))
             assertNull(view.pendingViewCommandUpdateJsonForTesting())

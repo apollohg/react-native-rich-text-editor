@@ -194,8 +194,6 @@ fn replay_reservation_is_fallible_and_does_not_clear_existing_history() {
     assert!(history.manager.can_undo());
 }
 
-// Task 16B: the retained fallible allocation/reservation sites keep the
-// allocation-class OPERATION_RESOURCE_EXHAUSTED code.
 #[test]
 fn roll_baseline_reservation_failure_keeps_resource_exhausted() {
     let (_doc, mut history) = compatible_history_requiring_reservation_roll(100);

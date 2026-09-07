@@ -12,9 +12,7 @@ internal fun RenderBridge.resolveTextStyle(
     nodeType: String,
     theme: EditorTheme?,
     inBlockquote: Boolean = false
-): EditorTextStyle {
-    return theme?.effectiveTextStyle(nodeType, inBlockquote) ?: EditorTextStyle()
-}
+): EditorTextStyle = theme?.effectiveTextStyle(nodeType, inBlockquote) ?: EditorTextStyle()
 
 internal fun RenderBridge.resolveInlineTextStyle(
     blockStack: List<BlockContext>,
@@ -30,17 +28,16 @@ internal fun RenderBridge.resolveInlineTextColor(
     theme: EditorTheme?
 ): Int = resolveInlineTextStyle(blockStack, theme).color ?: fallbackColor
 
-internal fun RenderBridge.isListItemNodeType(nodeType: String): Boolean {
-    return EditorNodeTypes.isListItem(nodeType)
-}
+internal fun RenderBridge.isListItemNodeType(nodeType: String): Boolean =
+    EditorNodeTypes.isListItem(nodeType)
 
-    /**
-     * Parse a [JSONArray] of marks into a list of mark identifiers.
-     *
-     * Each mark can be either a plain string (e.g. "bold") or a JSON object
-     * (e.g. `{"type": "link", "href": "https://..."}`). Returns a mixed list
-     * of [String] and [JSONObject].
-     */
+/**
+ * Parse a [JSONArray] of marks into a list of mark identifiers.
+ *
+ * Each mark can be either a plain string (e.g. "bold") or a JSON object
+ * (e.g. `{"type": "link", "href": "https://..."}`). Returns a mixed list
+ * of [String] and [JSONObject].
+ */
 internal fun RenderBridge.parseMarks(marksArray: JSONArray?): List<Any> {
     if (marksArray == null || marksArray.length() == 0) return emptyList()
     val marks = mutableListOf<Any>()
@@ -53,12 +50,12 @@ internal fun RenderBridge.parseMarks(marksArray: JSONArray?): List<Any> {
     return marks
 }
 
-    /**
-     * Append a newline used between blocks (inter-block separator).
-     *
-     * When [spacingPx] > 0, applies a [ParagraphSpacerSpan] to the newline
-     * character to create vertical spacing after the preceding block.
-     */
+/**
+ * Append a newline used between blocks (inter-block separator).
+ *
+ * When [spacingPx] > 0, applies a [ParagraphSpacerSpan] to the newline
+ * character to create vertical spacing after the preceding block.
+ */
 internal fun RenderBridge.appendInterBlockNewline(
     builder: SpannableStringBuilder,
     baseFontSize: Float,
@@ -79,16 +76,22 @@ internal fun RenderBridge.appendInterBlockNewline(
     if (spacingPx > 0) {
         builder.setSpan(
             ParagraphSpacerSpan(spacingPx, baseFontSize.toInt(), textColor),
-            start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
     } else {
         builder.setSpan(
             ForegroundColorSpan(textColor),
-            start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
         builder.setSpan(
             AbsoluteSizeSpan(baseFontSize.toInt(), false),
-            start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            start,
+            end,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
     }
     annotateTopLevelChild(builder, start, end, topLevelChildIndex)
@@ -126,7 +129,9 @@ internal fun RenderBridge.appendTrailingHardBreakPlaceholderIfNeeded(
         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
     )
     builder.setSpan(
-        ForegroundColorSpan(resolveInlineTextColor(remainingBlockStack + endedBlock, textColor, theme)),
+        ForegroundColorSpan(
+            resolveInlineTextColor(remainingBlockStack + endedBlock, textColor, theme)
+        ),
         start,
         end,
         Spanned.SPAN_EXCLUSIVE_EXCLUSIVE

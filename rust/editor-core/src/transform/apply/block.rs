@@ -33,13 +33,11 @@ fn apply_split_block(
 
     let parent_offset = resolved.parent_offset;
 
-    // Split the text block's children at parent_offset into left and right.
     let (left_children, right_children) = split_children_at(text_block, parent_offset);
 
     // Build the two new blocks.
     // First block: same type as the original text block.
     let left_block = rebuild_element(text_block, left_children);
-    // Second block: uses the specified node_type and attrs.
     let right_block = Node::element(
         new_node_type.to_string(),
         new_attrs.clone(),
@@ -61,7 +59,6 @@ fn apply_split_block(
         ));
     }
 
-    // Check if the grandparent is a list item. If so, we split the list item too.
     if text_block_path.len() >= 2 {
         let grandparent_path = &text_block_path[..text_block_path.len() - 1];
         let grandparent = doc
@@ -70,7 +67,6 @@ fn apply_split_block(
 
         if let Some(gp_spec) = schema.node(grandparent.node_type()) {
             if matches!(gp_spec.role, NodeRole::ListItem) {
-                // We're inside a list item. Split the list item into two.
                 let text_block_idx = *text_block_path.last().unwrap() as usize;
                 let gp_content = grandparent
                     .content()
@@ -116,7 +112,6 @@ fn apply_split_block(
         }
     }
 
-    // Standard case: replace the text block with two blocks in the parent.
     let new_root = replace_node_with_two(doc.root(), text_block_path, &left_block, &right_block);
     let new_doc = Document::new(new_root);
     let map = StepMap::from_insert(pos, 2);
@@ -146,15 +141,12 @@ fn split_children_at(parent: &Node, offset: u32) -> (Vec<Node>, Vec<Node>) {
         let child_size = child.node_size();
 
         if current_offset + child_size <= offset {
-            // Entire child is on the left side.
             left.push(child.clone());
             current_offset += child_size;
         } else if current_offset >= offset {
-            // Entire child is on the right side.
             right.push(child.clone());
             split_done = true;
         } else {
-            // The split point is inside this child.
             let inner_offset = offset - current_offset;
 
             if child.is_text() {
@@ -175,7 +167,6 @@ fn split_children_at(parent: &Node, offset: u32) -> (Vec<Node>, Vec<Node>) {
         }
     }
 
-    // Merge adjacent text nodes within each side.
     (
         merge_adjacent_text_nodes(left),
         merge_adjacent_text_nodes(right),
@@ -191,7 +182,6 @@ fn apply_join_blocks(doc: &Document, pos: u32) -> Result<(Document, StepMap), Tr
     let parent = resolved.parent(doc);
     let parent_offset = resolved.parent_offset;
 
-    // Walk the parent's children to find which boundary we're at.
     let content = parent.content().ok_or_else(|| {
         TransformError::InvalidTarget("join position parent has no content".to_string())
     })?;
@@ -220,7 +210,6 @@ fn apply_join_blocks(doc: &Document, pos: u32) -> Result<(Document, StepMap), Tr
         ))
     })?;
 
-    // Get the two adjacent blocks.
     let first = content.child(idx - 1).unwrap();
     let second = content.child(idx).unwrap();
 
@@ -230,7 +219,6 @@ fn apply_join_blocks(doc: &Document, pos: u32) -> Result<(Document, StepMap), Tr
         ));
     }
 
-    // Merge the children of both blocks.
     let first_content = first.content().unwrap();
     let second_content = second.content().unwrap();
 
@@ -246,20 +234,17 @@ fn apply_join_blocks(doc: &Document, pos: u32) -> Result<(Document, StepMap), Tr
 
     let merged_children = merge_adjacent_text_nodes(merged_children);
 
-    // Build the merged block using the first block's type and attrs.
     let merged_block = Node::element(
         first.node_type().to_string(),
         first.attrs().clone(),
         Fragment::from(merged_children),
     );
 
-    // Rebuild the parent with the merged block replacing the two.
     let mut new_parent_children: Vec<Node> = Vec::with_capacity(content.child_count() - 1);
     for (i, child) in content.iter().enumerate() {
         if i == idx - 1 {
             new_parent_children.push(merged_block.clone());
         } else if i == idx {
-            // Skip the second block — it's been merged into the first.
         } else {
             new_parent_children.push(child.clone());
         }
@@ -267,7 +252,6 @@ fn apply_join_blocks(doc: &Document, pos: u32) -> Result<(Document, StepMap), Tr
 
     let new_parent = rebuild_element(parent, new_parent_children);
 
-    // Replace the parent in the tree.
     let new_root = replace_node_at_path(doc.root(), &resolved.node_path, &new_parent);
     let new_doc = Document::new(new_root);
 

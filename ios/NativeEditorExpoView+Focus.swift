@@ -25,7 +25,7 @@ extension NativeEditorExpoView {
             "width": editorRect.width,
             "height": editorRect.height,
             "editorWidth": bounds.width,
-            "editorHeight": bounds.height,
+            "editorHeight": bounds.height
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8)

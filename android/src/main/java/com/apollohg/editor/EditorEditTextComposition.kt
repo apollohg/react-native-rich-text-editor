@@ -88,7 +88,8 @@ internal fun EditorEditText.applyTransientComposingTextStyleForEditorImpl() {
     if (start < 0 || end < 0 || start >= end || end > editable.length) return
 
     val textStyle = theme?.effectiveTextStyle("paragraph")
-    val resolvedTextSize = textStyle?.fontSize?.times(resources.displayMetrics.density) ?: baseFontSize
+    val resolvedTextSize =
+        textStyle?.fontSize?.times(resources.displayMetrics.density) ?: baseFontSize
     val resolvedTextColor = textStyle?.color ?: baseTextColor
 
     editable.setSpan(
@@ -156,11 +157,10 @@ internal fun EditorEditText.clearCompositionTrackingForEditorImpl() {
     composingReplacementAuthorizedTextRevision = null
 }
 
-internal fun EditorEditText.hasCompositionTrackingForEditor(): Boolean =
-    composingText != null ||
-        composingReplacementStartUtf16 != null ||
-        composingReplacementEndUtf16 != null ||
-        composingReplacementAuthorizedTextRevision != null
+internal fun EditorEditText.hasCompositionTrackingForEditor(): Boolean = composingText != null ||
+    composingReplacementStartUtf16 != null ||
+    composingReplacementEndUtf16 != null ||
+    composingReplacementAuthorizedTextRevision != null
 
 internal fun EditorEditText.retireInputConnectionForEditor() {
     recordImeTraceForTesting("retireInputConnection")
@@ -212,7 +212,9 @@ internal fun EditorEditText.restoreAuthorizedTextSnapshotForEditor() {
     }
 }
 
-internal fun EditorEditText.restartInputAfterCompositionInvalidationIfNeeded(shouldRestart: Boolean) {
+internal fun EditorEditText.restartInputAfterCompositionInvalidationIfNeeded(
+    shouldRestart: Boolean
+) {
     if (!shouldRestart) return
     restartInputForEditorIfFocused("focused")
 }

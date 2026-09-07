@@ -1,21 +1,4 @@
 #!/usr/bin/env bash
-#
-# Cross-compile editor-core for iOS targets and produce the production
-# XCFramework. Since the Task 16C cutover the v2 ABI is the only surface:
-# every slice is verified to export exactly 35 editor_v2_* symbols and zero
-# legacy editor_*/collaboration_* symbols.
-#
-# Targets:
-#   - aarch64-apple-ios       (physical devices)
-#   - aarch64-apple-ios-sim   (Apple Silicon simulators)
-#   - x86_64-apple-ios        (Intel simulators)
-#
-# Output: rust/ios/EditorCore.xcframework/ (synced into ios/)
-#
-# Prerequisites:
-#   - Rust toolchain with iOS targets installed:
-#       rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
-#   - Xcode command-line tools
 
 set -euo pipefail
 

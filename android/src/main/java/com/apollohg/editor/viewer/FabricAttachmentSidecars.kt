@@ -17,7 +17,7 @@ internal object FabricAttachmentSidecars {
     fun beginIfActive(
         generation: FabricGenerationToken,
         semanticIdentity: String,
-        isActive: () -> Boolean,
+        isActive: () -> Boolean
     ): ViewerAttachmentRevisionState? = synchronized(lock) {
         if (!isActive()) return@synchronized null
         states.getOrPut(generation, ::ViewerAttachmentRevisionState).also {
@@ -25,11 +25,16 @@ internal object FabricAttachmentSidecars {
         }
     }
 
-    fun begin(generation: FabricGenerationToken, semanticIdentity: String): ViewerAttachmentRevisionState =
-        beginIfActive(generation, semanticIdentity) { true }
-            ?: error("Unconditionally active sidecar unexpectedly rejected.")
+    fun begin(
+        generation: FabricGenerationToken,
+        semanticIdentity: String
+    ): ViewerAttachmentRevisionState = beginIfActive(generation, semanticIdentity) { true }
+        ?: error("Unconditionally active sidecar unexpectedly rejected.")
 
-    fun state(generation: FabricGenerationToken): ViewerAttachmentRevisionState? = synchronized(lock) { states[generation] }
+    fun state(generation: FabricGenerationToken): ViewerAttachmentRevisionState? =
+        synchronized(lock) {
+            states[generation]
+        }
 
     /** Nestable and exception-safe: Yoga workers may reuse the same thread. */
     fun <T> withMeasurementState(state: ViewerAttachmentRevisionState, body: () -> T): T {
@@ -42,14 +47,18 @@ internal object FabricAttachmentSidecars {
         }
     }
 
-    fun remove(generation: FabricGenerationToken) = synchronized(lock) { states.remove(generation)?.reset() }
+    fun remove(generation: FabricGenerationToken) = synchronized(lock) {
+        states.remove(generation)?.reset()
+    }
 
     fun remove(surface: FabricSurfaceToken) = synchronized(lock) {
         states.keys.filter { it.surface == surface }.forEach { states.remove(it)?.reset() }
     }
 
     fun removeSurface(surfaceId: Int) = synchronized(lock) {
-        states.keys.filter { it.surface.surfaceId == surfaceId }.forEach { token -> states.remove(token)?.reset() }
+        states.keys.filter {
+            it.surface.surfaceId == surfaceId
+        }.forEach { token -> states.remove(token)?.reset() }
     }
 
     fun remove(owner: FabricLeaseOwner) = synchronized(lock) {
@@ -59,9 +68,13 @@ internal object FabricAttachmentSidecars {
     }
 
     /** Commit keeps the incoming generation's in-flight sidecar but drops every stale revision for this family. */
-    fun removeOtherGenerations(owner: FabricLeaseOwner, keeping: FabricGenerationToken) = synchronized(lock) {
-        states.keys
-            .filter { it.surface == owner.surface && it.leaseHandle == owner.leaseHandle && it != keeping }
-            .forEach { states.remove(it)?.reset() }
-    }
+    fun removeOtherGenerations(owner: FabricLeaseOwner, keeping: FabricGenerationToken) =
+        synchronized(lock) {
+            states.keys
+                .filter {
+                    it.surface == owner.surface && it.leaseHandle == owner.leaseHandle &&
+                        it != keeping
+                }
+                .forEach { states.remove(it)?.reset() }
+        }
 }

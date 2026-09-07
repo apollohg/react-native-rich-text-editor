@@ -1,6 +1,6 @@
-import UIKit
-import ImageIO
 import CryptoKit
+import ImageIO
+import UIKit
 
 extension RenderBridge {
     /// Create a paragraph style for a block context.
@@ -126,8 +126,7 @@ extension RenderBridge {
             return number.intValue
         }
         if let string = value as? String,
-           let resolved = Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
-        {
+           let resolved = Int(string.trimmingCharacters(in: .whitespacesAndNewlines)) {
             return resolved
         }
         return nil
@@ -141,8 +140,7 @@ extension RenderBridge {
         }
         if let string = value as? String,
            let resolved = Double(string.trimmingCharacters(in: .whitespacesAndNewlines)),
-           resolved > 0
-        {
+           resolved > 0 {
             return CGFloat(resolved)
         }
         return nil
@@ -154,7 +152,7 @@ extension RenderBridge {
     ) -> [NSAttributedString.Key: Any] {
         [
             .font: baseFont,
-            .foregroundColor: textColor,
+            .foregroundColor: textColor
         ]
     }
 
@@ -187,8 +185,7 @@ extension RenderBridge {
             if (markerContext["kind"] as? String) != "task",
                (markerContext["ordered"] as? NSNumber)?.boolValue == true,
                let rawIndex = markerContext["index"] as? NSNumber,
-               let index = v2ExactUInt32(rawIndex)
-            {
+               let index = v2ExactUInt32(rawIndex) {
                 mutableAttrs[RenderBridgeAttributes.orderedListMarkerLabel] =
                     OrderedListMarkerFormatter.label(
                         index: index,
@@ -228,7 +225,7 @@ extension RenderBridge {
             let foreground = mutableAttrs[.foregroundColor] as? UIColor ?? .separator
             mutableAttrs[RenderBridgeAttributes.blockquoteBorderColor] =
                 theme?.blockquote?.borderColor
-                ?? foreground.withAlphaComponent(0.3)
+                    ?? foreground.withAlphaComponent(0.3)
             mutableAttrs[RenderBridgeAttributes.blockquoteBorderWidth] =
                 theme?.blockquote?.borderWidth ?? LayoutConstants.blockquoteBorderWidth
             mutableAttrs[RenderBridgeAttributes.blockquoteMarkerGap] =
@@ -260,8 +257,7 @@ extension RenderBridge {
         attrs[RenderBridgeAttributes.blockBoundary] = true
         if let paragraphSpacingOverride,
            let paragraphStyle = (attrs[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy()
-               as? NSMutableParagraphStyle
-        {
+           as? NSMutableParagraphStyle {
             paragraphStyle.paragraphSpacing = paragraphSpacingOverride
             attrs[.paragraphStyle] = paragraphStyle
         }

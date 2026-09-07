@@ -24,7 +24,7 @@ enum class EditorOrderedListNumberingScheme {
 private val DEFAULT_ORDERED_LIST_SCHEMES = listOf(
     EditorOrderedListNumberingScheme.DECIMAL,
     EditorOrderedListNumberingScheme.LOWER_ALPHA,
-    EditorOrderedListNumberingScheme.LOWER_ROMAN,
+    EditorOrderedListNumberingScheme.LOWER_ROMAN
 )
 
 data class EditorOrderedListMarkerTheme(
@@ -72,11 +72,7 @@ internal object OrderedListMarkerFormatter {
         1L to "i"
     )
 
-    fun label(
-        index: Long,
-        nestingDepth: Int,
-        theme: EditorOrderedListMarkerTheme?
-    ): String {
+    fun label(index: Long, nestingDepth: Int, theme: EditorOrderedListMarkerTheme?): String {
         val resolvedTheme = theme ?: EditorOrderedListMarkerTheme()
         val schemes = resolvedTheme.schemes.ifEmpty {
             DEFAULT_ORDERED_LIST_SCHEMES
@@ -86,18 +82,20 @@ internal object OrderedListMarkerFormatter {
         return formattedIndex(index, scheme) + suffix
     }
 
-    private fun formattedIndex(
-        index: Long,
-        scheme: EditorOrderedListNumberingScheme
-    ): String {
+    private fun formattedIndex(index: Long, scheme: EditorOrderedListNumberingScheme): String {
         if (index !in 0..MAX_INDEX) return index.toString()
 
         return when (scheme) {
             EditorOrderedListNumberingScheme.DECIMAL -> index.toString()
-            EditorOrderedListNumberingScheme.LOWER_ALPHA -> alphabeticIndex(index) ?: index.toString()
+
+            EditorOrderedListNumberingScheme.LOWER_ALPHA -> alphabeticIndex(index)
+                ?: index.toString()
+
             EditorOrderedListNumberingScheme.UPPER_ALPHA ->
                 alphabeticIndex(index)?.uppercase() ?: index.toString()
+
             EditorOrderedListNumberingScheme.LOWER_ROMAN -> romanIndex(index) ?: index.toString()
+
             EditorOrderedListNumberingScheme.UPPER_ROMAN ->
                 romanIndex(index)?.uppercase() ?: index.toString()
         }

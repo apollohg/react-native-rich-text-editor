@@ -88,8 +88,6 @@ pub fn apply_step(
     }
 }
 
-/// Apply a semantic step and canonicalize mark order without changing the
-/// legacy `apply_step` behavior used by the production standalone editor.
 pub(crate) fn apply_step_canonical_marks(
     doc: &Document,
     step: &Step,

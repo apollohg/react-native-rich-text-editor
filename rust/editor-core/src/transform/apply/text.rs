@@ -8,7 +8,6 @@ fn apply_insert_text(
     let resolved = doc.resolve(pos).map_err(TransformError::OutOfBounds)?;
     let parent = resolved.parent(doc);
 
-    // The parent must be a text block (e.g. paragraph). Check via schema.
     let parent_spec = schema.node(parent.node_type());
     match parent_spec {
         Some(spec) => match spec.role {
@@ -34,11 +33,9 @@ fn apply_insert_text(
     let parent_offset = resolved.parent_offset;
     let insert_len = insert_text.chars().count() as u32;
 
-    // Rebuild the parent node's children with the inserted text.
     let new_children = insert_text_in_children(parent, parent_offset, insert_text, marks);
     let new_parent = rebuild_element(parent, new_children);
 
-    // Reconstruct the document by replacing the parent node at its path.
     let new_root = replace_node_at_path(doc.root(), &resolved.node_path, &new_parent);
     let new_doc = Document::new(new_root);
     let map = StepMap::from_insert(pos, insert_len);
@@ -57,7 +54,6 @@ fn insert_text_in_children(
     let mut new_children: Vec<Node> = Vec::with_capacity(content.child_count() + 2);
     let mut remaining_offset = offset;
 
-    // If the parent has no children (empty paragraph), just insert the text.
     if content.child_count() == 0 {
         new_children.push(Node::text(insert_text.to_string(), marks.to_vec()));
         return merge_adjacent_text_nodes(new_children);
@@ -75,7 +71,6 @@ fn insert_text_in_children(
 
         if child.is_text() {
             if remaining_offset <= child_size {
-                // Insert point is within (or at boundary of) this text node.
                 let (left, right) = split_text_node(child, remaining_offset);
 
                 if let Some(l) = left {
@@ -95,7 +90,6 @@ fn insert_text_in_children(
             remaining_offset -= child_size;
         } else if child.is_void() {
             if remaining_offset == 0 {
-                // Insert before this void node.
                 new_children.push(Node::text(insert_text.to_string(), marks.to_vec()));
                 new_children.push(child.clone());
                 inserted = true;
@@ -118,7 +112,6 @@ fn insert_text_in_children(
         }
     }
 
-    // If we haven't inserted yet, the offset is at the end.
     if !inserted {
         new_children.push(Node::text(insert_text.to_string(), marks.to_vec()));
     }
@@ -137,14 +130,12 @@ fn apply_delete_range(
         )));
     }
     if from == to {
-        // No-op deletion.
         return Ok((doc.clone(), StepMap::empty()));
     }
 
     let resolved_from = doc.resolve(from).map_err(TransformError::OutOfBounds)?;
     let resolved_to = doc.resolve(to).map_err(TransformError::OutOfBounds)?;
 
-    // If both endpoints are in the same parent, do the simple in-parent delete.
     if resolved_from.node_path == resolved_to.node_path {
         let parent = resolved_from.parent(doc);
         let from_offset = resolved_from.parent_offset;
@@ -182,10 +173,8 @@ fn delete_in_children(parent: &Node, from_offset: u32, to_offset: u32) -> Vec<No
         let child_end = offset + child_size;
 
         if child_end <= from_offset || child_start >= to_offset {
-            // Child is entirely outside the delete range — keep it.
             new_children.push(child.clone());
         } else if child.is_text() {
-            // Child overlaps with the delete range. Keep the parts outside.
             let chars: Vec<char> = child.text_str().unwrap().chars().collect();
 
             let keep_left_end = if from_offset > child_start {
@@ -218,7 +207,6 @@ fn delete_in_children(parent: &Node, from_offset: u32, to_offset: u32) -> Vec<No
             // fully contained, remove it. If partially, this is an error we
             // don't handle yet (cross-node deletion).
             if child_start >= from_offset && child_end <= to_offset {
-                // Fully inside — remove.
             } else {
                 // Partially overlapping element — keep it as-is for now.
                 // A more sophisticated implementation would handle this.
@@ -240,7 +228,6 @@ fn apply_add_mark(
     schema: &Schema,
 ) -> Result<(Document, StepMap), TransformError> {
     if from >= to {
-        // No-op: empty range.
         return Ok((doc.clone(), StepMap::empty()));
     }
 
@@ -285,14 +272,11 @@ fn add_mark_in_children(
         let child_end = offset + child_size;
 
         if !child.is_text() || child_end <= from_offset || child_start >= to_offset {
-            // Non-text or entirely outside the mark range — keep as-is.
             new_children.push(child.clone());
         } else {
-            // Text node overlaps with the mark range.
             let text_str = child.text_str().unwrap();
             let chars: Vec<char> = text_str.chars().collect();
 
-            // How much of this text node is before, inside, and after the range.
             let mark_start_in_child = if from_offset > child_start {
                 (from_offset - child_start) as usize
             } else {
@@ -304,13 +288,11 @@ fn add_mark_in_children(
                 chars.len()
             };
 
-            // Part before the mark range.
             if mark_start_in_child > 0 {
                 let before_str: String = chars[..mark_start_in_child].iter().collect();
                 new_children.push(Node::text(before_str, child.marks().to_vec()));
             }
 
-            // Part inside the mark range — add the mark.
             if mark_start_in_child < mark_end_in_child {
                 let inside_str: String = chars[mark_start_in_child..mark_end_in_child]
                     .iter()
@@ -326,7 +308,6 @@ fn add_mark_in_children(
                 new_children.push(Node::text(inside_str, new_marks));
             }
 
-            // Part after the mark range.
             if mark_end_in_child < chars.len() {
                 let after_str: String = chars[mark_end_in_child..].iter().collect();
                 new_children.push(Node::text(after_str, child.marks().to_vec()));
@@ -404,20 +385,17 @@ fn remove_mark_in_children(
                 chars.len()
             };
 
-            // Part before the removal range — keep original marks.
             if range_start > 0 {
                 let before_str: String = chars[..range_start].iter().collect();
                 new_children.push(Node::text(before_str, child.marks().to_vec()));
             }
 
-            // Part inside the removal range — remove the mark type.
             if range_start < range_end {
                 let inside_str: String = chars[range_start..range_end].iter().collect();
                 let new_marks = remove_mark_from_set(child.marks(), mark_type);
                 new_children.push(Node::text(inside_str, new_marks));
             }
 
-            // Part after the removal range — keep original marks.
             if range_end < chars.len() {
                 let after_str: String = chars[range_end..].iter().collect();
                 new_children.push(Node::text(after_str, child.marks().to_vec()));

@@ -12,11 +12,7 @@ import android.view.inputmethod.CorrectionInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 
-
-internal data class PendingDuplicateCorrectionCommit(
-    val text: String,
-    val deadlineMs: Long
-)
+internal data class PendingDuplicateCorrectionCommit(val text: String, val deadlineMs: Long)
 
 internal data class PendingCompositionCorrectionCommit(
     val text: String,
@@ -43,11 +39,14 @@ internal data class GeneratedCompositionAdjustment(
 internal fun EditorInputConnection.rememberPendingDuplicateCorrectionCommit(text: String) {
     pendingDuplicateCorrectionCommit = PendingDuplicateCorrectionCommit(
         text = text,
-        deadlineMs = SystemClock.uptimeMillis() + EditorInputConnection.DUPLICATE_CORRECTION_COMMIT_WINDOW_MS
+        deadlineMs =
+            SystemClock.uptimeMillis() + EditorInputConnection.DUPLICATE_CORRECTION_COMMIT_WINDOW_MS
     )
 }
 
-internal fun EditorInputConnection.consumePendingDuplicateCorrectionCommitIfNeeded(text: String?): Boolean {
+internal fun EditorInputConnection.consumePendingDuplicateCorrectionCommitIfNeeded(
+    text: String?
+): Boolean {
     val pending = pendingDuplicateCorrectionCommit ?: return false
     pendingDuplicateCorrectionCommit = null
     if (text == null) return false
@@ -59,7 +58,9 @@ internal fun EditorInputConnection.rememberPendingCompositionCorrectionCommit(te
     val generation = ++pendingCompositionCorrectionGeneration
     pendingCompositionCorrectionCommit = PendingCompositionCorrectionCommit(
         text = text,
-        deadlineMs = SystemClock.uptimeMillis() + EditorInputConnection.DUPLICATE_CORRECTION_COMMIT_WINDOW_MS,
+        deadlineMs =
+            SystemClock.uptimeMillis() +
+                EditorInputConnection.DUPLICATE_CORRECTION_COMMIT_WINDOW_MS,
         generation = generation
     )
     Handler(Looper.getMainLooper()).post {
@@ -89,7 +90,9 @@ internal fun EditorInputConnection.consumePendingCompositionCorrectionCommitIfNe
     return true
 }
 
-internal fun EditorInputConnection.applyPendingCompositionCorrectionCommitIfNeeded(source: String): Boolean {
+internal fun EditorInputConnection.applyPendingCompositionCorrectionCommitIfNeeded(
+    source: String
+): Boolean {
     val pending = pendingCompositionCorrectionCommit ?: return false
     pendingCompositionCorrectionCommit = null
     pendingCompositionCorrectionGeneration += 1L

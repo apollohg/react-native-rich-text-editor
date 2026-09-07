@@ -1,5 +1,5 @@
-import XCTest
 import CoreText
+import XCTest
 
 // MARK: - RenderBridge Tests
 
@@ -22,7 +22,6 @@ final class RenderBridgeTests: XCTestCase {
         let data = try Data(contentsOf: url)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
-
 
     func ffiResultError() -> FfiError {
         FfiError(
@@ -56,7 +55,7 @@ final class RenderBridgeTests: XCTestCase {
 
     func commandPreparation(result: String) -> String? {
         guard let data = result.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return nil
         }
@@ -65,28 +64,6 @@ final class RenderBridgeTests: XCTestCase {
 
     let baseFont = UIFont.systemFont(ofSize: 16)
     let textColor = UIColor.black
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 }
 
@@ -170,8 +147,7 @@ final class ManualImageTimeoutScheduler {
     var allDelays: [TimeInterval] { tasks.map(\.delay) }
     var allCancelCounts: [Int] { tasks.map(\.cancelCount) }
 
-    lazy var schedule: (TimeInterval, @escaping () -> Void) -> ImageLoadingTask = {
-        [weak self] delay, action in
+    lazy var schedule: (TimeInterval, @escaping () -> Void) -> ImageLoadingTask = { [weak self] delay, action in
         let task = ScheduledTask(delay: delay, action: action)
         self?.tasks.append(task)
         return task
@@ -240,8 +216,7 @@ final class ConcurrentImageTimeoutScheduler {
     let lock = NSLock()
     private var tasks: [ScheduledTask] = []
 
-    lazy var schedule: (TimeInterval, @escaping () -> Void) -> ImageLoadingTask = {
-        [weak self] delay, action in
+    lazy var schedule: (TimeInterval, @escaping () -> Void) -> ImageLoadingTask = { [weak self] delay, action in
         let task = ScheduledTask(delay: delay, action: action)
         guard let self else { return task }
         self.lock.lock()

@@ -8,15 +8,24 @@ internal fun EditorEditText.handleCompositionCommitImpl(
 ) {
     val startedAt = System.nanoTime()
     if (!isEditable) {
-        recordImeTraceForTesting("handleCompositionCommitNoop", "reason=notEditable textLength=${text.length}")
+        recordImeTraceForTesting(
+            "handleCompositionCommitNoop",
+            "reason=notEditable textLength=${text.length}"
+        )
         return
     }
     if (isApplyingRustState) {
-        recordImeTraceForTesting("handleCompositionCommitNoop", "reason=applyingRust textLength=${text.length}")
+        recordImeTraceForTesting(
+            "handleCompositionCommitNoop",
+            "reason=applyingRust textLength=${text.length}"
+        )
         return
     }
     if (!hasLiveEditor()) {
-        recordImeTraceForTesting("handleCompositionCommitNoop", "reason=noLiveEditor textLength=${text.length}")
+        recordImeTraceForTesting(
+            "handleCompositionCommitNoop",
+            "reason=noLiveEditor textLength=${text.length}"
+        )
         return
     }
 
@@ -27,7 +36,10 @@ internal fun EditorEditText.handleCompositionCommitImpl(
         authorizedText
     )
     if (isCollapsedAtomBoundarySelection(startUtf16, endUtf16)) {
-        recordImeTraceForTesting("handleCompositionCommitNoop", "reason=atomBoundary textLength=${text.length}")
+        recordImeTraceForTesting(
+            "handleCompositionCommitNoop",
+            "reason=atomBoundary textLength=${text.length}"
+        )
         return
     }
     val scalarStart = PositionBridge.utf16ToScalar(startUtf16, authorizedText)
@@ -231,7 +243,10 @@ internal fun EditorEditText.missingOldTextCorrectionTokenRangeForEditorImpl(
     return if (startUtf16 < endUtf16) startUtf16 to endUtf16 else null
 }
 
-internal fun EditorEditText.isMissingOldTextCorrectionTokenCodePointAt(text: String, utf16Offset: Int): Boolean {
+internal fun EditorEditText.isMissingOldTextCorrectionTokenCodePointAt(
+    text: String,
+    utf16Offset: Int
+): Boolean {
     if (utf16Offset < 0 || utf16Offset >= text.length) return false
     val codePoint = Character.codePointAt(text, utf16Offset)
     if (isMissingOldTextCorrectionCoreTokenCodePoint(codePoint)) return true
@@ -256,6 +271,7 @@ internal fun EditorEditText.isMissingOldTextCorrectionCoreTokenCodePoint(codePoi
         Character.MODIFIER_SYMBOL.toInt(),
         Character.OTHER_SYMBOL.toInt(),
         Character.SURROGATE.toInt() -> true
+
         else -> false
     }
 }

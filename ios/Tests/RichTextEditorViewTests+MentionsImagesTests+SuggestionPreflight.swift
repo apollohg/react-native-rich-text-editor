@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testMentionSuggestionTapInsertsMentionNode() {
@@ -24,8 +24,8 @@ extension RichTextEditorViewTests {
                 "title": "Alice Chen",
                 "subtitle": "Design",
                 "label": "@alice",
-                "attrs": ["id": "user_alice", "label": "@alice"],
-            ])!,
+                "attrs": ["id": "user_alice", "label": "@alice"]
+            ])!
         ])
 
         view.triggerMentionSuggestionTapForTesting(at: 0)
@@ -78,8 +78,8 @@ extension RichTextEditorViewTests {
                 "title": "Alice Chen",
                 "subtitle": "Design",
                 "label": "@alice",
-                "attrs": ["id": "user_alice", "label": "@alice"],
-            ])!,
+                "attrs": ["id": "user_alice", "label": "@alice"]
+            ])!
         ])
         view.layoutIfNeeded()
         setCollapsedSelection(in: view.richTextView.textView, utf16Offset: view.richTextView.textView.textStorage.length)
@@ -186,8 +186,8 @@ extension RichTextEditorViewTests {
                 "title": "Alice Chen",
                 "subtitle": "Design",
                 "label": "@alice",
-                "attrs": ["id": "user_alice", "label": "@alice"],
-            ])!,
+                "attrs": ["id": "user_alice", "label": "@alice"]
+            ])!
         ])
         view.layoutIfNeeded()
         setCollapsedSelection(in: view.richTextView.textView, utf16Offset: view.richTextView.textView.textStorage.length)
@@ -244,8 +244,8 @@ extension RichTextEditorViewTests {
                 "title": "Alice Chen",
                 "subtitle": "Design",
                 "label": "@alice",
-                "attrs": ["id": "user_alice", "label": "@alice"],
-            ])!,
+                "attrs": ["id": "user_alice", "label": "@alice"]
+            ])!
         ])
         view.layoutIfNeeded()
         setCollapsedSelection(in: view.richTextView.textView, utf16Offset: view.richTextView.textView.textStorage.length)
@@ -478,7 +478,7 @@ extension RichTextEditorViewTests {
             "title": "Ally Chen",
             "subtitle": "Design",
             "label": "@ally",
-            "attrs": ["id": "user_ally", "label": "@ally"],
+            "attrs": ["id": "user_ally", "label": "@ally"]
         ])!
         view.setAddonsJson(
             """

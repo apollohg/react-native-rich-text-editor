@@ -16,11 +16,6 @@ type SNodeRef<'a> = ego_tree::NodeRef<'a, scraper::Node>;
 pub enum ParseError {
     /// An unknown HTML tag was encountered in strict mode.
     UnknownTag(String),
-    /// The parsed content does not satisfy the schema's content rules.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
-    #[allow(dead_code)]
-    InvalidContent(String),
     ResourceLimit {
         limit: usize,
         actual: usize,
@@ -31,7 +26,6 @@ impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ParseError::UnknownTag(tag) => write!(f, "unknown HTML tag: <{}>", tag),
-            ParseError::InvalidContent(msg) => write!(f, "invalid content: {}", msg),
             ParseError::ResourceLimit { limit, actual } => {
                 write!(f, "HTML parse work exceeds limit {limit}: {actual}")
             }
@@ -305,8 +299,6 @@ fn is_block_html_element(tag: &str) -> bool {
 ///
 /// In non-strict mode (the default), unknown tags are preserved as opaque nodes
 /// that round-trip faithfully. In strict mode, unknown tags produce an error.
-// Not reachable from production call paths after the Task 16C legacy runtime
-// removal; exercised by crate tests.
 #[allow(dead_code)]
 pub fn from_html(
     html: &str,
@@ -367,10 +359,8 @@ pub fn from_html_with_limits(
         &mut inline_acc,
     )?;
 
-    // Flush any remaining inline content
     flush_inline_acc(&mut inline_acc, schema, &mut block_children);
 
-    // If no blocks were produced, create an empty paragraph
     if block_children.is_empty() {
         block_children.push(make_paragraph(schema, vec![]));
     }
@@ -415,7 +405,6 @@ fn process_children(
                 inline_acc,
             )?;
         }
-        // Comments, processing instructions, etc. — skip
     }
     Ok(())
 }
@@ -432,7 +421,6 @@ fn process_element(
     block_acc: &mut Vec<Node>,
     inline_acc: &mut Vec<Node>,
 ) -> Result<(), ParseError> {
-    // 1) Check if this is a mark tag
     if let Some(mark) = mark_from_element(tag, elem, schema) {
         let mut new_marks = active_marks.to_vec();
         if !new_marks
@@ -444,7 +432,6 @@ fn process_element(
         return process_children(node_ref, schema, options, &new_marks, block_acc, inline_acc);
     }
 
-    // 1b) Native-editor mention round-trip
     if let Some(mention) = build_mention_node(node_ref, elem, schema) {
         inline_acc.push(mention);
         return Ok(());
@@ -456,7 +443,6 @@ fn process_element(
         return Ok(());
     }
 
-    // 2) Check if this matches a known schema node by html_tag
     if let Some(spec) = schema.node_by_html_tag(tag) {
         if tag == "img"
             && spec.name == "image"
@@ -483,12 +469,10 @@ fn process_element(
         );
     }
 
-    // 3) Unknown tag
     if options.strict {
         return Err(ParseError::UnknownTag(tag.to_string()));
     }
 
-    // Preserve as opaque node
     let placement = if is_block_html_element(tag) || is_void_html_element(tag) {
         "block"
     } else {
@@ -741,7 +725,6 @@ fn collect_inline_children(
                 continue;
             }
 
-            // Mark tag — recurse with added mark
             if let Some(mark) = mark_from_element(tag, elem, schema) {
                 let mut new_marks = active_marks.to_vec();
                 if !new_marks
@@ -755,7 +738,6 @@ fn collect_inline_children(
                 continue;
             }
 
-            // Known void inline node (hardBreak)
             if let Some(spec) = schema.node_by_html_tag(tag) {
                 if spec.is_void && matches!(spec.role, NodeRole::HardBreak | NodeRole::Inline) {
                     inline_nodes.push(Node::void(
@@ -766,7 +748,6 @@ fn collect_inline_children(
                 }
             }
 
-            // Unknown inline tag — opaque or error
             if options.strict {
                 return Err(ParseError::UnknownTag(tag.to_string()));
             }
@@ -858,7 +839,6 @@ fn build_opaque_node(
         serde_json::Value::String(placement.to_string()),
     );
 
-    // Preserve HTML attributes
     let html_attrs: HashMap<String, String> = elem
         .attrs
         .iter()
@@ -875,7 +855,6 @@ fn build_opaque_node(
         attrs.insert("html_attrs".to_string(), serde_json::json!(html_attrs));
     }
 
-    // Collect text content for display
     let text_content = collect_text_content(node_ref);
     if !text_content.is_empty() {
         attrs.insert(

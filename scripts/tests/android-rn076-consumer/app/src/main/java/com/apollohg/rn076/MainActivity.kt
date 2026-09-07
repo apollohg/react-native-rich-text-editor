@@ -13,6 +13,6 @@ class MainActivity : ReactActivity() {
         ReactActivityDelegateWrapper(
             this,
             BuildConfig.IS_NEW_ARCHITECTURE_ENABLED,
-            DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled),
+            DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
         )
 }

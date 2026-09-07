@@ -1,5 +1,5 @@
-import UIKit
 import os
+import UIKit
 
 extension EditorTextView {
     enum NativeTextMutationCommitResult {
@@ -144,29 +144,35 @@ extension EditorTextView {
         )
     }
 
+    struct ExternalEditorCommandPreparation {
+        let ready: Bool
+        let updateJSON: String?
+        let blockedReason: String?
+    }
+
     @discardableResult
-    func prepareForExternalEditorCommand() -> (ready: Bool, updateJSON: String?, blockedReason: String?) {
+    func prepareForExternalEditorCommand() -> ExternalEditorCommandPreparation {
         let previousEditorId = editorId
         let previousAuthorizedText = lastAuthorizedText
         let previousStateJSON = previousEditorId != 0 ? EditorV2Shadow.getCurrentState(id: previousEditorId) : nil
         let preparation = prepareForExternalEditorUpdateResult()
         guard preparation.ready else {
-            return (false, nil, "composition")
+            return ExternalEditorCommandPreparation(ready: false, updateJSON: nil, blockedReason: "composition")
         }
         guard editorId != 0 else {
-            return (true, nil, nil)
+            return ExternalEditorCommandPreparation(ready: true, updateJSON: nil, blockedReason: nil)
         }
         if let adoptedUpdateJSON = preparation.adoptedUpdateJSON {
-            return (true, adoptedUpdateJSON, nil)
+            return ExternalEditorCommandPreparation(ready: true, updateJSON: adoptedUpdateJSON, blockedReason: nil)
         }
         let currentStateJSON = EditorV2Shadow.getCurrentState(id: editorId)
         guard lastAuthorizedText != previousAuthorizedText
-                || previousEditorId != editorId
-                || previousStateJSON != currentStateJSON
+            || previousEditorId != editorId
+            || previousStateJSON != currentStateJSON
         else {
-            return (true, nil, nil)
+            return ExternalEditorCommandPreparation(ready: true, updateJSON: nil, blockedReason: nil)
         }
-        return (true, currentStateJSON, nil)
+        return ExternalEditorCommandPreparation(ready: true, updateJSON: currentStateJSON, blockedReason: nil)
     }
 
     private func prepareActiveCompositionForExternalMutation() -> ActiveCompositionPreparation {
@@ -215,8 +221,8 @@ extension EditorTextView {
             )
         }
         guard nativeTextMutationCommitScheduled
-                || pendingNativeTextMutation != nil
-                || (!isComposing && markedTextRange == nil && textStorage.string != lastAuthorizedText)
+            || pendingNativeTextMutation != nil
+            || (!isComposing && markedTextRange == nil && textStorage.string != lastAuthorizedText)
         else {
             return NativeTextMutationDrainResult(ready: true, adoptedUpdateJSON: nil)
         }
@@ -226,8 +232,7 @@ extension EditorTextView {
         let mutation: NativeTextMutation?
         if let pendingNativeTextMutation,
            pendingNativeTextMutation.resultingText == currentText,
-           pendingNativeTextMutation.authorizedText == lastAuthorizedText
-        {
+           pendingNativeTextMutation.authorizedText == lastAuthorizedText {
             mutation = nativeTextMutationWithCurrentSelection(pendingNativeTextMutation)
         } else {
             mutation = nativeTextMutationFromAuthorizedDiff(currentText: currentText)
@@ -291,7 +296,7 @@ extension EditorTextView {
         }
 
         guard !isApplyingRustState,
-              (!isInterceptingInput || allowWhileIntercepting),
+              !isInterceptingInput || allowWhileIntercepting,
               !isComposing
         else {
             return .deferred

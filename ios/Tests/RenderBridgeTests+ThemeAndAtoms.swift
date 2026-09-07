@@ -1,5 +1,5 @@
-import XCTest
 import CoreText
+import XCTest
 
 extension RenderBridgeTests {
     func testRender_opaqueInlineAtom() {
@@ -39,9 +39,9 @@ extension RenderBridgeTests {
                 "node": [
                     "textColor": "#112233",
                     "backgroundColor": "#ddeeff",
-                    "fontWeight": "bold",
-                ],
-            ],
+                    "fontWeight": "bold"
+                ]
+            ]
         ])
         let result = RenderBridge.renderElements(
             fromJSON: json,
@@ -107,9 +107,9 @@ extension RenderBridgeTests {
                 "node": [
                     "textColor": "#112233",
                     "backgroundColor": "#ddeeff",
-                    "fontWeight": "bold",
-                ],
-            ],
+                    "fontWeight": "bold"
+                ]
+            ]
         ])
         let result = RenderBridge.renderElements(
             fromJSON: json,
@@ -179,12 +179,12 @@ extension RenderBridgeTests {
             "text": [
                 "fontFamily": "Courier",
                 "fontSize": 18,
-                "color": "#112233",
+                "color": "#112233"
             ],
             "paragraph": [
                 "lineHeight": 28,
-                "spacingAfter": 14,
-            ],
+                "spacingAfter": 14
+            ]
         ])
 
         let result = RenderBridge.renderElements(
@@ -216,7 +216,7 @@ extension RenderBridgeTests {
         let theme = EditorTheme(dictionary: [
             "text": [
                 "fontSize": 16,
-                "color": "#112233",
+                "color": "#112233"
             ],
             "headings": [
                 "h2": [
@@ -224,13 +224,13 @@ extension RenderBridgeTests {
                     "fontWeight": "700",
                     "color": "#445566",
                     "lineHeight": 34,
-                    "spacingAfter": 12,
+                    "spacingAfter": 12
                 ],
                 "h4": [
                     "fontSize": 18,
-                    "color": "#AA5500",
-                ],
-            ],
+                    "color": "#AA5500"
+                ]
+            ]
         ])
 
         let result = RenderBridge.renderElements(
@@ -259,13 +259,13 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
-             "listContext": {"ordered": false, "index": 1, "total": 2, "start": 1, "isFirst": true, "isLast": false}},
+            "listContext": {"ordered": false, "index": 1, "total": 2, "start": 1, "isFirst": true, "isLast": false}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "First item", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
-             "listContext": {"ordered": false, "index": 2, "total": 2, "start": 1, "isFirst": false, "isLast": true}},
+            "listContext": {"ordered": false, "index": 2, "total": 2, "start": 1, "isFirst": false, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "Second item", "marks": []},
             {"type": "blockEnd"},
@@ -274,8 +274,8 @@ extension RenderBridgeTests {
         """
         let theme = EditorTheme(dictionary: [
             "list": [
-                "itemSpacing": 14,
-            ],
+                "itemSpacing": 14
+            ]
         ])
 
         let result = RenderBridge.renderElements(
@@ -295,13 +295,13 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
-             "listContext": {"ordered": false, "index": 1, "total": 2, "start": 1, "isFirst": true, "isLast": false}},
+            "listContext": {"ordered": false, "index": 1, "total": 2, "start": 1, "isFirst": true, "isLast": false}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "First item", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
-             "listContext": {"ordered": false, "index": 2, "total": 2, "start": 1, "isFirst": false, "isLast": true}},
+            "listContext": {"ordered": false, "index": 2, "total": 2, "start": 1, "isFirst": false, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "Second item", "marks": []},
             {"type": "blockEnd"},
@@ -310,11 +310,11 @@ extension RenderBridgeTests {
         """
         let theme = EditorTheme(dictionary: [
             "paragraph": [
-                "spacingAfter": 14,
+                "spacingAfter": 14
             ],
             "list": [
-                "itemSpacing": 6,
-            ],
+                "itemSpacing": 6
+            ]
         ])
 
         let result = RenderBridge.renderElements(
@@ -338,18 +338,18 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
-             "listContext": {"ordered": false, "index": 1, "total": 2, "start": 1, "isFirst": true, "isLast": false}},
+            "listContext": {"ordered": false, "index": 1, "total": 2, "start": 1, "isFirst": true, "isLast": false}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "First item", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
-             "listContext": {"ordered": false, "index": 2, "total": 2, "start": 1, "isFirst": false, "isLast": true}},
+            "listContext": {"ordered": false, "index": 2, "total": 2, "start": 1, "isFirst": false, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "Parent item", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Nested item", "marks": []},
             {"type": "blockEnd"},
@@ -366,8 +366,8 @@ extension RenderBridgeTests {
         let theme = EditorTheme(dictionary: [
             "list": [
                 "itemSpacing": 6,
-                "spacingAfter": 20,
-            ],
+                "spacingAfter": 20
+            ]
         ])
 
         let result = RenderBridge.renderElements(
@@ -402,12 +402,12 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "Parent item", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Nested item", "marks": []},
             {"type": "blockEnd"},
@@ -421,8 +421,8 @@ extension RenderBridgeTests {
         let theme = EditorTheme(dictionary: [
             "list": [
                 "itemSpacing": 6,
-                "spacingAfter": 20,
-            ],
+                "spacingAfter": 20
+            ]
         ])
 
         let result = RenderBridge.renderElements(
@@ -445,12 +445,12 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "Parent item", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Nested item", "marks": []},
             {"type": "blockEnd"},
@@ -460,11 +460,11 @@ extension RenderBridgeTests {
         """
         let theme = EditorTheme(dictionary: [
             "paragraph": [
-                "spacingAfter": 14,
+                "spacingAfter": 14
             ],
             "list": [
-                "itemSpacing": 0,
-            ],
+                "itemSpacing": 0
+            ]
         ])
 
         let result = RenderBridge.renderElements(
@@ -488,18 +488,18 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "Parent item", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 2, "start": 1, "isFirst": true, "isLast": false}},
+            "listContext": {"ordered": false, "index": 1, "total": 2, "start": 1, "isFirst": true, "isLast": false}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Child one", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 2, "total": 2, "start": 1, "isFirst": false, "isLast": true}},
+            "listContext": {"ordered": false, "index": 2, "total": 2, "start": 1, "isFirst": false, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Child two", "marks": []},
             {"type": "blockEnd"},
@@ -509,11 +509,11 @@ extension RenderBridgeTests {
         """
         let theme = EditorTheme(dictionary: [
             "paragraph": [
-                "spacingAfter": 14,
+                "spacingAfter": 14
             ],
             "list": [
-                "itemSpacing": 6,
-            ],
+                "itemSpacing": 6
+            ]
         ])
 
         let result = RenderBridge.renderElements(

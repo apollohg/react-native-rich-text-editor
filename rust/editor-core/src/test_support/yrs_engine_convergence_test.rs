@@ -454,8 +454,6 @@ mod protocol_driven {
         source.export_snapshot().unwrap()
     }
 
-    /// Frame a captured outbound document update as a standard y-sync
-    /// Update message, exactly as the Task 12 transport will.
     fn framed_update(update_v1: Vec<u8>) -> Vec<u8> {
         Message::Sync(SyncMessage::Update(update_v1)).encode_v1()
     }

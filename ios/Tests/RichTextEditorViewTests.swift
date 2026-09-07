@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 final class RichTextEditorViewTests: XCTestCase {
 
@@ -16,39 +16,39 @@ final class RichTextEditorViewTests: XCTestCase {
         NSLayoutConstraint.activate([
             toolbar.leadingAnchor.constraint(equalTo: host.leadingAnchor),
             toolbar.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-            toolbar.topAnchor.constraint(equalTo: host.topAnchor),
+            toolbar.topAnchor.constraint(equalTo: host.topAnchor)
         ])
         return host
     }
 
     static let placementToolbarFixtureJSON = """
     [
-      {
+    {
         "type": "action",
         "key": "start-item",
         "label": "Start",
         "icon": { "type": "glyph", "text": "S" },
         "placement": "start"
-      },
-      {
+    },
+    {
         "type": "action",
         "key": "scroll-one",
         "label": "Scroll One",
         "icon": { "type": "glyph", "text": "1" }
-      },
-      {
+    },
+    {
         "type": "action",
         "key": "scroll-two",
         "label": "Scroll Two",
         "icon": { "type": "glyph", "text": "2" }
-      },
-      {
+    },
+    {
         "type": "action",
         "key": "end-item",
         "label": "End",
         "icon": { "type": "glyph", "text": "E" },
         "placement": "end"
-      }
+    }
     ]
     """
 
@@ -257,21 +257,21 @@ final class RichTextEditorViewTests: XCTestCase {
                     [
                         "name": "doc",
                         "content": "block+",
-                        "role": "doc",
+                        "role": "doc"
                     ],
                     [
                         "name": "paragraph",
                         "content": "inline*",
                         "group": "block",
                         "role": "textBlock",
-                        "htmlTag": "p",
+                        "htmlTag": "p"
                     ],
                     [
                         "name": "bulletList",
                         "content": "listItem+",
                         "group": "block",
                         "role": "list",
-                        "htmlTag": "ul",
+                        "htmlTag": "ul"
                     ],
                     [
                         "name": "orderedList",
@@ -280,14 +280,14 @@ final class RichTextEditorViewTests: XCTestCase {
                         "role": "list",
                         "htmlTag": "ol",
                         "attrs": [
-                            "start": ["default": 1],
-                        ],
+                            "start": ["default": 1]
+                        ]
                     ],
                     [
                         "name": "listItem",
                         "content": "paragraph block*",
                         "role": "listItem",
-                        "htmlTag": "li",
+                        "htmlTag": "li"
                     ],
                     [
                         "name": "hardBreak",
@@ -295,7 +295,7 @@ final class RichTextEditorViewTests: XCTestCase {
                         "group": "inline",
                         "role": "hardBreak",
                         "htmlTag": "br",
-                        "isVoid": true,
+                        "isVoid": true
                     ],
                     [
                         "name": "horizontalRule",
@@ -303,13 +303,13 @@ final class RichTextEditorViewTests: XCTestCase {
                         "group": "block",
                         "role": "block",
                         "htmlTag": "hr",
-                        "isVoid": true,
+                        "isVoid": true
                     ],
                     [
                         "name": "text",
                         "content": "",
                         "group": "inline",
-                        "role": "text",
+                        "role": "text"
                     ],
                     [
                         "name": "mention",
@@ -324,20 +324,23 @@ final class RichTextEditorViewTests: XCTestCase {
                         // that Rust's set_json ingestion otherwise applies.
                         "allowUndeclaredAttrs": true,
                         "attrs": [
-                            "label": ["default": NSNull()],
-                        ],
-                    ],
+                            "label": ["default": NSNull()]
+                        ]
+                    ]
                 ],
                 "marks": [
                     ["name": "bold"],
                     ["name": "italic"],
                     ["name": "underline"],
-                    ["name": "strike"],
-                ],
-            ],
+                    ["name": "strike"]
+                ]
+            ]
         ]
 
-        let data = try! JSONSerialization.data(withJSONObject: config)
+        guard let data = try? JSONSerialization.data(withJSONObject: config) else {
+            XCTFail("Failed to serialize test fixture")
+            return "{}"
+        }
         return String(data: data, encoding: .utf8)!
     }
 }

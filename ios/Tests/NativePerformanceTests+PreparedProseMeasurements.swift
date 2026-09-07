@@ -1,9 +1,7 @@
-import XCTest
 import UIKit
+import XCTest
 
 extension NativePerformanceTests {
-    /// iPhone 13 release gate. This is intentionally a device-only benchmark:
-    /// Task 14 supplies the one authorized execution and records the export.
     func testPerformance_preparedProseCorpusGates_iPhone13() throws {
         try XCTSkipUnless(
             ProcessInfo.processInfo.environment["PREPARED_PROSE_DEVICE_BENCHMARK"] == "1",
@@ -28,12 +26,10 @@ extension NativePerformanceTests {
         )
     }
 
-    /// Fixture-only device contract for Task 11 integration. It is separately
-    /// gated so routine suites do not execute preparation or scroll work.
     func testPreparedProseHarnessStaticFixtures() throws {
         try XCTSkipUnless(
             ProcessInfo.processInfo.environment["PREPARED_PROSE_STATIC_HARNESS_FIXTURES"] == "1",
-            "Runs only when Task 14 explicitly requests static harness fixtures."
+            "Runs only when task explicitly requests static harness fixtures."
         )
         let corpus = try PreparedProseBenchmarkCorpus.load()
         let configuration = try PreparedProseBenchmarkConfiguration.load()
@@ -78,7 +74,7 @@ extension NativePerformanceTests {
                 24_000_000,
                 [
                     .init(startNanos: 10_000_000, endNanos: 20_000_000, kind: .draw),
-                    .init(startNanos: 10_000_000, endNanos: 20_000_000, kind: .layout),
+                    .init(startNanos: 10_000_000, endNanos: 20_000_000, kind: .layout)
                 ],
                 rawDeltaNanos: delayedEnd,
                 nominalFramePeriodNanos: fixture.nominalFramePeriodNanos
@@ -91,7 +87,7 @@ extension NativePerformanceTests {
                 delayedEnd,
                 [
                     .init(startNanos: 0, endNanos: 12_000_000, kind: .layout),
-                    .init(startNanos: 12_000_000, endNanos: 24_000_000, kind: .draw),
+                    .init(startNanos: 12_000_000, endNanos: 24_000_000, kind: .draw)
                 ],
                 rawDeltaNanos: delayedEnd,
                 nominalFramePeriodNanos: fixture.nominalFramePeriodNanos
@@ -102,7 +98,7 @@ extension NativePerformanceTests {
         for phase in [
             PreparedProseInstrumentation.TraversalPhase.cold,
             .warm,
-            .imagesDisabled,
+            .imagesDisabled
         ] {
             PreparedProseInstrumentation.beginPhase(phase)
             PreparedProseInstrumentation.endPhase()
@@ -210,7 +206,7 @@ extension NativePerformanceTests {
         let spans: [PreparedProseInstrumentation.ViewerWorkSpan] = [
             .init(startNanos: 0, endNanos: 12_000_000, kind: .layout),
             .init(startNanos: 8_000_000, endNanos: 20_000_000, kind: .draw),
-            .init(startNanos: 18_000_000, endNanos: 30_000_000, kind: .lifecycle),
+            .init(startNanos: 18_000_000, endNanos: 30_000_000, kind: .lifecycle)
         ]
         XCTAssertEqual(PreparedProseInstrumentation.viewerWorkNanos(0, 30_000_000, spans), 30_000_000)
         XCTAssertTrue(
@@ -229,7 +225,7 @@ extension NativePerformanceTests {
         let ratio = PreparedProseInstrumentation.cadencePassRatio(
             rawFrameDeltasNanos: [
                 nominal + PreparedProseInstrumentation.singleTickToleranceNanos,
-                nominal * 3,
+                nominal * 3
             ]
         )
         XCTAssertEqual(ratio, 0.25, accuracy: 0.000_001)

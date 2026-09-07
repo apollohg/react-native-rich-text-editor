@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testPendingEditorUpdateRetriesCompositionDeferralThenApplies() {
@@ -19,11 +19,11 @@ extension RichTextEditorViewTests {
 
         _ = EditorV2Shadow.replaceHtml(id: editorId, html: "<p>Remote</p>")
         guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
-              let update = editorV2RenderUpdate(
+            let update = editorV2RenderUpdate(
                 editorId: adapter.editorId,
                 mirrorScalarAnchor: nil,
                 mirrorScalarHead: nil
-              ).value
+            ).value
         else {
             XCTFail("expected atomic render snapshot")
             return
@@ -66,7 +66,7 @@ extension RichTextEditorViewTests {
         XCTAssertEqual(event["editorId"] as? String, String(editorId))
         let error = event["error"] as? [String: Any]
         XCTAssertEqual(
-            Set(error?.keys ?? Dictionary<String, Any>().keys),
+            Set(error?.keys ?? [String: Any]().keys),
             Set(["domain", "code", "message", "requestId", "operationIndex", "limit", "actual", "detailsJson"])
         )
         XCTAssertEqual(error?["domain"] as? String, "boundary")
@@ -245,11 +245,11 @@ extension RichTextEditorViewTests {
         setCollapsedSelection(in: view.richTextView.textView, utf16Offset: 0)
         _ = EditorV2Shadow.replaceHtml(id: firstEditorId, html: "<p>Remote</p>")
         guard let firstAdapter = EditorV2Registry.adapter(forLegacyId: firstEditorId),
-              let update = editorV2RenderUpdate(
+            let update = editorV2RenderUpdate(
                 editorId: firstAdapter.editorId,
                 mirrorScalarAnchor: nil,
                 mirrorScalarHead: nil
-              ).value
+            ).value
         else {
             XCTFail("expected atomic render snapshot")
             return

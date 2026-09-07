@@ -51,8 +51,7 @@ extension NativeEditorExpoView {
             // permanent rejection must not report or retry a second time.
             if let sourceEditorId = pendingEditorUpdateEditorId,
                richTextView.editorId != 0,
-               sourceEditorId != String(richTextView.editorId)
-            {
+               sourceEditorId != String(richTextView.editorId) {
                 pendingEditorUpdateEditorId = nil
             }
             consumePendingEditorUpdate(revision: pendingRevision)

@@ -1,10 +1,12 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension EditorV2StagingViewTests {
     func testStagingReturnReplacementUsesCollapsedSuppliedRange() throws {
         for returnText in ["\n", "\r"] {
-            let (view, _, window) = makeBoundView(html: "<p>abcd</p>")
+            let bound = makeBoundView(html: "<p>abcd</p>")
+            let view = bound.view
+            let window = bound.window
             defer { view.removeFromSuperview(); window.isHidden = true }
             setCollapsedCaret(in: view.textView, utf16Offset: 0)
             let position = try XCTUnwrap(
@@ -24,7 +26,9 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingReturnReplacementUsesNoncollapsedSuppliedRange() throws {
-        let (view, _, window) = makeBoundView(html: "<p>abcd</p>")
+        let bound = makeBoundView(html: "<p>abcd</p>")
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         setCollapsedCaret(in: view.textView, utf16Offset: 0)
         let start = try XCTUnwrap(
@@ -44,7 +48,9 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingBackspaceAtTerminalAtomBoundaryDoesNotChangeDocument() {
-        let (view, _, window) = makeTerminalAtomView()
+        let bound = makeTerminalAtomView()
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let htmlBefore = EditorV2Shadow.getHtml(id: view.editorId)
         setCollapsedCaret(in: view.textView, utf16Offset: view.textView.textStorage.length)
@@ -56,7 +62,10 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingMoveSelectionCommandReordersText() {
-        let (view, adapter, window) = makeBoundView(html: "<p>abcd</p>")
+        let bound = makeBoundView(html: "<p>abcd</p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
 
         guard let updateJSON = adapter.moveSelection(anchor: 0, head: 2, to: 4) else {
@@ -69,7 +78,10 @@ extension EditorV2StagingViewTests {
 
     @MainActor
     func testStagingSameViewTextDropRestoresCleanupAndAcceptsTypingBeforeSessionEnd() throws {
-        let (view, adapter, window) = makeBoundView(html: "<p>abcd</p>")
+        let bound = makeBoundView(html: "<p>abcd</p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let delegate = EditorTextViewDelegateSpy()
         view.textView.editorDelegate = delegate
@@ -140,7 +152,10 @@ extension EditorV2StagingViewTests {
 
     @MainActor
     func testStagingSameViewTextDropIgnoresCleanupAfterARenderMutation() throws {
-        let (view, adapter, window) = makeBoundView(html: "<p>abcd</p>")
+        let bound = makeBoundView(html: "<p>abcd</p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let item = UIDragItem(itemProvider: NSItemProvider(object: "ab" as NSString))
         let dragSession = TestTextDragSession(items: [item])
@@ -181,7 +196,10 @@ extension EditorV2StagingViewTests {
     @MainActor
     func testStagingSameViewAtomDropPreservesAttributesAndUndoesInOneStep() throws {
         let htmlBefore = #"<div data-type="counter-card" data-count="7"></div><p>x</p>"#
-        let (view, adapter, window) = makeTerminalAtomView(html: htmlBefore)
+        let bound = makeTerminalAtomView(html: htmlBefore)
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let item = UIDragItem(itemProvider: NSItemProvider(object: "atom" as NSString))
         let dragSession = TestTextDragSession(items: [item])
@@ -226,7 +244,9 @@ extension EditorV2StagingViewTests {
 
     @MainActor
     func testStagingSameViewTextDropRejectsDestinationInsideSourceRange() throws {
-        let (view, _, window) = makeBoundView(html: "<p>abcd</p>")
+        let bound = makeBoundView(html: "<p>abcd</p>")
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let item = UIDragItem(itemProvider: NSItemProvider(object: "ab" as NSString))
         let dragSession = TestTextDragSession(items: [item])
@@ -264,7 +284,9 @@ extension EditorV2StagingViewTests {
 
     @MainActor
     func testStagingSameViewTextDropRejectsCrossParagraphSelection() throws {
-        let (view, _, window) = makeBoundView(html: "<p>ab</p><p>cd</p>")
+        let bound = makeBoundView(html: "<p>ab</p><p>cd</p>")
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let item = UIDragItem(itemProvider: NSItemProvider(object: "ab\nc" as NSString))
         let dragSession = TestTextDragSession(items: [item])
@@ -295,7 +317,9 @@ extension EditorV2StagingViewTests {
 
     @MainActor
     func testStagingSameViewTextDropRejectsSelectionEndingAtNextParagraphStart() throws {
-        let (view, _, window) = makeBoundView(html: "<p>ab</p><p>cd</p>")
+        let bound = makeBoundView(html: "<p>ab</p><p>cd</p>")
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let item = UIDragItem(itemProvider: NSItemProvider(object: "ab\n" as NSString))
         let dragSession = TestTextDragSession(items: [item])
@@ -326,7 +350,9 @@ extension EditorV2StagingViewTests {
 
     @MainActor
     func testStagingSameViewTextDropAllowsSelectionSpanningInlineHardBreak() throws {
-        let (view, _, window) = makeBoundView(html: "<p>a<br>bcd</p>")
+        let bound = makeBoundView(html: "<p>a<br>bcd</p>")
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let item = UIDragItem(itemProvider: NSItemProvider(object: "a\nb" as NSString))
         let dragSession = TestTextDragSession(items: [item])

@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testBackspaceAtListItemStartAfterNestedListUnwrapsIntoParagraph() {
@@ -47,8 +47,10 @@ extension RichTextEditorViewTests {
             flushMainQueue()
             view.textView.deleteBackward()
             view.textView.deleteBackward()
-            XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId),
-                "<\(tag)><li><p>Parent</p><\(tag)><li><p>NestedLast</p></li></\(tag)></li></\(tag)>")
+            XCTAssertEqual(
+                EditorV2Shadow.getHtml(id: editorId),
+                "<\(tag)><li><p>Parent</p><\(tag)><li><p>NestedLast</p></li></\(tag)></li></\(tag)>"
+            )
             view.textView.insertText("!")
             XCTAssertTrue(EditorV2Shadow.getHtml(id: editorId).contains("Nested!Last"))
             for _ in 0..<32 {

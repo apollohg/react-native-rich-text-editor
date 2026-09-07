@@ -12,7 +12,6 @@ final class PreparedProseLayoutTests: XCTestCase {
         retainedBytes: 64
     )
 
-
     func configuration() -> ProseViewerConfiguration {
         ProseViewerConfiguration(configJSON: "{}", collapsesWhenEmpty: true)
     }

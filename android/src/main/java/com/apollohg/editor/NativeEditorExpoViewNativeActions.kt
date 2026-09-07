@@ -1,11 +1,11 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.NativeEditorExpoView.PendingNativeActionScope
-import com.apollohg.editor.NativeEditorExpoView.PendingNativeAction
-import com.apollohg.editor.NativeEditorExpoView.ToolbarPlacement
+import android.view.View
 import com.apollohg.editor.NativeEditorExpoView.Companion.MAX_NATIVE_ACTION_RETRY_ATTEMPTS
 import com.apollohg.editor.NativeEditorExpoView.Companion.NATIVE_ACTION_RETRY_DELAY_MS
-import android.view.View
+import com.apollohg.editor.NativeEditorExpoView.PendingNativeAction
+import com.apollohg.editor.NativeEditorExpoView.PendingNativeActionScope
+import com.apollohg.editor.NativeEditorExpoView.ToolbarPlacement
 
 internal fun NativeEditorExpoView.clearPendingNativeActionRetry() {
     pendingNativeAction = null
@@ -16,11 +16,14 @@ internal fun NativeEditorExpoView.clearPendingNativeActionRetry() {
     pendingNativeActionRetryGeneration += 1
 }
 
-internal fun NativeEditorExpoView.currentNativeActionScope(action: PendingNativeAction): PendingNativeActionScope {
+internal fun NativeEditorExpoView.currentNativeActionScope(
+    action: PendingNativeAction
+): PendingNativeActionScope {
     val selection = richTextView.editorEditText.currentScalarSelection()
     val mentionScope = when (action) {
         is PendingNativeAction.MentionSuggestionSelect ->
             mentionQueryState ?: addons.mentions?.let { currentMentionQueryState(it.trigger) }
+
         is PendingNativeAction.ToolbarItemPress -> null
     }
     return PendingNativeActionScope(
@@ -46,7 +49,10 @@ internal fun NativeEditorExpoView.isPendingNativeActionScopeCurrent(
     if (scope.hadVisibleToolbar != isNativeActionToolbarVisible(action)) return false
     if (
         scope.documentVersion != lastDocumentVersion &&
-        (scope.allowedDocumentVersion == null || scope.allowedDocumentVersion != lastDocumentVersion)
+        (
+            scope.allowedDocumentVersion == null ||
+                scope.allowedDocumentVersion != lastDocumentVersion
+            )
     ) {
         return false
     }
@@ -68,9 +74,15 @@ internal fun NativeEditorExpoView.isPendingNativeActionScopeCurrent(
     return true
 }
 
-internal fun NativeEditorExpoView.isNativeActionToolbarVisible(action: PendingNativeAction): Boolean {
+internal fun NativeEditorExpoView.isNativeActionToolbarVisible(
+    action: PendingNativeAction
+): Boolean {
     if (!showsToolbar || toolbarPlacement != ToolbarPlacement.KEYBOARD) return false
-    if (keyboardToolbarView.parent == null || keyboardToolbarView.visibility != View.VISIBLE) return false
+    if (keyboardToolbarView.parent == null ||
+        keyboardToolbarView.visibility != View.VISIBLE
+    ) {
+        return false
+    }
     if (action is PendingNativeAction.MentionSuggestionSelect) {
         return keyboardToolbarView.isShowingMentionSuggestions
     }
@@ -119,7 +131,9 @@ internal fun NativeEditorExpoView.schedulePendingNativeActionRetry(action: Pendi
             clearPendingNativeActionRetry()
             return@Runnable
         }
-        if (pendingNativeActionRetryEditorId != richTextView.editorId || richTextView.editorId == 0L) {
+        if (pendingNativeActionRetryEditorId != richTextView.editorId ||
+            richTextView.editorId == 0L
+        ) {
             clearPendingNativeActionRetry()
             return@Runnable
         }
@@ -132,8 +146,12 @@ internal fun NativeEditorExpoView.schedulePendingNativeActionRetry(action: Pendi
         when (retryAction) {
             is PendingNativeAction.ToolbarItemPress ->
                 handleToolbarItemPress(retryAction.item, allowPreflightRetry = allowNextRetry)
+
             is PendingNativeAction.MentionSuggestionSelect ->
-                insertMentionSuggestion(retryAction.suggestion, allowPreflightRetry = allowNextRetry)
+                insertMentionSuggestion(
+                    retryAction.suggestion,
+                    allowPreflightRetry = allowNextRetry
+                )
         }
     }
     mainHandler.postDelayed(retry, NATIVE_ACTION_RETRY_DELAY_MS)
@@ -154,6 +172,7 @@ internal fun NativeEditorExpoView.retryPendingNativeActionFromWake() {
     when (action) {
         is PendingNativeAction.ToolbarItemPress ->
             handleToolbarItemPress(action.item, allowPreflightRetry = true)
+
         is PendingNativeAction.MentionSuggestionSelect ->
             insertMentionSuggestion(action.suggestion, allowPreflightRetry = true)
     }

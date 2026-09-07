@@ -21,7 +21,10 @@ class EditorSurfaceAccessibilityTest {
     private class EventParent(context: Context) : FrameLayout(context) {
         val events = mutableListOf<AccessibilityEvent>()
 
-        override fun onRequestSendAccessibilityEvent(child: View, event: AccessibilityEvent): Boolean {
+        override fun onRequestSendAccessibilityEvent(
+            child: View,
+            event: AccessibilityEvent
+        ): Boolean {
             events += AccessibilityEvent.obtain(event)
             return super.onRequestSendAccessibilityEvent(child, event)
         }
@@ -43,7 +46,10 @@ class EditorSurfaceAccessibilityTest {
 
         editor.applyRenderJSON(render("replacement"))
 
-        val events = parent.events.filter { it.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED }
+        val events = parent.events.filter {
+            it.eventType ==
+                AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED
+        }
         assertEquals(1, events.size)
         val event = events.single()
         assertEquals(before, event.beforeText.toString())

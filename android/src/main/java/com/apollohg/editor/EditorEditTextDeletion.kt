@@ -3,22 +3,23 @@ package com.apollohg.editor
 import com.apollohg.editor.EditorEditText.Companion.EMPTY_BLOCK_PLACEHOLDER
 
 /**
-     * Handle surrounding text deletion from the IME.
-     *
-     * Called by [EditorInputConnection.deleteSurroundingText].
-     *
-     * @param beforeLength Number of UTF-16 code units to delete before the cursor.
-     * @param afterLength Number of UTF-16 code units to delete after the cursor.
-     */
+ * Handle surrounding text deletion from the IME.
+ *
+ * Called by [EditorInputConnection.deleteSurroundingText].
+ *
+ * @param beforeLength Number of UTF-16 code units to delete before the cursor.
+ * @param afterLength Number of UTF-16 code units to delete after the cursor.
+ */
 internal fun EditorEditText.handleDeleteImpl(beforeLength: Int, afterLength: Int) {
     if (!isEditable) return
     if (isApplyingRustState) return
     val selectionRange = normalizedUtf16SelectionRange()
-    if (selectionRange != null && isCollapsedAtomBoundarySelection(selectionRange.first, selectionRange.second)) {
+    if (selectionRange != null &&
+        isCollapsedAtomBoundarySelection(selectionRange.first, selectionRange.second)
+    ) {
         return
     }
     if (editorId == 0L) {
-        // Dev mode: direct editing.
         val editable = this.text ?: return
         val (selectionStart, selectionEnd) = selectionRange ?: return
         val delStart: Int
@@ -70,26 +71,27 @@ internal fun EditorEditText.handleDeleteImpl(beforeLength: Int, afterLength: Int
     }
 }
 
-    /**
-     * Handle backspace key press (hardware keyboard or key event).
-     *
-     * If there's a range selection, deletes the range. Otherwise deletes
-     * the grapheme cluster before the cursor.
-     */
+/**
+ * Handle backspace key press (hardware keyboard or key event).
+ *
+ * If there's a range selection, deletes the range. Otherwise deletes
+ * the grapheme cluster before the cursor.
+ */
 internal fun EditorEditText.handleBackspaceImpl() {
     if (!isEditable) return
     if (isApplyingRustState) return
     val selectionRange = normalizedUtf16SelectionRange() ?: return
     if (isCollapsedAtomBoundarySelection(selectionRange.first, selectionRange.second)) return
     if (editorId == 0L) {
-        // Dev mode: direct editing.
         val editable = this.text ?: return
         val (start, end) = selectionRange
         if (start != end) {
             editable.delete(start, end)
         } else if (start > 0) {
-            // Delete one grapheme cluster backward.
-            val prevBoundary = PositionBridge.snapToGraphemeBoundary(start - 1, text?.toString() ?: "")
+            val prevBoundary = PositionBridge.snapToGraphemeBoundary(
+                start - 1,
+                text?.toString() ?: ""
+            )
             val adjustedPrev = if (prevBoundary >= start) maxOf(0, start - 1) else prevBoundary
             editable.delete(adjustedPrev, start)
         }
@@ -102,7 +104,6 @@ internal fun EditorEditText.handleBackspaceImpl() {
     val logicalSelection = currentLogicalScalarSelection()
 
     if (start != end) {
-        // Range selection: delete the range.
         val (scalarStart, scalarEnd) = normalizedScalarSelectionRange(currentText) ?: return
         deleteRangeInRust(scalarStart, scalarEnd)
     } else if (logicalSelection != null && logicalSelection.first == logicalSelection.second) {
@@ -184,9 +185,9 @@ internal fun EditorEditText.handleForwardDeleteImpl() {
     }
 }
 
-    /**
-     * Handle return/enter key as a block split operation.
-     */
+/**
+ * Handle return/enter key as a block split operation.
+ */
 internal fun EditorEditText.handleReturnKeyImpl() {
     if (!isEditable) return
     if (isApplyingRustState) return
@@ -196,7 +197,6 @@ internal fun EditorEditText.handleReturnKeyImpl() {
     if (isCollapsedAtomBoundarySelection(start, end)) return
 
     if (editorId == 0L) {
-        // Dev mode: insert newline directly.
         val editable = this.text ?: return
         editable.replace(start, end, "\n")
         return
@@ -205,16 +205,15 @@ internal fun EditorEditText.handleReturnKeyImpl() {
 
     val (scalarStart, scalarEnd) = normalizedScalarSelectionRange(currentText) ?: return
     if (scalarStart != scalarEnd) {
-        // Range selection: atomic delete-and-split via Rust.
         deleteAndSplitInRust(scalarStart, scalarEnd)
     } else {
         splitBlockInRust(scalarEnd)
     }
 }
 
-    /**
-     * Handle Shift+Enter as an inline hard break insertion.
-     */
+/**
+ * Handle Shift+Enter as an inline hard break insertion.
+ */
 internal fun EditorEditText.handleHardBreakImpl() {
     if (!isEditable) return
     if (isApplyingRustState) return
@@ -231,13 +230,15 @@ internal fun EditorEditText.handleHardBreakImpl() {
 
     val selection = currentScalarSelection() ?: return
     v2Driver?.let { driver ->
-        driver.insertNode(preferredHardBreakNodeType(), selection.first, selection.second)?.let { applyUpdateJSON(it) }
+        driver.insertNode(preferredHardBreakNodeType(), selection.first, selection.second)?.let {
+            applyUpdateJSON(it)
+        }
     }
 }
 
-    /**
-     * Handle hardware Tab / Shift+Tab as list indent / outdent when the caret is in a list.
-     */
+/**
+ * Handle hardware Tab / Shift+Tab as list indent / outdent when the caret is in a list.
+ */
 internal fun EditorEditText.handleTabImpl(shiftPressed: Boolean): Boolean {
     if (!isEditable) return false
     if (isApplyingRustState) return false

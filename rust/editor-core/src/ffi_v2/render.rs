@@ -485,9 +485,6 @@ pub fn editor_v2_scalar_to_doc(editor_id: String, scalar: u32) -> FfiJsonResult 
     }))
 }
 
-// Legacy update-JSON serializers (hoisted from the pre-cutover lib.rs during
-// the cutover; this module is their only retained consumer — the v2 render
-// accessor emits the exact legacy update JSON shape by design).
 fn serialize_render_elements(
     elements: &[crate::render::RenderElement],
     atom_ids: &HashMap<u32, String>,

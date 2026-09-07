@@ -103,7 +103,7 @@ fn test_incremental_update_insert_text_in_first_block() {
     assert_eq!(map.block(1).unwrap().doc_start, 8);
 
     // Apply the transaction
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 2,
         text: "XX".to_string(),
@@ -161,7 +161,7 @@ fn test_incremental_update_preserves_roundtrip() {
     let schema = tiptap_schema();
     let mut map = PositionMap::build(&document, &tiptap_schema());
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 2,
         text: "X".to_string(),
@@ -204,7 +204,7 @@ fn test_compact_folds_deltas() {
     let mut map = PositionMap::build(&document, &tiptap_schema());
 
     // Insert "X" at pos 2 -> "AXB"
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 2,
         text: "X".to_string(),

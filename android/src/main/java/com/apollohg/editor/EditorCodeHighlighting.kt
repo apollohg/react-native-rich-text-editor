@@ -12,7 +12,9 @@ data class NativeCodeHighlightingConfig(val provider: String, val theme: String)
         fun fromJson(json: JSONObject?): NativeCodeHighlightingConfig? = json?.let {
             val provider = it.optNullableString("provider")
             val theme = it.optNullableString("theme")
-            require(!provider.isNullOrBlank() && !theme.isNullOrBlank()) { "Code highlighting requires provider and theme." }
+            require(!provider.isNullOrBlank() && !theme.isNullOrBlank()) {
+                "Code highlighting requires provider and theme."
+            }
             NativeCodeHighlightingConfig(provider, theme)
         }
     }
@@ -20,7 +22,8 @@ data class NativeCodeHighlightingConfig(val provider: String, val theme: String)
 
 internal class CodeBlockMetadataSpan(val language: String?)
 
-internal class EditorCodeHighlightSpan(private val range: CodeHighlightRange) : MetricAffectingSpan() {
+internal class EditorCodeHighlightSpan(private val range: CodeHighlightRange) :
+    MetricAffectingSpan() {
     override fun updateMeasureState(paint: TextPaint) {
         if (range.fontStyle and 5 == 0) return
         val bold = range.fontStyle and 1 != 0 || paint.typeface?.isBold == true
@@ -36,7 +39,16 @@ internal class EditorCodeHighlightSpan(private val range: CodeHighlightRange) : 
     override fun updateDrawState(paint: TextPaint) {
         updateMeasureState(paint)
         val rgba = range.color
-        paint.color = Color.argb((rgba and 255).toInt(), ((rgba shr 24) and 255).toInt(), ((rgba shr 16) and 255).toInt(), ((rgba shr 8) and 255).toInt())
+        paint.color =
+            Color.argb(
+                (rgba and 255).toInt(),
+                ((rgba shr 24) and 255).toInt(),
+                (
+                    (rgba shr 16) and
+                        255
+                    ).toInt(),
+                ((rgba shr 8) and 255).toInt()
+            )
         if (range.fontStyle and 2 != 0) paint.isUnderlineText = true
     }
 }
@@ -51,27 +63,58 @@ internal fun EditorEditText.setCodeHighlighting(configuration: NativeCodeHighlig
 internal fun EditorEditText.refreshCodeHighlighting() {
     codeHighlightingSession.cancel()
     val content = text ?: return
-    content.getSpans(0, content.length, EditorCodeHighlightSpan::class.java).forEach(content::removeSpan)
-    val config = codeHighlightingConfiguration ?: run { invalidate(); return }
+    content.getSpans(
+        0,
+        content.length,
+        EditorCodeHighlightSpan::class.java
+    ).forEach(content::removeSpan)
+    val config = codeHighlightingConfiguration ?: run {
+        invalidate()
+        return
+    }
     if (!isAttachedToWindow) return
     val snapshot = content.toString()
     val blocks = content.getSpans(0, content.length, CodeBlockMetadataSpan::class.java).mapNotNull {
         val start = content.getSpanStart(it)
         val end = content.getSpanEnd(it)
-        if (start < 0 || end <= start) null else CodeHighlightBlock(start, snapshot.substring(start, end), it.language)
+        if (start < 0 ||
+            end <= start
+        ) {
+            null
+        } else {
+            CodeHighlightBlock(start, snapshot.substring(start, end), it.language)
+        }
     }
     if (blocks.isEmpty()) return
     val revision = lastAuthorizedTextRevision
     codeHighlightingSession.update(config.provider, config.theme, blocks) { result ->
-        if (!isAttachedToWindow || config != codeHighlightingConfiguration || revision != lastAuthorizedTextRevision || text?.toString() != snapshot) return@update
+        if (!isAttachedToWindow || config != codeHighlightingConfiguration ||
+            revision != lastAuthorizedTextRevision ||
+            text?.toString() != snapshot
+        ) {
+            return@update
+        }
         result.onSuccess { highlighted ->
             val current = text ?: return@onSuccess
-            current.getSpans(0, current.length, EditorCodeHighlightSpan::class.java).forEach(current::removeSpan)
-            highlighted.forEach { block -> block.ranges.forEach { range ->
-                current.setSpan(EditorCodeHighlightSpan(range), block.block.start + range.start, block.block.start + range.start + range.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            } }
+            current.getSpans(
+                0,
+                current.length,
+                EditorCodeHighlightSpan::class.java
+            ).forEach(current::removeSpan)
+            highlighted.forEach { block ->
+                block.ranges.forEach { range ->
+                    current.setSpan(
+                        EditorCodeHighlightSpan(range),
+                        block.block.start + range.start,
+                        block.block.start + range.start + range.length,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+            }
             requestLayout()
             invalidate()
-        }.onFailure { android.util.Log.w("NativeEditor", "Code highlighting failed: ${it.message}") }
+        }.onFailure {
+            android.util.Log.w("NativeEditor", "Code highlighting failed: ${it.message}")
+        }
     }
 }

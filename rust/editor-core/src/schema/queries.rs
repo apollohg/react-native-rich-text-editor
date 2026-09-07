@@ -54,16 +54,7 @@ impl Schema {
         &self.doc_node_name
     }
 
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
-    #[allow(dead_code)]
-    pub fn text_node_type(&self) -> &str {
-        &self.text_node_name
-    }
-
     /// Return all node specs belonging to the given group.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn nodes_in_group(&self, group: &str) -> Vec<&NodeSpec> {
         self.groups
@@ -263,12 +254,10 @@ impl Schema {
                 continue;
             }
 
-            // Non-inline nodes don't support marks.
             if !allows_inline {
                 continue;
             }
 
-            // Check if any active mark excludes this candidate.
             let excluded_by_active = active_mark_names.iter().any(|&active_name| {
                 if let Some(active_spec) = self.mark(active_name) {
                     mark_excluded_by(&active_spec.excludes, &mark_spec.name)
@@ -280,7 +269,6 @@ impl Schema {
                 continue;
             }
 
-            // Check if this candidate excludes any active mark.
             let excludes_active = active_mark_names
                 .iter()
                 .any(|&active_name| mark_excluded_by(&mark_spec.excludes, active_name));
@@ -295,8 +283,6 @@ impl Schema {
 
     /// Return node type names that can be inserted at the given parent, assuming
     /// `existing_child_types` is the actual prefix before the insertion point.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn insertable_nodes_at(
         &self,

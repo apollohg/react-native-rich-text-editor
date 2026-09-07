@@ -20,7 +20,7 @@ struct RemoteSelectionDecoration {
             guard let clientId = item["clientId"] as? String,
                   !clientId.isEmpty,
                   clientId.allSatisfy({ $0 >= "0" && $0 <= "9" }),
-                  (clientId == "0" || clientId.first != "0"),
+                  clientId == "0" || clientId.first != "0",
                   UInt64(clientId) != nil,
                   let anchor = v2ExactUInt32(item["anchor"] as? NSNumber),
                   let head = v2ExactUInt32(item["head"] as? NSNumber),
@@ -233,9 +233,8 @@ final class RemoteSelectionOverlayView: UIView {
         if let previousPosition = textView.position(from: position, offset: -1),
            let previousRange = textView.textRange(from: previousPosition, to: position),
            let previousRect = textView.selectionRects(for: previousRange)
-               .map(\.rect)
-               .last(where: { !$0.isEmpty && $0.height > 0 })
-        {
+           .map(\.rect)
+           .last(where: { !$0.isEmpty && $0.height > 0 }) {
             let rect = textView.convert(previousRect, to: self)
             return CGRect(x: rect.maxX, y: rect.minY, width: 2, height: rect.height)
         }
@@ -243,9 +242,8 @@ final class RemoteSelectionOverlayView: UIView {
         if let nextPosition = textView.position(from: position, offset: 1),
            let nextRange = textView.textRange(from: position, to: nextPosition),
            let nextRect = textView.selectionRects(for: nextRange)
-               .map(\.rect)
-               .first(where: { !$0.isEmpty && $0.height > 0 })
-        {
+           .map(\.rect)
+           .first(where: { !$0.isEmpty && $0.height > 0 }) {
             let rect = textView.convert(nextRect, to: self)
             return CGRect(x: rect.minX, y: rect.minY, width: 2, height: rect.height)
         }

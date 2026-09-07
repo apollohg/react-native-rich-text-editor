@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testAccessoryToolbarNativeDisabledButtonUsesAdaptiveTintInDarkHost() {
@@ -7,7 +7,7 @@ extension RichTextEditorViewTests {
         toolbar.tintColor = .black
 
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
+            "appearance": "native"
         ]))
         toolbar.applyBoldStateForTesting(active: false, enabled: false)
 
@@ -41,7 +41,7 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
 
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
+            "appearance": "native"
         ]))
         toolbar.applyBoldStateForTesting(active: false, enabled: true)
 
@@ -59,7 +59,7 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
 
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
+            "appearance": "native"
         ]))
         _ = toolbar.setMentionSuggestions([
             NativeMentionSuggestion(dictionary: [
@@ -67,8 +67,8 @@ extension RichTextEditorViewTests {
                 "title": "Alice Chen",
                 "subtitle": "Design",
                 "label": "@alice",
-                "attrs": ["label": "@alice"],
-            ])!,
+                "attrs": ["label": "@alice"]
+            ])!
         ])
 
         XCTAssertTrue(toolbar.mentionButtonAtForTesting(0)?.usesNativeAppearanceForTesting() == true)
@@ -78,7 +78,7 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
 
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
+            "appearance": "native"
         ]))
         _ = toolbar.setMentionSuggestions([
             NativeMentionSuggestion(dictionary: [
@@ -86,21 +86,21 @@ extension RichTextEditorViewTests {
                 "title": "Alice Chen",
                 "subtitle": "Design",
                 "label": "@alice",
-                "attrs": ["label": "@alice"],
-            ])!,
+                "attrs": ["label": "@alice"]
+            ])!
         ])
 
         #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            XCTAssertTrue(
-                toolbar.mentionButtonAtForTesting(0)?.usesNativeGlassTextRenderingForTesting() == true,
-                "Native mention suggestions should let UIKit render adaptive glass text"
-            )
-            XCTAssertTrue(
-                toolbar.mentionButtonAtForTesting(0)?.usesNativeGlassSemiboldTitleForTesting() == true,
-                "Native mention suggestions should keep the mention label semibold in glass"
-            )
-        }
+            if #available(iOS 26.0, *) {
+                XCTAssertTrue(
+                    toolbar.mentionButtonAtForTesting(0)?.usesNativeGlassTextRenderingForTesting() == true,
+                    "Native mention suggestions should let UIKit render adaptive glass text"
+                )
+                XCTAssertTrue(
+                    toolbar.mentionButtonAtForTesting(0)?.usesNativeGlassSemiboldTitleForTesting() == true,
+                    "Native mention suggestions should keep the mention label semibold in glass"
+                )
+            }
         #endif
     }
 
@@ -108,11 +108,64 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
 
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
+            "appearance": "native"
         ]))
         #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            XCTAssertFalse(toolbar.nativeChromeIsTransparentForTesting)
+            if #available(iOS 26.0, *) {
+                XCTAssertFalse(toolbar.nativeChromeIsTransparentForTesting)
+
+                _ = toolbar.setMentionSuggestions([
+                    NativeMentionSuggestion(dictionary: [
+                        "key": "alice",
+                        "title": "Alice Chen",
+                        "subtitle": "Design",
+                        "label": "@alice",
+                        "attrs": ["label": "@alice"]
+                    ])!
+                ])
+
+                XCTAssertTrue(
+                    toolbar.nativeChromeIsTransparentForTesting,
+                    "Native mention chips own the glass surface, so the surrounding toolbar chrome should be transparent"
+                )
+
+                _ = toolbar.setMentionSuggestions([])
+
+                XCTAssertFalse(
+                    toolbar.nativeChromeIsTransparentForTesting,
+                    "The native toolbar chrome should return when mention suggestions are cleared"
+                )
+            }
+        #endif
+    }
+
+    func testAccessoryToolbarNativeMentionChromeTransitionAnimatesWhenHosted() {
+        #if compiler(>=6.2)
+            guard #available(iOS 26.0, *) else {
+                return
+            }
+
+            let animationsWereEnabled = UIView.areAnimationsEnabled
+            UIView.setAnimationsEnabled(true)
+            defer {
+                UIView.setAnimationsEnabled(animationsWereEnabled)
+            }
+
+            let toolbar = EditorAccessoryToolbarView(frame: CGRect(x: 0, y: 0, width: 320, height: 56))
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+            let viewController = UIViewController()
+            window.rootViewController = viewController
+            window.makeKeyAndVisible()
+            viewController.view.addSubview(toolbar)
+            toolbar.layoutIfNeeded()
+            defer {
+                toolbar.removeFromSuperview()
+                window.isHidden = true
+            }
+
+            toolbar.apply(theme: EditorToolbarTheme(dictionary: [
+                "appearance": "native"
+            ]))
 
             _ = toolbar.setMentionSuggestions([
                 NativeMentionSuggestion(dictionary: [
@@ -120,76 +173,23 @@ extension RichTextEditorViewTests {
                     "title": "Alice Chen",
                     "subtitle": "Design",
                     "label": "@alice",
-                    "attrs": ["label": "@alice"],
-                ])!,
+                    "attrs": ["label": "@alice"]
+                ])!
             ])
 
-            XCTAssertTrue(
-                toolbar.nativeChromeIsTransparentForTesting,
-                "Native mention chips own the glass surface, so the surrounding toolbar chrome should be transparent"
-            )
-
-            _ = toolbar.setMentionSuggestions([])
-
+            XCTAssertTrue(toolbar.didAnimateChromeTransitionForTesting)
             XCTAssertFalse(
                 toolbar.nativeChromeIsTransparentForTesting,
-                "The native toolbar chrome should return when mention suggestions are cleared"
+                "The outer chrome should fade out instead of disappearing immediately"
             )
-        }
-        #endif
-    }
 
-    func testAccessoryToolbarNativeMentionChromeTransitionAnimatesWhenHosted() {
-        #if compiler(>=6.2)
-        guard #available(iOS 26.0, *) else {
-            return
-        }
+            let expectation = expectation(description: "chrome transition completed")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                expectation.fulfill()
+            }
+            wait(for: [expectation], timeout: 1.0)
 
-        let animationsWereEnabled = UIView.areAnimationsEnabled
-        UIView.setAnimationsEnabled(true)
-        defer {
-            UIView.setAnimationsEnabled(animationsWereEnabled)
-        }
-
-        let toolbar = EditorAccessoryToolbarView(frame: CGRect(x: 0, y: 0, width: 320, height: 56))
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-        let viewController = UIViewController()
-        window.rootViewController = viewController
-        window.makeKeyAndVisible()
-        viewController.view.addSubview(toolbar)
-        toolbar.layoutIfNeeded()
-        defer {
-            toolbar.removeFromSuperview()
-            window.isHidden = true
-        }
-
-        toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
-        ]))
-
-        _ = toolbar.setMentionSuggestions([
-            NativeMentionSuggestion(dictionary: [
-                "key": "alice",
-                "title": "Alice Chen",
-                "subtitle": "Design",
-                "label": "@alice",
-                "attrs": ["label": "@alice"],
-            ])!,
-        ])
-
-        XCTAssertTrue(toolbar.didAnimateChromeTransitionForTesting)
-        XCTAssertFalse(
-            toolbar.nativeChromeIsTransparentForTesting,
-            "The outer chrome should fade out instead of disappearing immediately"
-        )
-
-        let expectation = expectation(description: "chrome transition completed")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            expectation.fulfill()
-        }
-        wait(for: [expectation], timeout: 1.0)
-
-        XCTAssertTrue(toolbar.nativeChromeIsTransparentForTesting)
+            XCTAssertTrue(toolbar.nativeChromeIsTransparentForTesting)
         #endif
     }
 
@@ -204,7 +204,7 @@ extension RichTextEditorViewTests {
                 "title": "Alice Chen",
                 "subtitle": "Design",
                 "label": "@alice",
-                "attrs": ["label": "@alice"],
+                "attrs": ["label": "@alice"]
             ])!,
             theme: nil,
             toolbarAppearance: .native
@@ -221,7 +221,7 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: CGRect(x: 0, y: 0, width: 320, height: 0))
 
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
+            "appearance": "native"
         ]))
         toolbar.layoutIfNeeded()
 
@@ -235,7 +235,7 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: CGRect(x: 0, y: 0, width: 180, height: 56))
 
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
+            "appearance": "native"
         ]))
         toolbar.layoutIfNeeded()
 
@@ -256,7 +256,7 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: CGRect(x: 0, y: 0, width: 180, height: 56))
 
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
+            "appearance": "native"
         ]))
         toolbar.layoutIfNeeded()
 

@@ -52,7 +52,7 @@ internal fun EditorEditText.scheduleSelectionUpdateAfterRestartInput(source: Str
             imeStart,
             imeEnd,
             imeComposingStart,
-            imeComposingEnd,
+            imeComposingEnd
         )
         recordImeTraceForTesting(
             "updateSelectionAfterRestart",
@@ -86,17 +86,15 @@ internal fun EditorEditText.clearCompositionInvalidationForEditor() {
     didInvalidateCompositionReplacementRange = false
 }
 
-internal fun EditorEditText.nextInputConnectionGenerationForEditor(): Long {
-    return inputConnectionGeneration
-}
+internal fun EditorEditText.nextInputConnectionGenerationForEditor(): Long =
+    inputConnectionGeneration
 
 internal fun EditorEditText.isInputConnectionCurrentForEditorImpl(
     boundEditorId: Long,
     boundGeneration: Long
-): Boolean =
-    editorId == boundEditorId &&
-        inputConnectionGeneration == boundGeneration &&
-        !isEditorDestroyedForInput()
+): Boolean = editorId == boundEditorId &&
+    inputConnectionGeneration == boundGeneration &&
+    !isEditorDestroyedForInput()
 
 internal fun EditorEditText.invalidateInputConnectionsForEditor() {
     inputConnectionGeneration += 1L
@@ -106,7 +104,7 @@ internal fun EditorEditText.invalidateInputConnectionsForEditor() {
 }
 
 internal fun EditorEditText.imeTextCoordinateMapperForEditorImpl(
-    boundGeneration: Long = inputConnectionGeneration,
+    boundGeneration: Long = inputConnectionGeneration
 ): ImeTextCoordinateMapper? {
     if (boundGeneration != inputConnectionGeneration) return null
     val cached = cachedImeTextCoordinateMapper

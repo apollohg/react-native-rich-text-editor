@@ -1,5 +1,5 @@
-import UIKit
 import os
+import UIKit
 
 extension EditorTextView {
     @objc func handleIndentKeyCommand() {
@@ -29,7 +29,7 @@ extension EditorTextView {
         }
         let attrs = textStorage.attributes(at: cursorUtf16Offset, effectiveRange: nil)
         guard attrs[.attachment] is NSTextAttachment,
-              attrs[RenderBridgeAttributes.voidNodeType] as? String != nil,
+              attrs[RenderBridgeAttributes.voidNodeType] is String,
               cursorScalar < UInt32.max
         else {
             return nil
@@ -76,7 +76,7 @@ extension EditorTextView {
         let attrs = textStorage.attributes(at: utf16Offset, effectiveRange: nil)
         guard let attachment = attrs[.attachment] as? NSTextAttachment,
               !(attachment is AtomBlockAttachment),
-              attrs[RenderBridgeAttributes.voidNodeType] as? String != nil
+              attrs[RenderBridgeAttributes.voidNodeType] is String
         else {
             return nil
         }
@@ -221,7 +221,6 @@ extension EditorTextView {
 
     /// Handle return key press as a block split operation.
     private func handleReturnKey() {
-        // If there's a range selection, atomically delete and split.
         if let selectedRange = selectedTextRange, !selectedRange.isEmpty {
             let range = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
             let updateJSON = EditorV2Shadow.deleteAndSplitScalar(
@@ -297,7 +296,6 @@ extension EditorTextView {
     /// Paste plain text through Rust.
     func pastePlainText(_ text: String) {
         if let selectedRange = selectedTextRange, !selectedRange.isEmpty {
-            // Atomically replace the selection with the pasted text.
             let range = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
             Self.inputLog.debug(
                 "[rust.pastePlainText.replace] text=\(self.preview(text), privacy: .public) scalar=\(range.from)-\(range.to) selection=\(self.selectionSummary(), privacy: .public)"

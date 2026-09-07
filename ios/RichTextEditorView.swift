@@ -418,7 +418,7 @@ final class RichTextEditorView: UIView {
         let viewport = textView.bounds
         guard width > 0,
               force || abs(width - lastAtomContentWidth) > 0.5
-                || positions != lastAtomPositions || viewport != lastAtomViewport
+              || positions != lastAtomPositions || viewport != lastAtomViewport
         else { return }
         lastAtomContentWidth = width
         lastAtomPositions = positions
@@ -437,7 +437,7 @@ final class RichTextEditorView: UIView {
                 "key": key,
                 "x": Double(textView.textContainerInset.left + padding),
                 "y": Double(textView.textContainerInset.top + rect.minY),
-                "height": Double(attachment.reservedHeight),
+                "height": Double(attachment.reservedHeight)
             ]
         }
     }

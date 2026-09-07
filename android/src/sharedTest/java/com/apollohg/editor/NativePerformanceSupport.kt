@@ -1,14 +1,14 @@
 package com.apollohg.editor
 
-import android.graphics.Color
 import android.app.Instrumentation
 import android.content.Context
+import android.graphics.Color
 import android.os.Looper
 import android.os.SystemClock
-import android.view.ViewGroup
 import android.view.Choreographer
-import androidx.recyclerview.widget.RecyclerView
+import android.view.ViewGroup
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.apollohg.editor.viewer.PreparedProseInstrumentation
 import com.apollohg.editor.viewer.PreparedProseLayoutRegistry
 import java.util.Locale
@@ -23,7 +23,7 @@ import org.json.JSONObject
  * same complete compiler configuration that the public viewer builder receives. */
 internal data class PreparedProseBenchmarkConfiguration(
     val configJson: String,
-    val imagePolicyJson: String,
+    val imagePolicyJson: String
 ) {
     companion object {
         fun load(context: Context): PreparedProseBenchmarkConfiguration {
@@ -32,16 +32,13 @@ internal data class PreparedProseBenchmarkConfiguration(
                 .use { JSONObject(it.readText()) }
             return PreparedProseBenchmarkConfiguration(
                 configJson = root.getJSONObject("configuration").toString(),
-                imagePolicyJson = root.getJSONObject("imageLoadingPolicy").toString(),
+                imagePolicyJson = root.getJSONObject("imageLoadingPolicy").toString()
             )
         }
     }
 }
 
-internal data class TimingStats(
-    val name: String,
-    val samplesNanos: List<Long>
-) {
+internal data class TimingStats(val name: String, val samplesNanos: List<Long>) {
     val averageMillis: Double = samplesNanos.average() / 1_000_000.0
 
     private val relativeStdDev: Double = run {
@@ -76,13 +73,12 @@ internal data class TimingStats(
     }
 }
 
-/** Pixel 7 release gate, evaluated only by the Task 14 device lane. */
 internal object PreparedProsePerformanceGates {
     private const val NS_PER_MS = 1_000_000L
     fun assertPasses(
         exportJson: String,
         expectedDocuments: Int,
-        expectedWindows: List<PreparedProseRecyclerHarness.WarmWindow>,
+        expectedWindows: List<PreparedProseRecyclerHarness.WarmWindow>
     ) {
         val export = JSONObject(exportJson)
         val phases = export.getJSONObject("phaseSamples")
@@ -101,7 +97,9 @@ internal object PreparedProsePerformanceGates {
         requireNonEmpty(layout, "cold layout")
         requireNonEmpty(lookup, "cold cache lookup")
         requireNonEmpty(draw, "cold draw")
-        check(combined.size >= expectedDocuments) { "expected cold compile+layout samples for every corpus document" }
+        check(combined.size >= expectedDocuments) {
+            "expected cold compile+layout samples for every corpus document"
+        }
         val combinedP95 = percentile(combined, .95)
         check(combinedP95 < 4 * NS_PER_MS) {
             buildString {
@@ -109,10 +107,14 @@ internal object PreparedProsePerformanceGates {
                 append("combined p50/p99/max=${micros(percentile(combined, .50))}/")
                 append("${micros(percentile(combined, .99))}/${micros(combined.max())}us, ")
                 append("compile p50/p95/p99=${micros(percentile(compile, .50))}/")
-                append("${micros(percentile(compile, .95))}/${micros(percentile(compile, .99))}us, ")
+                append(
+                    "${micros(percentile(compile, .95))}/${micros(percentile(compile, .99))}us, "
+                )
                 append("layout p50/p95/p99=${micros(percentile(layout, .50))}/")
                 append("${micros(percentile(layout, .95))}/${micros(percentile(layout, .99))}us; ")
-                append("samples combined/compile/layout=${combined.size}/${compile.size}/${layout.size}")
+                append(
+                    "samples combined/compile/layout=${combined.size}/${compile.size}/${layout.size}"
+                )
             }
         }
         check(percentile(lookup, .99) < 100_000L)
@@ -122,11 +124,13 @@ internal object PreparedProsePerformanceGates {
         listOf(
             "cold" to cold,
             "warm" to warm,
-            "imagesDisabled" to imagesDisabled,
+            "imagesDisabled" to imagesDisabled
         ).forEach { (name, phase) ->
-            check(phase.getInt("drawCount") > 0) { "phase must contain actual viewer draw evidence" }
+            check(phase.getInt("drawCount") > 0) {
+                "phase must contain actual viewer draw evidence"
+            }
             val rawFrameDeltas = phase.getJSONArray("rawFrameDeltasNanos").longs()
-            requireNonEmpty(rawFrameDeltas, "${phase} raw frame")
+            requireNonEmpty(rawFrameDeltas, "$phase raw frame")
             val deadline = Math.addExact(nominalFramePeriodNanos, singleTickToleranceNanos)
             val onTimeCount = rawFrameDeltas.count { it <= deadline }
             val onTimeRatio = onTimeCount.toDouble() / rawFrameDeltas.size
@@ -138,7 +142,10 @@ internal object PreparedProsePerformanceGates {
         }
         val warmViewerCausedIntervals = warm.getJSONArray("viewerCausedDelayedIntervals").objects()
         check(warmViewerCausedIntervals.all { it.getBoolean("viewerCaused") })
-        check((warmViewerCausedIntervals.maxOfOrNull { it.getLong("rawDeltaNanos") } ?: 0L) <= 33_300_000L)
+        check(
+            (warmViewerCausedIntervals.maxOfOrNull { it.getLong("rawDeltaNanos") } ?: 0L) <=
+                33_300_000L
+        )
         check(imagesDisabled.getInt("imageRequestCount") == 0)
         check(imagesDisabled.getInt("imageMetadataCount") == 0)
         check(imagesDisabled.getInt("imageDecodeCount") == 0)
@@ -156,7 +163,10 @@ internal object PreparedProsePerformanceGates {
             check(window.getInt("layoutCount") == 0)
             check(window.getInt("cacheMisses") == 0)
             check(window.getInt("residentKeyCount") == window.getJSONArray("entryIds").length())
-            check(window.getJSONObject("cache").getLong("unmountedHighWaterBytes") <= 32L * 1024L * 1024L)
+            check(
+                window.getJSONObject("cache").getLong("unmountedHighWaterBytes") <=
+                    32L * 1024L * 1024L
+            )
         }
         check(export.optInt("duplicatePublications") == 0)
     }
@@ -169,31 +179,36 @@ internal object PreparedProsePerformanceGates {
      */
     fun assertExactWindowEvidence(
         evidence: JSONArray,
-        expectedWindows: List<PreparedProseRecyclerHarness.WarmWindow>,
+        expectedWindows: List<PreparedProseRecyclerHarness.WarmWindow>
     ) {
         check(expectedWindows.size == 27) { "expected the 27 literal warm windows" }
         val records = evidence.objects()
         assertWindowSeries(
             records.filter { it.getString("phase") == "cold" },
             expectedWindows.map { it to it.primeIds },
-            "cold",
+            "cold"
         )
         assertWindowSeries(
             records.filter { it.getString("phase") == "warm" },
             expectedWindows.map { it to it.warmIds },
-            "warm",
+            "warm"
         )
         assertWindowSeries(
             records.filter { it.getString("phase") == "imagesDisabled" },
-            expectedWindows.flatMap { window -> listOf(window to window.primeIds, window to window.warmIds) },
-            "imagesDisabled",
+            expectedWindows.flatMap { window ->
+                listOf(
+                    window to window.primeIds,
+                    window to window.warmIds
+                )
+            },
+            "imagesDisabled"
         )
     }
 
     private fun assertWindowSeries(
         actual: List<JSONObject>,
         expected: List<Pair<PreparedProseRecyclerHarness.WarmWindow, List<String>>>,
-        phase: String,
+        phase: String
     ) {
         check(actual.size == expected.size) {
             "expected ${expected.size} $phase window records, found ${actual.size}"
@@ -212,16 +227,23 @@ internal object PreparedProsePerformanceGates {
     private fun JSONArray.longs() = List(length()) { getLong(it) }
     private fun JSONArray.objects() = List(length()) { getJSONObject(it) }
     private fun JSONArray.strings() = List(length()) { getString(it) }
-    private fun requireNonEmpty(values: List<Long>, name: String) = check(values.isNotEmpty()) { "$name evidence must be nonempty" }
+    private fun requireNonEmpty(values: List<Long>, name: String) =
+        check(values.isNotEmpty()) { "$name evidence must be nonempty" }
+
     /** Nearest rank shared with iOS: sorted[ceil(p * n) - 1]. */
-    private fun percentile(values: List<Long>, percentile: Double): Long = values.sorted()[(kotlin.math.ceil(values.size * percentile).toInt() - 1).coerceAtLeast(0)]
+    private fun percentile(values: List<Long>, percentile: Double): Long = values.sorted()[
+        (
+            kotlin.math.ceil(values.size * percentile).toInt() -
+                1
+            ).coerceAtLeast(0)
+    ]
     private fun micros(value: Long): Double = value / 1_000.0
 }
 
 /** Actual RecyclerView traversal: holders host the shipped ProseViewerView. */
 internal class PreparedProseRecyclerHarness(
     context: Context,
-    private val configuration: PreparedProseBenchmarkConfiguration,
+    private val configuration: PreparedProseBenchmarkConfiguration
 ) : RecyclerView(context) {
     data class Entry(val id: String, val contentJson: String)
     data class WarmWindow(val id: String, val primeIds: List<String>, val warmIds: List<String>)
@@ -230,13 +252,13 @@ internal class PreparedProseRecyclerHarness(
         val residentKeyDigest: String,
         val compileCount: Int,
         val layoutCount: Int,
-        val cacheMisses: Int,
+        val cacheMisses: Int
     )
     data class WindowTraversalResult(
         val windowId: String,
         val prime: WindowPhaseResult,
         val warm: WindowPhaseResult,
-        val initialLeadingHolderAttached: Boolean,
+        val initialLeadingHolderAttached: Boolean
     )
 
     private enum class Direction { PRIME, WARM }
@@ -252,18 +274,23 @@ internal class PreparedProseRecyclerHarness(
         var submissionGeneration: Long = NO_SUBMISSION_GENERATION,
         var finishingDirection: Boolean = false,
         var evidenceActive: Boolean = false,
-        val attachmentDeadlineUptimeMs: Long = SystemClock.uptimeMillis() + INITIAL_ATTACHMENT_TIMEOUT_MS,
+        val attachmentDeadlineUptimeMs: Long = SystemClock.uptimeMillis() +
+            INITIAL_ATTACHMENT_TIMEOUT_MS
     )
 
     private val benchmarkAdapter = object : RecyclerView.Adapter<Holder>() {
         var entries: List<Entry> = emptyList()
         var imagesEnabled = true
         private var submissionGeneration = NO_SUBMISSION_GENERATION
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = Holder(ProseViewerView(parent.context), configuration)
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
+            Holder(ProseViewerView(parent.context), configuration)
         override fun onBindViewHolder(holder: Holder, position: Int) {
             holder.bind(entries[position], imagesEnabled, submissionGeneration)
         }
-        override fun onViewRecycled(holder: Holder) { holder.viewer.prepareForReuse(); super.onViewRecycled(holder) }
+        override fun onViewRecycled(holder: Holder) {
+            holder.viewer.prepareForReuse()
+            super.onViewRecycled(holder)
+        }
         override fun getItemCount() = entries.size
         fun submit(nextEntries: List<Entry>, nextImagesEnabled: Boolean): Long {
             submissionGeneration = Math.addExact(submissionGeneration, 1L)
@@ -306,12 +333,17 @@ internal class PreparedProseRecyclerHarness(
         windows: List<WarmWindow>,
         entriesById: Map<String, Entry>,
         phase: PreparedProseInstrumentation.TraversalPhase,
-        imagesEnabled: Boolean,
+        imagesEnabled: Boolean
     ): List<WindowTraversalResult> {
-        require(phase == PreparedProseInstrumentation.TraversalPhase.COLD || phase == PreparedProseInstrumentation.TraversalPhase.IMAGES_DISABLED)
+        require(
+            phase == PreparedProseInstrumentation.TraversalPhase.COLD ||
+                phase == PreparedProseInstrumentation.TraversalPhase.IMAGES_DISABLED
+        )
         windowEntriesById.clear()
         windowEntriesById.putAll(entriesById)
-        return windows.map { window -> traverseWindow(instrumentation, window, phase, imagesEnabled) }
+        return windows.map { window ->
+            traverseWindow(instrumentation, window, phase, imagesEnabled)
+        }
     }
 
     /** Robolectric entrypoint for the same attached RecyclerView lifecycle. */
@@ -320,10 +352,15 @@ internal class PreparedProseRecyclerHarness(
         entriesById: Map<String, Entry>,
         phase: PreparedProseInstrumentation.TraversalPhase,
         imagesEnabled: Boolean,
-        completion: (Result<List<WindowTraversalResult>>) -> Unit,
+        completion: (Result<List<WindowTraversalResult>>) -> Unit
     ) {
-        check(Looper.myLooper() == Looper.getMainLooper()) { "Robolectric traversal must start on the main thread" }
-        require(phase == PreparedProseInstrumentation.TraversalPhase.COLD || phase == PreparedProseInstrumentation.TraversalPhase.IMAGES_DISABLED)
+        check(Looper.myLooper() == Looper.getMainLooper()) {
+            "Robolectric traversal must start on the main thread"
+        }
+        require(
+            phase == PreparedProseInstrumentation.TraversalPhase.COLD ||
+                phase == PreparedProseInstrumentation.TraversalPhase.IMAGES_DISABLED
+        )
         windowEntriesById.clear()
         windowEntriesById.putAll(entriesById)
         val results = mutableListOf<WindowTraversalResult>()
@@ -334,8 +371,11 @@ internal class PreparedProseRecyclerHarness(
             }
             startWindow(windows[index], phase, imagesEnabled) { result ->
                 result.fold(
-                    onSuccess = { traversal -> results += traversal; start(index + 1) },
-                    onFailure = { error -> completion(Result.failure(error)) },
+                    onSuccess = { traversal ->
+                        results += traversal
+                        start(index + 1)
+                    },
+                    onFailure = { error -> completion(Result.failure(error)) }
                 )
             }
         }
@@ -346,7 +386,7 @@ internal class PreparedProseRecyclerHarness(
         instrumentation: Instrumentation,
         window: WarmWindow,
         phase: PreparedProseInstrumentation.TraversalPhase,
-        imagesEnabled: Boolean,
+        imagesEnabled: Boolean
     ): WindowTraversalResult {
         val completion = CountDownLatch(1)
         var result: Result<WindowTraversalResult>? = null
@@ -358,7 +398,9 @@ internal class PreparedProseRecyclerHarness(
                 completion.countDown()
             }
         }
-        check(completion.await(10, TimeUnit.SECONDS)) { "timed out waiting for RecyclerView window ${window.id}" }
+        check(completion.await(10, TimeUnit.SECONDS)) {
+            "timed out waiting for RecyclerView window ${window.id}"
+        }
         return requireNotNull(result).getOrThrow()
     }
 
@@ -366,12 +408,14 @@ internal class PreparedProseRecyclerHarness(
         window: WarmWindow,
         phase: PreparedProseInstrumentation.TraversalPhase,
         imagesEnabled: Boolean,
-        completion: (Result<WindowTraversalResult>) -> Unit,
+        completion: (Result<WindowTraversalResult>) -> Unit
     ) {
         check(isAttachedToWindow) { "RecyclerView must be attached before traversal" }
         check(activeWindow == null) { "a RecyclerView window traversal is already active" }
         val entries = window.primeIds.map { id ->
-            requireNotNull(windowEntriesById[id]) { "window ${window.id} references unknown entry $id" }
+            requireNotNull(windowEntriesById[id]) {
+                "window ${window.id} references unknown entry $id"
+            }
         }
         activeWindow = ActiveWindow(window, phase, imagesEnabled, completion)
         // Prime evidence includes RecyclerView's initial post-submit binds,
@@ -386,13 +430,19 @@ internal class PreparedProseRecyclerHarness(
         val active = activeWindow ?: return
         val expectedEntryId = active.window.primeIds.first()
         val holder = findViewHolderForAdapterPosition(0) as? Holder
-        if (holder?.boundSubmissionGeneration == active.submissionGeneration && holder.boundEntryId == expectedEntryId) {
+        if (holder?.boundSubmissionGeneration == active.submissionGeneration &&
+            holder.boundEntryId == expectedEntryId
+        ) {
             active.initialLeadingHolderAttached = true
             driveCurrentDirection()
             return
         }
         if (SystemClock.uptimeMillis() >= active.attachmentDeadlineUptimeMs) {
-            failActiveWindow(IllegalStateException("initial leading holder was not attached for ${active.window.id}"))
+            failActiveWindow(
+                IllegalStateException(
+                    "initial leading holder was not attached for ${active.window.id}"
+                )
+            )
             return
         }
         post { awaitInitialLeadingAttachment() }
@@ -402,7 +452,9 @@ internal class PreparedProseRecyclerHarness(
         val active = activeWindow ?: return
         active.finishingDirection = false
         PreparedProseLayoutRegistry.shared.beginBenchmarkResidentCensus()
-        val evidencePhase = if (active.direction == Direction.WARM && active.phase == PreparedProseInstrumentation.TraversalPhase.COLD) {
+        val evidencePhase = if (active.direction == Direction.WARM &&
+            active.phase == PreparedProseInstrumentation.TraversalPhase.COLD
+        ) {
             PreparedProseInstrumentation.TraversalPhase.WARM
         } else {
             active.phase
@@ -435,7 +487,13 @@ internal class PreparedProseRecyclerHarness(
     private fun completeDirectionIfIdleAndAttached() {
         val active = activeWindow ?: return
         if (scrollState != SCROLL_STATE_IDLE || active.finishingDirection) return
-        val destination = if (active.direction == Direction.PRIME) benchmarkAdapter.entries.lastIndex else 0
+        val destination = if (active.direction ==
+            Direction.PRIME
+        ) {
+            benchmarkAdapter.entries.lastIndex
+        } else {
+            0
+        }
         if (destination < 0 || findViewHolderForAdapterPosition(destination) == null) return
         active.finishingDirection = true
         finishDirection()
@@ -450,21 +508,29 @@ internal class PreparedProseRecyclerHarness(
             residentKeyDigest = census.digest,
             compileCount = counters.first - active.counters.first,
             layoutCount = counters.second - active.counters.second,
-            cacheMisses = counters.third - active.counters.third,
+            cacheMisses = counters.third - active.counters.third
         )
-        val evidencePhase = if (active.direction == Direction.WARM && active.phase == PreparedProseInstrumentation.TraversalPhase.COLD) {
+        val evidencePhase = if (active.direction == Direction.WARM &&
+            active.phase == PreparedProseInstrumentation.TraversalPhase.COLD
+        ) {
             PreparedProseInstrumentation.TraversalPhase.WARM
         } else {
             active.phase
         }
         PreparedProseInstrumentation.recordWindow(
             windowId = active.window.id,
-            entryIds = if (active.direction == Direction.PRIME) active.window.primeIds else active.window.warmIds,
+            entryIds = if (active.direction ==
+                Direction.PRIME
+            ) {
+                active.window.primeIds
+            } else {
+                active.window.warmIds
+            },
             phase = evidencePhase,
             residentKeyCount = result.residentKeyCount,
             residentKeyDigest = result.residentKeyDigest,
             cache = PreparedProseInstrumentation.snapshotCache(),
-            counters = Triple(result.compileCount, result.layoutCount, result.cacheMisses),
+            counters = Triple(result.compileCount, result.layoutCount, result.cacheMisses)
         )
         measuring = false
         Choreographer.getInstance().removeFrameCallback(frameCallback)
@@ -477,7 +543,16 @@ internal class PreparedProseRecyclerHarness(
             driveCurrentDirection()
         } else {
             activeWindow = null
-            active.completion(Result.success(WindowTraversalResult(active.window.id, requireNotNull(active.prime), result, active.initialLeadingHolderAttached)))
+            active.completion(
+                Result.success(
+                    WindowTraversalResult(
+                        active.window.id,
+                        requireNotNull(active.prime),
+                        result,
+                        active.initialLeadingHolderAttached
+                    )
+                )
+            )
         }
     }
 
@@ -497,18 +572,32 @@ internal class PreparedProseRecyclerHarness(
     fun exportBeforeReset(): String = PreparedProseInstrumentation.exportJson()
 
     fun resetCacheWhileMounted() {
-        check((0 until childCount).any { index ->
-            (getChildViewHolder(getChildAt(index)) as? Holder)?.viewer?.preparedLayoutForTesting != null
-        }) { "a prepared viewer must remain mounted before the reset" }
+        check(
+            (0 until childCount).any { index ->
+                (
+                    getChildViewHolder(
+                        getChildAt(index)
+                    ) as? Holder
+                    )?.viewer?.preparedLayoutForTesting !=
+                    null
+            }
+        ) { "a prepared viewer must remain mounted before the reset" }
         PreparedProseLayoutRegistry.shared.didReceiveMemoryWarning()
-        check((0 until childCount).any { index ->
-            (getChildViewHolder(getChildAt(index)) as? Holder)?.viewer?.preparedLayoutForTesting != null
-        }) { "the mounted prepared viewer must remain usable after the reset" }
+        check(
+            (0 until childCount).any { index ->
+                (
+                    getChildViewHolder(
+                        getChildAt(index)
+                    ) as? Holder
+                    )?.viewer?.preparedLayoutForTesting !=
+                    null
+            }
+        ) { "the mounted prepared viewer must remain usable after the reset" }
     }
 
     private class Holder(
         val viewer: ProseViewerView,
-        private val configuration: PreparedProseBenchmarkConfiguration,
+        private val configuration: PreparedProseBenchmarkConfiguration
     ) : RecyclerView.ViewHolder(viewer) {
         var boundSubmissionGeneration: Long = NO_SUBMISSION_GENERATION
             private set
@@ -522,8 +611,8 @@ internal class PreparedProseRecyclerHarness(
                     configJson = configuration.configJson,
                     imagePolicyJson = configuration.imagePolicyJson,
                     imagesEnabled = imagesEnabled,
-                    collapsesWhenEmpty = true,
-                ),
+                    collapsesWhenEmpty = true
+                )
             )
             boundSubmissionGeneration = submissionGeneration
             boundEntryId = entry.id
@@ -552,45 +641,43 @@ internal data class ApplyUpdateTraceStats(
     private fun average(selector: (EditorEditText.ApplyUpdateTrace) -> Long): Double =
         if (traces.isEmpty()) 0.0 else traces.map(selector).average() / 1_000_000.0
 
-    fun summaryString(tag: String = "NativePerformanceTest"): String {
-        return buildString {
-            append("[")
-            append(tag)
-            append("] ")
-            append(name)
-            append(" avgMs={")
-            append("parse=")
-            append(String.format(Locale.US, "%.3f", average { it.parseNanos }))
-            append(", resolveBlocks=")
-            append(String.format(Locale.US, "%.3f", average { it.resolveRenderBlocksNanos }))
-            append(", patchEligibility=")
-            append(String.format(Locale.US, "%.3f", average { it.patchEligibilityNanos }))
-            append(", buildRender=")
-            append(String.format(Locale.US, "%.3f", average { it.buildRenderNanos }))
-            append(", applyRender=")
-            append(String.format(Locale.US, "%.3f", average { it.applyRenderNanos }))
-            append(", selection=")
-            append(String.format(Locale.US, "%.3f", average { it.selectionNanos }))
-            append(", postApply=")
-            append(String.format(Locale.US, "%.3f", average { it.postApplyNanos }))
-            append(", total=")
-            append(String.format(Locale.US, "%.3f", average { it.totalNanos }))
-            append("} patchUsage=")
-            append(traces.count { it.usedPatch })
-            append("/")
-            append(traces.size)
-            append(" skippedRender=")
-            append(traces.count { it.skippedRender })
-            append("/")
-            append(traces.size)
-        }
+    fun summaryString(tag: String = "NativePerformanceTest"): String = buildString {
+        append("[")
+        append(tag)
+        append("] ")
+        append(name)
+        append(" avgMs={")
+        append("parse=")
+        append(String.format(Locale.US, "%.3f", average { it.parseNanos }))
+        append(", resolveBlocks=")
+        append(String.format(Locale.US, "%.3f", average { it.resolveRenderBlocksNanos }))
+        append(", patchEligibility=")
+        append(String.format(Locale.US, "%.3f", average { it.patchEligibilityNanos }))
+        append(", buildRender=")
+        append(String.format(Locale.US, "%.3f", average { it.buildRenderNanos }))
+        append(", applyRender=")
+        append(String.format(Locale.US, "%.3f", average { it.applyRenderNanos }))
+        append(", selection=")
+        append(String.format(Locale.US, "%.3f", average { it.selectionNanos }))
+        append(", postApply=")
+        append(String.format(Locale.US, "%.3f", average { it.postApplyNanos }))
+        append(", total=")
+        append(String.format(Locale.US, "%.3f", average { it.totalNanos }))
+        append("} patchUsage=")
+        append(traces.count { it.usedPatch })
+        append("/")
+        append(traces.size)
+        append(" skippedRender=")
+        append(traces.count { it.skippedRender })
+        append("/")
+        append(traces.size)
     }
 }
 
 internal object NativePerformanceFixtureFactory {
-    private const val blockCount = 96
-    private const val paragraphCharacterCount = 180
-    private const val patchInsertIndex = 24
+    private const val BLOCK_COUNT = 96
+    private const val PARAGRAPH_CHARACTER_COUNT = 180
+    private const val PATCH_INSERT_INDEX = 24
 
     fun largeRenderJson(): String = largeRenderElements().toString()
 
@@ -611,24 +698,25 @@ internal object NativePerformanceFixtureFactory {
         val insertedBlock = emptyParagraphRenderBlock()
         val patchedBlocks = JSONArray()
         for (index in 0 until originalBlocks.length()) {
-            if (index == patchInsertIndex) {
+            if (index == PATCH_INSERT_INDEX) {
                 patchedBlocks.put(insertedBlock)
             }
             patchedBlocks.put(cloneJsonArray(originalBlocks.optJSONArray(index) ?: JSONArray()))
         }
-        if (patchInsertIndex >= originalBlocks.length()) {
+        if (PATCH_INSERT_INDEX >= originalBlocks.length()) {
             patchedBlocks.put(insertedBlock)
         }
 
-        val startIndex = if (patchInsertIndex > 0) patchInsertIndex - 1 else 0
+        val startIndex = if (PATCH_INSERT_INDEX > 0) PATCH_INSERT_INDEX - 1 else 0
         val oldDeleteCount = when {
             originalBlocks.length() == 0 -> 0
-            patchInsertIndex == 0 -> minOf(1, originalBlocks.length())
-            patchInsertIndex >= originalBlocks.length() -> 1
+            PATCH_INSERT_INDEX == 0 -> minOf(1, originalBlocks.length())
+            PATCH_INSERT_INDEX >= originalBlocks.length() -> 1
             else -> 2
         }
         val patchBlocks = JSONArray()
-        for (index in startIndex until minOf(patchedBlocks.length(), startIndex + oldDeleteCount + 1)) {
+        for (index in startIndex until
+            minOf(patchedBlocks.length(), startIndex + oldDeleteCount + 1)) {
             patchBlocks.put(cloneJsonArray(patchedBlocks.optJSONArray(index) ?: JSONArray()))
         }
 
@@ -662,7 +750,7 @@ internal object NativePerformanceFixtureFactory {
             Color.parseColor("#FF9500"),
             Color.parseColor("#FF2D55"),
             Color.parseColor("#AF52DE"),
-            Color.parseColor("#30B0C7"),
+            Color.parseColor("#30B0C7")
         )
 
         return evenlySpacedValues(1, upperBound, peerCount)
@@ -707,10 +795,13 @@ internal object NativePerformanceFixtureFactory {
         content.put(
             JSONObject()
                 .put("type", "h1")
-                .put("content", JSONArray().put(textNode(textFragment(seed = 10_000, minCharacterCount = 40))))
+                .put(
+                    "content",
+                    JSONArray().put(textNode(textFragment(seed = 10_000, minCharacterCount = 40)))
+                )
         )
 
-        for (index in 0 until blockCount) {
+        for (index in 0 until BLOCK_COUNT) {
             if (index > 0 && index % 18 == 0) {
                 content.put(JSONObject().put("type", "horizontalRule"))
             }
@@ -729,7 +820,7 @@ internal object NativePerformanceFixtureFactory {
                                             "content",
                                             richInlineDocContent(
                                                 seed = index,
-                                                totalCharacters = paragraphCharacterCount
+                                                totalCharacters = PARAGRAPH_CHARACTER_COUNT
                                             )
                                         )
                                 )
@@ -760,7 +851,7 @@ internal object NativePerformanceFixtureFactory {
                                 "content",
                                 richInlineDocContent(
                                     seed = index,
-                                    totalCharacters = paragraphCharacterCount
+                                    totalCharacters = PARAGRAPH_CHARACTER_COUNT
                                 )
                             )
                     )
@@ -810,10 +901,9 @@ internal object NativePerformanceFixtureFactory {
         content.put(node)
     }
 
-    private fun textNode(text: String): JSONObject =
-        JSONObject()
-            .put("type", "text")
-            .put("text", text)
+    private fun textNode(text: String): JSONObject = JSONObject()
+        .put("type", "text")
+        .put("text", text)
 
     private fun evenlySpacedValues(start: Int, endInclusive: Int, count: Int): List<Int> {
         if (count <= 1 || endInclusive <= start) {
@@ -821,7 +911,8 @@ internal object NativePerformanceFixtureFactory {
         }
 
         return (0 until count).map { index ->
-            start + (((endInclusive - start).toLong() * index.toLong()) / (count - 1).toLong()).toInt()
+            start +
+                (((endInclusive - start).toLong() * index.toLong()) / (count - 1).toLong()).toInt()
         }
     }
 
@@ -838,7 +929,7 @@ internal object NativePerformanceFixtureFactory {
             }
         )
 
-        for (index in 0 until blockCount) {
+        for (index in 0 until BLOCK_COUNT) {
             if (index > 0 && index % 18 == 0) {
                 blocks.put(
                     JSONArray().apply {
@@ -856,7 +947,7 @@ internal object NativePerformanceFixtureFactory {
                             appendRichInlineContent(
                                 this,
                                 seed = index,
-                                totalCharacters = paragraphCharacterCount
+                                totalCharacters = PARAGRAPH_CHARACTER_COUNT
                             )
                             appendBlockEnd(this)
                             appendBlockEnd(this)
@@ -876,7 +967,7 @@ internal object NativePerformanceFixtureFactory {
                             appendRichInlineContent(
                                 this,
                                 seed = index,
-                                totalCharacters = paragraphCharacterCount
+                                totalCharacters = PARAGRAPH_CHARACTER_COUNT
                             )
                             appendBlockEnd(this)
                         }
@@ -899,20 +990,15 @@ internal object NativePerformanceFixtureFactory {
         return flattened
     }
 
-    private fun emptyParagraphRenderBlock(): JSONArray =
-        JSONArray().apply {
-            appendBlockStart(this, nodeType = "paragraph", depth = 0)
-            appendTextRun(this, "\u200B")
-            appendBlockEnd(this)
-        }
+    private fun emptyParagraphRenderBlock(): JSONArray = JSONArray().apply {
+        appendBlockStart(this, nodeType = "paragraph", depth = 0)
+        appendTextRun(this, "\u200B")
+        appendBlockEnd(this)
+    }
 
     private fun cloneJsonArray(array: JSONArray): JSONArray = JSONArray(array.toString())
 
-    private fun appendRichInlineContent(
-        elements: JSONArray,
-        seed: Int,
-        totalCharacters: Int
-    ) {
+    private fun appendRichInlineContent(elements: JSONArray, seed: Int, totalCharacters: Int) {
         val text = textFragment(seed = seed, minCharacterCount = totalCharacters)
         val cutA = text.length / 4
         val cutB = text.length / 2
@@ -967,7 +1053,7 @@ internal object NativePerformanceFixtureFactory {
         val words = listOf(
             "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
             "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo",
-            "sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu",
+            "sierra", "tango", "uniform", "victor", "whiskey", "xray", "yankee", "zulu"
         )
 
         val builder = StringBuilder()

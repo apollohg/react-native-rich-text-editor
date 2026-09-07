@@ -54,8 +54,6 @@ pub enum UnknownTypeMode {
     /// retained in attrs.
     Preserve,
     /// Silently drop unknown nodes from the output.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     Skip,
 }
@@ -68,8 +66,6 @@ pub enum UnknownTypeMode {
 /// ```
 ///
 /// The `mode` parameter controls how unknown node/mark types are handled.
-// Not reachable from production call paths after the Task 16C legacy runtime
-// removal; exercised by crate tests.
 #[allow(dead_code)]
 pub fn from_prosemirror_json(
     json: &Value,
@@ -425,7 +421,6 @@ fn parse_marks(
                 JsonParseError::InvalidStructure("mark must have a string \"type\" field".into())
             })?;
 
-        // Check if mark exists in schema
         if schema.mark(mark_type).is_none() {
             return Err(JsonParseError::UnknownMark(mark_type.to_string()));
         }

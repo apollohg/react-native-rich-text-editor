@@ -1,15 +1,18 @@
 package com.apollohg.editor.viewer
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.graphics.Typeface
-import android.content.res.Configuration
-import com.apollohg.editor.ProseViewerConfiguration
-import com.apollohg.editor.ProseViewerSource
 import com.apollohg.editor.DecodedBitmapBudget
 import com.apollohg.editor.DecodedBitmapLease
 import com.apollohg.editor.DecodedBitmapPriority
+import com.apollohg.editor.ProseViewerConfiguration
+import com.apollohg.editor.ProseViewerSource
 import com.apollohg.editor.RenderImageLoader
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -17,14 +20,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class PreparedProseRevisionTest {
-    @Test fun visibleImagesAreAdmittedBeforePrefetchAndReleasedOutsideTheWindow() {
+    @Test
+    fun visibleImagesAreAdmittedBeforePrefetchAndReleasedOutsideTheWindow() {
         val budget = DecodedBitmapBudget(1024 * 1024)
         val bitmap = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
         val baseLease = requireNotNull(
@@ -46,21 +47,21 @@ class PreparedProseRevisionTest {
             "https://example.test/prefetch.png",
             Rect(200, 0, 220, 20),
             null,
-            ordinal = 0,
+            ordinal = 0
         )
         val visible = ViewerImageAttachment(
             "visible",
             "https://example.test/visible.png",
             Rect(0, 0, 20, 20),
             null,
-            ordinal = 1,
+            ordinal = 1
         )
 
         pipeline.begin("generation", true)
         pipeline.updateVisibleRect(Rect(0, 0, 100, 100), listOf(prefetch, visible))
         assertEquals(
             listOf(DecodedBitmapPriority.VISIBLE, DecodedBitmapPriority.PREFETCH),
-            priorities,
+            priorities
         )
         assertEquals(setOf("visible", "prefetch"), mounted.keys)
 
@@ -70,19 +71,26 @@ class PreparedProseRevisionTest {
         assertEquals(0, budget.retainedProcessBytesForTesting())
     }
 
-    @Test fun disabledImagesDoNotCreateRequests() {
+    @Test
+    fun disabledImagesDoNotCreateRequests() {
         val pipeline = ViewerImagePipeline()
         pipeline.begin("disabled", false)
-        pipeline.updateVisibleRect(Rect(0, 0, 100, 100), listOf(ViewerImageAttachment("i", "https://example.test/i.png", Rect(0, 0, 10, 10), null)))
+        pipeline.updateVisibleRect(
+            Rect(0, 0, 100, 100),
+            listOf(
+                ViewerImageAttachment("i", "https://example.test/i.png", Rect(0, 0, 10, 10), null)
+            )
+        )
         assertEquals(0, pipeline.requestCountForTesting)
     }
 
-    @Test fun inactiveViewerVisibilityCannotReleaseAnotherViewersPrefetch() {
+    @Test
+    fun inactiveViewerVisibilityCannotReleaseAnotherViewersPrefetch() {
         val budget = DecodedBitmapBudget(4_096)
         val cached = requireNotNull(
             budget.reserve(1_024, DecodedBitmapPriority.PREFETCH)?.commit(
                 Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888),
-                1_024,
+                1_024
             )
         )
         val mounted = mutableMapOf<String, DecodedBitmapLease>()
@@ -99,7 +107,7 @@ class PreparedProseRevisionTest {
             "https://example.test/prefetch.png",
             Rect(200, 0, 220, 20),
             null,
-            ordinal = 0,
+            ordinal = 0
         )
         val inactive = ViewerImagePipeline()
 
@@ -108,13 +116,13 @@ class PreparedProseRevisionTest {
         inactive.begin("disabled", false)
         inactive.updateVisibleRect(
             Rect(0, 0, 100, 100),
-            listOf(attachment.copy(bounds = Rect(0, 0, 20, 20))),
+            listOf(attachment.copy(bounds = Rect(0, 0, 20, 20)))
         )
         inactive.begin("stale", true)
         inactive.cancel()
         inactive.updateVisibleRect(
             Rect(0, 0, 100, 100),
-            listOf(attachment.copy(bounds = Rect(0, 0, 20, 20))),
+            listOf(attachment.copy(bounds = Rect(0, 0, 20, 20)))
         )
 
         assertEquals(setOf("prefetch"), mounted.keys)
@@ -123,12 +131,13 @@ class PreparedProseRevisionTest {
         assertEquals(0, budget.retainedProcessBytesForTesting())
     }
 
-    @Test fun pressureReleaseCannotRaceACompletedPrefetchPublication() {
+    @Test
+    fun pressureReleaseCannotRaceACompletedPrefetchPublication() {
         val budget = DecodedBitmapBudget(4_096)
         val cached = requireNotNull(
             budget.reserve(1_024, DecodedBitmapPriority.PREFETCH)?.commit(
                 Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888),
-                1_024,
+                1_024
             )
         )
         var completion: ((DecodedBitmapLease?) -> Unit)? = null
@@ -154,7 +163,7 @@ class PreparedProseRevisionTest {
             "https://example.test/prefetch.png",
             Rect(200, 0, 220, 20),
             null,
-            ordinal = 0,
+            ordinal = 0
         )
 
         pipeline.begin("active", true)
@@ -183,22 +192,26 @@ class PreparedProseRevisionTest {
         assertEquals(0, budget.retainedProcessBytesForTesting())
     }
 
-    @Test fun imagePipelineDoesNotAcquireBeforeMountedVisibility() {
+    @Test
+    fun imagePipelineDoesNotAcquireBeforeMountedVisibility() {
         val pipeline = ViewerImagePipeline()
         pipeline.begin("mounted", true)
         assertEquals(0, pipeline.requestCountForTesting)
     }
 
-    @Test fun zeroAndOffscreenVisibleRectsDoNotAcquireImages() {
+    @Test
+    fun zeroAndOffscreenVisibleRectsDoNotAcquireImages() {
         val pipeline = ViewerImagePipeline()
         pipeline.begin("visible", true)
-        val attachment = ViewerImageAttachment("i", "data:image/png;base64,", Rect(1000, 1000, 1010, 1010), null)
+        val attachment =
+            ViewerImageAttachment("i", "data:image/png;base64,", Rect(1000, 1000, 1010, 1010), null)
         pipeline.updateVisibleRect(Rect(), listOf(attachment))
         pipeline.updateVisibleRect(Rect(0, 0, 20, 20), listOf(attachment))
         assertEquals(0, pipeline.requestCountForTesting)
     }
 
-    @Test fun unknownMetadataAdvancesAttachmentRevisionOnce() {
+    @Test
+    fun unknownMetadataAdvancesAttachmentRevisionOnce() {
         val revisions = ViewerAttachmentRevisionState()
         revisions.admit(1)
         assertTrue(revisions.recordIntrinsicSize("i", 0, 10, 20, null))
@@ -206,7 +219,8 @@ class PreparedProseRevisionTest {
         assertEquals(1, revisions.revision)
     }
 
-    @Test fun intrinsicMetadataDoesNotReopenAcrossFabricReinstall() {
+    @Test
+    fun intrinsicMetadataDoesNotReopenAcrossFabricReinstall() {
         val state = ViewerAttachmentRevisionState()
         assertTrue(state.beginSemanticGeneration("semantic-a"))
         state.admit(1)
@@ -216,7 +230,8 @@ class PreparedProseRevisionTest {
         assertEquals(1, state.revision)
     }
 
-    @Test fun fabricMeasurementResetsSemanticSidecarBeforeMountBindsOrdinals() {
+    @Test
+    fun fabricMeasurementResetsSemanticSidecarBeforeMountBindsOrdinals() {
         val surface = FabricSurfaceToken(71, 9)
         try {
             val generation = FabricGenerationToken(surface, "semantic", 1)
@@ -235,7 +250,8 @@ class PreparedProseRevisionTest {
         }
     }
 
-    @Test fun `Fabric terminal sidecar release is idempotent and cannot remove another component`() {
+    @Test
+    fun `Fabric terminal sidecar release is idempotent and cannot remove another component`() {
         val registry = PreparedProseLayoutRegistry()
         val released = FabricSurfaceToken(71, 9)
         val sibling = FabricSurfaceToken(71, 10)
@@ -259,33 +275,53 @@ class PreparedProseRevisionTest {
         }
     }
 
-    @Test fun semanticIdentityIncludesAllPublicationInputsButExcludesStateRevisions() {
+    @Test
+    fun semanticIdentityIncludesAllPublicationInputsButExcludesStateRevisions() {
         val base = ProseViewerRequest(
             ProseViewerSource.Json("{\"type\":\"doc\"}"),
             ProseViewerConfiguration(
-                configJson = "{\"mentions\":{\"prefix\":\"@\"},\"maxLines\":2,\"overflow\":\"clip\"}",
+                configJson = """{"mentions":{"prefix":"@"},"maxLines":2,"overflow":"clip"}""",
                 themeJson = "{\"paragraph\":{\"fontSize\":16}}",
                 imagePolicyJson = "{\"maxDecodedBytes\":1024}",
                 imagesEnabled = true,
-                collapsesWhenEmpty = true,
-            ),
+                collapsesWhenEmpty = true
+            )
         )
-        val stateRevision = base.copy(nativeFontRevision = 3, fontEnvironmentRevision = 4, attachmentRevision = 5)
+        val stateRevision = base.copy(
+            nativeFontRevision = 3,
+            fontEnvironmentRevision = 4,
+            attachmentRevision = 5
+        )
         assertEquals(base.semanticGenerationIdentity, stateRevision.semanticGenerationIdentity)
         assertFalse(base.generationIdentity == stateRevision.generationIdentity)
 
         val variants = listOf(
             base.copy(source = ProseViewerSource.Html(base.source.value)),
-            base.copy(configuration = base.configuration.copy(configJson = "{\"mentions\":{\"prefix\":\"#\"},\"maxLines\":2,\"overflow\":\"clip\"}")),
-            base.copy(configuration = base.configuration.copy(themeJson = "{\"paragraph\":{\"fontSize\":18}}")),
-            base.copy(configuration = base.configuration.copy(imagePolicyJson = "{\"maxDecodedBytes\":2048}")),
+            base.copy(
+                configuration = base.configuration.copy(
+                    configJson = """{"mentions":{"prefix":"#"},"maxLines":2,"overflow":"clip"}"""
+                )
+            ),
+            base.copy(
+                configuration = base.configuration.copy(
+                    themeJson = "{\"paragraph\":{\"fontSize\":18}}"
+                )
+            ),
+            base.copy(
+                configuration = base.configuration.copy(
+                    imagePolicyJson = "{\"maxDecodedBytes\":2048}"
+                )
+            ),
             base.copy(configuration = base.configuration.copy(imagesEnabled = false)),
-            base.copy(configuration = base.configuration.copy(collapsesWhenEmpty = false)),
+            base.copy(configuration = base.configuration.copy(collapsesWhenEmpty = false))
         )
-        variants.forEach { assertFalse(base.semanticGenerationIdentity == it.semanticGenerationIdentity) }
+        variants.forEach {
+            assertFalse(base.semanticGenerationIdentity == it.semanticGenerationIdentity)
+        }
     }
 
-    @Test fun semanticReplacementResetsPublicationAndResourceErrorBitsExactlyOnce() {
+    @Test
+    fun semanticReplacementResetsPublicationAndResourceErrorBitsExactlyOnce() {
         val state = ViewerAttachmentRevisionState()
         assertTrue(state.beginSemanticGeneration("semantic-a"))
         state.admit(1)
@@ -299,14 +335,17 @@ class PreparedProseRevisionTest {
         assertTrue(state.recordResourceFailure(0))
     }
 
-    @Test fun allAdmittedUnknownAttachmentsBeyond256PublishOnceWithCompactBitset() {
+    @Test
+    fun allAdmittedUnknownAttachmentsBeyond256PublishOnceWithCompactBitset() {
         val state = ViewerAttachmentRevisionState()
         val count = 513
         val semanticIdentity = "semantic-byte-fixture"
         assertTrue(state.beginSemanticGeneration(semanticIdentity))
         state.admit(count)
         repeat(count) { index ->
-            assertTrue(state.recordIntrinsicSize("$index:https://example.test/image", index, 1, 1, null))
+            assertTrue(
+                state.recordIntrinsicSize("$index:https://example.test/image", index, 1, 1, null)
+            )
         }
         assertEquals(count.toLong(), state.revision)
         assertEquals(
@@ -315,14 +354,15 @@ class PreparedProseRevisionTest {
                 (count + 7) / 8 * 2 +
                 count * (Int.SIZE_BYTES * 3 + Long.SIZE_BYTES) +
                 semanticIdentity.length * 2 +
-                    (0 until count).sumOf { "$it:https://example.test/image".length * 2 },
-            state.retainedPublicationBytesForTesting,
+                (0 until count).sumOf { "$it:https://example.test/image".length * 2 },
+            state.retainedPublicationBytesForTesting
         )
         assertEquals(1 to 1, state.intrinsicSize(count - 1))
         assertFalse(state.recordIntrinsicSize("0:https://example.test/image", 0, 2, 2, null))
     }
 
-    @Test fun globalMetadataLRUEvictionFallsBackToOwnMeasurementSidecarWithoutRepublishing() {
+    @Test
+    fun globalMetadataLRUEvictionFallsBackToOwnMeasurementSidecarWithoutRepublishing() {
         val state = ViewerAttachmentRevisionState()
         ViewerImageIntrinsicStore.shared.clearAndSetEntryLimitForTesting(1)
         try {
@@ -330,10 +370,16 @@ class PreparedProseRevisionTest {
             state.admit(1)
             assertTrue(state.recordIntrinsicSize("7:https://example.test/a", 0, 10, 20, null))
             ViewerImageIntrinsicStore.shared.store("8:https://example.test/b", 20 to 10)
-            assertEquals(null, ViewerImageIntrinsicStore.shared.globalSize("7:https://example.test/a"))
-            assertEquals(10 to 20, FabricAttachmentSidecars.withMeasurementState(state) {
-                ViewerImageIntrinsicStore.shared.size("7:https://example.test/a")
-            })
+            assertEquals(
+                null,
+                ViewerImageIntrinsicStore.shared.globalSize("7:https://example.test/a")
+            )
+            assertEquals(
+                10 to 20,
+                FabricAttachmentSidecars.withMeasurementState(state) {
+                    ViewerImageIntrinsicStore.shared.size("7:https://example.test/a")
+                }
+            )
             assertFalse(state.recordIntrinsicSize("7:https://example.test/a", 0, 10, 20, null))
             assertEquals(1, state.revision)
         } finally {
@@ -341,7 +387,8 @@ class PreparedProseRevisionTest {
         }
     }
 
-    @Test fun concurrentFabricMeasurementScopesKeepEvictedIntrinsicMetadataSurfaceLocalAndCleanUp() {
+    @Test
+    fun concurrentFabricMeasurementScopesKeepEvictedIntrinsicMetadataSurfaceLocalAndCleanUp() {
         val first = FabricSurfaceToken(91, 1)
         val second = FabricSurfaceToken(92, 1)
         val firstGeneration = FabricGenerationToken(first, "first", 1)
@@ -355,7 +402,10 @@ class PreparedProseRevisionTest {
             val firstState = FabricAttachmentSidecars.begin(firstGeneration, "source-a-revision-1")
             firstState.admit(1)
             assertTrue(firstState.recordIntrinsicSize(id, 0, 80, 40, null))
-            val secondState = FabricAttachmentSidecars.begin(secondGeneration, "source-b-revision-2")
+            val secondState = FabricAttachmentSidecars.begin(
+                secondGeneration,
+                "source-b-revision-2"
+            )
             secondState.admit(1)
             assertTrue(secondState.recordIntrinsicSize(id, 0, 30, 60, null))
             assertEquals(1, firstState.revision)
@@ -408,23 +458,30 @@ class PreparedProseRevisionTest {
         }
     }
 
-    @Test fun mountedPixelOwnershipCountsOnlySurfaceMapEntries() {
+    @Test
+    fun mountedPixelOwnershipCountsOnlySurfaceMapEntries() {
         val shared = Bitmap.createBitmap(3, 2, Bitmap.Config.ARGB_8888)
         val replacement = Bitmap.createBitmap(4, 2, Bitmap.Config.ARGB_8888)
         assertEquals(
             PreparedProseDrawingView.IMAGE_PIXEL_MAP_RETAINED_BYTES +
                 PreparedProseDrawingView.IMAGE_PIXEL_ENTRY_RETAINED_BYTES * 2,
-            PreparedProseDrawingView.retainedImagePixelsBytes(mapOf("first" to shared, "second" to shared)),
+            PreparedProseDrawingView.retainedImagePixelsBytes(
+                mapOf(
+                    "first" to shared,
+                    "second" to shared
+                )
+            )
         )
         assertEquals(
             PreparedProseDrawingView.IMAGE_PIXEL_MAP_RETAINED_BYTES +
                 PreparedProseDrawingView.IMAGE_PIXEL_ENTRY_RETAINED_BYTES,
-            PreparedProseDrawingView.retainedImagePixelsBytes(mapOf("first" to replacement)),
+            PreparedProseDrawingView.retainedImagePixelsBytes(mapOf("first" to replacement))
         )
         assertEquals(0, PreparedProseDrawingView.retainedImagePixelsBytes(emptyMap<String, Any>()))
     }
 
-    @Test fun boundedIntrinsicMetadataEvictsOldestEntryDeterministically() {
+    @Test
+    fun boundedIntrinsicMetadataEvictsOldestEntryDeterministically() {
         val store = ViewerImageIntrinsicStore(entryLimit = 2)
         store.store("a", 10 to 10)
         store.store("b", 20 to 20)
@@ -434,7 +491,8 @@ class PreparedProseRevisionTest {
         assertEquals(30 to 30, store.size("c"))
     }
 
-    @Test fun staleGenerationCompletionIsRejected() {
+    @Test
+    fun staleGenerationCompletionIsRejected() {
         val pipeline = ViewerImagePipeline()
         pipeline.begin("one", true)
         pipeline.begin("two", true)
@@ -442,7 +500,8 @@ class PreparedProseRevisionTest {
         assertTrue(pipeline.acceptsCompletion("two"))
     }
 
-    @Test fun missingFamilyWarningSurvivesFontReplacementButNewSemanticGenerationWarns() {
+    @Test
+    fun missingFamilyWarningSurvivesFontReplacementButNewSemanticGenerationWarns() {
         ViewerFontEnvironment.resetMissingWarningsForTesting()
         try {
             assertTrue(ViewerFontEnvironment.warnOnceForMissingFamily("missing", "semantic-a"))
@@ -455,14 +514,23 @@ class PreparedProseRevisionTest {
         }
     }
 
-    @Test fun themeFamiliesUseOneSemanticWarningAcrossStylesAndLayoutRevisions() {
+    @Test
+    fun themeFamiliesUseOneSemanticWarningAcrossStylesAndLayoutRevisions() {
         ViewerFontEnvironment.resetFamilyRegistryForTesting()
         ViewerFontEnvironment.resetMissingWarningsForTesting()
         try {
             val family = "missing-theme-family-${System.nanoTime()}"
             val semanticA = "theme-warning-a-${System.nanoTime()}"
             val semanticB = "theme-warning-b-${System.nanoTime()}"
-            val theme = """{"text":{"fontFamily":"$family"},"paragraph":{"fontFamily":"$family"},"blockquote":{"text":{"fontFamily":"$family"}},"codeBlock":{"text":{"fontFamily":"$family"}},"headings":{"h1":{"fontFamily":"$family"},"h2":{"fontFamily":"$family"},"h3":{"fontFamily":"$family"},"h4":{"fontFamily":"$family"},"h5":{"fontFamily":"$family"},"h6":{"fontFamily":"$family"}},"links":{"fontFamily":"$family"}}"""
+            val theme =
+                """{"text":{"fontFamily":"$family"},""" +
+                    """"paragraph":{"fontFamily":"$family"},""" +
+                    """"blockquote":{"text":{"fontFamily":"$family"}},""" +
+                    """"codeBlock":{"text":{"fontFamily":"$family"}},""" +
+                    """"headings":{"h1":{"fontFamily":"$family"},""" +
+                    """"h2":{"fontFamily":"$family"},"h3":{"fontFamily":"$family"},""" +
+                    """"h4":{"fontFamily":"$family"},"h5":{"fontFamily":"$family"},""" +
+                    """"h6":{"fontFamily":"$family"}},"links":{"fontFamily":"$family"}}"""
             ViewerFontEnvironment.setPlatformFamilyResolverForTesting { false }
 
             PreparedProseTheme.resolve(theme, 1f, semanticGeneration = semanticA)
@@ -477,7 +545,8 @@ class PreparedProseRevisionTest {
         }
     }
 
-    @Test fun validThemeFamilyRemainsSilentAndCustomFallbackPreservesBoldItalic() {
+    @Test
+    fun validThemeFamilyRemainsSilentAndCustomFallbackPreservesBoldItalic() {
         ViewerFontEnvironment.resetFamilyRegistryForTesting()
         ViewerFontEnvironment.resetMissingWarningsForTesting()
         try {
@@ -486,9 +555,11 @@ class PreparedProseRevisionTest {
             PreparedProseTheme.resolve(
                 """{"paragraph":{"fontFamily":"viewer-theme-family"}}""",
                 1f,
-                semanticGeneration = validSemantic,
+                semanticGeneration = validSemantic
             )
-            assertTrue(ViewerFontEnvironment.warnOnceForMissingFamily("viewer-theme-family", validSemantic))
+            assertTrue(
+                ViewerFontEnvironment.warnOnceForMissingFamily("viewer-theme-family", validSemantic)
+            )
 
             val missingFamily = "missing-custom-family-${System.nanoTime()}"
             ViewerFontEnvironment.markFamilyUnavailable(missingFamily)
@@ -496,7 +567,7 @@ class PreparedProseRevisionTest {
                 missingFamily,
                 Typeface.BOLD_ITALIC,
                 Typeface.create("serif", Typeface.NORMAL),
-                "custom-fallback-${System.nanoTime()}",
+                "custom-fallback-${System.nanoTime()}"
             )
             assertEquals(Typeface.BOLD_ITALIC, resolved.style)
         } finally {
@@ -505,9 +576,18 @@ class PreparedProseRevisionTest {
         }
     }
 
-    @Test fun warningContextUsesSemanticIdentityInsteadOfLayoutReplacementIdentity() {
-        val base = ProseViewerRequest(ProseViewerSource.Json("{\"type\":\"doc\"}"), ProseViewerConfiguration(configJson = "{}"))
-        val replacement = base.copy(nativeFontRevision = 1, fontEnvironmentRevision = 2, attachmentRevision = 3)
+    @Test
+    fun warningContextUsesSemanticIdentityInsteadOfLayoutReplacementIdentity() {
+        val base =
+            ProseViewerRequest(
+                ProseViewerSource.Json("{\"type\":\"doc\"}"),
+                ProseViewerConfiguration(configJson = "{}")
+            )
+        val replacement = base.copy(
+            nativeFontRevision = 1,
+            fontEnvironmentRevision = 2,
+            attachmentRevision = 3
+        )
         val baseKey = ProseLayoutKey(
             semanticKey = "fixture",
             widthPx = 100,
@@ -517,7 +597,7 @@ class PreparedProseRevisionTest {
             densityBits = 1f.toRawBits().toLong(),
             attachmentRevision = base.attachmentRevision,
             generationIdentity = base.generationIdentity,
-            semanticGenerationIdentity = base.semanticGenerationIdentity,
+            semanticGenerationIdentity = base.semanticGenerationIdentity
         )
         val replacementKey = baseKey.copy(
             widthPx = 120,
@@ -525,13 +605,14 @@ class PreparedProseRevisionTest {
             fontEnvironmentRevision = replacement.fontEnvironmentRevision,
             attachmentRevision = replacement.attachmentRevision,
             generationIdentity = replacement.generationIdentity,
-            semanticGenerationIdentity = replacement.semanticGenerationIdentity,
+            semanticGenerationIdentity = replacement.semanticGenerationIdentity
         )
         assertFalse(baseKey.generationIdentity == replacementKey.generationIdentity)
         assertEquals(baseKey.semanticGenerationIdentity, replacementKey.semanticGenerationIdentity)
     }
 
-    @Test fun explicitFontAvailabilityAndSystemScaleEachPublishOneReplacementRevision() {
+    @Test
+    fun explicitFontAvailabilityAndSystemScaleEachPublishOneReplacementRevision() {
         val environment = ViewerFontEnvironment()
         val revisions = mutableListOf<Long>()
         environment.onInvalidated = revisions::add
@@ -541,31 +622,56 @@ class PreparedProseRevisionTest {
         assertEquals(listOf(1L, 2L), revisions)
     }
 
-    @Test fun fontScaleChangesResolvedGeometryWithoutDoubleDensity() {
+    @Test
+    fun fontScaleChangesResolvedGeometryWithoutDoubleDensity() {
         val base = PreparedProseTheme.resolve(null, density = 2f, fontScale = 1f)
         val scaled = PreparedProseTheme.resolve(null, density = 2f, fontScale = 1.5f)
         assertEquals(34f, base.paragraph.sizePx)
         assertEquals(51f, scaled.paragraph.sizePx)
     }
 
-    @Test fun registeredCustomFamilyNeverFalseWarnsAndOrdinaryPlatformFallbackWarnsOnce() {
+    @Test
+    fun registeredCustomFamilyNeverFalseWarnsAndOrdinaryPlatformFallbackWarnsOnce() {
         ViewerFontEnvironment.resetFamilyRegistryForTesting()
         ViewerFontEnvironment.resetMissingWarningsForTesting()
         try {
             ViewerFontEnvironment.registerAvailableFamily("viewer-test-font", Typeface.DEFAULT)
-            assertFalse(ViewerFontEnvironment.resolveFamily("viewer-test-font", Typeface.NORMAL, Typeface.SANS_SERIF).isDemonstrablyMissing)
+            assertFalse(
+                ViewerFontEnvironment.resolveFamily(
+                    "viewer-test-font",
+                    Typeface.NORMAL,
+                    Typeface.SANS_SERIF
+                ).isDemonstrablyMissing
+            )
             ViewerFontEnvironment.setPlatformFamilyResolverForTesting { false }
-            assertTrue(ViewerFontEnvironment.resolveFamily("ordinary-missing-font", Typeface.NORMAL, Typeface.SANS_SERIF).isDemonstrablyMissing)
-            assertTrue(ViewerFontEnvironment.warnOnceForMissingFamily("ordinary-missing-font", "semantic"))
-            assertFalse(ViewerFontEnvironment.warnOnceForMissingFamily("ordinary-missing-font", "semantic"))
-            assertFalse(ViewerFontEnvironment.resolveFamily("sans-serif", Typeface.NORMAL, Typeface.SANS_SERIF).isDemonstrablyMissing)
+            assertTrue(
+                ViewerFontEnvironment.resolveFamily(
+                    "ordinary-missing-font",
+                    Typeface.NORMAL,
+                    Typeface.SANS_SERIF
+                ).isDemonstrablyMissing
+            )
+            assertTrue(
+                ViewerFontEnvironment.warnOnceForMissingFamily("ordinary-missing-font", "semantic")
+            )
+            assertFalse(
+                ViewerFontEnvironment.warnOnceForMissingFamily("ordinary-missing-font", "semantic")
+            )
+            assertFalse(
+                ViewerFontEnvironment.resolveFamily(
+                    "sans-serif",
+                    Typeface.NORMAL,
+                    Typeface.SANS_SERIF
+                ).isDemonstrablyMissing
+            )
         } finally {
             ViewerFontEnvironment.resetMissingWarningsForTesting()
             ViewerFontEnvironment.resetFamilyRegistryForTesting()
         }
     }
 
-    @Test fun familyRegistrationInvalidatesMountedDirectAndFabricObserversOnceAndTeardownRemovesObserver() {
+    @Test
+    fun familyRegistrationInvalidatesMountedObserversOnceAndTeardownRemovesObserver() {
         ViewerFontEnvironment.resetFamilyRegistryForTesting()
         val direct = ViewerFontEnvironment()
         val fabric = ViewerFontEnvironment()
@@ -587,7 +693,8 @@ class PreparedProseRevisionTest {
         ViewerFontEnvironment.resetFamilyRegistryForTesting()
     }
 
-    @Test fun resourceFailureIsPublishedOncePerGenerationAndAttachment() {
+    @Test
+    fun resourceFailureIsPublishedOncePerGenerationAndAttachment() {
         val state = ViewerAttachmentRevisionState()
         assertTrue(state.beginSemanticGeneration("resource"))
         state.admit(1)

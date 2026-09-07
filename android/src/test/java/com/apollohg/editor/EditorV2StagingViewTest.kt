@@ -13,8 +13,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
@@ -41,7 +41,9 @@ class EditorV2StagingViewTest {
         editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.editorId = 4242L
         editText.v2Driver = adapter
-        adapter.setContentHtml("<p>Hello</p>")?.let { editText.applyUpdateJSON(it, notifyListener = false) }
+        adapter.setContentHtml("<p>Hello</p>")?.let {
+            editText.applyUpdateJSON(it, notifyListener = false)
+        }
         assertEquals("Hello", editText.text.toString())
     }
 
@@ -62,35 +64,50 @@ class EditorV2StagingViewTest {
     private fun adoptExternalRender(adapter: EditorV2Adapter, snapshot: String): String? =
         adapter.adoptExternalRender(snapshot)
 
-    private fun atomicRenderSnapshot(text: String, revision: String): String =
-        JSONObject()
-            .put(
-                "renderBlocks",
-                org.json.JSONArray().put(
-                    org.json.JSONArray()
-                        .put(JSONObject().put("type", "blockStart").put("nodeType", "paragraph").put("depth", 0))
-                        .put(JSONObject().put("type", "textRun").put("text", text).put("marks", org.json.JSONArray()))
-                        .put(JSONObject().put("type", "blockEnd"))
-                )
+    private fun atomicRenderSnapshot(text: String, revision: String): String = JSONObject()
+        .put(
+            "renderBlocks",
+            org.json.JSONArray().put(
+                org.json.JSONArray()
+                    .put(
+                        JSONObject().put(
+                            "type",
+                            "blockStart"
+                        ).put("nodeType", "paragraph").put("depth", 0)
+                    )
+                    .put(
+                        JSONObject().put(
+                            "type",
+                            "textRun"
+                        ).put("text", text).put("marks", org.json.JSONArray())
+                    )
+                    .put(JSONObject().put("type", "blockEnd"))
             )
-            .put("renderPatch", JSONObject.NULL)
-            .put("selection", JSONObject().put("type", "text").put("anchor", 1).put("head", 1).put("anchorScalar", 0).put("headScalar", 0))
-            .put(
-                "activeState",
-                JSONObject()
-                    .put("marks", JSONObject())
-                    .put("markAttrs", JSONObject())
-                    .put("nodes", JSONObject().put("paragraph", true))
-                    .put("commands", JSONObject())
-                    .put("allowedMarks", org.json.JSONArray().put("bold"))
-                    .put("insertableNodes", org.json.JSONArray().put("hardBreak"))
-            )
-            .put("historyState", JSONObject().put("canUndo", true).put("canRedo", false))
-            .put("documentVersion", revision)
-            .put("stateRevision", revision)
-            .put("scalarLength", text.length)
-            .put("documentIsEmpty", text.isEmpty())
-            .toString()
+        )
+        .put("renderPatch", JSONObject.NULL)
+        .put(
+            "selection",
+            JSONObject().put(
+                "type",
+                "text"
+            ).put("anchor", 1).put("head", 1).put("anchorScalar", 0).put("headScalar", 0)
+        )
+        .put(
+            "activeState",
+            JSONObject()
+                .put("marks", JSONObject())
+                .put("markAttrs", JSONObject())
+                .put("nodes", JSONObject().put("paragraph", true))
+                .put("commands", JSONObject())
+                .put("allowedMarks", org.json.JSONArray().put("bold"))
+                .put("insertableNodes", org.json.JSONArray().put("hardBreak"))
+        )
+        .put("historyState", JSONObject().put("canUndo", true).put("canRedo", false))
+        .put("documentVersion", revision)
+        .put("stateRevision", revision)
+        .put("scalarLength", text.length)
+        .put("documentIsEmpty", text.isEmpty())
+        .toString()
 
     @Test
     fun `view mutations route through the v2 adapter`() {
@@ -103,11 +120,15 @@ class EditorV2StagingViewTest {
     }
 
     @Test
-    fun `external N plus one render reaches the view before its first native key commits N plus two`() {
+    fun `external N plus one render reaches view before first native key commits N plus two`() {
         val session = backend.sessions.getValue(adapter.editorId)
         session.text.insert(0, "EXT")
         session.revision += 1u
-        val adopted = adoptExternalRender(adapter, atomicRenderSnapshot("EXTHello", session.revision.toString()))
+        val adopted =
+            adoptExternalRender(
+                adapter,
+                atomicRenderSnapshot("EXTHello", session.revision.toString())
+            )
         assertNotNull(adopted)
         editText.applyUpdateJSON(adopted!!, notifyListener = false)
         editText.setSelection(0)
@@ -128,7 +149,7 @@ class EditorV2StagingViewTest {
         inputConnection.setComposingText(" worl", 1)
         assertTrue(
             "transient composing state must stay native-only: $backend.calls",
-            backend.calls.none { it == "applyInput" || it == "applyCommand" },
+            backend.calls.none { it == "applyInput" || it == "applyCommand" }
         )
         val revisionBefore = adapter.baseDocumentRevision
         inputConnection.finishComposingText()
@@ -162,7 +183,7 @@ class EditorV2StagingViewTest {
     }
 
     @Test
-    fun `successful collapsed and replacement splits refresh the line boundary exactly once each`() {
+    fun `collapsed and replacement splits refresh the line boundary once each`() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         activity.setContentView(editText)
         assertTrue(editText.requestFocus())
@@ -202,7 +223,9 @@ class EditorV2StagingViewTest {
             editorId = 4343L
             v2Driver = readOnly
         }
-        readOnly.setContentHtml("<p>ab</p>")?.let { view.applyUpdateJSON(it, notifyListener = false) }
+        readOnly.setContentHtml("<p>ab</p>")?.let {
+            view.applyUpdateJSON(it, notifyListener = false)
+        }
         assertTrue(view.requestFocus())
         view.setSelection(2)
         view.clearImeTraceForTesting()
@@ -274,7 +297,9 @@ class EditorV2StagingViewTest {
         val view = EditorEditText(RuntimeEnvironment.getApplication())
         view.editorId = 4343L
         view.v2Driver = readOnly
-        readOnly.setContentHtml("<p>ab</p>")?.let { view.applyUpdateJSON(it, notifyListener = false) }
+        readOnly.setContentHtml("<p>ab</p>")?.let {
+            view.applyUpdateJSON(it, notifyListener = false)
+        }
         val errors = mutableListOf<EditorV2Error>()
         readOnly.onAutonomousError = { errors.add(it) }
 

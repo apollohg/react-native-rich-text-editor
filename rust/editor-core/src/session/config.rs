@@ -256,9 +256,6 @@ impl CollaborationLimits {
         }
     }
 
-    /// Test-only field mutation by wire name, shared by the in-crate limits
-    /// matrix and the staging integration-test support (which drives the
-    /// Task 9 receive ceilings to their exact/one-over boundaries).
     pub(crate) fn set_for_test(&mut self, field: &str, value: usize) {
         match field {
             "maxFramesPerMessage" => self.max_frames_per_message = value,

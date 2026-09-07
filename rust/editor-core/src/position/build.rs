@@ -31,8 +31,6 @@ pub(crate) fn classify_position_block(node: &Node, schema: &Schema) -> Option<Po
 
 /// Placeholder character used for void block-level nodes (e.g. horizontalRule)
 /// in the rendered text. U+FFFC OBJECT REPLACEMENT CHARACTER.
-// Not reachable from production call paths after the Task 16C legacy runtime
-// removal; exercised by crate tests.
 #[allow(dead_code)]
 pub const VOID_BLOCK_PLACEHOLDER: char = '\u{FFFC}';
 
@@ -149,7 +147,6 @@ fn walk_node(
     mut pending_prefix_len: u32,
 ) {
     if node.is_text() {
-        // Text nodes are inline content — handled by their parent block.
         return;
     }
 
@@ -176,7 +173,6 @@ fn walk_node(
     let content = node.content().expect("element nodes have content");
 
     if classify_position_block(node, schema) == Some(PositionBlockKind::Text) {
-        // This is a text block. Compute the scalar length from its inline content.
         let scalar_len = compute_inline_scalars(node, schema);
 
         blocks.push(BlockMapping {
@@ -193,7 +189,6 @@ fn walk_node(
         return;
     }
 
-    // Container node — recurse into children.
     let mut child_doc_offset = doc_offset;
     for (child_idx, child) in content.iter().enumerate() {
         let mut child_path = path.clone();

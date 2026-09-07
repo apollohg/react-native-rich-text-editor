@@ -553,7 +553,7 @@ pub(crate) fn apply_operations(
     schema: &Schema,
     operations: &[SemanticOperation],
 ) -> Result<Document, ()> {
-    let mut transaction = Transaction::new(crate::transform::Source::Input);
+    let mut transaction = Transaction::new();
     for operation in operations {
         transaction.add_step(operation.as_step());
     }

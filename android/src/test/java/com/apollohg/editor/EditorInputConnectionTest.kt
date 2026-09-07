@@ -7,9 +7,9 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Looper
 import android.provider.Settings
+import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
-import android.text.InputType
 import android.text.style.AbsoluteSizeSpan
 import android.view.MotionEvent
 import android.view.View
@@ -28,10 +28,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Shadows.shadowOf
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -48,7 +48,7 @@ internal class EditorInputConnectionTest : EditorInputConnectionTestFixture() {
         activity.setContentView(editText)
         editText.measure(
             View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(300, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(300, View.MeasureSpec.AT_MOST)
         )
         editText.layout(0, 0, editText.measuredWidth, editText.measuredHeight)
         assertTrue(editText.requestFocus())
@@ -82,7 +82,7 @@ internal class EditorInputConnectionTest : EditorInputConnectionTestFixture() {
         activity.setContentView(editText)
         editText.measure(
             View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(300, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(300, View.MeasureSpec.AT_MOST)
         )
         editText.layout(0, 0, editText.measuredWidth, editText.measuredHeight)
         val textLayout = requireNotNull(editText.layout)
@@ -111,7 +111,7 @@ internal class EditorInputConnectionTest : EditorInputConnectionTestFixture() {
         activity.setContentView(editText)
         editText.measure(
             View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(500, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(500, View.MeasureSpec.AT_MOST)
         )
         editText.layout(0, 0, editText.measuredWidth, editText.measuredHeight)
         val textLayout = requireNotNull(editText.layout)
@@ -203,10 +203,11 @@ internal class EditorInputConnectionTest : EditorInputConnectionTestFixture() {
             val listener = RecordingEditorListener()
             harness.editText.editorListener = listener
             val toggles = mutableListOf<Pair<Int, Int>>()
-            harness.editText.onToggleTaskItemCheckedAtSelectionScalarInRustForTesting = { anchor, head ->
-                listener.events.add("toggle")
-                toggles.add(anchor to head)
-            }
+            harness.editText.onToggleTaskItemCheckedAtSelectionScalarInRustForTesting =
+                { anchor, head ->
+                    listener.events.add("toggle")
+                    toggles.add(anchor to head)
+                }
             harness.editText.beginExternalTextComposition("speech-filtered-task")
             harness.editText.updateExternalTextComposition("speech-filtered-task", "letters")
             harness.editText.layoutParams = android.view.ViewGroup.LayoutParams(600, 240)
@@ -270,7 +271,9 @@ internal class EditorInputConnectionTest : EditorInputConnectionTestFixture() {
     @Test
     fun `external composition input filter failure is atomic`() {
         assertRealExternalCompositionPolicyFailure(
-            configJson = """{"initialization":{"type":"localEmpty"},"policy":{"inputFilter":"[unclosed"}}""",
+            configJson =
+                """{"initialization":{"type":"localEmpty"}""" +
+                    ""","policy":{"inputFilter":"[unclosed"}}""",
             initialText = "12",
             finalText = "letters"
         )

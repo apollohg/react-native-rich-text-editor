@@ -2,23 +2,23 @@ package com.apollohg.editor.viewer
 
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Rect
-import android.graphics.RectF
 import android.graphics.Path
 import android.graphics.PathMeasure
+import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.text.Layout
-import android.text.Spanned
 import android.text.SpannableString
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.LineHeightSpan
 import android.text.style.MetricAffectingSpan
+import android.text.style.ReplacementSpan
 import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
-import android.text.style.ReplacementSpan
 import com.apollohg.editor.EditorLinkTheme
 import com.apollohg.editor.EditorMentionTheme
 import com.apollohg.editor.EditorOrderedListMarkerTheme
@@ -52,7 +52,7 @@ internal fun mergeAdjacentSameLineSelectionFragments(fragments: List<Rect>): Lis
                 min(previous.left, fragment.left),
                 min(previous.top, fragment.top),
                 max(previous.right, fragment.right),
-                max(previous.bottom, fragment.bottom),
+                max(previous.bottom, fragment.bottom)
             )
         } else {
             merged += Rect(fragment)
@@ -74,14 +74,14 @@ internal data class FallbackLogicalBidiRun(
     val logicalIndex: Int,
     val documentStart: Int,
     val documentEnd: Int,
-    val level: Byte,
+    val level: Byte
 ) {
     val isRtl: Boolean get() = (level.toInt() and 1) == 1
 }
 
 internal data class FallbackVisualBidiRun(
     val visualIndex: Int,
-    val logicalRun: FallbackLogicalBidiRun,
+    val logicalRun: FallbackLogicalBidiRun
 ) {
     val documentStart: Int get() = logicalRun.documentStart
     val documentEnd: Int get() = logicalRun.documentEnd
@@ -101,7 +101,9 @@ internal data class FallbackVisualBidiRun(
  * logical run index. [Bidi.reorderVisually] is the public Unicode Bidi API
  * that turns those immutable logical records into left-to-right visual order.
  */
-internal fun visualBidiRuns(logicalRuns: List<FallbackLogicalBidiRun>): List<FallbackVisualBidiRun> {
+internal fun visualBidiRuns(
+    logicalRuns: List<FallbackLogicalBidiRun>
+): List<FallbackVisualBidiRun> {
     if (logicalRuns.isEmpty()) return emptyList()
 
     val levels = ByteArray(logicalRuns.size) { logicalRuns[it].level }
@@ -115,11 +117,17 @@ internal fun visualBidiRuns(logicalRuns: List<FallbackLogicalBidiRun>): List<Fal
 private fun fallbackHorizontalAtVisualEdge(
     layout: StaticLayout,
     offset: Int,
-    edge: FallbackVisualEdge,
+    edge: FallbackVisualEdge
 ): Float {
     val primary = layout.getPrimaryHorizontal(offset)
     val secondary = layout.getSecondaryHorizontal(offset)
-    return if (edge == FallbackVisualEdge.RIGHT) max(primary, secondary) else min(primary, secondary)
+    return if (edge ==
+        FallbackVisualEdge.RIGHT
+    ) {
+        max(primary, secondary)
+    } else {
+        min(primary, secondary)
+    }
 }
 
 /**
@@ -131,12 +139,13 @@ private fun fallbackHorizontalAtVisualEdge(
  */
 internal enum class FallbackLogicalCaretAffinity { LEADING_NEXT, TRAILING_PREVIOUS }
 
-internal fun FallbackVisualBidiRun.affinityAt(edge: FallbackVisualEdge): FallbackLogicalCaretAffinity =
-    if (offsetAt(edge) == documentStart) {
-        FallbackLogicalCaretAffinity.LEADING_NEXT
-    } else {
-        FallbackLogicalCaretAffinity.TRAILING_PREVIOUS
-    }
+internal fun FallbackVisualBidiRun.affinityAt(
+    edge: FallbackVisualEdge
+): FallbackLogicalCaretAffinity = if (offsetAt(edge) == documentStart) {
+    FallbackLogicalCaretAffinity.LEADING_NEXT
+} else {
+    FallbackLogicalCaretAffinity.TRAILING_PREVIOUS
+}
 
 /**
  * Mirrors Layout's primary-caret decision from the adjacent logical embedding
@@ -156,6 +165,7 @@ internal fun primaryIsTrailingPrevious(offset: Int, geometry: FallbackLineGeomet
     val levelAt = current?.level?.toInt() ?: paragraphLevel
     val levelBefore = when {
         offset == geometry.lineStart -> paragraphLevel
+
         else -> geometry.logicalRuns.firstOrNull {
             offset - 1 in it.documentStart until it.documentEnd
         }?.level?.toInt() ?: paragraphLevel
@@ -167,7 +177,7 @@ internal fun primaryIsTrailingPrevious(offset: Int, geometry: FallbackLineGeomet
 internal fun fallbackHorizontalForLogicalCaret(
     geometry: FallbackLineGeometry,
     offset: Int,
-    affinity: FallbackLogicalCaretAffinity,
+    affinity: FallbackLogicalCaretAffinity
 ): Float {
     val desiredTrailing = affinity == FallbackLogicalCaretAffinity.TRAILING_PREVIOUS
     return if (desiredTrailing == primaryIsTrailingPrevious(offset, geometry)) {
@@ -189,7 +199,7 @@ private fun softWrapTerminalBoundary(
     visualRuns: List<FallbackVisualBidiRun>,
     softWrapLineEnd: Int,
     outerLineBoundary: (FallbackVisualEdge) -> Float,
-    logicalCaretHorizontal: (offset: Int, affinity: FallbackLogicalCaretAffinity) -> Float,
+    logicalCaretHorizontal: (offset: Int, affinity: FallbackLogicalCaretAffinity) -> Float
 ): Float? {
     val terminalEdge = terminalRun.edgeForLogicalEnd()
     val isOuter = when (terminalEdge) {
@@ -230,7 +240,7 @@ internal fun fallbackSelectionRectForVisualRun(
     line: Int,
     width: Int,
     softWrapLineEnd: Int? = null,
-    softWrapTerminalBoundary: Float? = null,
+    softWrapTerminalBoundary: Float? = null
 ): Rect? {
     if (runStart >= runEnd) return null
 
@@ -249,7 +259,7 @@ internal fun fallbackSelectionRectForVisualRun(
         return fallbackHorizontalAtVisualEdge(
             layout,
             offset,
-            if (visualRightEdge) FallbackVisualEdge.RIGHT else FallbackVisualEdge.LEFT,
+            if (visualRightEdge) FallbackVisualEdge.RIGHT else FallbackVisualEdge.LEFT
         )
     }
 
@@ -257,7 +267,9 @@ internal fun fallbackSelectionRectForVisualRun(
     val end = visualBoundary(runEnd, logicalRunStart = false)
     val left = kotlin.math.floor(min(start, end)).toInt().coerceIn(0, width)
     val right = ceil(max(start, end)).toInt().coerceIn(0, width)
-    return Rect(left, layout.getLineTop(line), right, layout.getLineBottom(line)).takeIf { !it.isEmpty }
+    return Rect(left, layout.getLineTop(line), right, layout.getLineBottom(line)).takeIf {
+        !it.isEmpty
+    }
 }
 
 /**
@@ -278,7 +290,7 @@ internal data class FallbackLineGeometry(
     val logicalRuns: List<FallbackLogicalBidiRun>,
     val outerLineBoundary: (FallbackVisualEdge) -> Float,
     val primaryHorizontal: (Int) -> Float,
-    val secondaryHorizontal: (Int) -> Float,
+    val secondaryHorizontal: (Int) -> Float
 )
 
 /**
@@ -292,7 +304,7 @@ internal data class FallbackLineGeometry(
 internal fun fallbackSelectionRectsForGeometry(
     geometry: FallbackLineGeometry,
     start: Int,
-    end: Int,
+    end: Int
 ): List<Rect> {
     val lineStart = geometry.lineStart
     val rawLineEnd = geometry.rawLineEnd
@@ -302,7 +314,11 @@ internal fun fallbackSelectionRectsForGeometry(
         rawLineEnd > lineStart &&
         rawLineEnd <= geometry.text.length &&
         geometry.text[rawLineEnd - 1] == '\n'
-    ) rawLineEnd - 1 else rawLineEnd
+    ) {
+        rawLineEnd - 1
+    } else {
+        rawLineEnd
+    }
     val softWrapLineEnd = rawLineEnd.takeIf {
         lineEnd == rawLineEnd &&
             rawLineEnd < geometry.text.length &&
@@ -328,7 +344,7 @@ internal fun fallbackSelectionRectsForGeometry(
                 outerLineBoundary = geometry.outerLineBoundary,
                 logicalCaretHorizontal = { offset, affinity ->
                     fallbackHorizontalForLogicalCaret(geometry, offset, affinity)
-                },
+                }
             )
         } else {
             null
@@ -350,7 +366,7 @@ internal fun fallbackSelectionRectsForGeometry(
                     FallbackLogicalCaretAffinity.LEADING_NEXT
                 } else {
                     FallbackLogicalCaretAffinity.TRAILING_PREVIOUS
-                },
+                }
             )
         }
         val startBoundary = visualBoundary(intersectedStart, logicalRunStart = true)
@@ -359,7 +375,7 @@ internal fun fallbackSelectionRectsForGeometry(
             kotlin.math.floor(min(startBoundary, endBoundary)).toInt().coerceIn(0, geometry.width),
             geometry.top,
             ceil(max(startBoundary, endBoundary)).toInt().coerceIn(0, geometry.width),
-            geometry.bottom,
+            geometry.bottom
         ).takeIf { !it.isEmpty }?.let(fragments::add)
     }
     return fragments
@@ -377,7 +393,7 @@ internal fun fallbackSelectionRectsForLine(
     start: Int,
     end: Int,
     line: Int,
-    width: Int,
+    width: Int
 ): List<Rect> = fallbackSelectionRectsForGeometry(
     FallbackLineGeometry(
         text = layout.text,
@@ -390,18 +406,24 @@ internal fun fallbackSelectionRectsForLine(
         width = width,
         logicalRuns = fallbackLogicalBidiRunsForLine(layout, line),
         outerLineBoundary = { edge ->
-            if (edge == FallbackVisualEdge.LEFT) layout.getLineLeft(line) else layout.getLineRight(line)
+            if (edge ==
+                FallbackVisualEdge.LEFT
+            ) {
+                layout.getLineLeft(line)
+            } else {
+                layout.getLineRight(line)
+            }
         },
         primaryHorizontal = layout::getPrimaryHorizontal,
-        secondaryHorizontal = layout::getSecondaryHorizontal,
+        secondaryHorizontal = layout::getSecondaryHorizontal
     ),
     start,
-    end,
+    end
 )
 
 private fun fallbackLogicalBidiRunsForLine(
     layout: StaticLayout,
-    line: Int,
+    line: Int
 ): List<FallbackLogicalBidiRun> {
     val lineStart = layout.getLineStart(line)
     val rawLineEnd = layout.getLineEnd(line)
@@ -422,7 +444,7 @@ private fun fallbackLogicalBidiRunsForLine(
             logicalIndex = logicalIndex,
             documentStart = lineStart + bidi.getRunStart(logicalIndex),
             documentEnd = lineStart + bidi.getRunLimit(logicalIndex),
-            level = bidi.getRunLevel(logicalIndex).toByte(),
+            level = bidi.getRunLevel(logicalIndex).toByte()
         )
     }
 }

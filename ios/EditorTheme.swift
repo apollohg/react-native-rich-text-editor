@@ -61,7 +61,6 @@ struct EditorTextStyle {
         return attributes[.font] as? UIFont ?? fallback
     }
 
-
 }
 
 struct EditorListTheme {
@@ -210,8 +209,7 @@ struct EditorMentionSuggestionOptionTheme {
     var highlightedTextColor: UIColor?
 
     func merged(with override: EditorMentionSuggestionOptionTheme?)
-        -> EditorMentionSuggestionOptionTheme
-    {
+        -> EditorMentionSuggestionOptionTheme {
         guard let override else { return self }
         var merged = self
         merged.textColor = override.textColor ?? merged.textColor

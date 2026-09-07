@@ -4,7 +4,9 @@ import android.graphics.Rect
 import android.view.View
 
 internal fun EditorEditText.resolveAutoGrowHeightImpl(): Int {
-    val availableWidth = (measuredWidth - compoundPaddingLeft - compoundPaddingRight).coerceAtLeast(0)
+    val availableWidth = (measuredWidth - compoundPaddingLeft - compoundPaddingRight).coerceAtLeast(
+        0
+    )
     val placeholderHeight = resolvePlaceholderHeightForAvailableWidth(availableWidth)
     val laidOutTextHeight = if (isLaidOut) layout?.height else null
     if (laidOutTextHeight != null && laidOutTextHeight > 0) {
@@ -16,7 +18,8 @@ internal fun EditorEditText.resolveAutoGrowHeightImpl(): Int {
 
     val currentText = text
     if (availableWidth > 0 && currentText != null) {
-        val staticLayout = EditorDocumentLayout(currentText, paint, availableWidth, includeFontPadding)
+        val staticLayout =
+            EditorDocumentLayout(currentText, paint, availableWidth, includeFontPadding)
         val textHeight = staticLayout.height.takeIf { it > 0 } ?: lineHeight
         return maxOf(
             textHeight + compoundPaddingTop + compoundPaddingBottom,

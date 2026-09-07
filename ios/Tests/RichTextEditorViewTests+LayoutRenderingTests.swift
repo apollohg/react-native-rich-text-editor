@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 final class AutoGrowStyleTrackingNativeEditorView: NativeEditorExpoView {
     var publishedStyleHeights: [CGFloat?] = []
@@ -39,7 +39,7 @@ extension RichTextEditorViewTests {
             object: nil,
             userInfo: [
                 UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: keyboardFrame),
-                UIResponder.keyboardAnimationDurationUserInfoKey: 0,
+                UIResponder.keyboardAnimationDurationUserInfoKey: 0
             ]
         )
         textView.layoutIfNeeded()
@@ -80,7 +80,7 @@ extension RichTextEditorViewTests {
         for (index, item) in items.enumerated() {
             elements.append("""
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": \(index + 1), "total": \(total), \
+            "listContext": {"ordered": false, "index": \(index + 1), "total": \(total), \
             "start": 1, "isFirst": \(index == 0), "isLast": \(index == total - 1), \
             "kind": "task", "checked": \(item.checked)}}
             """)
@@ -217,10 +217,9 @@ extension RichTextEditorViewTests {
             let attrs = textView.textStorage.attributes(at: index, effectiveRange: nil)
             let character = text.substring(with: NSRange(location: index, length: 1))
             if attrs[.attachment] == nil,
-               character != "\n",
-               character != "\r",
-               visibleCharacterRect(in: textView, characterIndex: index) != nil
-            {
+            character != "\n",
+            character != "\r",
+            visibleCharacterRect(in: textView, characterIndex: index) != nil {
                 return index
             }
             index -= 1
@@ -241,10 +240,9 @@ extension RichTextEditorViewTests {
             let attrs = textView.textStorage.attributes(at: index, effectiveRange: nil)
             let character = text.substring(with: NSRange(location: index, length: 1))
             if attrs[.attachment] == nil,
-               character != "\n",
-               character != "\r",
-               visibleCharacterRect(in: textView, characterIndex: index) != nil
-            {
+            character != "\n",
+            character != "\r",
+            visibleCharacterRect(in: textView, characterIndex: index) != nil {
                 return index
             }
             index += 1
@@ -259,8 +257,8 @@ extension RichTextEditorViewTests {
     ) -> CGRect? {
         guard characterIndex >= 0, characterIndex < textView.textStorage.length else { return nil }
         guard let start = textView.position(from: textView.beginningOfDocument, offset: characterIndex),
-              let end = textView.position(from: start, offset: 1),
-              let range = textView.textRange(from: start, to: end)
+            let end = textView.position(from: start, offset: 1),
+            let range = textView.textRange(from: start, to: end)
         else {
             return nil
         }
@@ -276,9 +274,8 @@ extension RichTextEditorViewTests {
         for index in 0..<textView.textStorage.length {
             let attrs = textView.textStorage.attributes(at: index, effectiveRange: nil)
             if attrs[.attachment] is NSTextAttachment,
-               (attrs[RenderBridgeAttributes.voidNodeType] as? String)
-                .map(EditorNodeTypes.isHorizontalRule) == true
-            {
+            (attrs[RenderBridgeAttributes.voidNodeType] as? String)
+            .map(EditorNodeTypes.isHorizontalRule) == true {
                 return NSRange(location: index, length: 1)
             }
         }

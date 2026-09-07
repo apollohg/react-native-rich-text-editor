@@ -106,7 +106,7 @@ fn aggregate_output_and_undo_work_accept_exact_and_reject_one_over() {
         }],
     );
     let second = {
-        let mut tx = Transaction::new(Source::Input);
+        let mut tx = Transaction::new();
         tx.add_step(Step::InsertText {
             pos: 7,
             text: "y".into(),

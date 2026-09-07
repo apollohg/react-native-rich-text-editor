@@ -1,14 +1,13 @@
 package com.apollohg.editor
 
-import org.json.JSONObject
 import org.json.JSONArray
-
+import org.json.JSONObject
 
 internal fun EditorV2Adapter.adopt(
     snapshot: AtomicRenderSnapshot,
     stripViewSelection: Boolean,
     engineOwnedSelection: Boolean,
-    resolvedPositionEpoch: String? = snapshot.positionEpoch,
+    resolvedPositionEpoch: String? = snapshot.positionEpoch
 ): String {
     val update = JSONObject(snapshot.viewUpdateJson)
     if (stripViewSelection) update.remove("selection")
@@ -28,21 +27,20 @@ internal fun EditorV2Adapter.adopt(
     return updateJson
 }
 
-internal fun EditorV2Adapter.fetchDocumentJson(): String? {
-    return when (val result = backend.getDocumentJson(editorId)) {
+internal fun EditorV2Adapter.fetchDocumentJson(): String? =
+    when (val result = backend.getDocumentJson(editorId)) {
         is EditorV2CallResult.Err -> {
             emit(result.error)
             null
         }
+
         is EditorV2CallResult.Ok -> result.value
     }
-}
-
 
 internal fun EditorV2Adapter.refreshInternal(
     mirrorSelection: IntArray?,
     stripViewSelection: Boolean = mirrorSelection == null,
-    controlledPropSnapshot: Boolean = false,
+    controlledPropSnapshot: Boolean = false
 ): String? {
     if (destroyed) {
         emit(EditorV2Adapter.destroyedError())
@@ -64,6 +62,7 @@ internal fun EditorV2Adapter.refreshInternal(
             emit(result.error)
             return null
         }
+
         is EditorV2CallResult.Ok -> result.value
     }
     renderUpdateCallCountForTesting += 1
@@ -77,7 +76,7 @@ internal fun EditorV2Adapter.refreshInternal(
         val viewUpdateJson = adopt(
             snapshot,
             stripViewSelection = stripViewSelection,
-            engineOwnedSelection = mirrorSelection == null,
+            engineOwnedSelection = mirrorSelection == null
         )
         if (controlledPropSnapshot) snapshot.atomicRenderJson else viewUpdateJson
     }
@@ -85,19 +84,32 @@ internal fun EditorV2Adapter.refreshInternal(
 
 internal fun EditorV2Adapter.pinPositionEpochCandidate(documentRevision: ULong): String? {
     val ownerId = nativeOwnerId ?: return positionEpoch
-    return when (val result = backend.pinPositionEpoch(editorId, ownerId, documentRevision.toString())) {
+    return when (
+        val result = backend.pinPositionEpoch(
+            editorId,
+            ownerId,
+            documentRevision.toString()
+        )
+    ) {
         is EditorV2CallResult.Err -> {
             emit(result.error)
             null
         }
+
         is EditorV2CallResult.Ok -> try {
             canonicalV2U64(JSONObject(result.value).opt("positionEpoch") as? String)
                 ?: run {
-                    emit(EditorV2Adapter.contractError("v2 position epoch result violates the frozen shape"))
+                    emit(
+                        EditorV2Adapter.contractError(
+                            "v2 position epoch result violates the frozen shape"
+                        )
+                    )
                     null
                 }
         } catch (_: Exception) {
-            emit(EditorV2Adapter.contractError("v2 position epoch result violates the frozen shape"))
+            emit(
+                EditorV2Adapter.contractError("v2 position epoch result violates the frozen shape")
+            )
             null
         }
     }

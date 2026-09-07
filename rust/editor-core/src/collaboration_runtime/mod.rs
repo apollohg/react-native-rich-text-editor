@@ -1,16 +1,4 @@
 //! Collaboration runtime host.
-//!
-//! Adds the bounded pre-commit document outbox plus attachment plumbing on
-//! `EditorSession`; added the generation-owned transport state machine
-//! ([`state::TransportStateMachine`], session-owned per the established
-//! split); added strict standard y-sync protocol handling ([`protocol`])
-//! that composes those seams with the engine's sealed remote-update
-//! surface; added runtime awareness ownership ([`awareness`]): desired
-//! local state, peer projections, and the deterministic renewal/expiry
-//! clocks, all wired through the engine-owned `AwarenessCodec`. The runtime
-//! owns no `yrs::Doc`, no awareness object, and cannot apply Yrs mutations
-//! directly; for dependency-pending updates it retains only byte-unit work
-//! accounting — the payload bytes stay quarantined inside the engine.
 
 pub mod awareness;
 pub mod outbox;
@@ -21,19 +9,9 @@ pub(crate) use outbox::CollaborationOutbox;
 
 use crate::session::CollaborationLimits;
 
-/// Per-session collaboration runtime. Attached explicitly; detached
-/// (local-only) sessions own no runtime and therefore no outbox, which is
-/// what makes their local editing behavior identical to pre-runtime staging
-/// behavior by construction.
 pub(crate) struct CollaborationRuntime {
     outbox: CollaborationOutbox,
-    /// Byte-unit work charged for dependency-pending remote updates while
-    /// the engine's quarantine is non-empty; reset when it drains. This is
-    /// accounting metadata only — never a payload copy.
     remote_dependency_work: u64,
-    /// Task 10 awareness ownership: desired-state JSON, deterministic
-    /// deadlines, and projection bookkeeping (never wire or clock state —
-    /// that stays in the engine-owned codec).
     awareness: awareness::AwarenessRuntimeState,
 }
 
@@ -59,17 +37,6 @@ impl CollaborationRuntime {
         self.remote_dependency_work
     }
 
-    /// Task 11 teardown-on-restore, run by the session only after the
-    /// engine's candidate installed (infallible by construction):
-    ///
-    /// - pending protocol replies minted against the prior store are
-    ///   dropped (pending *document* updates cannot exist — the session
-    ///   gate rejected the restore otherwise);
-    /// - dependency-quarantine work accounting resets (the engine cleared
-    ///   the quarantine payload inside the restore);
-    /// - awareness peer bookkeeping resets while the desired local state is
-    ///   retained — the engine's store-swap rebind already re-published it
-    ///   under the fresh client identity with a fresh clock.
     pub(crate) fn reset_for_restore(&mut self) {
         self.outbox.release_lease();
         self.outbox.clear_protocol_replies();

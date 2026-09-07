@@ -1,10 +1,9 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.RenderBridge.RenderBuildState
-
 import android.text.Annotation
 import android.text.Spanned
 import android.view.View
+import com.apollohg.editor.RenderBridge.RenderBuildState
 import org.json.JSONArray
 
 internal fun RenderBridge.appendElements(
@@ -72,7 +71,14 @@ internal fun RenderBridge.appendElements(
                         spacingPx,
                         topLevelChildIndex = topLevelChildIndex
                     )
-                    if (theme?.styleSheet != null) state.blockStack.filter { it.renderStart == separatorStart }.forEach { it.renderStart = state.result.length }
+                    if (theme?.styleSheet !=
+                        null
+                    ) {
+                        state.blockStack.filter { it.renderStart == separatorStart }.forEach {
+                            it.renderStart =
+                                state.result.length
+                        }
+                    }
                 }
                 state.isFirstBlock = false
                 val spacingBefore = theme?.effectiveTextStyle(nodeType)?.spacingAfter
@@ -95,8 +101,14 @@ internal fun RenderBridge.appendElements(
                     atomId != null,
                     state.blockStack.isEmpty(),
                     state.reusableImages,
-                    state.blockStack.fold(EditorEdges()) { total, block -> total + (theme?.styleSheet?.box(block.nodeType)?.outerInset?.scaled(density) ?: EditorEdges()) },
-                    state.blockStack.size,
+                    state.blockStack.fold(EditorEdges()) { total, block ->
+                        total +
+                            (
+                                theme?.styleSheet?.box(block.nodeType)?.outerInset?.scaled(density)
+                                    ?: EditorEdges()
+                                )
+                    },
+                    state.blockStack.size
                 )
             }
 
@@ -137,7 +149,14 @@ internal fun RenderBridge.appendElements(
                         spacingPx,
                         topLevelChildIndex = topLevelChildIndex
                     )
-                    if (theme?.styleSheet != null) state.blockStack.filter { it.renderStart == separatorStart }.forEach { it.renderStart = state.result.length }
+                    if (theme?.styleSheet !=
+                        null
+                    ) {
+                        state.blockStack.filter { it.renderStart == separatorStart }.forEach {
+                            it.renderStart =
+                                state.result.length
+                        }
+                    }
                 }
                 state.isFirstBlock = false
                 state.replaceNextBlockSpacing(blockSpacing)
@@ -159,9 +178,32 @@ internal fun RenderBridge.appendElements(
                 val depth = element.optInt("depth", 0)
                 val listContext = element.optJSONObject("listContext")
                 if (theme?.styleSheet != null && listContext?.optBoolean("isFirst") == true) {
-                    val listName = if (listContext.optString("kind") == "task") "taskList" else if (listContext.optBoolean("ordered")) "orderedList" else "bulletList"
-                    val container = org.json.JSONObject().put("type", "blockStart").put("nodeType", listName).put("depth", depth)
-                    appendElements(state, JSONArray().put(container), baseFontSize, textColor, theme, density, hostView, atomConfiguration, topLevelChildIndex)
+                    val listName = if (listContext.optString("kind") ==
+                        "task"
+                    ) {
+                        "taskList"
+                    } else if (listContext.optBoolean("ordered")) {
+                        "orderedList"
+                    } else {
+                        "bulletList"
+                    }
+                    val container = org.json.JSONObject().put(
+                        "type",
+                        "blockStart"
+                    ).put("nodeType", listName).put("depth", depth)
+                    appendElements(
+                        state,
+                        JSONArray().put(
+                            container
+                        ),
+                        baseFontSize,
+                        textColor,
+                        theme,
+                        density,
+                        hostView,
+                        atomConfiguration,
+                        topLevelChildIndex
+                    )
                 }
                 val isListItemContainer = isListItemNodeType(nodeType) && listContext != null
                 val isTransparentContainer = isTransparentContainer(nodeType)
@@ -189,7 +231,8 @@ internal fun RenderBridge.appendElements(
                             renderStart = state.result.length
                         )
                         val inBlockquoteSeparator =
-                            blockquoteDepth(nextBlockStack) > 0f && trailingRenderedContentHasBlockquote(state.result)
+                            blockquoteDepth(nextBlockStack) > 0f &&
+                                trailingRenderedContentHasBlockquote(state.result)
                         val separatorStart = state.result.length
                         appendInterBlockNewline(
                             state.result,
@@ -199,7 +242,16 @@ internal fun RenderBridge.appendElements(
                             inBlockquote = inBlockquoteSeparator,
                             topLevelChildIndex = topLevelChildIndex
                         )
-                        if (theme?.styleSheet != null) state.blockStack.filter { it.renderStart == separatorStart }.forEach { it.renderStart = state.result.length }
+                        if (theme?.styleSheet !=
+                            null
+                        ) {
+                            state.blockStack.filter {
+                                it.renderStart == separatorStart
+                            }.forEach {
+                                it.renderStart =
+                                    state.result.length
+                            }
+                        }
                     }
                     state.isFirstBlock = false
                     state.replaceNextBlockSpacing(blockSpacing)
@@ -231,7 +283,7 @@ internal fun RenderBridge.appendElements(
                     val isTask = markerListContext.optString("kind", "") == "task"
                     val visualListDepth = (
                         state.blockStack.count { it.listContext != null } - 1
-                    ).coerceAtLeast(0)
+                        ).coerceAtLeast(0)
                     val presentationLabel = if (ordered && !isTask) {
                         val index = if (!markerListContext.has("index")) {
                             1L
@@ -294,11 +346,31 @@ internal fun RenderBridge.appendElements(
                             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                         )
                     }
-                    val checkbox = if (isTask) theme?.styleSheet?.let { resolvedCheckboxStyle(it, markerListContext.optBoolean("checked")) } else null
-                    if (checkbox != null && marker.endsWith(' ')) {
-                        state.result.setSpan(EditorCheckboxSpan(checkbox, markerListContext.optBoolean("checked"), density), markerStart, markerEnd - 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    val checkbox = if (isTask) {
+                        theme?.styleSheet?.let {
+                            resolvedCheckboxStyle(it, markerListContext.optBoolean("checked"))
+                        }
+                    } else {
+                        null
                     }
-                    val markerGapPx = (checkbox?.gap ?: theme?.list?.markerGap ?: LayoutConstants.LIST_MARKER_TEXT_GAP) * density
+                    if (checkbox != null && marker.endsWith(' ')) {
+                        state.result.setSpan(
+                            EditorCheckboxSpan(
+                                checkbox,
+                                markerListContext.optBoolean("checked"),
+                                density
+                            ),
+                            markerStart,
+                            markerEnd - 1,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
+                    val markerGapPx =
+                        (
+                            checkbox?.gap ?: theme?.list?.markerGap
+                                ?: LayoutConstants.LIST_MARKER_TEXT_GAP
+                            ) *
+                            density
                     if ((ordered || isTask) && marker.endsWith(' ')) {
                         state.result.setSpan(
                             MarkerGapSpan(markerGapPx),
@@ -317,9 +389,12 @@ internal fun RenderBridge.appendElements(
                     }
                     if (!ordered && !isTask) {
                         val markerScale =
-                            theme?.list?.markerScale ?: LayoutConstants.UNORDERED_LIST_MARKER_FONT_SCALE
+                            theme?.list?.markerScale
+                                ?: LayoutConstants.UNORDERED_LIST_MARKER_FONT_SCALE
                         val markerWidth = calculateMarkerWidth(density)
-                        val bulletRadius = ((markerBaseSize * markerScale) * 0.16f).coerceAtLeast(2f * density)
+                        val bulletRadius = ((markerBaseSize * markerScale) * 0.16f).coerceAtLeast(
+                            2f * density
+                        )
                         state.result.setSpan(
                             CenteredBulletSpan(
                                 textColor = theme?.list?.markerColor ?: textColor,
@@ -359,17 +434,64 @@ internal fun RenderBridge.appendElements(
                     theme?.styleSheet?.let { sheet ->
                         val start = endedBlock.renderStart
                         if (start <= state.result.length) {
-                            val ancestors = state.blockStack.fold(EditorEdges()) { total, block -> total + sheet.box(block.nodeType).outerInset.scaled(density) }
-                            val empty = start == state.result.length
-                            val flags = if (empty) Spanned.SPAN_MARK_MARK else Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                            state.result.setSpan(EditorBlockBoxSpan(sheet.box(endedBlock.nodeType).scaled(density), ancestors, state.blockStack.size, endedBlock.nodeType), start, state.result.length, flags)
-                            if (empty && !isTransparentContainer(endedBlock.nodeType) && !isListItemNodeType(endedBlock.nodeType)) {
-                                val style = EditorTextStyle(fontSize = baseFontSize / density, color = textColor)
-                                    .mergedWith(sheet.resolveText(endedBlock.nodeType, state.blockStack.map { it.nodeType }))
-                                state.result.setSpan(EditorResolvedTextSpan(style, density), start, start, flags)
+                            val ancestors = state.blockStack.fold(EditorEdges()) { total, block ->
+                                total +
+                                    sheet.box(block.nodeType).outerInset.scaled(density)
                             }
-                            val alignment = sheet.resolveText(endedBlock.nodeType, state.blockStack.map { it.nodeType }).textAlign
-                            if (alignment != null && !isTransparentContainer(endedBlock.nodeType)) state.result.applyPhysicalTextAlignment(alignment, start, state.result.length)
+                            val empty = start == state.result.length
+                            val flags = if (empty) {
+                                Spanned.SPAN_MARK_MARK
+                            } else {
+                                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                            }
+                            state.result.setSpan(
+                                EditorBlockBoxSpan(
+                                    sheet.box(endedBlock.nodeType).scaled(density),
+                                    ancestors,
+                                    state.blockStack.size,
+                                    endedBlock.nodeType
+                                ),
+                                start,
+                                state.result.length,
+                                flags
+                            )
+                            if (empty && !isTransparentContainer(endedBlock.nodeType) &&
+                                !isListItemNodeType(endedBlock.nodeType)
+                            ) {
+                                val style = EditorTextStyle(
+                                    fontSize = baseFontSize / density,
+                                    color = textColor
+                                )
+                                    .mergedWith(
+                                        sheet.resolveText(
+                                            endedBlock.nodeType,
+                                            state.blockStack.map {
+                                                it.nodeType
+                                            }
+                                        )
+                                    )
+                                state.result.setSpan(
+                                    EditorResolvedTextSpan(style, density),
+                                    start,
+                                    start,
+                                    flags
+                                )
+                            }
+                            val alignment = sheet.resolveText(
+                                endedBlock.nodeType,
+                                state.blockStack.map {
+                                    it.nodeType
+                                }
+                            ).textAlign
+                            if (alignment != null &&
+                                !isTransparentContainer(endedBlock.nodeType)
+                            ) {
+                                state.result.applyPhysicalTextAlignment(
+                                    alignment,
+                                    start,
+                                    state.result.length
+                                )
+                            }
                         }
                     }
                     if (endedBlock.listContext != null) {
@@ -380,8 +502,15 @@ internal fun RenderBridge.appendElements(
                         }
                         state.addListBoundarySpacing(spacing)
                     }
-                    if (endedBlock.nodeType == "codeBlock" && endedBlock.renderStart < state.result.length) {
-                        state.result.setSpan(CodeBlockMetadataSpan(endedBlock.language), endedBlock.renderStart, state.result.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    if (endedBlock.nodeType == "codeBlock" &&
+                        endedBlock.renderStart < state.result.length
+                    ) {
+                        state.result.setSpan(
+                            CodeBlockMetadataSpan(endedBlock.language),
+                            endedBlock.renderStart,
+                            state.result.length,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
                         state.pendingCodeBlockSpans.add(
                             PendingCodeBlockSpan(
                                 start = endedBlock.renderStart,
@@ -389,8 +518,24 @@ internal fun RenderBridge.appendElements(
                             )
                         )
                     }
-                    if (theme?.styleSheet != null && endedBlock.listContext?.optBoolean("isLast") == true && state.blockStack.lastOrNull()?.nodeType in setOf("bulletList", "orderedList", "taskList")) {
-                        appendElements(state, JSONArray().put(org.json.JSONObject().put("type", "blockEnd")), baseFontSize, textColor, theme, density, hostView, atomConfiguration, topLevelChildIndex)
+                    if (theme?.styleSheet != null &&
+                        endedBlock.listContext?.optBoolean("isLast") == true &&
+                        state.blockStack.lastOrNull()?.nodeType in
+                        setOf("bulletList", "orderedList", "taskList")
+                    ) {
+                        appendElements(
+                            state,
+                            JSONArray().put(
+                                org.json.JSONObject().put("type", "blockEnd")
+                            ),
+                            baseFontSize,
+                            textColor,
+                            theme,
+                            density,
+                            hostView,
+                            atomConfiguration,
+                            topLevelChildIndex
+                        )
                     }
                 }
             }

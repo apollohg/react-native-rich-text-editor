@@ -1,8 +1,5 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.NativeEditorExpoView.Companion.OUTSIDE_TAP_HANDLER_INSTALL_RETRY_DELAY_MS
-import com.apollohg.editor.NativeEditorExpoView.Companion.TOOLBAR_FOCUS_PRESERVE_MS
-import com.apollohg.editor.NativeEditorExpoView.Companion.TOOLBAR_HIT_SLOP_DP
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -12,6 +9,9 @@ import android.graphics.RectF
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
+import com.apollohg.editor.NativeEditorExpoView.Companion.OUTSIDE_TAP_HANDLER_INSTALL_RETRY_DELAY_MS
+import com.apollohg.editor.NativeEditorExpoView.Companion.TOOLBAR_FOCUS_PRESERVE_MS
+import com.apollohg.editor.NativeEditorExpoView.Companion.TOOLBAR_HIT_SLOP_DP
 
 internal fun NativeEditorExpoView.installOutsideTapBlurHandlerIfNeeded() {
     val window = resolveActivity(context)?.window ?: return
@@ -48,7 +48,9 @@ internal fun NativeEditorExpoView.uninstallOutsideTapBlurHandler() {
     outsideTapWindow = null
 }
 
-internal fun NativeEditorExpoView.prepareOutsideTapDecisionForWindowEventImpl(event: MotionEvent): NativeEditorOutsideTapDecision {
+internal fun NativeEditorExpoView.prepareOutsideTapDecisionForWindowEventImpl(
+    event: MotionEvent
+): NativeEditorOutsideTapDecision {
     if (!isAttachedToNativeWindow) {
         traceOutsideTap("decision ignored detached")
         return NativeEditorOutsideTapDecision.IGNORE
@@ -71,7 +73,9 @@ internal fun NativeEditorExpoView.prepareOutsideTapDecisionForWindowEventImpl(ev
     return decision
 }
 
-internal fun NativeEditorExpoView.handleOutsideTapDecisionFromWindowDispatcherImpl(decision: NativeEditorOutsideTapDecision) {
+internal fun NativeEditorExpoView.handleOutsideTapDecisionFromWindowDispatcherImpl(
+    decision: NativeEditorOutsideTapDecision
+) {
     traceOutsideTap("handle decision=$decision")
     when (decision) {
         NativeEditorOutsideTapDecision.IGNORE -> {
@@ -79,7 +83,9 @@ internal fun NativeEditorExpoView.handleOutsideTapDecisionFromWindowDispatcherIm
                 cancelPendingOutsideTapBlur()
             }
         }
+
         NativeEditorOutsideTapDecision.PRESERVE_FOCUS -> cancelPendingOutsideTapBlur()
+
         NativeEditorOutsideTapDecision.OUTSIDE_EDITOR -> {
             clearRecentToolbarTouch()
             cancelPendingToolbarRefocus()

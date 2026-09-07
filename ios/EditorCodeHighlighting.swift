@@ -33,9 +33,9 @@ enum NativeCodeHighlightPresentation {
             string.enumerateAttributes(in: range) { original, piece, _ in
                 var attributes: [NSAttributedString.Key: Any] = [:]
                 let color = UIColor(red: CGFloat(token.color >> 24) / 255,
-                                    green: CGFloat((token.color >> 16) & 255) / 255,
-                                    blue: CGFloat((token.color >> 8) & 255) / 255,
-                                    alpha: CGFloat(token.color & 255) / 255)
+                    green: CGFloat((token.color >> 16) & 255) / 255,
+                    blue: CGFloat((token.color >> 8) & 255) / 255,
+                    alpha: CGFloat(token.color & 255) / 255)
                 attributes[.foregroundColor] = color
                 attributes[kCTForegroundColorAttributeName as NSAttributedString.Key] = color.cgColor
                 let font = original[.font] as? UIFont ?? .systemFont(ofSize: 16)
@@ -69,8 +69,7 @@ extension EditorTextView {
         textStorage.enumerateAttribute(editorSyntaxOwnedAttribute, in: NSRange(location: 0, length: textStorage.length)) { value, range, _ in
             guard let original = value as? EditorSyntaxOwnedAttributes else { return }
             for (key, value) in original.values {
-                if value is NSNull { textStorage.removeAttribute(key, range: range) }
-                else { textStorage.addAttribute(key, value: value, range: range) }
+                if value is NSNull { textStorage.removeAttribute(key, range: range) } else { textStorage.addAttribute(key, value: value, range: range) }
             }
             textStorage.removeAttribute(editorSyntaxOwnedAttribute, range: range)
         }
@@ -84,8 +83,7 @@ extension EditorTextView {
     func scheduleCodeHighlighting() {
         codeHighlightingSession.cancel()
         guard let configuration = codeHighlighting else { return }
-        do { _ = try NativeCodeHighlightingRegistry.provider(id: configuration.provider) }
-        catch { onCodeHighlightingError?(error); return }
+        do { _ = try NativeCodeHighlightingRegistry.provider(id: configuration.provider) } catch { onCodeHighlightingError?(error); return }
         guard markedTextRange == nil, textStorage.length > 0 else { return }
         restoreCodeHighlighting()
         let text = textStorage.string

@@ -3,15 +3,19 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.text.Layout
 import android.text.StaticLayout
-import android.text.TextPaint
 import android.text.TextDirectionHeuristics
+import android.text.TextPaint
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.MotionEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
+import java.text.Bidi
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.min
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -23,10 +27,6 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import uniffi.editor_core.FfiViewerMark
-import java.text.Bidi
-import kotlin.math.ceil
-import kotlin.math.max
-import kotlin.math.min
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -60,7 +60,7 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
             0,
             requireNotNull(
                 view.accessibilityNodeProvider.createAccessibilityNodeInfo(View.NO_ID)
-            ).childCount,
+            ).childCount
         )
 
         view.mentionInteractionsEnabled = true
@@ -71,13 +71,13 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
             1,
             requireNotNull(
                 view.accessibilityNodeProvider.createAccessibilityNodeInfo(View.NO_ID)
-            ).childCount,
+            ).childCount
         )
         assertEquals(
             "mention",
             AccessibilityNodeInfoCompat.wrap(
                 requireNotNull(view.accessibilityNodeProvider.createAccessibilityNodeInfo(1))
-            ).roleDescription,
+            ).roleDescription
         )
     }
 
@@ -100,14 +100,14 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
             view.accessibilityNodeProvider.performAction(
                 1,
                 AccessibilityNodeInfo.ACTION_CLICK,
-                null,
+                null
             )
         )
         assertFalse(
             view.accessibilityNodeProvider.performAction(
                 1,
                 AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
-                null,
+                null
             )
         )
         assertEquals(0, activations)
@@ -126,7 +126,7 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
             view.accessibilityNodeProvider.performAction(
                 2,
                 AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
-                null,
+                null
             )
         )
         var clearedNodeLabel: CharSequence? = null
@@ -153,7 +153,7 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
                 globalVisibleBounds,
                 shown = true,
                 windowVisible = true,
-                alphaVisible = true,
+                alphaVisible = true
             )
         )
         assertFalse(
@@ -162,7 +162,7 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
                 globalVisibleBounds,
                 shown = true,
                 windowVisible = true,
-                alphaVisible = true,
+                alphaVisible = true
             )
         )
         assertFalse(
@@ -171,7 +171,7 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
                 globalVisibleBounds,
                 shown = false,
                 windowVisible = true,
-                alphaVisible = true,
+                alphaVisible = true
             )
         )
     }
@@ -187,7 +187,7 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
             view.accessibilityNodeProvider.performAction(
                 1,
                 android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
-                null,
+                null
             )
         )
 
@@ -201,12 +201,12 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
         assertFalse(hiddenNode.isAccessibilityFocused)
         assertEquals(
             listOf(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED),
-            parent.eventTypes,
+            parent.eventTypes
         )
     }
 
     @Test
-    fun `Fabric-equivalent prepared replacement announces one subtree change and preserves focus clear`() {
+    fun `Fabric-equivalent replacement announces one subtree change and preserves focus clear`() {
         val context = RuntimeEnvironment.getApplication()
         val view = PreparedProseDrawingView(context)
         val parent = CapturingAccessibilityParent(context)
@@ -216,7 +216,7 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
             view.accessibilityNodeProvider.performAction(
                 1,
                 android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
-                null,
+                null
             )
         )
 
@@ -237,9 +237,9 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
         assertEquals(
             listOf(
                 AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED,
-                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
             ),
-            parent.eventTypes,
+            parent.eventTypes
         )
 
         parent.clearEvents()
@@ -265,7 +265,7 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
             view.accessibilityNodeProvider.performAction(
                 1,
                 android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
-                null,
+                null
             )
         )
 
@@ -277,14 +277,14 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
         assertEquals(
             listOf(
                 AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED,
-                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
             ),
-            parent.eventTypes,
+            parent.eventTypes
         )
     }
 
     @Test
-    fun `Fabric mount miss announces a removed subtree once and suppresses a later deferred install`() {
+    fun `Fabric mount miss announces removed subtree once and suppresses deferred install`() {
         val context = RuntimeEnvironment.getApplication()
         val view = PreparedProseDrawingView(context)
         val parent = CapturingAccessibilityParent(context)
@@ -295,7 +295,7 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
             view.accessibilityNodeProvider.performAction(
                 1,
                 android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
-                null,
+                null
             )
         )
 
@@ -307,9 +307,9 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
         assertEquals(
             listOf(
                 AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED,
-                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
             ),
-            parent.eventTypes,
+            parent.eventTypes
         )
 
         parent.clearEvents()
@@ -332,14 +332,16 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
                     inlines = listOf(
                         ViewerInline.Text(
                             "linked ".repeat(12),
-                            listOf(FfiViewerMark("link", "{\"href\":\"https://example.test/wrapped\"}")),
+                            listOf(
+                                FfiViewerMark("link", "{\"href\":\"https://example.test/wrapped\"}")
+                            )
                         ),
-                        ViewerInline.Atom("mention", UInt.MAX_VALUE.toLong(), "{}", "@Ada"),
-                    ),
-                ),
+                        ViewerInline.Atom("mention", UInt.MAX_VALUE.toLong(), "{}", "@Ada")
+                    )
+                )
             ),
             isEmpty = false,
-            retainedBytes = 64,
+            retainedBytes = 64
         )
         val layout = StaticLayoutAndroidProseLayoutEngine().prepare(
             document,
@@ -347,14 +349,27 @@ internal class PreparedProseAccessibilityTest : PreparedProseAccessibilityTestFi
             PreparedProseTheme.resolve(null, 1f),
             90,
             1f,
-            false,
+            false
         )
 
-        assertEquals(listOf(PreparedProseInteraction.Kind.LINK, PreparedProseInteraction.Kind.MENTION), layout.interactions.map { it.kind })
+        assertEquals(
+            listOf(PreparedProseInteraction.Kind.LINK, PreparedProseInteraction.Kind.MENTION),
+            layout.interactions.map {
+                it.kind
+            }
+        )
         assertEquals("https://example.test/wrapped", layout.interactions.first().href)
         assertTrue(layout.interactions.first().rects.isNotEmpty())
         assertEquals(UInt.MAX_VALUE.toLong(), layout.interactions.last().docPos)
-        assertEquals(listOf(PreparedProseAccessibilityNode.Role.LINK, PreparedProseAccessibilityNode.Role.MENTION), layout.accessibilityNodes.map { it.role })
+        assertEquals(
+            listOf(
+                PreparedProseAccessibilityNode.Role.LINK,
+                PreparedProseAccessibilityNode.Role.MENTION
+            ),
+            layout.accessibilityNodes.map {
+                it.role
+            }
+        )
         assertTrue(layout.retainedBytes > document.retainedBytes)
     }
 }

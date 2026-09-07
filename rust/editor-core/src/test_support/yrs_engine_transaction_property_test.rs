@@ -8,7 +8,7 @@ use crate::render::RenderElement;
 use crate::schema::{NodeRole, Schema};
 use crate::serialize::{from_prosemirror_json, to_html, to_prosemirror_json, UnknownTypeMode};
 use crate::tiptap_schema;
-use crate::transform::{DocumentValidator, Source, Step, Transaction, TransformError};
+use crate::transform::{DocumentValidator, Step, Transaction, TransformError};
 use crate::yrs_engine::{
     scalar_offset_to_utf16, Affinity, DocumentScope, EditingLimits, EditorOffsetKind,
     HistoryPolicy, InitializationMode, OperationError, RevisionedPosition, RevisionedRange,

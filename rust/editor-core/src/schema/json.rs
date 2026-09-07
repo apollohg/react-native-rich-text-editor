@@ -8,8 +8,6 @@ impl Schema {
     ///   "marks": [{ "name": "bold" }, ...]
     /// }
     /// ```
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn from_json(value: &serde_json::Value) -> Result<Self, String> {
         Self::from_json_with_limits(value, &ResourceLimits::default())

@@ -264,6 +264,7 @@ impl PreparedSemanticAdmission {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(crate) fn from_deferred_insert(
         request_id: u64,
         document_revision: u64,

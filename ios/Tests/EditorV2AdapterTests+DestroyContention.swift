@@ -1,5 +1,5 @@
-import XCTest
 import UIKit
+import XCTest
 
 extension EditorV2AdapterTests {
     func testThrowingHandleReservationHookDoesNotStrandDestroyRetry() {
@@ -8,8 +8,8 @@ extension EditorV2AdapterTests {
             snapshotState: nil
         )
         guard let value = created.value,
-              created.error == nil,
-              let handle = createdV2TestEditorHandle(value)
+            created.error == nil,
+            let handle = createdV2TestEditorHandle(value)
         else {
             XCTFail("expected v2 editor creation to succeed")
             return
@@ -76,8 +76,8 @@ extension EditorV2AdapterTests {
             snapshotState: nil
         )
         guard let value = created.value,
-              created.error == nil,
-              let handle = createdV2TestEditorHandle(value)
+            created.error == nil,
+            let handle = createdV2TestEditorHandle(value)
         else {
             XCTFail("expected v2 editor creation to succeed")
             return
@@ -137,8 +137,8 @@ extension EditorV2AdapterTests {
             snapshotState: nil
         )
         guard let value = created.value,
-              created.error == nil,
-              let handle = createdV2TestEditorHandle(value)
+            created.error == nil,
+            let handle = createdV2TestEditorHandle(value)
         else {
             XCTFail("expected v2 editor creation to succeed")
             return
@@ -205,8 +205,8 @@ extension EditorV2AdapterTests {
             snapshotState: nil
         )
         guard let value = created.value,
-              created.error == nil,
-              let handle = createdV2TestEditorHandle(value)
+            created.error == nil,
+            let handle = createdV2TestEditorHandle(value)
         else {
             XCTFail("expected v2 editor creation to succeed")
             return
@@ -287,8 +287,8 @@ extension EditorV2AdapterTests {
             snapshotState: nil
         )
         guard let pairedValue = paired.value,
-              paired.error == nil,
-              let pairedHandle = createdV2TestEditorHandle(pairedValue)
+            paired.error == nil,
+            let pairedHandle = createdV2TestEditorHandle(pairedValue)
         else {
             XCTFail("expected paired v2 editor creation to succeed")
             return

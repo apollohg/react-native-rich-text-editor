@@ -75,22 +75,18 @@ data class NativeEditorAddons(
             }
             return NativeEditorAddons(
                 mentions = NativeMentionsAddonConfig.fromJson(root.optJSONObject("mentions")),
-                codeHighlighting = NativeCodeHighlightingConfig.fromJson(root.optJSONObject("codeHighlighting"))
+                codeHighlighting = NativeCodeHighlightingConfig.fromJson(
+                    root.optJSONObject("codeHighlighting")
+                )
             )
         }
     }
 }
 
-data class MentionQueryState(
-    val query: String,
-    val trigger: String,
-    val anchor: Int,
-    val head: Int
-)
+data class MentionQueryState(val query: String, val trigger: String, val anchor: Int, val head: Int)
 
-internal fun isMentionIdentifierCodePoint(codePoint: Int): Boolean {
-    return Character.isLetterOrDigit(codePoint) || codePoint == '_'.code || codePoint == '-'.code
-}
+internal fun isMentionIdentifierCodePoint(codePoint: Int): Boolean =
+    Character.isLetterOrDigit(codePoint) || codePoint == '_'.code || codePoint == '-'.code
 
 internal fun resolveMentionQueryState(
     text: String,

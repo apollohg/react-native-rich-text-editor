@@ -16,7 +16,7 @@ class BlockquoteSpan(
     private val stripeColor: Int,
     private val stripeWidthPx: Int,
     private val gapWidthPx: Int
-    ) : LeadingMarginSpan {
+) : LeadingMarginSpan {
 
     override fun getLeadingMargin(first: Boolean): Int = totalIndentPx
 
@@ -45,7 +45,13 @@ class BlockquoteSpan(
         paint.style = Paint.Style.FILL
 
         val stripeStart = x + (dir * baseIndentPx)
-        val stripeLeft = if (dir > 0) stripeStart.toFloat() else (stripeStart - stripeWidthPx).toFloat()
+        val stripeLeft = if (dir >
+            0
+        ) {
+            stripeStart.toFloat()
+        } else {
+            (stripeStart - stripeWidthPx).toFloat()
+        }
         val stripeRight = if (dir > 0) stripeLeft + stripeWidthPx else stripeLeft + stripeWidthPx
         val stripeBottom = resolvedStripeBottom(
             text = text,
@@ -136,11 +142,17 @@ class CodeBlockSpan(
     private val cornerRadiusPx: Float,
     private val paddingHorizontalPx: Int,
     private val paddingVerticalPx: Int
-) : LeadingMarginSpan, LineBackgroundSpan {
+) : LeadingMarginSpan,
+    LineBackgroundSpan {
     internal val documentBox: EditorBoxStyle get() = EditorBoxStyle(
         backgroundColor = backgroundColor,
-        padding = EditorEdges(paddingVerticalPx.toFloat(), paddingHorizontalPx.toFloat(), paddingVerticalPx.toFloat(), paddingHorizontalPx.toFloat()),
-        corners = EditorCorners(cornerRadiusPx, cornerRadiusPx, cornerRadiusPx, cornerRadiusPx),
+        padding = EditorEdges(
+            paddingVerticalPx.toFloat(),
+            paddingHorizontalPx.toFloat(),
+            paddingVerticalPx.toFloat(),
+            paddingHorizontalPx.toFloat()
+        ),
+        corners = EditorCorners(cornerRadiusPx, cornerRadiusPx, cornerRadiusPx, cornerRadiusPx)
     )
     override fun getLeadingMargin(first: Boolean): Int = paddingHorizontalPx
 
@@ -192,15 +204,23 @@ class CodeBlockSpan(
         paint.style = Paint.Style.FILL
 
         when {
-            isFirstLine && isLastLine -> canvas.drawRoundRect(rect, cornerRadiusPx, cornerRadiusPx, paint)
+            isFirstLine && isLastLine -> canvas.drawRoundRect(
+                rect,
+                cornerRadiusPx,
+                cornerRadiusPx,
+                paint
+            )
+
             isFirstLine -> {
                 canvas.drawRoundRect(rect, cornerRadiusPx, cornerRadiusPx, paint)
                 canvas.drawRect(rect.left, rect.centerY(), rect.right, rect.bottom, paint)
             }
+
             isLastLine -> {
                 canvas.drawRoundRect(rect, cornerRadiusPx, cornerRadiusPx, paint)
                 canvas.drawRect(rect.left, rect.top, rect.right, rect.centerY(), paint)
             }
+
             else -> canvas.drawRect(rect, paint)
         }
 
@@ -214,7 +234,8 @@ class HorizontalRuleSpan(
     private val lineHeight: Float = LayoutConstants.HORIZONTAL_RULE_HEIGHT,
     private val verticalPadding: Float = LayoutConstants.HORIZONTAL_RULE_VERTICAL_PADDING,
     private val boxInset: EditorEdges = EditorEdges()
-) : ReplacementSpan(), LeadingMarginSpan {
+) : ReplacementSpan(),
+    LeadingMarginSpan {
 
     override fun getLeadingMargin(first: Boolean): Int = 0
 
@@ -258,7 +279,9 @@ class HorizontalRuleSpan(
         paint.color = lineColor
         paint.style = Paint.Style.FILL
 
-        val owned = text is Spanned && text.getSpans(start, end, EditorOwnedBlockGeometrySpan::class.java).isNotEmpty()
+        val owned =
+            text is Spanned &&
+                text.getSpans(start, end, EditorOwnedBlockGeometrySpan::class.java).isNotEmpty()
         val inset = if (owned) EditorEdges() else boxInset
         val lineY = (top + inset.top + bottom - inset.bottom) / 2f
         val lineWidth = (layout?.width?.toFloat() ?: canvas.width.toFloat()) - inset.right

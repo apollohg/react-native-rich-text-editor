@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testEditorThemeContentInsetsApplyToTextView() {
@@ -10,8 +10,8 @@ extension RichTextEditorViewTests {
                 "top": 12,
                 "right": 16,
                 "bottom": 20,
-                "left": 24,
-            ],
+                "left": 24
+            ]
         ])
 
         view.applyTheme(theme)
@@ -34,9 +34,9 @@ extension RichTextEditorViewTests {
         view.textView.placeholder = "Type here"
         view.textView.applyRenderJSON("""
         [
-          {"type":"blockStart","nodeType":"paragraph","depth":0},
-          {"type":"textRun","text":"\\u200B","marks":[]},
-          {"type":"blockEnd"}
+        {"type":"blockStart","nodeType":"paragraph","depth":0},
+        {"type":"textRun","text":"\\u200B","marks":[]},
+        {"type":"blockEnd"}
         ]
         """)
 
@@ -45,8 +45,8 @@ extension RichTextEditorViewTests {
                 "top": 0,
                 "right": 0,
                 "bottom": 0,
-                "left": 0,
-            ],
+                "left": 0
+            ]
         ]))
         view.layoutIfNeeded()
         view.textView.layoutIfNeeded()
@@ -59,7 +59,7 @@ extension RichTextEditorViewTests {
         let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
         let theme = EditorTheme(dictionary: [
             "backgroundColor": "#d7e4ff",
-            "borderRadius": 18,
+            "borderRadius": 18
         ])
 
         view.applyTheme(theme)
@@ -93,7 +93,7 @@ extension RichTextEditorViewTests {
                 color: .systemOrange,
                 name: "Alice",
                 isFocused: true
-            ),
+            )
         ])
         view.layoutIfNeeded()
 
@@ -125,7 +125,7 @@ extension RichTextEditorViewTests {
                 color: .systemGreen,
                 name: "Bob",
                 isFocused: true
-            ),
+            )
         ])
         view.layoutIfNeeded()
 
@@ -161,7 +161,7 @@ extension RichTextEditorViewTests {
                 color: .systemPurple,
                 name: "Wrapped",
                 isFocused: true
-            ),
+            )
         ])
         view.layoutIfNeeded()
 
@@ -189,7 +189,7 @@ extension RichTextEditorViewTests {
                 color: .systemBlue,
                 name: "Alice",
                 isFocused: false
-            ),
+            )
         ])
         view.layoutIfNeeded()
 
@@ -204,9 +204,9 @@ extension RichTextEditorViewTests {
             "suggestions": [
                 "option": [
                     "backgroundColor": "#d7e4ff",
-                    "textColor": "#1a2c48",
-                ],
-            ],
+                    "textColor": "#1a2c48"
+                ]
+            ]
         ]))
 
         let didChange = toolbar.setMentionSuggestions([
@@ -215,15 +215,15 @@ extension RichTextEditorViewTests {
                 "title": "Alice Chen",
                 "subtitle": "Design",
                 "label": "alice",
-                "attrs": ["label": "alice"],
+                "attrs": ["label": "alice"]
             ])!,
             NativeMentionSuggestion(dictionary: [
                 "key": "ben",
                 "title": "Ben Ortiz",
                 "subtitle": "Engineering",
                 "label": "ben",
-                "attrs": ["label": "ben"],
-            ])!,
+                "attrs": ["label": "ben"]
+            ])!
         ], trigger: "@")
 
         XCTAssertTrue(didChange)
@@ -239,14 +239,14 @@ extension RichTextEditorViewTests {
             "title": "Alice Chen",
             "subtitle": "Design",
             "label": "alice",
-            "attrs": ["label": "alice"],
+            "attrs": ["label": "alice"]
         ])!
         let ben = NativeMentionSuggestion(dictionary: [
             "key": "ben",
             "title": "Ben Ortiz",
             "subtitle": "Engineering",
             "label": "ben",
-            "attrs": ["label": "ben"],
+            "attrs": ["label": "ben"]
         ])!
 
         _ = toolbar.setMentionSuggestions([alice, ben], trigger: "@")

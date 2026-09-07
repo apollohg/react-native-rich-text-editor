@@ -12,11 +12,14 @@ import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import org.junit.Assert.*
+import java.io.File
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class EditorSurfaceGboardTest {
@@ -24,13 +27,28 @@ class EditorSurfaceGboardTest {
 
     @Test
     fun realKeyboardTapComposesAndCommitsThroughRust() {
-        val keyboard = Settings.Secure.getString(instrumentation.targetContext.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-        assumeTrue("Gboard-specific smoke fixture", keyboard?.startsWith("com.google.android.inputmethod.latin/") == true)
+        val keyboard = Settings.Secure.getString(
+            instrumentation.targetContext.contentResolver,
+            Settings.Secure.DEFAULT_INPUT_METHOD
+        )
+        assumeTrue(
+            "Gboard-specific smoke fixture",
+            keyboard?.startsWith("com.google.android.inputmethod.latin/") == true
+        )
         val automation = instrumentation.uiAutomation
         val originalFlags = automation.serviceInfo.flags
-        automation.serviceInfo = automation.serviceInfo.apply { flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS }
+        automation.serviceInfo =
+            automation.serviceInfo.apply {
+                flags =
+                    flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            }
         try {
-            ActivityScenario.launch<EditorSurfaceActivity>(Intent(instrumentation.targetContext, EditorSurfaceActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use { scenario ->
+            ActivityScenario.launch<EditorSurfaceActivity>(
+                Intent(
+                    instrumentation.targetContext,
+                    EditorSurfaceActivity::class.java
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ).use { scenario ->
                 instrumentation.waitForIdleSync()
                 val point = FloatArray(2)
                 var originalText = ""
@@ -51,21 +69,48 @@ class EditorSurfaceGboardTest {
                 var committed = false
                 val deadline = SystemClock.uptimeMillis() + 4000
                 while (!committed && SystemClock.uptimeMillis() < deadline) {
-                    scenario.onActivity { activity -> committed = activity.adapter.documentHtml()?.startsWith("<p>a ", ignoreCase = true) == true }
+                    scenario.onActivity { activity ->
+                        committed =
+                            activity.adapter.documentHtml()?.startsWith(
+                                "<p>a ",
+                                ignoreCase = true
+                            ) ==
+                            true
+                    }
                     if (!committed) SystemClock.sleep(50)
                 }
                 automation.waitForIdle(300, 5000)
                 val bitmap = requireNotNull(automation.takeScreenshot())
-                File(instrumentation.targetContext.getExternalFilesDir(null), "android-editor-surface-keyboard.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                File(
+                    instrumentation.targetContext.getExternalFilesDir(null),
+                    "android-editor-surface-keyboard.png"
+                ).outputStream().use {
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+                }
                 bitmap.recycle()
                 scenario.onActivity { activity ->
                     val html = activity.adapter.documentHtml().orEmpty()
                     val displayed = activity.editor.text.toString()
-                    val detail = "HTML=$html\nDISPLAYED=$displayed\nselection=${activity.editor.selectionStart}..${activity.editor.selectionEnd}\n" + activity.editor.imeTraceSnapshotForTesting().joinToString("\n")
-                    File(instrumentation.targetContext.getExternalFilesDir(null), "android-editor-surface-ime-trace.txt").writeText(detail)
+                    val detail =
+                        "HTML=$html\nDISPLAYED=$displayed\n" +
+                            "selection=${activity.editor.selectionStart}.." +
+                            "${activity.editor.selectionEnd}\n" +
+                            activity.editor.imeTraceSnapshotForTesting().joinToString("\n")
+                    File(
+                        instrumentation.targetContext.getExternalFilesDir(null),
+                        "android-editor-surface-ime-trace.txt"
+                    ).writeText(detail)
                     assertTrue(detail, committed)
-                    assertTrue(detail, displayed.take(2).equals("a ", ignoreCase = true) && displayed.drop(2) == originalText)
-                    assertTrue(detail, html.take(5).equals("<p>a ", ignoreCase = true) && html.drop(5) == originalHtml.drop(3))
+                    assertTrue(
+                        detail,
+                        displayed.take(2).equals("a ", ignoreCase = true) &&
+                            displayed.drop(2) == originalText
+                    )
+                    assertTrue(
+                        detail,
+                        html.take(5).equals("<p>a ", ignoreCase = true) &&
+                            html.drop(5) == originalHtml.drop(3)
+                    )
                     assertFalse(android.widget.EditText::class.java.isInstance(activity.editor))
                     assertEquals(0, activity.editor.scrollY)
                 }
@@ -80,7 +125,10 @@ class EditorSurfaceGboardTest {
         val deadline = SystemClock.uptimeMillis() + 8000
         var observed = emptyList<String>()
         while (SystemClock.uptimeMillis() < deadline) {
-            val root = instrumentation.uiAutomation.windows.firstOrNull { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }?.root
+            val root = instrumentation.uiAutomation.windows.firstOrNull {
+                it.type ==
+                    AccessibilityWindowInfo.TYPE_INPUT_METHOD
+            }?.root
             if (root != null) {
                 val nodes = mutableListOf<AccessibilityNodeInfo>()
                 fun visit(node: AccessibilityNodeInfo) {

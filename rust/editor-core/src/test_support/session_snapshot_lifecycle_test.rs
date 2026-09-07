@@ -370,11 +370,7 @@ fn connected_transports_reject_restore_with_the_frozen_snapshot_code() {
     let (id, snapshot) = create_ready_room();
     let (generation, now_millis) = drive_generation(id, 200, 0);
 
-    // Every row is reached through the real Task 8 transitions. `Incompatible`
-    // is pinned to the same code by decision: restore is
-    // `Detached`/`Disconnected`-only (design line 223), and `Incompatible`
-    // changes only through an explicit detach/reattach (design line 124), so
-    // restore must not smuggle a transport transition out of it.
+    // Restore must not transition an incompatible transport; only detach/reattach can do that.
     for (request_id, expected_transport) in [
         (201, TransportState::Connecting),
         (202, TransportState::Handshaking),
@@ -613,8 +609,7 @@ fn restore_clears_protocol_replies_quarantine_peers_and_generation_state() {
     assert_eq!(outcome.replies_enqueued, 1, "{outcome:?}");
     assert_eq!(pending_protocol_replies(id).unwrap().unwrap().0, 1);
 
-    // Disconnect clears the peers (Task 10) but neither the protocol queue
-    // nor the quarantine: restore is provably what clears those.
+    // Disconnect leaves the queue and quarantine intact, isolating what restore clears.
     transport_disconnect(id, 703).unwrap();
     assert_eq!(remote_peers(id).len(), 0);
     assert_eq!(pending_protocol_replies(id).unwrap().unwrap().0, 1);

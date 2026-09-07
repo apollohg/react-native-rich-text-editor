@@ -68,7 +68,7 @@ final class AtomMountingTests: XCTestCase {
                     nodeType: "counter",
                     docPos: 2,
                     reservedHeight: 90
-                ),
+                )
             ],
             in: editor
         )
@@ -210,7 +210,7 @@ final class AtomMountingTests: XCTestCase {
             baseFont: .systemFont(ofSize: 16),
             textColor: .label,
             theme: EditorTheme(dictionary: [
-                "paragraph": ["spacingAfter": 18],
+                "paragraph": ["spacingAfter": 18]
             ]),
             atomConfiguration: AtomRenderConfiguration(
                 registeredNodeTypes: ["counterCard"],
@@ -257,7 +257,7 @@ final class AtomMountingTests: XCTestCase {
             textColor: .label,
             theme: EditorTheme(dictionary: [
                 "text": ["spacingAfter": 11],
-                "paragraph": ["spacingAfter": 29],
+                "paragraph": ["spacingAfter": 29]
             ]),
             atomConfiguration: AtomRenderConfiguration(
                 registeredNodeTypes: ["counterCard"],

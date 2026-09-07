@@ -3,7 +3,8 @@ package com.apollohg.editor
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import org.json.JSONObject
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -42,15 +43,24 @@ internal class EditorToolbarLineBreakTest : EditorInputConnectionTestFixture() {
             editor.setSelection(editor.text!!.length)
             measureEditor(editor)
             val before = requireNotNull(editor.nativeCursorDrawRect())
-            val prefix = editor.text.toString().replace(LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER, "")
+            val prefix = editor.text.toString().replace(
+                LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER,
+                ""
+            )
 
             val nodeType = editor.preferredHardBreakNodeType()
             editor.performToolbarInsertNode(nodeType)
             measureEditor(editor)
 
-            assertEquals(prefix + "\n" + LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER, editor.text.toString())
+            assertEquals(
+                prefix + "\n" + LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER,
+                editor.text.toString()
+            )
             val after = requireNotNull(editor.nativeCursorDrawRect())
-            assertTrue("before=$before after=$after text=${editor.text} selection=${editor.selectionStart}", after.top >= before.bottom)
+            assertTrue(
+                "before=$before after=$after text=${editor.text} selection=${editor.selectionStart}",
+                after.top >= before.bottom
+            )
             assertEquals(0f, after.left, 1f)
             val breakText = editor.text.toString()
             val breakSelection = editor.selectionStart
@@ -59,8 +69,16 @@ internal class EditorToolbarLineBreakTest : EditorInputConnectionTestFixture() {
             measureEditor(editor)
             assertEquals(prefix + "\nQ", editor.text.toString())
             val typed = requireNotNull(editor.nativeCursorDrawRect())
-            assertEquals("after=$after typed=$typed breakText=$breakText breakSelection=$breakSelection text=${editor.text} selection=${editor.selectionStart} document=${harness.adapter.documentJson()}", after.top, typed.top, 1f)
-            assertTrue("after=$after typed=$typed text=${editor.text} selection=${editor.selectionStart}", typed.left > after.left)
+            assertEquals(
+                "after=$after typed=$typed breakText=$breakText breakSelection=$breakSelection text=${editor.text} selection=${editor.selectionStart} document=${harness.adapter.documentJson()}",
+                after.top,
+                typed.top,
+                1f
+            )
+            assertTrue(
+                "after=$after typed=$typed text=${editor.text} selection=${editor.selectionStart}",
+                typed.left > after.left
+            )
             val content = JSONObject(requireNotNull(harness.adapter.documentJson()))
                 .getJSONArray("content").getJSONObject(0).getJSONArray("content")
             assertEquals(nodeType, content.getJSONObject(content.length() - 2).getString("type"))
@@ -73,7 +91,7 @@ internal class EditorToolbarLineBreakTest : EditorInputConnectionTestFixture() {
     private fun measureEditor(editor: EditorEditText) {
         editor.measure(
             View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         )
         editor.layout(0, 0, editor.measuredWidth, editor.measuredHeight)
     }

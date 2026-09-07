@@ -1,5 +1,5 @@
-import UIKit
 import os
+import UIKit
 
 extension EditorTextView {
     @objc func handleKeyboardFrameChange(_ notification: Notification) {
@@ -125,7 +125,7 @@ extension EditorTextView {
     func defaultTypingAttributes() -> [NSAttributedString.Key: Any] {
         [
             .font: resolvedDefaultFont(),
-            .foregroundColor: resolvedDefaultTextColor(),
+            .foregroundColor: resolvedDefaultTextColor()
         ]
     }
 
@@ -200,7 +200,7 @@ extension EditorTextView {
                 }
                 let hostIsTrackingMeasuredHeight =
                     autoGrowHostHeight > 0
-                    && abs(currentHeight - ceil(autoGrowHostHeight)) <= 1.0
+                        && abs(currentHeight - ceil(autoGrowHostHeight)) <= 1.0
                 guard hostIsTrackingMeasuredHeight else {
                     return layoutHeight
                 }

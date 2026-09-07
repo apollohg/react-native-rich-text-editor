@@ -10,7 +10,14 @@ import android.text.Layout
 import android.text.Spanned
 
 internal object EditorTextDecorationDrawing {
-    fun drawRun(canvas: Canvas, source: android.text.TextPaint, style: EditorTextStyle, left: Float, right: Float, baseline: Float) {
+    fun drawRun(
+        canvas: Canvas,
+        source: android.text.TextPaint,
+        style: EditorTextStyle,
+        left: Float,
+        right: Float,
+        baseline: Float
+    ) {
         if (!style.hasCustomDecoration()) return
         val paint = android.text.TextPaint(source).apply {
             color = style.textDecorationColor ?: style.color ?: source.color
@@ -24,10 +31,28 @@ internal object EditorTextDecorationDrawing {
         }
         fun stroke(y: Float) {
             canvas.drawLine(left, y, right, y, paint)
-            if (style.textDecorationStyle == "double") canvas.drawLine(left, y + paint.strokeWidth * 2f, right, y + paint.strokeWidth * 2f, paint)
+            if (style.textDecorationStyle ==
+                "double"
+            ) {
+                canvas.drawLine(
+                    left,
+                    y + paint.strokeWidth * 2f,
+                    right,
+                    y + paint.strokeWidth * 2f,
+                    paint
+                )
+            }
         }
-        if (style.textDecorationLine?.contains("underline") == true) stroke(baseline + maxOf(paint.strokeWidth, paint.fontMetrics.descent * .5f))
-        if (style.textDecorationLine?.contains("line-through") == true) stroke(baseline + paint.fontMetrics.ascent * .35f)
+        if (style.textDecorationLine?.contains("underline") ==
+            true
+        ) {
+            stroke(baseline + maxOf(paint.strokeWidth, paint.fontMetrics.descent * .5f))
+        }
+        if (style.textDecorationLine?.contains("line-through") ==
+            true
+        ) {
+            stroke(baseline + paint.fontMetrics.ascent * .35f)
+        }
     }
 
     fun draw(canvas: Canvas, layout: Layout) {
@@ -44,8 +69,19 @@ internal object EditorTextDecorationDrawing {
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = maxOf(1f, paint.textSize / 16f)
             paint.pathEffect = when (style.textDecorationStyle) {
-                "dotted" -> DashPathEffect(floatArrayOf(paint.strokeWidth, paint.strokeWidth * 1.5f), 0f)
-                "dashed" -> DashPathEffect(floatArrayOf(paint.strokeWidth * 3f, paint.strokeWidth * 2f), 0f)
+                "dotted" -> DashPathEffect(
+                    floatArrayOf(paint.strokeWidth, paint.strokeWidth * 1.5f),
+                    0f
+                )
+
+                "dashed" -> DashPathEffect(
+                    floatArrayOf(
+                        paint.strokeWidth * 3f,
+                        paint.strokeWidth * 2f
+                    ),
+                    0f
+                )
+
                 else -> null
             }
             for (line in layout.getLineForOffset(start)..layout.getLineForOffset(end - 1)) {
@@ -65,10 +101,33 @@ internal object EditorTextDecorationDrawing {
                         val baseline = layout.getLineBaseline(line).toFloat()
                         fun stroke(y: Float) {
                             canvas.drawLine(bounds.left, y, bounds.right, y, paint)
-                            if (style.textDecorationStyle == "double") canvas.drawLine(bounds.left, y + paint.strokeWidth * 2f, bounds.right, y + paint.strokeWidth * 2f, paint)
+                            if (style.textDecorationStyle ==
+                                "double"
+                            ) {
+                                canvas.drawLine(
+                                    bounds.left,
+                                    y + paint.strokeWidth * 2f,
+                                    bounds.right,
+                                    y + paint.strokeWidth * 2f,
+                                    paint
+                                )
+                            }
                         }
-                        if (style.textDecorationLine?.contains("underline") == true) stroke(baseline + maxOf(paint.strokeWidth, paint.fontMetrics.descent * .5f))
-                        if (style.textDecorationLine?.contains("line-through") == true) stroke(baseline + paint.fontMetrics.ascent * .35f)
+                        if (style.textDecorationLine?.contains("underline") ==
+                            true
+                        ) {
+                            stroke(
+                                baseline + maxOf(
+                                    paint.strokeWidth,
+                                    paint.fontMetrics.descent * .5f
+                                )
+                            )
+                        }
+                        if (style.textDecorationLine?.contains("line-through") ==
+                            true
+                        ) {
+                            stroke(baseline + paint.fontMetrics.ascent * .35f)
+                        }
                     }
                 } while (measure.nextContour())
             }
@@ -76,4 +135,9 @@ internal object EditorTextDecorationDrawing {
     }
 }
 
-internal fun EditorTextStyle.hasCustomDecoration(): Boolean = textDecorationLine != null && textDecorationLine != "none" && (textDecorationColor != null || textDecorationStyle != null && textDecorationStyle != "solid")
+internal fun EditorTextStyle.hasCustomDecoration(): Boolean =
+    textDecorationLine != null && textDecorationLine != "none" &&
+        (
+            textDecorationColor != null ||
+                (textDecorationStyle != null && textDecorationStyle != "solid")
+            )

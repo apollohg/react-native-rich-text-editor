@@ -106,7 +106,7 @@ struct PreparedViewerAtoms {
 /// Theme parsing is deliberately outside the drawing path. A registry stores
 /// this value once per generation and every width-specific artifact reuses it.
 struct PreparedProseTheme {
-    var codeHighlighting: NativeCodeHighlightConfiguration? = nil
+    var codeHighlighting: NativeCodeHighlightConfiguration?
     let styleSheet: EditorStyleSheet?
     let viewerAtoms: PreparedViewerAtoms?
     let fontScale: CGFloat
@@ -260,7 +260,7 @@ struct PreparedProseTheme {
 }
 
 struct PreparedAtomAppearance {
-    var styleBox: EditorStyleBox? = nil
+    var styleBox: EditorStyleBox?
     let attributes: [NSAttributedString.Key: Any]
     let background: UIColor
     let borderColor: UIColor?

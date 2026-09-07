@@ -13,7 +13,7 @@ extension NativeEditorExpoView {
     func dispatchExternalTextCompositionEnd(_ resultJSON: String) {
         let payload: [String: Any] = [
             "editorId": String(richTextView.editorId),
-            "resultJson": resultJSON,
+            "resultJson": resultJSON
         ]
         if let onExternalTextCompositionEndForTesting {
             onExternalTextCompositionEndForTesting(payload)
@@ -79,14 +79,14 @@ extension NativeEditorExpoView {
               let documentRevision = v2CanonicalUInt64String(rawRevision),
               let revision = UInt64(documentRevision),
               let atomicUpdateJSON = EditorV2Registry.adapter(forLegacyId: nativeEditorId)?
-                .atomicRenderJSON(matchingDocumentRevision: revision)
+              .atomicRenderJSON(matchingDocumentRevision: revision)
         else {
             return nil
         }
         return [
             "editorId": editorId,
             "documentRevision": documentRevision,
-            "updateJson": atomicUpdateJSON,
+            "updateJson": atomicUpdateJSON
         ]
     }
 

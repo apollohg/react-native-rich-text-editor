@@ -1,6 +1,6 @@
-import UIKit
-import ImageIO
 import CryptoKit
+import ImageIO
+import UIKit
 
 extension RenderBridge {
     /// Build NSAttributedString attributes for a set of render marks.
@@ -118,14 +118,12 @@ extension RenderBridge {
         case "hardBreak", "hard_break":
             var hardBreakAttrs = styledAttrs
             if let paragraphStyle = (hardBreakAttrs[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy()
-                as? NSMutableParagraphStyle
-            {
+                as? NSMutableParagraphStyle {
                 paragraphStyle.paragraphSpacing = 0
                 hardBreakAttrs[.paragraphStyle] = paragraphStyle
             }
             return NSAttributedString(string: "\n", attributes: hardBreakAttrs)
         default:
-            // Unknown void inline: render as object replacement character.
             return NSAttributedString(
                 string: LayoutConstants.objectReplacementCharacter,
                 attributes: styledAttrs
@@ -180,7 +178,6 @@ extension RenderBridge {
             let attrStr = NSMutableAttributedString(
                 attachment: attachment
             )
-            // Apply our custom attributes to the attachment character.
             let range = NSRange(location: 0, length: attrStr.length)
             attrStr.addAttributes(attrs, range: range)
             return attrStr
@@ -205,7 +202,6 @@ extension RenderBridge {
             attrStr.addAttributes(attrs, range: range)
             return attrStr
         default:
-            // Unknown void block: render as object replacement character.
             return NSAttributedString(
                 string: LayoutConstants.objectReplacementCharacter,
                 attributes: attrs
@@ -284,8 +280,7 @@ extension RenderBridge {
     }
 
     private static func mentionFont(from baseFont: UIFont, theme: EditorMentionNodeTheme?)
-        -> UIFont?
-    {
+        -> UIFont? {
         guard let fontWeight = theme?.fontWeight else { return nil }
         return EditorTextStyle(fontWeight: fontWeight).resolvedFont(fallback: baseFont)
     }

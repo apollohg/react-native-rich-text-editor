@@ -1,5 +1,5 @@
-import XCTest
 import CoreText
+import XCTest
 
 extension RenderBridgeTests {
     /// Ordered list items should reserve gutter space without injecting marker text.
@@ -7,13 +7,13 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": true, "index": 1, "total": 2, "start": 1, "isFirst": true, "isLast": false}},
+            "listContext": {"ordered": true, "index": 1, "total": 2, "start": 1, "isFirst": true, "isLast": false}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "First item", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": true, "index": 2, "total": 2, "start": 1, "isFirst": false, "isLast": true}},
+            "listContext": {"ordered": true, "index": 2, "total": 2, "start": 1, "isFirst": false, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Second item", "marks": []},
             {"type": "blockEnd"},
@@ -38,7 +38,7 @@ extension RenderBridgeTests {
     func testOrderedListMarkerFormatterCyclesSchemesAndFormatsBoundaries() {
         let theme = EditorOrderedListMarkerTheme(dictionary: [
             "schemes": ["decimal", "lowerAlpha", "lowerRoman"],
-            "suffix": ")",
+            "suffix": ")"
         ])
 
         XCTAssertEqual(OrderedListMarkerFormatter.label(index: 1, nestingDepth: 0, theme: theme), "1)")
@@ -51,7 +51,7 @@ extension RenderBridgeTests {
     func testOrderedListMarkerFormatterFallsBackToDecimal() {
         let invalid = EditorOrderedListMarkerTheme(dictionary: [
             "schemes": ["unknown"],
-            "suffix": "!",
+            "suffix": "!"
         ])
 
         XCTAssertEqual(OrderedListMarkerFormatter.label(index: 4_000, nestingDepth: 2, theme: invalid), "4000.")
@@ -61,16 +61,16 @@ extension RenderBridgeTests {
         let missing = EditorOrderedListMarkerTheme(dictionary: [:])
         let empty = EditorOrderedListMarkerTheme(dictionary: ["schemes": []])
         let mixed = EditorOrderedListMarkerTheme(dictionary: [
-            "schemes": ["lowerAlpha", 7, NSNull(), "unknown", "upperRoman"],
+            "schemes": ["lowerAlpha", 7, NSNull(), "unknown", "upperRoman"]
         ])
         let malformed = EditorOrderedListMarkerTheme(dictionary: [
-            "schemes": [7, NSNull(), "unknown"],
+            "schemes": [7, NSNull(), "unknown"]
         ])
 
         let defaultSchemes: [EditorOrderedListNumberingScheme] = [
             .decimal,
             .lowerAlpha,
-            .lowerRoman,
+            .lowerRoman
         ]
         XCTAssertEqual(missing.schemes, defaultSchemes)
         XCTAssertEqual(empty.schemes, defaultSchemes)
@@ -81,7 +81,7 @@ extension RenderBridgeTests {
     func testOrderedListMarkerFormatterFormatsUppercaseSchemesAndRomanBoundary() {
         let theme = EditorOrderedListMarkerTheme(dictionary: [
             "schemes": ["upperAlpha", "upperRoman"],
-            "suffix": ")",
+            "suffix": ")"
         ])
 
         XCTAssertEqual(OrderedListMarkerFormatter.label(index: 27, nestingDepth: 0, theme: theme), "AA)")
@@ -93,22 +93,22 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
-             "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "Depth zero", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Depth one", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 2,
-             "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 3},
             {"type": "textRun", "text": "Depth two", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 3,
-             "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 4},
             {"type": "textRun", "text": "Depth three", "marks": []},
             {"type": "blockEnd"},
@@ -141,12 +141,12 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "taskItem", "depth": 0,
-             "listContext": {"ordered": false, "index": 1, "kind": "task", "checked": false, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "kind": "task", "checked": false, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "Task", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": true, "index": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": true, "index": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Nested ordered", "marks": []},
             {"type": "blockEnd"},
@@ -155,7 +155,7 @@ extension RenderBridgeTests {
         ]
         """
         let theme = EditorTheme(dictionary: [
-            "list": ["orderedMarker": ["schemes": ["decimal", "lowerAlpha"]]],
+            "list": ["orderedMarker": ["schemes": ["decimal", "lowerAlpha"]]]
         ])
         let result = RenderBridge.renderElements(
             fromJSON: json,
@@ -179,7 +179,7 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "taskItem", "depth": 0,
-             "listContext": {"ordered": true, "index": 4, "kind": "task", "checked": false, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": true, "index": 4, "kind": "task", "checked": false, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "Task", "marks": []},
             {"type": "blockEnd"},
@@ -191,7 +191,7 @@ extension RenderBridgeTests {
             baseFont: baseFont,
             textColor: textColor,
             theme: EditorTheme(dictionary: [
-                "list": ["orderedMarker": ["schemes": ["upperRoman"], "suffix": ")"]],
+                "list": ["orderedMarker": ["schemes": ["upperRoman"], "suffix": ")"]]
             ])
         )
 
@@ -200,7 +200,7 @@ extension RenderBridgeTests {
                 "ordered": true,
                 "index": 4,
                 "kind": "task",
-                "checked": false,
+                "checked": false
             ]),
             "\u{2610} "
         )
@@ -217,12 +217,12 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
-             "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "Outer item", "marks": []},
             {"type": "blockEnd"},
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Nested item", "marks": []},
             {"type": "blockEnd"},
@@ -234,9 +234,9 @@ extension RenderBridgeTests {
             "list": [
                 "orderedMarker": [
                     "schemes": ["decimal", "lowerAlpha"],
-                    "suffix": ".",
-                ],
-            ],
+                    "suffix": "."
+                ]
+            ]
         ])
 
         let result = RenderBridge.renderElements(
@@ -279,7 +279,7 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Bullet item", "marks": []},
             {"type": "blockEnd"},
@@ -300,7 +300,7 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Bullet item", "marks": []},
             {"type": "blockEnd"},
@@ -322,7 +322,7 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "\\u200B", "marks": []},
             {"type": "blockEnd"},
@@ -346,7 +346,7 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "A", "marks": []},
             {"type": "blockEnd"},
@@ -380,7 +380,7 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "A", "marks": []},
             {"type": "blockEnd"},

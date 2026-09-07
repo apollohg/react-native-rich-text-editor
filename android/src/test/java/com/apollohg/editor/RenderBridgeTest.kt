@@ -6,15 +6,10 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Annotation
 import android.text.Layout
-import android.text.Spanned
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.util.Base64
-import android.view.View
-import android.view.ViewGroup
-import android.widget.TextView
-import kotlin.math.abs
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
@@ -24,6 +19,14 @@ import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.text.style.URLSpan
 import android.text.style.UnderlineSpan
+import android.util.Base64
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -34,9 +37,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -107,7 +107,9 @@ internal class RenderBridgeTest : RenderBridgeTestFixture() {
             Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
         }
         val editor = EditorEditText(org.robolectric.RuntimeEnvironment.getApplication())
-        val json = """[{"type":"voidBlock","nodeType":"image","docPos":1,"attrs":{"src":"https://example.com/attach.png"}}]"""
+        val json =
+            """[{"type":"voidBlock","nodeType":"image","docPos":1""" +
+                ""","attrs":{"src":"https://example.com/attach.png"}}]"""
         try {
             editor.applyRenderJSON(json)
             assertTrue(firstDecodeStarted.await(2, TimeUnit.SECONDS))
@@ -130,7 +132,9 @@ internal class RenderBridgeTest : RenderBridgeTestFixture() {
         }
         val editor = EditorEditText(org.robolectric.RuntimeEnvironment.getApplication())
         editor.applyRenderJSON(
-            """[{"type":"voidBlock","nodeType":"image","docPos":1,"attrs":{"src":"https://example.com/done.png"}}]"""
+
+            """[{"type":"voidBlock","nodeType":"image","docPos":1""" +
+                ""","attrs":{"src":"https://example.com/done.png"}}]"""
         )
 
         repeat(100) {
@@ -188,10 +192,18 @@ internal class RenderBridgeTest : RenderBridgeTestFixture() {
                 baseFontSize,
                 textColor,
                 theme,
-                density = 1f,
+                density = 1f
             )
             val layout = StaticLayout.Builder
-                .obtain(result, 0, result.length, TextPaint().apply { textSize = baseFontSize }, 320)
+                .obtain(
+                    result,
+                    0,
+                    result.length,
+                    TextPaint().apply {
+                        textSize = baseFontSize
+                    },
+                    320
+                )
                 .setIncludePad(false)
                 .build()
             layout.draw(
@@ -245,8 +257,14 @@ internal class RenderBridgeTest : RenderBridgeTestFixture() {
 
     @Test
     fun `render - non finite and overflowing image dimensions are rejected`() {
-        assertEquals(null, org.json.JSONObject("""{"width":"Infinity"}""").optPositiveFiniteFloat("width"))
-        assertEquals(null, org.json.JSONObject("""{"width":2147483648}""").optPositiveFiniteFloat("width"))
+        assertEquals(
+            null,
+            org.json.JSONObject("""{"width":"Infinity"}""").optPositiveFiniteFloat("width")
+        )
+        assertEquals(
+            null,
+            org.json.JSONObject("""{"width":2147483648}""").optPositiveFiniteFloat("width")
+        )
 
         val span = BlockImageSpan(
             source = "https://example.com/cat.png",
@@ -329,7 +347,7 @@ internal class RenderBridgeTest : RenderBridgeTestFixture() {
             editor,
             density = 1f,
             preferredWidthDp = null,
-            preferredHeightDp = null,
+            preferredHeightDp = null
         )
 
         try {
@@ -343,7 +361,7 @@ internal class RenderBridgeTest : RenderBridgeTestFixture() {
             assertEquals(
                 0,
                 DecodedBitmapBudget.shared()
-                    .retainedOwnerBytesForTesting(editor.decodedBitmapOwnerId),
+                    .retainedOwnerBytesForTesting(editor.decodedBitmapOwnerId)
             )
         } finally {
             releaseDecode.countDown()

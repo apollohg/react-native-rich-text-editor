@@ -1,5 +1,5 @@
-import UIKit
 import os
+import UIKit
 
 extension EditorTextView {
     enum LocalTextDragState {
@@ -29,8 +29,7 @@ extension EditorTextView {
         let range = scalarRange(for: dragRequest)
         if editorId != 0,
            range.from < range.to,
-           let documentRevision = EditorV2Shadow.documentRevision(id: editorId)
-        {
+           let documentRevision = EditorV2Shadow.documentRevision(id: editorId) {
             let narrowedToVoidAttachment = !dragRequest.isSelected
                 && (range.from != requestedRange.from || range.to != requestedRange.to)
             localTextDragState = .dragging(
@@ -76,9 +75,9 @@ extension EditorTextView {
         ) { value, characterRange, stop in
             guard value is NSTextAttachment,
                   textStorage.attribute(
-                    RenderBridgeAttributes.voidNodeType,
-                    at: characterRange.location,
-                    effectiveRange: nil
+                      RenderBridgeAttributes.voidNodeType,
+                      at: characterRange.location,
+                      effectiveRange: nil
                   ) is String
             else {
                 return
@@ -181,15 +180,15 @@ extension EditorTextView {
         finishLocalTextDrag(for: session)
     }
 
-    private func matchingLocalTextDrag(
-        for drop: UITextDropRequest
-    ) -> (
-        session: ObjectIdentifier,
-        editorId: UInt64,
-        documentRevision: UInt64,
-        supported: Bool,
-        range: (from: UInt32, to: UInt32)
-    )? {
+    private struct LocalTextDragMatch {
+        let session: ObjectIdentifier
+        let editorId: UInt64
+        let documentRevision: UInt64
+        let supported: Bool
+        let range: (from: UInt32, to: UInt32)
+    }
+
+    private func matchingLocalTextDrag(for drop: UITextDropRequest) -> LocalTextDragMatch? {
         guard drop.isSameView,
               let localSession = drop.dropSession.localDragSession,
               case let .dragging(
@@ -204,7 +203,13 @@ extension EditorTextView {
         else {
             return nil
         }
-        return (session, sourceEditorId, documentRevision, supported, range)
+        return LocalTextDragMatch(
+            session: session,
+            editorId: sourceEditorId,
+            documentRevision: documentRevision,
+            supported: supported,
+            range: range
+        )
     }
 
     private func canMove(

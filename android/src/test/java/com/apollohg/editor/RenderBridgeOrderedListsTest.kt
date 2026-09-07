@@ -6,15 +6,10 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Annotation
 import android.text.Layout
-import android.text.Spanned
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.util.Base64
-import android.view.View
-import android.view.ViewGroup
-import android.widget.TextView
-import kotlin.math.abs
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
@@ -24,6 +19,14 @@ import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.text.style.URLSpan
 import android.text.style.UnderlineSpan
+import android.util.Base64
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -34,9 +37,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -164,16 +164,16 @@ internal class RenderBridgeOrderedListsTest : RenderBridgeTestFixture() {
         val defaultSchemes = listOf(
             EditorOrderedListNumberingScheme.DECIMAL,
             EditorOrderedListNumberingScheme.LOWER_ALPHA,
-            EditorOrderedListNumberingScheme.LOWER_ROMAN,
+            EditorOrderedListNumberingScheme.LOWER_ROMAN
         )
         assertEquals(defaultSchemes, missing?.schemes)
         assertEquals(defaultSchemes, empty?.schemes)
         assertEquals(
             listOf(
                 EditorOrderedListNumberingScheme.LOWER_ALPHA,
-                EditorOrderedListNumberingScheme.UPPER_ROMAN,
+                EditorOrderedListNumberingScheme.UPPER_ROMAN
             ),
-            mixed?.schemes,
+            mixed?.schemes
         )
         assertEquals(defaultSchemes, malformed?.schemes)
     }
@@ -213,14 +213,14 @@ internal class RenderBridgeOrderedListsTest : RenderBridgeTestFixture() {
             json,
             baseFontSize,
             textColor,
-            EditorTheme.fromJson("""{"list":{}}"""),
+            EditorTheme.fromJson("""{"list":{}}""")
         )
 
         assertEquals(
             listOf("1.", "a.", "i.", "1."),
             rendered.getSpans(0, rendered.length, OrderedListMarkerSpan::class.java)
                 .sortedBy { rendered.getSpanStart(it) }
-                .map { it.label },
+                .map { it.label }
         )
         assertTrue(rendered.toString().contains("1. Depth zero"))
         assertTrue(rendered.toString().contains("1. Depth one"))
@@ -229,7 +229,7 @@ internal class RenderBridgeOrderedListsTest : RenderBridgeTestFixture() {
     }
 
     @Test
-    fun `render - nested ordered marker uses semantic list depth without changing canonical text`() {
+    fun `nested ordered marker uses semantic list depth and preserves canonical text`() {
         val json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
@@ -302,9 +302,18 @@ internal class RenderBridgeOrderedListsTest : RenderBridgeTestFixture() {
         """.trimIndent()
 
         val rendered = RenderBridge.buildSpannable(maxJson, baseFontSize, textColor).toString()
-        assertTrue("u32::MAX marker must remain exact. Got: '$rendered'", rendered.contains("4294967295. "))
+        assertTrue(
+            "u32::MAX marker must remain exact. Got: '$rendered'",
+            rendered.contains("4294967295. ")
+        )
 
-        for (malformedIndex in listOf<Any>(-1, 1.5, org.json.JSONObject.NULL, "1", 4_294_967_296L)) {
+        for (malformedIndex in listOf<Any>(
+            -1,
+            1.5,
+            org.json.JSONObject.NULL,
+            "1",
+            4_294_967_296L
+        )) {
             val context = org.json.JSONObject()
                 .put("ordered", true)
                 .put("index", malformedIndex)
@@ -339,15 +348,35 @@ internal class RenderBridgeOrderedListsTest : RenderBridgeTestFixture() {
         listOf(4f, 20f).forEach { gap ->
             val theme = EditorTheme.fromJson("""{"list": {"markerGap": $gap}}""")
 
-            val unordered = RenderBridge.buildSpannable(json(false), baseFontSize, textColor, theme, 2f)
-            val bullet = unordered.getSpans(0, unordered.length, CenteredBulletSpan::class.java).single()
+            val unordered = RenderBridge.buildSpannable(
+                json(false),
+                baseFontSize,
+                textColor,
+                theme,
+                2f
+            )
+            val bullet = unordered.getSpans(
+                0,
+                unordered.length,
+                CenteredBulletSpan::class.java
+            ).single()
             assertEquals(gap * 2f, bullet.textSideGapPx(0f), 0.01f)
 
-            val orderedResult = RenderBridge.buildSpannable(json(true), baseFontSize, textColor, theme, 2f)
-            val gapSpan = orderedResult.getSpans(0, orderedResult.length, MarkerGapSpan::class.java).single()
+            val orderedResult = RenderBridge.buildSpannable(
+                json(true),
+                baseFontSize,
+                textColor,
+                theme,
+                2f
+            )
+            val gapSpan = orderedResult.getSpans(
+                0,
+                orderedResult.length,
+                MarkerGapSpan::class.java
+            ).single()
             assertEquals(
                 kotlin.math.ceil(gap * 2f).toInt(),
-                gapSpan.getSize(TextPaint(), orderedResult, 0, 1, null),
+                gapSpan.getSize(TextPaint(), orderedResult, 0, 1, null)
             )
         }
     }

@@ -600,9 +600,7 @@ impl OperationError {
             .with_details(serde_json::json!({ "field": field }))
     }
 
-    /// Deterministic bounded-work exhaustion (Task 16B): the work budget is a
-    /// derived ceiling, so no meaningful limit/actual pair is reported —
-    /// unlike `operation_limit_exceeded`, which carries both.
+    /// Derived work ceilings have no meaningful limit/actual pair to report.
     pub(crate) fn operation_work_budget_exceeded(
         request_id: u64,
         field: &'static str,

@@ -4,7 +4,7 @@ package com.apollohg.editor
 internal fun NativeEditorExpoView.publicHandleForViewToken(viewToken: Long): String? =
     EditorV2Registry.handleForViewToken(viewToken)
 
-    /** Events never expose a signed widget token as a v2 editor id. */
+/** Events never expose a signed widget token as a v2 editor id. */
 internal fun NativeEditorExpoView.eventEditorId(viewToken: Long): String =
     publicHandleForViewToken(viewToken) ?: "0"
 
@@ -13,10 +13,10 @@ internal fun NativeEditorExpoView.setEditorHandleImpl(handle: String?) {
     setEditorId(viewToken ?: 0L)
 }
 
-    /**
-     * Internal-only widget binding. This token is allocated by
-     * [EditorV2Registry] and is never a public session identifier.
-     */
+/**
+ * Internal-only widget binding. This token is allocated by
+ * [EditorV2Registry] and is never a public session identifier.
+ */
 internal fun NativeEditorExpoView.setEditorIdImpl(id: Long) {
     if (id != 0L && NativeEditorViewRegistry.isDestroyed(id)) {
         setEditorId(0L)

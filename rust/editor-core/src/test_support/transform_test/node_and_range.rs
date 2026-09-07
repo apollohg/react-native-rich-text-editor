@@ -4,7 +4,7 @@
 fn test_insert_node_at_doc_start() {
     // Insert an empty paragraph at pos 0 (before the first block)
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("A")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertNode {
         pos: 0,
         node: paragraph(vec![]),
@@ -23,7 +23,7 @@ fn test_insert_node_at_doc_start() {
 fn test_replace_range_inline_content() {
     // Replace a single char with another
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("A")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::ReplaceRange {
         from: 1,
         to: 2,
@@ -36,19 +36,8 @@ fn test_replace_range_inline_content() {
 }
 
 #[test]
-fn test_transaction_source_variants() {
-    // Just verify all source variants can be constructed
-    let _ = Transaction::new(Source::Input);
-    let _ = Transaction::new(Source::Format);
-    let _ = Transaction::new(Source::Paste);
-    let _ = Transaction::new(Source::History);
-    let _ = Transaction::new(Source::Api);
-    let _ = Transaction::new(Source::Reconciliation);
-}
-
-#[test]
 fn test_transaction_meta() {
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.meta.insert(
         "user_id".to_string(),
         serde_json::Value::String("abc".to_string()),
@@ -84,7 +73,7 @@ fn test_insert_horizontal_rule_between_paragraphs() {
         paragraph(vec![text("B")]),
     ]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertNode {
         pos: 3,
         node: horizontal_rule(),
@@ -128,7 +117,7 @@ fn test_insert_hard_break_in_paragraph() {
     //   pos 3: parent_offset 2 (between "He" and "llo")
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertNode {
         pos: 3,
         node: hard_break(),
@@ -164,7 +153,7 @@ fn test_insert_hard_break_at_start_of_paragraph() {
     // Expected: <doc><p><br>Hello</p></doc>
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertNode {
         pos: 1,
         node: hard_break(),
@@ -187,7 +176,7 @@ fn test_insert_hard_break_at_end_of_paragraph() {
     // Expected: <doc><p>Hello<br></p></doc>
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertNode {
         pos: 6,
         node: hard_break(),
@@ -209,7 +198,7 @@ fn test_insert_hard_break_at_end_of_list_item_paragraph_preserves_text() {
         vec![text("A"), hard_break()],
     )])])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertNode {
         pos: 5,
         node: hard_break(),
@@ -239,7 +228,7 @@ fn test_insert_void_node_occupies_one_position() {
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("AB")])]));
     // pos 1 = A, pos 2 = B, pos 3 = end
     // Insert hardBreak at pos 2 (between A and B)
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertNode {
         pos: 2,
         node: hard_break(),
@@ -267,7 +256,7 @@ fn test_insert_paragraph_node_between_blocks() {
     // Expected: <doc><p>A</p><p></p></doc>
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("A")])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertNode {
         pos: 3,
         node: paragraph(vec![]),
@@ -297,7 +286,7 @@ fn test_replace_range_replace_selection_with_text() {
     // Expected: <doc><p>Hey there</p></doc>
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
 
-    let mut tx = Transaction::new(Source::Paste);
+    let mut tx = Transaction::new();
     tx.add_step(Step::ReplaceRange {
         from: 3,
         to: 6,
@@ -327,7 +316,7 @@ fn test_replace_range_pure_insertion() {
     // Expected: <doc><p>HeXYllo</p></doc>
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
 
-    let mut tx = Transaction::new(Source::Paste);
+    let mut tx = Transaction::new();
     tx.add_step(Step::ReplaceRange {
         from: 3,
         to: 3,
@@ -352,7 +341,7 @@ fn test_replace_range_empty_fragment_is_delete() {
     // Expected: <doc><p>Ho</p></doc>
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::ReplaceRange {
         from: 2,
         to: 5,
@@ -377,7 +366,7 @@ fn test_replace_range_preserves_surrounding_content() {
     // Expected: <doc><p>Help, rld</p></doc>
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello world")])]));
 
-    let mut tx = Transaction::new(Source::Paste);
+    let mut tx = Transaction::new();
     tx.add_step(Step::ReplaceRange {
         from: 4,
         to: 9,
@@ -402,7 +391,7 @@ fn replace_range_preserves_preceding_split_text_siblings() {
         text_with_marks("bcd", vec![bold()]),
         text("ef"),
     ])]));
-    let mut transaction = Transaction::new(Source::Input);
+    let mut transaction = Transaction::new();
     transaction.add_step(Step::ReplaceRange {
         from: 3,
         to: 4,
@@ -425,7 +414,7 @@ fn test_replace_range_with_marked_content() {
     // Expected: <doc><p>H<b>ELL</b>o</p></doc>
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
 
-    let mut tx = Transaction::new(Source::Paste);
+    let mut tx = Transaction::new();
     tx.add_step(Step::ReplaceRange {
         from: 2,
         to: 5,
@@ -464,7 +453,7 @@ fn test_replace_range_step_map() {
     // Deleted 3, inserted 1. Net delta = -2.
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::ReplaceRange {
         from: 2,
         to: 5,
@@ -502,7 +491,7 @@ fn test_insert_node_then_delete_restores_original_block() {
     ]));
 
     // Insert
-    let mut tx_insert = Transaction::new(Source::Input);
+    let mut tx_insert = Transaction::new();
     tx_insert.add_step(Step::InsertNode {
         pos: 3,
         node: horizontal_rule(),
@@ -511,7 +500,7 @@ fn test_insert_node_then_delete_restores_original_block() {
     assert_eq!(inserted_doc.root().child_count(), 3);
 
     // Delete the inserted hr (pos 3..4, since void node is 1 token)
-    let mut tx_delete = Transaction::new(Source::Input);
+    let mut tx_delete = Transaction::new();
     tx_delete.add_step(Step::DeleteRange { from: 3, to: 4 });
     let (restored_doc, _) = tx_delete
         .apply(&inserted_doc, &schema)
@@ -534,7 +523,7 @@ fn test_insert_node_then_delete_restores_original_inline() {
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
 
     // Insert
-    let mut tx_insert = Transaction::new(Source::Input);
+    let mut tx_insert = Transaction::new();
     tx_insert.add_step(Step::InsertNode {
         pos: 3,
         node: hard_break(),
@@ -542,7 +531,7 @@ fn test_insert_node_then_delete_restores_original_inline() {
     let (inserted_doc, _) = tx_insert.apply(&d, &schema).expect("insert should succeed");
 
     // Delete the hardBreak (pos 3..4)
-    let mut tx_delete = Transaction::new(Source::Input);
+    let mut tx_delete = Transaction::new();
     tx_delete.add_step(Step::DeleteRange { from: 3, to: 4 });
     let (restored_doc, _) = tx_delete
         .apply(&inserted_doc, &schema)
@@ -559,7 +548,7 @@ fn test_insert_node_then_delete_restores_original_inline() {
 fn test_delete_range_invalid_range_returns_error() {
     // from > to should be an error
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::DeleteRange { from: 4, to: 2 });
 
     assert!(
@@ -571,7 +560,7 @@ fn test_delete_range_invalid_range_returns_error() {
 #[test]
 fn test_insert_text_out_of_bounds_returns_error() {
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hi")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 100,
         text: "X".to_string(),
@@ -588,7 +577,7 @@ fn test_insert_text_out_of_bounds_returns_error() {
 fn test_add_mark_range_no_change_for_empty_range() {
     // AddMark with from == to should be a no-op
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Format);
+    let mut tx = Transaction::new();
     tx.add_step(Step::AddMark {
         from: 3,
         to: 3,
@@ -604,7 +593,7 @@ fn test_add_mark_range_no_change_for_empty_range() {
 #[test]
 fn test_empty_transaction_is_noop() {
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let tx = Transaction::new(Source::Input);
+    let tx = Transaction::new();
 
     let (new_doc, _map) = tx
         .apply(&doc, &schema)

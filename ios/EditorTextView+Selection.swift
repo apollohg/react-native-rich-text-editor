@@ -1,5 +1,5 @@
-import UIKit
 import os
+import UIKit
 
 class CaretPlacementTapRecognizer: UITapGestureRecognizer {
     private weak var trackedTouch: UITouch?
@@ -70,13 +70,12 @@ extension EditorTextView {
     func isAtomBoundaryCaretOffset(_ offset: Int) -> Bool {
         guard offset >= 0, offset <= textStorage.length else { return false }
         if offset < textStorage.length,
-           textStorage.attribute(.attachment, at: offset, effectiveRange: nil) is AtomBlockAttachment
-        {
+           textStorage.attribute(.attachment, at: offset, effectiveRange: nil) is AtomBlockAttachment {
             return true
         }
         return offset > 0
             && textStorage.attribute(.attachment, at: offset - 1, effectiveRange: nil)
-                is AtomBlockAttachment
+            is AtomBlockAttachment
     }
 
     func isCollapsedAtomBoundary(_ range: NSRange?) -> Bool {
@@ -91,8 +90,7 @@ extension EditorTextView {
         logicalSelectionUtf16Range = nil
         if let authorized = lastAuthorizedSelectedUtf16Range,
            NSMaxRange(authorized) <= textStorage.length,
-           !isCollapsedAtomBoundary(authorized)
-        {
+           !isCollapsedAtomBoundary(authorized) {
             performTransientTextMutation {
                 selectedRange = authorized
                 noteSelectionDidChange()
@@ -170,8 +168,7 @@ extension EditorTextView {
             if interactionSelection.location != NSNotFound,
                interactionSelection.location >= 0,
                interactionSelection.length >= 0,
-               interactionSelection.location + interactionSelection.length <= textStorage.length
-            {
+               interactionSelection.location + interactionSelection.length <= textStorage.length {
                 logicalSelectionScalarRange = nil
                 logicalSelectionUtf16Range = nil
                 performTransientTextMutation {
@@ -344,8 +341,7 @@ extension EditorTextView {
         let scalarRange = PositionBridge.textRangeToScalarRange(range, in: self)
         if let logicalSelectionScalarRange,
            min(logicalSelectionScalarRange.anchor, logicalSelectionScalarRange.head) == scalarRange.from,
-           max(logicalSelectionScalarRange.anchor, logicalSelectionScalarRange.head) == scalarRange.to
-        {
+           max(logicalSelectionScalarRange.anchor, logicalSelectionScalarRange.head) == scalarRange.to {
             return logicalSelectionScalarRange
         }
         // A lone empty block parks the caret ahead of the placeholder so UIKit
@@ -360,8 +356,7 @@ extension EditorTextView {
         if let logicalSelectionScalarRange,
            let logicalSelectionUtf16Range,
            logicalSelectionUtf16Range == selectedRange,
-           isLoneEmptyPlaceholderBlock
-        {
+           isLoneEmptyPlaceholderBlock {
             return logicalSelectionScalarRange
         }
         logicalSelectionScalarRange = nil
@@ -472,12 +467,10 @@ extension EditorTextView {
             )
 
         case "node":
-            // Node selection: select the object replacement character at that position.
             let resolveStartedAt = DispatchTime.now().uptimeNanoseconds
             guard let pos = v2ExactUInt32(selection["pos"] as? NSNumber) else {
                 return SelectionApplyTrace(totalNanos: 0, resolveNanos: 0, assignmentNanos: 0, chromeNanos: 0)
             }
-            // pos from Rust is a document position; convert to scalar offset.
             let posScalar: UInt32
             if let rawPosScalar = selection["posScalar"] {
                 guard let exactPosScalar = v2ExactUInt32(rawPosScalar as? NSNumber) else {

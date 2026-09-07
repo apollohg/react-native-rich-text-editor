@@ -5,7 +5,10 @@ import android.util.Base64
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -16,7 +19,10 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [34])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class RenderSvgImageDecoderTest {
-    private val rectangle = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="10 20 200 100"><rect x="10" y="20" width="200" height="100" fill="#ff0000"/></svg>"""
+    private val rectangle =
+        """<svg xmlns="http://www.w3.org/2000/svg" viewBox="10 20 200 100">""" +
+            """<rect x="10" y="20" width="200" height="100" fill="#ff0000"/>""" +
+            """</svg>"""
 
     @After
     fun tearDown() {
@@ -26,7 +32,7 @@ class RenderSvgImageDecoderTest {
     private fun decode(svg: String, policy: ImageLoadingPolicy = ImageLoadingPolicy.DEFAULT) =
         RenderImageDecoder.decodeSourceLease(
             "data:image/svg+xml;base64," + Base64.encodeToString(svg.toByteArray(), Base64.NO_WRAP),
-            policy,
+            policy
         )
 
     @Test
@@ -43,7 +49,11 @@ class RenderSvgImageDecoderTest {
     @Test
     fun `remote SVG is identified by bytes with no SVG suffix or content type`() {
         MockWebServer().use { server ->
-            server.enqueue(MockResponse().setBody(rectangle).setHeader("Content-Type", "application/octet-stream"))
+            server.enqueue(
+                MockResponse().setBody(
+                    rectangle
+                ).setHeader("Content-Type", "application/octet-stream")
+            )
             server.start()
             val lease = RenderImageDecoder.decodeSourceLease(server.url("/image?id=42").toString())
             assertNotNull(lease)
@@ -54,7 +64,11 @@ class RenderSvgImageDecoderTest {
 
     @Test
     fun `SVG rasterization obeys dimension and pixel budget before allocation`() {
-        val lease = decode(rectangle, ImageLoadingPolicy.DEFAULT.copy(maxDecodeDimensionPx = 80, maxDecodedBytes = 3200))
+        val lease =
+            decode(
+                rectangle,
+                ImageLoadingPolicy.DEFAULT.copy(maxDecodeDimensionPx = 80, maxDecodedBytes = 3200)
+            )
         assertNotNull(lease)
         lease!!.use {
             assertEquals(40, it.bitmap.width)
@@ -74,13 +88,17 @@ class RenderSvgImageDecoderTest {
             assertEquals(320, it.bitmap.width)
             assertEquals(180, it.bitmap.height)
             var opaque = 0
-            for (y in 0 until 180) for (x in 0 until 320) {
-                if (Color.alpha(it.bitmap.getPixel(x, y)) != 0) opaque++
+            for (y in 0 until 180) {
+                for (x in 0 until 320) {
+                    if (Color.alpha(it.bitmap.getPixel(x, y)) != 0) opaque++
+                }
             }
             assertTrue("Expected diagram shapes and labels", opaque > 4000)
             var textPixels = 0
-            for (y in 24 until 48) for (x in 104 until 200) {
-                if (Color.alpha(it.bitmap.getPixel(x, y)) != 0) textPixels++
+            for (y in 24 until 48) {
+                for (x in 104 until 200) {
+                    if (Color.alpha(it.bitmap.getPixel(x, y)) != 0) textPixels++
+                }
             }
             assertTrue("Expected the Sample text label", textPixels > 100)
         }
@@ -94,14 +112,27 @@ class RenderSvgImageDecoderTest {
         val deep = "<svg xmlns=\"http://www.w3.org/2000/svg\">" + "<g>".repeat(128) +
             "</g>".repeat(128) + "</svg>"
         assertNull(decode(deep))
-        assertNull(decode("""<svg xmlns="http://www.w3.org/2000/svg"><g id="loop"><use href="#loop"/></g></svg>"""))
+        assertNull(
+            decode(
+
+                """<svg xmlns="http://www.w3.org/2000/svg"><g id="loop"><use href="#""" +
+                    """loop"/></g></svg>"""
+            )
+        )
     }
 
     @Test
     fun `local use references render and keep budget until lease release`() {
         val budget = DecodedBitmapBudget.shared()
         val before = budget.retainedProcessBytesForTesting()
-        val lease = decode("""<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><defs><rect id="shape" width="20" height="10" fill="red"/></defs><use xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="#shape"/></svg>""")
+        val lease =
+            decode(
+
+                """<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><d""" +
+                    """efs><rect id="shape" width="20" height="10" fill="red"/></defs><u""" +
+                    """se xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="#shap""" +
+                    """e"/></svg>"""
+            )
         assertNotNull(lease)
         lease!!.use {
             assertEquals(Color.RED, it.bitmap.getPixel(10, 5))
@@ -112,7 +143,11 @@ class RenderSvgImageDecoderTest {
 
     @Test
     fun `literal SVG metadata permits at signs backslashes and URL-like names`() {
-        val svg = """<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10" id="mail@host" title="C:\icons" aria-label="mail@example.com" data-source="url(unclosed" class="curl-icon"><style>.curl-icon { fill: red; }</style><rect width="20" height="10"/></svg>"""
+        val svg =
+            """<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10" id""" +
+                """="mail@host" title="C:\icons" aria-label="mail@example.com" data-""" +
+                """source="url(unclosed" class="curl-icon"><style>.curl-icon { fill:""" +
+                """ red; }</style><rect width="20" height="10"/></svg>"""
         val lease = decode(svg)
         assertNotNull(lease)
         lease!!.use { assertEquals(Color.RED, it.bitmap.getPixel(10, 5)) }
@@ -121,20 +156,46 @@ class RenderSvgImageDecoderTest {
     @Test
     fun `malformed CSS URL functions are rejected in styles and presentation attributes`() {
         for (attributes in listOf("fill=\"url(\"", "style=\"fill: url (\"")) {
-            assertNull(decode("""<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10" $attributes/></svg>"""))
+            assertNull(
+                decode(
+
+                    """<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><r""" +
+                        """ect width="20" height="10" $attributes/></svg>"""
+                )
+            )
         }
-        assertNull(decode("""<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><style>rect {fill: url(}</style><rect width="20" height="10"/></svg>"""))
+        assertNull(
+            decode(
+
+                """<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><s""" +
+                    """tyle>rect {fill: url(}</style><rect width="20" height="10"/></svg""" +
+                    """>"""
+            )
+        )
     }
 
     @Test
     fun `malformed SVG and active or external content are rejected`() {
         for (svg in listOf(
-            "<svg", "<html/>",
-            """<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><style>.paint {fill: url(#color)}</style><defs><linearGradient id="color"><stop stop-color="red"/></linearGradient></defs><rect class="paint" width="10" height="10"/></svg>""",
-            """<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///etc/passwd">]><svg xmlns="http://www.w3.org/2000/svg"><text>&x;</text></svg>""",
-            """<?xml-stylesheet href="https://example.com/style.css"?><svg xmlns="http://www.w3.org/2000/svg"/>""",
+            "<svg",
+            "<html/>",
+
+            """<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><s""" +
+                """tyle>.paint {fill: url(#color)}</style><defs><linearGradient id""" +
+                """="color"><stop stop-color="red"/></linearGradient></defs><rect cl""" +
+                """ass="paint" width="10" height="10"/></svg>""",
+
+            """<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///etc/passwd">]><svg xmln""" +
+                """s="http://www.w3.org/2000/svg"><text>&x;</text></svg>""",
+
+            """<?xml-stylesheet href="https://example.com/style.css"?><svg xmlns""" +
+                """="http://www.w3.org/2000/svg"/>""",
             """<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>""",
-            """<svg xmlns="http://www.w3.org/2000/svg"><image href="https://example.com/image.png"/></svg>""",
-        )) assertNull(svg, decode(svg))
+
+            """<svg xmlns="http://www.w3.org/2000/svg"><image href="https://exam""" +
+                """ple.com/image.png"/></svg>"""
+        )) {
+            assertNull(svg, decode(svg))
+        }
     }
 }

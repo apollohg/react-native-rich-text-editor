@@ -9,7 +9,6 @@ use crate::model::Mark;
 #[cfg(test)]
 use crate::schema::Schema;
 use crate::yrs_engine;
-use crate::yrs_engine::prepared_admission::DerivedStateAuthority;
 use crate::yrs_engine::{scalar_offset_to_utf16, ResolvedPoint, ResolvedSelection};
 use sha2::Digest;
 use std::sync::Arc;
@@ -53,42 +52,6 @@ impl DerivedStateCache {
             yrs_state_epoch,
             &self.mutation_lookup_seed,
             None,
-        )
-    }
-
-    /// Callers may invoke this only after envelope admission, cached-view
-    /// validation, document-byte charging, and Yrs scan admission.
-    #[allow(dead_code)]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn admit_existing_text_insert<T: ReadTxn>(
-        &self,
-        transaction: &yrs_engine::TypedTransaction,
-        allow_prepared_command_boundary: bool,
-        document_position: u32,
-        txn: &T,
-        fragment: &XmlFragmentRef,
-        schema_fingerprint: &str,
-        resource_limits: &ResourceLimits,
-        editing_limits: &yrs_engine::EditingLimits,
-        max_length: Option<u32>,
-        yrs_state_epoch: u64,
-    ) -> Option<LocalizedInsertAdmission> {
-        let authority = yrs_engine::prepared_admission::InstalledDerivedStateAuthority::new(self);
-        let lookup_seed =
-            DerivedStateAuthority::lookup_seed(&authority, transaction.request_id).ok()?;
-        self.admit_existing_text_insert_with_authority(
-            transaction,
-            allow_prepared_command_boundary,
-            document_position,
-            txn,
-            fragment,
-            lookup_seed,
-            authority.materialized_identity(),
-            schema_fingerprint,
-            resource_limits,
-            editing_limits,
-            max_length,
-            yrs_state_epoch,
         )
     }
 

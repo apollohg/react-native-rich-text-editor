@@ -1,13 +1,17 @@
 package com.apollohg.editor
-import android.os.Looper
 import android.content.Context
+import android.os.Looper
 import android.view.inputmethod.EditorInfo
-import java.math.BigDecimal
-import java.lang.ref.WeakReference
 import expo.modules.core.ModuleRegistry
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.ModulesProvider
 import expo.modules.kotlin.modules.Module
+import java.lang.ref.WeakReference
+import java.math.BigDecimal
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
@@ -22,10 +26,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import uniffi.editor_core.FfiError
 import uniffi.editor_core.FfiJsonResult
 import uniffi.editor_core.FfiUnitResult
@@ -43,13 +43,13 @@ internal class NativeEditorModuleTest : NativeEditorModuleTestFixture() {
             create = { _, _ ->
                 FfiJsonResult(
                     "{\"editorId\":\"900001\"}",
-                    FfiError("engine", "FAILED", "malformed", null, null, null, null, null),
+                    FfiError("engine", "FAILED", "malformed", null, null, null, null, null)
                 )
             },
             destroy = { editorId ->
                 cleanupHandles += editorId
                 FfiUnitResult(true, null)
-            },
+            }
         )
 
         val error = result["error"] as Map<*, *>
@@ -70,7 +70,7 @@ internal class NativeEditorModuleTest : NativeEditorModuleTestFixture() {
             destroy = { editorId ->
                 cleanupHandles += editorId
                 FfiUnitResult(true, null)
-            },
+            }
         )
 
         val error = result["error"] as Map<*, *>
@@ -86,11 +86,13 @@ internal class NativeEditorModuleTest : NativeEditorModuleTestFixture() {
         val result = createEditorV2FromModule(
             configJson = "{\"initialization\":{\"type\":\"localEmpty\"}}",
             snapshotState = null,
-            create = { _, _ -> FfiJsonResult("{\"editorId\":\"900003\",\"unexpected\":true}", null) },
+            create = { _, _ ->
+                FfiJsonResult("{\"editorId\":\"900003\",\"unexpected\":true}", null)
+            },
             destroy = { editorId ->
                 cleanupHandles += editorId
                 FfiUnitResult(true, null)
-            },
+            }
         )
 
         val error = result["error"] as Map<*, *>
@@ -104,7 +106,7 @@ internal class NativeEditorModuleTest : NativeEditorModuleTestFixture() {
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"room\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val editorId = JSONObject(created.value).getString("editorId")
         NativeCollaborationTransportRegistry.transportFactoryForTesting = { id, sink ->
@@ -112,7 +114,7 @@ internal class NativeEditorModuleTest : NativeEditorModuleTestFixture() {
                 editorId = id,
                 backend = backend,
                 socketFactory = neverSocketFactory(),
-                eventSink = sink,
+                eventSink = sink
             )
         }
         NativeCollaborationTransportRegistry.detachHost(collaborationRuntimeToken)
@@ -121,7 +123,7 @@ internal class NativeEditorModuleTest : NativeEditorModuleTestFixture() {
             NativeCollaborationTransportRegistry.configure(
                 collaborationRuntimeToken,
                 editorId,
-                "{\"url\":\"wss://collab.example/room\",\"connect\":true}",
+                "{\"url\":\"wss://collab.example/room\",\"connect\":true}"
             )
         )
         NativeCollaborationTransportRegistry.awaitIdleForTesting(editorId)
@@ -130,14 +132,14 @@ internal class NativeEditorModuleTest : NativeEditorModuleTestFixture() {
         ) as AndroidCollaborationTransport
         assertEquals(
             AndroidCollaborationTransport.HostState.DETACHED,
-            transport.hostStateForTesting(),
+            transport.hostStateForTesting()
         )
 
         NativeCollaborationTransportRegistry.attachHost(collaborationRuntimeToken)
         NativeCollaborationTransportRegistry.awaitIdleForTesting(editorId)
         assertEquals(
             AndroidCollaborationTransport.HostState.FOREGROUND,
-            transport.hostStateForTesting(),
+            transport.hostStateForTesting()
         )
     }
 }

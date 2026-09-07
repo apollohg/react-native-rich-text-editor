@@ -194,7 +194,6 @@ describe('YjsCollaboration (native-transport controller)', () => {
             'applyLocal' + 'DocumentJson',
             'onContentChangeJSON',
             'valueJSON',
-            // The JavaScript-owned data plane removed by the native cutover.
             'createWebSocket',
             'WebSocket',
             'retryIntervalMs',

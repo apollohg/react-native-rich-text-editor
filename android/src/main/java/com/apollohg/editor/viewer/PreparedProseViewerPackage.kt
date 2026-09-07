@@ -7,9 +7,10 @@ import com.facebook.react.uimanager.ViewManager
 
 /** Autolinked package that exposes only the Fabric PreparedProseViewer manager. */
 class PreparedProseViewerPackage : ReactPackage {
-    override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> = emptyList()
+    override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
+        emptyList()
 
     override fun createViewManagers(
-        reactContext: ReactApplicationContext,
+        reactContext: ReactApplicationContext
     ): List<ViewManager<in Nothing, in Nothing>> = listOf(PreparedProseViewerManager())
 }

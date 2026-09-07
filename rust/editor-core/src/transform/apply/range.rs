@@ -7,7 +7,6 @@ fn insert_node_in_children(parent: &Node, offset: u32, insert_node: &Node) -> Ve
     let mut new_children: Vec<Node> = Vec::with_capacity(content.child_count() + 2);
     let mut remaining_offset = offset;
 
-    // If the parent has no children, just insert the node.
     if content.child_count() == 0 {
         new_children.push(insert_node.clone());
         return new_children;
@@ -26,7 +25,6 @@ fn insert_node_in_children(parent: &Node, offset: u32, insert_node: &Node) -> Ve
         if child.is_text() {
             if remaining_offset <= child_size {
                 if remaining_offset == 0 {
-                    // Insert before this text node.
                     new_children.push(insert_node.clone());
                     new_children.push(child.clone());
                     inserted = true;
@@ -38,7 +36,6 @@ fn insert_node_in_children(parent: &Node, offset: u32, insert_node: &Node) -> Ve
                     remaining_offset -= child_size;
                     continue;
                 } else {
-                    // Split the text node at the offset, insert node between halves.
                     let (left, right) = split_text_node(child, remaining_offset);
                     if let Some(l) = left {
                         new_children.push(l);
@@ -75,7 +72,6 @@ fn insert_node_in_children(parent: &Node, offset: u32, insert_node: &Node) -> Ve
         }
     }
 
-    // If we haven't inserted yet, the offset is at the end.
     if !inserted {
         new_children.push(insert_node.clone());
     }
@@ -99,16 +95,13 @@ fn apply_replace_range(
     let resolved_from = doc.resolve(from).map_err(TransformError::OutOfBounds)?;
 
     if from == to && content.size() == 0 {
-        // No-op: empty range and empty content.
         return Ok((doc.clone(), StepMap::empty()));
     }
 
-    // If from != to, resolve `to` and check if same parent.
     if from != to {
         let resolved_to = doc.resolve(to).map_err(TransformError::OutOfBounds)?;
 
         if resolved_from.node_path != resolved_to.node_path {
-            // Cross-parent replace: delete across parents first, then insert.
             return apply_cross_parent_replace(
                 doc,
                 from,
@@ -125,7 +118,6 @@ fn apply_replace_range(
     let deleted_len = to - from;
     let to_offset = from_offset + deleted_len;
 
-    // Step 1: Delete the range [from_offset, to_offset) in the parent's children.
     let after_delete = if deleted_len > 0 {
         delete_in_children(parent, from_offset, to_offset)
     } else {
@@ -137,7 +129,6 @@ fn apply_replace_range(
             .collect()
     };
 
-    // Step 2: Insert the content nodes at from_offset in the resulting children.
     let after_insert = if content.size() > 0 {
         // Build a temporary parent with the after-delete children so we can
         // use insert_nodes_in_children to splice in the content.
@@ -166,7 +157,6 @@ fn insert_nodes_in_children(parent: &Node, offset: u32, fragment: &Fragment) -> 
         Vec::with_capacity(content.child_count() + insert_nodes.len() + 2);
     let mut remaining_offset = offset;
 
-    // If the parent has no children, just insert all fragment nodes.
     if content.child_count() == 0 {
         for node in &insert_nodes {
             new_children.push((*node).clone());
@@ -187,7 +177,6 @@ fn insert_nodes_in_children(parent: &Node, offset: u32, fragment: &Fragment) -> 
         if child.is_text() {
             if remaining_offset <= child_size {
                 if remaining_offset == 0 {
-                    // Insert before this text node.
                     for node in &insert_nodes {
                         new_children.push((*node).clone());
                     }
@@ -195,12 +184,10 @@ fn insert_nodes_in_children(parent: &Node, offset: u32, fragment: &Fragment) -> 
                     inserted = true;
                     continue;
                 } else if remaining_offset == child_size {
-                    // At the end of this text node — continue.
                     new_children.push(child.clone());
                     remaining_offset -= child_size;
                     continue;
                 } else {
-                    // Split the text node and insert between halves.
                     let (left, right) = split_text_node(child, remaining_offset);
                     if let Some(l) = left {
                         new_children.push(l);
@@ -229,7 +216,6 @@ fn insert_nodes_in_children(parent: &Node, offset: u32, fragment: &Fragment) -> 
             remaining_offset -= 1;
             new_children.push(child.clone());
         } else {
-            // Element child.
             if remaining_offset == 0 {
                 for node in &insert_nodes {
                     new_children.push((*node).clone());
@@ -243,7 +229,6 @@ fn insert_nodes_in_children(parent: &Node, offset: u32, fragment: &Fragment) -> 
         }
     }
 
-    // If we haven't inserted yet, the offset is at the end.
     if !inserted {
         for node in &insert_nodes {
             new_children.push((*node).clone());
@@ -283,7 +268,6 @@ fn apply_cross_parent_delete(
         TransformError::InvalidTarget("common ancestor has no content".to_string())
     })?;
 
-    // The first and last blocks at the common ancestor level.
     let first_child_idx = *resolved_from.node_path.get(common_depth).ok_or_else(|| {
         TransformError::InvalidRange(
             "cross-parent delete: from endpoint resolves to common ancestor boundary".to_string(),
@@ -321,12 +305,9 @@ fn apply_cross_parent_delete(
     let first_parent = resolved_from.parent(doc);
     let last_parent = resolved_to.parent(doc);
 
-    // Keep left part of first block.
     let (left_children, _) = split_children_at(first_parent, from_offset_in_first);
-    // Keep right part of last block.
     let (_, right_children) = split_children_at(last_parent, to_offset_in_last);
 
-    // Merge the kept parts into one block (using the first block's type/attrs).
     let mut merged_children = left_children;
     merged_children.extend(right_children);
     let merged_children = merge_adjacent_text_nodes(merged_children);
@@ -341,7 +322,6 @@ fn apply_cross_parent_delete(
         if i == first_child_idx {
             new_common_children.push(merged_block.clone());
         } else if i > first_child_idx && i <= last_child_idx {
-            // Skip — these are being deleted.
         } else {
             new_common_children.push(child.clone());
         }
@@ -365,16 +345,13 @@ fn apply_cross_parent_replace(
     resolved_from: &ResolvedPos,
     resolved_to: &ResolvedPos,
 ) -> Result<(Document, StepMap), TransformError> {
-    // First, perform the cross-parent delete.
     let (after_delete, delete_map) =
         apply_cross_parent_delete(doc, from, to, resolved_from, resolved_to)?;
 
-    // Now insert the content at `from` in the post-delete document.
     if content.size() == 0 {
         return Ok((after_delete, delete_map));
     }
 
-    // Resolve `from` in the post-delete doc and insert content there.
     let resolved_insert = after_delete
         .resolve(from)
         .map_err(TransformError::OutOfBounds)?;
@@ -411,7 +388,6 @@ fn replace_node_with_two(root: &Node, path: &[u32], first: &Node, second: &Node)
     }
 
     if path.len() == 1 {
-        // We're at the direct parent of the node to replace.
         let content = root
             .content()
             .expect("non-leaf node in path must be an element");
@@ -430,7 +406,6 @@ fn replace_node_with_two(root: &Node, path: &[u32], first: &Node, second: &Node)
         return rebuild_element(root, new_children);
     }
 
-    // Recurse into the child indicated by path[0].
     let content = root
         .content()
         .expect("non-leaf node in path must be an element");
@@ -474,7 +449,6 @@ fn replace_node_with_many(root: &Node, path: &[u32], replacements: &[Node]) -> N
         return rebuild_element(root, new_children);
     }
 
-    // Recurse into the child indicated by path[0].
     let content = root
         .content()
         .expect("non-leaf node in path must be an element");

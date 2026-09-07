@@ -1,23 +1,4 @@
 #!/usr/bin/env bash
-#
-# Cross-compile editor-core for Android targets using cargo-ndk. Since the
-# Task 16C cutover the v2 ABI is the only surface: every ABI is verified to
-# export exactly 35 editor_v2_* symbols and zero legacy
-# editor_*/collaboration_* symbols.
-#
-# Targets:
-#   - aarch64-linux-android     -> arm64-v8a   (most modern devices)
-#   - armv7-linux-androideabi   -> armeabi-v7a  (older 32-bit devices)
-#   - i686-linux-android        -> x86           (32-bit emulators)
-#   - x86_64-linux-android      -> x86_64       (emulators)
-#
-# Output: rust/android/{arm64-v8a,armeabi-v7a,x86,x86_64}/libeditor_core.so
-#
-# Prerequisites:
-#   - cargo-ndk: cargo install cargo-ndk
-#   - Rust toolchain with Android targets installed:
-#       rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
-#   - Android NDK (set ANDROID_NDK_HOME or let cargo-ndk auto-detect from ANDROID_HOME)
 
 set -euo pipefail
 

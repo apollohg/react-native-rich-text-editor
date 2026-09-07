@@ -7,6 +7,7 @@ import android.view.KeyEvent
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.CorrectionInfo
 import android.view.inputmethod.EditorInfo
+import java.time.Duration
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -15,18 +16,17 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.robolectric.Shadows.shadowOf
-import org.robolectric.RuntimeEnvironment
-import java.time.Duration
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 internal class EditorInputConnectionLifecycleHardwareKeysTest : EditorInputConnectionTestSupport() {
     @Test
-    fun `delete surrounding text after authorized render change is consumed without deleting authorized text`() {
+    fun `delete surrounding text after authorized render preserves authorized text`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson("Hello world"), notifyListener = false)
         editText.setSelection(6)
@@ -65,7 +65,7 @@ internal class EditorInputConnectionLifecycleHardwareKeysTest : EditorInputConne
     }
 
     @Test
-    fun `delete surrounding text in code points after authorized render change is consumed without mutation`() {
+    fun `delete surrounding code points after authorized render is consumed unchanged`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson("Hello world"), notifyListener = false)
         editText.setSelection(6)
@@ -175,7 +175,10 @@ internal class EditorInputConnectionLifecycleHardwareKeysTest : EditorInputConne
             assertTrue(inputConnection!!.setComposingText("brave ", 1))
             assertEquals("Hello brave world", editText.text?.toString())
 
-            editText.applyUpdateJSON(renderUpdateJson("Hello updated world"), notifyListener = false)
+            editText.applyUpdateJSON(
+                renderUpdateJson("Hello updated world"),
+                notifyListener = false
+            )
 
             assertTrue(inputConnection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode)))
             assertEquals("Hello updated world", editText.text?.toString())

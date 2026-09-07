@@ -25,8 +25,6 @@ impl DeltaTree {
     }
 
     /// Number of delta entries.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.deltas.len()
@@ -37,17 +35,14 @@ impl DeltaTree {
     /// If an entry already exists for `from_block`, the deltas are summed.
     /// Entries for blocks *after* `from_block` are also shifted.
     pub fn insert(&mut self, from_block: usize, doc_delta: i32, scalar_delta: i32) {
-        // Find insertion point
         let pos = self
             .deltas
             .binary_search_by_key(&from_block, |&(idx, _, _)| idx);
 
         match pos {
             Ok(i) => {
-                // Existing entry — accumulate
                 self.deltas[i].1 += doc_delta;
                 self.deltas[i].2 += scalar_delta;
-                // Remove if both deltas are zero
                 if self.deltas[i].1 == 0 && self.deltas[i].2 == 0 {
                     self.deltas.remove(i);
                 }
@@ -81,14 +76,6 @@ impl DeltaTree {
     /// Clear all deltas (after folding them into BlockMappings).
     pub fn clear(&mut self) {
         self.deltas.clear();
-    }
-
-    /// Iterate over raw entries (for folding into block mappings).
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
-    #[allow(dead_code)]
-    pub fn iter(&self) -> impl Iterator<Item = &(usize, i32, i32)> {
-        self.deltas.iter()
     }
 
     /// Upper bound for the heap retained by cloning this tree into a history

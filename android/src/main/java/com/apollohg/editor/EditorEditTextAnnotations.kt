@@ -1,14 +1,14 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.EditorEditText.AccessibleAnnotationTarget
-import com.apollohg.editor.EditorEditText.InteractiveAnnotationHit
-import com.apollohg.editor.EditorEditText.AccessibleAnnotation
-import com.apollohg.editor.EditorEditText.LinkHit
-import com.apollohg.editor.EditorEditText.MentionHit
 import android.graphics.Rect
 import android.text.Annotation
 import android.text.Layout
 import android.text.Spanned
+import com.apollohg.editor.EditorEditText.AccessibleAnnotation
+import com.apollohg.editor.EditorEditText.AccessibleAnnotationTarget
+import com.apollohg.editor.EditorEditText.InteractiveAnnotationHit
+import com.apollohg.editor.EditorEditText.LinkHit
+import com.apollohg.editor.EditorEditText.MentionHit
 
 internal fun EditorEditText.textOffsetHitAt(x: Float, y: Float): Pair<Spanned, Int>? {
     val spannable = text as? Spanned ?: return null
@@ -96,6 +96,7 @@ internal fun EditorEditText.accessibleAnnotationsImpl(): List<AccessibleAnnotati
                 href = annotation.value,
                 text = label
             )
+
             annotation.key == "nativeVoidNodeType" && annotation.value == "mention" -> {
                 val docPos = annotations.firstOrNull { candidate ->
                     candidate.key == "nativeDocPos" &&
@@ -104,6 +105,7 @@ internal fun EditorEditText.accessibleAnnotationsImpl(): List<AccessibleAnnotati
                 }?.value?.viewerMentionDocPos() ?: return@forEach
                 AccessibleAnnotationTarget.Mention(docPos, label)
             }
+
             else -> return@forEach
         }
         val role = when (target) {
@@ -123,7 +125,10 @@ internal fun EditorEditText.accessibleAnnotationsImpl(): List<AccessibleAnnotati
     return results.sortedBy { it.first }.map { it.second }
 }
 
-internal fun EditorEditText.interactiveAnnotationHitAtImpl(x: Float, y: Float): InteractiveAnnotationHit? {
+internal fun EditorEditText.interactiveAnnotationHitAtImpl(
+    x: Float,
+    y: Float
+): InteractiveAnnotationHit? {
     val (spannable, offset) = textOffsetHitAt(x, y) ?: return null
     val annotations = spannable.getSpans(
         offset,
@@ -153,7 +158,7 @@ internal fun EditorEditText.interactiveAnnotationHitAtImpl(x: Float, y: Float): 
     return InteractiveAnnotationHit(target, annotation, start, end)
 }
 
-    /** Annotation values are decimal Rust u32 positions, never signed editor offsets. */
+/** Annotation values are decimal Rust u32 positions, never signed editor offsets. */
 private fun String.viewerMentionDocPos(): Long? =
     toLongOrNull()?.takeIf { it in 0L..UInt.MAX_VALUE.toLong() }
 

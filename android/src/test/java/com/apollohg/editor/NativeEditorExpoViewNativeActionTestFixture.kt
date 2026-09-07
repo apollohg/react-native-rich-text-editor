@@ -3,6 +3,7 @@ import android.app.Activity
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
+import java.time.Duration
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -17,9 +18,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
 
-internal abstract class NativeEditorExpoViewNativeActionTestFixture : NativeEditorExpoViewTestSupport(){
+internal abstract class NativeEditorExpoViewNativeActionTestFixture :
+    NativeEditorExpoViewTestSupport() {
     protected fun assertInvalidToolbarPreflightOmitsAtomicFields(preflightUpdateJson: String) {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
@@ -37,7 +38,8 @@ internal abstract class NativeEditorExpoViewNativeActionTestFixture : NativeEdit
             view.setAttachedToNativeWindowForTesting(true)
             view.setEditorId(viewToken)
             editText.v2Driver = object : EditorV2Driver by adapter {
-                override fun insertText(text: String, atScalarPos: Int): String = preflightUpdateJson
+                override fun insertText(text: String, atScalarPos: Int): String =
+                    preflightUpdateJson
             }
             editText.setSelection(0)
             val inputConnection = editText.onCreateInputConnection(EditorInfo())
@@ -49,7 +51,7 @@ internal abstract class NativeEditorExpoViewNativeActionTestFixture : NativeEdit
 
             view.handleToolbarItemPressForTesting(
                 NativeToolbarItem(
-                    type = ToolbarItemKind.action,
+                    type = ToolbarItemKind.ACTION,
                     key = "custom",
                     label = "Custom"
                 )

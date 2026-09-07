@@ -3,6 +3,10 @@ import android.app.Activity
 import android.os.Handler
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
+import java.time.Duration
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,14 +20,11 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-internal class NativeEditorExpoViewControlledUpdateReconciliationTest : NativeEditorExpoViewControlledUpdateTestFixture() {
+internal class NativeEditorExpoViewControlledUpdateReconciliationTest :
+    NativeEditorExpoViewControlledUpdateTestFixture() {
     @Test
     fun `detach preserves pending controlled editor update json`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
@@ -333,7 +334,7 @@ internal class NativeEditorExpoViewControlledUpdateReconciliationTest : NativeEd
     }
 
     @Test
-    fun `external atomic view update keeps adopted selection through toolbar state refresh without state reads`() {
+    fun `atomic view update keeps selection through toolbar refresh without state reads`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
         val backend = FakeEditorV2Backend()

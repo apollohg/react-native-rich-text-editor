@@ -59,8 +59,11 @@ class NativeDeviceCollaborationInitialSyncTest {
                 waitUntil(
                     "replace update should render remote document",
                     detail = {
-                        "text=${editorRef.get().richTextView.editorEditText.text} " +
-                            "trace=${editorRef.get().richTextView.editorEditText.imeTraceSnapshotForTesting().joinToString("|")} " +
+                        val editText = editorRef.get().richTextView.editorEditText
+                        "text=${editText.text} " +
+                            "trace=${editText.imeTraceSnapshotForTesting().joinToString(
+                                "|"
+                            )} " +
                             "update=${updateJson.get()}"
                     }
                 ) {
@@ -90,7 +93,11 @@ class NativeDeviceCollaborationInitialSyncTest {
 
                 val updateJson = AtomicReference<String>()
                 scenario.onActivity {
-                    if (adapter.setContentJson(documentJson("Remote reset sync")) == null) return@onActivity
+                    if (adapter.setContentJson(documentJson("Remote reset sync")) ==
+                        null
+                    ) {
+                        return@onActivity
+                    }
                     val update = atomicRenderSnapshot(adapter)
                     updateJson.set(update)
                     editorRef.get().setPendingEditorResetUpdateJson(update)
@@ -103,8 +110,11 @@ class NativeDeviceCollaborationInitialSyncTest {
                 waitUntil(
                     "reset update should render remote document",
                     detail = {
-                        "text=${editorRef.get().richTextView.editorEditText.text} " +
-                            "trace=${editorRef.get().richTextView.editorEditText.imeTraceSnapshotForTesting().joinToString("|")} " +
+                        val editText = editorRef.get().richTextView.editorEditText
+                        "text=${editText.text} " +
+                            "trace=${editText.imeTraceSnapshotForTesting().joinToString(
+                                "|"
+                            )} " +
                             "update=${updateJson.get()}"
                     }
                 ) {
@@ -126,13 +136,12 @@ class NativeDeviceCollaborationInitialSyncTest {
         }
     }
 
-    private fun createV2Editor(): Pair<EditorV2Adapter, Long> {
-        return createPairedV2TestEditor()
-    }
+    private fun createV2Editor(): Pair<EditorV2Adapter, Long> = createPairedV2TestEditor()
 
     private fun atomicRenderSnapshot(adapter: EditorV2Adapter): String =
         when (val result = UniffiEditorV2Backend.renderUpdate(adapter.editorId, null, null)) {
             is EditorV2CallResult.Ok -> result.value
+
             is EditorV2CallResult.Err ->
                 error("v2 renderUpdate failed: ${result.error.code}: ${result.error.message}")
         }
@@ -146,15 +155,13 @@ class NativeDeviceCollaborationInitialSyncTest {
             .toString()
         when (val result = UniffiEditorV2Backend.replaceDocument(adapter.editorId, requestJson)) {
             is EditorV2CallResult.Ok -> Unit
+
             is EditorV2CallResult.Err ->
                 error("v2 replaceDocument failed: ${result.error.code}: ${result.error.message}")
         }
     }
 
-    private fun createMountedEditor(
-        activity: Activity,
-        editorId: Long
-    ): NativeEditorExpoView {
+    private fun createMountedEditor(activity: Activity, editorId: Long): NativeEditorExpoView {
         initializeSoLoaderIfAvailable(activity)
         val root = FrameLayout(activity).apply {
             setBackgroundColor(Color.WHITE)
@@ -184,25 +191,24 @@ class NativeDeviceCollaborationInitialSyncTest {
         return editor
     }
 
-    private fun documentJson(text: String): String =
-        JSONObject()
-            .put("type", "doc")
-            .put(
-                "content",
-                JSONArray().put(
-                    JSONObject()
-                        .put("type", "paragraph")
-                        .put(
-                            "content",
-                            JSONArray().put(
-                                JSONObject()
-                                    .put("type", "text")
-                                    .put("text", text)
-                            )
+    private fun documentJson(text: String): String = JSONObject()
+        .put("type", "doc")
+        .put(
+            "content",
+            JSONArray().put(
+                JSONObject()
+                    .put("type", "paragraph")
+                    .put(
+                        "content",
+                        JSONArray().put(
+                            JSONObject()
+                                .put("type", "text")
+                                .put("text", text)
                         )
-                )
+                    )
             )
-            .toString()
+        )
+        .toString()
 
     private fun waitUntil(
         description: String,
@@ -262,8 +268,5 @@ class NativeDeviceCollaborationInitialSyncTest {
         return TestExpoContext(reactContext, appContext)
     }
 
-    private data class TestExpoContext(
-        val context: Context,
-        val appContext: AppContext
-    )
+    private data class TestExpoContext(val context: Context, val appContext: AppContext)
 }

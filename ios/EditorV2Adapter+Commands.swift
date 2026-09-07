@@ -89,9 +89,9 @@ extension EditorV2Adapter {
                 "type": "moveSelection",
                 "range": [
                     "from": EditorV2PositionBridge.positionEnvelope(scalar: min(anchor, head)),
-                    "to": EditorV2PositionBridge.positionEnvelope(scalar: max(anchor, head)),
+                    "to": EditorV2PositionBridge.positionEnvelope(scalar: max(anchor, head))
                 ],
-                "at": EditorV2PositionBridge.positionEnvelope(scalar: destination),
+                "at": EditorV2PositionBridge.positionEnvelope(scalar: destination)
             ],
             anchor: anchor,
             head: head
@@ -117,12 +117,12 @@ extension EditorV2Adapter {
         guard let scalar = scalarPosition(forDoc: docPos) else { return nil }
         return performMutation {
             self.callWithEnvelope([
-                    "command": [
-                        "type": "resizeImage",
-                        "at": EditorV2PositionBridge.positionEnvelope(scalar: scalar),
-                        "width": Int(width),
-                        "height": Int(height),
-                    ] as [String: Any],
+                "command": [
+                    "type": "resizeImage",
+                    "at": EditorV2PositionBridge.positionEnvelope(scalar: scalar),
+                    "width": Int(width),
+                    "height": Int(height)
+                ] as [String: Any]
             ]) { requestJson in
                 editorV2ApplyCommand(editorId: self.editorId, requestJson: requestJson)
             }

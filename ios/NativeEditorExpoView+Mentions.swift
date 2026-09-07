@@ -28,8 +28,7 @@ extension NativeEditorExpoView {
         refreshSystemAssistantToolbarIfNeeded()
         if didChangeToolbarHeight,
            richTextView.textView.isFirstResponder,
-           richTextView.textView.inputAccessoryView === accessoryToolbar
-        {
+           richTextView.textView.inputAccessoryView === accessoryToolbar {
             richTextView.textView.reloadInputViews()
         }
         markAccessoryMutationSucceeded(.refreshMentionQuery)
@@ -49,8 +48,7 @@ extension NativeEditorExpoView {
         refreshSystemAssistantToolbarIfNeeded()
         if didChangeToolbarHeight,
            richTextView.textView.isFirstResponder,
-           richTextView.textView.inputAccessoryView === accessoryToolbar
-        {
+           richTextView.textView.inputAccessoryView === accessoryToolbar {
             richTextView.textView.reloadInputViews()
         }
         markAccessoryMutationSucceeded(.clearMentionQueryState)
@@ -69,9 +67,9 @@ extension NativeEditorExpoView {
             "trigger": trigger,
             "range": [
                 "anchor": Int(anchor),
-                "head": Int(head),
+                "head": Int(head)
             ],
-            "isActive": isActive,
+            "isActive": isActive
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8)
@@ -106,7 +104,7 @@ extension NativeEditorExpoView {
             "type": "mentionsSelect",
             "trigger": trigger,
             "suggestionKey": suggestion.key,
-            "attrs": attrs,
+            "attrs": attrs
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8)
@@ -130,8 +128,8 @@ extension NativeEditorExpoView {
             "attrs": attrs,
             "range": [
                 "anchor": Int(range.anchor),
-                "head": Int(range.head),
-            ],
+                "head": Int(range.head)
+            ]
         ]
         if let preflightUpdateJSON {
             payload["updateJson"] = preflightUpdateJSON
@@ -175,11 +173,11 @@ extension NativeEditorExpoView {
         guard let data = updateJSON.data(using: .utf8),
               let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let document = (raw["documentVersion"] as? String)
-                .flatMap(v2CanonicalUInt64String)
-                .flatMap(UInt64.init),
+              .flatMap(v2CanonicalUInt64String)
+              .flatMap(UInt64.init),
               let state = (raw["stateRevision"] as? String)
-                .flatMap(v2CanonicalUInt64String)
-                .flatMap(UInt64.init)
+              .flatMap(v2CanonicalUInt64String)
+              .flatMap(UInt64.init)
         else {
             return nil
         }
@@ -275,7 +273,7 @@ extension NativeEditorExpoView {
         guard textStorage.length > 0 else { return false }
         let candidateOffsets = [
             min(max(utf16Offset, 0), max(textStorage.length - 1, 0)),
-            min(max(utf16Offset - 1, 0), max(textStorage.length - 1, 0)),
+            min(max(utf16Offset - 1, 0), max(textStorage.length - 1, 0))
         ]
 
         for offset in candidateOffsets where offset >= 0 && offset < textStorage.length {

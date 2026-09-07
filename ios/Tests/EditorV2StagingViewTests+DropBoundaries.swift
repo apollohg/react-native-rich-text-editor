@@ -1,29 +1,31 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension EditorV2StagingViewTests {
     @MainActor
     func testStagingSameViewTextDropAllowsSelectionSpanningCodeBlockNewline() throws {
         let configJson = #"""
         {
-          "initialization":{"type":"localEmpty"},
-          "schema":{
+        "initialization":{"type":"localEmpty"},
+        "schema":{
             "nodes":[
-              {"name":"doc","content":"block+","role":"doc"},
-              {"name":"paragraph","content":"text*","group":"block","role":"textBlock","htmlTag":"p"},
-              {"name":"codeBlock","content":"text*","group":"block","role":"textBlock","htmlTag":"pre"},
-              {"name":"text","content":"","role":"text"}
+            {"name":"doc","content":"block+","role":"doc"},
+            {"name":"paragraph","content":"text*","group":"block","role":"textBlock","htmlTag":"p"},
+            {"name":"codeBlock","content":"text*","group":"block","role":"textBlock","htmlTag":"pre"},
+            {"name":"text","content":"","role":"text"}
             ],
             "marks":[]
-          }
+        }
         }
         """#
-        let (view, _, window) = makeBoundView(configJson: configJson)
+        let bound = makeBoundView(configJson: configJson)
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         view.setContent(json: """
         {
-          "type":"doc",
-          "content":[{"type":"codeBlock","content":[{"type":"text","text":"a\\nbcd"}]}]
+        "type":"doc",
+        "content":[{"type":"codeBlock","content":[{"type":"text","text":"a\\nbcd"}]}]
         }
         """)
         XCTAssertEqual(view.textView.textStorage.string, "a\nbcd")
@@ -71,7 +73,9 @@ extension EditorV2StagingViewTests {
 
     @MainActor
     func testStagingSameViewTextDropRejectsStaleSourceRevision() throws {
-        let (view, _, window) = makeBoundView(html: "<p>abcd</p>")
+        let bound = makeBoundView(html: "<p>abcd</p>")
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let item = UIDragItem(itemProvider: NSItemProvider(object: "ab" as NSString))
         let dragSession = TestTextDragSession(items: [item])
@@ -106,7 +110,10 @@ extension EditorV2StagingViewTests {
 
     @MainActor
     func testStagingSameViewTextDropRejectsRevisionAdvancedByPendingMutationFlush() throws {
-        let (view, adapter, window) = makeBoundView(html: "<p>abcd</p>")
+        let bound = makeBoundView(html: "<p>abcd</p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         XCTAssertTrue(view.textView.becomeFirstResponder())
         let item = UIDragItem(itemProvider: NSItemProvider(object: "ab" as NSString))
@@ -148,7 +155,10 @@ extension EditorV2StagingViewTests {
 
     @MainActor
     func testStagingTextDropStartedBeforeRebindCannotMutateTheNewEditor() throws {
-        let (view, firstAdapter, window) = makeBoundView(html: "<p>abcd</p>")
+        let bound = makeBoundView(html: "<p>abcd</p>")
+        let view = bound.view
+        let firstAdapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let item = UIDragItem(itemProvider: NSItemProvider(object: "ab" as NSString))
         let dragSession = TestTextDragSession(items: [item])

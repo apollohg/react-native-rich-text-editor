@@ -63,10 +63,6 @@ fn remote_history_admission_failure_retains_dependency_quarantine_for_retry() {
     assert_eq!(target.encoded_state().unwrap(), after_b);
 }
 
-/// Task 9 classification seam: the read-only preflight accepts exactly
-/// what the prepare pipeline's ingress admission accepts, rejects
-/// malformed encodings with the same structured errors, and never
-/// touches engine state.
 #[test]
 fn preflight_remote_update_v1_classifies_encoding_without_engine_effects() {
     let mut source = transaction_engine();
@@ -93,9 +89,6 @@ fn preflight_remote_update_v1_classifies_encoding_without_engine_effects() {
     assert_eq!(atomic_audit(&engine), before);
 }
 
-/// Task 9 accounting seam: the engine reports its retained
-/// dependency-quarantine bytes (the exact pending payload length) and
-/// returns to zero once the dependency completes.
 #[test]
 fn pending_remote_dependency_bytes_tracks_the_quarantine_lifecycle() {
     use yrs::{diff_updates_v1, encode_state_vector_from_update_v1};
@@ -144,8 +137,6 @@ fn state_only_boundary_reservation_failure_is_fully_atomic() {
     assert_eq!(atomic_audit(&engine), before);
 }
 
-/// Task 16B: the quarantined remote-update reservation is a demonstrated
-/// fallible allocation seam and keeps OPERATION_RESOURCE_EXHAUSTED.
 #[test]
 fn quarantined_remote_update_reservation_failure_keeps_resource_exhausted() {
     use yrs::{diff_updates_v1, encode_state_vector_from_update_v1};
@@ -171,8 +162,6 @@ fn quarantined_remote_update_reservation_failure_keeps_resource_exhausted() {
     assert!(!target.apply_remote_update_v1(221, &delta).unwrap().changed);
 }
 
-/// Task 16B: the outbound staging-copy allocation seam keeps
-/// OPERATION_RESOURCE_EXHAUSTED.
 #[test]
 fn outbound_staging_copy_allocation_failure_keeps_resource_exhausted() {
     let limits = crate::session::CollaborationLimits::default();
@@ -189,13 +178,7 @@ fn outbound_staging_copy_allocation_failure_keeps_resource_exhausted() {
     sink.reserve_and_stage(41, 4, &[1, 2, 3]).unwrap();
 }
 
-/// Task 6 fix round 1: exact/one-over coverage of the shared
-/// `maxEncodedStateBytes` gate used by the remote pipeline and the sealed
-/// state-vector/diff encoders. The state-vector *output* branch is
-/// unreachable through any consistent engine (the full encoded state is
-/// strictly larger than its state vector and is bounded by the same
-/// ceiling on every admission path), so the gate is proven here at the
-/// boundary instead.
+/// A state vector cannot exceed a valid full state, so test its byte gate directly.
 #[test]
 fn max_encoded_state_gate_admits_exact_and_rejects_one_over() {
     assert!(super::admit_max_encoded_state_len(90_001, 64, 64).is_ok());
@@ -212,10 +195,6 @@ fn max_encoded_state_gate_admits_exact_and_rejects_one_over() {
     );
 }
 
-/// Task 6 same-doc binding proof: the codec's sole `Awareness` wraps the
-/// live authoritative `Doc` handle (documents edits are visible through
-/// it, the client identity matches), and the binding follows every store
-/// swap (undo/redo candidate installation and import).
 #[test]
 fn awareness_codec_owns_an_awareness_bound_to_the_live_doc() {
     use yrs::GetString;

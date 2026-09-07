@@ -400,11 +400,6 @@ impl<'session> NativeTransactionBridge<'session> {
         Ok(())
     }
 
-    /// Undo: one history walk through the engine with the optionally
-    /// attached outbox. Read-only policy covers history mutations (Task 12
-    /// tracked Minor: the legacy locked `ReadOnly` rejects
-    /// `Source::History`); the rejection is structured and atomic — no
-    /// engine work happens after the policy check fails.
     pub(crate) fn undo(&mut self, request_id: u64) -> Result<bool, SessionError> {
         self.admit_history_writable(request_id)?;
         let (engine, outbox) = self.session.engine_and_outbox();
@@ -424,10 +419,6 @@ impl<'session> NativeTransactionBridge<'session> {
             .map_err(operation_error)
     }
 
-    /// Read-only policy for the history entry points (Task 12 tracked
-    /// Minor): the legacy locked `ReadOnly` rejects `Source::History`
-    /// transactions, so undo/redo refuse with the frozen policy code before
-    /// any engine work.
     fn admit_history_writable(&self, request_id: u64) -> Result<(), SessionError> {
         if self.session.policy.read_only() {
             let mut error = SessionError::new(

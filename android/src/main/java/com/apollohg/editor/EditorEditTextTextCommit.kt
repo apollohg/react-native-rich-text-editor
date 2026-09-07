@@ -11,47 +11,62 @@ import android.text.style.StyleSpan
 import android.text.style.UnderlineSpan
 
 /**
-     * Handle committed text from the IME (typed characters, autocomplete).
-     *
-     * Called by [EditorInputConnection.commitText]. Routes the text through
-     * the Rust editor instead of directly inserting into the EditText.
-     */
+ * Handle committed text from the IME (typed characters, autocomplete).
+ *
+ * Called by [EditorInputConnection.commitText]. Routes the text through
+ * the Rust editor instead of directly inserting into the EditText.
+ */
 internal fun EditorEditText.handleTextCommitImpl(text: String, newCursorPosition: Int = 1) {
     val startedAt = System.nanoTime()
     if (!isEditable) {
-        recordImeTraceForTesting("handleTextCommitNoop", "reason=notEditable textLength=${text.length}")
+        recordImeTraceForTesting(
+            "handleTextCommitNoop",
+            "reason=notEditable textLength=${text.length}"
+        )
         return
     }
     if (isApplyingRustState) {
-        recordImeTraceForTesting("handleTextCommitNoop", "reason=applyingRust textLength=${text.length}")
+        recordImeTraceForTesting(
+            "handleTextCommitNoop",
+            "reason=applyingRust textLength=${text.length}"
+        )
         return
     }
     val selectionRange = normalizedUtf16SelectionRange()
     if (selectionRange == null) {
-        recordImeTraceForTesting("handleTextCommitNoop", "reason=noSelection textLength=${text.length}")
+        recordImeTraceForTesting(
+            "handleTextCommitNoop",
+            "reason=noSelection textLength=${text.length}"
+        )
         return
     }
     if (isCollapsedAtomBoundarySelection(selectionRange.first, selectionRange.second)) {
-        recordImeTraceForTesting("handleTextCommitNoop", "reason=atomBoundary textLength=${text.length}")
+        recordImeTraceForTesting(
+            "handleTextCommitNoop",
+            "reason=atomBoundary textLength=${text.length}"
+        )
         return
     }
     if (editorId == 0L) {
-        // No Rust editor bound — fall through to direct editing (dev mode).
         val editable = this.text ?: return
         val (start, end) = selectionRange
         editable.replace(start, end, text)
         recordImeTraceForTesting(
             "handleTextCommitDirect",
-            "textLength=${text.length} utf16Sel=$start..$end totalUs=${nanosToMicros(System.nanoTime() - startedAt)}"
+            "textLength=${text.length} utf16Sel=$start..$end totalUs=${nanosToMicros(
+                System.nanoTime() - startedAt
+            )}"
         )
         return
     }
     if (discardTransientInputForDestroyedEditorIfNeeded()) {
-        recordImeTraceForTesting("handleTextCommitNoop", "reason=destroyedEditor textLength=${text.length}")
+        recordImeTraceForTesting(
+            "handleTextCommitNoop",
+            "reason=destroyedEditor textLength=${text.length}"
+        )
         return
     }
 
-    // Handle Enter/Return as a block split operation.
     if (text == "\n") {
         recordImeTraceForTesting(
             "handleTextCommit",
@@ -68,7 +83,10 @@ internal fun EditorEditText.handleTextCommitImpl(text: String, newCursorPosition
     val currentText = this.text?.toString() ?: ""
     val scalarSelectionRange = normalizedScalarSelectionRange(currentText)
     if (scalarSelectionRange == null) {
-        recordImeTraceForTesting("handleTextCommitNoop", "reason=noScalarSelection textLength=${text.length}")
+        recordImeTraceForTesting(
+            "handleTextCommitNoop",
+            "reason=noScalarSelection textLength=${text.length}"
+        )
         return
     }
     val (scalarStart, scalarEnd) = scalarSelectionRange
@@ -127,7 +145,11 @@ internal fun EditorEditText.applyOptimisticPlainTextCommitIfPossible(
     if (currentText != lastAuthorizedText) return false
     if (startUtf16 < 0 || endUtf16 < startUtf16 || endUtf16 > editable.length) return false
     val spanned = editable as? Spanned
-    if (spanned != null && spannedRangeContainsImageSpan(spanned, startUtf16, endUtf16)) return false
+    if (spanned != null &&
+        spannedRangeContainsImageSpan(spanned, startUtf16, endUtf16)
+    ) {
+        return false
+    }
 
     val inlineSpans = spanned?.let {
         optimisticInlineSpansForInsertion(it, startUtf16)
@@ -177,16 +199,15 @@ internal fun EditorEditText.optimisticInlineSpansForInsertion(
     return spans
 }
 
-internal fun EditorEditText.cloneOptimisticInlineSpan(span: Any): Any? =
-    when (span) {
-        is ForegroundColorSpan -> ForegroundColorSpan(span.foregroundColor)
-        is BackgroundColorSpan -> BackgroundColorSpan(span.backgroundColor)
-        is AbsoluteSizeSpan -> AbsoluteSizeSpan(span.size, span.dip)
-        is StyleSpan -> StyleSpan(span.style)
-        is UnderlineSpan -> UnderlineSpan()
-        is StrikethroughSpan -> StrikethroughSpan()
-        else -> null
-    }
+internal fun EditorEditText.cloneOptimisticInlineSpan(span: Any): Any? = when (span) {
+    is ForegroundColorSpan -> ForegroundColorSpan(span.foregroundColor)
+    is BackgroundColorSpan -> BackgroundColorSpan(span.backgroundColor)
+    is AbsoluteSizeSpan -> AbsoluteSizeSpan(span.size, span.dip)
+    is StyleSpan -> StyleSpan(span.style)
+    is UnderlineSpan -> UnderlineSpan()
+    is StrikethroughSpan -> StrikethroughSpan()
+    else -> null
+}
 
 internal fun EditorEditText.applyOptimisticInlineSpans(
     editable: Editable,
@@ -212,7 +233,8 @@ internal fun EditorEditText.applyOptimisticInlineSpans(
         )
     }
     if (!hasSize) {
-        val resolvedTextSize = textStyle?.fontSize?.times(resources.displayMetrics.density) ?: baseFontSize
+        val resolvedTextSize =
+            textStyle?.fontSize?.times(resources.displayMetrics.density) ?: baseFontSize
         editable.setSpan(
             AbsoluteSizeSpan(resolvedTextSize.toInt(), false),
             start,
@@ -255,7 +277,7 @@ internal fun EditorEditText.applyVisibleCompositionCommitForPendingImeOperationF
     return didApply
 }
 
-internal fun EditorEditText.commitAlreadyVisibleCompositionMutationForPendingImeOperationForEditorImpl(
+internal fun EditorEditText.commitVisibleCompositionMutationForPendingImeOperationImpl(
     committedText: String,
     newCursorPosition: Int
 ): Boolean {

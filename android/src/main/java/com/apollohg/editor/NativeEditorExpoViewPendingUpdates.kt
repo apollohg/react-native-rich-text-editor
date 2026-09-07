@@ -1,22 +1,24 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.NativeEditorExpoView.Companion.MAX_PENDING_UPDATE_RETRY_ATTEMPTS
-import com.apollohg.editor.NativeEditorExpoView.Companion.PENDING_UPDATE_RECOVERY_RETRY_DELAY_MS
-import com.apollohg.editor.NativeEditorExpoView.Companion.NATIVE_ACTION_RETRY_DELAY_MS
 import android.os.Looper
+import com.apollohg.editor.NativeEditorExpoView.Companion.MAX_PENDING_UPDATE_RETRY_ATTEMPTS
+import com.apollohg.editor.NativeEditorExpoView.Companion.NATIVE_ACTION_RETRY_DELAY_MS
+import com.apollohg.editor.NativeEditorExpoView.Companion.PENDING_UPDATE_RECOVERY_RETRY_DELAY_MS
 
 internal fun NativeEditorExpoView.setPendingEditorUpdateJsonImpl(editorUpdateJson: String?) {
     lastEditorUpdateJsonProp = editorUpdateJson
     pendingEditorUpdateJson = editorUpdateJson
 }
 
-internal fun NativeEditorExpoView.setPendingEditorUpdateEditorHandleImpl(editorUpdateEditorHandle: String?) {
+internal fun NativeEditorExpoView.setPendingEditorUpdateEditorHandleImpl(
+    editorUpdateEditorHandle: String?
+) {
     val viewToken = editorUpdateEditorHandle?.let(EditorV2Registry::viewTokenForHandle)
     lastEditorUpdateEditorIdProp = viewToken
     pendingEditorUpdateEditorId = viewToken
 }
 
-    /** Internal widget/test hook; production props always use decimal handles. */
+/** Internal widget/test hook; production props always use decimal handles. */
 internal fun NativeEditorExpoView.setPendingEditorUpdateEditorIdImpl(viewToken: Long?) {
     lastEditorUpdateEditorIdProp = viewToken
     pendingEditorUpdateEditorId = viewToken
@@ -36,24 +38,30 @@ internal fun NativeEditorExpoView.setPendingEditorUpdateRevisionImpl(editorUpdat
     pendingEditorUpdateRevision = editorUpdateRevision
 }
 
-internal fun NativeEditorExpoView.setPendingEditorResetUpdateJsonImpl(editorResetUpdateJson: String?) {
+internal fun NativeEditorExpoView.setPendingEditorResetUpdateJsonImpl(
+    editorResetUpdateJson: String?
+) {
     lastEditorResetUpdateJsonProp = editorResetUpdateJson
     pendingEditorResetUpdateJson = editorResetUpdateJson
 }
 
-internal fun NativeEditorExpoView.setPendingEditorResetUpdateEditorHandleImpl(editorResetUpdateEditorHandle: String?) {
+internal fun NativeEditorExpoView.setPendingEditorResetUpdateEditorHandleImpl(
+    editorResetUpdateEditorHandle: String?
+) {
     val viewToken = editorResetUpdateEditorHandle?.let(EditorV2Registry::viewTokenForHandle)
     lastEditorResetUpdateEditorIdProp = viewToken
     pendingEditorResetUpdateEditorId = viewToken
 }
 
-    /** Internal widget/test hook; production props always use decimal handles. */
+/** Internal widget/test hook; production props always use decimal handles. */
 internal fun NativeEditorExpoView.setPendingEditorResetUpdateEditorIdImpl(viewToken: Long?) {
     lastEditorResetUpdateEditorIdProp = viewToken
     pendingEditorResetUpdateEditorId = viewToken
 }
 
-internal fun NativeEditorExpoView.setPendingEditorResetUpdateRevisionImpl(editorResetUpdateRevision: Long) {
+internal fun NativeEditorExpoView.setPendingEditorResetUpdateRevisionImpl(
+    editorResetUpdateRevision: Long
+) {
     if (pendingEditorResetUpdateRevision != editorResetUpdateRevision) {
         pendingEditorUpdateRetryAttempts = 0
         pendingEditorUpdateForcedRecoveryAttempted = false
@@ -67,15 +75,19 @@ internal fun NativeEditorExpoView.setPendingEditorResetUpdateRevisionImpl(editor
     pendingEditorResetUpdateRevision = editorResetUpdateRevision
 }
 
-internal fun NativeEditorExpoView.isConsumedEditorUpdateRevision(editorId: Long, revision: Long): Boolean =
-    revision != 0L &&
-        consumedEditorUpdateEditorId == editorId &&
-        consumedEditorUpdateRevision == revision
+internal fun NativeEditorExpoView.isConsumedEditorUpdateRevision(
+    editorId: Long,
+    revision: Long
+): Boolean = revision != 0L &&
+    consumedEditorUpdateEditorId == editorId &&
+    consumedEditorUpdateRevision == revision
 
-internal fun NativeEditorExpoView.isConsumedEditorResetUpdateRevision(editorId: Long, revision: Long): Boolean =
-    revision != 0L &&
-        consumedEditorResetUpdateEditorId == editorId &&
-        consumedEditorResetUpdateRevision == revision
+internal fun NativeEditorExpoView.isConsumedEditorResetUpdateRevision(
+    editorId: Long,
+    revision: Long
+): Boolean = revision != 0L &&
+    consumedEditorResetUpdateEditorId == editorId &&
+    consumedEditorResetUpdateRevision == revision
 
 internal fun NativeEditorExpoView.consumeEditorUpdateRevision(editorId: Long, revision: Long) {
     consumedEditorUpdateEditorId = editorId
@@ -171,9 +183,11 @@ internal fun NativeEditorExpoView.applyPendingEditorResetUpdateIfNeededImpl() {
                 emitEditorReady(editorUpdateRevision = revision)
                 refreshReadyStateIfSettled()
             }
+
             PendingEditorUpdateApplyOutcome.RETRYABLE_DEFERRED -> {
                 schedulePendingEditorUpdateRetry(PendingEditorUpdateKind.RESET)
             }
+
             PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED -> {
                 consumeEditorResetUpdateRevision(editorId, revision)
                 clearPendingEditorResetUpdateState(resetAppliedRevision = false)
@@ -238,10 +252,12 @@ internal fun NativeEditorExpoView.applyPendingEditorUpdateIfNeededImpl() {
         val resetJson = pendingEditorUpdateResetJson
         val outcome = if (resetJson != null) {
             applyEditorResetUpdateOutcome(updateJson, resetJson)
-        } else applyEditorUpdateOutcome(
-            updateJson,
-            scheduleViewCommandRetry = false,
-        )
+        } else {
+            applyEditorUpdateOutcome(
+                updateJson,
+                scheduleViewCommandRetry = false
+            )
+        }
         when (outcome) {
             PendingEditorUpdateApplyOutcome.APPLIED -> {
                 appliedEditorUpdateRevision = revision
@@ -254,9 +270,11 @@ internal fun NativeEditorExpoView.applyPendingEditorUpdateIfNeededImpl() {
                 emitEditorReady(editorUpdateRevision = revision)
                 refreshReadyStateIfSettled()
             }
+
             PendingEditorUpdateApplyOutcome.RETRYABLE_DEFERRED -> {
                 schedulePendingEditorUpdateRetry(PendingEditorUpdateKind.ORDINARY)
             }
+
             PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED -> {
                 consumeEditorUpdateRevision(editorId, revision)
                 clearPendingEditorUpdateState(resetAppliedRevision = false)
@@ -271,7 +289,9 @@ internal fun NativeEditorExpoView.applyPendingEditorUpdateIfNeededImpl() {
     }
 }
 
-internal fun NativeEditorExpoView.clearPendingEditorUpdateState(resetAppliedRevision: Boolean = true) {
+internal fun NativeEditorExpoView.clearPendingEditorUpdateState(
+    resetAppliedRevision: Boolean = true
+) {
     pendingEditorUpdateJson = null
     pendingEditorUpdateEditorId = null
     pendingEditorUpdateRevision = 0L
@@ -282,7 +302,9 @@ internal fun NativeEditorExpoView.clearPendingEditorUpdateState(resetAppliedRevi
     cancelPendingEditorUpdateRetry(PendingEditorUpdateKind.ORDINARY)
 }
 
-internal fun NativeEditorExpoView.clearPendingEditorResetUpdateState(resetAppliedRevision: Boolean = true) {
+internal fun NativeEditorExpoView.clearPendingEditorResetUpdateState(
+    resetAppliedRevision: Boolean = true
+) {
     pendingEditorResetUpdateJson = null
     pendingEditorResetUpdateEditorId = null
     pendingEditorResetUpdateRevision = 0L
@@ -292,8 +314,12 @@ internal fun NativeEditorExpoView.clearPendingEditorResetUpdateState(resetApplie
     cancelPendingEditorUpdateRetry(PendingEditorUpdateKind.RESET)
 }
 
-internal fun NativeEditorExpoView.cancelPendingEditorUpdateRetry(kind: PendingEditorUpdateKind? = null) {
-    if (kind != null && pendingEditorUpdateRetryKind != null && pendingEditorUpdateRetryKind != kind) {
+internal fun NativeEditorExpoView.cancelPendingEditorUpdateRetry(
+    kind: PendingEditorUpdateKind? = null
+) {
+    if (kind != null && pendingEditorUpdateRetryKind != null &&
+        pendingEditorUpdateRetryKind != kind
+    ) {
         return
     }
     pendingEditorUpdateRetryScheduled = false

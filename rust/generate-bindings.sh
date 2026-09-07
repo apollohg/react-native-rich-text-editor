@@ -1,21 +1,4 @@
 #!/usr/bin/env bash
-#
-# Generate Swift and Kotlin bindings from the UniFFI definitions.
-#
-# Output:
-#   rust/bindings/swift/    -> Swift source + modulemap
-#   rust/bindings/kotlin/   -> Kotlin source
-#
-# This script uses the uniffi-bindgen binary target defined in the crate,
-# which is gated behind the "cli" feature.
-#
-# Prerequisites:
-#   - The crate must be built for the host target first (cargo build --release)
-#
-# Since the Task 16C production cutover, the v2 ABI is the ONLY surface: the
-# generated bindings and the dylib are verified to expose all 35 editor_v2_*
-# symbols plus editor_core_version and zero legacy editor_*/collaboration_*
-# symbols before the script succeeds.
 
 set -euo pipefail
 

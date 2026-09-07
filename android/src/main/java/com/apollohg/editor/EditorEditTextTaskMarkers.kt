@@ -1,15 +1,15 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.EditorEditText.Companion.MARKER_TAP_HORIZONTAL_SLOP_DP
 import android.text.Spanned
 import android.view.MotionEvent
+import com.apollohg.editor.EditorEditText.Companion.MARKER_TAP_HORIZONTAL_SLOP_DP
 
 /**
-     * Task-marker taps are recognized as a paired DOWN+UP on the same marker
-     * within touch slop. DOWN is never consumed (so scrolls and selection
-     * gestures that start on a checkbox keep working); only the matching UP
-     * is consumed.
-     */
+ * Task-marker taps are recognized as a paired DOWN+UP on the same marker
+ * within touch slop. DOWN is never consumed (so scrolls and selection
+ * gestures that start on a checkbox keep working); only the matching UP
+ * is consumed.
+ */
 internal fun EditorEditText.handleTaskListMarkerTap(event: MotionEvent): Boolean {
     when (event.actionMasked) {
         MotionEvent.ACTION_DOWN -> {
@@ -18,12 +18,14 @@ internal fun EditorEditText.handleTaskListMarkerTap(event: MotionEvent): Boolean
             pendingTaskMarkerDownY = event.y
             return false
         }
+
         MotionEvent.ACTION_MOVE -> {
             if (pendingTaskMarkerDownScalar != null && !withinTouchSlop(event)) {
                 pendingTaskMarkerDownScalar = null
             }
             return false
         }
+
         MotionEvent.ACTION_UP -> {
             val downScalar = pendingTaskMarkerDownScalar ?: return false
             pendingTaskMarkerDownScalar = null
@@ -39,18 +41,19 @@ internal fun EditorEditText.handleTaskListMarkerTap(event: MotionEvent): Boolean
             performClick()
             return true
         }
+
         MotionEvent.ACTION_CANCEL -> {
             pendingTaskMarkerDownScalar = null
             return false
         }
+
         else -> return false
     }
 }
 
-internal fun EditorEditText.withinTouchSlop(event: MotionEvent): Boolean {
-    return kotlin.math.abs(event.x - pendingTaskMarkerDownX) <= touchSlopPx &&
+internal fun EditorEditText.withinTouchSlop(event: MotionEvent): Boolean =
+    kotlin.math.abs(event.x - pendingTaskMarkerDownX) <= touchSlopPx &&
         kotlin.math.abs(event.y - pendingTaskMarkerDownY) <= touchSlopPx
-}
 
 internal fun EditorEditText.taskListMarkerScalarHitAt(x: Float, y: Float): Int? {
     val spanned = text as? Spanned ?: return null

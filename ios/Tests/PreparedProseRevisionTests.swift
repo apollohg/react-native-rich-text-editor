@@ -1,6 +1,6 @@
-import XCTest
-import UIKit
 import CoreText
+import UIKit
+import XCTest
 
 final class PreparedProseRevisionTests: XCTestCase {
     enum FixtureError: Error { case expected }
@@ -49,6 +49,6 @@ final class PreparedProseRevisionTests: XCTestCase {
         let color = try XCTUnwrap(
             attributes?[kCTForegroundColorAttributeName as NSAttributedString.Key]
         )
-        return UIColor(cgColor: color as! CGColor)
+        return UIColor(cgColor: try unwrapCoreTextAttribute(color, as: CGColor.self))
     }
 }

@@ -1,5 +1,5 @@
-import UIKit
 import os
+import UIKit
 
 extension EditorTextView {
     struct TopLevelChildMetadata {
@@ -227,8 +227,7 @@ extension EditorTextView {
               renderBlockEquals(
                   current[current.count - suffix - 1],
                   updated[updated.count - suffix - 1]
-              )
-        {
+              ) {
             suffix += 1
         }
 
@@ -283,8 +282,7 @@ extension EditorTextView {
                 entriesByIndex[index]?.containsAttachment = true
             }
             if attrs[RenderBridgeAttributes.syntheticPlaceholder] as? Bool == true
-                || attrs[RenderBridgeAttributes.listMarkerContext] != nil
-            {
+                || attrs[RenderBridgeAttributes.listMarkerContext] != nil {
                 entriesByIndex[index]?.containsPositionAdjustments = true
             }
         }
@@ -332,12 +330,10 @@ extension EditorTextView {
 
         let newEntries: [TopLevelChildMetadata]
         if let renderedPatchMetadata,
-           renderedPatchMetadata.entries.isEmpty
-        {
+           renderedPatchMetadata.entries.isEmpty {
             newEntries = []
         } else if let renderedPatchMetadata,
-                  renderedPatchMetadata.startIndex == patch.startIndex
-        {
+                  renderedPatchMetadata.startIndex == patch.startIndex {
             let patchEntries = renderedPatchMetadata.entries.prefix(patch.renderBlocks.count)
             guard patchEntries.count == patch.renderBlocks.count else {
                 currentTopLevelChildMetadata = nil
@@ -465,17 +461,17 @@ extension EditorTextView {
         let renderedPatchMetadata = topLevelChildMetadataSlice(from: attrStr)
         let renderedPatchContainsAttachment =
             renderedPatchMetadata?.entries.contains(where: \.containsAttachment)
-            ?? attributedStringContainsAttachment(attrStr)
+                ?? attributedStringContainsAttachment(attrStr)
         let renderedPatchContainsListMarkerContext =
             attributedStringContainsListMarkerContext(attrStr)
         let renderedPatchContainsPositionAdjustments =
             renderedPatchMetadata?.entries.contains(where: \.containsPositionAdjustments)
-            ?? attributedStringContainsPositionAdjustments(attrStr)
+                ?? attributedStringContainsPositionAdjustments(attrStr)
         guard !topLevelChildrenContainAttachment(
-                  startIndex: patch.startIndex,
-                  deleteCount: patch.deleteCount
-              ),
-              !renderedPatchContainsAttachment
+            startIndex: patch.startIndex,
+            deleteCount: patch.deleteCount
+        ),
+            !renderedPatchContainsAttachment
         else {
             return PatchApplyTrace(
                 applied: false,
@@ -524,8 +520,7 @@ extension EditorTextView {
             if topLevelChildrenContainPositionAdjustments(
                 startIndex: patch.startIndex,
                 deleteCount: patch.deleteCount
-            ) || renderedPatchContainsPositionAdjustments
-            {
+            ) || renderedPatchContainsPositionAdjustments {
                 .attributed
             } else {
                 .plainText

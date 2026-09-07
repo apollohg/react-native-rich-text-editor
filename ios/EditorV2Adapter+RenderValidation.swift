@@ -261,7 +261,7 @@ extension EditorV2Adapter {
                 "baseDocumentVersion",
                 "startIndex",
                 "deleteCount",
-                "renderBlocks",
+                "renderBlocks"
               ],
               uint64Field(object, "baseDocumentVersion") != nil,
               uint32Field(object, "startIndex") != nil,

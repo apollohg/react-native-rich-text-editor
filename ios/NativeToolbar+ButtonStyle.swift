@@ -26,12 +26,12 @@ extension EditorAccessoryToolbarView {
             )
         case .list:
             switch item.listType {
-            case .bulletList, .bullet_list:
+            case .bulletList, .legacyBulletList:
                 return (
                     enabled: state.commands["wrapBulletList"] == true,
                     active: state.nodes[item.listType?.rawValue ?? ""] == true
                 )
-            case .orderedList, .ordered_list:
+            case .orderedList, .legacyOrderedList:
                 return (
                     enabled: state.commands["wrapOrderedList"] == true,
                     active: state.nodes[item.listType?.rawValue ?? ""] == true
@@ -179,8 +179,7 @@ extension EditorAccessoryToolbarView {
         let iconSize = resolvedButtonIconSize(for: item)
         let font = UIFont.systemFont(ofSize: iconSize, weight: .semibold)
         if #available(iOS 15.0, *), var configuration = button.configuration {
-            configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer {
-                incoming in
+            configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
                 var outgoing = incoming
                 outgoing.font = font
                 return outgoing
@@ -198,14 +197,14 @@ extension EditorAccessoryToolbarView {
     }
 
     func resolvedBlurEffect() -> UIVisualEffect {
-#if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            let effect = UIGlassEffect(style: .regular)
-            effect.isInteractive = true
-            effect.tintColor = resolvedGlassEffectTintColor
-            return effect
-        }
-#endif
+        #if compiler(>=6.2)
+            if #available(iOS 26.0, *) {
+                let effect = UIGlassEffect(style: .regular)
+                effect.isInteractive = true
+                effect.tintColor = resolvedGlassEffectTintColor
+                return effect
+            }
+        #endif
         if #available(iOS 13.0, *) {
             return UIBlurEffect(style: .systemUltraThinMaterial)
         }

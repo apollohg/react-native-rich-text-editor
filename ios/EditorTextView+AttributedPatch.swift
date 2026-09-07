@@ -1,5 +1,5 @@
-import UIKit
 import os
+import UIKit
 
 extension EditorTextView {
     func shouldUseSmallPatchTextMutation(
@@ -79,8 +79,7 @@ extension EditorTextView {
             options: [.longestEffectiveRangeNotRequired]
         ) { attrs, _, stop in
             if attrs[RenderBridgeAttributes.syntheticPlaceholder] as? Bool == true
-                || attrs[RenderBridgeAttributes.listMarkerContext] != nil
-            {
+                || attrs[RenderBridgeAttributes.listMarkerContext] != nil {
                 hasAdjustments = true
                 stop.pointee = true
             }
@@ -118,8 +117,7 @@ extension EditorTextView {
             options: [.longestEffectiveRangeNotRequired]
         ) { attrs, _, stop in
             if attrs[RenderBridgeAttributes.syntheticPlaceholder] as? Bool == true
-                || attrs[RenderBridgeAttributes.listMarkerContext] != nil
-            {
+                || attrs[RenderBridgeAttributes.listMarkerContext] != nil {
                 hasAdjustments = true
                 stop.pointee = true
             }
@@ -233,8 +231,7 @@ extension EditorTextView {
             guard attributesEqualForPatchTrimming(existingAttrs, replacementAttrs) else { break }
             let runEnd = min(NSMaxRange(existingRange), NSMaxRange(replacementRange), sharedLength)
             while prefix < runEnd,
-                  existingString.character(at: prefix) == replacementString.character(at: prefix)
-            {
+                  existingString.character(at: prefix) == replacementString.character(at: prefix) {
                 prefix += 1
             }
             if prefix < runEnd {
@@ -267,8 +264,7 @@ extension EditorTextView {
             var matchedLength = 0
             while matchedLength < maxComparableLength,
                   existingString.character(at: existingIndex - matchedLength)
-                      == replacementString.character(at: replacementIndex - matchedLength)
-            {
+                  == replacementString.character(at: replacementIndex - matchedLength) {
                 matchedLength += 1
             }
             suffix += matchedLength

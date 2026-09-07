@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 @MainActor
 final class TestTextDragSession: NSObject, UIDragSession {
@@ -130,6 +130,12 @@ final class EditorV2StagingViewTests: XCTestCase {
         return window
     }
 
+    struct BoundView {
+        let view: RichTextEditorView
+        let adapter: EditorV2Adapter
+        let window: UIWindow
+    }
+
     func makeBoundView(
         configJson: String = #"{"initialization":{"type":"localEmpty"}}"#,
         html: String = "<p>Hello</p>",
@@ -137,7 +143,7 @@ final class EditorV2StagingViewTests: XCTestCase {
         finalFrame: CGRect? = nil,
         file: StaticString = #filePath,
         line: UInt = #line
-    ) -> (view: RichTextEditorView, adapter: EditorV2Adapter, window: UIWindow) {
+    ) -> BoundView {
         let syntheticId = makeV2Editor(configJson: configJson, file: file, line: line)
         guard let adapter = EditorV2Registry.adapter(forLegacyId: syntheticId) else {
             XCTFail("v2 adapter was not paired to its created handle", file: file, line: line)
@@ -153,7 +159,7 @@ final class EditorV2StagingViewTests: XCTestCase {
             view.frame = finalFrame
             view.layoutIfNeeded()
         }
-        return (view, adapter, window)
+        return BoundView(view: view, adapter: adapter, window: window)
     }
 
     func makeTerminalAtomView(
@@ -162,16 +168,16 @@ final class EditorV2StagingViewTests: XCTestCase {
         finalFrame: CGRect? = nil,
         file: StaticString = #filePath,
         line: UInt = #line
-    ) -> (view: RichTextEditorView, adapter: EditorV2Adapter, window: UIWindow) {
+    ) -> BoundView {
         let configJson = #"""
         {
-          "initialization":{"type":"localEmpty"},
-          "schema":{
+        "initialization":{"type":"localEmpty"},
+        "schema":{
             "nodes":[
-              {"name":"doc","content":"block+","role":"doc"},
-              {"name":"paragraph","content":"text*","group":"block","role":"textBlock","htmlTag":"p"},
-              {"name":"text","content":"","role":"text"},
-              {
+            {"name":"doc","content":"block+","role":"doc"},
+            {"name":"paragraph","content":"text*","group":"block","role":"textBlock","htmlTag":"p"},
+            {"name":"text","content":"","role":"text"},
+            {
                 "name":"counterCard",
                 "content":"",
                 "group":"block",
@@ -179,14 +185,14 @@ final class EditorV2StagingViewTests: XCTestCase {
                 "isVoid":true,
                 "attrs":{"count":{"default":0}},
                 "html":{
-                  "tag":"div",
-                  "staticAttrs":{"data-type":"counter-card"},
-                  "attrMap":{"count":"data-count"}
+                "tag":"div",
+                "staticAttrs":{"data-type":"counter-card"},
+                "attrMap":{"count":"data-count"}
                 }
-              }
+            }
             ],
             "marks":[]
-          }
+        }
         }
         """#
         let bound = makeBoundView(
@@ -260,7 +266,7 @@ final class EditorV2StagingViewTests: XCTestCase {
             return ""
         }
         guard let data = value.data(using: .utf8),
-              let doc = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let doc = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return "" }
         var pieces: [String] = []
         func walk(_ node: [String: Any]) {

@@ -5,7 +5,9 @@ import android.view.View
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.CorrectionInfo
 import org.json.JSONObject
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -15,7 +17,8 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class PrototypeInputConnectionTest {
-    private fun connection(session: PrototypeDocumentSession) = PrototypeInputConnection(View(RuntimeEnvironment.getApplication()), session)
+    private fun connection(session: PrototypeDocumentSession) =
+        PrototypeInputConnection(View(RuntimeEnvironment.getApplication()), session)
 
     @Test
     fun `modern replacement reconciles explicit range and cursor to core`() {
@@ -26,7 +29,10 @@ class PrototypeInputConnectionTest {
             assertEquals("a文\n字ail", session.editable.toString())
             assertEquals("a文\n字ail", session.committedText)
             assertEquals(4, session.selectionEnd)
-            assertEquals(2, JSONObject(session.committedDocumentJson()).getJSONArray("content").length())
+            assertEquals(
+                2,
+                JSONObject(session.committedDocumentJson()).getJSONArray("content").length()
+            )
             assertFalse(input.replaceText(0, 1, "\uD800", 1, null))
             input.closeConnection()
             assertFalse(input.replaceText(0, 1, "stale", 1, null))
@@ -88,7 +94,10 @@ class PrototypeInputConnectionTest {
             assertEquals("a😀b\ncd", session.committedText)
             assertEquals(session.committedText, session.editable.toString())
             assertEquals(3, session.selectionStart)
-            assertEquals(2, JSONObject(session.committedDocumentJson()).getJSONArray("content").length())
+            assertEquals(
+                2,
+                JSONObject(session.committedDocumentJson()).getJSONArray("content").length()
+            )
             assertTrue(input.deleteSurroundingTextInCodePoints(1, 0))
             assertEquals("ab\ncd", session.committedText)
             assertEquals(1, session.selectionStart)
@@ -134,7 +143,10 @@ class PrototypeInputConnectionTest {
             assertEquals("st\nsec", input.getSelectedText(0).toString())
             assertTrue(input.commitText("X", 1))
             assertEquals("firXond", session.committedText)
-            assertEquals(1, JSONObject(session.committedDocumentJson()).getJSONArray("content").length())
+            assertEquals(
+                1,
+                JSONObject(session.committedDocumentJson()).getJSONArray("content").length()
+            )
             assertEquals(4, session.selectionStart)
         }
     }
@@ -146,13 +158,22 @@ class PrototypeInputConnectionTest {
             session.setSelection(2, 2)
             assertTrue(input.commitText("\n", 1))
             assertEquals("ab\ncd", session.committedText)
-            assertEquals(2, JSONObject(session.committedDocumentJson()).getJSONArray("content").length())
+            assertEquals(
+                2,
+                JSONObject(session.committedDocumentJson()).getJSONArray("content").length()
+            )
             assertTrue(input.deleteSurroundingText(1, 0))
             assertEquals("abcd", session.committedText)
-            assertEquals(1, JSONObject(session.committedDocumentJson()).getJSONArray("content").length())
+            assertEquals(
+                1,
+                JSONObject(session.committedDocumentJson()).getJSONArray("content").length()
+            )
             assertTrue(input.commitText("\n\n", 1))
             assertEquals("ab\n\ncd", session.committedText)
-            assertEquals(3, JSONObject(session.committedDocumentJson()).getJSONArray("content").length())
+            assertEquals(
+                3,
+                JSONObject(session.committedDocumentJson()).getJSONArray("content").length()
+            )
         }
     }
 

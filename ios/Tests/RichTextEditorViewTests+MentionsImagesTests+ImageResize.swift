@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testImageTouchRemainsInTextViewScrollHierarchy() {
@@ -81,7 +81,7 @@ extension RichTextEditorViewTests {
         assertSelectedUtf16Range(in: view.textView, imageRange)
         XCTAssertEqual(currentSelection(in: editorId)["type"] as? String, "node")
         XCTAssertTrue(view.applyTheme(EditorTheme(dictionary: [
-            "contentInsets": ["bottom": 320],
+            "contentInsets": ["bottom": 320]
         ])))
         flushMainQueue()
         view.layoutIfNeeded()
@@ -287,29 +287,29 @@ extension RichTextEditorViewTests {
         view.editorId = editorId
         view.setContent(json: """
         {
-          "type": "doc",
-          "content": [
+        "type": "doc",
+        "content": [
             {
-              "type": "paragraph",
-              "content": [
+            "type": "paragraph",
+            "content": [
                 {
-                  "type": "text",
-                  "text": "Hello"
+                "type": "text",
+                "text": "Hello"
                 }
-              ]
+            ]
             },
             {
-              "type": "image",
-              "attrs": {
+            "type": "image",
+            "attrs": {
                 "src": "\(dataUri)",
                 "width": 140,
                 "height": 80
-              }
+            }
             },
             {
-              "type": "paragraph"
+            "type": "paragraph"
             }
-          ]
+        ]
         }
         """)
         view.layoutIfNeeded()

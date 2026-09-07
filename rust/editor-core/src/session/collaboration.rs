@@ -1,8 +1,4 @@
 impl EditorSession {
-    /// Attach the collaboration runtime (Task 7: the bounded document
-    /// outbox) sized from the session's validated collaboration limits.
-    /// Idempotent: an already attached runtime and its pending outbox
-    /// entries are preserved.
     pub(crate) fn attach_collaboration_runtime(&mut self) {
         if self.collaboration.runtime.is_none() {
             self.collaboration.runtime = Some(
@@ -178,10 +174,7 @@ impl EditorSession {
         Ok(())
     }
 
-    /// Task 10 lifecycle rule shared by every accepted generation-closing
-    /// transition: remote awareness peers are transport-scoped, desired
-    /// local awareness is retained. Sessions without an attached runtime
-    /// own no peers by construction.
+    /// Remote peers are transport-scoped; desired local awareness survives disconnects.
     fn retire_transport_scope(&mut self) -> bool {
         if let Some(runtime) = self.collaboration.runtime.as_mut() {
             runtime.outbox_mut().release_lease();
@@ -190,9 +183,7 @@ impl EditorSession {
         false
     }
 
-    /// Crate-private Task 9 seam: an accepted current-generation Sync
-    /// Step 2 turns `Handshaking` into `Synchronized`. Transport-only —
-    /// document-state promotion is Task 9's Step 2 handling.
+    /// Synchronizes transport only; document promotion happens during Sync Step 2 handling.
     #[cfg(test)]
     pub(crate) fn mark_synchronized(
         &mut self,
@@ -204,12 +195,6 @@ impl EditorSession {
             .mark_synchronized(request_id, generation)
     }
 
-    /// Task 9 protocol entry point: one bounded inbound y-sync message for
-    /// the given generation. The runtime composes the sealed seams (engine
-    /// state-vector/diff and prepare/commit, outbox reservation, transport
-    /// generation discipline); the session only performs the field-disjoint
-    /// split borrow. Sessions without an attached runtime own no protocol
-    /// surface and refuse like every other runtime-shaped operation.
     pub(crate) fn collaboration_receive(
         &mut self,
         request_id: u64,
@@ -459,8 +444,7 @@ impl EditorSession {
         Ok(runtime.desired_awareness().cloned())
     }
 
-    /// Task 10: public awareness peer projections with cursors resolved
-    /// against the current document (recomputed on every read).
+    /// Cursor positions are recomputed against the current document on every read.
     pub(crate) fn awareness_peers(
         &mut self,
     ) -> Result<Vec<crate::collaboration_runtime::awareness::AwarenessPeerProjection>, SessionError>
@@ -473,9 +457,6 @@ impl EditorSession {
         Ok(runtime.peers(&mut self.engine))
     }
 
-    /// Field-disjoint split borrow for awareness operations, mirroring the
-    /// Task 9 receive split: the runtime plus the engine/limits/transport
-    /// context it composes.
     fn awareness_runtime_and_context(
         &mut self,
     ) -> Result<
@@ -524,13 +505,7 @@ impl EditorSession {
         &self.collaboration.limits
     }
 
-    /// Test-only transport-state injection, routed through the state
-    /// machine so its live-attempt invariant holds (forced states carry no
-    /// live attempt). It remains alongside the real transitions for exactly
-    /// one reason: policy-matrix cells that are unreachable by construction
-    /// — `LocalReady` sessions are permanently `Detached`, yet the Task 5
-    /// replacement gate deliberately covers them for every transport state.
-    /// Room-bound tests must use the real transitions instead.
+    /// Covers unreachable policy-matrix states; room-bound tests must use real transitions.
     pub(crate) fn set_transport_state_for_test(&mut self, state: TransportState) {
         self.collaboration.transport.set_state_for_test(state);
     }

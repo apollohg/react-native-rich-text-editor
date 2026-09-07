@@ -24,8 +24,7 @@ extension CoreTextProseLayoutEngine {
             guard range.length > 0 else { return }
             if let previous = accessibilityRanges.last,
                previous.role == role,
-               previous.range.upperBound == range.location
-            {
+               previous.range.upperBound == range.location {
                 accessibilityRanges[accessibilityRanges.count - 1] = PreparedAccessibilityRange(
                     range: NSRange(location: previous.range.location, length: previous.range.length + range.length),
                     label: previous.label + label,
@@ -88,7 +87,7 @@ extension CoreTextProseLayoutEngine {
                 let range = NSRange(location: result.length, length: 1)
                 result.append(NSAttributedString(string: "\u{FFFC}", attributes: [
                     kCTRunDelegateAttributeName as NSAttributedString.Key: preparedAtomDelegate(metrics),
-                    preparedAtomAttribute: nodeType,
+                    preparedAtomAttribute: nodeType
                 ]))
                 atoms.append(
                     PreparedAtomSpec(
@@ -258,7 +257,7 @@ extension CoreTextProseLayoutEngine {
             guard (attributes[preparedStrikeAttribute] as? NSNumber)?.boolValue == true,
                   let colorValue = attributes[kCTForegroundColorAttributeName as NSAttributedString.Key]
             else { return [] }
-            let color = (attributes[.strikethroughColor] as? UIColor)?.cgColor ?? (colorValue as! CGColor)
+            guard let color = (attributes[.strikethroughColor] as? UIColor)?.cgColor ?? coreTextColor(colorValue) else { return [] }
             var ascent: CGFloat = 0
             let width = CGFloat(CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), &ascent, nil, nil))
             let stringRange = CTRunGetStringRange(run)
@@ -277,9 +276,13 @@ extension CoreTextProseLayoutEngine {
                 var x: CGFloat = 0
                 while x < extent {
                     let length = min(extent - x, dotted ? thickness : (dashed ? thickness * 4 : extent))
-                    result.append(PreparedProseFragment(kind: .strike,
+                    result.append(PreparedProseFragment(
+                        kind: .strike,
                         bounds: CGRect(x: lineOrigin.x + min(start, end) + x, y: centerY + offset - thickness / 2, width: length, height: thickness),
-                        color: color, cornerRadius: dotted ? thickness / 2 : 0, strokeWidth: thickness))
+                        color: color,
+                        cornerRadius: dotted ? thickness / 2 : 0,
+                        strokeWidth: thickness
+                    ))
                     x += length + thickness * 2
                 }
             }
@@ -343,7 +346,7 @@ extension CoreTextProseLayoutEngine {
                 string: label,
                 attributes: [
                     kCTFontAttributeName as NSAttributedString.Key: Self.coreTextFont(from: font),
-                    kCTForegroundColorAttributeName as NSAttributedString.Key: theme.listMarkerColor.cgColor,
+                    kCTForegroundColorAttributeName as NSAttributedString.Key: theme.listMarkerColor.cgColor
                 ]
             )
         )
@@ -414,11 +417,16 @@ extension CoreTextProseLayoutEngine {
 }
 
 extension CoreTextProseLayoutEngine {
+    private func coreTextColor(_ value: Any) -> CGColor? {
+        guard CFGetTypeID(value as CFTypeRef) == CGColor.typeID else { return nil }
+        return unsafeDowncast(value as AnyObject, to: CGColor.self)
+    }
+
     func inlineBackgroundFragments(for line: CTLine, bounds: CGRect) -> [PreparedProseFragment] {
         (CTLineGetGlyphRuns(line) as? [CTRun] ?? []).compactMap { run in
             let attributes = CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
             guard let value = attributes[kCTBackgroundColorAttributeName as NSAttributedString.Key] else { return nil }
-            let color = value as! CGColor
+            guard let color = coreTextColor(value) else { return nil }
             let range = CTRunGetStringRange(run)
             let start = CGFloat(CTLineGetOffsetForStringIndex(line, range.location, nil))
             let end = CGFloat(CTLineGetOffsetForStringIndex(line, range.location + range.length, nil))

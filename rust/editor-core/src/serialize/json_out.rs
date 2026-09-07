@@ -110,13 +110,11 @@ fn node_to_json_shallow(node: &Node, schema: &Schema) -> Value {
             obj.insert("marks".to_string(), Value::Array(marks_json));
         }
     } else if node.is_element() {
-        // Include non-default attrs
         let attrs_json = build_attrs_json(node, schema);
         if !attrs_json.is_empty() {
             obj.insert("attrs".to_string(), Value::Object(attrs_json));
         }
     } else {
-        // Void node — include non-default attrs, no content
         let attrs_json = build_attrs_json(node, schema);
         if !attrs_json.is_empty() {
             obj.insert("attrs".to_string(), Value::Object(attrs_json));
@@ -133,7 +131,6 @@ fn build_attrs_json(node: &Node, schema: &Schema) -> Map<String, Value> {
     let spec = schema.node(node.node_type());
 
     for (key, value) in node.attrs() {
-        // Check if this value equals the schema default — if so, omit it
         let is_default = spec
             .and_then(|s| s.attrs.get(key))
             .and_then(|a| a.default.as_ref())

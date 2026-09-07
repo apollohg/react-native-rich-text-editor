@@ -44,8 +44,6 @@ impl Default for ResourceLimits {
 }
 
 impl ResourceLimits {
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn try_from_config(value: Option<&serde_json::Value>) -> BoundaryResult<Self> {
         let overrides = match value {
@@ -195,12 +193,8 @@ pub enum InputKind {
     Config,
     DocumentJson,
     Html,
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     CollaborationMessage,
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     EncodedState,
 }

@@ -7,6 +7,8 @@ import android.view.Window
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.ScrollView
+import java.time.Duration
+import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -22,8 +24,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
-import java.util.concurrent.atomic.AtomicBoolean
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -35,7 +35,9 @@ internal class NativeEditorExpoViewCompositionTest : NativeEditorExpoViewTestFix
 
         view.setAndroidInputOptionsJson("""{"privateImeOptions":"nm"}""")
         val configuredEditorInfo = EditorInfo()
-        assertNotNull(view.richTextView.editorEditText.onCreateInputConnection(configuredEditorInfo))
+        assertNotNull(
+            view.richTextView.editorEditText.onCreateInputConnection(configuredEditorInfo)
+        )
         assertEquals("nm", configuredEditorInfo.privateImeOptions)
 
         view.setAndroidInputOptionsJson(null)
@@ -106,7 +108,9 @@ internal class NativeEditorExpoViewCompositionTest : NativeEditorExpoViewTestFix
             editText.applyUpdateJSON(renderUpdateJson(text), notifyListener = false)
         }
 
-        val inputConnection = editText.onCreateInputConnection(android.view.inputmethod.EditorInfo())
+        val inputConnection = editText.onCreateInputConnection(
+            android.view.inputmethod.EditorInfo()
+        )
         assertNotNull(inputConnection)
         assertTrue(inputConnection!!.setComposingText("abc", 1))
 
@@ -139,7 +143,9 @@ internal class NativeEditorExpoViewCompositionTest : NativeEditorExpoViewTestFix
             editText.applyUpdateJSON(renderUpdateJson(text), notifyListener = false)
         }
 
-        val inputConnection = editText.onCreateInputConnection(android.view.inputmethod.EditorInfo())
+        val inputConnection = editText.onCreateInputConnection(
+            android.view.inputmethod.EditorInfo()
+        )
         assertNotNull(inputConnection)
         assertTrue(inputConnection!!.setComposingText("abc", 1))
 

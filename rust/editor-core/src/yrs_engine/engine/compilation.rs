@@ -82,7 +82,6 @@ fn required_fallbacks_are_representable<Current: ReadTxn, Proof: ReadTxn>(
 }
 
 impl YrsDocumentEngine {
-    #[allow(dead_code)] // exposes the internal compiler through atomic application.
     pub(crate) fn compile_typed_transaction(
         &self,
         transaction: yrs_engine::TypedTransaction,

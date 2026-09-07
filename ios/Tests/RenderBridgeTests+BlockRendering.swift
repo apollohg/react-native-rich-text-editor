@@ -1,5 +1,5 @@
-import XCTest
 import CoreText
+import XCTest
 
 extension RenderBridgeTests {
     /// Two adjacent code blocks must produce two separate background groups —
@@ -44,9 +44,9 @@ extension RenderBridgeTests {
         let theme = EditorTheme(dictionary: [
             "codeBlock": [
                 "text": [
-                    "fontFamily": "Courier New",
-                ],
-            ],
+                    "fontFamily": "Courier New"
+                ]
+            ]
         ])
         let result = RenderBridge.renderElements(
             fromJSON: json,
@@ -113,8 +113,8 @@ extension RenderBridgeTests {
         """
         let theme = EditorTheme(dictionary: [
             "paragraph": [
-                "spacingAfter": 14,
-            ],
+                "spacingAfter": 14
+            ]
         ])
         let result = RenderBridge.renderElements(
             fromJSON: json,
@@ -332,8 +332,8 @@ extension RenderBridgeTests {
                     "type": "voidBlock",
                     "nodeType": "counterCard",
                     "docPos": 5,
-                    "atomId": "client-1:9",
-                ],
+                    "atomId": "client-1:9"
+                ]
             ],
             baseFont: baseFont,
             textColor: textColor,
@@ -389,7 +389,7 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "list_item", "depth": 1,
-             "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Item", "marks": []},
             {"type": "blockEnd"},
@@ -420,11 +420,11 @@ extension RenderBridgeTests {
         """
         let theme = EditorTheme(dictionary: [
             "paragraph": [
-                "spacingAfter": 14,
+                "spacingAfter": 14
             ],
             "horizontalRule": [
-                "verticalMargin": 10,
-            ],
+                "verticalMargin": 10
+            ]
         ])
 
         let result = RenderBridge.renderElements(

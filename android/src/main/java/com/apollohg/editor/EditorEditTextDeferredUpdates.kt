@@ -1,14 +1,14 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.EditorEditText.AuthoritativeInputSnapshot
 import android.os.Handler
 import android.os.Looper
 import android.text.SpannableStringBuilder
+import com.apollohg.editor.EditorEditText.AuthoritativeInputSnapshot
 import org.json.JSONObject
 
 // Samsung Keyboard may call finishComposingText() and then commitText(" ")
-    // for one space tap. Defer the render from finishComposingText() by one
-    // loop so setText() does not restart input before the pending space arrives.
+// for one space tap. Defer the render from finishComposingText() by one
+// loop so setText() does not restart input before the pending space arrives.
 internal fun EditorEditText.runWithDeferredRustUpdateApplicationImpl(block: () -> Unit) {
     recordImeTraceForTesting(
         "deferRustUpdateBegin",
@@ -98,16 +98,16 @@ internal fun EditorEditText.authorizeCurrentVisibleTextForPendingImeOperationFor
     )
 }
 
-internal fun EditorEditText.captureAuthoritativeInputSnapshotForEditorImpl(): AuthoritativeInputSnapshot =
+internal fun EditorEditText.captureAuthoritativeInputSnapshotImpl(): AuthoritativeInputSnapshot =
     AuthoritativeInputSnapshot(
         renderedText = SpannableStringBuilder(lastAuthorizedRenderedText ?: lastAuthorizedText),
         selectionStart = selectionStart.coerceAtLeast(0),
-        selectionEnd = selectionEnd.coerceAtLeast(0),
+        selectionEnd = selectionEnd.coerceAtLeast(0)
     )
 
 internal fun EditorEditText.deleteScalarRangeForPendingImeOperationForEditorImpl(
     scalarFrom: Int,
-    scalarTo: Int,
+    scalarTo: Int
 ): EditorV2NativeIntentResult? {
     onDeleteRangeInRustForTesting?.let { callback ->
         runWithDeferredRustUpdateApplication {
@@ -120,7 +120,7 @@ internal fun EditorEditText.deleteScalarRangeForPendingImeOperationForEditorImpl
 
 internal fun EditorEditText.promoteOptimisticInputForEditorImpl(
     render: EditorV2NativeMutationRender,
-    logicalCursorAfter: Int,
+    logicalCursorAfter: Int
 ) {
     authorizeCurrentVisibleTextForPendingImeOperationForEditor(logicalCursorAfter)
     pendingOptimisticRenderText = text?.toString()
@@ -129,7 +129,7 @@ internal fun EditorEditText.promoteOptimisticInputForEditorImpl(
 
 internal fun EditorEditText.restoreAuthoritativeInputForEditorImpl(
     snapshot: AuthoritativeInputSnapshot,
-    recoveryUpdateJson: String? = null,
+    recoveryUpdateJson: String? = null
 ) {
     pendingOptimisticRenderText = null
     cancelDeferredRustUpdateApplication()
@@ -144,7 +144,7 @@ internal fun EditorEditText.restoreAuthoritativeInputForEditorImpl(
         val length = text?.length ?: 0
         setSelection(
             snapshot.selectionStart.coerceIn(0, length),
-            snapshot.selectionEnd.coerceIn(0, length),
+            snapshot.selectionEnd.coerceIn(0, length)
         )
     } finally {
         endBatchEdit()
@@ -174,7 +174,9 @@ internal fun EditorEditText.handleStructuralBackspaceImpl() {
     }
 }
 
-internal fun EditorEditText.selectAtomBeforeEmptyTrailingParagraph(driver: EditorV2Driver): Boolean {
+internal fun EditorEditText.selectAtomBeforeEmptyTrailingParagraph(
+    driver: EditorV2Driver
+): Boolean {
     val adapter = driver as? EditorV2Adapter ?: return false
     val content = text ?: return false
     if (selectionStart != selectionEnd) return false
@@ -182,7 +184,11 @@ internal fun EditorEditText.selectAtomBeforeEmptyTrailingParagraph(driver: Edito
     val paragraphStart = raw.lastIndexOf('\n') + 1
     if (paragraphStart < 2 || selectionEnd < paragraphStart) return false
     val trailingText = raw.substring(paragraphStart)
-    if (trailingText.isNotEmpty() && trailingText != LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER) return false
+    if (trailingText.isNotEmpty() &&
+        trailingText != LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER
+    ) {
+        return false
+    }
     val atom = content.getSpans(paragraphStart - 2, paragraphStart - 1, AtomBlockSpan::class.java)
         .firstOrNull { content.getSpanEnd(it) == paragraphStart - 1 } ?: return false
     deferredRustUpdateJSON?.let { applyUpdateJSON(it) }
@@ -215,7 +221,10 @@ internal fun EditorEditText.handleStructuralDeleteImpl(
     }
 }
 
-internal fun EditorEditText.applyNonOptimisticRustUpdate(driver: EditorV2Driver, updateJSON: String?) {
+internal fun EditorEditText.applyNonOptimisticRustUpdate(
+    driver: EditorV2Driver,
+    updateJSON: String?
+) {
     if (driver is EditorV2Adapter) {
         driver.recoverNativeRender()?.let { applyRustUpdateJSON(it) }
         return
@@ -262,7 +271,10 @@ internal fun EditorEditText.scheduleDeferredRustUpdateApplication() {
             return@post
         }
         if (deferredRustUpdateJSON != pendingUpdateJSON) {
-            recordImeTraceForTesting("rustUpdateDeferredSkip", "reason=replaced generation=$generation")
+            recordImeTraceForTesting(
+                "rustUpdateDeferredSkip",
+                "reason=replaced generation=$generation"
+            )
             return@post
         }
         deferredRustUpdateJSON = null
@@ -294,11 +306,13 @@ internal fun EditorEditText.advanceRenderBlocksThroughDeferredUpdate(updateJSON:
     retainCurrentRenderBlocks(
         resolved,
         updateDocumentVersion,
-        needFullApply = resolved != null,
+        needFullApply = resolved != null
     )
 }
 
-internal fun EditorEditText.cancelDeferredRustUpdateApplication(invalidateRenderBlocks: Boolean = true) {
+internal fun EditorEditText.cancelDeferredRustUpdateApplication(
+    invalidateRenderBlocks: Boolean = true
+) {
     if (deferredRustUpdateJSON == null) return
     recordImeTraceForTesting(
         "rustUpdateDeferredCancel",

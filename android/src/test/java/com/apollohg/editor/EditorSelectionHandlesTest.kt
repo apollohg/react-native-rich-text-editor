@@ -9,12 +9,12 @@ import android.view.ContextThemeWrapper
 import android.view.MotionEvent
 import android.view.View
 import android.widget.EditText
-import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
@@ -43,10 +43,17 @@ class EditorSelectionHandlesTest {
         for (offset in listOf(6, 16)) {
             val layout = editor.layout
             val line = layout.getLineForOffset(offset)
-            val x = ((layout.getPrimaryHorizontal(offset) + layout.getPrimaryHorizontal(offset + 1)) / 2).toInt()
+            val x = (
+                (layout.getPrimaryHorizontal(offset) + layout.getPrimaryHorizontal(offset + 1)) /
+                    2
+                ).toInt()
             val y = (layout.editorTextLineTop(line) + layout.editorTextLineBottom(line)) / 2
             val pixel = actual.getPixel(x, y)
-            assertEquals("Highlight opacity at offset $offset", Color.alpha(editor.highlightColor), Color.alpha(pixel))
+            assertEquals(
+                "Highlight opacity at offset $offset",
+                Color.alpha(editor.highlightColor),
+                Color.alpha(pixel)
+            )
             for (channel in listOf(Color::red, Color::green, Color::blue)) {
                 assertEquals(channel(editor.highlightColor).toFloat(), channel(pixel).toFloat(), 2f)
             }
@@ -68,7 +75,10 @@ class EditorSelectionHandlesTest {
             editor.setSelection(4)
             val caret = bitmap(editor)
             editor.draw(Canvas(caret))
-            assertTrue("Collapsed selection must still draw the insertion bar", !caret.sameAs(bitmap(editor)))
+            assertTrue(
+                "Collapsed selection must still draw the insertion bar",
+                !caret.sameAs(bitmap(editor))
+            )
 
             editor.setSelection(4, 10)
             val selected = bitmap(editor)
@@ -76,7 +86,10 @@ class EditorSelectionHandlesTest {
             editor.isCursorVisible = false
             val withoutCursor = bitmap(editor)
             editor.draw(Canvas(withoutCursor))
-            assertTrue("A text selection must draw identically with the insertion bar disabled", selected.sameAs(withoutCursor))
+            assertTrue(
+                "A text selection must draw identically with the insertion bar disabled",
+                selected.sameAs(withoutCursor)
+            )
         } finally {
             controller.pause().stop().destroy()
         }
@@ -87,7 +100,10 @@ class EditorSelectionHandlesTest {
         val editor = editor("hello world")
         val x = editor.layout.getPrimaryHorizontal(3)
         val y = editor.layout.getLineBaseline(0).toFloat()
-        for ((time, action) in listOf(0L to MotionEvent.ACTION_DOWN, 50L to MotionEvent.ACTION_UP)) {
+        for ((time, action) in listOf(
+            0L to MotionEvent.ACTION_DOWN,
+            50L to MotionEvent.ACTION_UP
+        )) {
             val event = MotionEvent.obtain(0L, time, action, x, y, 0)
             editor.onTouchEvent(event)
             event.recycle()
@@ -96,7 +112,10 @@ class EditorSelectionHandlesTest {
         assertTrue(editor.selectionStart == editor.selectionEnd)
         val actual = bitmap(editor)
         editor.interaction.drawHandles(Canvas(actual))
-        assertTrue("An insertion caret should have no selection handle", actual.sameAs(bitmap(editor)))
+        assertTrue(
+            "An insertion caret should have no selection handle",
+            actual.sameAs(bitmap(editor))
+        )
     }
 
     @Test
@@ -112,17 +131,41 @@ class EditorSelectionHandlesTest {
                     val layout = editor.layout
                     val rtl = layout.isRtlCharAt(if (isStart) offset else offset - 1)
                     val leftHandle = isStart != rtl
-                    val drawable = requireNotNull(if (leftHandle) native.textSelectHandleLeft else native.textSelectHandleRight).mutate()
+                    val drawable = requireNotNull(
+                        if (leftHandle) {
+                            native.textSelectHandleLeft
+                        } else {
+                            native.textSelectHandleRight
+                        }
+                    ).mutate()
                     drawable.setTint(editor.caretColor)
-                    val hotspot = if (leftHandle) drawable.intrinsicWidth * 3 / 4 else drawable.intrinsicWidth / 4
+                    val hotspot = if (leftHandle) {
+                        drawable.intrinsicWidth * 3 / 4
+                    } else {
+                        drawable.intrinsicWidth /
+                            4
+                    }
                     val x = (layout.getPrimaryHorizontal(offset) - 0.5f).toInt() - hotspot
-                    val y = CaretGeometry.verticalBounds(layout, offset, editor.paint, editor.text).bottom.toInt()
-                    drawable.setBounds(x, y, x + drawable.intrinsicWidth, y + drawable.intrinsicHeight)
+                    val y = CaretGeometry.verticalBounds(
+                        layout,
+                        offset,
+                        editor.paint,
+                        editor.text
+                    ).bottom.toInt()
+                    drawable.setBounds(
+                        x,
+                        y,
+                        x + drawable.intrinsicWidth,
+                        y + drawable.intrinsicHeight
+                    )
                     drawable.draw(canvas)
                 }
                 val actual = bitmap(editor)
                 editor.interaction.drawHandles(Canvas(actual))
-                assertTrue("Handles must use native shapes for $text ($start..$end)", expected.sameAs(actual))
+                assertTrue(
+                    "Handles must use native shapes for $text ($start..$end)",
+                    expected.sameAs(actual)
+                )
             }
         }
     }
@@ -133,8 +176,14 @@ class EditorSelectionHandlesTest {
         editor.setSelection(6, 9)
         val drawable = requireNotNull(EditText(editor.context).textSelectHandleRight)
         val x = editor.layout.getSecondaryHorizontal(6) + drawable.intrinsicWidth / 4f
-        val y = CaretGeometry.verticalBounds(editor.layout, 6, editor.paint, editor.text).bottom + drawable.intrinsicHeight / 2f
-        for ((time, action) in listOf(0L to MotionEvent.ACTION_DOWN, 50L to MotionEvent.ACTION_MOVE, 100L to MotionEvent.ACTION_UP)) {
+        val y =
+            CaretGeometry.verticalBounds(editor.layout, 6, editor.paint, editor.text).bottom +
+                drawable.intrinsicHeight / 2f
+        for ((time, action) in listOf(
+            0L to MotionEvent.ACTION_DOWN,
+            50L to MotionEvent.ACTION_MOVE,
+            100L to MotionEvent.ACTION_UP
+        )) {
             val event = MotionEvent.obtain(0L, time, action, x, y, 0)
             editor.onTouchEvent(event)
             event.recycle()
@@ -158,13 +207,18 @@ class EditorSelectionHandlesTest {
         editor.setSelection(4, 10)
         val drawable = requireNotNull(EditText(editor.context).textSelectHandleRight)
         val x = editor.layout.getPrimaryHorizontal(10) + drawable.intrinsicWidth / 4f
-        val bottom = CaretGeometry.verticalBounds(editor.layout, 10, editor.paint, editor.text).bottom
+        val bottom = CaretGeometry.verticalBounds(
+            editor.layout,
+            10,
+            editor.paint,
+            editor.text
+        ).bottom
         val y = bottom + drawable.intrinsicHeight / 2f
         val delta = editor.layout.getPrimaryHorizontal(12) - editor.layout.getPrimaryHorizontal(10)
         for ((time, action, touchX) in listOf(
             Triple(0L, MotionEvent.ACTION_DOWN, x),
             Triple(50L, MotionEvent.ACTION_MOVE, x + delta),
-            Triple(100L, MotionEvent.ACTION_UP, x + delta),
+            Triple(100L, MotionEvent.ACTION_UP, x + delta)
         )) {
             val event = MotionEvent.obtain(0L, time, action, touchX, y, 0)
             editor.onTouchEvent(event)
@@ -179,16 +233,24 @@ class EditorSelectionHandlesTest {
     }
 
     private fun editor(text: String): EditorEditText {
-        val context = ContextThemeWrapper(RuntimeEnvironment.getApplication(), android.R.style.Theme_Material_Light_NoActionBar)
+        val context =
+            ContextThemeWrapper(
+                RuntimeEnvironment.getApplication(),
+                android.R.style.Theme_Material_Light_NoActionBar
+            )
         return EditorEditText(context).apply {
             typeface = Typeface.MONOSPACE
             setPadding(0, 0, 0, 0)
             setText(text)
-            measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(240, View.MeasureSpec.EXACTLY))
+            measure(
+                View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(240, View.MeasureSpec.EXACTLY)
+            )
             layout(0, 0, measuredWidth, measuredHeight)
             requestFocus()
         }
     }
 
-    private fun bitmap(editor: EditorEditText) = Bitmap.createBitmap(editor.width, editor.height, Bitmap.Config.ARGB_8888)
+    private fun bitmap(editor: EditorEditText) =
+        Bitmap.createBitmap(editor.width, editor.height, Bitmap.Config.ARGB_8888)
 }

@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
 
@@ -113,8 +113,7 @@ extension RichTextEditorViewTests {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let state = Dictionary(uniqueKeysWithValues: Mirror(reflecting: view).children.compactMap {
-            child -> (String, Any)? in
+        let state = Dictionary(uniqueKeysWithValues: Mirror(reflecting: view).children.compactMap { child -> (String, Any)? in
             guard let label = child.label else { return nil }
             return (label, child.value)
         })
@@ -135,9 +134,9 @@ final class AutonomousErrorEventSink {
 
     func record(_ payload: [String: Any]) {
         guard let error = payload["error"] as? [String: Any],
-              let domain = error["domain"] as? String,
-              let code = error["code"] as? String,
-              let message = error["message"] as? String
+            let domain = error["domain"] as? String,
+            let code = error["code"] as? String,
+            let message = error["message"] as? String
         else { return }
         func optionalString(_ key: String) -> String? {
             error[key] as? String

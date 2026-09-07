@@ -4,21 +4,36 @@ import UIKit
 import XCTest
 
 extension PreparedProseLayoutTests {
-    func testRegisteredBlockAtomReservesMeasuredWidthAndZeroHeight() {
-        let block = ViewerBlock(nodeType: "card", depth: 0, inBlockquote: false,
-                                listContext: nil, listItemBoundary: nil,
-                                inlines: [.atom(nodeType: "card", docPos: 3, attrsJSON: "{}", label: "Card")], isBlockAtom: true)
-        let document = ViewerDocument(semanticKey: String(repeating: "a", count: 64),
-                                      blocks: [block], isEmpty: false, retainedBytes: 128,
-                                      trailingEmptyTextBlockCount: 0)
+    func testRegisteredBlockAtomReservesMeasuredWidthAndZeroHeight() throws {
+        let block = ViewerBlock(
+            nodeType: "card",
+            depth: 0,
+            inBlockquote: false,
+            listContext: nil,
+            listItemBoundary: nil,
+            inlines: [.atom(nodeType: "card", docPos: 3, attrsJSON: "{}", label: "Card")],
+            isBlockAtom: true
+        )
+        let document = ViewerDocument(
+            semanticKey: String(repeating: "a", count: 64),
+            blocks: [block],
+            isEmpty: false,
+            retainedBytes: 128,
+            trailingEmptyTextBlockCount: 0
+        )
         let registry = PreparedProseLayoutRegistry(compile: { _ in document })
         func measure(_ measuredWidth: Int) -> PreparedProseLayout {
             let theme = """
             {"viewerAtoms":{"generation":"g","revision":"r","nodeTypes":["card"],"estimatedHeights":{"card":70},"measurements":{"3":{"width":\(measuredWidth),"height":0}}}}
             """
-            return registry.measure(request: ProseViewerRequest(source: .json("{}"),
-                configuration: ProseViewerConfiguration(configJSON: "{}", themeJSON: theme)),
-                widthPoints: 160, scale: 2)
+            return registry.measure(
+                request: ProseViewerRequest(
+                    source: .json("{}"),
+                    configuration: ProseViewerConfiguration(configJSON: "{}", themeJSON: theme)
+                ),
+                widthPoints: 160,
+                scale: 2
+            )
         }
         XCTAssertEqual(measure(160).size.height, 0)
         XCTAssertEqual(measure(120).size.height, 70)
@@ -30,30 +45,50 @@ extension PreparedProseLayoutTests {
         let drawing = PreparedProseDrawingView(frame: .zero)
         drawing.install(layout: layout)
         let data = drawing.atomLayoutsJSON(origin: CGPoint(x: 5, y: 9)).data(using: .utf8)!
-        let atoms = try! JSONSerialization.jsonObject(with: data) as! [[String: Any]]
+        let atoms = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
         XCTAssertEqual(atoms.first?["x"] as? Double, 5)
         XCTAssertEqual(atoms.first?["y"] as? Double, 9)
     }
 
     func testShortListedViewerAtomsIncludeMarkerBoundsAndFollowingSpacing() throws {
-        let atom = ViewerBlock(nodeType: "card", depth: 0, inBlockquote: false,
+        let atom = ViewerBlock(
+            nodeType: "card",
+            depth: 0,
+            inBlockquote: false,
             listContext: ViewerListContext(ordered: false, index: 0, kind: nil, checked: false, isLast: true),
             listItemBoundary: nil,
-            inlines: [.atom(nodeType: "card", docPos: 3, attrsJSON: "{}", label: "Card")], isBlockAtom: true)
-        let paragraph = ViewerBlock(nodeType: "paragraph", depth: 0, inBlockquote: false,
-            listContext: nil, listItemBoundary: nil, inlines: [.text(text: "After", marks: [])])
+            inlines: [.atom(nodeType: "card", docPos: 3, attrsJSON: "{}", label: "Card")],
+            isBlockAtom: true
+        )
+        let paragraph = ViewerBlock(
+            nodeType: "paragraph",
+            depth: 0,
+            inBlockquote: false,
+            listContext: nil,
+            listItemBoundary: nil,
+            inlines: [.text(text: "After", marks: [])]
+        )
         for height in [0, 1] {
             for followingParagraph in [false, true] {
-                let document = ViewerDocument(semanticKey: String(repeating: "a", count: 64),
-                    blocks: followingParagraph ? [atom, paragraph] : [atom], isEmpty: false,
-                    retainedBytes: 128, trailingEmptyTextBlockCount: 0)
+                let document = ViewerDocument(
+                    semanticKey: String(repeating: "a", count: 64),
+                    blocks: followingParagraph ? [atom, paragraph] : [atom],
+                    isEmpty: false,
+                    retainedBytes: 128,
+                    trailingEmptyTextBlockCount: 0
+                )
                 let registry = PreparedProseLayoutRegistry(compile: { _ in document })
                 let theme = """
                 {"viewerAtoms":{"nodeTypes":["card"],"estimatedHeights":{"card":\(height)}}}
                 """
-                let layout = registry.measure(request: ProseViewerRequest(source: .json("{}"),
-                    configuration: ProseViewerConfiguration(configJSON: "{}", themeJSON: theme)),
-                    widthPoints: 200, scale: 2)
+                let layout = registry.measure(
+                    request: ProseViewerRequest(
+                        source: .json("{}"),
+                        configuration: ProseViewerConfiguration(configJSON: "{}", themeJSON: theme)
+                    ),
+                    widthPoints: 200,
+                    scale: 2
+                )
                 let block = try XCTUnwrap(layout.blocks.first)
                 let marker = try XCTUnwrap(block.fragments.first { $0.kind == .marker })
                 XCTAssertEqual(block.atomSlot?.bounds.height, CGFloat(height))
@@ -76,31 +111,60 @@ extension PreparedProseLayoutTests {
     }
 
     func testViewerAtomDecorationsFallbackAndDownstreamGeometry() {
-        func block(_ nodeType: String, atom: Bool, quote: Bool = false,
-                   list: ViewerListContext? = nil) -> ViewerBlock {
-            ViewerBlock(nodeType: nodeType, depth: 0, inBlockquote: quote,
-                        listContext: list, listItemBoundary: nil,
-                        inlines: [.atom(nodeType: "card", docPos: 3, attrsJSON: "{}", label: "Card")],
-                        isBlockAtom: atom)
+        func block(
+            _ nodeType: String,
+            atom: Bool,
+            quote: Bool = false,
+            list: ViewerListContext? = nil
+        ) -> ViewerBlock {
+            ViewerBlock(
+                nodeType: nodeType,
+                depth: 0,
+                inBlockquote: quote,
+                listContext: list,
+                listItemBoundary: nil,
+                inlines: [.atom(nodeType: "card", docPos: 3, attrsJSON: "{}", label: "Card")],
+                isBlockAtom: atom
+            )
         }
         func measure(_ first: ViewerBlock, registered: Bool = true) -> PreparedProseLayout {
-            let paragraph = ViewerBlock(nodeType: "paragraph", depth: 0, inBlockquote: false,
-                listContext: nil, listItemBoundary: nil, inlines: [.text(text: "After", marks: [])])
-            let document = ViewerDocument(semanticKey: String(repeating: "a", count: 64),
-                blocks: [first, paragraph], isEmpty: false, retainedBytes: 128, trailingEmptyTextBlockCount: 0)
+            let paragraph = ViewerBlock(
+                nodeType: "paragraph",
+                depth: 0,
+                inBlockquote: false,
+                listContext: nil,
+                listItemBoundary: nil,
+                inlines: [.text(text: "After", marks: [])]
+            )
+            let document = ViewerDocument(
+                semanticKey: String(repeating: "a", count: 64),
+                blocks: [first, paragraph],
+                isEmpty: false,
+                retainedBytes: 128,
+                trailingEmptyTextBlockCount: 0
+            )
             let registry = PreparedProseLayoutRegistry(compile: { _ in document })
             let theme = """
             {"viewerAtoms":{"nodeTypes":["\(registered ? "card" : "other")"],"estimatedHeights":{"card":80}}}
             """
-            return registry.measure(request: ProseViewerRequest(source: .json("{}"),
-                configuration: ProseViewerConfiguration(configJSON: "{}", themeJSON: theme)),
-                widthPoints: 200, scale: 2)
+            return registry.measure(
+                request: ProseViewerRequest(
+                    source: .json("{}"),
+                    configuration: ProseViewerConfiguration(configJSON: "{}", themeJSON: theme)
+                ),
+                widthPoints: 200,
+                scale: 2
+            )
         }
         let plain = measure(block("card", atom: true))
         XCTAssertEqual(plain.blocks[0].atomSlot?.bounds.height, 80)
         XCTAssertGreaterThanOrEqual(plain.blocks[1].bounds.minY, 80)
-        let decorated = measure(block("card", atom: true, quote: true,
-            list: ViewerListContext(ordered: false, index: 0, kind: nil, checked: false, isLast: true)))
+        let decorated = measure(block(
+            "card",
+            atom: true,
+            quote: true,
+            list: ViewerListContext(ordered: false, index: 0, kind: nil, checked: false, isLast: true)
+        ))
         XCTAssertTrue(decorated.blocks[0].fragments.contains { $0.kind == .marker })
         XCTAssertTrue(decorated.blocks[0].fragments.contains { $0.kind == .border })
         XCTAssertLessThan(decorated.blocks[0].atomSlot!.bounds.width, 200)
@@ -160,16 +224,16 @@ extension PreparedProseLayoutTests {
     func testCollapseTrailingHiddenInlineImagePreservesPrecedingParagraph() {
         let source = """
         {"type":"doc","content":[
-          {"type":"paragraph","content":[{"type":"text","text":"keep"}]},
-          {"type":"paragraph","content":[{"type":"image","attrs":{"src":"https://example.test/image.png"}}]}
+        {"type":"paragraph","content":[{"type":"text","text":"keep"}]},
+        {"type":"paragraph","content":[{"type":"image","attrs":{"src":"https://example.test/image.png"}}]}
         ]}
         """
         let configJSON = """
         {"schema":{"nodes":[
-          {"name":"doc","content":"block+","role":"doc"},
-          {"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},
-          {"name":"image","content":"","group":"inline","role":"inline","isVoid":true,"attrs":{"src":{}}},
-          {"name":"text","group":"inline","role":"text"}
+        {"name":"doc","content":"block+","role":"doc"},
+        {"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},
+        {"name":"image","content":"","group":"inline","role":"inline","isVoid":true,"attrs":{"src":{}}},
+        {"name":"text","group":"inline","role":"text"}
         ],"marks":[]},"initialization":{"type":"localEmpty"}}
         """
         let request = ProseViewerRequest(
@@ -194,17 +258,17 @@ extension PreparedProseLayoutTests {
     func testCustomBlockContainerDoesNotBecomeAnEmptyLeaf() {
         let source = """
         {"type":"doc","content":[
-          {"type":"callout","content":[
+        {"type":"callout","content":[
             {"type":"paragraph","content":[{"type":"text","text":"keep"}]}
-          ]}
+        ]}
         ]}
         """
         let configJSON = """
         {"schema":{"nodes":[
-          {"name":"doc","content":"block+","role":"doc"},
-          {"name":"callout","content":"block+","group":"block","role":"block"},
-          {"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},
-          {"name":"text","group":"inline","role":"text"}
+        {"name":"doc","content":"block+","role":"doc"},
+        {"name":"callout","content":"block+","group":"block","role":"block"},
+        {"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},
+        {"name":"text","group":"inline","role":"text"}
         ],"marks":[]},"initialization":{"type":"localEmpty"}}
         """
         let request = ProseViewerRequest(
@@ -256,19 +320,19 @@ extension PreparedProseLayoutTests {
             [ViewerListItemAncestor(identity: 0, context: orderedContext)],
             [
                 bulletAncestor,
-                ViewerListItemAncestor(identity: 1, context: orderedContext),
+                ViewerListItemAncestor(identity: 1, context: orderedContext)
             ],
             [
                 nestedOrderedAncestor,
                 nestedBulletAncestor,
-                ViewerListItemAncestor(identity: 2, context: orderedContext),
+                ViewerListItemAncestor(identity: 2, context: orderedContext)
             ],
             [
                 bulletAncestor,
                 nestedOrderedAncestor,
                 nestedBulletAncestor,
-                ViewerListItemAncestor(identity: 3, context: orderedContext),
-            ],
+                ViewerListItemAncestor(identity: 3, context: orderedContext)
+            ]
         ]
         let mismatchedBoundaryDepths: [UInt16] = [2, 0, 0, 1]
         let blocks = ancestorChains.enumerated().map { index, ancestors in
@@ -344,7 +408,7 @@ extension PreparedProseLayoutTests {
             listItemAncestors: [
                 ViewerListItemAncestor(identity: 100, context: bulletContext),
                 ViewerListItemAncestor(identity: 101, context: orderedContext),
-                ViewerListItemAncestor(identity: 102, context: orderedContext),
+                ViewerListItemAncestor(identity: 102, context: orderedContext)
             ],
             inlines: [.text(text: "item", marks: [])]
         )
@@ -385,18 +449,23 @@ extension PreparedProseLayoutTests {
     }
 
     func testOrderedMarkerEditorAndViewerRenderingConformForSharedTuples() throws {
-        let fixtures: [(index: Int, semanticDepth: Int, expected: String)] = [
-            (27, 0, "AA)"),
-            (3_999, 1, "MMMCMXCIX)"),
-            (42, 2, "42)"),
+        struct MarkerFixture {
+            let index: Int
+            let semanticDepth: Int
+            let expected: String
+        }
+        let fixtures: [MarkerFixture] = [
+            MarkerFixture(index: 27, semanticDepth: 0, expected: "AA)"),
+            MarkerFixture(index: 3_999, semanticDepth: 1, expected: "MMMCMXCIX)"),
+            MarkerFixture(index: 42, semanticDepth: 2, expected: "42)")
         ]
         let themeDictionary: [String: Any] = [
             "list": [
                 "orderedMarker": [
                     "schemes": ["upperAlpha", "upperRoman", "decimal"],
-                    "suffix": ")",
-                ],
-            ],
+                    "suffix": ")"
+                ]
+            ]
         ]
         let themeJSONData = try JSONSerialization.data(withJSONObject: themeDictionary)
         let themeJSON = try XCTUnwrap(String(data: themeJSONData, encoding: .utf8))
@@ -415,14 +484,14 @@ extension PreparedProseLayoutTests {
                         "ordered": deepest,
                         "index": deepest ? fixture.index : 1,
                         "isFirst": true,
-                        "isLast": true,
-                    ],
+                        "isLast": true
+                    ]
                 ])
             }
             elements.append([
                 "type": "blockStart",
                 "nodeType": "paragraph",
-                "depth": fixture.semanticDepth + 1,
+                "depth": fixture.semanticDepth + 1
             ])
             elements.append(["type": "textRun", "text": "item", "marks": []])
             elements.append(["type": "blockEnd"])

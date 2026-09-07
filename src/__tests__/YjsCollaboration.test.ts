@@ -60,7 +60,6 @@ describe('YjsCollaboration (native-transport controller)', () => {
         setup.controller.disconnect();
         expect(configuredTransport()).toEqual({ url: TRANSPORT_URL, connect: false });
 
-        // No JavaScript-owned socket exists at any point in the cutover.
         expect(runtime.module.editorV2CollaborationConfigureTransport).toHaveBeenCalledTimes(3);
     });
 

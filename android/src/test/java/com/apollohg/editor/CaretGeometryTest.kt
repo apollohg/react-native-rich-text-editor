@@ -34,7 +34,11 @@ class CaretGeometryTest {
         // Inter-block spacer inflates the descent of line 0 (the "Hello\n" line),
         // exactly as RenderBridge applies it between blocks.
         text.setSpan(
-            ParagraphSpacerSpan(spacingPx = SPACER_PX, baseFontSize = FONT_SIZE_PX, textColor = Color.BLACK),
+            ParagraphSpacerSpan(
+                spacingPx = SPACER_PX,
+                baseFontSize = FONT_SIZE_PX,
+                textColor = Color.BLACK
+            ),
             5,
             6,
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -77,7 +81,11 @@ class CaretGeometryTest {
 
         val spaced = SpannableStringBuilder("Hello\nWorld")
         spaced.setSpan(
-            ParagraphSpacerSpan(spacingPx = SPACER_PX, baseFontSize = FONT_SIZE_PX, textColor = Color.BLACK),
+            ParagraphSpacerSpan(
+                spacingPx = SPACER_PX,
+                baseFontSize = FONT_SIZE_PX,
+                textColor = Color.BLACK
+            ),
             5,
             6,
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -116,11 +124,11 @@ class CaretGeometryTest {
             ParagraphSpacerSpan(
                 spacingPx = SPACER_PX,
                 baseFontSize = FONT_SIZE_PX,
-                textColor = Color.BLACK,
+                textColor = Color.BLACK
             ),
             5,
             6,
-            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
         val fallbackPaint = TextPaint().apply { textSize = FONT_SIZE_PX.toFloat() }
         val layout = layoutFor(text, fallbackPaint)
@@ -133,13 +141,13 @@ class CaretGeometryTest {
             layout,
             offset = 5,
             fallbackPaint = fallbackPaint,
-            text = text,
+            text = text
         )
 
         assertEquals(
             layout.getLineBaseline(0) + expectedPaint.fontMetrics.descent,
             bounds.bottom,
-            TOLERANCE_PX,
+            TOLERANCE_PX
         )
         assertTrue(bounds.bottom < layout.getLineBottom(0))
     }
@@ -157,13 +165,13 @@ class CaretGeometryTest {
             layout,
             offset = 3,
             fallbackPaint = fallbackPaint,
-            text = text,
+            text = text
         )
 
         assertEquals(
             layout.getLineBaseline(0) + precedingPaint.fontMetrics.descent,
             bounds.bottom,
-            TOLERANCE_PX,
+            TOLERANCE_PX
         )
     }
 
@@ -179,13 +187,13 @@ class CaretGeometryTest {
             layout,
             offset = 6,
             fallbackPaint = fallbackPaint,
-            text = text,
+            text = text
         )
 
         assertEquals(
             layout.getLineBaseline(1) + followingPaint.fontMetrics.descent,
             bounds.bottom,
-            TOLERANCE_PX,
+            TOLERANCE_PX
         )
     }
 
@@ -193,23 +201,48 @@ class CaretGeometryTest {
     fun `caret renders only when focused, window-focused, and selection collapsed`() {
         assertTrue(
             "collapsed caret in a focused field should render",
-            CaretGeometry.shouldRender(focused = true, windowFocused = true, selectionStart = 3, selectionEnd = 3)
+            CaretGeometry.shouldRender(
+                focused = true,
+                windowFocused = true,
+                selectionStart = 3,
+                selectionEnd = 3
+            )
         )
         assertFalse(
             "no caret when the field is not focused",
-            CaretGeometry.shouldRender(focused = false, windowFocused = true, selectionStart = 3, selectionEnd = 3)
+            CaretGeometry.shouldRender(
+                focused = false,
+                windowFocused = true,
+                selectionStart = 3,
+                selectionEnd = 3
+            )
         )
         assertFalse(
             "no caret when the window is not focused",
-            CaretGeometry.shouldRender(focused = true, windowFocused = false, selectionStart = 3, selectionEnd = 3)
+            CaretGeometry.shouldRender(
+                focused = true,
+                windowFocused = false,
+                selectionStart = 3,
+                selectionEnd = 3
+            )
         )
         assertFalse(
             "no caret for a range selection (highlight shown instead)",
-            CaretGeometry.shouldRender(focused = true, windowFocused = true, selectionStart = 3, selectionEnd = 5)
+            CaretGeometry.shouldRender(
+                focused = true,
+                windowFocused = true,
+                selectionStart = 3,
+                selectionEnd = 5
+            )
         )
         assertFalse(
             "no caret when there is no selection",
-            CaretGeometry.shouldRender(focused = true, windowFocused = true, selectionStart = -1, selectionEnd = -1)
+            CaretGeometry.shouldRender(
+                focused = true,
+                windowFocused = true,
+                selectionStart = -1,
+                selectionEnd = -1
+            )
         )
     }
 

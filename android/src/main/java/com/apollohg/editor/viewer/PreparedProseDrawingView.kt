@@ -6,23 +6,26 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
+import android.os.Bundle
 import android.util.AttributeSet
-import android.view.View
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewTreeObserver
-import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeProvider
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import com.apollohg.editor.AndroidApiCompat
-import com.apollohg.editor.DecodedBitmapLease
 import com.apollohg.editor.DecodedBitmapBudget
+import com.apollohg.editor.DecodedBitmapLease
 
 /** Rendering-only consumer of fully prepared StaticLayout and geometry fragments. */
-internal class PreparedProseDrawingView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
+internal class PreparedProseDrawingView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null
+) : View(context, attrs) {
     private val accessibilityManager = context.getSystemService(AccessibilityManager::class.java)
     var preparedLayout: PreparedProseLayout? = null
         private set
@@ -34,9 +37,11 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
     var onInteractionActivated: ((PreparedProseInteraction) -> Boolean)? = null
     private val imagePixelsLock = Any()
     private val imagePixels = mutableMapOf<String, DecodedBitmapLease>()
+
     /** Map overhead only; decoded allocation bytes are charged by the shared lease budget. */
     internal val retainedImagePixelsBytesForTesting: Long
         get() = synchronized(imagePixelsLock) { retainedImagePixelsBytes(imagePixels) }
+
     /** False when a public host owns this view's virtual subtree and notifications. */
     var publishesAccessibilitySubtree: Boolean = true
     internal var accessibilityVisibilityForTesting: ((Rect) -> Boolean)? = null
@@ -119,7 +124,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
         PreparedProseInstrumentation.retained(
             PreparedProseInstrumentation.Owner.IMAGE,
             "drawing-${System.identityHashCode(this)}",
-            synchronized(imagePixelsLock) { retainedImagePixelsBytes(imagePixels) },
+            synchronized(imagePixelsLock) { retainedImagePixelsBytes(imagePixels) }
         )
     }
 
@@ -132,13 +137,15 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
         layout: PreparedProseLayout?,
         announceAccessibilitySubtree: Boolean = true,
         contentOriginXPx: Int = 0,
-        contentOriginYPx: Int = 0,
+        contentOriginYPx: Int = 0
     ) {
         if (
             preparedLayout === layout &&
             this.contentOriginXPx == contentOriginXPx &&
             this.contentOriginYPx == contentOriginYPx
-        ) return
+        ) {
+            return
+        }
         clearVirtualAccessibilityFocus()
         preparedLayout = layout
         codeHighlighting.update()
@@ -156,12 +163,22 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
         canvas.translate(contentOriginXPx.toFloat(), contentOriginYPx.toFloat())
         canvas.clipRect(0, 0, artifact.widthPx, artifact.heightPx)
         try {
-            artifact.contentBox?.let { com.apollohg.editor.EditorBoxDrawing.draw(canvas, RectF(0f, 0f, artifact.widthPx.toFloat(), artifact.heightPx.toFloat()), it) }
+            artifact.contentBox?.let {
+                com.apollohg.editor.EditorBoxDrawing.draw(
+                    canvas,
+                    RectF(0f, 0f, artifact.widthPx.toFloat(), artifact.heightPx.toFloat()),
+                    it
+                )
+            }
             recordPreparedProseDraw {
                 onVisibleRectChanged?.invoke(Rect(canvas.clipBounds))
                 val visible = mutableListOf<PreparedProseFragment>()
                 var visibleBlockCount = 0
-                artifact.forEachBlockIntersecting(canvas.clipBounds) { block -> visible += block.fragments; visibleBlockCount += 1 }
+                artifact.forEachBlockIntersecting(canvas.clipBounds) { block ->
+                    visible +=
+                        block.fragments
+                    visibleBlockCount += 1
+                }
                 // Phases stay global across blocks: later code backgrounds cannot cover
                 // an earlier quote border, and text/labels always remain foreground.
                 visible.forEach { drawBackground(canvas, it) }
@@ -175,17 +192,31 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
     }
 
     private fun drawBackground(canvas: Canvas, fragment: PreparedProseFragment) {
-        if (fragment.kind != PreparedProseFragmentKind.BACKGROUND && fragment.kind != PreparedProseFragmentKind.ATOM && fragment.kind != PreparedProseFragmentKind.IMAGE) return
+        if (fragment.kind != PreparedProseFragmentKind.BACKGROUND &&
+            fragment.kind != PreparedProseFragmentKind.ATOM &&
+            fragment.kind != PreparedProseFragmentKind.IMAGE
+        ) {
+            return
+        }
         fragment.box?.let { box ->
             val saved = canvas.save()
             canvas.clipRect(fragment.bounds)
-            com.apollohg.editor.EditorBoxDrawing.draw(canvas, RectF(fragment.decorationBounds ?: fragment.bounds), box)
+            com.apollohg.editor.EditorBoxDrawing.draw(
+                canvas,
+                RectF(fragment.decorationBounds ?: fragment.bounds),
+                box
+            )
             canvas.restoreToCount(saved)
             return
         }
         paint.style = Paint.Style.FILL
         paint.color = fragment.color ?: return
-        canvas.drawRoundRect(RectF(fragment.bounds), fragment.cornerRadius, fragment.cornerRadius, paint)
+        canvas.drawRoundRect(
+            RectF(fragment.bounds),
+            fragment.cornerRadius,
+            fragment.cornerRadius,
+            paint
+        )
     }
 
     private fun drawBorderOrRule(canvas: Canvas, fragment: PreparedProseFragment) {
@@ -195,13 +226,23 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
                 paint.color = fragment.color ?: return
                 canvas.drawRect(fragment.bounds, paint)
             }
+
             PreparedProseFragmentKind.ATOM -> if (fragment.strokeWidth > 0f) {
                 paint.style = Paint.Style.STROKE
                 paint.strokeWidth = fragment.strokeWidth
                 paint.color = fragment.borderColor ?: fragment.color ?: return
                 val inset = fragment.strokeWidth / 2f
-                canvas.drawRoundRect(RectF(fragment.bounds).apply { inset(inset, inset) }, maxOf(0f, fragment.cornerRadius - inset), maxOf(0f, fragment.cornerRadius - inset), paint)
+                canvas.drawRoundRect(
+                    RectF(fragment.bounds).apply { inset(inset, inset) },
+                    maxOf(
+                        0f,
+                        fragment.cornerRadius - inset
+                    ),
+                    maxOf(0f, fragment.cornerRadius - inset),
+                    paint
+                )
             }
+
             else -> Unit
         }
     }
@@ -215,8 +256,16 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
                     layout.draw(canvas)
                     com.apollohg.editor.EditorTextDecorationDrawing.draw(canvas, layout)
                     canvas.restoreToCount(saved)
-                } ?: if (fragment.kind == PreparedProseFragmentKind.MARKER) drawTaskMarker(canvas, fragment) else Unit
+                }
+                    ?: if (fragment.kind ==
+                        PreparedProseFragmentKind.MARKER
+                    ) {
+                        drawTaskMarker(canvas, fragment)
+                    } else {
+                        Unit
+                    }
             }
+
             PreparedProseFragmentKind.ATOM -> fragment.labelLayout?.let { layout ->
                 val saved = canvas.save()
                 canvas.translate(fragment.labelX.toFloat(), fragment.labelY.toFloat())
@@ -224,18 +273,30 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
                 com.apollohg.editor.EditorTextDecorationDrawing.draw(canvas, layout)
                 canvas.restoreToCount(saved)
             }
+
             PreparedProseFragmentKind.STRIKE -> {
                 paint.style = Paint.Style.FILL
                 paint.color = fragment.color ?: return
                 canvas.drawRect(fragment.bounds, paint)
             }
+
             PreparedProseFragmentKind.IMAGE -> {
-                val attachment = preparedLayout?.imageAttachments?.firstOrNull { it.bounds == fragment.bounds } ?: return
-                val bitmap = synchronized(imagePixelsLock) { imagePixels[attachment.id]?.bitmap } ?: return
+                val attachment =
+                    preparedLayout?.imageAttachments?.firstOrNull { it.bounds == fragment.bounds }
+                        ?: return
+                val bitmap =
+                    synchronized(imagePixelsLock) { imagePixels[attachment.id]?.bitmap } ?: return
                 fragment.box?.let {
-                    com.apollohg.editor.EditorBoxDrawing.drawImage(canvas, bitmap, RectF(fragment.bounds), it, fragment.resizeMode)
+                    com.apollohg.editor.EditorBoxDrawing.drawImage(
+                        canvas,
+                        bitmap,
+                        RectF(fragment.bounds),
+                        it,
+                        fragment.resizeMode
+                    )
                 } ?: canvas.drawBitmap(bitmap, null, fragment.bounds, paint)
             }
+
             else -> Unit
         }
     }
@@ -243,7 +304,13 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
     private fun drawTaskMarker(canvas: Canvas, fragment: PreparedProseFragment) {
         val bounds = RectF(fragment.bounds)
         fragment.box?.let {
-            com.apollohg.editor.drawCheckbox(canvas, bounds, it, fragment.checked, fragment.borderColor ?: fragment.color ?: android.graphics.Color.BLACK)
+            com.apollohg.editor.drawCheckbox(
+                canvas,
+                bounds,
+                it,
+                fragment.checked,
+                fragment.borderColor ?: fragment.color ?: android.graphics.Color.BLACK
+            )
             return
         }
         val inset = maxOf(1f, bounds.height() * 0.2f)
@@ -308,25 +375,60 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val contentX = event.x - contentOriginXPx
         val contentY = event.y - contentOriginYPx
-        fun targetAt(): PreparedProseInteraction? = preparedLayout?.interactions?.firstOrNull { interaction ->
-            if (contentX < 0f || contentY < 0f) return@firstOrNull false
-            interactionEnabled(interaction.kind) &&
-                interaction.rects.any { it.contains(contentX.toInt(), contentY.toInt()) }
-        }
+        fun targetAt(): PreparedProseInteraction? =
+            preparedLayout?.interactions?.firstOrNull { interaction ->
+                if (contentX < 0f || contentY < 0f) return@firstOrNull false
+                interactionEnabled(interaction.kind) &&
+                    interaction.rects.any { it.contains(contentX.toInt(), contentY.toInt()) }
+            }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                pendingTap = if (event.pointerCount == 1) targetAt()?.let { PendingTap(it, event.getPointerId(event.actionIndex), event.x, event.y) } else null
+                pendingTap =
+                    if (event.pointerCount ==
+                        1
+                    ) {
+                        targetAt()?.let {
+                            PendingTap(
+                                it,
+                                event.getPointerId(event.actionIndex),
+                                event.x,
+                                event.y
+                            )
+                        }
+                    } else {
+                        null
+                    }
                 return pendingTap != null
             }
+
             MotionEvent.ACTION_MOVE -> {
-                pendingTap?.let { tap -> if (event.pointerCount != 1 || event.findPointerIndex(tap.pointerId) < 0 || exceedsSlop(event, tap)) pendingTap = null }
+                pendingTap?.let { tap ->
+                    if (event.pointerCount != 1 ||
+                        event.findPointerIndex(tap.pointerId) < 0 ||
+                        exceedsSlop(event, tap)
+                    ) {
+                        pendingTap = null
+                    }
+                }
                 return pendingTap != null
             }
-            MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> { pendingTap = null; return false }
+
+            MotionEvent.ACTION_CANCEL,
+            MotionEvent.ACTION_POINTER_DOWN,
+            MotionEvent.ACTION_POINTER_UP -> {
+                pendingTap =
+                    null
+                return false
+            }
+
             MotionEvent.ACTION_UP -> {
                 val tap = pendingTap
                 pendingTap = null
-                if (tap != null && event.pointerCount == 1 && event.getPointerId(event.actionIndex) == tap.pointerId && !exceedsSlop(event, tap) && targetAt() == tap.target) {
+                if (tap != null && event.pointerCount == 1 &&
+                    event.getPointerId(event.actionIndex) == tap.pointerId &&
+                    !exceedsSlop(event, tap) &&
+                    targetAt() == tap.target
+                ) {
                     return onInteractionActivated?.invoke(tap.target) ?: false
                 }
             }
@@ -340,7 +442,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
         return dx * dx + dy * dy > touchSlop * touchSlop
     }
 
-    private data class PendingTap(val target: PreparedProseInteraction, val pointerId: Int, val downX: Float, val downY: Float)
+    private data class PendingTap(
+        val target: PreparedProseInteraction,
+        val pointerId: Int,
+        val downX: Float,
+        val downY: Float
+    )
 
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
         super.onInitializeAccessibilityNodeInfo(info)
@@ -356,9 +463,17 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
     @Suppress("DEPRECATION")
     private val provider = object : AccessibilityNodeProvider() {
         override fun createAccessibilityNodeInfo(id: Int): AccessibilityNodeInfo? {
-            if (id == View.NO_ID) return AccessibilityNodeInfo.obtain(this@PreparedProseDrawingView).also(::onInitializeAccessibilityNodeInfo)
+            if (id ==
+                View.NO_ID
+            ) {
+                return AccessibilityNodeInfo.obtain(
+                    this@PreparedProseDrawingView
+                ).also(::onInitializeAccessibilityNodeInfo)
+            }
             val node = nodes().getOrNull(id - 1) ?: return null
-            val parentBounds = Rect(node.bounds).apply { offset(contentOriginXPx, contentOriginYPx) }
+            val parentBounds = Rect(node.bounds).apply {
+                offset(contentOriginXPx, contentOriginYPx)
+            }
             val screen = accessibilityScreenBounds(node)
             val visibleToUser = accessibilityNodeVisibleOnScreen(screen)
             reconcileVirtualAccessibilityFocus()
@@ -378,8 +493,15 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
                 setBoundsInParent(parentBounds)
                 setBoundsInScreen(screen)
                 addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)
-                addAction(if (isAccessibilityFocused) AccessibilityNodeInfo.AccessibilityAction.ACTION_CLEAR_ACCESSIBILITY_FOCUS else AccessibilityNodeInfo.AccessibilityAction.ACTION_ACCESSIBILITY_FOCUS)
-                AccessibilityNodeInfoCompat.wrap(this).roleDescription = if (node.role == PreparedProseAccessibilityNode.Role.LINK) "link" else "mention"
+                addAction(
+                    if (isAccessibilityFocused) {
+                        AccessibilityNodeInfo.AccessibilityAction.ACTION_CLEAR_ACCESSIBILITY_FOCUS
+                    } else {
+                        AccessibilityNodeInfo.AccessibilityAction.ACTION_ACCESSIBILITY_FOCUS
+                    }
+                )
+                AccessibilityNodeInfoCompat.wrap(this).roleDescription =
+                    if (node.role == PreparedProseAccessibilityNode.Role.LINK) "link" else "mention"
             }
         }
 
@@ -393,8 +515,17 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
                 } else {
                     false
                 }
-                AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS -> requestVirtualAccessibilityFocus(id)
-                AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS -> clearVirtualAccessibilityFocus(id)
+
+                AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS ->
+                    requestVirtualAccessibilityFocus(
+                        id
+                    )
+
+                AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS ->
+                    clearVirtualAccessibilityFocus(
+                        id
+                    )
+
                 else -> false
             }
         }
@@ -426,7 +557,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
     }
 
     private fun clearVirtualAccessibilityFocus(
-        id: Int = focusedVirtualNode?.virtualId ?: View.NO_ID,
+        id: Int = focusedVirtualNode?.virtualId ?: View.NO_ID
     ): Boolean {
         val focused = focusedVirtualNode ?: return false
         if (id == View.NO_ID || id != focused.virtualId) return false
@@ -467,7 +598,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
         preparedLayout?.key?.generationIdentity,
         node.interactionIndex,
         node.role,
-        node.label,
+        node.label
     )
 
     // AccessibilityEvent(Int) is API 30; see the node provider above.
@@ -486,7 +617,9 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
     @Suppress("DEPRECATION")
     internal fun announceAccessibilitySubtreeChanged() {
         if (!publishesAccessibilitySubtree || !accessibilityManager.isEnabled) return
-        val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED).apply {
+        val event = AccessibilityEvent.obtain(
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        ).apply {
             packageName = context.packageName
             className = android.widget.TextView::class.java.name
             contentChangeTypes = AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE
@@ -499,12 +632,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(context: Conte
         val generation: String?,
         val interactionIndex: Int,
         val role: PreparedProseAccessibilityNode.Role,
-        val label: String,
+        val label: String
     )
 
     private data class FocusedVirtualNode(
         val virtualId: Int,
-        val identity: AccessibilityNodeIdentity,
+        val identity: AccessibilityNodeIdentity
     )
 }
 
@@ -516,7 +649,7 @@ internal fun View.accessibilityNodeVisibleOnScreen(screenBounds: Rect): Boolean 
         visibleBounds.takeIf { hasGlobalVisibleBounds },
         isShown,
         windowVisibility == View.VISIBLE,
-        hasVisibleAlpha(),
+        hasVisibleAlpha()
     )
 }
 
@@ -525,7 +658,7 @@ internal fun accessibilityBoundsVisible(
     globalVisibleBounds: Rect?,
     shown: Boolean,
     windowVisible: Boolean,
-    alphaVisible: Boolean,
+    alphaVisible: Boolean
 ): Boolean {
     if (!shown || !windowVisible || !alphaVisible || globalVisibleBounds?.isEmpty != false) {
         return false

@@ -1,6 +1,6 @@
-import XCTest
-import UIKit
 import CoreText
+import UIKit
+import XCTest
 
 extension PreparedProseRevisionTests {
     func testExplicitFontAvailabilityAndDynamicTypeEachPublishOneReplacementRevision() {
@@ -17,10 +17,10 @@ extension PreparedProseRevisionTests {
         let environment = ViewerFontEnvironment(notificationCenter: center)
         center.post(name: ViewerFontEnvironment.registeredFontsDidChangeNotification, object: nil)
         center.post(name: UIContentSizeCategory.didChangeNotification, object: nil, userInfo: [
-            UIContentSizeCategory.newValueUserInfoKey: UIContentSizeCategory.accessibilityLarge,
+            UIContentSizeCategory.newValueUserInfoKey: UIContentSizeCategory.accessibilityLarge
         ])
         center.post(name: UIContentSizeCategory.didChangeNotification, object: nil, userInfo: [
-            UIContentSizeCategory.newValueUserInfoKey: UIContentSizeCategory.accessibilityLarge,
+            UIContentSizeCategory.newValueUserInfoKey: UIContentSizeCategory.accessibilityLarge
         ])
         XCTAssertEqual(environment.revision, 2)
     }

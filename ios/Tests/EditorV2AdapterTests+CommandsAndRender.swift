@@ -1,5 +1,5 @@
-import XCTest
 import UIKit
+import XCTest
 
 extension EditorV2AdapterTests {
     func testCommandsRouteThroughTypedV2Transactions() {

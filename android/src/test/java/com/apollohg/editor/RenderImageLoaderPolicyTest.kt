@@ -6,13 +6,13 @@ import java.io.File
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.CopyOnWriteArrayList
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -41,14 +41,22 @@ internal class RenderImageLoaderPolicyTest : RenderImageLoaderPolicyTestFixture(
         assertEquals(32 * 1024 * 1024, defaults.maxDecodedBytes)
 
         val parsed = ImageLoadingPolicy.fromJson(
-            """{"maxSourceBytes":12,"connectTimeoutMs":13,"readTimeoutMs":14,"requestTimeoutMs":15,"maxConcurrentRequests":3,"maxPendingRequests":4,"maxDecodeDimensionPx":16,"maxDecodedBytes":17}"""
+
+            """{"maxSourceBytes":12,"connectTimeoutMs":13,"readTimeoutMs":14""" +
+                ""","requestTimeoutMs":15,"maxConcurrentRequests":3""" +
+                ""","maxPendingRequests":4,"maxDecodeDimensionPx":16""" +
+                ""","maxDecodedBytes":17}"""
         )
         assertEquals(ImageLoadingPolicy(12, 13, 14, 15, 3, 4, 16, 17), parsed)
         assertEquals(defaults, ImageLoadingPolicy.fromJson("""{"maxSourceBytes":0}"""))
         assertEquals(
             defaults,
             ImageLoadingPolicy.fromJson(
-                """{"maxSourceBytes":67108865,"connectTimeoutMs":600001,"readTimeoutMs":600001,"requestTimeoutMs":600001,"maxConcurrentRequests":17,"maxPendingRequests":513,"maxDecodeDimensionPx":8193,"maxDecodedBytes":268435457}"""
+
+                """{"maxSourceBytes":67108865,"connectTimeoutMs":600001""" +
+                    ""","readTimeoutMs":600001,"requestTimeoutMs":600001""" +
+                    ""","maxConcurrentRequests":17,"maxPendingRequests":513""" +
+                    ""","maxDecodeDimensionPx":8193,"maxDecodedBytes":268435457}"""
             )
         )
     }
@@ -174,10 +182,13 @@ internal class RenderImageLoaderPolicyTest : RenderImageLoaderPolicyTestFixture(
         val policy = ImageLoadingPolicy.DEFAULT.copy(maxSourceBytes = 3)
         assertNull(RenderImageDecoder.decodeDataUrlBytes("data:image/png;base64,AQIDBA==", policy))
         assertNull(RenderImageDecoder.readBounded(ByteArrayInputStream(byteArrayOf(1, 2, 3, 4)), 3))
-        assertEquals(listOf<Byte>(1, 2, 3), RenderImageDecoder.readBounded(
-            ByteArrayInputStream(byteArrayOf(1, 2, 3)),
-            3
-        )?.toList())
+        assertEquals(
+            listOf<Byte>(1, 2, 3),
+            RenderImageDecoder.readBounded(
+                ByteArrayInputStream(byteArrayOf(1, 2, 3)),
+                3
+            )?.toList()
+        )
     }
 
     @Test
@@ -333,7 +344,10 @@ internal class RenderImageLoaderPolicyTest : RenderImageLoaderPolicyTestFixture(
             release.await(2, TimeUnit.SECONDS)
             null
         }
-        val policy = ImageLoadingPolicy.DEFAULT.copy(maxConcurrentRequests = 1, maxPendingRequests = 1)
+        val policy = ImageLoadingPolicy.DEFAULT.copy(
+            maxConcurrentRequests = 1,
+            maxPendingRequests = 1
+        )
         val accepted = listOf(
             RenderImageLoader.load("https://example.com/policy-rejection/active", policy) { },
             RenderImageLoader.load("https://example.com/policy-rejection/pending", policy) { }
@@ -382,10 +396,14 @@ internal class RenderImageLoaderPolicyTest : RenderImageLoaderPolicyTestFixture(
                 allowFirstReturn.await(2, TimeUnit.SECONDS)
             }
         }
-        val policy = ImageLoadingPolicy.DEFAULT.copy(maxConcurrentRequests = 1, maxPendingRequests = 1)
+        val policy = ImageLoadingPolicy.DEFAULT.copy(
+            maxConcurrentRequests = 1,
+            maxPendingRequests = 1
+        )
         val first = RenderImageLoader.load(firstSource, policy) { }
         assertTrue(firstStarted.await(2, TimeUnit.SECONDS))
-        val fillers = (0 until RenderImageLoader.globalAdmissionLimitForTesting() - 1).map { index ->
+        val fillerIndices = 0 until RenderImageLoader.globalAdmissionLimitForTesting() - 1
+        val fillers = fillerIndices.map { index ->
             RenderImageLoader.load(
                 "https://example.com/retry-capacity/filler/$index",
                 ImageLoadingPolicy.DEFAULT.copy(readTimeoutMs = 10_000 + index)

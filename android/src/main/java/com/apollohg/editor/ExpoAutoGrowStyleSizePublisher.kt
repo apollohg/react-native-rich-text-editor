@@ -6,7 +6,7 @@ internal class ExpoAutoGrowStyleSizePublisher(private val view: ExpoView) {
     private data class Binding(
         val proxy: Any,
         val method: java.lang.reflect.Method,
-        val stateWrapperGetter: java.lang.reflect.Method,
+        val stateWrapperGetter: java.lang.reflect.Method
     )
 
     private val binding: Binding? by lazy(LazyThreadSafetyMode.NONE) {

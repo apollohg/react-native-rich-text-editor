@@ -69,7 +69,6 @@ impl WorkBudget {
 /// and repetition) instead of interpreting a linearized representation.
 #[derive(Debug, Clone)]
 pub struct ContentRule {
-    #[allow(dead_code)]
     source: String,
     states: Vec<State>,
     start: usize,
@@ -134,17 +133,8 @@ impl ContentRule {
         })
     }
 
-    #[allow(dead_code)]
     pub(crate) fn source(&self) -> &str {
         &self.source
-    }
-
-    /// Whether this expression contains no symbols (the empty content rule).
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.symbols.is_empty()
     }
 
     /// Every node/group symbol referenced by this expression, in stable order.
@@ -199,8 +189,6 @@ impl ContentRule {
     }
 
     /// Return symbols accepted immediately after the supplied prefix.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn accepting_symbols_after<T, F>(&self, children: &[T], mut symbol_matches: F) -> Vec<&str>
     where
@@ -294,15 +282,6 @@ impl ContentRule {
         Ok(Some(choices))
     }
 
-    /// Return every symbol accepted at the start of the expression.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
-    #[allow(dead_code)]
-    pub fn initial_symbols(&self) -> Vec<&str> {
-        self.initial_symbols_with_budget(&WorkBudget::new(DEFAULT_RUNTIME_WORK_LIMIT))
-            .unwrap_or_default()
-    }
-
     pub(crate) fn initial_symbols_with_budget(&self, budget: &WorkBudget) -> Result<Vec<&str>, ()> {
         let states = self.epsilon_closure_budgeted([self.start], budget)?;
         let mut symbols = BTreeSet::new();
@@ -356,21 +335,6 @@ impl ContentRule {
             }
         }
         None
-    }
-
-    /// Whether some accepted sequence can be built using only allowed symbols.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
-    #[allow(dead_code)]
-    pub fn is_constructible_with<F>(&self, mut symbol_is_constructible: F) -> bool
-    where
-        F: FnMut(&str) -> bool,
-    {
-        self.is_constructible_with_budget(
-            &mut symbol_is_constructible,
-            &WorkBudget::new(DEFAULT_RUNTIME_WORK_LIMIT),
-        )
-        .unwrap_or(false)
     }
 
     pub(crate) fn is_constructible_with_budget<F>(

@@ -178,21 +178,11 @@ impl AwarenessRuntimeState {
         }
     }
 
-    /// Task 11 restore bookkeeping reset: peer activity deadlines die with
-    /// the prior store's peers (the codec's store-swap rebind dropped the
-    /// states themselves), and the renewal clock restarts — the fresh-clock
-    /// local re-publish inside the restore never reached the outbox, so no
-    /// broadcast has happened for the new store. The desired state itself is
-    /// retained by design.
     pub(crate) fn reset_for_restore(&mut self) {
         self.peer_activity.clear();
         self.last_local_publish_millis = None;
     }
 
-    /// The requested next tick: the earlier of the local renewal deadline
-    /// (while synchronized with a desired state) and the earliest remote
-    /// expiry deadline. Candidates beyond the representable clock range are
-    /// unschedulable and omitted. `None` means no clock work is pending.
     fn next_deadline_millis(&self, transport_state: TransportState) -> Option<u64> {
         let local_publish =
             if transport_state == TransportState::Synchronized && self.desired_state.is_some() {
@@ -220,19 +210,12 @@ impl AwarenessRuntimeState {
     }
 }
 
-/// The session collaborators one awareness operation composes; built by the
-/// session's field-disjoint split borrow, mirroring the `ReceiveContext`
-/// idiom.
 pub(crate) struct AwarenessContext<'a> {
     pub(crate) engine: &'a mut YrsDocumentEngine,
     pub(crate) transport_state: TransportState,
     pub(crate) limits: &'a CollaborationLimits,
 }
 
-/// Public projection of one live awareness entry: identity, protocol clock,
-/// validated JSON state, and the resolved cursor. Tombstoned clients are
-/// never projected; peers whose cursor is invalid or unresolvable degrade to
-/// a cursor-less entry instead of erroring.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AwarenessPeerProjection {
     pub(crate) client_id: u64,
@@ -242,16 +225,12 @@ pub(crate) struct AwarenessPeerProjection {
     pub(crate) cursor: Option<AwarenessCursorProjection>,
 }
 
-/// A peer cursor resolved to ProseMirror document positions through the
-/// engine's read-only sticky-position surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AwarenessCursorProjection {
     pub(crate) anchor: u32,
     pub(crate) head: u32,
 }
 
-/// What one accepted [`CollaborationRuntime::tick`] did, and when the next
-/// tick is requested.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TickOutcome {
     /// The desired local state was re-published with a fresh clock.
@@ -266,8 +245,6 @@ pub(crate) struct TickOutcome {
     pub(crate) next_deadline_millis: Option<u64>,
 }
 
-/// The engine codec ceilings mirrored from the session's validated
-/// collaboration limits (same field names by design).
 pub(crate) fn awareness_limits(limits: &CollaborationLimits) -> AwarenessLimits {
     AwarenessLimits {
         max_awareness_peers: limits.max_awareness_peers,
@@ -369,12 +346,6 @@ impl CollaborationRuntime {
         Ok(())
     }
 
-    /// Test-only raw-state fixture seam: validated JSON, bounded by the
-    /// per-peer and aggregate awareness byte ceilings at set time
-    /// (atomic rejection through the codec), retained across every transport
-    /// teardown, and broadcast immediately while `Synchronized`. A broadcast
-    /// reservation refusal keeps the state set — the renewal clock heals the
-    /// missed broadcast — and reports the retryable error.
     #[cfg(test)]
     pub(crate) fn set_desired_awareness_for_test(
         &mut self,
@@ -396,9 +367,6 @@ impl CollaborationRuntime {
         self.set_desired_awareness_value(request_id, value, engine, transport_state, limits)
     }
 
-    /// Validates a closed caller intent before building the Rust-owned
-    /// published state. Every fallible operation happens before the codec,
-    /// runtime desired state, and outbox can be mutated.
     pub(crate) fn set_awareness_intent(
         &mut self,
         request_id: u64,
@@ -410,10 +378,6 @@ impl CollaborationRuntime {
             transport_state,
             limits,
         } = context;
-        // Bound the untrusted serialized envelope before serde_json can
-        // deserialize it or recurse through its state. The codec keeps the
-        // exact check on the final published state payload below, including
-        // any Rust-owned sticky cursor expansion.
         if intent_json.len() > limits.max_awareness_peer_bytes {
             return Err(awareness_peer_bytes_limit_error(
                 request_id,
@@ -556,10 +520,6 @@ impl CollaborationRuntime {
         Ok(())
     }
 
-    /// Withdraws the desired local awareness: the codec creates one local
-    /// tombstone and the removal is broadcast while `Synchronized`. A
-    /// refused reservation retains the exact framed tombstone for tick
-    /// retry; repeated clears remain no-ops and cannot bump its clock.
     pub(crate) fn clear_desired_awareness(
         &mut self,
         request_id: u64,
@@ -603,10 +563,6 @@ impl CollaborationRuntime {
         self.awareness.desired_state.as_ref()
     }
 
-    /// Public peer projections: every live awareness entry (local included,
-    /// flagged) with its resolved cursor, recomputed against the current
-    /// document on every read so projections follow every revision without
-    /// an awareness re-receive. Tombstones are excluded by the codec.
     pub(crate) fn peers(&self, engine: &mut YrsDocumentEngine) -> Vec<AwarenessPeerProjection> {
         let snapshot = engine.awareness().peer_snapshot();
         snapshot
@@ -624,25 +580,14 @@ impl CollaborationRuntime {
             .collect()
     }
 
-    /// Transport-scoped teardown on generation close, detach, and reattach:
-    /// remote peers (and their activity deadlines) are cleared, the local
-    /// entry is tombstoned by the codec with its clock preserved for the
-    /// reconnect re-publish, and the desired state is retained.
     pub(crate) fn clear_transport_peers(&mut self, engine: &mut YrsDocumentEngine) -> bool {
         let peers_changed = !engine.awareness().peer_snapshot().is_empty();
-        // Live local publications always retain one checked tombstone clock,
-        // and local-client remote echoes never mutate it. Exhaustion is thus
-        // unreachable in production cleanup; the guarded failure arm keeps
-        // injected/corrupt state atomic and non-panicking.
         if engine.awareness().clear_transport_states().is_ok() {
             self.awareness.peer_activity.clear();
         }
         peers_changed
     }
 
-    /// Applies one inbound awareness update payload through the codec and
-    /// stamps deterministic activity deadlines from what it actually
-    /// touched. Local-client entries never enter the activity map.
     pub(crate) fn apply_awareness_frame(
         &mut self,
         engine: &mut YrsDocumentEngine,
@@ -665,10 +610,6 @@ impl CollaborationRuntime {
         Ok(())
     }
 
-    /// Prebuilds the handshake-completion re-publish frame: the desired
-    /// state (if any) is re-set through the codec for a fresh clock and the
-    /// framed local update is returned for Step-1-idiom reservation. The
-    /// fresh clock strictly exceeds any removal tombstone a peer holds.
     pub(crate) fn prepare_handshake_republish(
         &mut self,
         engine: &mut YrsDocumentEngine,
@@ -685,23 +626,10 @@ impl CollaborationRuntime {
         )))
     }
 
-    /// Records that the desired state reached the outbox (immediate
-    /// broadcast, handshake re-publish, or renewal): the renewal clock
-    /// restarts from the current deterministic time.
     pub(crate) fn mark_local_awareness_published(&mut self) {
         self.awareness.last_local_publish_millis = Some(self.awareness.now_millis);
     }
 
-    /// Deterministic clock work. `now_millis` is the ONLY time source of the
-    /// awareness layer: remote peers whose last activity is at least
-    /// [`AWARENESS_EXPIRY_MILLIS`] old are expired (standard removal
-    /// tombstones, so they leave `peers()` and every query answer), and a
-    /// synchronized transport re-publishes the desired state once at least
-    /// [`AWARENESS_RENEWAL_INTERVAL_MILLIS`] have elapsed since the last
-    /// broadcast. An already-clocked withdrawal is retried first when due;
-    /// reservation refusal preserves its exact frame and defers the next
-    /// attempt by one renewal interval to avoid a zero-delay retry loop.
-    /// Expiry is idempotent, so a retried tick converges.
     pub(crate) fn tick(
         &mut self,
         request_id: u64,

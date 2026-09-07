@@ -4,7 +4,8 @@ import android.graphics.Rect
 import android.view.View
 import android.view.ViewGroup
 
-internal fun NativeEditorExpoView.atomChildAtImpl(index: Int): View? = reactChildren.getOrNull(index)
+internal fun NativeEditorExpoView.atomChildAtImpl(index: Int): View? =
+    reactChildren.getOrNull(index)
 
 internal fun NativeEditorExpoView.addAtomChildImpl(child: View, index: Int) {
     reactChildren.remove(child)
@@ -31,7 +32,10 @@ internal fun NativeEditorExpoView.removeAtomChildImpl(child: View) {
     }
 }
 
-internal fun NativeEditorExpoView.emitAtomLayout(widthPx: Float, positions: List<AtomLayoutPosition>) {
+internal fun NativeEditorExpoView.emitAtomLayout(
+    widthPx: Float,
+    positions: List<AtomLayoutPosition>
+) {
     val density = resources.displayMetrics.density.takeIf { it > 0f } ?: 1f
     val contentOrigin = Rect()
     offsetDescendantRectToMyCoords(richTextView.editorContentFrame, contentOrigin)
@@ -45,12 +49,12 @@ internal fun NativeEditorExpoView.emitAtomLayout(widthPx: Float, positions: List
                 "hostX" to (contentOrigin.left + position.xPx) / density,
                 "hostY" to (contentOrigin.top + position.yPx) / density,
                 "height" to position.heightPx / density,
-                "width" to position.widthPx / density,
+                "width" to position.widthPx / density
             )
         },
         "viewport" to mapOf(
             "y" to richTextView.editorScrollView.scrollY / density,
-            "height" to richTextView.editorScrollView.height / density,
+            "height" to richTextView.editorScrollView.height / density
         ),
         "editorId" to eventEditorId(richTextView.editorId)
     )

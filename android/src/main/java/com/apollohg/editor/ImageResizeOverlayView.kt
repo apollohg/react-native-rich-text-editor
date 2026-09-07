@@ -90,8 +90,7 @@ internal class ImageResizeOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
-    fun visibleRectForTesting(): RectF? =
-        currentGeometry?.rect?.let(::RectF)
+    fun visibleRectForTesting(): RectF? = currentGeometry?.rect?.let(::RectF)
 
     fun simulateResizeForTesting(widthPx: Float, heightPx: Float) {
         val geometry = currentGeometry ?: return
@@ -171,19 +170,20 @@ internal class ImageResizeOverlayView @JvmOverloads constructor(
         updateSystemGestureExclusionRects()
     }
 
-    private fun cornerAt(x: Float, y: Float, rect: RectF): Corner? {
-        return Corner.entries.firstOrNull { corner ->
+    private fun cornerAt(x: Float, y: Float, rect: RectF): Corner? =
+        Corner.entries.firstOrNull { corner ->
             val center = handleCenter(corner, rect)
             val dx = x - center.x
             val dy = y - center.y
             (dx * dx) + (dy * dy) <= handleTouchRadiusPx * handleTouchRadiusPx
         }
-    }
 
     private fun updateSystemGestureExclusionRects() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
         val geometry = currentGeometry
-        val nextRects = if (geometry == null || visibility != VISIBLE || width == 0 || height == 0) {
+        val nextRects = if (geometry == null || visibility != VISIBLE || width == 0 ||
+            height == 0
+        ) {
             emptyList()
         } else {
             Corner.entries.map { corner ->
@@ -192,7 +192,7 @@ internal class ImageResizeOverlayView @JvmOverloads constructor(
                     floor(center.x - handleTouchRadiusPx).toInt().coerceIn(0, width),
                     floor(center.y - handleTouchRadiusPx).toInt().coerceIn(0, height),
                     ceil(center.x + handleTouchRadiusPx).toInt().coerceIn(0, width),
-                    ceil(center.y + handleTouchRadiusPx).toInt().coerceIn(0, height),
+                    ceil(center.y + handleTouchRadiusPx).toInt().coerceIn(0, height)
                 )
             }
         }
@@ -223,11 +223,26 @@ internal class ImageResizeOverlayView @JvmOverloads constructor(
         maximumWidthPx: Float?
     ): RectF {
         val aspectRatio = max(originalRect.width() / max(originalRect.height(), 1f), 0.1f)
-        val signedDx = if (corner == Corner.TOP_RIGHT || corner == Corner.BOTTOM_RIGHT) deltaX else -deltaX
-        val signedDy = if (corner == Corner.BOTTOM_LEFT || corner == Corner.BOTTOM_RIGHT) deltaY else -deltaY
+        val signedDx = if (corner == Corner.TOP_RIGHT ||
+            corner == Corner.BOTTOM_RIGHT
+        ) {
+            deltaX
+        } else {
+            -deltaX
+        }
+        val signedDy = if (corner == Corner.BOTTOM_LEFT ||
+            corner == Corner.BOTTOM_RIGHT
+        ) {
+            deltaY
+        } else {
+            -deltaY
+        }
         val widthScale = (originalRect.width() + signedDx) / max(originalRect.width(), 1f)
         val heightScale = (originalRect.height() + signedDy) / max(originalRect.height(), 1f)
-        val scale = max(max(widthScale, heightScale), minimumImageSizePx / max(originalRect.width(), 1f))
+        val scale = max(
+            max(widthScale, heightScale),
+            minimumImageSizePx / max(originalRect.width(), 1f)
+        )
         val unclampedWidth = max(minimumImageSizePx, originalRect.width() * scale)
         val unclampedHeight = max(minimumImageSizePx / aspectRatio, unclampedWidth / aspectRatio)
         val (width, height) = editorView?.let { boundEditor ->

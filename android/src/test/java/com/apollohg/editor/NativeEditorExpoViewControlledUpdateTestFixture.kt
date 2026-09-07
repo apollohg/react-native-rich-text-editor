@@ -3,6 +3,10 @@ import android.app.Activity
 import android.os.Handler
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
+import java.time.Duration
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,12 +20,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 
-internal abstract class NativeEditorExpoViewControlledUpdateTestFixture : NativeEditorExpoViewTestSupport(){
+internal abstract class NativeEditorExpoViewControlledUpdateTestFixture :
+    NativeEditorExpoViewTestSupport() {
     protected fun bindFocusedViewForTypingTest(
         activity: Activity,
         view: NativeEditorExpoView,

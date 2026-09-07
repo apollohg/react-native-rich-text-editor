@@ -15,7 +15,6 @@ fn apply_wrap_in_list(
         )));
     }
 
-    // Validate the list_type is actually a list node in the schema.
     let list_spec = schema.node(list_type).ok_or_else(|| {
         TransformError::InvalidTarget(format!("list_type '{}' not found in schema", list_type))
     })?;
@@ -26,7 +25,6 @@ fn apply_wrap_in_list(
         )));
     }
 
-    // Validate the item_type is a list item.
     let item_spec = schema.node(item_type).ok_or_else(|| {
         TransformError::InvalidTarget(format!("item_type '{}' not found in schema", item_type))
     })?;
@@ -80,7 +78,6 @@ fn apply_wrap_in_list(
     })?;
     let last_idx = last_block_idx.unwrap(); // safe: set whenever first_idx is set
 
-    // Build the list items: one per block in the range.
     let mut list_items: Vec<Node> = Vec::with_capacity(last_idx - first_idx + 1);
     for i in first_idx..=last_idx {
         let block = doc_content.child(i).unwrap();
@@ -92,21 +89,18 @@ fn apply_wrap_in_list(
         list_items.push(li);
     }
 
-    // Build the list node.
     let list_node = Node::element(
         list_type.to_string(),
         list_attrs.clone(),
         Fragment::from(list_items),
     );
 
-    // Rebuild the doc's children: children before the range, the list, children after.
     let mut new_children: Vec<Node> =
         Vec::with_capacity(doc_content.child_count() - (last_idx - first_idx));
     for (i, child) in doc_content.iter().enumerate() {
         if i == first_idx {
             new_children.push(list_node.clone());
         } else if i > first_idx && i <= last_idx {
-            // Skip — these are now inside the list.
         } else {
             new_children.push(child.clone());
         }
@@ -137,7 +131,6 @@ fn apply_unwrap_from_list(
     pos: u32,
     schema: &Schema,
 ) -> Result<(Document, StepMap), TransformError> {
-    // Resolve the position to find which list item we're in.
     let resolved = doc.resolve(pos).map_err(TransformError::OutOfBounds)?;
 
     // Walk up the path to find the list item and the list.
@@ -186,13 +179,11 @@ fn apply_unwrap_from_list(
     // The list itself is found by following path[0..li_depth].
     let list_item_idx = path[li_depth] as usize;
 
-    // Get the list node.
     let list_path = &path[..li_depth];
     let list_node = doc
         .node_at(list_path)
         .ok_or_else(|| TransformError::OutOfBounds("list node path invalid".to_string()))?;
 
-    // Verify the list node is actually a list.
     let list_spec = schema.node(list_node.node_type()).ok_or_else(|| {
         TransformError::InvalidTarget(format!(
             "parent of list item ('{}') not found in schema",
@@ -219,7 +210,6 @@ fn apply_unwrap_from_list(
         ))
     })?;
 
-    // Extract the content of the list item (the paragraph(s) inside it).
     let li_content = list_item_node
         .content()
         .ok_or_else(|| TransformError::InvalidTarget("list item has no content".to_string()))?;
@@ -236,10 +226,8 @@ fn apply_unwrap_from_list(
     let mut replacement_nodes: Vec<Node> = Vec::new();
 
     if total_list_items == 1 {
-        // Case 1: Only list item — replace entire list with extracted blocks.
         replacement_nodes.extend(extracted_blocks);
     } else if list_item_idx == 0 {
-        // Case 2a: First item — extracted blocks come first, then remaining list.
         replacement_nodes.extend(extracted_blocks);
 
         let remaining_items: Vec<Node> = (1..total_list_items)
@@ -252,7 +240,6 @@ fn apply_unwrap_from_list(
         );
         replacement_nodes.push(remaining_list);
     } else if list_item_idx == total_list_items - 1 {
-        // Case 2b: Last item — remaining list comes first, then extracted blocks.
         let remaining_items: Vec<Node> = (0..list_item_idx)
             .map(|i| list_content.child(i).unwrap().clone())
             .collect();
@@ -264,7 +251,6 @@ fn apply_unwrap_from_list(
         replacement_nodes.push(remaining_list);
         replacement_nodes.extend(extracted_blocks);
     } else {
-        // Case 3: Middle item — split into two lists with extracted blocks between.
         let before_items: Vec<Node> = (0..list_item_idx)
             .map(|i| list_content.child(i).unwrap().clone())
             .collect();
@@ -308,7 +294,6 @@ fn apply_unwrap_from_list(
     // For position mapping, positions before the list are unchanged.
     // Positions inside the unwrapped content shift by the number of wrapper tokens removed.
 
-    // Calculate the absolute position of the list start in the document.
     let mut list_abs_pos: u32 = 0;
     {
         let mut node = doc.root();

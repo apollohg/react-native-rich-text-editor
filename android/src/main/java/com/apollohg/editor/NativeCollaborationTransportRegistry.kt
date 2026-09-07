@@ -1,9 +1,9 @@
 package com.apollohg.editor
 
 import android.util.Base64
+import java.util.concurrent.CompletableFuture
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.CompletableFuture
 
 internal object NativeCollaborationTransportRegistry {
     private val lock = Any()
@@ -16,16 +16,16 @@ internal object NativeCollaborationTransportRegistry {
     private var hostState = AndroidCollaborationTransport.HostState.FOREGROUND
     private var runtimeActive = true
     private var runtimeToken = Any()
-    @Volatile
-    internal var transportFactoryForTesting: ((
-        String,
-        (AndroidCollaborationTransportEvent) -> Unit,
-    ) -> AndroidCollaborationTransport)? = null
 
-    fun setEventEmitter(
-        ownerToken: Any,
-        emitter: ((Map<String, Any?>) -> Unit)?,
-    ) {
+    @Volatile
+    internal var transportFactoryForTesting: (
+        (
+            String,
+            (AndroidCollaborationTransportEvent) -> Unit
+        ) -> AndroidCollaborationTransport
+    )? = null
+
+    fun setEventEmitter(ownerToken: Any, emitter: ((Map<String, Any?>) -> Unit)?) {
         synchronized(lock) {
             if (!runtimeActive || runtimeToken !== ownerToken) return
             eventEmitter = emitter
@@ -39,11 +39,7 @@ internal object NativeCollaborationTransportRegistry {
         }
     }
 
-    fun configure(
-        ownerToken: Any?,
-        editorId: String,
-        configJson: String?,
-    ): EditorV2Error? {
+    fun configure(ownerToken: Any?, editorId: String, configJson: String?): EditorV2Error? {
         synchronized(lock) {
             if (!runtimeActive || runtimeToken !== ownerToken) return runtimeDestroyedError()
         }
@@ -53,7 +49,7 @@ internal object NativeCollaborationTransportRegistry {
             null
         } else {
             parseConfig(configJson) ?: return contractError(
-                "invalid collaboration transport configuration",
+                "invalid collaboration transport configuration"
             )
         }
 
@@ -79,8 +75,10 @@ internal object NativeCollaborationTransportRegistry {
                     val sink = { event: AndroidCollaborationTransportEvent ->
                         enqueueEvent(canonical, token, event)
                     }
-                    (transportFactoryForTesting?.invoke(canonical, sink)
-                        ?: AndroidCollaborationTransport(editorId = canonical, eventSink = sink)).also {
+                    (
+                        transportFactoryForTesting?.invoke(canonical, sink)
+                            ?: AndroidCollaborationTransport(editorId = canonical, eventSink = sink)
+                        ).also {
                         it.requestHostState(hostState)
                     }
                 }
@@ -117,7 +115,7 @@ internal object NativeCollaborationTransportRegistry {
         editorId: String,
         attemptId: String,
         eventId: String,
-        responseJson: String,
+        responseJson: String
     ): EditorV2Error? {
         synchronized(lock) {
             if (!runtimeActive || runtimeToken !== ownerToken) return runtimeDestroyedError()
@@ -149,22 +147,22 @@ internal object NativeCollaborationTransportRegistry {
 
     fun enterBackground(ownerToken: Any) = requestHostState(
         ownerToken,
-        AndroidCollaborationTransport.HostState.BACKGROUND,
+        AndroidCollaborationTransport.HostState.BACKGROUND
     )
 
     fun attachHost(ownerToken: Any) = requestHostState(
         ownerToken,
-        AndroidCollaborationTransport.HostState.FOREGROUND,
+        AndroidCollaborationTransport.HostState.FOREGROUND
     )
 
     fun detachHost(ownerToken: Any) = requestHostState(
         ownerToken,
-        AndroidCollaborationTransport.HostState.DETACHED,
+        AndroidCollaborationTransport.HostState.DETACHED
     )
 
     private fun requestHostState(
         ownerToken: Any,
-        requestedState: AndroidCollaborationTransport.HostState,
+        requestedState: AndroidCollaborationTransport.HostState
     ) {
         val owned = synchronized(lock) {
             if (!runtimeActive || runtimeToken !== ownerToken) return
@@ -196,10 +194,7 @@ internal object NativeCollaborationTransportRegistry {
     private fun runtimeDestroyedError() =
         EditorV2Error("lifecycle", "ENGINE_DESTROYED", "collaboration runtime is destroyed")
 
-    private fun retireLocked(
-        editorId: String,
-        transport: AndroidCollaborationTransport,
-    ) {
+    private fun retireLocked(editorId: String, transport: AndroidCollaborationTransport) {
         val completion = transport.destroyAsync()
         retirements[editorId] = completion
         completion.whenComplete { _, _ ->
@@ -244,7 +239,7 @@ internal object NativeCollaborationTransportRegistry {
     private fun enqueueEvent(
         editorId: String,
         token: Any,
-        event: AndroidCollaborationTransportEvent,
+        event: AndroidCollaborationTransportEvent
     ) {
         val sequence = synchronized(lock) {
             if (!transports.containsKey(editorId) || transportTokens[editorId] !== token) return
@@ -256,7 +251,7 @@ internal object NativeCollaborationTransportRegistry {
         }
         val payload = mutableMapOf<String, Any?>(
             "editorId" to editorId,
-            "eventSequence" to sequence.toString(),
+            "eventSequence" to sequence.toString()
         )
         when (event) {
             is AndroidCollaborationTransportEvent.Directive -> {
@@ -272,14 +267,16 @@ internal object NativeCollaborationTransportRegistry {
                     "remoteCommitApplied" to event.directive.remoteCommitApplied,
                     "peersChanged" to event.directive.peersChanged,
                     "renewedLocal" to event.directive.renewedLocal,
-                    "expiredPeerCount" to event.directive.expiredPeers.size,
+                    "expiredPeerCount" to event.directive.expiredPeers.size
                 )
             }
+
             is AndroidCollaborationTransportEvent.Error -> {
                 payload["kind"] = "error"
                 payload["generation"] = event.generation
                 payload["error"] = event.error.toJSMap()
             }
+
             is AndroidCollaborationTransportEvent.ProtocolAdapter -> {
                 val adapterEvent = event.event
                 payload["kind"] = "protocolAdapter"
@@ -291,15 +288,17 @@ internal object NativeCollaborationTransportRegistry {
                     NativeCollaborationProtocolAdapterPhase.Open -> {
                         payload["phase"] = "open"
                     }
+
                     is NativeCollaborationProtocolAdapterPhase.Message -> {
                         payload["phase"] = "message"
                         payload["frame"] = when (val frame = phase.frame) {
                             is NativeCollaborationProtocolFrame.Text ->
                                 mapOf("type" to "text", "data" to frame.data)
+
                             is NativeCollaborationProtocolFrame.Binary ->
                                 mapOf(
                                     "type" to "binary",
-                                    "data" to Base64.encodeToString(frame.data, Base64.NO_WRAP),
+                                    "data" to Base64.encodeToString(frame.data, Base64.NO_WRAP)
                                 )
                         }
                     }
@@ -340,7 +339,9 @@ internal object NativeCollaborationTransportRegistry {
         if (
             !keys.containsAll(setOf("url", "connect")) ||
             !setOf("url", "connect", "protocolAdapter").containsAll(keys)
-        ) return null
+        ) {
+            return null
+        }
         val url = value.opt("url") as? String ?: return null
         val connect = value.opt("connect") as? Boolean ?: return null
         val protocolAdapter = when (val rawAdapter = value.opt("protocolAdapter")) {
@@ -352,23 +353,28 @@ internal object NativeCollaborationTransportRegistry {
     }
 
     private fun parseProtocolAdapterConfig(
-        value: JSONObject,
+        value: JSONObject
     ): NativeCollaborationProtocolAdapterConfig? {
         val keys = value.keys().asSequence().toSet()
         if (
             !keys.contains("protocols") ||
             !setOf("protocols", "timeoutMillis", "terminalCloseCodes").containsAll(keys)
-        ) return null
+        ) {
+            return null
+        }
         val rawProtocols = value.optJSONArray("protocols") ?: return null
         if (rawProtocols.length() !in 1..16) return null
         val protocols = List(rawProtocols.length()) { index ->
             rawProtocols.opt(index) as? String ?: return null
         }
-        if (protocols.toSet().size != protocols.size || protocols.any { !validWebSocketProtocol(it) }) {
+        if (protocols.toSet().size != protocols.size ||
+            protocols.any { !validWebSocketProtocol(it) }
+        ) {
             return null
         }
         val timeoutMillis = when (val rawTimeout = value.opt("timeoutMillis")) {
             null -> 10_000L
+
             is Number -> {
                 val asDouble = rawTimeout.toDouble()
                 if (
@@ -376,13 +382,17 @@ internal object NativeCollaborationTransportRegistry {
                     asDouble % 1.0 != 0.0 ||
                     asDouble < 1.0 ||
                     asDouble > 60_000.0
-                ) return null
+                ) {
+                    return null
+                }
                 asDouble.toLong()
             }
+
             else -> return null
         }
         val terminalCloseCodes = when (val rawCodes = value.optJSONArray("terminalCloseCodes")) {
             null -> emptySet()
+
             else -> buildSet {
                 for (index in 0 until rawCodes.length()) {
                     val rawCode = rawCodes.opt(index) as? Number ?: return null
@@ -393,26 +403,29 @@ internal object NativeCollaborationTransportRegistry {
                         asDouble < 1_000.0 ||
                         asDouble > 4_999.0 ||
                         !add(asDouble.toInt())
-                    ) return null
+                    ) {
+                        return null
+                    }
                 }
             }
         }
         return NativeCollaborationProtocolAdapterConfig(
             protocols = protocols,
             timeoutMillis = timeoutMillis,
-            terminalCloseCodes = terminalCloseCodes,
+            terminalCloseCodes = terminalCloseCodes
         )
     }
 
     private fun validWebSocketProtocol(value: String): Boolean {
         if (value.toByteArray(Charsets.UTF_8).size !in 1..128) return false
-        val allowed = "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-            .toSet()
+        val allowed =
+            "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+                .toSet()
         return value.all { it in allowed }
     }
 
     private fun parseProtocolAdapterResponse(
-        json: String,
+        json: String
     ): NativeCollaborationProtocolAdapterResponse? {
         if (json.toByteArray(Charsets.UTF_8).size > 1_500_000) return null
         val value = runCatching { JSONObject(json) }.getOrNull() ?: return null
@@ -437,9 +450,12 @@ internal object NativeCollaborationTransportRegistry {
                             if (
                                 data.toByteArray(Charsets.UTF_8).size >
                                 NativeCollaborationProtocolAdapterConfig.MAXIMUM_FRAME_BYTES
-                            ) return null
+                            ) {
+                                return null
+                            }
                             add(NativeCollaborationProtocolFrame.Text(data))
                         }
+
                         "binary" -> {
                             val decoded = runCatching {
                                 Base64.decode(data, Base64.NO_WRAP)
@@ -447,9 +463,12 @@ internal object NativeCollaborationTransportRegistry {
                             if (
                                 decoded.size >
                                 NativeCollaborationProtocolAdapterConfig.MAXIMUM_FRAME_BYTES
-                            ) return null
+                            ) {
+                                return null
+                            }
                             add(NativeCollaborationProtocolFrame.Binary(decoded))
                         }
+
                         else -> return null
                     }
                 }

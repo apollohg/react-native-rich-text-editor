@@ -1,16 +1,19 @@
 package com.apollohg.editor
 
 import android.os.Build
-
 import android.util.TypedValue
 
 /**
-     * Bind this EditText to a Rust editor instance and optionally apply initial content.
-     *
-     * @param id The editor session public ID.
-     * @param initialHTML Optional HTML to set as initial content.
-     */
-internal fun EditorEditText.bindEditorImpl(id: Long, initialHTML: String? = null, notifyListener: Boolean = true) {
+ * Bind this EditText to a Rust editor instance and optionally apply initial content.
+ *
+ * @param id The editor session public ID.
+ * @param initialHTML Optional HTML to set as initial content.
+ */
+internal fun EditorEditText.bindEditorImpl(
+    id: Long,
+    initialHTML: String? = null,
+    notifyListener: Boolean = true
+) {
     if (id != 0L && NativeEditorViewRegistry.isDestroyed(id)) {
         discardTransientNativeInputForEditorRebind()
         editorId = 0L
@@ -32,9 +35,9 @@ internal fun EditorEditText.bindEditorImpl(id: Long, initialHTML: String? = null
     }
 }
 
-    /**
-     * Unbind from the current editor instance.
-     */
+/**
+ * Unbind from the current editor instance.
+ */
 internal fun EditorEditText.unbindEditorImpl() {
     if (editorId != 0L) {
         discardTransientNativeInputForEditorRebind()
@@ -48,7 +51,11 @@ internal fun EditorEditText.handleEditorDestroyedFromRegistryImpl(destroyedEdito
     unbindEditor()
 }
 
-internal fun EditorEditText.setBaseStyleImpl(fontSizePx: Float, textColor: Int, backgroundColor: Int) {
+internal fun EditorEditText.setBaseStyleImpl(
+    fontSizePx: Float,
+    textColor: Int,
+    backgroundColor: Int
+) {
     if (baseFontSize != fontSizePx || baseTextColor != textColor) {
         renderAppearanceRevision += 1L
     }
@@ -64,14 +71,22 @@ internal fun EditorEditText.applyThemeImpl(theme: EditorTheme?) {
     this.theme = theme
     renderAppearanceRevision += 1L
     setBackgroundColor(theme?.backgroundColor ?: baseBackgroundColor)
-    theme?.styleSheet?.let { background = EditorBoxDrawable(it.box("content").scaled(resources.displayMetrics.density)) }
+    theme?.styleSheet?.let {
+        background =
+            EditorBoxDrawable(it.box("content").scaled(resources.displayMetrics.density))
+    }
     applyContentInsets(theme?.contentInsets)
     if (hasLiveEditor()) {
         val previousScrollX = scrollX
         val previousScrollY = scrollY
         val stateJSON = v2Driver?.currentStateJson() ?: return
         reuseImagesDuringThemeUpdate = true
-        try { applyUpdateJSON(stateJSON, notifyListener = false) } finally { reuseImagesDuringThemeUpdate = false }
+        try {
+            applyUpdateJSON(stateJSON, notifyListener = false)
+        } finally {
+            reuseImagesDuringThemeUpdate =
+                false
+        }
         if (heightBehavior == EditorHeightBehavior.FIXED) {
             preserveScrollPosition(previousScrollX, previousScrollY)
         } else {
@@ -81,16 +96,28 @@ internal fun EditorEditText.applyThemeImpl(theme: EditorTheme?) {
         standaloneRenderJSON?.let { json ->
             reuseImagesDuringThemeUpdate = true
             try {
-                val rendered = RenderBridge.buildSpannable(json, baseFontSize, baseTextColor, theme, resources.displayMetrics.density, this, atomRenderConfiguration)
+                val rendered = RenderBridge.buildSpannable(
+                    json,
+                    baseFontSize,
+                    baseTextColor,
+                    theme,
+                    resources.displayMetrics.density,
+                    this,
+                    atomRenderConfiguration
+                )
                 applyFullRenderPreservingEditorState(rendered)
-            } finally { reuseImagesDuringThemeUpdate = false }
+            } finally {
+                reuseImagesDuringThemeUpdate = false
+            }
         }
         requestLayout()
         invalidate()
     }
 }
 
-internal fun EditorEditText.applyAtomRenderConfigurationImpl(configuration: AtomRenderConfiguration?): Boolean {
+internal fun EditorEditText.applyAtomRenderConfigurationImpl(
+    configuration: AtomRenderConfiguration?
+): Boolean {
     if (atomRenderConfiguration == configuration) return true
     val stateJson = if (hasLiveEditor()) {
         v2Driver?.currentStateJson() ?: return false
@@ -155,7 +182,8 @@ internal fun EditorEditText.applyAtomHeightImpl(
     return true
 }
 
-internal fun EditorEditText.atomHeightRenderApplyCountForTestingImpl(): Int = atomHeightRenderApplyCount
+internal fun EditorEditText.atomHeightRenderApplyCountForTestingImpl(): Int =
+    atomHeightRenderApplyCount
 
 internal fun EditorEditText.setHeightBehaviorImpl(heightBehavior: EditorHeightBehavior) {
     if (this.heightBehavior == heightBehavior) return
@@ -237,9 +265,10 @@ internal fun EditorEditText.registerImageLoadImpl(handle: RenderImageLoader.Load
     }
 }
 
-internal fun EditorEditText.activeImageLoadHandleCountForTestingImpl(): Int = synchronized(imageLoadHandles) {
-    imageLoadHandles.size
-}
+internal fun EditorEditText.activeImageLoadHandleCountForTestingImpl(): Int =
+    synchronized(imageLoadHandles) {
+        imageLoadHandles.size
+    }
 
 internal fun EditorEditText.onImageSpanSizeMayChangeImpl(span: BlockImageSpan) {
     val content = text ?: return
@@ -257,7 +286,6 @@ internal fun EditorEditText.onImageSpanSizeMayChangeImpl(span: BlockImageSpan) {
 
 internal fun EditorEditText.initializeEditorView() {
     DecodedBitmapBudget.shared(context)
-    // Configure for rich text editing.
     inputType = resolvedInputType()
 
     // Disable built-in spell checking to avoid conflicts with Rust state.

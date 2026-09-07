@@ -183,14 +183,13 @@ data class EditorLinkTheme(
         }
     }
 
-    fun asTextStyle(): EditorTextStyle =
-        EditorTextStyle(
-            fontFamily = fontFamily,
-            fontSize = fontSize,
-            fontWeight = fontWeight,
-            fontStyle = fontStyle,
-            color = color
-        )
+    fun asTextStyle(): EditorTextStyle = EditorTextStyle(
+        fontFamily = fontFamily,
+        fontSize = fontSize,
+        fontWeight = fontWeight,
+        fontStyle = fontStyle,
+        color = color
+    )
 }
 
 data class EditorMentionNodeTheme(
@@ -242,9 +241,7 @@ data class EditorMentionSuggestionOptionTheme(
     val highlightedBackgroundColor: Int? = null,
     val highlightedTextColor: Int? = null
 ) {
-    fun mergedWith(
-        other: EditorMentionSuggestionOptionTheme?
-    ): EditorMentionSuggestionOptionTheme {
+    fun mergedWith(other: EditorMentionSuggestionOptionTheme?): EditorMentionSuggestionOptionTheme {
         other ?: return this
         return copy(
             textColor = other.textColor ?: textColor,
@@ -343,12 +340,11 @@ enum class EditorToolbarAppearance {
     NATIVE;
 
     companion object {
-        fun fromRaw(raw: String?): EditorToolbarAppearance? =
-            when (raw?.trim()?.lowercase()) {
-                "custom" -> CUSTOM
-                "native" -> NATIVE
-                else -> null
-            }
+        fun fromRaw(raw: String?): EditorToolbarAppearance? = when (raw?.trim()?.lowercase()) {
+            "custom" -> CUSTOM
+            "native" -> NATIVE
+            else -> null
+        }
     }
 }
 
@@ -404,13 +400,22 @@ data class EditorToolbarTheme(
     val buttonDisabledBackgroundColor: Int? = null,
     val buttonBorderRadius: Float? = null
 ) {
-    fun resolvedKeyboardOffset(): Float = keyboardOffset ?: if (appearance == EditorToolbarAppearance.NATIVE) 8f else 0f
+    fun resolvedKeyboardOffset(): Float =
+        keyboardOffset ?: if (appearance == EditorToolbarAppearance.NATIVE) 8f else 0f
 
-    fun resolvedHorizontalInset(): Float = horizontalInset ?: if (appearance == EditorToolbarAppearance.NATIVE) 0f else 0f
+    fun resolvedHorizontalInset(): Float =
+        horizontalInset ?: if (appearance == EditorToolbarAppearance.NATIVE) 0f else 0f
 
-    fun resolvedBorderRadius(): Float = if (appearance == EditorToolbarAppearance.NATIVE) 0f else (borderRadius ?: 0f)
+    fun resolvedBorderRadius(): Float = if (appearance ==
+        EditorToolbarAppearance.NATIVE
+    ) {
+        0f
+    } else {
+        (borderRadius ?: 0f)
+    }
 
-    fun resolvedBorderWidth(): Float = borderWidth ?: if (appearance == EditorToolbarAppearance.NATIVE) 0f else 1f
+    fun resolvedBorderWidth(): Float =
+        borderWidth ?: if (appearance == EditorToolbarAppearance.NATIVE) 0f else 1f
 
     fun resolvedButtonBorderRadius(): Float =
         buttonBorderRadius ?: if (appearance == EditorToolbarAppearance.NATIVE) 20f else 6f
@@ -426,7 +431,14 @@ data class EditorToolbarTheme(
                 borderWidth = json.optNullableFloat("borderWidth"),
                 borderRadius = json.optNullableFloat("borderRadius"),
                 marginTop = json.optNullableFloat("marginTop"),
-                showTopBorder = if (json.has("showTopBorder")) json.optBoolean("showTopBorder") else null,
+                showTopBorder = if (json.has(
+                        "showTopBorder"
+                    )
+                ) {
+                    json.optBoolean("showTopBorder")
+                } else {
+                    null
+                },
                 keyboardOffset = json.optNullableFloat("keyboardOffset"),
                 horizontalInset = json.optNullableFloat("horizontalInset"),
                 separatorColor = parseColor(json.optNullableString("separatorColor")),
@@ -435,8 +447,12 @@ data class EditorToolbarTheme(
                 buttonIconSize = json.optNullableFloat("buttonIconSize"),
                 buttonActiveColor = parseColor(json.optNullableString("buttonActiveColor")),
                 buttonDisabledColor = parseColor(json.optNullableString("buttonDisabledColor")),
-                buttonActiveBackgroundColor = parseColor(json.optNullableString("buttonActiveBackgroundColor")),
-                buttonDisabledBackgroundColor = parseColor(json.optNullableString("buttonDisabledBackgroundColor")),
+                buttonActiveBackgroundColor = parseColor(
+                    json.optNullableString("buttonActiveBackgroundColor")
+                ),
+                buttonDisabledBackgroundColor = parseColor(
+                    json.optNullableString("buttonDisabledBackgroundColor")
+                ),
                 buttonBorderRadius = json.optNullableFloat("buttonBorderRadius")
             )
         }
@@ -492,7 +508,9 @@ data class EditorTheme(
 
             val headings = mutableMapOf<String, EditorTextStyle>()
             for (level in listOf("h1", "h2", "h3", "h4", "h5", "h6")) {
-                val style = EditorTextStyle.fromJson(root.optJSONObject("headings")?.optJSONObject(level))
+                val style = EditorTextStyle.fromJson(
+                    root.optJSONObject("headings")?.optJSONObject(level)
+                )
                 if (style != null) {
                     headings[level] = style
                 }
@@ -505,7 +523,9 @@ data class EditorTheme(
                 codeBlock = EditorCodeBlockTheme.fromJson(root.optJSONObject("codeBlock")),
                 headings = headings,
                 list = EditorListTheme.fromJson(root.optJSONObject("list")),
-                horizontalRule = EditorHorizontalRuleTheme.fromJson(root.optJSONObject("horizontalRule")),
+                horizontalRule = EditorHorizontalRuleTheme.fromJson(
+                    root.optJSONObject("horizontalRule")
+                ),
                 mentions = EditorMentionTheme.fromJson(root.optJSONObject("mentions")),
                 links = EditorLinkTheme.fromJson(root.optJSONObject("links")),
                 toolbar = EditorToolbarTheme.fromJson(root.optJSONObject("toolbar")),
@@ -518,7 +538,9 @@ data class EditorTheme(
     }
 
     fun effectiveTextStyle(nodeType: String, inBlockquote: Boolean = false): EditorTextStyle {
-        styleSheet?.let { return it.resolveText(nodeType, if (inBlockquote) listOf("blockquote") else emptyList()) }
+        styleSheet?.let {
+            return it.resolveText(nodeType, if (inBlockquote) listOf("blockquote") else emptyList())
+        }
         var style = text ?: EditorTextStyle()
         style = style.mergedWith(if (inBlockquote) blockquote?.text else null)
         if (nodeType == "paragraph") {
@@ -548,7 +570,6 @@ internal fun parseColor(raw: String?): Int? {
     try {
         return Color.parseColor(value)
     } catch (_: IllegalArgumentException) {
-        // Fall through to rgb()/rgba() parsing.
     }
 
     return when {
@@ -562,6 +583,7 @@ internal fun parseColor(raw: String?): Int? {
             val blue = parts[2].toDoubleOrNull() ?: return null
             Color.argb(255, red.toInt(), green.toInt(), blue.toInt())
         }
+
         value.startsWith("rgba(") && value.endsWith(")") -> {
             val parts = value.removePrefix("rgba(").removeSuffix(")")
                 .split(',')
@@ -573,6 +595,7 @@ internal fun parseColor(raw: String?): Int? {
             val alpha = parts[3].toDoubleOrNull() ?: return null
             Color.argb((alpha * 255f).toInt(), red.toInt(), green.toInt(), blue.toInt())
         }
+
         else -> null
     }
 }
@@ -588,6 +611,7 @@ private fun parseCssHexColor(value: String): Int? {
             val blue = "${hex[2]}${hex[2]}".toIntOrNull(16) ?: return null
             Color.argb(255, red, green, blue)
         }
+
         4 -> {
             val red = "${hex[0]}${hex[0]}".toIntOrNull(16) ?: return null
             val green = "${hex[1]}${hex[1]}".toIntOrNull(16) ?: return null
@@ -595,12 +619,14 @@ private fun parseCssHexColor(value: String): Int? {
             val alpha = "${hex[3]}${hex[3]}".toIntOrNull(16) ?: return null
             Color.argb(alpha, red, green, blue)
         }
+
         6 -> {
             val red = hex.substring(0, 2).toIntOrNull(16) ?: return null
             val green = hex.substring(2, 4).toIntOrNull(16) ?: return null
             val blue = hex.substring(4, 6).toIntOrNull(16) ?: return null
             Color.argb(255, red, green, blue)
         }
+
         8 -> {
             val red = hex.substring(0, 2).toIntOrNull(16) ?: return null
             val green = hex.substring(2, 4).toIntOrNull(16) ?: return null
@@ -608,6 +634,7 @@ private fun parseCssHexColor(value: String): Int? {
             val alpha = hex.substring(6, 8).toIntOrNull(16) ?: return null
             Color.argb(alpha, red, green, blue)
         }
+
         else -> null
     }
 }

@@ -26,9 +26,7 @@ fn transform_error_class(error: &TransformError) -> ErrorClass {
     match error {
         TransformError::OutOfBounds(_) | TransformError::InvalidTarget(_) => ErrorClass::Position,
         TransformError::InvalidRange(_) => ErrorClass::InvalidRange,
-        TransformError::ContentViolation(_) | TransformError::NotImplemented(_) => {
-            ErrorClass::InvalidContent
-        }
+        TransformError::ContentViolation(_) => ErrorClass::InvalidContent,
     }
 }
 
@@ -111,7 +109,7 @@ fn one_transaction_maps_same_base_utf16_position_by_before_and_after_affinity() 
         (20_001, Affinity::Before, base_pos, "A😀yxB"),
         (20_002, Affinity::After, base_pos + 1, "A😀xyB"),
     ] {
-        let mut legacy_transaction = Transaction::new(Source::Api);
+        let mut legacy_transaction = Transaction::new();
         legacy_transaction.add_step(Step::InsertText {
             pos: base_pos,
             text: "x".into(),
@@ -188,7 +186,7 @@ fn no_op_and_rejection_classes_match_the_legacy_oracle_without_state_changes() {
         ))
         .unwrap();
     assert!(!no_op.changed);
-    let mut legacy_no_op = Transaction::new(Source::Api);
+    let mut legacy_no_op = Transaction::new();
     legacy_no_op.add_step(Step::DeleteRange {
         from: legacy_position(&document, &schema, 2),
         to: legacy_position(&document, &schema, 2),
@@ -205,7 +203,7 @@ fn no_op_and_rejection_classes_match_the_legacy_oracle_without_state_changes() {
         before
     );
 
-    let mut legacy = Transaction::new(Source::Api);
+    let mut legacy = Transaction::new();
     legacy.add_step(Step::DeleteRange {
         from: legacy_position(&document, &schema, 4),
         to: legacy_position(&document, &schema, 1),
@@ -287,7 +285,7 @@ fn no_op_and_rejection_classes_match_the_legacy_oracle_without_state_changes() {
     let operation_error = yrs
         .apply_typed_transaction(transaction(&yrs, 9_102, invalid_position))
         .unwrap_err();
-    let mut legacy = Transaction::new(Source::Api);
+    let mut legacy = Transaction::new();
     legacy.add_step(Step::InsertText {
         pos: document.root().node_size() + 1,
         text: "x".into(),
@@ -329,7 +327,7 @@ fn no_op_and_rejection_classes_match_the_legacy_oracle_without_state_changes() {
     let operation_error = yrs
         .apply_typed_transaction(transaction(&yrs, 9_200, invalid_content))
         .unwrap_err();
-    let mut legacy = Transaction::new(Source::Api);
+    let mut legacy = Transaction::new();
     legacy.add_step(Step::InsertText {
         pos: legacy_position(&document, &schema, 2),
         text: "x".into(),

@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testPendingResetDiscardsMarkedTextAndWinsRacingNativeCommit() throws {
@@ -300,11 +300,11 @@ extension RichTextEditorViewTests {
 
         _ = EditorV2Shadow.replaceHtml(id: firstEditorId, html: "<p>Remote first</p>")
         guard let firstAdapter = EditorV2Registry.adapter(forLegacyId: firstEditorId),
-              let staleUpdate = editorV2RenderUpdate(
+            let staleUpdate = editorV2RenderUpdate(
                 editorId: firstAdapter.editorId,
                 mirrorScalarAnchor: nil,
                 mirrorScalarHead: nil
-              ).value
+            ).value
         else {
             XCTFail("expected atomic render snapshot")
             return
@@ -443,7 +443,7 @@ extension RichTextEditorViewTests {
             destroyV2Editor(id: differentEditorId)
         }
         guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
-              let differentAdapter = EditorV2Registry.adapter(forLegacyId: differentEditorId)
+            let differentAdapter = EditorV2Registry.adapter(forLegacyId: differentEditorId)
         else {
             XCTFail("expected adapters")
             return

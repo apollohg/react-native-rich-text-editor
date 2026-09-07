@@ -2,23 +2,23 @@ package com.apollohg.editor.viewer
 
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Rect
-import android.graphics.RectF
 import android.graphics.Path
 import android.graphics.PathMeasure
+import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.text.Layout
-import android.text.Spanned
 import android.text.SpannableString
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.LineHeightSpan
 import android.text.style.MetricAffectingSpan
+import android.text.style.ReplacementSpan
 import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
-import android.text.style.ReplacementSpan
 import com.apollohg.editor.EditorLinkTheme
 import com.apollohg.editor.EditorMentionTheme
 import com.apollohg.editor.EditorOrderedListMarkerTheme
@@ -41,24 +41,30 @@ internal data class PreparedTextPaint(
     val spacingAfterPx: Int,
     val letterSpacing: Float = 0f,
     val textAlign: String? = null,
-    val resolvedStyle: EditorTextStyle? = null,
+    val resolvedStyle: EditorTextStyle? = null
 ) {
-    fun newTextPaint(): TextPaint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-        typeface = this@PreparedTextPaint.typeface
-        textSize = sizePx
-        color = this@PreparedTextPaint.color
-        letterSpacing = this@PreparedTextPaint.letterSpacing
-    }
+    fun newTextPaint(): TextPaint =
+        TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+            typeface = this@PreparedTextPaint.typeface
+            textSize = sizePx
+            color = this@PreparedTextPaint.color
+            letterSpacing = this@PreparedTextPaint.letterSpacing
+        }
 }
 
 internal fun PreparedTextPaint.withStyle(
     style: EditorTextStyle,
     density: Float,
-    semanticGeneration: String,
+    semanticGeneration: String
 ): PreparedTextPaint {
     val currentBold = typeface.style == Typeface.BOLD || typeface.style == Typeface.BOLD_ITALIC
     val currentItalic = typeface.style == Typeface.ITALIC || typeface.style == Typeface.BOLD_ITALIC
-    val bold = style.fontWeight?.let { it == "bold" || it.toIntOrNull()?.let { value -> value >= 600 } == true } ?: currentBold
+    val bold =
+        style.fontWeight?.let {
+            it == "bold" ||
+                it.toIntOrNull()?.let { value -> value >= 600 } == true
+        }
+            ?: currentBold
     val italic = style.fontStyle?.let { it == "italic" } ?: currentItalic
     val resolvedStyle = when {
         bold && italic -> Typeface.BOLD_ITALIC
@@ -66,15 +72,22 @@ internal fun PreparedTextPaint.withStyle(
         italic -> Typeface.ITALIC
         else -> Typeface.NORMAL
     }
-    val resolvedTypeface = ViewerFontEnvironment.resolveFont(style.fontFamily, resolvedStyle, typeface, semanticGeneration)
+    val resolvedTypeface = ViewerFontEnvironment.resolveFont(
+        style.fontFamily,
+        resolvedStyle,
+        typeface,
+        semanticGeneration
+    )
     return copy(
         typeface = resolvedTypeface,
         sizePx = style.fontSize?.times(density)?.takeIf { it.isFinite() && it > 0f } ?: sizePx,
         color = style.color ?: color,
         lineHeightPx = style.lineHeight?.times(density)?.toInt() ?: lineHeightPx,
-        letterSpacing = style.letterSpacing?.let { it * density / (style.fontSize?.times(density) ?: sizePx) } ?: letterSpacing,
+        letterSpacing =
+            style.letterSpacing?.let { it * density / (style.fontSize?.times(density) ?: sizePx) }
+                ?: letterSpacing,
         textAlign = style.textAlign ?: textAlign,
-        resolvedStyle = this.resolvedStyle?.mergedWith(style) ?: style,
+        resolvedStyle = this.resolvedStyle?.mergedWith(style) ?: style
     )
 }
 
@@ -115,81 +128,189 @@ internal data class PreparedProseTheme(
     val atomPaddingVerticalPx: Int,
     val viewerAtoms: ViewerAtomConfiguration? = null,
     val sourceTheme: EditorTheme? = null,
-    val codeHighlighting: com.apollohg.editor.NativeCodeHighlightingConfig? = null,
+    val codeHighlighting: com.apollohg.editor.NativeCodeHighlightingConfig? = null
 ) {
     companion object {
         fun resolve(
             themeJson: String?,
             density: Float,
             fontScale: Float = 1f,
-            semanticGeneration: String = "standalone-theme",
+            semanticGeneration: String = "standalone-theme"
         ): PreparedProseTheme {
             val decoded = EditorTheme.fromJson(themeJson)
-            require(themeJson.isNullOrBlank() || decoded != null) { "Invalid viewer theme version or payload shape." }
+            require(themeJson.isNullOrBlank() || decoded != null) {
+                "Invalid viewer theme version or payload shape."
+            }
             val theme = decoded ?: EditorTheme()
             val resolvedFontScale = fontScale.takeIf { it.isFinite() && it > 0f } ?: 1f
             val scaledDensity = density * resolvedFontScale
-            fun px(value: Float, fallback: Float): Int = max(0, (value.takeIf { it.isFinite() } ?: fallback).times(density).toInt())
-            fun fontPx(value: Float, fallback: Float): Float = ((value.takeIf { it.isFinite() } ?: fallback) * scaledDensity)
-            fun typeface(style: EditorTextStyle?, fallback: Typeface): Typeface {
-                return ViewerFontEnvironment.resolveFont(
+            fun px(value: Float, fallback: Float): Int = max(
+                0,
+                (
+                    value.takeIf { it.isFinite() }
+                        ?: fallback
+                    ).times(density).toInt()
+            )
+            fun fontPx(value: Float, fallback: Float): Float = (
+                (
+                    value.takeIf { it.isFinite() }
+                        ?: fallback
+                    ) *
+                    scaledDensity
+                )
+            fun typeface(style: EditorTextStyle?, fallback: Typeface): Typeface =
+                ViewerFontEnvironment.resolveFont(
                     style?.fontFamily,
                     style?.typefaceStyle() ?: fallback.style,
                     fallback,
-                    semanticGeneration,
+                    semanticGeneration
                 )
-            }
-            fun paint(style: EditorTextStyle?, fallback: PreparedTextPaint? = null): PreparedTextPaint {
-                val base = fallback ?: PreparedTextPaint(Typeface.DEFAULT, 17f * scaledDensity, 0xFF212121.toInt(), null, 0)
+            fun paint(
+                style: EditorTextStyle?,
+                fallback: PreparedTextPaint? = null
+            ): PreparedTextPaint {
+                val base =
+                    fallback
+                        ?: PreparedTextPaint(
+                            Typeface.DEFAULT,
+                            17f * scaledDensity,
+                            0xFF212121.toInt(),
+                            null,
+                            0
+                        )
                 return PreparedTextPaint(
                     typeface = typeface(style, base.typeface),
                     sizePx = style?.fontSize?.let { fontPx(it, 17f) } ?: base.sizePx,
                     color = style?.color ?: base.color,
-                    lineHeightPx = style?.lineHeight?.let { fontPx(it, 0f).toInt().takeIf { value -> value > 0 } } ?: base.lineHeightPx,
-                    spacingAfterPx = style?.spacingAfter?.let { fontPx(it, 0f).toInt() } ?: base.spacingAfterPx,
+                    lineHeightPx =
+                        style?.lineHeight?.let {
+                            fontPx(it, 0f).toInt().takeIf { value -> value > 0 }
+                        }
+                            ?: base.lineHeightPx,
+                    spacingAfterPx =
+                        style?.spacingAfter?.let { fontPx(it, 0f).toInt() } ?: base.spacingAfterPx
                 )
             }
             val text = paint(theme.text)
             theme.links?.let { link ->
                 link.fontFamily?.let { linkFamily ->
-                    ViewerFontEnvironment.resolveFont(linkFamily, link.asTextStyle().typefaceStyle(), text.typeface, semanticGeneration)
+                    ViewerFontEnvironment.resolveFont(
+                        linkFamily,
+                        link.asTextStyle().typefaceStyle(),
+                        text.typeface,
+                        semanticGeneration
+                    )
                 }
             }
             val paragraph = paint(theme.effectiveTextStyle("paragraph"), text)
             val quote = paint(theme.effectiveTextStyle("paragraph", true), paragraph)
-            val codeFallback = PreparedTextPaint(Typeface.MONOSPACE, text.sizePx, text.color, text.lineHeightPx, text.spacingAfterPx)
-            val headings = listOf("h1" to 32f, "h2" to 28f, "h3" to 24f, "h4" to 21f, "h5" to 19f, "h6" to 17f).associate { (name, size) ->
-                name to paint(EditorTextStyle(fontSize = size, fontWeight = "700", spacingAfter = 10f).mergedWith(theme.headings[name]), paragraph)
+            val codeFallback =
+                PreparedTextPaint(
+                    Typeface.MONOSPACE,
+                    text.sizePx,
+                    text.color,
+                    text.lineHeightPx,
+                    text.spacingAfterPx
+                )
+            val headings = listOf(
+                "h1" to 32f,
+                "h2" to 28f,
+                "h3" to 24f,
+                "h4" to 21f,
+                "h5" to 19f,
+                "h6" to 17f
+            ).associate { (name, size) ->
+                name to
+                    paint(
+                        EditorTextStyle(
+                            fontSize = size,
+                            fontWeight = "700",
+                            spacingAfter = 10f
+                        ).mergedWith(theme.headings[name]),
+                        paragraph
+                    )
             }
             val listItemSpacingPx = px(theme.list?.itemSpacing ?: 4f, 4f)
             return PreparedProseTheme(
-                density, scaledDensity, text, paragraph, headings, quote, paint(theme.effectiveTextStyle("codeBlock"), codeFallback),
-                px(theme.contentInsets?.top ?: 0f, 0f), px(theme.contentInsets?.right ?: 0f, 0f), px(theme.contentInsets?.bottom ?: 0f, 0f), px(theme.contentInsets?.left ?: 0f, 0f),
-                px(theme.list?.indent ?: 28f, 28f), theme.list?.baseIndentMultiplier ?: 1f, listItemSpacingPx, px(theme.list?.spacingAfter ?: theme.list?.itemSpacing ?: 4f, 4f), theme.list?.markerColor ?: text.color, theme.list?.markerScale ?: 1f,
-                px(theme.list?.markerGap ?: PREPARED_LIST_MARKER_GAP_DP, PREPARED_LIST_MARKER_GAP_DP),
+                density, scaledDensity, text, paragraph, headings, quote,
+                paint(
+                    theme.effectiveTextStyle("codeBlock"),
+                    codeFallback
+                ),
+                px(
+                    theme.contentInsets?.top ?: 0f,
+                    0f
+                ),
+                px(
+                    theme.contentInsets?.right ?: 0f,
+                    0f
+                ),
+                px(
+                    theme.contentInsets?.bottom ?: 0f,
+                    0f
+                ),
+                px(theme.contentInsets?.left ?: 0f, 0f),
+                px(
+                    theme.list?.indent ?: 28f,
+                    28f
+                ),
+                theme.list?.baseIndentMultiplier ?: 1f, listItemSpacingPx,
+                px(
+                    theme.list?.spacingAfter ?: theme.list?.itemSpacing ?: 4f,
+                    4f
+                ),
+                theme.list?.markerColor ?: text.color, theme.list?.markerScale ?: 1f,
+                px(
+                    theme.list?.markerGap ?: PREPARED_LIST_MARKER_GAP_DP,
+                    PREPARED_LIST_MARKER_GAP_DP
+                ),
                 theme.list?.orderedMarker,
-                px(theme.blockquote?.indent ?: 16f, 16f), theme.blockquote?.borderColor ?: 0xFFC7C7CC.toInt(), px(theme.blockquote?.borderWidth ?: 3f, 3f), px(theme.blockquote?.markerGap ?: 10f, 10f),
-                theme.codeBlock?.backgroundColor ?: 0xFFF2F2F7.toInt(), (theme.codeBlock?.borderRadius ?: 8f) * density, px(theme.codeBlock?.paddingHorizontal ?: 12f, 12f), px(theme.codeBlock?.paddingVertical ?: 8f, 8f),
-                theme.horizontalRule?.color ?: 0xFFC7C7CC.toInt(), max(1, px(theme.horizontalRule?.thickness ?: 1f, 1f)), px(theme.horizontalRule?.verticalMargin ?: 12f, 12f),
+                px(theme.blockquote?.indent ?: 16f, 16f),
+                theme.blockquote?.borderColor ?: 0xFFC7C7CC.toInt(),
+                px(
+                    theme.blockquote?.borderWidth ?: 3f,
+                    3f
+                ),
+                px(theme.blockquote?.markerGap ?: 10f, 10f),
+                theme.codeBlock?.backgroundColor ?: 0xFFF2F2F7.toInt(),
+                (theme.codeBlock?.borderRadius ?: 8f) * density,
+                px(
+                    theme.codeBlock?.paddingHorizontal ?: 12f,
+                    12f
+                ),
+                px(theme.codeBlock?.paddingVertical ?: 8f, 8f),
+                theme.horizontalRule?.color ?: 0xFFC7C7CC.toInt(),
+                max(
+                    1,
+                    px(theme.horizontalRule?.thickness ?: 1f, 1f)
+                ),
+                px(theme.horizontalRule?.verticalMargin ?: 12f, 12f),
                 theme.links, theme.mentions, px(6f, 6f), px(4f, 4f),
                 ViewerAtomConfiguration.parse(themeJson),
-                theme,
+                theme
             )
         }
     }
 
     fun paintFor(block: ViewerBlock): PreparedTextPaint {
         sourceTheme?.styleSheet?.let { sheet ->
-            val ancestors = block.containers.map { it.nodeType }.ifEmpty { if (block.inBlockquote) listOf("blockquote") else emptyList() }
-            return text.withStyle(sheet.resolveText(block.nodeType, ancestors), fontDensity, "stylesheet").copy(spacingAfterPx = 0)
+            val ancestors = block.containers.map {
+                it.nodeType
+            }.ifEmpty { if (block.inBlockquote) listOf("blockquote") else emptyList() }
+            return text.withStyle(
+                sheet.resolveText(block.nodeType, ancestors),
+                fontDensity,
+                "stylesheet"
+            ).copy(spacingAfterPx = 0)
         }
         return when {
-        block.nodeType == "codeBlock" -> code
-        headings.containsKey(block.nodeType) -> headings.getValue(block.nodeType)
-        block.inBlockquote -> blockquote
-        else -> paragraph
+            block.nodeType == "codeBlock" -> code
+            headings.containsKey(block.nodeType) -> headings.getValue(block.nodeType)
+            block.inBlockquote -> blockquote
+            else -> paragraph
         }
     }
 
-    val retainedBytes: Long get() = 3_072L + headings.size * 384L + (viewerAtoms?.retainedBytes ?: 0)
+    val retainedBytes: Long get() = 3_072L + headings.size * 384L +
+        (viewerAtoms?.retainedBytes ?: 0)
 }

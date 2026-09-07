@@ -28,7 +28,7 @@ class EditorEditTextHardwareKeyTest {
         editText.setSelection(editText.length())
         editText.measure(
             View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(80, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(80, View.MeasureSpec.EXACTLY)
         )
         editText.layout(0, 0, editText.measuredWidth, editText.measuredHeight)
 
@@ -47,7 +47,14 @@ class EditorEditTextHardwareKeyTest {
         editText.setSelection(3)
 
         val downEvent = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL)
-        val upEvent = KeyEvent(downEvent.downTime, downEvent.eventTime, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL, 0)
+        val upEvent =
+            KeyEvent(
+                downEvent.downTime,
+                downEvent.eventTime,
+                KeyEvent.ACTION_UP,
+                KeyEvent.KEYCODE_DEL,
+                0
+            )
 
         val handledDown = editText.dispatchKeyEvent(downEvent)
         val handledUp = editText.dispatchKeyEvent(upEvent)
@@ -238,7 +245,14 @@ class EditorEditTextHardwareKeyTest {
         editText.isEditable = false
 
         val downEvent = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL)
-        val upEvent = KeyEvent(downEvent.downTime, downEvent.eventTime, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL, 0)
+        val upEvent =
+            KeyEvent(
+                downEvent.downTime,
+                downEvent.eventTime,
+                KeyEvent.ACTION_UP,
+                KeyEvent.KEYCODE_DEL,
+                0
+            )
 
         assertTrue(editText.dispatchKeyEvent(downEvent))
         assertTrue(editText.dispatchKeyEvent(upEvent))
@@ -255,7 +269,14 @@ class EditorEditTextHardwareKeyTest {
         editText.isEditable = false
 
         val downEvent = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_A)
-        val upEvent = KeyEvent(downEvent.downTime, downEvent.eventTime, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_A, 0)
+        val upEvent =
+            KeyEvent(
+                downEvent.downTime,
+                downEvent.eventTime,
+                KeyEvent.ACTION_UP,
+                KeyEvent.KEYCODE_A,
+                0
+            )
 
         assertTrue(editText.dispatchKeyEvent(downEvent))
         assertTrue(editText.dispatchKeyEvent(upEvent))

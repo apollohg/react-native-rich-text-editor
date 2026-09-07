@@ -4,7 +4,10 @@ import android.os.Looper
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -24,7 +27,11 @@ class CodeHighlightingSessionTest {
         val provider = object : CodeHighlightingProvider {
             override val id = "session-fairness-provider"
             override val version = 1
-            override fun highlight(text: String, language: String?, theme: String): List<CodeHighlightRange> {
+            override fun highlight(
+                text: String,
+                language: String?,
+                theme: String
+            ): List<CodeHighlightRange> {
                 assertNotEquals(Looper.getMainLooper(), Looper.myLooper())
                 calls.add(theme)
                 if (theme == "blocked") {

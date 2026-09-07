@@ -37,6 +37,8 @@ mod model;
 mod native_transaction_bridge;
 #[path = "../src/position/mod.rs"]
 mod position;
+#[path = "../src/position_epoch.rs"]
+mod position_epoch;
 #[path = "../src/registry.rs"]
 mod registry;
 #[path = "../src/render/mod.rs"]
@@ -51,6 +53,8 @@ mod serialize;
 mod session;
 #[path = "../src/transform/mod.rs"]
 mod transform;
+#[path = "../src/viewer/types.rs"]
+mod viewer;
 #[path = "../src/yrs_engine/mod.rs"]
 mod yrs_engine;
 

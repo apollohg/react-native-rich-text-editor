@@ -102,7 +102,7 @@ fn validate_limit(field: &'static str, actual: u64, ceiling: u64) -> YrsEngineRe
 }
 
 #[derive(Debug, Default)]
-#[allow(dead_code)] // Consumed by the transaction compiler introduced in the next task.
+#[allow(dead_code)]
 pub(crate) struct CheckedWork {
     operations: usize,
     actions: usize,
@@ -110,7 +110,7 @@ pub(crate) struct CheckedWork {
     undo_units: u64,
 }
 
-#[allow(dead_code)] // Consumed by the transaction compiler introduced in the next task.
+#[allow(dead_code)]
 impl CheckedWork {
     pub(crate) fn charge_operations(
         &mut self,
@@ -190,7 +190,6 @@ impl CheckedWork {
     }
 }
 
-#[allow(dead_code)] // Consumed through CheckedWork in the next task.
 fn charge_usize(
     actual: Option<usize>,
     request_id: u64,

@@ -11,7 +11,9 @@ class MeasureHeightInstrumentedTest {
     @Test
     fun measureHeight_narrowerWidthProducesTallerResult() {
         val longText = "word ".repeat(100)
-        val renderJSON = """[{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"textRun","text":"$longText"},{"type":"blockEnd"}]"""
+        val renderJSON =
+            """[{"type":"blockStart","nodeType":"paragraph","depth":0},""" +
+                """{"type":"textRun","text":"$longText"},{"type":"blockEnd"}]"""
         val narrowHeight = RenderBridge.measureHeight(
             json = renderJSON,
             themeJson = null,
@@ -32,7 +34,9 @@ class MeasureHeightInstrumentedTest {
 
     @Test
     fun measureHeight_largerFontProducesTallerResult() {
-        val renderJSON = """[{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"textRun","text":"Hello world"},{"type":"blockEnd"}]"""
+        val renderJSON =
+            """[{"type":"blockStart","nodeType":"paragraph","depth":0},""" +
+                """{"type":"textRun","text":"Hello world"},{"type":"blockEnd"}]"""
         val smallHeight = RenderBridge.measureHeight(
             json = renderJSON,
             themeJson = """{"text":{"fontSize":12}}""",

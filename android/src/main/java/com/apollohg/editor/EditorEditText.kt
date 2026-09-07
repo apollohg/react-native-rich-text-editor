@@ -7,11 +7,11 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.text.Annotation
 import android.text.Selection
-import android.text.Spanned
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.util.AttributeSet
-import android.view.KeyEvent
 import android.view.DragEvent
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
@@ -32,7 +32,7 @@ class EditorEditText @JvmOverloads constructor(
     internal data class AuthoritativeInputSnapshot(
         val renderedText: CharSequence,
         val selectionStart: Int,
-        val selectionEnd: Int,
+        val selectionEnd: Int
     )
     data class ApplyUpdateTrace(
         val attemptedPatch: Boolean,
@@ -57,10 +57,7 @@ class EditorEditText @JvmOverloads constructor(
         val removedPlaceholderCount: Int
     )
 
-    data class SelectedImageGeometry(
-        val docPos: Int,
-        val rect: RectF
-    )
+    data class SelectedImageGeometry(val docPos: Int, val rect: RectF)
 
     data class MentionHit(
         /** A Rust u32 retained in a signed [Long] without narrowing. */
@@ -68,10 +65,7 @@ class EditorEditText @JvmOverloads constructor(
         val label: String
     )
 
-    data class CommandPreparation(
-        val ready: Boolean,
-        val updateJSON: String?
-    )
+    data class CommandPreparation(val ready: Boolean, val updateJSON: String?)
 
     data class ExternalEditorUpdatePreparation(
         val ready: Boolean,
@@ -79,10 +73,7 @@ class EditorEditText @JvmOverloads constructor(
         val adoptedUpdateJSON: String?
     )
 
-    data class LinkHit(
-        val href: String,
-        val text: String
-    )
+    data class LinkHit(val href: String, val text: String)
 
     internal data class AccessibleAnnotation(
         val target: AccessibleAnnotationTarget,
@@ -236,7 +227,8 @@ class EditorEditText @JvmOverloads constructor(
     internal val externalCompositionMarker = Any()
     internal val externalTextCompositionTerminalResults = mutableMapOf<String, String>()
     internal var nativeTextMutationAfterBlurWindow: NativeTextMutationAfterBlurWindow? = null
-    internal var nativeTextMutationAdoptionSuppression: NativeTextMutationAdoptionSuppression? = null
+    internal var nativeTextMutationAdoptionSuppression: NativeTextMutationAdoptionSuppression? =
+        null
     internal var lastAuthorizedTextRevision: Long = 0L
     internal var lastAuthorizedRenderedText: CharSequence? = null
     internal var explicitSelectedImageRange: ImageSelectionRange? = null
@@ -271,7 +263,12 @@ class EditorEditText @JvmOverloads constructor(
     internal var restartInputSelectionUpdateGeneration: Long = 0L
     internal var onDeleteRangeInRustForTesting: ((Int, Int) -> Unit)? = null
     internal var onDeleteBackwardAtSelectionScalarInRustForTesting: ((Int, Int) -> Unit)? = null
-    internal var onToggleTaskItemCheckedAtSelectionScalarInRustForTesting: ((Int, Int) -> Unit)? = null
+    internal var onToggleTaskItemCheckedAtSelectionScalarInRustForTesting: (
+        (
+            Int,
+            Int
+        ) -> Unit
+    )? = null
     internal var onInsertTextInRustForTesting: ((String, Int) -> Unit)? = null
     internal var onSplitBlockInRustForTesting: ((Int) -> Unit)? = null
     internal var onReplaceTextInRustForTesting: ((Int, Int, String) -> Unit)? = null
@@ -301,7 +298,8 @@ class EditorEditText @JvmOverloads constructor(
         }
     internal val nativeBindingToken = nextNativeBindingToken.incrementAndGet()
 
-    internal fun ownsNativeBinding(adapter: EditorV2Adapter): Boolean = ownsNativeBindingImpl(adapter)
+    internal fun ownsNativeBinding(adapter: EditorV2Adapter): Boolean =
+        ownsNativeBindingImpl(adapter)
 
     fun lastRenderAppliedPatch(): Boolean = lastRenderAppliedPatchImpl()
 
@@ -310,7 +308,8 @@ class EditorEditText @JvmOverloads constructor(
     internal fun hasDeferredRustUpdateApplicationForTesting(): Boolean =
         hasDeferredRustUpdateApplicationForTestingImpl()
 
-    internal fun inputConnectionGenerationForTesting(): Long = inputConnectionGenerationForTestingImpl()
+    internal fun inputConnectionGenerationForTesting(): Long =
+        inputConnectionGenerationForTestingImpl()
 
     internal fun authorizedTextForTesting(): String = authorizedTextForTestingImpl()
 
@@ -328,7 +327,9 @@ class EditorEditText @JvmOverloads constructor(
         initializeEditorView()
     }
 
-    internal val legacyCursorClipPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    internal val legacyCursorClipPaint = android.graphics.Paint(
+        android.graphics.Paint.ANTI_ALIAS_FLAG
+    )
     internal val caretWidthPx: Float by lazy { resolveCaretWidth(attrs, defStyleAttr) }
     internal val caretColor: Int by lazy { resolveCaretColor() }
     internal var editorAccessibilityHint: CharSequence? = null
@@ -380,8 +381,10 @@ class EditorEditText @JvmOverloads constructor(
         return super.dispatchKeyEvent(event)
     }
 
-    internal fun handleCompositionKeyEvent(event: KeyEvent, applyBaseEvent: () -> Boolean): Boolean =
-        handleCompositionKeyEventImpl(event, applyBaseEvent)
+    internal fun handleCompositionKeyEvent(
+        event: KeyEvent,
+        applyBaseEvent: () -> Boolean
+    ): Boolean = handleCompositionKeyEventImpl(event, applyBaseEvent)
 
     override fun onDraw(canvas: android.graphics.Canvas) {
         updateAtomBoundaryCursorVisibility()
@@ -399,8 +402,12 @@ class EditorEditText @JvmOverloads constructor(
 
         val previousColor = paint.color
         val saveCount = canvas.save()
-        val placeholderInsets = placeholderContentInsets(width - compoundPaddingLeft - compoundPaddingRight)
-        canvas.translate(compoundPaddingLeft + placeholderInsets.left, extendedPaddingTop + placeholderInsets.top)
+        val placeholderInsets =
+            placeholderContentInsets(width - compoundPaddingLeft - compoundPaddingRight)
+        canvas.translate(
+            compoundPaddingLeft + placeholderInsets.left,
+            extendedPaddingTop + placeholderInsets.top
+        )
         placeholderLayout.draw(canvas)
         EditorTextDecorationDrawing.draw(canvas, placeholderLayout)
         canvas.restoreToCount(saveCount)
@@ -413,11 +420,15 @@ class EditorEditText @JvmOverloads constructor(
         val placeholderHeight = resolvePlaceholderHeightForMeasuredWidth(measuredWidth) ?: 0
         val desiredHeight = maxOf(
             measuredHeight,
-            placeholderHeight,
+            placeholderHeight
         )
         val resolvedHeight = when (MeasureSpec.getMode(heightMeasureSpec)) {
             MeasureSpec.EXACTLY -> measuredHeight
-            MeasureSpec.AT_MOST -> desiredHeight.coerceAtMost(MeasureSpec.getSize(heightMeasureSpec))
+
+            MeasureSpec.AT_MOST -> desiredHeight.coerceAtMost(
+                MeasureSpec.getSize(heightMeasureSpec)
+            )
+
             else -> desiredHeight
         }
 
@@ -427,7 +438,9 @@ class EditorEditText @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_DOWN && imageSpanHitAt(event.x, event.y) == null) {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN &&
+            imageSpanHitAt(event.x, event.y) == null
+        ) {
             clearExplicitSelectedImageRange()
         }
         if (handleTaskListMarkerTap(event)) {
@@ -448,6 +461,7 @@ class EditorEditText @JvmOverloads constructor(
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN,
                     MotionEvent.ACTION_MOVE -> parent?.requestDisallowInterceptTouchEvent(true)
+
                     MotionEvent.ACTION_UP,
                     MotionEvent.ACTION_CANCEL -> parent?.requestDisallowInterceptTouchEvent(false)
                 }
@@ -456,49 +470,49 @@ class EditorEditText @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
-    override fun onDragEvent(event: DragEvent): Boolean {
-        return when (event.action) {
-            DragEvent.ACTION_DRAG_STARTED -> {
-                val drag = localTextDragFor(event)
-                localTextDrag = drag
-                drag != null || super.onDragEvent(event)
-            }
-            DragEvent.ACTION_DROP -> {
-                val drag = localTextDrag
-                localTextDrag = null
-                if (drag == null) {
-                    super.onDragEvent(event)
-                } else {
-                    val currentText = text?.toString().orEmpty()
-                    val destinationUtf16 = getOffsetForPosition(event.x, event.y)
-                        .coerceIn(0, currentText.length)
-                    val destination = PositionBridge.utf16ToScalar(destinationUtf16, currentText)
-                    performLocalSelectionDrop(drag, destination) || super.onDragEvent(event)
-                }
-            }
-            DragEvent.ACTION_DRAG_ENDED -> {
-                val handled = localTextDrag != null
-                localTextDrag = null
-                super.onDragEvent(event) || handled
-            }
-            DragEvent.ACTION_DRAG_ENTERED,
-            DragEvent.ACTION_DRAG_LOCATION,
-            DragEvent.ACTION_DRAG_EXITED -> super.onDragEvent(event) || localTextDrag != null
-            else -> super.onDragEvent(event)
+    override fun onDragEvent(event: DragEvent): Boolean = when (event.action) {
+        DragEvent.ACTION_DRAG_STARTED -> {
+            val drag = localTextDragFor(event)
+            localTextDrag = drag
+            drag != null || super.onDragEvent(event)
         }
+
+        DragEvent.ACTION_DROP -> {
+            val drag = localTextDrag
+            localTextDrag = null
+            if (drag == null) {
+                super.onDragEvent(event)
+            } else {
+                val currentText = text?.toString().orEmpty()
+                val destinationUtf16 = getOffsetForPosition(event.x, event.y)
+                    .coerceIn(0, currentText.length)
+                val destination = PositionBridge.utf16ToScalar(destinationUtf16, currentText)
+                performLocalSelectionDrop(drag, destination) || super.onDragEvent(event)
+            }
+        }
+
+        DragEvent.ACTION_DRAG_ENDED -> {
+            val handled = localTextDrag != null
+            localTextDrag = null
+            super.onDragEvent(event) || handled
+        }
+
+        DragEvent.ACTION_DRAG_ENTERED,
+        DragEvent.ACTION_DRAG_LOCATION,
+        DragEvent.ACTION_DRAG_EXITED -> super.onDragEvent(event) || localTextDrag != null
+
+        else -> super.onDragEvent(event)
     }
 
     internal fun performLocalSelectionDropForTesting(
         scalarFrom: Int,
         scalarTo: Int,
         destination: Int,
-        documentVersion: String?,
+        documentVersion: String?
     ): Boolean =
         performLocalSelectionDropForTestingImpl(scalarFrom, scalarTo, destination, documentVersion)
 
-    override fun performClick(): Boolean {
-        return super.performClick()
-    }
+    override fun performClick(): Boolean = super.performClick()
 
     /**
      * The core's `documentIsEmpty` from the most recent editor update, or null
@@ -507,7 +521,8 @@ class EditorEditText @JvmOverloads constructor(
     internal var coreReportedDocumentIsEmpty: Boolean? = null
 
     /** Adopt the core's authoritative empty state from an editor update. */
-    fun setCoreReportedDocumentIsEmpty(isEmpty: Boolean?) = setCoreReportedDocumentIsEmptyImpl(isEmpty)
+    fun setCoreReportedDocumentIsEmpty(isEmpty: Boolean?) =
+        setCoreReportedDocumentIsEmptyImpl(isEmpty)
 
     fun shouldDisplayPlaceholderForTesting(): Boolean = shouldDisplayPlaceholderForTestingImpl()
 
@@ -540,12 +555,13 @@ class EditorEditText @JvmOverloads constructor(
         atomKey: String,
         heightPx: Int,
         configuration: AtomRenderConfiguration?
-    ): Boolean =
-        applyAtomHeightImpl(atomKey, heightPx, configuration)
+    ): Boolean = applyAtomHeightImpl(atomKey, heightPx, configuration)
 
-    internal fun atomHeightRenderApplyCountForTesting(): Int = atomHeightRenderApplyCountForTestingImpl()
+    internal fun atomHeightRenderApplyCountForTesting(): Int =
+        atomHeightRenderApplyCountForTestingImpl()
 
-    fun setHeightBehavior(heightBehavior: EditorHeightBehavior) = setHeightBehaviorImpl(heightBehavior)
+    fun setHeightBehavior(heightBehavior: EditorHeightBehavior) =
+        setHeightBehaviorImpl(heightBehavior)
 
     fun setViewportBottomInsetPx(bottomInsetPx: Int) = setViewportBottomInsetPxImpl(bottomInsetPx)
 
@@ -558,9 +574,11 @@ class EditorEditText @JvmOverloads constructor(
 
     internal fun currentImageLoadGeneration(): Long = currentImageLoadGenerationImpl()
 
-    internal fun registerImageLoad(handle: RenderImageLoader.LoadHandle) = registerImageLoadImpl(handle)
+    internal fun registerImageLoad(handle: RenderImageLoader.LoadHandle) =
+        registerImageLoadImpl(handle)
 
-    internal fun activeImageLoadHandleCountForTesting(): Int = activeImageLoadHandleCountForTestingImpl()
+    internal fun activeImageLoadHandleCountForTesting(): Int =
+        activeImageLoadHandleCountForTestingImpl()
 
     internal fun onImageSpanSizeMayChange(span: BlockImageSpan) = onImageSpanSizeMayChangeImpl(span)
 
@@ -580,7 +598,8 @@ class EditorEditText @JvmOverloads constructor(
     internal fun runWithTransientInputMutationGuard(block: () -> Boolean): Boolean =
         runWithTransientInputMutationGuardImpl(block)
 
-    fun beginExternalTextComposition(sessionId: String): String = beginExternalTextCompositionImpl(sessionId)
+    fun beginExternalTextComposition(sessionId: String): String =
+        beginExternalTextCompositionImpl(sessionId)
 
     fun updateExternalTextComposition(sessionId: String, text: String): String =
         updateExternalTextCompositionImpl(sessionId, text)
@@ -600,7 +619,8 @@ class EditorEditText @JvmOverloads constructor(
     internal fun authorizedUtf16Range(start: Int, end: Int): Pair<Int, Int> =
         authorizedUtf16RangeImpl(start, end)
 
-    internal fun isCurrentTextAuthorizedForEditor(): Boolean = isCurrentTextAuthorizedForEditorImpl()
+    internal fun isCurrentTextAuthorizedForEditor(): Boolean =
+        isCurrentTextAuthorizedForEditorImpl()
 
     internal fun captureCompositionReplacementRangeIfNeeded() =
         captureCompositionReplacementRangeIfNeededImpl()
@@ -623,7 +643,8 @@ class EditorEditText @JvmOverloads constructor(
     internal fun samsungSentenceCapsComposingTextForEditor(composingText: String?): String? =
         samsungSentenceCapsComposingTextForEditorImpl(composingText)
 
-    internal fun applyTransientComposingTextStyleForEditor() = applyTransientComposingTextStyleForEditorImpl()
+    internal fun applyTransientComposingTextStyleForEditor() =
+        applyTransientComposingTextStyleForEditorImpl()
 
     internal fun composingTextFromVisibleReplacementForEditor(): String? =
         composingTextFromVisibleReplacementForEditorImpl()
@@ -637,17 +658,16 @@ class EditorEditText @JvmOverloads constructor(
     internal fun isInputConnectionCurrentForEditor(
         boundEditorId: Long,
         boundGeneration: Long
-    ): Boolean =
-        isInputConnectionCurrentForEditorImpl(boundEditorId, boundGeneration)
+    ): Boolean = isInputConnectionCurrentForEditorImpl(boundEditorId, boundGeneration)
 
     internal fun imeTextCoordinateMapperForEditor(
-        boundGeneration: Long = inputConnectionGeneration,
-    ): ImeTextCoordinateMapper? =
-        imeTextCoordinateMapperForEditorImpl(boundGeneration)
+        boundGeneration: Long = inputConnectionGeneration
+    ): ImeTextCoordinateMapper? = imeTextCoordinateMapperForEditorImpl(boundGeneration)
 
     internal fun restoreAuthorizedTextIfNeeded() = restoreAuthorizedTextIfNeededImpl()
 
-    fun discardTransientNativeInputForEditorRebind() = discardTransientNativeInputForEditorRebindImpl()
+    fun discardTransientNativeInputForEditorRebind() =
+        discardTransientNativeInputForEditorRebindImpl()
 
     internal fun discardTransientNativeInputForExternalRecovery() =
         discardTransientNativeInputForExternalRecoveryImpl()
@@ -663,25 +683,29 @@ class EditorEditText @JvmOverloads constructor(
         hasPendingCompositionForExternalRefreshImpl()
 
     fun prepareForExternalEditorUpdateWithResult(): ExternalEditorUpdatePreparation =
-        prepareForExternalEditorUpdateWithResultImpl()
+        prepareExternalUpdateWithResultImpl()
 
-    fun prepareForExternalEditorCommand(): CommandPreparation = prepareForExternalEditorCommandImpl()
+    fun prepareForExternalEditorCommand(): CommandPreparation =
+        prepareForExternalEditorCommandImpl()
 
     fun handleCompositionCommit(
         text: String,
         replacementStartUtf16: Int,
         replacementEndUtf16: Int,
         newCursorPosition: Int = 1
-    ) =
-        handleCompositionCommitImpl(text, replacementStartUtf16, replacementEndUtf16, newCursorPosition)
+    ) = handleCompositionCommitImpl(
+        text,
+        replacementStartUtf16,
+        replacementEndUtf16,
+        newCursorPosition
+    )
 
     fun handleCorrectionCommit(
         startUtf16: Int,
         endUtf16: Int,
         renderedOldText: String,
         newText: String
-    ): Boolean =
-        handleCorrectionCommitImpl(startUtf16, endUtf16, renderedOldText, newText)
+    ): Boolean = handleCorrectionCommitImpl(startUtf16, endUtf16, renderedOldText, newText)
 
     fun handleMissingOldTextCorrectionCommit(
         startUtf16: Int,
@@ -694,8 +718,7 @@ class EditorEditText @JvmOverloads constructor(
     internal fun missingOldTextCorrectionTokenRangeForEditor(
         text: String,
         offsetUtf16: Int
-    ): Pair<Int, Int>? =
-        missingOldTextCorrectionTokenRangeForEditorImpl(text, offsetUtf16)
+    ): Pair<Int, Int>? = missingOldTextCorrectionTokenRangeForEditorImpl(text, offsetUtf16)
 
     /**
      * Handle surrounding text deletion from the IME.
@@ -705,7 +728,8 @@ class EditorEditText @JvmOverloads constructor(
      * @param beforeLength Number of UTF-16 code units to delete before the cursor.
      * @param afterLength Number of UTF-16 code units to delete after the cursor.
      */
-    fun handleDelete(beforeLength: Int, afterLength: Int) = handleDeleteImpl(beforeLength, afterLength)
+    fun handleDelete(beforeLength: Int, afterLength: Int) =
+        handleDeleteImpl(beforeLength, afterLength)
 
     /**
      * Handle backspace key press (hardware keyboard or key event).
@@ -743,8 +767,7 @@ class EditorEditText @JvmOverloads constructor(
     internal fun handlePrintableHardwareKeyEvent(
         event: KeyEvent,
         applyBaseEvent: () -> Boolean
-    ): Boolean =
-        handlePrintableHardwareKeyEventImpl(event, applyBaseEvent)
+    ): Boolean = handlePrintableHardwareKeyEventImpl(event, applyBaseEvent)
 
     fun performToolbarToggleMark(markName: String) = performToolbarToggleMarkImpl(markName)
 
@@ -851,29 +874,26 @@ class EditorEditText @JvmOverloads constructor(
 
     internal fun authorizeCurrentVisibleTextForPendingImeOperationForEditor(
         logicalCursorAfter: Int? = null
-    ) =
-        authorizeCurrentVisibleTextForPendingImeOperationForEditorImpl(logicalCursorAfter)
+    ) = authorizeCurrentVisibleTextForPendingImeOperationForEditorImpl(logicalCursorAfter)
 
     internal fun captureAuthoritativeInputSnapshotForEditor(): AuthoritativeInputSnapshot =
-        captureAuthoritativeInputSnapshotForEditorImpl()
+        captureAuthoritativeInputSnapshotImpl()
 
     internal fun deleteScalarRangeForPendingImeOperationForEditor(
         scalarFrom: Int,
-        scalarTo: Int,
+        scalarTo: Int
     ): EditorV2NativeIntentResult? =
         deleteScalarRangeForPendingImeOperationForEditorImpl(scalarFrom, scalarTo)
 
     internal fun promoteOptimisticInputForEditor(
         render: EditorV2NativeMutationRender,
-        logicalCursorAfter: Int,
-    ) =
-        promoteOptimisticInputForEditorImpl(render, logicalCursorAfter)
+        logicalCursorAfter: Int
+    ) = promoteOptimisticInputForEditorImpl(render, logicalCursorAfter)
 
     internal fun restoreAuthoritativeInputForEditor(
         snapshot: AuthoritativeInputSnapshot,
-        recoveryUpdateJson: String? = null,
-    ) =
-        restoreAuthoritativeInputForEditorImpl(snapshot, recoveryUpdateJson)
+        recoveryUpdateJson: String? = null
+    ) = restoreAuthoritativeInputForEditorImpl(snapshot, recoveryUpdateJson)
 
     internal fun handleStructuralBackspace() = handleStructuralBackspaceImpl()
 
@@ -882,22 +902,27 @@ class EditorEditText @JvmOverloads constructor(
         utf16To: Int,
         scalarFrom: Int,
         scalarTo: Int
-    ) =
-        handleStructuralDeleteImpl(utf16From, utf16To, scalarFrom, scalarTo)
+    ) = handleStructuralDeleteImpl(utf16From, utf16To, scalarFrom, scalarTo)
 
     internal fun applyVisibleCompositionCommitForPendingImeOperationForEditor(
         committedText: String,
         replacementStartUtf16: Int,
         replacementEndUtf16: Int,
         newCursorPosition: Int
-    ): Boolean =
-        applyVisibleCompositionCommitForPendingImeOperationForEditorImpl(committedText, replacementStartUtf16, replacementEndUtf16, newCursorPosition)
+    ): Boolean = applyVisibleCompositionCommitForPendingImeOperationForEditorImpl(
+        committedText,
+        replacementStartUtf16,
+        replacementEndUtf16,
+        newCursorPosition
+    )
 
-    internal fun commitAlreadyVisibleCompositionMutationForPendingImeOperationForEditor(
+    internal fun commitVisibleCompositionMutationForPendingImeOperation(
         committedText: String,
         newCursorPosition: Int
-    ): Boolean =
-        commitAlreadyVisibleCompositionMutationForPendingImeOperationForEditorImpl(committedText, newCursorPosition)
+    ): Boolean = commitVisibleCompositionMutationForPendingImeOperationImpl(
+        committedText,
+        newCursorPosition
+    )
 
     internal fun currentScalarSelection(): Pair<Int, Int>? = currentScalarSelectionImpl()
 
@@ -914,9 +939,8 @@ class EditorEditText @JvmOverloads constructor(
         cursorCapsModeForEditorImpl(reqModes, baseCapsMode)
 
     internal fun initialSurroundingTextForImeForEditor(
-        mapper: ImeTextCoordinateMapper? = null,
-    ): ImeInitialSurroundingText? =
-        initialSurroundingTextForImeForEditorImpl(mapper)
+        mapper: ImeTextCoordinateMapper? = null
+    ): ImeInitialSurroundingText? = initialSurroundingTextForImeForEditorImpl(mapper)
 
     fun selectedImageGeometry(): SelectedImageGeometry? = selectedImageGeometryImpl()
 
@@ -1000,7 +1024,9 @@ class EditorEditText @JvmOverloads constructor(
     internal fun editorVerticalScrollRange(): Int = computeVerticalScrollRange()
 
     companion object {
-        private val nextNativeBindingToken = java.util.concurrent.atomic.AtomicLong(Long.MAX_VALUE / 2)
+        private val nextNativeBindingToken = java.util.concurrent.atomic.AtomicLong(
+            Long.MAX_VALUE / 2
+        )
         internal const val DEFAULT_AUTO_CAPITALIZE = "sentences"
         internal const val DEFAULT_AUTO_CORRECT = true
         internal const val DEFAULT_KEYBOARD_TYPE = "default"

@@ -136,9 +136,6 @@ android {
         consumerProguardFiles "consumer-rules.pro"
     }
 
-    // Task 16C: the v2 engine is the ONLY runtime. The prebuilt Rust .so
-    // files (35 editor_v2_* symbols + version, zero legacy symbols) and the
-    // regenerated UniFFI Kotlin bindings are wired into every variant.
     sourceSets {
         main {
             jniLibs.srcDirs = [

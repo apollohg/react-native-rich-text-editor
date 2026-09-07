@@ -17,26 +17,45 @@ internal data class ViewerImageAttachment(
     val bounds: Rect,
     val declaredSize: Pair<Int, Int>?,
     /** Ordinal within the immutable prepared artifact; id is source-qualified cache identity. */
-    val ordinal: Int = -1,
+    val ordinal: Int = -1
 ) {
-    val hasDeclaredSize: Boolean get() = (declaredSize?.first ?: 0) > 0 && (declaredSize?.second ?: 0) > 0
+    val hasDeclaredSize: Boolean get() = (declaredSize?.first ?: 0) > 0 &&
+        (declaredSize?.second ?: 0) > 0
 
     companion object {
         /** Compiler/admission ceiling; supports far more than the old 256 IDs. */
         const val MAXIMUM_ADMITTED_ATTACHMENTS = 8_192
         fun sourceAndDeclaredSize(block: ViewerBlock): Triple<String, String, Pair<Int, Int>?>? {
-            val atom = block.inlines.filterIsInstance<Atom>().firstOrNull { it.nodeType == "image" } ?: return null
+            val atom =
+                block.inlines.filterIsInstance<Atom>().firstOrNull { it.nodeType == "image" }
+                    ?: return null
             val attrs = runCatching { JSONObject(atom.attrsJson) }.getOrNull() ?: return null
             val source = attrs.optString("src").takeIf(String::isNotEmpty) ?: return null
-            val width = attrs.optDouble("width", Double.NaN).takeIf { it.isFinite() && it > 0 }?.toInt()
-            val height = attrs.optDouble("height", Double.NaN).takeIf { it.isFinite() && it > 0 }?.toInt()
-            return Triple("${atom.docPos}:$source", source, if (width != null && height != null) width to height else null)
+            val width = attrs.optDouble("width", Double.NaN).takeIf {
+                it.isFinite() && it > 0
+            }?.toInt()
+            val height = attrs.optDouble("height", Double.NaN).takeIf {
+                it.isFinite() && it > 0
+            }?.toInt()
+            return Triple(
+                "${atom.docPos}:$source",
+                source,
+                if (width != null &&
+                    height != null
+                ) {
+                    width to height
+                } else {
+                    null
+                }
+            )
         }
     }
 }
 
 internal class ViewerImageIntrinsicStore(entryLimit: Int = 256) {
-    companion object { val shared = ViewerImageIntrinsicStore() }
+    companion object {
+        val shared = ViewerImageIntrinsicStore()
+    }
 
     private data class Entry(val size: Pair<Int, Int>, var access: Long)
     private val lock = Any()
@@ -53,7 +72,10 @@ internal class ViewerImageIntrinsicStore(entryLimit: Int = 256) {
         }
         // The global LRU is process-wide, but sidecar fallback must be the
         // measurement owner's explicit local state. Never scan another host.
-        return cached ?: FabricAttachmentSidecars.currentMeasurementState?.intrinsicSizeForSourceQualifiedId(id)
+        return cached
+            ?: FabricAttachmentSidecars.currentMeasurementState?.intrinsicSizeForSourceQualifiedId(
+                id
+            )
     }
 
     /** Test-only global-LRU inspection; [size] can consult its scoped owner. */
@@ -71,7 +93,13 @@ internal class ViewerImageIntrinsicStore(entryLimit: Int = 256) {
         access += 1
         values[id] = Entry(size, access)
         while (values.size > entryLimit) {
-            val oldest = values.minWithOrNull(compareBy<Map.Entry<String, Entry>> { it.value.access }.thenBy { it.key }) ?: break
+            val oldest =
+                values.minWithOrNull(
+                    compareBy<Map.Entry<String, Entry>> {
+                        it.value.access
+                    }.thenBy { it.key }
+                )
+                    ?: break
             values.remove(oldest.key)
         }
     }
@@ -142,8 +170,18 @@ internal class ViewerAttachmentRevisionState {
         semanticGenerationIdentity = null
     }
 
-    fun recordIntrinsicSize(id: String, ordinal: Int, width: Int, height: Int, declaredSize: Pair<Int, Int>?): Boolean = synchronized(lock) {
-        if (declaredSize != null || width <= 0 || height <= 0 || ordinal !in 0 until admittedAttachmentCount) return@synchronized false
+    fun recordIntrinsicSize(
+        id: String,
+        ordinal: Int,
+        width: Int,
+        height: Int,
+        declaredSize: Pair<Int, Int>?
+    ): Boolean = synchronized(lock) {
+        if (declaredSize != null || width <= 0 || height <= 0 ||
+            ordinal !in 0 until admittedAttachmentCount
+        ) {
+            return@synchronized false
+        }
         val byteIndex = ordinal / 8
         val mask = 1 shl (ordinal % 8)
         if ((publishedBits[byteIndex].toInt() and mask) != 0) return@synchronized false
@@ -159,8 +197,11 @@ internal class ViewerAttachmentRevisionState {
     fun intrinsicSize(ordinal: Int): Pair<Int, Int>? = synchronized(lock) {
         if (ordinal !in 0 until admittedAttachmentCount) return@synchronized null
         val mask = 1 shl (ordinal % 8)
-        if ((publishedBits[ordinal / 8].toInt() and mask) == 0) null
-        else intrinsicWidths[ordinal] to intrinsicHeights[ordinal]
+        if ((publishedBits[ordinal / 8].toInt() and mask) == 0) {
+            null
+        } else {
+            intrinsicWidths[ordinal] to intrinsicHeights[ordinal]
+        }
     }
 
     fun recordResourceFailure(ordinal: Int): Boolean = synchronized(lock) {
@@ -177,8 +218,11 @@ internal class ViewerAttachmentRevisionState {
         if (index < 0) return@synchronized null
         val ordinal = attachmentOrdinals[index]
         val mask = 1 shl (ordinal % 8)
-        if ((publishedBits[ordinal / 8].toInt() and mask) == 0) null
-        else intrinsicWidths[ordinal] to intrinsicHeights[ordinal]
+        if ((publishedBits[ordinal / 8].toInt() and mask) == 0) {
+            null
+        } else {
+            intrinsicWidths[ordinal] to intrinsicHeights[ordinal]
+        }
     }
 
     private fun clearLocked() {
@@ -204,12 +248,14 @@ internal class ViewerImagePipeline(
         RenderImageLoader.PreparedSource,
         Long,
         DecodedBitmapPriority,
-        (DecodedBitmapLease?) -> Unit,
+        (DecodedBitmapLease?) -> Unit
     ) -> RenderImageLoader.LoadHandle = { source, owner, priority, callback ->
         NativeImagePipeline.load(source, owner, priority, callback)
-    },
+    }
 ) {
-    companion object { const val PREFETCH_MARGIN_PX = 480 }
+    companion object {
+        const val PREFETCH_MARGIN_PX = 480
+    }
 
     private val lock = Any()
     private var generation = ""
@@ -223,12 +269,19 @@ internal class ViewerImagePipeline(
     var onPixels: ((ViewerImageAttachment, DecodedBitmapLease) -> Unit)? = null
     var onPixelsReleased: ((Set<String>) -> Unit)? = null
     var onIntrinsicMetadata: ((ViewerImageAttachment, Int, Int) -> Unit)? = null
+
     /** Contains only the internal attachment token, never its source URL. */
     var onResourceFailure: ((ViewerImageAttachment) -> Unit)? = null
 
-    fun begin(generation: String, imagesEnabled: Boolean, policy: ImageLoadingPolicy = this.policy) {
+    fun begin(
+        generation: String,
+        imagesEnabled: Boolean,
+        policy: ImageLoadingPolicy = this.policy
+    ) {
         val released = synchronized(lock) {
-            if (this.generation == generation && enabled == imagesEnabled && this.policy == policy) {
+            if (this.generation == generation && enabled == imagesEnabled &&
+                this.policy == policy
+            ) {
                 return@synchronized null
             }
             receipts.values.forEach(RenderImageLoader.LoadHandle::cancel)
@@ -270,14 +323,24 @@ internal class ViewerImagePipeline(
     }
 
     fun updateVisibleRect(visible: Rect, attachments: List<ViewerImageAttachment>) {
-        val prefetched = if (visible.isEmpty) Rect() else Rect(visible).apply {
-            inset(-PREFETCH_MARGIN_PX, -PREFETCH_MARGIN_PX)
+        val prefetched = if (visible.isEmpty) {
+            Rect()
+        } else {
+            Rect(visible).apply {
+                inset(-PREFETCH_MARGIN_PX, -PREFETCH_MARGIN_PX)
+            }
         }
         val eligibleIds = attachments.asSequence()
-            .filter { it.ordinal >= 0 && it.source.isNotEmpty() && Rect.intersects(it.bounds, prefetched) }
+            .filter {
+                it.ordinal >= 0 && it.source.isNotEmpty() &&
+                    Rect.intersects(it.bounds, prefetched)
+            }
             .mapTo(mutableSetOf()) { it.id }
         val visibleIds = attachments.asSequence()
-            .filter { it.ordinal >= 0 && it.source.isNotEmpty() && Rect.intersects(it.bounds, visible) }
+            .filter {
+                it.ordinal >= 0 && it.source.isNotEmpty() &&
+                    Rect.intersects(it.bounds, visible)
+            }
             .mapTo(mutableSetOf()) { it.id }
         val released = mutableSetOf<String>()
         val start = synchronized(lock) {
@@ -305,7 +368,7 @@ internal class ViewerImagePipeline(
                             DecodedBitmapPriority.VISIBLE
                         } else {
                             DecodedBitmapPriority.PREFETCH
-                        },
+                        }
                     ).also { requestPriorities[attachment.id] = it.third }
                 }
         }
@@ -331,12 +394,16 @@ internal class ViewerImagePipeline(
                 PreparedProseInstrumentation.imageMetadataRead()
                 onIntrinsicMetadata?.invoke(attachment, bitmap.width, bitmap.height)
                 val delivered = synchronized(lock) {
-                    if (!enabled || generation != requestGeneration || attachment.id !in requested) {
+                    if (!enabled || generation != requestGeneration ||
+                        attachment.id !in requested
+                    ) {
                         false
                     } else {
                         PreparedProseInstrumentation.imageDecoded()
                         val callback = onPixels
-                        if (callback == null) false else {
+                        if (callback == null) {
+                            false
+                        } else {
                             callback.invoke(attachment, lease)
                             true
                         }

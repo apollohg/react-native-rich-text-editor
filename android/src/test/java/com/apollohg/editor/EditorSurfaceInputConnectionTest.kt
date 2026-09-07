@@ -5,7 +5,9 @@ import android.view.KeyEvent
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.CorrectionInfo
 import android.view.inputmethod.EditorInfo
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -18,8 +20,13 @@ class EditorSurfaceInputConnectionTest {
     private class Surface(context: Context) : EditorTextSurface(context) {
         var published = 0
         val keys = mutableListOf<Int>()
-        override fun onSurfaceInputStateChanged() { published++ }
-        override fun dispatchKeyEvent(event: KeyEvent): Boolean { keys += event.keyCode; return true }
+        override fun onSurfaceInputStateChanged() {
+            published++
+        }
+        override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+            keys += event.keyCode
+            return true
+        }
     }
 
     @Test

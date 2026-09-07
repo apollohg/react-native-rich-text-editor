@@ -31,7 +31,11 @@ object CodeHighlightingRegistry {
         for (range in ranges) {
             if (range.start < end || range.length <= 0 || range.start > text.length ||
                 range.length > text.length - range.start || range.color !in 0L..0xffffffffL ||
-                range.fontStyle !in 0..7 || !isBoundary(range.start) || !isBoundary(range.start + range.length)) return false
+                range.fontStyle !in 0..7 || !isBoundary(range.start) ||
+                !isBoundary(range.start + range.length)
+            ) {
+                return false
+            }
             end = range.start + range.length
         }
         return true
@@ -39,7 +43,10 @@ object CodeHighlightingRegistry {
 }
 
 internal data class CodeHighlightBlock(val start: Int, val text: String, val language: String?)
-internal data class HighlightedCodeBlock(val block: CodeHighlightBlock, val ranges: List<CodeHighlightRange>)
+internal data class HighlightedCodeBlock(
+    val block: CodeHighlightBlock,
+    val ranges: List<CodeHighlightRange>
+)
 
 internal class CodeHighlightingSession {
     private data class Request(
@@ -47,7 +54,7 @@ internal class CodeHighlightingSession {
         val provider: CodeHighlightingProvider,
         val theme: String,
         val blocks: List<CodeHighlightBlock>,
-        val completion: (Result<List<HighlightedCodeBlock>>) -> Unit,
+        val completion: (Result<List<HighlightedCodeBlock>>) -> Unit
     )
 
     companion object {
@@ -72,8 +79,12 @@ internal class CodeHighlightingSession {
         }
     }
 
-    fun update(provider: String, theme: String, blocks: List<CodeHighlightBlock>,
-               completion: (Result<List<HighlightedCodeBlock>>) -> Unit) {
+    fun update(
+        provider: String,
+        theme: String,
+        blocks: List<CodeHighlightBlock>,
+        completion: (Result<List<HighlightedCodeBlock>>) -> Unit
+    ) {
         cancel()
         val resolved = CodeHighlightingRegistry.provider(provider)
         val schedule = synchronized(lock) {
@@ -106,7 +117,11 @@ internal class CodeHighlightingSession {
                 val output = mutableListOf<HighlightedCodeBlock>()
                 for (block in request.blocks) {
                     if (!current(request.generation)) break
-                    val ranges = request.provider.highlight(block.text, block.language, request.theme).toList()
+                    val ranges = request.provider.highlight(
+                        block.text,
+                        block.language,
+                        request.theme
+                    ).toList()
                     require(CodeHighlightingRegistry.validRanges(block.text, ranges)) {
                         "Code highlighting provider returned invalid UTF-16 ranges"
                     }
@@ -114,8 +129,10 @@ internal class CodeHighlightingSession {
                 }
                 output.toList()
             }
-            if (current(request.generation)) main.post {
-                if (current(request.generation)) request.completion(result)
+            if (current(request.generation)) {
+                main.post {
+                    if (current(request.generation)) request.completion(result)
+                }
             }
         } finally {
             scheduleNext()

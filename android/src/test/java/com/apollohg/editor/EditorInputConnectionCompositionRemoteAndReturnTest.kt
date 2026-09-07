@@ -13,16 +13,17 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.robolectric.Shadows.shadowOf
-import org.robolectric.Robolectric
-import org.robolectric.RuntimeEnvironment
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-internal class EditorInputConnectionCompositionRemoteAndReturnTest : EditorInputConnectionTestSupport() {
+internal class EditorInputConnectionCompositionRemoteAndReturnTest :
+    EditorInputConnectionTestSupport() {
     @Test
     fun `typing keeps every character when a remote update lands between keystrokes`() {
         val backend = FakeEditorV2Backend()
@@ -34,7 +35,9 @@ internal class EditorInputConnectionCompositionRemoteAndReturnTest : EditorInput
             this.editorId = 1
             v2Driver = adapter
         }
-        adapter.setContentHtml("<p>ab</p>")?.let { editText.applyUpdateJSON(it, notifyListener = false) }
+        adapter.setContentHtml("<p>ab</p>")?.let {
+            editText.applyUpdateJSON(it, notifyListener = false)
+        }
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         activity.setContentView(editText)
         assertTrue(editText.requestFocus())
@@ -68,7 +71,9 @@ internal class EditorInputConnectionCompositionRemoteAndReturnTest : EditorInput
             this.editorId = 1
             v2Driver = adapter
         }
-        adapter.setContentHtml("<p>hello</p>")?.let { editText.applyUpdateJSON(it, notifyListener = false) }
+        adapter.setContentHtml("<p>hello</p>")?.let {
+            editText.applyUpdateJSON(it, notifyListener = false)
+        }
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         activity.setContentView(editText)
         assertTrue(editText.requestFocus())
@@ -103,7 +108,9 @@ internal class EditorInputConnectionCompositionRemoteAndReturnTest : EditorInput
             editorId = 1
             v2Driver = adapter
         }
-        adapter.setContentHtml("<p>seed</p>")?.let { editText.applyUpdateJSON(it, notifyListener = false) }
+        adapter.setContentHtml("<p>seed</p>")?.let {
+            editText.applyUpdateJSON(it, notifyListener = false)
+        }
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         activity.setContentView(editText)
         assertTrue(editText.requestFocus())
@@ -119,12 +126,18 @@ internal class EditorInputConnectionCompositionRemoteAndReturnTest : EditorInput
         shadowOf(Looper.getMainLooper()).idle()
 
         assertEquals("s\nd", editText.text.toString())
-        assertEquals(1, editText.imeTraceSnapshotForTesting().count {
-            it.startsWith("lineBoundaryInputRefreshScheduled")
-        })
-        assertEquals(1, editText.imeTraceSnapshotForTesting().count {
-            it.startsWith("restartInput:source=lineBoundary:deleteAndSplit")
-        })
+        assertEquals(
+            1,
+            editText.imeTraceSnapshotForTesting().count {
+                it.startsWith("lineBoundaryInputRefreshScheduled")
+            }
+        )
+        assertEquals(
+            1,
+            editText.imeTraceSnapshotForTesting().count {
+                it.startsWith("restartInput:source=lineBoundary:deleteAndSplit")
+            }
+        )
     }
 
     @Test
@@ -141,7 +154,9 @@ internal class EditorInputConnectionCompositionRemoteAndReturnTest : EditorInput
             editorId = 1
             v2Driver = adapter
         }
-        adapter.setContentHtml("<p>seed</p>")?.let { editText.applyUpdateJSON(it, notifyListener = false) }
+        adapter.setContentHtml("<p>seed</p>")?.let {
+            editText.applyUpdateJSON(it, notifyListener = false)
+        }
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         activity.setContentView(editText)
         assertTrue(editText.requestFocus())
@@ -157,12 +172,18 @@ internal class EditorInputConnectionCompositionRemoteAndReturnTest : EditorInput
         shadowOf(Looper.getMainLooper()).idle()
 
         assertEquals("seed REMOTE\n", editText.text.toString())
-        assertEquals(1, editText.imeTraceSnapshotForTesting().count {
-            it.startsWith("lineBoundaryInputRefreshScheduled")
-        })
-        assertEquals(1, editText.imeTraceSnapshotForTesting().count {
-            it.startsWith("restartInput:source=lineBoundary:")
-        })
+        assertEquals(
+            1,
+            editText.imeTraceSnapshotForTesting().count {
+                it.startsWith("lineBoundaryInputRefreshScheduled")
+            }
+        )
+        assertEquals(
+            1,
+            editText.imeTraceSnapshotForTesting().count {
+                it.startsWith("restartInput:source=lineBoundary:")
+            }
+        )
     }
 
     @Test
@@ -179,7 +200,9 @@ internal class EditorInputConnectionCompositionRemoteAndReturnTest : EditorInput
             editorId = 1
             v2Driver = adapter
         }
-        adapter.setContentHtml("<p>seed</p>")?.let { editText.applyUpdateJSON(it, notifyListener = false) }
+        adapter.setContentHtml("<p>seed</p>")?.let {
+            editText.applyUpdateJSON(it, notifyListener = false)
+        }
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         activity.setContentView(editText)
         assertTrue(editText.requestFocus())
@@ -206,19 +229,32 @@ internal class EditorInputConnectionCompositionRemoteAndReturnTest : EditorInput
         assertEquals(5, refreshedEditorInfo.initialSelStart)
         assertEquals(5, refreshedEditorInfo.initialSelEnd)
         assertEquals("seed\n", refreshedEditorInfo.getInitialTextBeforeCursor(20, 0).toString())
-        assertTrue(refreshedEditorInfo.initialCapsMode hasInputFlag InputType.TYPE_TEXT_FLAG_CAP_SENTENCES)
-        assertEquals(1, editText.imeTraceSnapshotForTesting().count {
-            it.startsWith("lineBoundaryInputRefreshScheduled")
-        })
-        assertEquals(1, editText.imeTraceSnapshotForTesting().count {
-            it.startsWith("restartInput:source=lineBoundary:splitBlock")
-        })
-        assertEquals(1, editText.imeTraceSnapshotForTesting().count {
-            it.startsWith("createInputConnection:boundEditor=1 boundGen=$initialGeneration")
-        })
-        assertTrue(editText.imeTraceSnapshotForTesting().any {
-            it.startsWith("applySelectionFromJSON:doc=") && it.contains("scalar=5..5")
-        })
+        assertTrue(
+            refreshedEditorInfo.initialCapsMode hasInputFlag InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        )
+        assertEquals(
+            1,
+            editText.imeTraceSnapshotForTesting().count {
+                it.startsWith("lineBoundaryInputRefreshScheduled")
+            }
+        )
+        assertEquals(
+            1,
+            editText.imeTraceSnapshotForTesting().count {
+                it.startsWith("restartInput:source=lineBoundary:splitBlock")
+            }
+        )
+        assertEquals(
+            1,
+            editText.imeTraceSnapshotForTesting().count {
+                it.startsWith("createInputConnection:boundEditor=1 boundGen=$initialGeneration")
+            }
+        )
+        assertTrue(
+            editText.imeTraceSnapshotForTesting().any {
+                it.startsWith("applySelectionFromJSON:doc=") && it.contains("scalar=5..5")
+            }
+        )
 
         assertTrue(refreshedConnection.commitText("x", 1))
         shadowOf(Looper.getMainLooper()).idle()

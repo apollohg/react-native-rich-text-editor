@@ -1,20 +1,21 @@
 package com.apollohg.editor.viewer
-import android.graphics.Canvas
-import android.graphics.Bitmap
-import android.graphics.Rect
 import android.app.Activity
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Rect
 import android.os.Looper
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.view.View
 import android.view.ViewGroup
-import android.widget.FrameLayout
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
-import com.apollohg.editor.PreparedProseRecyclerHarness
+import android.widget.FrameLayout
+import com.apollohg.editor.OrderedListMarkerSpan
 import com.apollohg.editor.PreparedProseBenchmarkConfiguration
 import com.apollohg.editor.PreparedProsePerformanceGates
+import com.apollohg.editor.PreparedProseRecyclerHarness
 import com.apollohg.editor.ProseViewerConfiguration
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.ProseViewerErrorCode
@@ -22,23 +23,22 @@ import com.apollohg.editor.ProseViewerInteractionListenerAdapter
 import com.apollohg.editor.ProseViewerMention
 import com.apollohg.editor.ProseViewerSource
 import com.apollohg.editor.ProseViewerView
-import com.apollohg.editor.OrderedListMarkerSpan
 import com.apollohg.editor.RenderBridge
+import java.io.File
+import java.util.concurrent.TimeUnit
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.io.File
-import java.util.concurrent.TimeUnit
-import org.json.JSONArray
-import org.json.JSONObject
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -50,7 +50,7 @@ internal class PreparedProseLayoutMarkersTest : PreparedProseLayoutTestFixture()
             index = 1,
             kind = null,
             checked = false,
-            isLast = true,
+            isLast = true
         )
         val bulletContext = orderedContext.copy(ordered = false)
         val checkedTaskContext = bulletContext.copy(kind = "task", checked = true)
@@ -58,31 +58,31 @@ internal class PreparedProseLayoutMarkersTest : PreparedProseLayoutTestFixture()
             identity: Int,
             context: ViewerListContext,
             storedDepth: Int,
-            isMarkerOwner: Boolean,
+            isMarkerOwner: Boolean
         ) = ViewerListItemAncestor(
             identity = identity,
             context = context,
             nestingDepth = storedDepth,
             isFirstRenderableLeaf = isMarkerOwner,
-            isFinalRenderableLeaf = isMarkerOwner,
+            isFinalRenderableLeaf = isMarkerOwner
         )
         val ancestorChains = listOf(
             listOf(ancestor(0, orderedContext, storedDepth = 2, isMarkerOwner = true)),
             listOf(
                 ancestor(100, bulletContext, storedDepth = 8, isMarkerOwner = false),
-                ancestor(1, orderedContext, storedDepth = 0, isMarkerOwner = true),
+                ancestor(1, orderedContext, storedDepth = 0, isMarkerOwner = true)
             ),
             listOf(
                 ancestor(101, orderedContext, storedDepth = 12, isMarkerOwner = false),
                 ancestor(102, bulletContext, storedDepth = 3, isMarkerOwner = false),
-                ancestor(2, orderedContext, storedDepth = 0, isMarkerOwner = true),
+                ancestor(2, orderedContext, storedDepth = 0, isMarkerOwner = true)
             ),
             listOf(
                 ancestor(103, bulletContext, storedDepth = 20, isMarkerOwner = true),
                 ancestor(104, checkedTaskContext, storedDepth = 2, isMarkerOwner = true),
                 ancestor(105, orderedContext, storedDepth = 0, isMarkerOwner = true),
-                ancestor(3, orderedContext, storedDepth = 1, isMarkerOwner = true),
-            ),
+                ancestor(3, orderedContext, storedDepth = 1, isMarkerOwner = true)
+            )
         )
         val blocks = ancestorChains.mapIndexed { index, ancestors ->
             val markerOwner = ancestors.last()
@@ -95,17 +95,17 @@ internal class PreparedProseLayoutMarkersTest : PreparedProseLayoutTestFixture()
                     identity = markerOwner.identity,
                     nestingDepth = markerOwner.nestingDepth,
                     isFirstRenderableLeaf = true,
-                    isFinalRenderableLeaf = true,
+                    isFinalRenderableLeaf = true
                 ),
                 inlines = listOf(ViewerInline.Text("item", emptyList())),
-                listItemAncestors = ancestors,
+                listItemAncestors = ancestors
             )
         }
         val document = ViewerDocument(
             semanticKey = "ordered-marker-theme",
             blocks = blocks,
             isEmpty = false,
-            retainedBytes = 128,
+            retainedBytes = 128
         )
         val theme = PreparedProseTheme.resolve(null, density = 1f)
 
@@ -115,7 +115,7 @@ internal class PreparedProseLayoutMarkersTest : PreparedProseLayoutTestFixture()
             theme = theme,
             widthPx = 320,
             density = 1f,
-            collapsesWhenEmpty = false,
+            collapsesWhenEmpty = false
         )
         val markerFragments = layout.blocks
             .flatMap { it.fragments }
@@ -140,7 +140,7 @@ internal class PreparedProseLayoutMarkersTest : PreparedProseLayoutTestFixture()
         val fixtures = listOf(
             Fixture(index = 27, semanticDepth = 0, expected = "AA)"),
             Fixture(index = 3_999, semanticDepth = 1, expected = "MMMCMXCIX)"),
-            Fixture(index = 42, semanticDepth = 2, expected = "42)"),
+            Fixture(index = 42, semanticDepth = 2, expected = "42)")
         )
         val themeJson =
             """{"list":{"orderedMarker":{"schemes":["upperAlpha","upperRoman","decimal"],"suffix":")"}}}"""
@@ -162,21 +162,21 @@ internal class PreparedProseLayoutMarkersTest : PreparedProseLayoutTestFixture()
                                 .put("ordered", deepest)
                                 .put("index", if (deepest) fixture.index else 1)
                                 .put("isFirst", true)
-                                .put("isLast", true),
-                        ),
+                                .put("isLast", true)
+                        )
                 )
             }
             renderElements.put(
                 JSONObject()
                     .put("type", "blockStart")
                     .put("nodeType", "paragraph")
-                    .put("depth", fixture.semanticDepth + 1),
+                    .put("depth", fixture.semanticDepth + 1)
             )
             renderElements.put(
                 JSONObject()
                     .put("type", "textRun")
                     .put("text", "item")
-                    .put("marks", JSONArray()),
+                    .put("marks", JSONArray())
             )
             renderElements.put(JSONObject().put("type", "blockEnd"))
             repeat(fixture.semanticDepth + 1) {
@@ -187,12 +187,12 @@ internal class PreparedProseLayoutMarkersTest : PreparedProseLayoutTestFixture()
                 renderElements.toString(),
                 16f,
                 0xFF000000.toInt(),
-                editorTheme,
+                editorTheme
             )
             val editorLabel = editor.getSpans(
                 0,
                 editor.length,
-                OrderedListMarkerSpan::class.java,
+                OrderedListMarkerSpan::class.java
             ).single().label
 
             val orderedContext = ViewerListContext(
@@ -200,7 +200,7 @@ internal class PreparedProseLayoutMarkersTest : PreparedProseLayoutTestFixture()
                 index = fixture.index,
                 kind = null,
                 checked = false,
-                isLast = true,
+                isLast = true
             )
             val ancestors = (0..fixture.semanticDepth).map { depth ->
                 val deepest = depth == fixture.semanticDepth
@@ -209,7 +209,7 @@ internal class PreparedProseLayoutMarkersTest : PreparedProseLayoutTestFixture()
                     context = if (deepest) orderedContext else orderedContext.copy(ordered = false),
                     nestingDepth = 50 - depth,
                     isFirstRenderableLeaf = deepest,
-                    isFinalRenderableLeaf = deepest,
+                    isFinalRenderableLeaf = deepest
                 )
             }
             val block = ViewerBlock(
@@ -221,23 +221,23 @@ internal class PreparedProseLayoutMarkersTest : PreparedProseLayoutTestFixture()
                     identity = ancestors.last().identity,
                     nestingDepth = 40 - fixture.semanticDepth,
                     isFirstRenderableLeaf = true,
-                    isFinalRenderableLeaf = true,
+                    isFinalRenderableLeaf = true
                 ),
                 inlines = listOf(ViewerInline.Text("item", emptyList())),
-                listItemAncestors = ancestors,
+                listItemAncestors = ancestors
             )
             val viewer = StaticLayoutAndroidProseLayoutEngine().prepare(
                 document = ViewerDocument(
                     semanticKey = "conformance-${fixture.semanticDepth}",
                     blocks = listOf(block),
                     isEmpty = false,
-                    retainedBytes = 64,
+                    retainedBytes = 64
                 ),
                 key = testLayoutKey("conformance-${fixture.semanticDepth}"),
                 theme = viewerTheme,
                 widthPx = 320,
                 density = 1f,
-                collapsesWhenEmpty = false,
+                collapsesWhenEmpty = false
             )
             val viewerLabel = viewer.blocks
                 .flatMap { it.fragments }
@@ -265,13 +265,13 @@ internal class PreparedProseLayoutMarkersTest : PreparedProseLayoutTestFixture()
                         PreparedProseFragment(
                             PreparedProseFragmentKind.TEXT,
                             Rect(0, index * 10, 10, index * 10 + 10),
-                            layout = blockLayout,
+                            layout = blockLayout
                         )
                     ),
-                    bounds = Rect(0, index * 10, 10, index * 10 + 10),
+                    bounds = Rect(0, index * 10, 10, index * 10 + 10)
                 )
             },
-            retainedBytes = 0,
+            retainedBytes = 0
         )
         val visited = mutableListOf<Int>()
 

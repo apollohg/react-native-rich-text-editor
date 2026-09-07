@@ -13,16 +13,17 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.robolectric.Shadows.shadowOf
-import org.robolectric.Robolectric
-import org.robolectric.RuntimeEnvironment
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-internal class EditorInputConnectionCompositionHardwareKeysTest : EditorInputConnectionTestSupport() {
+internal class EditorInputConnectionCompositionHardwareKeysTest :
+    EditorInputConnectionTestSupport() {
     @Test
     fun `key event backspace during composition edits transient text without mutating rust`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
@@ -40,10 +41,14 @@ internal class EditorInputConnectionCompositionHardwareKeysTest : EditorInputCon
         assertNotNull(inputConnection)
         assertTrue(inputConnection!!.setComposingText("abc", 1))
 
-        assertTrue(inputConnection.sendKeyEvent(android.view.KeyEvent(
-            android.view.KeyEvent.ACTION_DOWN,
-            android.view.KeyEvent.KEYCODE_DEL
-        )))
+        assertTrue(
+            inputConnection.sendKeyEvent(
+                android.view.KeyEvent(
+                    android.view.KeyEvent.ACTION_DOWN,
+                    android.view.KeyEvent.KEYCODE_DEL
+                )
+            )
+        )
         assertTrue(inputConnection.commitText("ab", 1))
 
         assertFalse(deleteCalled)
@@ -51,7 +56,7 @@ internal class EditorInputConnectionCompositionHardwareKeysTest : EditorInputCon
     }
 
     @Test
-    fun `duplicate composition key event across view and input connection edits transient text once`() {
+    fun `duplicate composition key across view and input connection edits text once`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson("Hello "), notifyListener = false)
         editText.setSelection(6)
@@ -318,10 +323,14 @@ internal class EditorInputConnectionCompositionHardwareKeysTest : EditorInputCon
         assertNotNull(inputConnection)
         assertTrue(inputConnection!!.setComposingText("abc", 1))
 
-        assertTrue(inputConnection.sendKeyEvent(android.view.KeyEvent(
-            android.view.KeyEvent.ACTION_DOWN,
-            android.view.KeyEvent.KEYCODE_ENTER
-        )))
+        assertTrue(
+            inputConnection.sendKeyEvent(
+                android.view.KeyEvent(
+                    android.view.KeyEvent.ACTION_DOWN,
+                    android.view.KeyEvent.KEYCODE_ENTER
+                )
+            )
+        )
 
         assertFalse(deleteAndSplitCalled)
         assertEquals(0, editText.reconciliationCount)

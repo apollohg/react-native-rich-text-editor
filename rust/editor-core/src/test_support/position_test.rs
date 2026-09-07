@@ -7,7 +7,7 @@ use crate::position::PositionMap;
 use crate::render::{list_marker_string, task_list_marker_string, RenderElement};
 use crate::schema::presets::tiptap_schema;
 use crate::schema::Schema;
-use crate::transform::{Source, Step, StepMap, Transaction};
+use crate::transform::{Step, StepMap, Transaction};
 
 // Helper builders (matching model_test.rs conventions)
 

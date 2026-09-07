@@ -1,26 +1,26 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.EditorEditText.ExternalEditorUpdatePreparation
 import com.apollohg.editor.EditorEditText.CommandPreparation
+import com.apollohg.editor.EditorEditText.ExternalEditorUpdatePreparation
 
 internal fun EditorEditText.prepareForExternalEditorUpdateImpl(): Boolean =
-    prepareForExternalEditorUpdateInternal().ready
+    prepareExternalUpdateInternal().ready
 
-    /**
-     * Performs external-update preflight while retaining a mutation snapshot
-     * for the caller that will apply it. This prevents a second state render
-     * after a composing commit has already produced and adopted one.
-     */
+/**
+ * Performs external-update preflight while retaining a mutation snapshot
+ * for the caller that will apply it. This prevents a second state render
+ * after a composing commit has already produced and adopted one.
+ */
 internal fun EditorEditText.hasPendingCompositionForExternalRefreshImpl(): Boolean =
     externalTextComposition != null || activeInputConnection?.hasPendingComposition() == true
 
-internal fun EditorEditText.prepareForExternalEditorUpdateWithResultImpl(): ExternalEditorUpdatePreparation {
+internal fun EditorEditText.prepareExternalUpdateWithResultImpl(): ExternalEditorUpdatePreparation {
     externalUpdatePreparationCaptureDepth += 1
     if (externalUpdatePreparationCaptureDepth == 1) {
         capturedExternalUpdatePreparationJSON = null
     }
     return try {
-        val preparation = prepareForExternalEditorUpdateInternal()
+        val preparation = prepareExternalUpdateInternal()
         ExternalEditorUpdatePreparation(
             ready = preparation.ready,
             adoptedUpdateJSON = capturedExternalUpdatePreparationJSON
@@ -33,7 +33,7 @@ internal fun EditorEditText.prepareForExternalEditorUpdateWithResultImpl(): Exte
     }
 }
 
-internal fun EditorEditText.prepareForExternalEditorUpdateInternal(): ExternalEditorUpdatePreparation {
+internal fun EditorEditText.prepareExternalUpdateInternal(): ExternalEditorUpdatePreparation {
     if (blockExternalEditorUpdatePreparationForTesting) {
         return ExternalEditorUpdatePreparation(ready = false, adoptedUpdateJSON = null)
     }

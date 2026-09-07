@@ -1,10 +1,13 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.EditorEditText.Companion.RECENT_HANDLED_HARDWARE_KEY_DOWN_WINDOW_MS
 import android.os.SystemClock
 import android.view.KeyEvent
+import com.apollohg.editor.EditorEditText.Companion.RECENT_HANDLED_HARDWARE_KEY_DOWN_WINDOW_MS
 
-internal fun EditorEditText.handleCompositionKeyEventImpl(event: KeyEvent, applyBaseEvent: () -> Boolean): Boolean {
+internal fun EditorEditText.handleCompositionKeyEventImpl(
+    event: KeyEvent,
+    applyBaseEvent: () -> Boolean
+): Boolean {
     val inputConnection = activeInputConnection ?: return false
     if (!inputConnection.hasPendingComposition()) return false
     if (!isCompositionKeyCode(event.keyCode)) return false
@@ -20,7 +23,11 @@ internal fun EditorEditText.handleCompositionKeyEventImpl(event: KeyEvent, apply
         runWithTransientInputMutationGuard {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_DEL,
-                KeyEvent.KEYCODE_FORWARD_DEL -> inputConnection.deleteTransientTextForHardwareKeyEvent(event)
+                KeyEvent.KEYCODE_FORWARD_DEL ->
+                    inputConnection.deleteTransientTextForHardwareKeyEvent(
+                        event
+                    )
+
                 else -> applyBaseEvent()
             }
         }
@@ -30,7 +37,8 @@ internal fun EditorEditText.handleCompositionKeyEventImpl(event: KeyEvent, apply
     if (event.action == KeyEvent.ACTION_UP) {
         if (lastHandledHardwareKeySignature?.let {
                 it.keyCode == event.keyCode && it.downTime == event.downTime
-            } == true) {
+            } == true
+        ) {
             lastHandledHardwareKeySignature = null
         }
         return true
@@ -38,27 +46,32 @@ internal fun EditorEditText.handleCompositionKeyEventImpl(event: KeyEvent, apply
     return false
 }
 
-internal fun EditorEditText.isCompositionKeyCode(keyCode: Int): Boolean =
-    when (keyCode) {
-        KeyEvent.KEYCODE_DEL,
-        KeyEvent.KEYCODE_FORWARD_DEL,
-        KeyEvent.KEYCODE_ENTER,
-        KeyEvent.KEYCODE_NUMPAD_ENTER,
-        KeyEvent.KEYCODE_TAB -> true
-        else -> false
-    }
+internal fun EditorEditText.isCompositionKeyCode(keyCode: Int): Boolean = when (keyCode) {
+    KeyEvent.KEYCODE_DEL,
+    KeyEvent.KEYCODE_FORWARD_DEL,
+    KeyEvent.KEYCODE_ENTER,
+    KeyEvent.KEYCODE_NUMPAD_ENTER,
+    KeyEvent.KEYCODE_TAB -> true
 
-internal fun EditorEditText.handleHardwareKeyDownImpl(keyCode: Int, shiftPressed: Boolean): Boolean {
+    else -> false
+}
+
+internal fun EditorEditText.handleHardwareKeyDownImpl(
+    keyCode: Int,
+    shiftPressed: Boolean
+): Boolean {
     if (!isEditable || isApplyingRustState) return false
     return when (keyCode) {
         KeyEvent.KEYCODE_DEL -> {
             handleBackspace()
             true
         }
+
         KeyEvent.KEYCODE_FORWARD_DEL -> {
             handleForwardDelete()
             true
         }
+
         KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
             if (shiftPressed) {
                 handleHardBreak()
@@ -67,20 +80,22 @@ internal fun EditorEditText.handleHardwareKeyDownImpl(keyCode: Int, shiftPressed
             }
             true
         }
+
         KeyEvent.KEYCODE_TAB -> handleTab(shiftPressed)
+
         else -> false
     }
 }
 
-internal fun EditorEditText.isSupportedHardwareMutationKey(keyCode: Int): Boolean =
-    when (keyCode) {
-        KeyEvent.KEYCODE_DEL,
-        KeyEvent.KEYCODE_FORWARD_DEL,
-        KeyEvent.KEYCODE_ENTER,
-        KeyEvent.KEYCODE_NUMPAD_ENTER,
-        KeyEvent.KEYCODE_TAB -> true
-        else -> false
-    }
+internal fun EditorEditText.isSupportedHardwareMutationKey(keyCode: Int): Boolean = when (keyCode) {
+    KeyEvent.KEYCODE_DEL,
+    KeyEvent.KEYCODE_FORWARD_DEL,
+    KeyEvent.KEYCODE_ENTER,
+    KeyEvent.KEYCODE_NUMPAD_ENTER,
+    KeyEvent.KEYCODE_TAB -> true
+
+    else -> false
+}
 
 internal fun EditorEditText.isReadOnlyTextMutationKeyEventImpl(event: KeyEvent): Boolean {
     if (isSupportedHardwareMutationKey(event.keyCode) ||
@@ -97,6 +112,7 @@ internal fun EditorEditText.isReadOnlyTextMutationKeyEventImpl(event: KeyEvent):
             KeyEvent.KEYCODE_X,
             KeyEvent.KEYCODE_Z,
             KeyEvent.KEYCODE_Y -> true
+
             else -> false
         }
     }
@@ -130,7 +146,8 @@ internal fun EditorEditText.handleHardwareKeyEventImpl(event: KeyEvent?): Boolea
         KeyEvent.ACTION_UP -> {
             if (lastHandledHardwareKeySignature?.let {
                     it.keyCode == event.keyCode && it.downTime == event.downTime
-                } == true) {
+                } == true
+            ) {
                 lastHandledHardwareKeySignature = null
                 true
             } else {
@@ -176,14 +193,17 @@ internal fun EditorEditText.handlePrintableHardwareKeyEventImpl(
                 true
             }
         }
+
         KeyEvent.ACTION_UP -> {
             if (lastHandledHardwareKeySignature?.let {
                     it.keyCode == event.keyCode && it.downTime == event.downTime
-                } == true) {
+                } == true
+            ) {
                 lastHandledHardwareKeySignature = null
             }
             false
         }
+
         else -> false
     }
 }
@@ -201,7 +221,7 @@ internal fun EditorEditText.hardwareKeyEventSignature(event: KeyEvent): Hardware
         repeatCount = event.repeatCount
     )
 
-    @Suppress("DEPRECATION")
+@Suppress("DEPRECATION")
 internal fun EditorEditText.keyEventCharacters(event: KeyEvent): String? = event.characters
 
 internal fun EditorEditText.keyEventText(event: KeyEvent): String? {
@@ -243,7 +263,9 @@ internal fun EditorEditText.markHandledHardwareKeyDown(signature: HardwareKeyEve
     recentHandledHardwareKeyDownUptimeMs = SystemClock.uptimeMillis()
 }
 
-internal fun EditorEditText.didRecentlyHandleHardwareKeyDown(signature: HardwareKeyEventSignature): Boolean {
+internal fun EditorEditText.didRecentlyHandleHardwareKeyDown(
+    signature: HardwareKeyEventSignature
+): Boolean {
     val recentSignature = recentHandledHardwareKeyDownSignature ?: return false
     val elapsedMs = SystemClock.uptimeMillis() - recentHandledHardwareKeyDownUptimeMs
     if (elapsedMs > RECENT_HANDLED_HARDWARE_KEY_DOWN_WINDOW_MS) {

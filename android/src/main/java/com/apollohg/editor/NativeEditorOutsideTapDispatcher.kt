@@ -80,9 +80,7 @@ internal object NativeEditorOutsideTapDispatcher {
         }
     }
 
-    private class OutsideTapWindowRoute(
-        window: Window
-    ) {
+    private class OutsideTapWindowRoute(window: Window) {
         private data class OutsideTapCandidate(
             val view: WeakReference<NativeEditorExpoView>,
             val downRawX: Float,
@@ -171,7 +169,9 @@ internal object NativeEditorOutsideTapDispatcher {
             val window = windowRef.get()
             val activeCallback = callback
             val baseCallback = callbackBase
-            if (window != null && activeCallback != null && window.callback === activeCallback && baseCallback != null) {
+            if (window != null && activeCallback != null && window.callback === activeCallback &&
+                baseCallback != null
+            ) {
                 window.callback = baseCallback
             }
             callback = null
@@ -197,6 +197,7 @@ internal object NativeEditorOutsideTapDispatcher {
                         handleActionDown(activeViews, event)
                         baseCallback.dispatchTouchEvent(event)
                     }
+
                     MotionEvent.ACTION_MOVE -> {
                         val result = baseCallback.dispatchTouchEvent(event)
                         if (hasMovedBeyondTapSlop(event)) {
@@ -204,6 +205,7 @@ internal object NativeEditorOutsideTapDispatcher {
                         }
                         result
                     }
+
                     MotionEvent.ACTION_UP -> {
                         val result = baseCallback.dispatchTouchEvent(event)
                         if (hasMovedBeyondTapSlop(event)) {
@@ -213,11 +215,13 @@ internal object NativeEditorOutsideTapDispatcher {
                         }
                         result
                     }
+
                     MotionEvent.ACTION_CANCEL -> {
                         val result = baseCallback.dispatchTouchEvent(event)
                         cancelPendingOutsideTapCandidates("cancel")
                         result
                     }
+
                     else -> baseCallback.dispatchTouchEvent(event)
                 }
             } finally {
@@ -296,7 +300,9 @@ internal object NativeEditorOutsideTapDispatcher {
                 return
             }
             view.traceOutsideTap("confirm outside tap candidate reason=$reason")
-            view.handleOutsideTapDecisionFromWindowDispatcher(NativeEditorOutsideTapDecision.OUTSIDE_EDITOR)
+            view.handleOutsideTapDecisionFromWindowDispatcher(
+                NativeEditorOutsideTapDecision.OUTSIDE_EDITOR
+            )
         }
 
         private fun hasMovedBeyondTapSlop(event: MotionEvent): Boolean =
@@ -320,7 +326,10 @@ internal object NativeEditorOutsideTapDispatcher {
             return dx * dx + dy * dy > touchSlopPx * touchSlopPx
         }
 
-        private fun cancelPendingOutsideTapCandidatesFor(view: NativeEditorExpoView, reason: String) {
+        private fun cancelPendingOutsideTapCandidatesFor(
+            view: NativeEditorExpoView,
+            reason: String
+        ) {
             pendingOutsideTapCandidates.toList().forEach { candidate ->
                 if (candidate.view.get() === view) {
                     pendingOutsideTapCandidates.remove(candidate)

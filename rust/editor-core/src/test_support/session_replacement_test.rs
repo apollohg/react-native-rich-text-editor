@@ -97,10 +97,6 @@ fn await_remote_sessions_reject_replacement_not_ready_for_every_transport() {
         DocumentState::AwaitRemote
     );
 
-    // Row 1 of the policy matrix: AwaitRemote + ANY transport state is
-    // ENGINE_NOT_READY, even when the transport claims to be connected.
-    // Every state is reached through the real Task 8 transitions: connect,
-    // socket open, current-generation synchronize, incompatible close.
     let mut generation = 0;
     for transport in [
         TransportState::Disconnected,

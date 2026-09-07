@@ -18,7 +18,7 @@ internal fun EditorEditText.caretRectImpl(): RectF? {
         textLayout,
         clampedOffset,
         paint,
-        textLayout.text,
+        textLayout.text
     )
     val left = totalPaddingLeft + caretLeft - scrollX
     val top = totalPaddingTop + bounds.top - scrollY
@@ -52,7 +52,10 @@ internal fun EditorEditText.updateAtomBoundaryCursorVisibility() {
     }
 }
 
-internal fun EditorEditText.restoreSelectionFromAtomBoundaryIfNeeded(start: Int, end: Int): Boolean {
+internal fun EditorEditText.restoreSelectionFromAtomBoundaryIfNeeded(
+    start: Int,
+    end: Int
+): Boolean {
     if (!isCollapsedAtomBoundarySelection(start, end)) {
         if (start >= 0 && end >= 0) {
             lastAllowedAtomCaretSelection = start to end
@@ -124,7 +127,10 @@ internal fun EditorEditText.currentScalarSelectionImpl(): Pair<Int, Int>? {
 internal fun EditorEditText.currentLogicalScalarSelectionForInputImpl(): Pair<Int, Int>? =
     currentLogicalScalarSelection()
 
-internal fun EditorEditText.renderedRangeContainsGeneratedStructureImpl(start: Int, endExclusive: Int): Boolean {
+internal fun EditorEditText.renderedRangeContainsGeneratedStructureImpl(
+    start: Int,
+    endExclusive: Int
+): Boolean {
     if (start >= endExclusive) return false
     val content = text as? Spanned ?: return false
     return content.getSpans(start, endExclusive, Annotation::class.java).any { annotation ->
@@ -132,7 +138,10 @@ internal fun EditorEditText.renderedRangeContainsGeneratedStructureImpl(start: I
     }
 }
 
-internal fun EditorEditText.compositionContentRangeForEditorImpl(start: Int, end: Int): Pair<Int, Int>? {
+internal fun EditorEditText.compositionContentRangeForEditorImpl(
+    start: Int,
+    end: Int
+): Pair<Int, Int>? {
     val content = text as? Spanned ?: return null
     var contentStart = minOf(start, end).coerceIn(0, content.length)
     var contentEnd = maxOf(start, end).coerceIn(0, content.length)
@@ -258,20 +267,20 @@ internal fun EditorEditText.rawScalarSelection(currentText: String): Pair<Int, I
         PositionBridge.utf16ToScalar(snappedHead, currentText)
 }
 
-    /**
-     * Apply a selection from a parsed JSON selection object.
-     *
-     * The selection JSON matches the format from `serialize_editor_update`:
-     * ```json
-     * {"type": "text", "anchor": 5, "head": 5}
-     * {"type": "node", "pos": 10}
-     * {"type": "all"}
-     * ```
-     *
-     * anchor/head from Rust are **document positions** (include structural tokens).
-     * We convert doc→scalar via the v2 driver ([EditorV2Driver.scalarPositionForDoc])
-     * before converting to UTF-16.
-     */
+/**
+ * Apply a selection from a parsed JSON selection object.
+ *
+ * The selection JSON matches the format from `serialize_editor_update`:
+ * ```json
+ * {"type": "text", "anchor": 5, "head": 5}
+ * {"type": "node", "pos": 10}
+ * {"type": "all"}
+ * ```
+ *
+ * anchor/head from Rust are **document positions** (include structural tokens).
+ * We convert doc→scalar via the v2 driver ([EditorV2Driver.scalarPositionForDoc])
+ * before converting to UTF-16.
+ */
 internal fun EditorEditText.applySelectionFromJSON(
     selection: org.json.JSONObject,
     documentVersion: String?
@@ -319,19 +328,19 @@ internal fun EditorEditText.applySelectionFromJSON(
                     documentVersion = documentVersion
                 )
             }
+
             "node" -> {
                 logicalSelectionSnapshot = null
                 val docPos = exactV2ScalarInt(selection.opt("pos") as? Number) ?: return
-                // Convert doc position to scalar offset.
                 val nodeSelectionDriver = v2Driver ?: return
                 val scalarPos = nodeSelectionDriver.scalarPositionForDoc(docPos) ?: docPos
                 val startUtf16 = PositionBridge.scalarToUtf16(scalarPos, currentText)
                 val len = text?.length ?: 0
                 val clamped = startUtf16.coerceIn(0, len)
-                // Select one character (the void node placeholder).
                 val endClamped = (clamped + 1).coerceAtMost(len)
                 setSelection(clamped, endClamped)
             }
+
             "all" -> {
                 logicalSelectionSnapshot = null
                 selectAll()

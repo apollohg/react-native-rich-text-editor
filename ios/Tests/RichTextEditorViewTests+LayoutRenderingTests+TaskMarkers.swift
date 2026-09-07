@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testTaskMarkerTap_togglesCheckedStateAfterScrolling() throws {
@@ -43,8 +43,10 @@ extension RichTextEditorViewTests {
         for checked in [true, false] {
             let marker = taskMarkerTightRect(forCharacterIndex: start, in: textView)
             let point = textView.convert(
-                CGPoint(x: marker.midX + textView.contentOffset.x,
-                        y: marker.midY + textView.contentOffset.y),
+                CGPoint(
+                    x: marker.midX + textView.contentOffset.x,
+                    y: marker.midY + textView.contentOffset.y
+                ),
                 to: view
             )
             XCTAssertTrue(view.bounds.contains(point))
@@ -106,7 +108,7 @@ extension RichTextEditorViewTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true, "kind": "task", "checked": false}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true, "kind": "task", "checked": false}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Line one", "marks": []},
             {"type": "voidInline", "nodeType": "hardBreak", "docPos": 8},
@@ -215,7 +217,7 @@ extension RichTextEditorViewTests {
             fromJSON: taskListJSON(items: [
                 (text: "Alpha", checked: false),
                 (text: "Bravo", checked: false),
-                (text: "Charlie", checked: false),
+                (text: "Charlie", checked: false)
             ]),
             // A small font keeps line pitch well under the ~24pt checkbox
             // height, guaranteeing the slop zone bleeds into neighboring
@@ -267,7 +269,7 @@ extension RichTextEditorViewTests {
             fromJSON: taskListJSON(items: [
                 (text: "Alpha", checked: false),
                 (text: "Bravo", checked: false),
-                (text: "Charlie", checked: false),
+                (text: "Charlie", checked: false)
             ]),
             baseFont: .systemFont(ofSize: 8),
             textColor: .label

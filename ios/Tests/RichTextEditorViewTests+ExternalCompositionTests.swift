@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
 
@@ -82,7 +82,7 @@ extension RichTextEditorViewTests {
                 "operationIndex",
                 "limit",
                 "actual",
-                "details",
+                "details"
             ]),
             file: file,
             line: line

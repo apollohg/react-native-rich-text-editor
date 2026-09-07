@@ -134,8 +134,12 @@ final class CoreTextProseLayoutEngine {
                     let innerBottom = remaining.reduce(CGFloat.zero) { $0 + (closing.contains($1) ? sheet.box($1.nodeType).outerInsets.bottom : 0) }
                     let y = cursorY - innerTop - (opening.contains(ancestor) ? box.inset.top : 0)
                     let end = prepared.nextY + innerBottom + (closing.contains(ancestor) ? box.inset.bottom : 0)
-                    let rect = CGRect(x: theme.contentInsets.left + outerLeft + box.margin.left, y: y,
-                                      width: max(1, canonicalWidth - theme.contentInsets.left - theme.contentInsets.right - outerLeft - outerRight - box.margin.left - box.margin.right), height: max(0, end - y))
+                    let rect = CGRect(
+                        x: theme.contentInsets.left + outerLeft + box.margin.left,
+                        y: y,
+                        width: max(1, canonicalWidth - theme.contentInsets.left - theme.contentInsets.right - outerLeft - outerRight - box.margin.left - box.margin.right),
+                        height: max(0, end - y)
+                    )
                     containerBounds[ancestor.identity] = containerBounds[ancestor.identity].map { $0.union(rect) } ?? rect
                     containerStyles[ancestor.identity] = (box, depth)
                     outerLeft += box.outerInsets.left
@@ -184,6 +188,15 @@ final class CoreTextProseLayoutEngine {
         return [ViewerListItemAncestor(identity: boundary.identity, context: context)]
     }
 
+    private struct BlockPreparation {
+        let block: PreparedProseBlock
+        let interactions: [PreparedProseInteraction]
+        let accessibilityNodes: [PreparedProseAccessibilityNode]
+        let attachment: ViewerImageAttachment?
+        let nextY: CGFloat
+        let retainedBytes: Int
+    }
+
     private func prepareBlock(
         _ block: ViewerBlock,
         highlighting: [NativeCodeHighlightRange],
@@ -196,7 +209,7 @@ final class CoreTextProseLayoutEngine {
         disappearingListItemIdentities: Set<Int>,
         displayScale: CGFloat,
         warningSemanticGeneration: String
-    ) -> (block: PreparedProseBlock, interactions: [PreparedProseInteraction], accessibilityNodes: [PreparedProseAccessibilityNode], attachment: ViewerImageAttachment?, nextY: CGFloat, retainedBytes: Int) {
+    ) -> BlockPreparation {
         let sheet = theme.styleSheet
         let box = sheet?.box(block.nodeType) ?? EditorStyleBox()
         let ancestors = block.styleAncestors.reduce(UIEdgeInsets.zero) { $0.adding(sheet?.box($1.nodeType).outerInsets ?? .zero) }
@@ -240,8 +253,7 @@ final class CoreTextProseLayoutEngine {
                     return spacing + (ancestor.context.isLast ? theme.listSpacingAfter : theme.listItemSpacing)
                 }
                 if ancestor.identity == block.listItemBoundary?.identity,
-                   block.listItemBoundary?.isFinalRenderableLeaf == true
-                {
+                   block.listItemBoundary?.isFinalRenderableLeaf == true {
                     return spacing + theme.listItemSpacing
                 }
                 return spacing
@@ -256,23 +268,45 @@ final class CoreTextProseLayoutEngine {
             let bounds = CGRect(x: textX, y: cursorY, width: slotWidth, height: height)
             var fragments: [PreparedProseFragment] = []
             if block.inBlockquote {
-                fragments.append(.init(kind: .border, bounds: CGRect(x: contentX, y: cursorY,
-                    width: theme.quoteBorderWidth, height: height), color: theme.quoteBorderColor.cgColor,
-                    strokeWidth: theme.quoteBorderWidth))
+                fragments.append(.init(
+                    kind: .border,
+                    bounds: CGRect(
+                        x: contentX,
+                        y: cursorY,
+                        width: theme.quoteBorderWidth,
+                        height: height
+                    ),
+                    color: theme.quoteBorderColor.cgColor,
+                    strokeWidth: theme.quoteBorderWidth
+                ))
             }
             if let marker {
                 let markerX = textX - markerGutter
                 let markerTop = cursorY + max(0, (height - marker.ascent - marker.descent) / 2)
-                let markerBounds = CGRect(x: markerX, y: markerTop, width: marker.width,
-                                          height: marker.ascent + marker.descent)
-                fragments.append(.init(kind: .marker, line: marker.line,
-                    origin: CGPoint(x: markerX, y: markerTop + marker.ascent), bounds: markerBounds,
-                    color: theme.listMarkerColor.cgColor, label: marker.label, checked: marker.checked, styleBox: checkbox))
+                let markerBounds = CGRect(
+                    x: markerX,
+                    y: markerTop,
+                    width: marker.width,
+                    height: marker.ascent + marker.descent
+                )
+                fragments.append(.init(
+                    kind: .marker,
+                    line: marker.line,
+                    origin: CGPoint(x: markerX, y: markerTop + marker.ascent),
+                    bounds: markerBounds,
+                    color: theme.listMarkerColor.cgColor,
+                    label: marker.label,
+                    checked: marker.checked,
+                    styleBox: checkbox
+                ))
             }
             let blockBounds = fragments.reduce(bounds) { $0.union($1.bounds) }
-            let prepared = PreparedProseBlock(fragments: fragments, bounds: blockBounds,
-                atomSlot: PreparedProseAtomSlot(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJSON, bounds: bounds))
-            return (prepared, [], [], nil, blockBounds.maxY + itemSpacing, prepared.estimatedRetainedBytes)
+            let prepared = PreparedProseBlock(
+                fragments: fragments,
+                bounds: blockBounds,
+                atomSlot: PreparedProseAtomSlot(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJSON, bounds: bounds)
+            )
+            return BlockPreparation(block: prepared, interactions: [], accessibilityNodes: [], attachment: nil, nextY: blockBounds.maxY + itemSpacing, retainedBytes: prepared.estimatedRetainedBytes)
         }
         if block.nodeType == "image", let image = ViewerImageAttachment.sourceAndDeclaredSize(in: block) {
             let availableImageWidth = max(1, contentWidth - listInset - quoteInset - box.inset.left - box.inset.right)
@@ -297,7 +331,7 @@ final class CoreTextProseLayoutEngine {
                 label: accessibleImageLabel,
                 bounds: bounds
             )
-            return (prepared, [], [node], attachment, bounds.maxY + itemSpacing, prepared.estimatedRetainedBytes + 192)
+            return BlockPreparation(block: prepared, interactions: [], accessibilityNodes: [node], attachment: attachment, nextY: bounds.maxY + itemSpacing, retainedBytes: prepared.estimatedRetainedBytes + 192)
         }
         if block.nodeType == "horizontalRule" || block.nodeType == "horizontal_rule" {
             let ruleX = contentX + listInset + quoteInset + box.inset.left
@@ -326,18 +360,18 @@ final class CoreTextProseLayoutEngine {
                 fragments: fragments,
                 bounds: bounds
             )
-            return (
-                prepared,
-                [],
-                [PreparedProseAccessibilityNode(
+            return BlockPreparation(
+                block: prepared,
+                interactions: [],
+                accessibilityNodes: [PreparedProseAccessibilityNode(
                     interactionIndex: nil,
                     role: .separator,
                     label: "Separator",
                     bounds: bounds
                 )],
-                nil,
-                totalEnd + itemSpacing,
-                prepared.estimatedRetainedBytes
+                attachment: nil,
+                nextY: totalEnd + itemSpacing,
+                retainedBytes: prepared.estimatedRetainedBytes
             )
         }
 
@@ -353,8 +387,7 @@ final class CoreTextProseLayoutEngine {
         let semanticGeometryRanges = attributed.semanticRanges.enumerated().map {
             (index: $0.offset, range: $0.element.range)
         }
-        let accessibilityGeometryRanges = attributed.accessibilityRanges.enumerated().compactMap {
-            index, range -> (index: Int, range: NSRange)? in
+        let accessibilityGeometryRanges = attributed.accessibilityRanges.enumerated().compactMap { index, range -> (index: Int, range: NSRange)? in
             guard range.role == .text else { return nil }
             return (index, range.range)
         }
@@ -537,13 +570,13 @@ final class CoreTextProseLayoutEngine {
                 rects: rects
             )
         }
-        return (
-            prepared,
-            interactions,
-            accessibilityNodes,
-            nil,
-            totalEnd + itemSpacing,
-            256 + attributed.retainedBytes + prepared.estimatedRetainedBytes
+        return BlockPreparation(
+            block: prepared,
+            interactions: interactions,
+            accessibilityNodes: accessibilityNodes,
+            attachment: nil,
+            nextY: totalEnd + itemSpacing,
+            retainedBytes: 256 + attributed.retainedBytes + prepared.estimatedRetainedBytes
         )
     }
 

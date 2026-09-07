@@ -1,20 +1,22 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.NativeEditorExpoView.Companion.LOG_TAG
 import android.os.Looper
 import android.util.Log
+import com.apollohg.editor.NativeEditorExpoView.Companion.LOG_TAG
 
 /** Applies an editor update from JS without echoing it back through events. */
 internal fun NativeEditorExpoView.applyEditorUpdateImpl(updateJson: String): Boolean =
     applyEditorUpdateOutcome(updateJson, scheduleViewCommandRetry = true) ==
         PendingEditorUpdateApplyOutcome.APPLIED
 
-    /** Applies a reset-style update from JS, discarding pending native composition. */
-internal fun NativeEditorExpoView.applyEditorResetUpdateImpl(updateJson: String): Boolean {
-    return applyEditorResetUpdateOutcome(updateJson) == PendingEditorUpdateApplyOutcome.APPLIED
-}
+/** Applies a reset-style update from JS, discarding pending native composition. */
+internal fun NativeEditorExpoView.applyEditorResetUpdateImpl(updateJson: String): Boolean =
+    applyEditorResetUpdateOutcome(updateJson) == PendingEditorUpdateApplyOutcome.APPLIED
 
-internal fun NativeEditorExpoView.applyEditorResetUpdateOutcome(updateJson: String, resetJson: String? = null): PendingEditorUpdateApplyOutcome {
+internal fun NativeEditorExpoView.applyEditorResetUpdateOutcome(
+    updateJson: String,
+    resetJson: String? = null
+): PendingEditorUpdateApplyOutcome {
     if (Looper.myLooper() != Looper.getMainLooper()) {
         val postedEditorId = richTextView.editorId
         val apply = Runnable {
@@ -45,9 +47,16 @@ internal fun NativeEditorExpoView.applyEditorResetUpdateOutcome(updateJson: Stri
     richTextView.editorEditText.discardTransientNativeInputForExternalRecovery()
     clearPendingEditorUpdateState(resetAppliedRevision = false)
     clearPendingViewCommandUpdateRetry()
-    val adoptedUpdateJson = if (adapter == null) updateJson else {
-        (if (resetJson == null) adapter.adoptExternalRender(updateJson)
-        else adapter.adoptExternalReset(updateJson, resetJson))
+    val adoptedUpdateJson = if (adapter == null) {
+        updateJson
+    } else {
+        (
+            if (resetJson == null) {
+                adapter.adoptExternalRender(updateJson)
+            } else {
+                adapter.adoptExternalReset(updateJson, resetJson)
+            }
+            )
             ?: return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
     }
     drainPendingEditorUpdateEvents()
@@ -69,7 +78,10 @@ internal fun NativeEditorExpoView.applyEditorResetUpdateOutcome(updateJson: Stri
         isApplyingJSUpdate = false
     }
     if (applied) {
-        if (resetJson != null && documentVersionFromUpdateJSON(adoptedUpdateJson) != documentVersionFromUpdateJSON(updateJson)) {
+        if (resetJson != null &&
+            documentVersionFromUpdateJSON(adoptedUpdateJson) !=
+            documentVersionFromUpdateJSON(updateJson)
+        ) {
             onEditorUpdate(adoptedUpdateJson)
         }
         refreshReadyStateIfSettled()
@@ -83,10 +95,11 @@ internal fun NativeEditorExpoView.applyEditorResetUpdateOutcome(updateJson: Stri
 
 internal fun NativeEditorExpoView.isEditorReadyForNativeUpdate(): Boolean {
     val editorId = richTextView.editorId
-    return editorId == 0L || (isAttachedToNativeWindow && richTextView.editorEditText.editorId == editorId)
+    return editorId == 0L ||
+        (isAttachedToNativeWindow && richTextView.editorEditText.editorId == editorId)
 }
 
-    @Synchronized
+@Synchronized
 internal fun NativeEditorExpoView.markRemoteCommitRebaseScheduledImpl(editorId: Long): Boolean {
     if (remoteCommitRebaseScheduled && remoteCommitRebaseEditorId == editorId) return false
     remoteCommitRebaseScheduled = true
@@ -94,7 +107,7 @@ internal fun NativeEditorExpoView.markRemoteCommitRebaseScheduledImpl(editorId: 
     return true
 }
 
-    @Synchronized
+@Synchronized
 internal fun NativeEditorExpoView.clearRemoteCommitRebaseScheduled(editorId: Long) {
     if (remoteCommitRebaseEditorId != editorId) return
     remoteCommitRebaseScheduled = false
@@ -232,7 +245,9 @@ internal fun NativeEditorExpoView.prepareForEditorCommandJSONImpl(): String {
             blockedReason = "detached"
         )
     }
-    if (richTextView.editorId != 0L && richTextView.editorEditText.editorId != richTextView.editorId) {
+    if (richTextView.editorId != 0L &&
+        richTextView.editorEditText.editorId != richTextView.editorId
+    ) {
         return NativeEditorViewRegistry.commandPreparationJSON(
             ready = false,
             blockedReason = "detached"

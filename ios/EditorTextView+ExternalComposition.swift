@@ -1,5 +1,5 @@
-import UIKit
 import os
+import UIKit
 
 extension EditorTextView {
     struct ExternalTextCompositionState {
@@ -173,8 +173,7 @@ extension EditorTextView {
         if cancel,
            editorId != 0,
            let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
-           !adapter.isDestroyed
-        {
+           !adapter.isDestroyed {
             authoritativeUpdateJSON = adapter.currentStateJSON()
         }
         externalTextComposition = nil
@@ -268,7 +267,7 @@ extension EditorTextView {
               state.startingSelectedUtf16Range.location >= 0,
               state.startingSelectedUtf16Range.length >= 0,
               state.startingSelectedUtf16Range.location
-                + state.startingSelectedUtf16Range.length <= textStorage.length
+              + state.startingSelectedUtf16Range.length <= textStorage.length
         else {
             return
         }
@@ -293,7 +292,7 @@ extension EditorTextView {
         externalCompositionResultJSON([
             "version": 1,
             "type": "active",
-            "sessionId": sessionId,
+            "sessionId": sessionId
         ])
     }
 
@@ -310,7 +309,7 @@ extension EditorTextView {
             "sessionId": sessionId,
             "outcome": outcome,
             "cause": cause,
-            "text": text,
+            "text": text
         ]
         if let error {
             payload["error"] = error
@@ -335,7 +334,7 @@ extension EditorTextView {
             "version": 1,
             "type": "error",
             "sessionId": sessionId.map { $0 as Any } ?? NSNull(),
-            "error": externalCompositionErrorPayload(code: code, message: message),
+            "error": externalCompositionErrorPayload(code: code, message: message)
         ])
     }
 
@@ -348,7 +347,7 @@ extension EditorTextView {
             "operationIndex": NSNull(),
             "limit": NSNull(),
             "actual": NSNull(),
-            "details": NSNull(),
+            "details": NSNull()
         ]
     }
 

@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     /// Every placement renders as a custom button, with scroll items in the
@@ -8,7 +8,7 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
         let host = Self.attachToFixedWidthHost(toolbar, width: 320)
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
+            "appearance": "native"
         ]))
         toolbar.setItemsJSONForTesting(Self.placementToolbarFixtureJSON)
         host.layoutIfNeeded()
@@ -34,7 +34,7 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
         let host = Self.attachToFixedWidthHost(toolbar, width: 320)
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
+            "appearance": "native"
         ]))
         toolbar.setItemsJSONForTesting(Self.placementToolbarFixtureJSON)
         host.layoutIfNeeded()
@@ -49,9 +49,9 @@ extension RichTextEditorViewTests {
         }
 
         guard let startButton = descendant(withLabel: "Start", in: toolbar),
-              let endButton = descendant(withLabel: "End", in: toolbar),
-              let startSection = startButton.superview,
-              let endSection = endButton.superview
+            let endButton = descendant(withLabel: "End", in: toolbar),
+            let startSection = startButton.superview,
+            let endSection = endButton.superview
         else {
             XCTFail("expected both pinned toolbar buttons")
             return
@@ -80,7 +80,7 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
         let host = Self.attachToFixedWidthHost(toolbar, width: 320)
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
+            "appearance": "native"
         ]))
         toolbar.setItemsJSONForTesting(Self.placementToolbarFixtureJSON)
         host.setNeedsLayout()
@@ -112,7 +112,7 @@ extension RichTextEditorViewTests {
         let toolbar = EditorAccessoryToolbarView(frame: .zero)
         let host = Self.attachToFixedWidthHost(toolbar, width: 320)
         toolbar.apply(theme: EditorToolbarTheme(dictionary: [
-            "appearance": "native",
+            "appearance": "native"
         ]))
         toolbar.setItemsJSONForTesting(Self.placementToolbarFixtureJSON)
         host.setNeedsLayout()
@@ -124,8 +124,8 @@ extension RichTextEditorViewTests {
                 "title": "Alice Chen",
                 "subtitle": "Design",
                 "label": "alice",
-                "attrs": ["label": "alice"],
-            ])!,
+                "attrs": ["label": "alice"]
+            ])!
         ], trigger: "@")
         host.setNeedsLayout()
         host.layoutIfNeeded()
@@ -183,7 +183,7 @@ extension RichTextEditorViewTests {
                 "title": "Alice Chen",
                 "subtitle": "Design",
                 "label": "@alice",
-                "attrs": ["label": "@alice"],
+                "attrs": ["label": "@alice"]
             ])!,
             theme: nil
         )

@@ -81,8 +81,6 @@ pub struct AwarenessApplied {
 
 /// The desired local presence, retained beside the live `Awareness` so it
 /// survives store swaps (snapshot restore, import) with a fresh clock.
-// Not reachable from production call paths after the Task 16C legacy runtime
-// removal; exercised by crate tests.
 #[allow(dead_code)]
 struct DesiredLocalState {
     value: Value,
@@ -171,8 +169,6 @@ impl AwarenessCodec {
     }
 
     /// The desired local presence state, if one is currently published.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn local_state(&self) -> Option<&Value> {
         self.desired_local_state.as_ref().map(|state| &state.value)

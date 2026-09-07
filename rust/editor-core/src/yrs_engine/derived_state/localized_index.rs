@@ -34,7 +34,7 @@ pub(crate) struct LocalizedTextLeafCertificate {
     pub(super) marks_sha256: [u8; 32],
 }
 
-#[allow(dead_code)] // E1 evidence API is consumed by E2 and admission-oracle tests.
+#[allow(dead_code)]
 impl LocalizedTextLeafCertificate {
     pub(crate) fn doc_start(&self) -> u32 {
         self.doc_start
@@ -68,7 +68,7 @@ pub(crate) struct LocalizedTextLeafIndex {
     pub(super) retained_bytes: usize,
 }
 
-#[allow(dead_code)] // E1 evidence API is consumed by E2 and admission-oracle tests.
+#[allow(dead_code)]
 impl LocalizedTextLeafIndex {
     pub(super) fn build(
         document: &Document,

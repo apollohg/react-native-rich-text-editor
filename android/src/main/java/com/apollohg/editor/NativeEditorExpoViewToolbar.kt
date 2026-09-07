@@ -1,17 +1,16 @@
 package com.apollohg.editor
 
-import android.view.View.MeasureSpec
-
-import com.apollohg.editor.NativeEditorExpoView.PreflightUpdateEvent
-import com.apollohg.editor.NativeEditorExpoView.PendingNativeAction
-import com.apollohg.editor.NativeEditorExpoView.ToolbarPlacement
 import android.view.Gravity
 import android.view.View
+import android.view.View.MeasureSpec
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ScrollView
-import androidx.core.widget.NestedScrollView
 import androidx.core.view.ViewCompat
+import androidx.core.widget.NestedScrollView
+import com.apollohg.editor.NativeEditorExpoView.PendingNativeAction
+import com.apollohg.editor.NativeEditorExpoView.PreflightUpdateEvent
+import com.apollohg.editor.NativeEditorExpoView.ToolbarPlacement
 
 internal fun NativeEditorExpoView.refreshToolbarStateFromEditorSelection(): String? {
     if (richTextView.editorId == 0L) return null
@@ -118,7 +117,10 @@ internal fun NativeEditorExpoView.updateEditorViewportInset(forceMeasureToolbar:
         return
     }
 
-    val hostWidth = (resolveActivity(context)?.findViewById<ViewGroup>(android.R.id.content)?.width ?: width)
+    val hostWidth = (
+        resolveActivity(context)?.findViewById<ViewGroup>(android.R.id.content)?.width
+            ?: width
+        )
         .coerceAtLeast(0)
     val toolbarTheme = richTextView.editorEditText.theme?.toolbar
     val density = resources.displayMetrics.density
@@ -206,15 +208,16 @@ internal fun NativeEditorExpoView.handleToolbarItemPress(
     }
     var preflightUpdate: PreflightUpdateEvent? = null
     val needsEditorPreflight = when (item.type) {
-        ToolbarItemKind.mark,
-        ToolbarItemKind.heading,
-        ToolbarItemKind.blockquote,
-        ToolbarItemKind.list,
-        ToolbarItemKind.command,
-        ToolbarItemKind.node,
-        ToolbarItemKind.action -> true
-        ToolbarItemKind.group,
-        ToolbarItemKind.separator -> false
+        ToolbarItemKind.MARK,
+        ToolbarItemKind.HEADING,
+        ToolbarItemKind.BLOCKQUOTE,
+        ToolbarItemKind.LIST,
+        ToolbarItemKind.COMMAND,
+        ToolbarItemKind.NODE,
+        ToolbarItemKind.ACTION -> true
+
+        ToolbarItemKind.GROUP,
+        ToolbarItemKind.SEPARATOR -> false
     }
     if (needsEditorPreflight) {
         if (shouldBlockEditorCommandForPendingUpdate()) {
@@ -236,19 +239,36 @@ internal fun NativeEditorExpoView.handleToolbarItemPress(
     }
     if (handleDestroyedCurrentEditorIfNeeded()) return
     when (item.type) {
-        ToolbarItemKind.mark -> item.mark?.let { richTextView.editorEditText.performToolbarToggleMark(it) }
-        ToolbarItemKind.heading -> item.headingLevel?.let { richTextView.editorEditText.performToolbarToggleHeading(it) }
-        ToolbarItemKind.blockquote -> richTextView.editorEditText.performToolbarToggleBlockquote()
-        ToolbarItemKind.list -> item.listType?.name?.let { handleListToggle(it) }
-        ToolbarItemKind.command -> when (item.command) {
-            ToolbarCommand.indentList -> richTextView.editorEditText.performToolbarIndentListItem()
-            ToolbarCommand.outdentList -> richTextView.editorEditText.performToolbarOutdentListItem()
-            ToolbarCommand.undo -> richTextView.editorEditText.performToolbarUndo()
-            ToolbarCommand.redo -> richTextView.editorEditText.performToolbarRedo()
+        ToolbarItemKind.MARK -> item.mark?.let {
+            richTextView.editorEditText.performToolbarToggleMark(it)
+        }
+
+        ToolbarItemKind.HEADING -> item.headingLevel?.let {
+            richTextView.editorEditText.performToolbarToggleHeading(it)
+        }
+
+        ToolbarItemKind.BLOCKQUOTE -> richTextView.editorEditText.performToolbarToggleBlockquote()
+
+        ToolbarItemKind.LIST -> item.listType?.wireValue?.let { handleListToggle(it) }
+
+        ToolbarItemKind.COMMAND -> when (item.command) {
+            ToolbarCommand.INDENT_LIST -> richTextView.editorEditText.performToolbarIndentListItem()
+
+            ToolbarCommand.OUTDENT_LIST ->
+                richTextView.editorEditText.performToolbarOutdentListItem()
+
+            ToolbarCommand.UNDO -> richTextView.editorEditText.performToolbarUndo()
+
+            ToolbarCommand.REDO -> richTextView.editorEditText.performToolbarRedo()
+
             null -> Unit
         }
-        ToolbarItemKind.node -> item.nodeType?.let { richTextView.editorEditText.performToolbarInsertNode(it) }
-        ToolbarItemKind.action -> item.key?.let {
+
+        ToolbarItemKind.NODE -> item.nodeType?.let {
+            richTextView.editorEditText.performToolbarInsertNode(it)
+        }
+
+        ToolbarItemKind.ACTION -> item.key?.let {
             if (handleDestroyedCurrentEditorIfNeeded()) return
             val payload = mutableMapOf<String, Any>(
                 "key" to it,
@@ -257,7 +277,9 @@ internal fun NativeEditorExpoView.handleToolbarItemPress(
             addPreflightUpdateToEvent(payload, preflightUpdate)
             onToolbarActionForTesting?.invoke(payload) ?: onToolbarAction(payload)
         }
-        ToolbarItemKind.group -> Unit
-        ToolbarItemKind.separator -> Unit
+
+        ToolbarItemKind.GROUP -> Unit
+
+        ToolbarItemKind.SEPARATOR -> Unit
     }
 }

@@ -3,10 +3,15 @@ package com.apollohg.editor
 import android.graphics.Bitmap
 import android.os.Looper
 import android.view.View
+import java.util.concurrent.atomic.AtomicInteger
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
+import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -14,7 +19,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -24,10 +28,12 @@ internal class EditorImageRenderReuseTest : EditorInputConnectionTestFixture() {
     fun resetLoader() = RenderImageLoader.resetForTesting()
 
     @Test
-    fun `ordinary full block refresh retains loaded image geometry and ownership`() = verifyLoadedRefresh("renderBlocks")
+    fun `ordinary full block refresh retains loaded image geometry and ownership`() =
+        verifyLoadedRefresh("renderBlocks")
 
     @Test
-    fun `ordinary element refresh retains loaded image geometry and ownership`() = verifyLoadedRefresh("renderElements")
+    fun `ordinary element refresh retains loaded image geometry and ownership`() =
+        verifyLoadedRefresh("renderElements")
 
     private fun verifyLoadedRefresh(payload: String) {
         val decodes = AtomicInteger()
@@ -93,14 +99,19 @@ internal class EditorImageRenderReuseTest : EditorInputConnectionTestFixture() {
             assertNotSame(original, images(editor).single())
             assertFalse(original.matches("invalid-source", null, null))
             images(editor).single().close()
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     private fun editor(): EditorEditText {
         val activity = Robolectric.buildActivity(android.app.Activity::class.java).setup().get()
         val editor = EditorEditText(activity)
         activity.setContentView(editor)
-        editor.measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(900, View.MeasureSpec.EXACTLY))
+        editor.measure(
+            View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(900, View.MeasureSpec.EXACTLY)
+        )
         editor.layout(0, 0, 600, 900)
         return editor
     }
@@ -114,19 +125,48 @@ internal class EditorImageRenderReuseTest : EditorInputConnectionTestFixture() {
         fail("Image load did not finish")
     }
 
-    private fun images(editor: EditorEditText) = editor.text.getSpans(0, editor.length(), BlockImageSpan::class.java).toList()
+    private fun images(editor: EditorEditText) =
+        editor.text.getSpans(0, editor.length(), BlockImageSpan::class.java).toList()
 
-    private fun update(label: String, source: String = "data:image/png;base64,AQ==", payload: String = "renderBlocks", imageCount: Int = 1): String {
+    private fun update(
+        label: String,
+        source: String = "data:image/png;base64,AQ==",
+        payload: String = "renderBlocks",
+        imageCount: Int = 1
+    ): String {
         val blocks = JSONArray()
         repeat(imageCount) {
-            blocks.put(JSONArray().put(JSONObject().put("type", "voidBlock").put("nodeType", "image").put("docPos", it + 1).put("attrs", JSONObject().put("src", source))))
+            blocks.put(
+                JSONArray().put(
+                    JSONObject().put("type", "voidBlock").put("nodeType", "image").put(
+                        "docPos",
+                        it + 1
+                    ).put("attrs", JSONObject().put("src", source))
+                )
+            )
         }
-        blocks.put(JSONArray("""[{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"textRun","text":"$label","marks":[]},{"type":"blockEnd"}]"""))
+        blocks.put(
+            JSONArray(
+
+                """[{"type":"blockStart","nodeType":"paragraph","depth":0},""" +
+                    """{"type":"textRun","text":"$label","marks":[]},""" +
+                    """{"type":"blockEnd"}]"""
+            )
+        )
         val elements = JSONArray()
         for (index in 0 until blocks.length()) {
             val block = blocks.getJSONArray(index)
             for (element in 0 until block.length()) elements.put(block.get(element))
         }
-        return JSONObject().put(payload, if (payload == "renderBlocks") blocks else elements).toString()
+        return JSONObject().put(
+            payload,
+            if (payload ==
+                "renderBlocks"
+            ) {
+                blocks
+            } else {
+                elements
+            }
+        ).toString()
     }
 }

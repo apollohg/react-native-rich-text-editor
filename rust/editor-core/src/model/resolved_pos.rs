@@ -120,12 +120,10 @@ pub(crate) fn resolve_in_node(
                 });
             }
 
-            // If pos falls within the element's span (between open and close tags)
             let inner_start = offset + 1; // after open tag
             let inner_end = offset + child_size - 1; // before close tag
 
             if pos >= inner_start && pos <= inner_end {
-                // Position is inside this child element
                 let inner_pos = pos - inner_start;
                 path.push(
                     u32::try_from(child_idx).map_err(|_| {
@@ -135,7 +133,6 @@ pub(crate) fn resolve_in_node(
                 return resolve_in_node(child, inner_pos, path);
             }
 
-            // pos is at or after the close tag — continue to next child
             offset += child_size;
         }
     }

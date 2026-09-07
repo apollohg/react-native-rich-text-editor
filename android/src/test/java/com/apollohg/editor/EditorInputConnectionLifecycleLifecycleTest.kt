@@ -7,6 +7,7 @@ import android.view.KeyEvent
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.CorrectionInfo
 import android.view.inputmethod.EditorInfo
+import java.time.Duration
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -15,18 +16,17 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.robolectric.Shadows.shadowOf
-import org.robolectric.RuntimeEnvironment
-import java.time.Duration
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 internal class EditorInputConnectionLifecycleLifecycleTest : EditorInputConnectionTestSupport() {
     @Test
-    fun `commit correction after authorized render change is consumed without replacing matching text`() {
+    fun `correction after authorized render is consumed without replacing matching text`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson("Hello world"), notifyListener = false)
         editText.setSelection(6)
@@ -129,28 +129,25 @@ internal class EditorInputConnectionLifecycleLifecycleTest : EditorInputConnecti
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderBlocksUpdateJson("Alpha", "Beta"), notifyListener = false)
 
-        fun patchUpdate(
-            fullTexts: List<String>,
-            startIndex: Int,
-            replacementText: String
-        ): String = JSONObject()
-            .put(
-                "renderElements",
-                JSONArray().apply {
-                    fullTexts.forEach { text ->
-                        val block = paragraphRenderBlock(text)
-                        for (index in 0 until block.length()) put(block.get(index))
+        fun patchUpdate(fullTexts: List<String>, startIndex: Int, replacementText: String): String =
+            JSONObject()
+                .put(
+                    "renderElements",
+                    JSONArray().apply {
+                        fullTexts.forEach { text ->
+                            val block = paragraphRenderBlock(text)
+                            for (index in 0 until block.length()) put(block.get(index))
+                        }
                     }
-                }
-            )
-            .put(
-                "renderPatch",
-                JSONObject()
-                    .put("startIndex", startIndex)
-                    .put("deleteCount", 1)
-                    .put("renderBlocks", JSONArray().put(paragraphRenderBlock(replacementText)))
-            )
-            .toString()
+                )
+                .put(
+                    "renderPatch",
+                    JSONObject()
+                        .put("startIndex", startIndex)
+                        .put("deleteCount", 1)
+                        .put("renderBlocks", JSONArray().put(paragraphRenderBlock(replacementText)))
+                )
+                .toString()
 
         editText.runWithDeferredRustUpdateApplication {
             editText.applyRustUpdateJSONForTesting(
@@ -168,7 +165,7 @@ internal class EditorInputConnectionLifecycleLifecycleTest : EditorInputConnecti
 
         editText.applyUpdateJSON(
             patchUpdate(listOf("Alpha 1!", "Beta 2"), 0, "Alpha 1!"),
-            notifyListener = false,
+            notifyListener = false
         )
 
         assertEquals("Alpha 1!\nBeta 2", editText.text.toString())
@@ -189,7 +186,7 @@ internal class EditorInputConnectionLifecycleLifecycleTest : EditorInputConnecti
         assertTrue(
             editText.applyUpdateJSON(
                 renderPatchUpdateJson(startIndex = 1, replacementText = "Beta 2"),
-                notifyListener = false,
+                notifyListener = false
             )
         )
         assertEquals("Alpha 1\nBeta 2", editText.text.toString())
@@ -199,13 +196,13 @@ internal class EditorInputConnectionLifecycleLifecycleTest : EditorInputConnecti
     fun `wrong render patch base recovers a full native snapshot`() {
         val created = UniffiEditorV2Backend.create(
             """{"initialization":{"type":"localEmpty"}}""",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val editorId = JSONObject(created.value).getString("editorId")
         val adapter = EditorV2Adapter.attach(
             UniffiEditorV2Backend,
             editorId,
-            roomBound = false,
+            roomBound = false
         )!!
         try {
             adapter.claimNativeBindingIfUnowned(1L)
@@ -225,7 +222,7 @@ internal class EditorInputConnectionLifecycleLifecycleTest : EditorInputConnecti
                         .put("baseDocumentVersion", wrongBase)
                         .put("startIndex", 0)
                         .put("deleteCount", 1)
-                        .put("renderBlocks", JSONArray().put(paragraphRenderBlock("Corrupt"))),
+                        .put("renderBlocks", JSONArray().put(paragraphRenderBlock("Corrupt")))
                 )
                 .toString()
 
@@ -248,7 +245,9 @@ internal class EditorInputConnectionLifecycleLifecycleTest : EditorInputConnecti
         editText.text!!.replace(0, editText.text!!.length, "Rejected")
         editText.authorizeCurrentVisibleTextForPendingImeOperationForEditor()
 
-        assertTrue(editText.applyUpdateJSON(renderBlocksUpdateJson("Alpha"), notifyListener = false))
+        assertTrue(
+            editText.applyUpdateJSON(renderBlocksUpdateJson("Alpha"), notifyListener = false)
+        )
         assertEquals("Alpha", editText.text.toString())
         assertEquals("Alpha", editText.authorizedTextForTesting())
     }

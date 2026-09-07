@@ -31,7 +31,6 @@ use yrs::ReadTxn;
 /// insert contract. Stage E2 revalidates it immediately before localized
 /// semantic reconstruction.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // The seal intentionally retains claims used by later E2 stages.
 pub(crate) struct LocalizedInsertAdmission {
     pub(super) leaf: LocalizedTextLeafCertificate,
     pub(super) block_path_len: usize,
@@ -490,7 +489,6 @@ impl LocalizedInsertAdmission {
     }
 }
 
-#[allow(dead_code)] // Stage E2 consumes the semantic subset; later stages use the remainder.
 pub(crate) struct ValidatedLocalizedInsertAdmission<'a> {
     pub(super) admission: &'a LocalizedInsertAdmission,
     pub(super) state: &'a DerivedStateCache,

@@ -1,10 +1,10 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.NativeEditorExpoView.PendingPropertyRetry
-import com.apollohg.editor.NativeEditorExpoView.PendingPropertyRetryResult
+import android.os.Looper
 import com.apollohg.editor.NativeEditorExpoView.Companion.MAX_PENDING_UPDATE_RETRY_ATTEMPTS
 import com.apollohg.editor.NativeEditorExpoView.Companion.NATIVE_ACTION_RETRY_DELAY_MS
-import android.os.Looper
+import com.apollohg.editor.NativeEditorExpoView.PendingPropertyRetry
+import com.apollohg.editor.NativeEditorExpoView.PendingPropertyRetryResult
 
 internal fun NativeEditorExpoView.clearPendingThemeRetry() {
     pendingThemeJson = null
@@ -41,7 +41,7 @@ internal fun NativeEditorExpoView.schedulePendingThemeRetry() {
     schedulePendingPropertyRetry(
         pendingThemeRetry,
         onEditorChanged = ::clearPendingThemeRetry,
-        apply = ::applyPendingThemeIfNeeded,
+        apply = ::applyPendingThemeIfNeeded
     )
 }
 
@@ -72,18 +72,18 @@ internal fun NativeEditorExpoView.schedulePendingAtomsRetry() {
     schedulePendingPropertyRetry(
         pendingAtomsRetry,
         onEditorChanged = ::cancelPendingAtomsRetry,
-        apply = ::applyPendingAtomsIfNeeded,
+        apply = ::applyPendingAtomsIfNeeded
     )
 }
 
 internal fun NativeEditorExpoView.schedulePendingPropertyRetry(
     state: PendingPropertyRetry,
     onEditorChanged: () -> Unit,
-    apply: () -> Unit,
+    apply: () -> Unit
 ) {
     val (generation, attempt) = state.schedule(
         richTextView.editorId,
-        MAX_PENDING_UPDATE_RETRY_ATTEMPTS,
+        MAX_PENDING_UPDATE_RETRY_ATTEMPTS
     ) ?: return
     val retry = Runnable {
         when (state.consume(generation, richTextView.editorId)) {
@@ -122,7 +122,9 @@ internal fun NativeEditorExpoView.scheduleViewCommandUpdateRetry(updateJson: Str
             pendingViewCommandUpdateRetryScheduled = false
             return@Runnable
         }
-        if (pendingViewCommandUpdateEditorId != richTextView.editorId || richTextView.editorId == 0L) {
+        if (pendingViewCommandUpdateEditorId != richTextView.editorId ||
+            richTextView.editorId == 0L
+        ) {
             clearPendingViewCommandUpdateRetry()
             return@Runnable
         }
@@ -133,7 +135,7 @@ internal fun NativeEditorExpoView.scheduleViewCommandUpdateRetry(updateJson: Str
         pendingViewCommandUpdateRetryScheduled = false
         if (
             applyEditorUpdateOutcome(retryJson, scheduleViewCommandRetry = true) !=
-                PendingEditorUpdateApplyOutcome.RETRYABLE_DEFERRED
+            PendingEditorUpdateApplyOutcome.RETRYABLE_DEFERRED
         ) {
             clearPendingViewCommandUpdateRetry()
         }
@@ -186,7 +188,7 @@ internal fun NativeEditorExpoView.wakePendingPreflightWork() {
         pendingViewCommandUpdateRetryGeneration += 1
         if (
             applyEditorUpdateOutcome(updateJson, scheduleViewCommandRetry = true) !=
-                PendingEditorUpdateApplyOutcome.RETRYABLE_DEFERRED
+            PendingEditorUpdateApplyOutcome.RETRYABLE_DEFERRED
         ) {
             clearPendingViewCommandUpdateRetry()
         }

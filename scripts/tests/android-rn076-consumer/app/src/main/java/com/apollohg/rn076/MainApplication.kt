@@ -14,7 +14,9 @@ import com.facebook.soloader.SoLoader
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ReactNativeHostWrapper
 
-class MainApplication : Application(), ReactApplication {
+class MainApplication :
+    Application(),
+    ReactApplication {
     override val reactNativeHost: ReactNativeHost = ReactNativeHostWrapper(
         this,
         object : DefaultReactNativeHost(this) {
@@ -23,7 +25,7 @@ class MainApplication : Application(), ReactApplication {
             override fun getUseDeveloperSupport(): Boolean = BuildConfig.DEBUG
             override val isNewArchEnabled: Boolean = BuildConfig.IS_NEW_ARCHITECTURE_ENABLED
             override val isHermesEnabled: Boolean = BuildConfig.IS_HERMES_ENABLED
-        },
+        }
     )
 
     override val reactHost: ReactHost

@@ -3,6 +3,7 @@ package com.apollohg.editor
 import android.app.Activity
 import android.os.Looper
 import android.widget.FrameLayout
+import java.time.Duration
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,7 +16,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -587,5 +587,4 @@ class NativeEditorExpoViewExternalCompositionTest : NativeEditorExpoViewTestSupp
         }
         view.richTextView.editorEditText.setSelection(0, 7)
     }
-
 }

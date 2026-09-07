@@ -3,8 +3,8 @@ package com.apollohg.editor
 import android.app.Instrumentation
 import android.content.Context
 import android.os.SystemClock
-import android.text.Selection
 import android.text.InputType
+import android.text.Selection
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.CompletionInfo
 import android.view.inputmethod.CorrectionInfo
@@ -60,7 +60,9 @@ class NativeDeviceImeRegressionTest {
                 replacement = Replacement(from, to, text)
             }
 
-            assertTrue(createInputConnection(editText).commitCorrection(CorrectionInfo(0, "", "the")))
+            assertTrue(
+                createInputConnection(editText).commitCorrection(CorrectionInfo(0, "", "the"))
+            )
 
             assertNull(replacement)
             assertEquals("\u200B", editText.text.toString())
@@ -76,17 +78,20 @@ class NativeDeviceImeRegressionTest {
         assertNull(explicit.inserted)
         assertTraceContains(explicit.trace, "correctionExplicitApply")
 
-        val trailingPeriod = runCorrectionScenario("teh.", offset = 0, oldText = null, newText = "the")
+        val trailingPeriod =
+            runCorrectionScenario("teh.", offset = 0, oldText = null, newText = "the")
         assertEquals(Replacement(0, 3, "the"), trailingPeriod.replacement)
         assertNull(trailingPeriod.inserted)
         assertTraceContains(trailingPeriod.trace, "correctionInferredApply")
 
-        val punctuationOffset = runCorrectionScenario("teh.", offset = 3, oldText = null, newText = "the")
+        val punctuationOffset =
+            runCorrectionScenario("teh.", offset = 3, oldText = null, newText = "the")
         assertNull(punctuationOffset.replacement)
         assertNull(punctuationOffset.inserted)
         assertTraceContains(punctuationOffset.trace, "correctionInferredNoop")
 
-        val whitespaceOffset = runCorrectionScenario("teh ", offset = 3, oldText = null, newText = "the")
+        val whitespaceOffset =
+            runCorrectionScenario("teh ", offset = 3, oldText = null, newText = "the")
         assertNull(whitespaceOffset.replacement)
         assertNull(whitespaceOffset.inserted)
         assertTraceContains(whitespaceOffset.trace, "correctionInferredNoop")
@@ -99,10 +104,12 @@ class NativeDeviceImeRegressionTest {
         )
         assertEquals(Replacement(0, 9, "don't-stop"), hyphenated.replacement)
 
-        val apostrophe = runCorrectionScenario("cant's ", offset = 4, oldText = null, newText = "can't")
+        val apostrophe =
+            runCorrectionScenario("cant's ", offset = 4, oldText = null, newText = "can't")
         assertEquals(Replacement(0, 6, "can't"), apostrophe.replacement)
 
-        val surrogate = runCorrectionScenario("te😀h ", offset = 3, oldText = null, newText = "term")
+        val surrogate =
+            runCorrectionScenario("te😀h ", offset = 3, oldText = null, newText = "term")
         assertEquals(Replacement(0, 4, "term"), surrogate.replacement)
     }
 
@@ -258,12 +265,14 @@ class NativeDeviceImeRegressionTest {
         assertNull(stale.inserted)
         assertTraceContains(stale.trace, "correctionExplicitNoop")
 
-        val invalidExplicit = runCorrectionScenario("teh ", offset = -1, oldText = "teh", newText = "the")
+        val invalidExplicit =
+            runCorrectionScenario("teh ", offset = -1, oldText = "teh", newText = "the")
         assertNull(invalidExplicit.replacement)
         assertNull(invalidExplicit.inserted)
         assertTraceContains(invalidExplicit.trace, "commitCorrectionResult")
 
-        val invalidInferred = runCorrectionScenario("teh ", offset = -1, oldText = null, newText = "the")
+        val invalidInferred =
+            runCorrectionScenario("teh ", offset = -1, oldText = null, newText = "the")
         assertNull(invalidInferred.replacement)
         assertNull(invalidInferred.inserted)
         assertTraceContains(invalidInferred.trace, "correctionInferredNoop")
@@ -325,7 +334,9 @@ class NativeDeviceImeRegressionTest {
                     ImeResult(
                         selection = editText.selectionStart to editText.selectionEnd,
                         trace = editText.imeTraceSnapshotForTesting(),
-                        ready = editorInfo.initialCapsMode and InputType.TYPE_TEXT_FLAG_CAP_SENTENCES != 0,
+                        ready =
+                            editorInfo.initialCapsMode and InputType.TYPE_TEXT_FLAG_CAP_SENTENCES !=
+                                0,
                         surroundingText = editorInfo.getInitialTextBeforeCursor(20, 0).toString(),
                         imeSelection = editorInfo.initialSelStart to editorInfo.initialSelEnd,
                         inputConnectionGeneration = editText.inputConnectionGenerationForTesting()
@@ -342,23 +353,28 @@ class NativeDeviceImeRegressionTest {
                     initialGeneration,
                     afterSplit.inputConnectionGeneration
                 )
-                assertEquals("IME surrounding text after Return", "seed\n", afterSplit.surroundingText)
+                assertEquals(
+                    "IME surrounding text after Return",
+                    "seed\n",
+                    afterSplit.surroundingText
+                )
                 assertTraceEventCount(
                     afterSplit.trace,
                     "lineBoundaryInputRefreshScheduled:source=splitBlock",
-                    1,
+                    1
                 )
                 assertTraceEventCount(
                     afterSplit.trace,
                     "restartInput:source=lineBoundary:splitBlock",
-                    1,
+                    1
                 )
                 assertTrue(
                     "restart should require a newly acquired connection; trace=${afterSplit.trace}",
                     refreshedInputConnection !== initialInputConnection
                 )
                 assertTrue(
-                    "refreshed connection should request sentence capitalization; result=$afterSplit",
+                    "refreshed connection should request sentence capitalization; " +
+                        "result=$afterSplit",
                     afterSplit.ready
                 )
 
@@ -370,14 +386,23 @@ class NativeDeviceImeRegressionTest {
                 }
                 instrumentation.waitForIdleSync()
 
-                assertEquals("refreshed connection should insert x", "seed\nx", editText.text.toString())
+                assertEquals(
+                    "refreshed connection should insert x",
+                    "seed\nx",
+                    editText.text.toString()
+                )
                 assertEquals(
                     "rendered caret after refreshed connection inserts x",
                     6 to 6,
                     runOnMainSyncWithResult { editText.selectionStart to editText.selectionEnd }
                 )
-                val document = adapter.documentJson()?.let(::JSONObject) ?: error("missing document JSON")
-                assertEquals("paired engine should retain two blocks after x", 2, document.getJSONArray("content").length())
+                val document =
+                    adapter.documentJson()?.let(::JSONObject) ?: error("missing document JSON")
+                assertEquals(
+                    "paired engine should retain two blocks after x",
+                    2,
+                    document.getJSONArray("content").length()
+                )
             }
         } finally {
             releasePairedV2TestEditor(editorId)
@@ -389,33 +414,29 @@ class NativeDeviceImeRegressionTest {
         offset: Int,
         oldText: String?,
         newText: String
-    ): ImeResult =
-        runOnMainSyncWithResult {
-            val editText = createEditor(text, selectionStart = text.length, selectionEnd = text.length)
-            var replacement: Replacement? = null
-            var inserted: Inserted? = null
-            editText.onReplaceTextInRustForTesting = { scalarFrom, scalarTo, replacementText ->
-                replacement = Replacement(scalarFrom, scalarTo, replacementText)
-            }
-            editText.onInsertTextInRustForTesting = { insertedText, scalar ->
-                inserted = Inserted(insertedText, scalar)
-            }
-
-            val inputConnection = createInputConnection(editText)
-            assertTrue(inputConnection.commitCorrection(CorrectionInfo(offset, oldText, newText)))
-
-            ImeResult(
-                replacement = replacement,
-                inserted = inserted,
-                trace = editText.imeTraceSnapshotForTesting()
-            )
+    ): ImeResult = runOnMainSyncWithResult {
+        val editText =
+            createEditor(text, selectionStart = text.length, selectionEnd = text.length)
+        var replacement: Replacement? = null
+        var inserted: Inserted? = null
+        editText.onReplaceTextInRustForTesting = { scalarFrom, scalarTo, replacementText ->
+            replacement = Replacement(scalarFrom, scalarTo, replacementText)
+        }
+        editText.onInsertTextInRustForTesting = { insertedText, scalar ->
+            inserted = Inserted(insertedText, scalar)
         }
 
-    private fun createEditor(
-        text: String,
-        selectionStart: Int,
-        selectionEnd: Int
-    ): EditorEditText =
+        val inputConnection = createInputConnection(editText)
+        assertTrue(inputConnection.commitCorrection(CorrectionInfo(offset, oldText, newText)))
+
+        ImeResult(
+            replacement = replacement,
+            inserted = inserted,
+            trace = editText.imeTraceSnapshotForTesting()
+        )
+    }
+
+    private fun createEditor(text: String, selectionStart: Int, selectionEnd: Int): EditorEditText =
         EditorEditText(context).apply {
             applyUpdateJSON(renderUpdateJson(text), notifyListener = false)
             Selection.setSelection(this.text, selectionStart, selectionEnd)
@@ -451,11 +472,7 @@ class NativeDeviceImeRegressionTest {
         )
     }
 
-    private fun waitUntil(
-        description: String,
-        timeoutMs: Long = 3_000L,
-        predicate: () -> Boolean
-    ) {
+    private fun waitUntil(description: String, timeoutMs: Long = 3_000L, predicate: () -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + timeoutMs
         while (SystemClock.uptimeMillis() < deadline) {
             instrumentation.waitForIdleSync()
@@ -465,28 +482,27 @@ class NativeDeviceImeRegressionTest {
         assertTrue(description, predicate())
     }
 
-    private fun renderUpdateJson(text: String): String =
-        JSONObject()
-            .put(
-                "renderBlocks",
-                JSONArray().put(
-                    JSONArray()
-                        .put(
-                            JSONObject()
-                                .put("type", "blockStart")
-                                .put("nodeType", "paragraph")
-                                .put("depth", 0)
-                        )
-                        .put(
-                            JSONObject()
-                                .put("type", "textRun")
-                                .put("text", text)
-                                .put("marks", JSONArray())
-                        )
-                        .put(JSONObject().put("type", "blockEnd"))
-                )
+    private fun renderUpdateJson(text: String): String = JSONObject()
+        .put(
+            "renderBlocks",
+            JSONArray().put(
+                JSONArray()
+                    .put(
+                        JSONObject()
+                            .put("type", "blockStart")
+                            .put("nodeType", "paragraph")
+                            .put("depth", 0)
+                    )
+                    .put(
+                        JSONObject()
+                            .put("type", "textRun")
+                            .put("text", text)
+                            .put("marks", JSONArray())
+                    )
+                    .put(JSONObject().put("type", "blockEnd"))
             )
-            .toString()
+        )
+        .toString()
 
     @Suppress("UNCHECKED_CAST")
     private fun <T> runOnMainSyncWithResult(block: () -> T): T {
@@ -503,16 +519,9 @@ class NativeDeviceImeRegressionTest {
         return result.get() as T
     }
 
-    private data class Replacement(
-        val scalarFrom: Int,
-        val scalarTo: Int,
-        val text: String
-    )
+    private data class Replacement(val scalarFrom: Int, val scalarTo: Int, val text: String)
 
-    private data class Inserted(
-        val text: String,
-        val scalar: Int
-    )
+    private data class Inserted(val text: String, val scalar: Int)
 
     private data class ImeResult(
         val replacement: Replacement? = null,

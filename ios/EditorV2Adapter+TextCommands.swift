@@ -17,7 +17,7 @@ extension EditorV2Adapter {
                     intent = [
                         "type": "setSelection",
                         "anchor": Int(postSelection.anchor),
-                        "head": Int(postSelection.head),
+                        "head": Int(postSelection.head)
                     ]
                     return performNativeIntent(intent)?.updateJSON
                 }
@@ -47,7 +47,7 @@ extension EditorV2Adapter {
             let selectionIntent: [String: Any] = [
                 "type": "setSelection",
                 "anchor": Int(postSelection.anchor),
-                "head": Int(postSelection.head),
+                "head": Int(postSelection.head)
             ]
             guard let selectionOutcome = submitNativeIntent(
                 selectionIntent,
@@ -232,13 +232,13 @@ extension EditorV2Adapter {
         }
         return performMutation(postSelectionMirror: (from, from)) {
             self.callWithEnvelope([
-                    "command": [
-                        "type": "deleteRange",
-                        "range": [
-                            "from": EditorV2PositionBridge.positionEnvelope(scalar: from),
-                            "to": EditorV2PositionBridge.positionEnvelope(scalar: to),
-                        ],
-                    ] as [String: Any],
+                "command": [
+                    "type": "deleteRange",
+                    "range": [
+                        "from": EditorV2PositionBridge.positionEnvelope(scalar: from),
+                        "to": EditorV2PositionBridge.positionEnvelope(scalar: to)
+                    ]
+                ] as [String: Any]
             ]) { requestJson in
                 editorV2ApplyCommand(editorId: self.editorId, requestJson: requestJson)
             }

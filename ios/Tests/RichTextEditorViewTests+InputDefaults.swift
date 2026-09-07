@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testImageAttachmentLoadNotificationOnlyInvalidatesOwningEditor() {
@@ -86,9 +86,9 @@ extension RichTextEditorViewTests {
         textView.placeholder = "Type here"
         textView.applyRenderJSON("""
         [
-          {"type":"blockStart","nodeType":"paragraph","depth":0},
-          {"type":"textRun","text":"\\u200B","marks":[]},
-          {"type":"blockEnd"}
+        {"type":"blockStart","nodeType":"paragraph","depth":0},
+        {"type":"textRun","text":"\\u200B","marks":[]},
+        {"type":"blockEnd"}
         ]
         """)
 
@@ -106,18 +106,18 @@ extension RichTextEditorViewTests {
         textView.placeholder = "Type here"
         textView.applyUpdateJSON("""
         {
-          "renderBlocks": [[
+        "renderBlocks": [[
             {"type":"blockStart","nodeType":"bulletList","depth":0},
             {"type":"blockStart","nodeType":"listItem","depth":1,
-             "listContext":{"ordered":false,"index":0,"total":1,"start":1,
-                            "isFirst":true,"isLast":true}},
+            "listContext":{"ordered":false,"index":0,"total":1,"start":1,
+                "isFirst":true,"isLast":true}},
             {"type":"blockStart","nodeType":"paragraph","depth":2},
             {"type":"textRun","text":"\\u200B","marks":[]},
             {"type":"blockEnd"},
             {"type":"blockEnd"},
             {"type":"blockEnd"}
-          ]],
-          "documentIsEmpty": false
+        ]],
+        "documentIsEmpty": false
         }
         """)
 
@@ -134,12 +134,12 @@ extension RichTextEditorViewTests {
         textView.placeholder = "Type here"
         textView.applyUpdateJSON("""
         {
-          "renderBlocks": [[
+        "renderBlocks": [[
             {"type":"blockStart","nodeType":"paragraph","depth":0},
             {"type":"textRun","text":"\\u200B","marks":[]},
             {"type":"blockEnd"}
-          ]],
-          "documentIsEmpty": true
+        ]],
+        "documentIsEmpty": true
         }
         """)
 
@@ -154,9 +154,9 @@ extension RichTextEditorViewTests {
         textView.placeholder = "Type here"
         textView.applyRenderJSON("""
         [
-          {"type":"blockStart","nodeType":"paragraph","depth":0},
-          {"type":"textRun","text":"Hello","marks":[]},
-          {"type":"blockEnd"}
+        {"type":"blockStart","nodeType":"paragraph","depth":0},
+        {"type":"textRun","text":"Hello","marks":[]},
+        {"type":"blockEnd"}
         ]
         """)
 
@@ -168,9 +168,9 @@ extension RichTextEditorViewTests {
         textView.placeholder = "Line 1\nLine 2"
         textView.applyRenderJSON("""
         [
-          {"type":"blockStart","nodeType":"paragraph","depth":0},
-          {"type":"textRun","text":"\\u200B","marks":[]},
-          {"type":"blockEnd"}
+        {"type":"blockStart","nodeType":"paragraph","depth":0},
+        {"type":"textRun","text":"\\u200B","marks":[]},
+        {"type":"blockEnd"}
         ]
         """)
         textView.layoutIfNeeded()
@@ -263,9 +263,9 @@ extension RichTextEditorViewTests {
         }
         view.textView.applyRenderJSON("""
         [
-          {"type":"blockStart","nodeType":"paragraph","depth":0},
-          {"type":"textRun","text":"Hello world","marks":[]},
-          {"type":"blockEnd"}
+        {"type":"blockStart","nodeType":"paragraph","depth":0},
+        {"type":"textRun","text":"Hello world","marks":[]},
+        {"type":"blockEnd"}
         ]
         """)
         view.layoutIfNeeded()

@@ -1,5 +1,5 @@
-import UIKit
 import os
+import UIKit
 
 extension EditorTextView {
     func resolvedCaretReferenceRect(for position: UITextPosition) -> CGRect {
@@ -19,9 +19,8 @@ extension EditorTextView {
         if let nextPosition = self.position(from: position, offset: 1),
            let nextRange = textRange(from: position, to: nextPosition),
            let nextRect = selectionRects(for: nextRange)
-               .map(\.rect)
-               .first(where: { !$0.isEmpty && $0.width > 0 && $0.height > 0 })
-        {
+           .map(\.rect)
+           .first(where: { !$0.isEmpty && $0.width > 0 && $0.height > 0 }) {
             return CGRect(
                 x: nextRect.minX,
                 y: nextRect.minY,
@@ -33,9 +32,8 @@ extension EditorTextView {
         if let previousPosition = self.position(from: position, offset: -1),
            let previousRange = textRange(from: previousPosition, to: position),
            let previousRect = selectionRects(for: previousRange)
-               .map(\.rect)
-               .last(where: { !$0.isEmpty && $0.width > 0 && $0.height > 0 })
-        {
+           .map(\.rect)
+           .last(where: { !$0.isEmpty && $0.width > 0 && $0.height > 0 }) {
             return CGRect(
                 x: previousRect.maxX,
                 y: previousRect.minY,
@@ -61,8 +59,7 @@ extension EditorTextView {
                from: utf16Offset - 1,
                direction: -1
            ),
-           let previousRect = visibleSelectionRect(forCharacterAt: previousCharacterIndex)
-        {
+           let previousRect = visibleSelectionRect(forCharacterAt: previousCharacterIndex) {
             return CGRect(
                 x: previousRect.maxX,
                 y: previousRect.minY,
@@ -76,8 +73,7 @@ extension EditorTextView {
                from: utf16Offset,
                direction: 1
            ),
-           let nextRect = visibleSelectionRect(forCharacterAt: nextCharacterIndex)
-        {
+           let nextRect = visibleSelectionRect(forCharacterAt: nextCharacterIndex) {
             return CGRect(
                 x: nextRect.minX,
                 y: nextRect.minY,
@@ -207,8 +203,7 @@ extension EditorTextView {
            let previousCharacterIndex = nearestVisibleCharacterIndex(
                from: utf16Offset - 1,
                direction: -1
-           )
-        {
+           ) {
             return baselineY(forCharacterAt: previousCharacterIndex)
         }
 
@@ -216,8 +211,7 @@ extension EditorTextView {
            let nextCharacterIndex = nearestVisibleCharacterIndex(
                from: utf16Offset,
                direction: 1
-           )
-        {
+           ) {
             return baselineY(forCharacterAt: nextCharacterIndex)
         }
 
@@ -266,8 +260,7 @@ extension EditorTextView {
             if attrs[.attachment] == nil,
                character != "\n",
                character != "\r",
-               visibleSelectionRect(forCharacterAt: index) != nil
-            {
+               visibleSelectionRect(forCharacterAt: index) != nil {
                 return index
             }
 

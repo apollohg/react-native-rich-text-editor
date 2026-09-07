@@ -11,7 +11,6 @@ import uniffi.editor_core.FfiViewerMark
 import uniffi.editor_core.FfiViewerSourceKind
 import uniffi.editor_core.viewerCompile
 
-/** A typed, width-independent projection of Task 1's immutable compiler stream. */
 internal data class ViewerListContext(
     val ordered: Boolean,
     /** Rust u32 list index retained exactly for interaction/accessibility consumers. */
@@ -19,7 +18,7 @@ internal data class ViewerListContext(
     val kind: String?,
     val checked: Boolean,
     val isLast: Boolean,
-    val isFirst: Boolean = false,
+    val isFirst: Boolean = false
 )
 
 /** Identifies the nearest list item and its first/final renderable leaf. */
@@ -27,7 +26,7 @@ internal data class ViewerListItemBoundary(
     val identity: Int,
     val nestingDepth: Int,
     val isFirstRenderableLeaf: Boolean,
-    val isFinalRenderableLeaf: Boolean,
+    val isFinalRenderableLeaf: Boolean
 )
 
 /**
@@ -40,16 +39,27 @@ internal data class ViewerListItemAncestor(
     val context: ViewerListContext,
     val nestingDepth: Int,
     val isFirstRenderableLeaf: Boolean,
-    val isFinalRenderableLeaf: Boolean,
+    val isFinalRenderableLeaf: Boolean
 )
 
 internal sealed interface ViewerInline {
     data class Text(val text: String, val marks: List<FfiViewerMark>) : ViewerInline
+
     /** Rust u32 document position retained exactly; drawing spans never own it. */
-    data class Atom(val nodeType: String, val docPos: Long, val attrsJson: String, val label: String) : ViewerInline
+    data class Atom(
+        val nodeType: String,
+        val docPos: Long,
+        val attrsJson: String,
+        val label: String
+    ) : ViewerInline
 }
 
-internal data class ViewerContainerAncestor(val identity: Int, val nodeType: String, val firstLeaf: Int, val lastLeaf: Int)
+internal data class ViewerContainerAncestor(
+    val identity: Int,
+    val nodeType: String,
+    val firstLeaf: Int,
+    val lastLeaf: Int
+)
 
 internal data class ViewerBlock(
     val nodeType: String,
@@ -63,7 +73,7 @@ internal data class ViewerBlock(
     val outermostListItemIsLast: Boolean = false,
     val isBlockAtom: Boolean = false,
     val containers: List<ViewerContainerAncestor> = emptyList(),
-    val language: String? = null,
+    val language: String? = null
 )
 
 /** Semantic positions live only in [ViewerInline.Atom], never in Android drawing spans. */
@@ -72,7 +82,7 @@ internal data class ViewerDocument(
     val blocks: List<ViewerBlock>,
     val isEmpty: Boolean,
     val retainedBytes: Long,
-    val trailingEmptyTextBlockCount: Int = 0,
+    val trailingEmptyTextBlockCount: Int = 0
 )
 
 internal data class ProseViewerRequest(
@@ -80,28 +90,48 @@ internal data class ProseViewerRequest(
     val configuration: ProseViewerConfiguration,
     val nativeFontRevision: Long = 0,
     val fontEnvironmentRevision: Long = 0,
-    val attachmentRevision: Long = 0,
+    val attachmentRevision: Long = 0
 ) {
     val compiledCacheKey: String by lazy {
-        sha256(listOf(source.value, configuration.configJson, configuration.imagePolicyJson.orEmpty(), if (configuration.imagesEnabled) "1" else "0", mentionPrefix(configuration.configJson).orEmpty(), source.kind).joinToString("\u001f"))
+        sha256(
+            listOf(
+                source.value,
+                configuration.configJson,
+                configuration.imagePolicyJson.orEmpty(),
+                if (configuration.imagesEnabled) "1" else "0",
+                mentionPrefix(configuration.configJson).orEmpty(),
+                source.kind
+            ).joinToString("\u001f")
+        )
     }
     val themeDigest: String by lazy { sha256(configuration.themeJson.orEmpty()) }
+
     /** Semantic publication identity; layout/font revisions deliberately do not enter it. */
     val semanticGenerationIdentity: String by lazy {
-        sha256(listOf(
-            source.kind,
-            source.value,
-            configuration.configJson,
-            configuration.themeJson.orEmpty(),
-            configuration.imagePolicyJson.orEmpty(),
-            if (configuration.imagesEnabled) "1" else "0",
-            if (configuration.collapsesWhenEmpty) "1" else "0",
-            mentionPrefix.orEmpty(),
-        ).joinToString("\u001f"))
+        sha256(
+            listOf(
+                source.kind,
+                source.value,
+                configuration.configJson,
+                configuration.themeJson.orEmpty(),
+                configuration.imagePolicyJson.orEmpty(),
+                if (configuration.imagesEnabled) "1" else "0",
+                if (configuration.collapsesWhenEmpty) "1" else "0",
+                mentionPrefix.orEmpty()
+            ).joinToString("\u001f")
+        )
     }
+
     /** Immutable layout/cache identity including permitted state-only revisions. */
     val generationIdentity: String by lazy {
-        sha256(listOf(semanticGenerationIdentity, attachmentRevision.toString(), nativeFontRevision.toString(), fontEnvironmentRevision.toString()).joinToString("\u001f"))
+        sha256(
+            listOf(
+                semanticGenerationIdentity,
+                attachmentRevision.toString(),
+                nativeFontRevision.toString(),
+                fontEnvironmentRevision.toString()
+            ).joinToString("\u001f")
+        )
     }
     val mentionPrefix: String? get() = mentionPrefix(configuration.configJson)
 }
@@ -111,19 +141,33 @@ internal typealias DocumentCompiler = (ProseViewerRequest) -> ViewerDocument
 internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
     val result = viewerCompile(
         FfiViewerCompileRequest(
-            sourceKind = if (request.source is ProseViewerSource.Html) FfiViewerSourceKind.HTML else FfiViewerSourceKind.JSON,
+            sourceKind = if (request.source is ProseViewerSource.Html) {
+                FfiViewerSourceKind.HTML
+            } else {
+                FfiViewerSourceKind.JSON
+            },
             source = request.source.value,
             configJson = request.configuration.configJson,
             imagesEnabled = request.configuration.imagesEnabled,
-            mentionPrefix = request.mentionPrefix,
+            mentionPrefix = request.mentionPrefix
         )
     )
     try {
         result.error?.let { throw ProseViewerError.compiler(it.domain, it.code, it.message) }
-        val compiled = result.value ?: throw ProseViewerError.compiler("viewer", "MISSING_COMPILED_DOCUMENT", "The compiler returned neither a document nor an error.")
+        val compiled =
+            result.value
+                ?: throw ProseViewerError.compiler(
+                    "viewer",
+                    "MISSING_COMPILED_DOCUMENT",
+                    "The compiler returned neither a document nor an error."
+                )
         val semanticKey = compiled.semanticKey()
         if (!semanticKey.matches(Regex("[0-9a-f]{64}"))) {
-            throw ProseViewerError.compiler("viewer", "INVALID_SEMANTIC_KEY", "The compiler returned an invalid semantic key.")
+            throw ProseViewerError.compiler(
+                "viewer",
+                "INVALID_SEMANTIC_KEY",
+                "The compiler returned an invalid semantic key."
+            )
         }
 
         data class Builder(
@@ -134,7 +178,7 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
             val listItemContext: ViewerListContext?,
             val identity: Int,
             val language: String? = null,
-            val inlines: MutableList<ViewerInline> = mutableListOf(),
+            val inlines: MutableList<ViewerInline> = mutableListOf()
         )
 
         val stack = mutableListOf<Builder>()
@@ -148,13 +192,23 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
         var nextListItemIdentity = 0
         var nextContainerIdentity = 0
 
-        fun nearestListContext(builders: List<Builder>): ViewerListContext? = builders.asReversed().firstNotNullOfOrNull { it.listContext }
-        fun listItemAncestors(builders: List<Builder>): List<ViewerListItemAncestor> = builders.mapNotNull { builder ->
-            val identity = builder.listItemIdentity ?: return@mapNotNull null
-            val context = builder.listItemContext ?: return@mapNotNull null
-            ViewerListItemAncestor(identity, context, builder.depth, false, false)
-        }
-        fun appendLeaf(nodeType: String, depth: Int, inlines: List<ViewerInline>, ancestors: List<Builder>, isBlockAtom: Boolean = false) {
+        fun nearestListContext(builders: List<Builder>): ViewerListContext? =
+            builders.asReversed().firstNotNullOfOrNull {
+                it.listContext
+            }
+        fun listItemAncestors(builders: List<Builder>): List<ViewerListItemAncestor> =
+            builders.mapNotNull { builder ->
+                val identity = builder.listItemIdentity ?: return@mapNotNull null
+                val context = builder.listItemContext ?: return@mapNotNull null
+                ViewerListItemAncestor(identity, context, builder.depth, false, false)
+            }
+        fun appendLeaf(
+            nodeType: String,
+            depth: Int,
+            inlines: List<ViewerInline>,
+            ancestors: List<Builder>,
+            isBlockAtom: Boolean = false
+        ) {
             val itemAncestors = listItemAncestors(ancestors)
             rendered += ViewerBlock(
                 nodeType = nodeType,
@@ -165,16 +219,21 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
                 inlines = inlines,
                 isBlockAtom = isBlockAtom,
                 language = ancestors.lastOrNull()?.language,
-                containers = ancestors.filter { it.nodeType in CONTAINER_BLOCKS && it.nodeType != "doc" }.map { ViewerContainerAncestor(it.identity, it.nodeType, 0, 0) },
+                containers = ancestors.filter {
+                    it.nodeType in CONTAINER_BLOCKS &&
+                        it.nodeType != "doc"
+                }.map { ViewerContainerAncestor(it.identity, it.nodeType, 0, 0) },
                 listItemAncestors = itemAncestors,
                 outermostListItemIdentity = itemAncestors.firstOrNull()?.identity,
-                outermostListItemIsLast = itemAncestors.firstOrNull()?.context?.isLast == true,
+                outermostListItemIsLast = itemAncestors.firstOrNull()?.context?.isLast == true
             )
             itemAncestors.forEach { ancestor ->
-                descendantLeavesByListItem.getOrPut(ancestor.identity) { mutableListOf() } += rendered.lastIndex
+                descendantLeavesByListItem.getOrPut(ancestor.identity) { mutableListOf() } +=
+                    rendered.lastIndex
             }
             itemAncestors.lastOrNull()?.let { nearest ->
-                directLeavesByListItem.getOrPut(nearest.identity) { mutableListOf() } += rendered.lastIndex
+                directLeavesByListItem.getOrPut(nearest.identity) { mutableListOf() } +=
+                    rendered.lastIndex
             }
         }
 
@@ -183,7 +242,23 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
                 is FfiViewerElement.BlockStart -> {
                     val context = listContext(element.listContextJson)
                     if (context?.isFirst == true) {
-                        stack += Builder(if (context.kind == "task") "taskList" else if (context.ordered) "orderedList" else "bulletList", element.depth.toInt(), null, null, null, nextContainerIdentity++)
+                        stack +=
+                            Builder(
+                                if (context.kind ==
+                                    "task"
+                                ) {
+                                    "taskList"
+                                } else if (context.ordered) {
+                                    "orderedList"
+                                } else {
+                                    "bulletList"
+                                },
+                                element.depth.toInt(),
+                                null,
+                                null,
+                                null,
+                                nextContainerIdentity++
+                            )
                     }
                     val identity = if (context != null) nextListItemIdentity++ else null
                     identity?.let { listItemDepths[it] = element.depth.toInt() }
@@ -194,33 +269,62 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
                         identity,
                         if (identity == null) null else context,
                         nextContainerIdentity++,
-                        element.language,
+                        element.language
                     )
                 }
-                is FfiViewerElement.TextRun -> stack.lastOrNull()?.inlines?.add(ViewerInline.Text(element.text, element.marks))
-                is FfiViewerElement.InlineAtom -> stack.lastOrNull()?.inlines?.add(
-                    ViewerInline.Atom(element.nodeType, u32(element.docPos), element.attrsJson, element.label)
+
+                is FfiViewerElement.TextRun -> stack.lastOrNull()?.inlines?.add(
+                    ViewerInline.Text(element.text, element.marks)
                 )
+
+                is FfiViewerElement.InlineAtom -> stack.lastOrNull()?.inlines?.add(
+                    ViewerInline.Atom(
+                        element.nodeType,
+                        u32(element.docPos),
+                        element.attrsJson,
+                        element.label
+                    )
+                )
+
                 is FfiViewerElement.BlockAtom -> appendLeaf(
                     element.nodeType,
                     stack.lastOrNull()?.depth ?: 0,
-                    listOf(ViewerInline.Atom(element.nodeType, u32(element.docPos), element.attrsJson, element.label)),
+                    listOf(
+                        ViewerInline.Atom(
+                            element.nodeType,
+                            u32(element.docPos),
+                            element.attrsJson,
+                            element.label
+                        )
+                    ),
                     stack,
-                    isBlockAtom = true,
+                    isBlockAtom = true
                 )
+
                 FfiViewerElement.BlockEnd -> {
                     val builder = stack.removeLastOrNull() ?: return@forEach
                     // Containers are represented by inherited context. Every text block,
                     // including an empty paragraph, remains a leaf for list boundaries.
                     if (builder.nodeType !in CONTAINER_BLOCKS && builder.listItemIdentity == null) {
-                        appendLeaf(builder.nodeType, builder.depth, builder.inlines, stack + builder)
+                        appendLeaf(
+                            builder.nodeType,
+                            builder.depth,
+                            builder.inlines,
+                            stack + builder
+                        )
                     }
-                    if (builder.listItemContext?.isLast == true && stack.lastOrNull()?.nodeType in setOf("bulletList", "orderedList", "taskList")) stack.removeLastOrNull()
+                    if (builder.listItemContext?.isLast == true &&
+                        stack.lastOrNull()?.nodeType in
+                        setOf("bulletList", "orderedList", "taskList")
+                    ) {
+                        stack.removeLastOrNull()
+                    }
                 }
             }
         }
         descendantLeavesByListItem.forEach { (identity, descendantLeaves) ->
-            val leaves = directLeavesByListItem[identity]?.takeIf { it.isNotEmpty() } ?: descendantLeaves
+            val leaves =
+                directLeavesByListItem[identity]?.takeIf { it.isNotEmpty() } ?: descendantLeaves
             val first = leaves.firstOrNull() ?: return@forEach
             val final = leaves.last()
             leaves.forEach { index ->
@@ -229,28 +333,48 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
                         ancestor.copy(
                             nestingDepth = listItemDepths[identity] ?: ancestor.nestingDepth,
                             isFirstRenderableLeaf = index == first,
-                            isFinalRenderableLeaf = index == final,
+                            isFinalRenderableLeaf = index == final
                         )
-                    } else ancestor
+                    } else {
+                        ancestor
+                    }
                 }
                 val nearest = updatedAncestors.lastOrNull()
                 rendered[index] = rendered[index].copy(
                     listItemBoundary = nearest?.let {
-                        ViewerListItemBoundary(it.identity, it.nestingDepth, it.isFirstRenderableLeaf, it.isFinalRenderableLeaf)
+                        ViewerListItemBoundary(
+                            it.identity,
+                            it.nestingDepth,
+                            it.isFirstRenderableLeaf,
+                            it.isFinalRenderableLeaf
+                        )
                     },
-                    listItemAncestors = updatedAncestors,
+                    listItemAncestors = updatedAncestors
                 )
             }
         }
         val containerLeaves = mutableMapOf<Int, MutableList<Int>>()
-        rendered.forEachIndexed { index, block -> block.containers.forEach { containerLeaves.getOrPut(it.identity) { mutableListOf() } += index } }
-        rendered.indices.forEach { index ->
-            rendered[index] = rendered[index].copy(containers = rendered[index].containers.map {
-                val leaves = containerLeaves.getValue(it.identity)
-                it.copy(firstLeaf = leaves.first(), lastLeaf = leaves.last())
-            })
+        rendered.forEachIndexed { index, block ->
+            block.containers.forEach {
+                containerLeaves.getOrPut(it.identity) { mutableListOf() } +=
+                    index
+            }
         }
-        val fallback = if (rendered.isEmpty() && !compiled.isEmpty()) listOf(ViewerBlock("paragraph", 0, false, null, null, emptyList())) else rendered
+        rendered.indices.forEach { index ->
+            rendered[index] = rendered[index].copy(
+                containers = rendered[index].containers.map {
+                    val leaves = containerLeaves.getValue(it.identity)
+                    it.copy(firstLeaf = leaves.first(), lastLeaf = leaves.last())
+                }
+            )
+        }
+        val fallback = if (rendered.isEmpty() &&
+            !compiled.isEmpty()
+        ) {
+            listOf(ViewerBlock("paragraph", 0, false, null, null, emptyList()))
+        } else {
+            rendered
+        }
         val admittedAttachmentCount = fallback.count { block ->
             block.nodeType == "image" && ViewerImageAttachment.sourceAndDeclaredSize(block) != null
         }
@@ -258,7 +382,7 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
             throw ProseViewerError.compiler(
                 "viewer",
                 "ATTACHMENT_LIMIT_EXCEEDED",
-                "The document exceeds the maximum admitted image attachment count.",
+                "The document exceeds the maximum admitted image attachment count."
             )
         }
         return ViewerDocument(
@@ -266,7 +390,7 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
             blocks = fallback,
             isEmpty = compiled.isEmpty(),
             retainedBytes = compiled.retainedBytesDecimal().toLongOrNull() ?: 0,
-            trailingEmptyTextBlockCount = compiled.trailingEmptyTextBlockCount().toInt(),
+            trailingEmptyTextBlockCount = compiled.trailingEmptyTextBlockCount().toInt()
         )
     } finally {
         result.destroy()
@@ -298,7 +422,7 @@ internal fun listContext(json: String?): ViewerListContext? = runCatching {
         value.optionalString("kind"),
         value.optBoolean("checked"),
         value.optBoolean("isLast"),
-        value.optBoolean("isFirst"),
+        value.optBoolean("isFirst")
     )
 }.getOrNull()
 
@@ -322,4 +446,8 @@ private fun mentionPrefix(configJson: String): String? = runCatching {
     root.optJSONObject("mentions")?.optionalString("prefix") ?: root.optionalString("mentionPrefix")
 }.getOrNull()
 
-internal fun sha256(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+internal fun sha256(value: String): String = MessageDigest.getInstance(
+    "SHA-256"
+).digest(value.toByteArray(Charsets.UTF_8)).joinToString("") {
+    "%02x".format(it)
+}

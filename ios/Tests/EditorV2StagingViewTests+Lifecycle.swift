@@ -1,9 +1,12 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension EditorV2StagingViewTests {
     func testStagingTypingAppliesRenderPatchWithoutFullRerender() {
-        let (view, adapter, window) = makeBoundView(html: "<p>Hello world, this is a long paragraph.</p>")
+        let bound = makeBoundView(html: "<p>Hello world, this is a long paragraph.</p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         setCollapsedCaret(in: view.textView, utf16Offset: 5)
         flushMain()
@@ -20,7 +23,10 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingSelectionSyncDeliversRustStatePositions() {
-        let (view, adapter, window) = makeBoundView(html: "<p>abcdef</p>")
+        let bound = makeBoundView(html: "<p>abcdef</p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let delegate = EditorTextViewDelegateSpy()
         view.textView.editorDelegate = delegate
@@ -35,10 +41,13 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingReadOnlyRejectsAccessibilityStyleEditAtomically() {
-        let (view, adapter, window) = makeBoundView(
+        let bound = makeBoundView(
             configJson: #"{"initialization":{"type":"localEmpty"},"policy":{"readOnly":true}}"#,
             html: "<p>ab</p>"
         )
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         setCollapsedCaret(in: view.textView, utf16Offset: 2)
         flushMain()
@@ -57,7 +66,10 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingDestroyMidCompositionIsStructuredFailureWithoutPartialCommit() {
-        let (view, adapter, window) = makeBoundView(html: "<p>ab</p>")
+        let bound = makeBoundView(html: "<p>ab</p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         setCollapsedCaret(in: view.textView, utf16Offset: 2)
         flushMain()
@@ -82,7 +94,10 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingUndoRedoThroughToolbarPath() {
-        let (view, adapter, window) = makeBoundView(html: "<p>ab</p>")
+        let bound = makeBoundView(html: "<p>ab</p>")
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         setCollapsedCaret(in: view.textView, utf16Offset: 2)
         flushMain()

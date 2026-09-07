@@ -6,15 +6,10 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Annotation
 import android.text.Layout
-import android.text.Spanned
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.util.Base64
-import android.view.View
-import android.view.ViewGroup
-import android.widget.TextView
-import kotlin.math.abs
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
@@ -24,6 +19,14 @@ import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.text.style.URLSpan
 import android.text.style.UnderlineSpan
+import android.util.Base64
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -34,9 +37,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -58,7 +58,7 @@ internal class RenderBridgeTaskListsTest : RenderBridgeTestFixture() {
         val result = RenderBridge.buildSpannable(json, baseFontSize, textColor)
 
         assertTrue(
-            "Task list item should start with the unchecked marker. Got: '${result}'",
+            "Task list item should start with the unchecked marker. Got: '$result'",
             result.toString().startsWith(LayoutConstants.TASK_LIST_MARKER_UNCHECKED)
         )
         val annotations = result.getSpans(0, 2, android.text.Annotation::class.java)

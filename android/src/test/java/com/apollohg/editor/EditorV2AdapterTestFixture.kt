@@ -27,23 +27,24 @@ internal abstract class EditorV2AdapterTestFixture {
         val adapter = EditorV2Adapter.attach(
             backend,
             createEditorId(configJson),
-            roomBound = false,
+            roomBound = false
         ) ?: throw AssertionError("created editor could not be attached")
         createdAdapters.add(adapter)
         return adapter
     }
 
-    protected fun createEditorId(configJson: String, snapshotState: ByteArray? = null): String = when (
-        val created = backend.create(configJson, snapshotState)
-    ) {
-        is EditorV2CallResult.Ok -> JSONObject(created.value).getString("editorId")
-        is EditorV2CallResult.Err -> throw AssertionError("create failed: ${created.error}")
-    }
+    protected fun createEditorId(configJson: String, snapshotState: ByteArray? = null): String =
+        when (
+            val created = backend.create(configJson, snapshotState)
+        ) {
+            is EditorV2CallResult.Ok -> JSONObject(created.value).getString("editorId")
+            is EditorV2CallResult.Err -> throw AssertionError("create failed: ${created.error}")
+        }
 
     protected fun makeRoomAdapter(
         collaborationWake: (String, CollaborationWakeReason) -> Unit = { editorId, reason ->
             NativeCollaborationTransportRegistry.notifyOutboundAvailable(editorId, reason)
-        },
+        }
     ): EditorV2Adapter {
         val seed = makeAdapter()
         seed.setContentHtml("<p>seed</p>")
@@ -58,13 +59,13 @@ internal abstract class EditorV2AdapterTestFixture {
                             .put("type", "room")
                             .put("documentId", "doc")
                             .put("lineageId", "lineage")
-                            .put("snapshot", JSONObject(snapshot.first)),
+                            .put("snapshot", JSONObject(snapshot.first))
                     )
                     .toString(),
-                snapshot.second,
+                snapshot.second
             ),
             roomBound = true,
-            collaborationWake = collaborationWake,
+            collaborationWake = collaborationWake
         ) ?: throw AssertionError("created room editor could not be attached")
         createdAdapters.add(adapter)
         return adapter
@@ -96,107 +97,109 @@ internal abstract class EditorV2AdapterTestFixture {
         backend.sessions.getValue(adapter.editorId)
 
     /** A frozen v2 atomic render snapshot, deliberately independent of the fake's legacy payload. */
-    protected fun atomicRenderSnapshot(text: String, revision: String, selectionScalar: Int = 0): String =
-        JSONObject()
-            .put(
-                "renderBlocks",
+    protected fun atomicRenderSnapshot(
+        text: String,
+        revision: String,
+        selectionScalar: Int = 0
+    ): String = JSONObject()
+        .put(
+            "renderBlocks",
+            org.json.JSONArray().put(
                 org.json.JSONArray().put(
-                    org.json.JSONArray().put(
-                        JSONObject()
-                            .put("type", "textRun")
-                            .put("text", text)
-                            .put("marks", org.json.JSONArray())
-                    )
+                    JSONObject()
+                        .put("type", "textRun")
+                        .put("text", text)
+                        .put("marks", org.json.JSONArray())
                 )
             )
-            .put("renderPatch", JSONObject.NULL)
-            .put(
-                "selection",
-                JSONObject()
-                    .put("type", "text")
-                    .put("anchor", selectionScalar)
-                    .put("head", selectionScalar)
-                    .put("anchorScalar", selectionScalar)
-                    .put("headScalar", selectionScalar)
-            )
-            .put(
-                "activeState",
-                JSONObject()
-                    .put("marks", JSONObject().put("bold", selectionScalar > 0))
-                    .put("markAttrs", JSONObject())
-                    .put("nodes", JSONObject().put("paragraph", true))
-                    .put("commands", JSONObject().put("toggleBold", true))
-                    .put("allowedMarks", org.json.JSONArray().put("bold"))
-                    .put("insertableNodes", org.json.JSONArray().put("hardBreak"))
-            )
-            .put("historyState", JSONObject().put("canUndo", true).put("canRedo", false))
-            .put("documentVersion", revision)
-            .put("stateRevision", revision)
-            .put("scalarLength", text.codePointCount(0, text.length))
-            .put("documentIsEmpty", text.isEmpty())
-            .toString()
+        )
+        .put("renderPatch", JSONObject.NULL)
+        .put(
+            "selection",
+            JSONObject()
+                .put("type", "text")
+                .put("anchor", selectionScalar)
+                .put("head", selectionScalar)
+                .put("anchorScalar", selectionScalar)
+                .put("headScalar", selectionScalar)
+        )
+        .put(
+            "activeState",
+            JSONObject()
+                .put("marks", JSONObject().put("bold", selectionScalar > 0))
+                .put("markAttrs", JSONObject())
+                .put("nodes", JSONObject().put("paragraph", true))
+                .put("commands", JSONObject().put("toggleBold", true))
+                .put("allowedMarks", org.json.JSONArray().put("bold"))
+                .put("insertableNodes", org.json.JSONArray().put("hardBreak"))
+        )
+        .put("historyState", JSONObject().put("canUndo", true).put("canRedo", false))
+        .put("documentVersion", revision)
+        .put("stateRevision", revision)
+        .put("scalarLength", text.codePointCount(0, text.length))
+        .put("documentIsEmpty", text.isEmpty())
+        .toString()
 
-    protected fun imageAtomicRenderSnapshot(revision: String, width: Int): String =
-        JSONObject()
-            .put(
-                "renderBlocks",
-                org.json.JSONArray()
-                    .put(
-                        org.json.JSONArray()
-                            .put(
-                                JSONObject()
-                                    .put("type", "blockStart")
-                                    .put("nodeType", "paragraph")
-                                    .put("depth", 0)
-                            )
-                            .put(
-                                JSONObject()
-                                    .put("type", "textRun")
-                                    .put("text", "Hello")
-                                    .put("marks", org.json.JSONArray())
-                            )
-                            .put(JSONObject().put("type", "blockEnd"))
-                    )
-                    .put(
-                        org.json.JSONArray().put(
+    protected fun imageAtomicRenderSnapshot(revision: String, width: Int): String = JSONObject()
+        .put(
+            "renderBlocks",
+            org.json.JSONArray()
+                .put(
+                    org.json.JSONArray()
+                        .put(
                             JSONObject()
-                                .put("type", "voidBlock")
-                                .put("nodeType", "image")
-                                .put("docPos", 7)
-                                .put(
-                                    "attrs",
-                                    JSONObject()
-                                        .put("src", "https://example.com/cat.png")
-                                        .put("width", width)
-                                        .put("height", 80)
-                                )
+                                .put("type", "blockStart")
+                                .put("nodeType", "paragraph")
+                                .put("depth", 0)
                         )
+                        .put(
+                            JSONObject()
+                                .put("type", "textRun")
+                                .put("text", "Hello")
+                                .put("marks", org.json.JSONArray())
+                        )
+                        .put(JSONObject().put("type", "blockEnd"))
+                )
+                .put(
+                    org.json.JSONArray().put(
+                        JSONObject()
+                            .put("type", "voidBlock")
+                            .put("nodeType", "image")
+                            .put("docPos", 7)
+                            .put(
+                                "attrs",
+                                JSONObject()
+                                    .put("src", "https://example.com/cat.png")
+                                    .put("width", width)
+                                    .put("height", 80)
+                            )
                     )
-            )
-            .put("renderPatch", JSONObject.NULL)
-            .put(
-                "selection",
-                JSONObject()
-                    .put("type", "node")
-                    .put("pos", 7)
-                    .put("posScalar", 6)
-            )
-            .put(
-                "activeState",
-                JSONObject()
-                    .put("marks", JSONObject())
-                    .put("markAttrs", JSONObject())
-                    .put("nodes", JSONObject().put("image", true))
-                    .put("commands", JSONObject())
-                    .put("allowedMarks", org.json.JSONArray())
-                    .put("insertableNodes", org.json.JSONArray())
-            )
-            .put("historyState", JSONObject().put("canUndo", true).put("canRedo", false))
-            .put("documentVersion", revision)
-            .put("stateRevision", revision)
-            .put("scalarLength", 7)
-            .put("documentIsEmpty", false)
-            .toString()
+                )
+        )
+        .put("renderPatch", JSONObject.NULL)
+        .put(
+            "selection",
+            JSONObject()
+                .put("type", "node")
+                .put("pos", 7)
+                .put("posScalar", 6)
+        )
+        .put(
+            "activeState",
+            JSONObject()
+                .put("marks", JSONObject())
+                .put("markAttrs", JSONObject())
+                .put("nodes", JSONObject().put("image", true))
+                .put("commands", JSONObject())
+                .put("allowedMarks", org.json.JSONArray())
+                .put("insertableNodes", org.json.JSONArray())
+        )
+        .put("historyState", JSONObject().put("canUndo", true).put("canRedo", false))
+        .put("documentVersion", revision)
+        .put("stateRevision", revision)
+        .put("scalarLength", 7)
+        .put("documentIsEmpty", false)
+        .toString()
 
     protected fun adoptExternalRender(adapter: EditorV2Adapter, snapshot: String): String? =
         adapter.adoptExternalRender(snapshot)
@@ -204,8 +207,6 @@ internal abstract class EditorV2AdapterTestFixture {
     // MARK: construction
 
     // MARK: commit semantics
-
-    // MARK: Task 16B render accessor (probe replacement)
 
     // MARK: read-only atomicity
 

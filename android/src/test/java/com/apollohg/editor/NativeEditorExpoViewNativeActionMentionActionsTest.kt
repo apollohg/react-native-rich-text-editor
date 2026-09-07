@@ -3,6 +3,7 @@ import android.app.Activity
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
+import java.time.Duration
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -17,13 +18,13 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-internal class NativeEditorExpoViewNativeActionMentionActionsTest : NativeEditorExpoViewNativeActionTestFixture() {
+internal class NativeEditorExpoViewNativeActionMentionActionsTest :
+    NativeEditorExpoViewNativeActionTestFixture() {
     @Test
-    fun `parked native mention selection survives controlled update document version acknowledgement`() {
+    fun `parked mention selection survives controlled document version acknowledgement`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
         val editorId = 779856L

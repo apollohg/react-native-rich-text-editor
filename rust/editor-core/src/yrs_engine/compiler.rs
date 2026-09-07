@@ -66,7 +66,6 @@ use yrs::types::Attrs;
 use yrs_compilation::compile_transaction_with_yrs_impl;
 
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 pub(crate) struct CompilationContext<'a> {
     pub document: &'a Document,
     pub selection: Option<&'a Selection>,
@@ -102,7 +101,6 @@ pub(crate) struct EngineCompilationView<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum HistoryClass {
     Insert,
     Delete,
@@ -112,7 +110,6 @@ pub(crate) enum HistoryClass {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum SelectionPlan {
     Preserve,
     Mapped(Selection),
@@ -270,17 +267,7 @@ pub(crate) enum MutationLookupTransition {
     Invalidate { request_id: u64 },
 }
 
-impl MutationLookupTransition {
-    pub(crate) fn request_id(&self) -> u64 {
-        match self {
-            Self::Promote(promotion) => promotion.request_id(),
-            Self::Invalidate { request_id } => *request_id,
-        }
-    }
-}
-
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) struct CompiledTransaction {
     pub request_id: u64,
     pub base_state_revision: u64,
@@ -378,6 +365,7 @@ pub(super) fn compile_transaction(
     )
 }
 
+#[cfg(test)]
 pub(super) fn compile_transaction_with_yrs<T: yrs::ReadTxn>(
     context: CompilationContext<'_>,
     transaction: TypedTransaction,
@@ -485,9 +473,6 @@ fn map_transform_error(
         }
         crate::transform::TransformError::ContentViolation(message) => {
             OperationError::document_invalid(request_id, Some(operation_index), "content", message)
-        }
-        crate::transform::TransformError::NotImplemented(message) => {
-            OperationError::operation_invalid(request_id, operation_index, "operation", message)
         }
     }
 }

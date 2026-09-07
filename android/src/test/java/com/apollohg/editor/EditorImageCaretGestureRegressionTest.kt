@@ -7,7 +7,9 @@ import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
 import android.widget.EditText
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -19,13 +21,33 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [34])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class EditorImageCaretGestureRegressionTest {
-    private fun editor(): EditorEditText = EditorEditText(RuntimeEnvironment.getApplication()).apply {
-        showSoftInputOnFocus = false
-        applyTheme(EditorTheme.fromJson("""{"version":1,"styles":{"content":{"padding":20},"text":{"fontSize":17},"paragraph":{"lineHeight":27,"marginBottom":12},"image":{"marginVertical":12}}}"""))
-        applyRenderJSON("""[{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"textRun","text":"Hello","marks":[]},{"type":"blockEnd"},{"type":"voidBlock","nodeType":"image","docPos":7,"attrs":{"src":"https://example.com/image.png","width":140,"height":80}},{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"textRun","text":"After","marks":[]},{"type":"blockEnd"}]""")
-        measure(View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.AT_MOST))
-        layout(0, 0, measuredWidth, measuredHeight)
-    }
+    private fun editor(): EditorEditText =
+        EditorEditText(RuntimeEnvironment.getApplication()).apply {
+            showSoftInputOnFocus = false
+            applyTheme(
+                EditorTheme.fromJson(
+
+                    """{"version":1,"styles":{"content":{"padding":20}""" +
+                        ""","text":{"fontSize":17},"paragraph":{"lineHeight":27""" +
+                        ""","marginBottom":12},"image":{"marginVertical":12}}}"""
+                )
+            )
+            applyRenderJSON(
+
+                """[{"type":"blockStart","nodeType":"paragraph","depth":0},""" +
+                    """{"type":"textRun","text":"Hello","marks":[]},{"type":"blockEnd"},""" +
+                    """{"type":"voidBlock","nodeType":"image","docPos":7""" +
+                    ""","attrs":{"src":"https://example.com/image.png","width":140""" +
+                    ""","height":80}},{"type":"blockStart","nodeType":"paragrap""" +
+                    """h","depth":0},{"type":"textRun","text":"After","marks":[]},""" +
+                    """{"type":"blockEnd"}]"""
+            )
+            measure(
+                View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.AT_MOST)
+            )
+            layout(0, 0, measuredWidth, measuredHeight)
+        }
 
     @Test
     fun `tap at paragraph end above image places text caret`() {
@@ -74,22 +96,34 @@ class EditorImageCaretGestureRegressionTest {
         val expected = Bitmap.createBitmap(editor.width, editor.height, Bitmap.Config.ARGB_8888)
         val native = EditText(editor.context)
         for ((offset, isStart) in listOf(0 to true, 2 to false)) {
-            val drawable = requireNotNull(if (isStart) native.textSelectHandleLeft else native.textSelectHandleRight).mutate()
+            val drawable = requireNotNull(
+                if (isStart) native.textSelectHandleLeft else native.textSelectHandleRight
+            ).mutate()
             drawable.setTint(editor.caretColor)
             val width = drawable.intrinsicWidth
             val height = drawable.intrinsicHeight
             val hotspot = if (isStart) width * 3 / 4 else width / 4
             val left = ((editor.layout.getPrimaryHorizontal(offset) - 0.5f).toInt() - hotspot)
                 .coerceIn(0, editor.width - width)
-            val top = CaretGeometry.verticalBounds(editor.layout, offset, editor.paint, editor.text).bottom.toInt()
+            val top = CaretGeometry.verticalBounds(
+                editor.layout,
+                offset,
+                editor.paint,
+                editor.text
+            ).bottom.toInt()
                 .coerceIn(0, editor.height - height)
             drawable.setBounds(left, top, left + width, top + height)
             drawable.draw(Canvas(expected))
         }
-        assertTrue("Selection handles must retain native shapes at the edge", expected.sameAs(bitmap))
-        assertTrue((0 until bitmap.height).any { y ->
-            (0 until bitmap.width).any { x -> Color.alpha(bitmap.getPixel(x, y)) > 0 }
-        })
+        assertTrue(
+            "Selection handles must retain native shapes at the edge",
+            expected.sameAs(bitmap)
+        )
+        assertTrue(
+            (0 until bitmap.height).any { y ->
+                (0 until bitmap.width).any { x -> Color.alpha(bitmap.getPixel(x, y)) > 0 }
+            }
+        )
         expected.recycle()
         bitmap.recycle()
     }
@@ -114,7 +148,20 @@ class EditorImageCaretGestureRegressionTest {
     private fun tap(editor: EditorEditText, x: Float, y: Float) {
         val time = SystemClock.uptimeMillis()
         for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
-            MotionEvent.obtain(time, time + if (action == MotionEvent.ACTION_UP) 30 else 0, action, x, y, 0).also {
+            MotionEvent.obtain(
+                time,
+                time + if (action ==
+                    MotionEvent.ACTION_UP
+                ) {
+                    30
+                } else {
+                    0
+                },
+                action,
+                x,
+                y,
+                0
+            ).also {
                 editor.dispatchTouchEvent(it)
                 it.recycle()
             }

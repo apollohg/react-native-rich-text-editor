@@ -1,5 +1,5 @@
-import XCTest
 import CoreText
+import XCTest
 
 extension RenderBridgeTests {
     func testAbsoluteRequestDeadlineStartsAtAdmissionAndSuppressesQueuedWork() {
@@ -382,8 +382,8 @@ extension RenderBridgeTests {
                 "type": "localJson",
                 "json": [
                     "type": "doc",
-                    "content": [["type": "counterCard", "attrs": ["title": "Sample item"]]],
-                ],
+                    "content": [["type": "counterCard", "attrs": ["title": "Sample item"]]]
+                ]
             ],
             "schema": [
                 "nodes": [
@@ -393,7 +393,7 @@ extension RenderBridgeTests {
                         "content": "text*",
                         "group": "block",
                         "role": "textBlock",
-                        "htmlTag": "p",
+                        "htmlTag": "p"
                     ],
                     ["name": "text", "content": "", "role": "text"],
                     [
@@ -406,12 +406,12 @@ extension RenderBridgeTests {
                         "html": [
                             "tag": "div",
                             "staticAttrs": ["data-type": "counter-card"],
-                            "attrMap": ["title": "data-title"],
-                        ],
-                    ],
+                            "attrMap": ["title": "data-title"]
+                        ]
+                    ]
                 ],
-                "marks": [],
-            ],
+                "marks": []
+            ]
         ]
         let data = try JSONSerialization.data(withJSONObject: config)
         let editorId = makeV2Editor(configJson: try XCTUnwrap(String(data: data, encoding: .utf8)))

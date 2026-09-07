@@ -1,5 +1,7 @@
 package com.apollohg.editor
 
+import uniffi.editor_core.FfiError
+import uniffi.editor_core.FfiJsonResult
 import uniffi.editor_core.editorV2ApplyCommand
 import uniffi.editor_core.editorV2ApplyInput
 import uniffi.editor_core.editorV2ApplyLocalApi
@@ -22,19 +24,17 @@ import uniffi.editor_core.editorV2GetContentSnapshot
 import uniffi.editor_core.editorV2GetDocumentHtml
 import uniffi.editor_core.editorV2GetDocumentJson
 import uniffi.editor_core.editorV2GetState
+import uniffi.editor_core.editorV2PinPositionEpoch
 import uniffi.editor_core.editorV2Redo
 import uniffi.editor_core.editorV2ReleaseNativeBinding
 import uniffi.editor_core.editorV2RenderNative
 import uniffi.editor_core.editorV2RenderUpdate
 import uniffi.editor_core.editorV2ReplaceDocument
-import uniffi.editor_core.editorV2PinPositionEpoch
 import uniffi.editor_core.editorV2ResolveScalarSelection
 import uniffi.editor_core.editorV2ScalarToDoc
 import uniffi.editor_core.editorV2SetSelection
 import uniffi.editor_core.editorV2SnapshotExport
 import uniffi.editor_core.editorV2Undo
-import uniffi.editor_core.FfiError
-import uniffi.editor_core.FfiJsonResult
 
 /**
  * The production v2 backend over the real UniFFI bindings. The v2 verbs
@@ -55,14 +55,15 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
         val error = result.error
         if (value != null && error == null) return EditorV2CallResult.Ok(value)
         if (value == null && error != null) return EditorV2CallResult.Err(error.toV2())
-        return EditorV2CallResult.Err(contractError("v2 result must carry exactly one of value/error"))
+        return EditorV2CallResult.Err(
+            contractError("v2 result must carry exactly one of value/error")
+        )
     }
 
     override fun create(configJson: String, snapshotState: ByteArray?): EditorV2CallResult<String> =
         normalize(editorV2Create(configJson, snapshotState))
 
-    override fun destroy(editorId: String): EditorV2Error? =
-        editorV2Destroy(editorId).error?.toV2()
+    override fun destroy(editorId: String): EditorV2Error? = editorV2Destroy(editorId).error?.toV2()
 
     override fun getState(editorId: String): EditorV2CallResult<String> =
         normalize(editorV2GetState(editorId))
@@ -85,8 +86,10 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
     override fun applyLocalApi(editorId: String, requestJson: String): EditorV2CallResult<String> =
         normalize(editorV2ApplyLocalApi(editorId, requestJson))
 
-    override fun replaceDocument(editorId: String, requestJson: String): EditorV2CallResult<String> =
-        normalize(editorV2ReplaceDocument(editorId, requestJson))
+    override fun replaceDocument(
+        editorId: String,
+        requestJson: String
+    ): EditorV2CallResult<String> = normalize(editorV2ReplaceDocument(editorId, requestJson))
 
     override fun setSelection(editorId: String, requestJson: String): EditorV2CallResult<String> =
         normalize(editorV2SetSelection(editorId, requestJson))
@@ -97,13 +100,15 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
     override fun redo(editorId: String, requestJson: String): EditorV2CallResult<String> =
         normalize(editorV2Redo(editorId, requestJson))
 
-    override fun collaborationDrive(editorId: String, nowMillis: String): EditorV2CallResult<String> =
-        normalize(editorV2CollaborationDrive(editorId, nowMillis))
+    override fun collaborationDrive(
+        editorId: String,
+        nowMillis: String
+    ): EditorV2CallResult<String> = normalize(editorV2CollaborationDrive(editorId, nowMillis))
 
     override fun collaborationSocketOpen(
         editorId: String,
         generation: String,
-        nowMillis: String,
+        nowMillis: String
     ): EditorV2CallResult<String> =
         normalize(editorV2CollaborationSocketOpen(editorId, generation, nowMillis))
 
@@ -111,7 +116,7 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
         editorId: String,
         generation: String,
         message: ByteArray,
-        nowMillis: String,
+        nowMillis: String
     ): EditorV2CallResult<String> =
         normalize(editorV2CollaborationReceive(editorId, generation, message, nowMillis))
 
@@ -120,13 +125,13 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
         generation: String,
         code: UInt?,
         reason: String?,
-        nowMillis: String,
+        nowMillis: String
     ): EditorV2CallResult<String> =
         normalize(editorV2CollaborationSocketClose(editorId, generation, code, reason, nowMillis))
 
     override fun collaborationLeaseOutbound(
         editorId: String,
-        generation: String,
+        generation: String
     ): EditorV2LeaseResult {
         val result = editorV2CollaborationLeaseOutbound(editorId, generation)
         val value = result.value
@@ -134,23 +139,28 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
         return when {
             value != null && !result.empty && error == null ->
                 EditorV2LeaseResult.Value(EditorV2OutboundLease(value.leaseId, value.frame))
+
             value == null && result.empty && error == null -> EditorV2LeaseResult.Empty
+
             value == null && !result.empty && error != null -> EditorV2LeaseResult.Err(error.toV2())
-            else -> EditorV2LeaseResult.Err(contractError("v2 lease result violates the frozen shape"))
+
+            else -> EditorV2LeaseResult.Err(
+                contractError("v2 lease result violates the frozen shape")
+            )
         }
     }
 
     override fun collaborationAckOutbound(
         editorId: String,
         generation: String,
-        leaseId: String,
+        leaseId: String
     ): EditorV2CallResult<String> =
         normalize(editorV2CollaborationAckOutbound(editorId, generation, leaseId))
 
     override fun collaborationNackOutbound(
         editorId: String,
         generation: String,
-        leaseId: String,
+        leaseId: String
     ): EditorV2CallResult<String> =
         normalize(editorV2CollaborationNackOutbound(editorId, generation, leaseId))
 
@@ -165,7 +175,7 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
 
     override fun collaborationSetAwarenessSelection(
         editorId: String,
-        selectionJson: String,
+        selectionJson: String
     ): EditorV2CallResult<String> =
         normalize(editorV2CollaborationSetAwarenessSelection(editorId, selectionJson))
 
@@ -177,14 +187,15 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
             return EditorV2CallResult.Ok(value.metadataJson to value.encodedState)
         }
         if (error != null) return EditorV2CallResult.Err(error.toV2())
-        return EditorV2CallResult.Err(contractError("v2 result must carry exactly one of value/error"))
+        return EditorV2CallResult.Err(
+            contractError("v2 result must carry exactly one of value/error")
+        )
     }
-
 
     override fun renderUpdate(
         editorId: String,
         mirrorAnchor: Int?,
-        mirrorHead: Int?,
+        mirrorHead: Int?
     ): EditorV2CallResult<String> {
         val anchor = mirrorAnchor?.let(::exactV2U32)
         val head = mirrorHead?.let(::exactV2U32)
@@ -198,7 +209,7 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
         editorId: String,
         ownerId: String,
         mirrorAnchor: Int?,
-        mirrorHead: Int?,
+        mirrorHead: Int?
     ): EditorV2CallResult<String> {
         val anchor = mirrorAnchor?.let(::exactV2U32)
         val head = mirrorHead?.let(::exactV2U32)
@@ -211,17 +222,23 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
     override fun pinPositionEpoch(
         editorId: String,
         ownerId: String,
-        documentRevision: String,
+        documentRevision: String
     ): EditorV2CallResult<String> =
         normalize(editorV2PinPositionEpoch(editorId, ownerId, documentRevision))
 
-    override fun applyNativeIntent(editorId: String, requestJson: String): EditorV2CallResult<String> =
-        normalize(editorV2ApplyNativeIntent(editorId, requestJson))
+    override fun applyNativeIntent(
+        editorId: String,
+        requestJson: String
+    ): EditorV2CallResult<String> = normalize(editorV2ApplyNativeIntent(editorId, requestJson))
 
     override fun releaseNativeBinding(editorId: String, ownerId: String): EditorV2Error? =
         editorV2ReleaseNativeBinding(editorId, ownerId).error?.toV2()
 
-    override fun resolveScalarSelection(editorId: String, anchor: Int, head: Int): EditorV2CallResult<String> {
+    override fun resolveScalarSelection(
+        editorId: String,
+        anchor: Int,
+        head: Int
+    ): EditorV2CallResult<String> {
         val exactAnchor = exactV2U32(anchor)
         val exactHead = exactV2U32(head)
         if (exactAnchor == null || exactHead == null) {

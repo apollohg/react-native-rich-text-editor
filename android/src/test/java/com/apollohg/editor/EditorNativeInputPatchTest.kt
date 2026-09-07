@@ -2,7 +2,8 @@ package com.apollohg.editor
 
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -21,7 +22,11 @@ internal class EditorNativeInputPatchTest : EditorInputConnectionTestFixture() {
             editor.setSelection(0)
             val input = requireNotNull(editor.onCreateInputConnection(EditorInfo()))
             input.commitText("A", 1)
-            assertEquals(editor.imeTraceSnapshotForTesting().joinToString("\n"), "AAlpha\nBeta", editor.text.toString())
+            assertEquals(
+                editor.imeTraceSnapshotForTesting().joinToString("\n"),
+                "AAlpha\nBeta",
+                editor.text.toString()
+            )
             assertTrue(editor.lastRenderAppliedPatchForTesting)
             input.commitText(" ", 1)
             assertEquals("<p>A Alpha</p><p>Beta</p>", harness.adapter.documentHtml())
@@ -31,7 +36,9 @@ internal class EditorNativeInputPatchTest : EditorInputConnectionTestFixture() {
             assertEquals("<p>A Alpha</p><p>😀Beta</p>", harness.adapter.documentHtml())
             assertEquals("A Alpha\n😀Beta", editor.text.toString())
             assertTrue(editor.lastRenderAppliedPatchForTesting)
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -47,7 +54,13 @@ internal class EditorNativeInputPatchTest : EditorInputConnectionTestFixture() {
             input.commitText("日本", 1)
             shadowOf(Looper.getMainLooper()).idle()
             assertEquals("<p>Alpha</p><p>日本Beta</p>", harness.adapter.documentHtml())
-            assertEquals(editor.imeTraceSnapshotForTesting().joinToString("\n"), "Alpha\n日本Beta", editor.text.toString())
-        } finally { harness.adapter.destroy() }
+            assertEquals(
+                editor.imeTraceSnapshotForTesting().joinToString("\n"),
+                "Alpha\n日本Beta",
+                editor.text.toString()
+            )
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 }

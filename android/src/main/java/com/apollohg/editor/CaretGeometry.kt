@@ -41,24 +41,24 @@ object CaretGeometry {
         selectionStart >= 0 &&
         selectionStart == selectionEnd
 
-    fun verticalBounds(layout: Layout, offset: Int, paint: Paint): VerticalBounds {
-        return verticalBounds(layout, offset, paint, layout.text)
-    }
+    fun verticalBounds(layout: Layout, offset: Int, paint: Paint): VerticalBounds =
+        verticalBounds(layout, offset, paint, layout.text)
 
     fun verticalBounds(
         layout: Layout,
         offset: Int,
         fallbackPaint: Paint,
-        text: CharSequence,
+        text: CharSequence
     ): VerticalBounds {
         val line = layout.getLineForOffset(offset.coerceIn(0, layout.text.length))
         val top = layout.editorTextLineTop(line).toFloat()
-        val resolvedPaint = (layout as? EditorDocumentLayout)?.emptyLinePaint(offset) ?: resolvedPaintAtOffset(
-            fallbackPaint,
-            text,
-            offset,
-            layout.getLineStart(line),
-        )
+        val resolvedPaint =
+            (layout as? EditorDocumentLayout)?.emptyLinePaint(offset) ?: resolvedPaintAtOffset(
+                fallbackPaint,
+                text,
+                offset,
+                layout.getLineStart(line)
+            )
         val bottom = layout.getLineBaseline(line) + resolvedPaint.fontMetrics.descent
         return VerticalBounds(top, bottom)
     }
@@ -67,12 +67,14 @@ object CaretGeometry {
         fallbackPaint: Paint,
         text: CharSequence,
         offset: Int,
-        lineStart: Int,
+        lineStart: Int
     ): TextPaint {
         val resolved = TextPaint(fallbackPaint)
         val spanned = text as? Spanned ?: return resolved
         if (spanned.isEmpty()) {
-            spanned.getSpans(0, 0, MetricAffectingSpan::class.java).forEach { it.updateMeasureState(resolved) }
+            spanned.getSpans(0, 0, MetricAffectingSpan::class.java).forEach {
+                it.updateMeasureState(resolved)
+            }
             return resolved
         }
         val clampedOffset = offset.coerceIn(0, spanned.length)

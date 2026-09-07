@@ -1,19 +1,21 @@
 package com.apollohg.editor
-import android.graphics.Color
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Rect
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
-import android.widget.LinearLayout
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -26,8 +28,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -295,12 +295,15 @@ internal class RichTextEditorViewTest : RichTextEditorViewTestFixture() {
         richTextEditorView.setViewportBottomInsetPx(96)
 
         val density = context.resources.displayMetrics.density
-        assertEquals((12f * density).toInt() + 96, richTextEditorView.editorScrollView.paddingBottom)
+        assertEquals(
+            (12f * density).toInt() + 96,
+            richTextEditorView.editorScrollView.paddingBottom
+        )
         assertEquals(0, richTextEditorView.editorEditText.paddingBottom)
     }
 
     @Test
-    fun `fixed height editor scrolls vertical contentInsets away while preserving viewport inset`() {
+    fun `fixed height editor scrolls contentInsets away and preserves viewport inset`() {
         val context = RuntimeEnvironment.getApplication()
         val richTextEditorView = RichTextEditorView(context)
         val density = context.resources.displayMetrics.density
@@ -319,7 +322,10 @@ internal class RichTextEditorViewTest : RichTextEditorViewTestFixture() {
 
         assertTrue(!richTextEditorView.editorScrollView.clipToPadding)
         assertEquals((8f * density).toInt(), richTextEditorView.editorScrollView.paddingTop)
-        assertEquals((12f * density).toInt() + 96, richTextEditorView.editorScrollView.paddingBottom)
+        assertEquals(
+            (12f * density).toInt() + 96,
+            richTextEditorView.editorScrollView.paddingBottom
+        )
         assertEquals(0, richTextEditorView.editorEditText.paddingTop)
         assertEquals(0, richTextEditorView.editorEditText.paddingBottom)
     }
@@ -401,7 +407,11 @@ internal class RichTextEditorViewTest : RichTextEditorViewTestFixture() {
     fun `example content layout does not end with multiple blank lines`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         val theme = exampleTheme()
-        editText.setBaseStyle(17f * 2.625f, Color.parseColor("#2a2118"), Color.parseColor("#f6f1e8"))
+        editText.setBaseStyle(
+            17f * 2.625f,
+            Color.parseColor("#2a2118"),
+            Color.parseColor("#f6f1e8")
+        )
         editText.applyTheme(theme)
         editText.setText(
             RenderBridge.buildSpannable(
@@ -435,9 +445,14 @@ internal class RichTextEditorViewTest : RichTextEditorViewTestFixture() {
             break
         }
 
-        val spacerSpans = editText.text?.getSpans(0, text.length, ParagraphSpacerSpan::class.java) ?: emptyArray()
+        val spacerSpans =
+            editText.text?.getSpans(0, text.length, ParagraphSpacerSpan::class.java) ?: emptyArray()
         assertTrue(
-            "Trailing blank lines=$trailingBlankLines lineCount=${layout.lineCount} text='${text.replace("\n", "\\n")}' spacerCount=${spacerSpans.size} measuredHeight=${editText.measuredHeight}",
+            "Trailing blank lines=$trailingBlankLines lineCount=${layout.lineCount} " +
+                "text='${text.replace(
+                    "\n",
+                    "\\n"
+                )}' spacerCount=${spacerSpans.size} measuredHeight=${editText.measuredHeight}",
             trailingBlankLines <= 1
         )
     }
@@ -458,12 +473,12 @@ internal class RichTextEditorViewTest : RichTextEditorViewTestFixture() {
         assertTrue(
             "the scroll viewport must be taller than one line for this fixture " +
                 "(viewport=$usableHeight, field=${editText.height})",
-            usableHeight > editText.lineHeight * 2,
+            usableHeight > editText.lineHeight * 2
         )
         assertEquals(
             "a tap below the last line must land on the field, not the scroll container",
             usableHeight,
-            editText.height,
+            editText.height
         )
     }
 
@@ -482,7 +497,7 @@ internal class RichTextEditorViewTest : RichTextEditorViewTestFixture() {
         assertTrue(
             "long content must not be clamped to the viewport " +
                 "(viewport=${scrollView.height}, field=${editText.height})",
-            editText.height > scrollView.height,
+            editText.height > scrollView.height
         )
     }
 }

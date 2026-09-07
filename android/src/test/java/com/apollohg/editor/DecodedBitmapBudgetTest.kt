@@ -67,7 +67,7 @@ class DecodedBitmapBudgetTest {
         val mountedBase = requireNotNull(
             budget.reserve(2_048, DecodedBitmapPriority.VISIBLE)?.commit(
                 Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888),
-                2_048,
+                2_048
             )
         )
         val mounted = requireNotNull(
@@ -76,7 +76,7 @@ class DecodedBitmapBudgetTest {
         val cacheOnly = requireNotNull(
             budget.reserve(2_048, DecodedBitmapPriority.VISIBLE)?.commit(
                 Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888),
-                2_048,
+                2_048
             )
         )
         budget.setPressureHandler { cacheOnly.close() }
@@ -84,7 +84,7 @@ class DecodedBitmapBudgetTest {
         val replacement = requireNotNull(
             budget.reserve(2_048, DecodedBitmapPriority.VISIBLE)?.commit(
                 Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888),
-                2_048,
+                2_048
             )
         )
 
@@ -103,7 +103,7 @@ class DecodedBitmapBudgetTest {
         val cached = requireNotNull(
             budget.reserve(4_096, DecodedBitmapPriority.PREFETCH)?.commit(
                 Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888),
-                4_096,
+                4_096
             )
         )
         val prefetched = requireNotNull(
@@ -125,7 +125,7 @@ class DecodedBitmapBudgetTest {
         val prefetchBase = requireNotNull(
             budget.reserve(2_048, DecodedBitmapPriority.PREFETCH)?.commit(
                 Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888),
-                2_048,
+                2_048
             )
         )
         val prefetch = requireNotNull(
@@ -135,7 +135,7 @@ class DecodedBitmapBudgetTest {
         val visibleBase = requireNotNull(
             budget.reserve(2_048, DecodedBitmapPriority.VISIBLE)?.commit(
                 Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888),
-                2_048,
+                2_048
             )
         )
 

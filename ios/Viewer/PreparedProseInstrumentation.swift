@@ -134,55 +134,55 @@ enum PreparedProseInstrumentation {
     }
 
     static func beginBenchmark() {
-#if DEBUG
-        lock.lock(); enabled = true; resetLocked(); lock.unlock()
-#endif
+        #if DEBUG
+            lock.lock(); enabled = true; resetLocked(); lock.unlock()
+        #endif
     }
     static func reset() {
-#if DEBUG
-        lock.lock(); resetLocked(); lock.unlock()
-#endif
+        #if DEBUG
+            lock.lock(); resetLocked(); lock.unlock()
+        #endif
     }
     static func beginPhase(_ value: TraversalPhase, preservingDisplayLinkBaseline: Bool = false) {
-#if DEBUG
-        lock.lock()
-        guard enabled else { lock.unlock(); return }
-        phase = value; completedPhases.remove(value)
-        if !preservingDisplayLinkBaseline {
-            previousDisplayTimestampNanos = 0; previousMonotonicNanos = 0
-        }
-        lock.unlock()
-#endif
+        #if DEBUG
+            lock.lock()
+            guard enabled else { lock.unlock(); return }
+            phase = value; completedPhases.remove(value)
+            if !preservingDisplayLinkBaseline {
+                previousDisplayTimestampNanos = 0; previousMonotonicNanos = 0
+            }
+            lock.unlock()
+        #endif
     }
     static func transitionPhase(_ value: TraversalPhase) {
-#if DEBUG
-        lock.lock()
-        guard enabled else { lock.unlock(); return }
-        if let phase { completedPhases.insert(phase); viewerWorkSpans[phase] = [] }
-        phase = value; completedPhases.remove(value)
-        lock.unlock()
-#endif
+        #if DEBUG
+            lock.lock()
+            guard enabled else { lock.unlock(); return }
+            if let phase { completedPhases.insert(phase); viewerWorkSpans[phase] = [] }
+            phase = value; completedPhases.remove(value)
+            lock.unlock()
+        #endif
     }
     static func endPhase() {
-#if DEBUG
-        lock.lock()
-        if let phase { completedPhases.insert(phase); viewerWorkSpans[phase] = [] }
-        phase = nil; previousDisplayTimestampNanos = 0; previousMonotonicNanos = 0
-        lock.unlock()
-#endif
+        #if DEBUG
+            lock.lock()
+            if let phase { completedPhases.insert(phase); viewerWorkSpans[phase] = [] }
+            phase = nil; previousDisplayTimestampNanos = 0; previousMonotonicNanos = 0
+            lock.unlock()
+        #endif
     }
     static func beginTraversal(_ value: TraversalPhase) { beginPhase(value) }
     static func endTraversal() { endPhase() }
 
     static func displayLinkDidTick(_ displayLink: CADisplayLink) {
-#if DEBUG
-        recordDisplayLinkTick(
-            callbackTimestampNanos: timeIntervalNanos(displayLink.timestamp),
-            observedMonotonicNanos: DispatchTime.now().uptimeNanoseconds,
-            callbackDurationNanos: timeIntervalNanos(displayLink.duration),
-            targetLeadNanos: signedTimeIntervalNanos(displayLink.targetTimestamp - displayLink.timestamp)
-        )
-#endif
+        #if DEBUG
+            recordDisplayLinkTick(
+                callbackTimestampNanos: timeIntervalNanos(displayLink.timestamp),
+                observedMonotonicNanos: DispatchTime.now().uptimeNanoseconds,
+                callbackDurationNanos: timeIntervalNanos(displayLink.duration),
+                targetLeadNanos: signedTimeIntervalNanos(displayLink.targetTimestamp - displayLink.timestamp)
+            )
+        #endif
     }
 
     static func recordDisplayLinkTick(
@@ -191,93 +191,99 @@ enum PreparedProseInstrumentation {
         callbackDurationNanos: UInt64,
         targetLeadNanos: Int64
     ) {
-#if DEBUG
-        lock.lock(); defer { lock.unlock() }
-        guard enabled, let phase else { return }
-        mutate(phase) { sample in
-            append(
-                .init(
-                    callbackTimestampNanos: callbackTimestampNanos,
-                    callbackDurationNanos: callbackDurationNanos,
-                    targetLeadNanos: targetLeadNanos
-                ),
-                to: &sample.frameCallbackSamples
-            )
-        }
-        defer { previousDisplayTimestampNanos = callbackTimestampNanos; previousMonotonicNanos = observedMonotonicNanos }
-        guard previousDisplayTimestampNanos > 0, previousMonotonicNanos > 0,
-              callbackTimestampNanos > previousDisplayTimestampNanos
-        else { return }
-        let rawDeltaNanos = callbackTimestampNanos - previousDisplayTimestampNanos
-        guard rawDeltaNanos > 0 else { return }
-        let intervalStart = previousMonotonicNanos
-        let intervalEnd = observedMonotonicNanos
-        let spans = viewerWorkSpans[phase] ?? []
-        mutate(phase) { sample in
-            append(rawDeltaNanos, to: &sample.rawFrameDeltasNanos)
-            let classification = classifyFrame(rawDeltaNanos: rawDeltaNanos, nominalFramePeriodNanos: nominalFramePeriodNanos, singleTickToleranceNanos: singleTickToleranceNanos)
-            sample.nominalFrameCount += classification.nominalFrameCount
-            if !classification.isDelayed { sample.onTimeNominalFrameCount += classification.nominalFrameCount }
-            if classification.isDelayed {
-                sample.delayedIntervalCount += 1
-                let caused = viewerCaused(
-                    intervalStart,
-                    intervalEnd,
-                    spans,
-                    rawDeltaNanos: rawDeltaNanos,
-                    nominalFramePeriodNanos: nominalFramePeriodNanos
+        #if DEBUG
+            lock.lock(); defer { lock.unlock() }
+            guard enabled, let phase else { return }
+            mutate(phase) { sample in
+                append(
+                    .init(
+                        callbackTimestampNanos: callbackTimestampNanos,
+                        callbackDurationNanos: callbackDurationNanos,
+                        targetLeadNanos: targetLeadNanos
+                    ),
+                    to: &sample.frameCallbackSamples
                 )
-                let interval = DelayedInterval(
-                    startNanos: intervalStart,
-                    endNanos: intervalEnd,
-                    rawDeltaNanos: rawDeltaNanos,
-                    viewerLayoutNanos: clippedWork(intervalStart, intervalEnd, spans, kind: .layout),
-                    viewerDrawNanos: clippedWork(intervalStart, intervalEnd, spans, kind: .draw),
-                    viewerLifecycleNanos: clippedWork(intervalStart, intervalEnd, spans, kind: .lifecycle),
-                    viewerWorkUnionNanos: viewerWorkNanos(intervalStart, intervalEnd, spans),
-                    viewerCaused: caused
-                )
-                if caused { append(interval, to: &sample.viewerCausedDelayedIntervals) }
             }
-        }
-        viewerWorkSpans[phase] = spans.filter { $0.endNanos > intervalStart }
-#endif
+            defer { previousDisplayTimestampNanos = callbackTimestampNanos; previousMonotonicNanos = observedMonotonicNanos }
+            guard previousDisplayTimestampNanos > 0, previousMonotonicNanos > 0,
+                  callbackTimestampNanos > previousDisplayTimestampNanos
+            else { return }
+            let rawDeltaNanos = callbackTimestampNanos - previousDisplayTimestampNanos
+            guard rawDeltaNanos > 0 else { return }
+            let intervalStart = previousMonotonicNanos
+            let intervalEnd = observedMonotonicNanos
+            let spans = viewerWorkSpans[phase] ?? []
+            mutate(phase) { sample in
+                append(rawDeltaNanos, to: &sample.rawFrameDeltasNanos)
+                let classification = classifyFrame(rawDeltaNanos: rawDeltaNanos, nominalFramePeriodNanos: nominalFramePeriodNanos, singleTickToleranceNanos: singleTickToleranceNanos)
+                sample.nominalFrameCount += classification.nominalFrameCount
+                if !classification.isDelayed { sample.onTimeNominalFrameCount += classification.nominalFrameCount }
+                if classification.isDelayed {
+                    sample.delayedIntervalCount += 1
+                    let caused = viewerCaused(
+                        intervalStart,
+                        intervalEnd,
+                        spans,
+                        rawDeltaNanos: rawDeltaNanos,
+                        nominalFramePeriodNanos: nominalFramePeriodNanos
+                    )
+                    let interval = DelayedInterval(
+                        startNanos: intervalStart,
+                        endNanos: intervalEnd,
+                        rawDeltaNanos: rawDeltaNanos,
+                        viewerLayoutNanos: clippedWork(intervalStart, intervalEnd, spans, kind: .layout),
+                        viewerDrawNanos: clippedWork(intervalStart, intervalEnd, spans, kind: .draw),
+                        viewerLifecycleNanos: clippedWork(intervalStart, intervalEnd, spans, kind: .lifecycle),
+                        viewerWorkUnionNanos: viewerWorkNanos(intervalStart, intervalEnd, spans),
+                        viewerCaused: caused
+                    )
+                    if caused { append(interval, to: &sample.viewerCausedDelayedIntervals) }
+                }
+            }
+            viewerWorkSpans[phase] = spans.filter { $0.endNanos > intervalStart }
+        #endif
     }
 
     static func recordViewerWork(startNanos: UInt64, endNanos: UInt64, kind: ViewerWorkKind) {
-#if DEBUG
-        guard startNanos < endNanos else { return }
-        lock.lock(); defer { lock.unlock() }
-        guard enabled, let phase else { return }
-        viewerWorkSpans[phase, default: []].append(.init(startNanos: startNanos, endNanos: endNanos, kind: kind))
-#endif
+        #if DEBUG
+            guard startNanos < endNanos else { return }
+            lock.lock(); defer { lock.unlock() }
+            guard enabled, let phase else { return }
+            viewerWorkSpans[phase, default: []].append(.init(startNanos: startNanos, endNanos: endNanos, kind: kind))
+        #endif
     }
     static func snapshotCache() -> CacheSnapshot {
-#if DEBUG
-        lock.lock(); defer { lock.unlock() }; return cacheSnapshot
-#else
-        return CacheSnapshot()
-#endif
+        #if DEBUG
+            lock.lock(); defer { lock.unlock() }; return cacheSnapshot
+        #else
+            return CacheSnapshot()
+        #endif
     }
     static func capturePreResetSnapshot() {
-#if DEBUG
-        lock.lock(); if enabled { preResetSnapshot = cacheSnapshot }; lock.unlock()
-#endif
+        #if DEBUG
+            lock.lock(); if enabled { preResetSnapshot = cacheSnapshot }; lock.unlock()
+        #endif
     }
     static func capturePostResetSnapshot() {
-#if DEBUG
-        lock.lock(); if enabled { postResetSnapshot = cacheSnapshot }; lock.unlock()
-#endif
+        #if DEBUG
+            lock.lock(); if enabled { postResetSnapshot = cacheSnapshot }; lock.unlock()
+        #endif
     }
-    static func phaseCounters() -> (compileCount: Int, layoutCount: Int, cacheMisses: Int) {
-#if DEBUG
-        lock.lock(); defer { lock.unlock() }
-        guard let phase else { return (0, 0, 0) }
-        let value = samples[phase] ?? PhaseSamples()
-        return (value.compileCount, value.layoutCount, value.cacheMisses)
-#else
-        return (0, 0, 0)
-#endif
+    struct PhaseCounters {
+        var compileCount = 0
+        var layoutCount = 0
+        var cacheMisses = 0
+    }
+
+    static func phaseCounters() -> PhaseCounters {
+        #if DEBUG
+            lock.lock(); defer { lock.unlock() }
+            guard let phase else { return PhaseCounters() }
+            let value = samples[phase] ?? PhaseSamples()
+            return PhaseCounters(compileCount: value.compileCount, layoutCount: value.layoutCount, cacheMisses: value.cacheMisses)
+        #else
+            return PhaseCounters()
+        #endif
     }
     static func recordWindow(
         windowId: String,
@@ -286,56 +292,56 @@ enum PreparedProseInstrumentation {
         residentKeyCount: Int,
         residentKeyDigest: String,
         cache: CacheSnapshot,
-        counters: (compileCount: Int, layoutCount: Int, cacheMisses: Int)
+        counters: PhaseCounters
     ) {
-#if DEBUG
-        lock.lock(); defer { lock.unlock() }
-        guard enabled else { return }
-        windowEvidence.append(
-            .init(
-                windowId: windowId,
-                entryIds: entryIds,
-                phase: phase.rawValue,
-                residentKeyCount: residentKeyCount,
-                residentKeyDigest: residentKeyDigest,
-                cache: cache,
-                compileCount: counters.compileCount,
-                layoutCount: counters.layoutCount,
-                cacheMisses: counters.cacheMisses
+        #if DEBUG
+            lock.lock(); defer { lock.unlock() }
+            guard enabled else { return }
+            windowEvidence.append(
+                .init(
+                    windowId: windowId,
+                    entryIds: entryIds,
+                    phase: phase.rawValue,
+                    residentKeyCount: residentKeyCount,
+                    residentKeyDigest: residentKeyDigest,
+                    cache: cache,
+                    compileCount: counters.compileCount,
+                    layoutCount: counters.layoutCount,
+                    cacheMisses: counters.cacheMisses
+                )
             )
-        )
-#endif
+        #endif
     }
     static func cacheUpdated(unmountedBytes: Int? = nil, unmountedResidentCount: Int? = nil, compiledBytes: Int? = nil, compiledResidentCount: Int? = nil) {
-#if DEBUG
-        lock.lock(); defer { lock.unlock() }
-        guard enabled else { return }
-        if let unmountedBytes { cacheSnapshot.unmountedCurrentBytes = max(0, unmountedBytes); cacheSnapshot.unmountedHighWaterBytes = max(cacheSnapshot.unmountedHighWaterBytes, cacheSnapshot.unmountedCurrentBytes) }
-        if let unmountedResidentCount { cacheSnapshot.unmountedCurrentResidentCount = max(0, unmountedResidentCount); cacheSnapshot.unmountedHighWaterResidentCount = max(cacheSnapshot.unmountedHighWaterResidentCount, cacheSnapshot.unmountedCurrentResidentCount) }
-        if let compiledBytes { cacheSnapshot.compiledCurrentBytes = max(0, compiledBytes) }
-        if let compiledResidentCount { cacheSnapshot.compiledCurrentResidentCount = max(0, compiledResidentCount) }
-#endif
+        #if DEBUG
+            lock.lock(); defer { lock.unlock() }
+            guard enabled else { return }
+            if let unmountedBytes { cacheSnapshot.unmountedCurrentBytes = max(0, unmountedBytes); cacheSnapshot.unmountedHighWaterBytes = max(cacheSnapshot.unmountedHighWaterBytes, cacheSnapshot.unmountedCurrentBytes) }
+            if let unmountedResidentCount { cacheSnapshot.unmountedCurrentResidentCount = max(0, unmountedResidentCount); cacheSnapshot.unmountedHighWaterResidentCount = max(cacheSnapshot.unmountedHighWaterResidentCount, cacheSnapshot.unmountedCurrentResidentCount) }
+            if let compiledBytes { cacheSnapshot.compiledCurrentBytes = max(0, compiledBytes) }
+            if let compiledResidentCount { cacheSnapshot.compiledCurrentResidentCount = max(0, compiledResidentCount) }
+        #endif
     }
 
     static func exportJSON() -> String {
-#if DEBUG
-        lock.lock()
-        let exportedPhases = [TraversalPhase.cold, .warm, .imagesDisabled]
-        let completedSamples = Dictionary(uniqueKeysWithValues: exportedPhases.map { ($0.rawValue, samples[$0] ?? PhaseSamples()) })
-        let snapshot = Snapshot(schemaVersion: 3, percentileDefinition: "nearest-rank: sorted[ceil(p*n)-1]", nominalFramePeriodNanos: nominalFramePeriodNanos, singleTickToleranceNanos: singleTickToleranceNanos, phaseSamples: completedSamples, windowEvidence: windowEvidence, preResetSnapshot: preResetSnapshot, postResetSnapshot: postResetSnapshot, duplicatePublications: duplicatePublications)
-        lock.unlock()
-        return String(data: (try? JSONEncoder().encode(snapshot)) ?? Data("{}".utf8), encoding: .utf8) ?? "{}"
-#else
-        return "{}"
-#endif
+        #if DEBUG
+            lock.lock()
+            let exportedPhases = [TraversalPhase.cold, .warm, .imagesDisabled]
+            let completedSamples = Dictionary(uniqueKeysWithValues: exportedPhases.map { ($0.rawValue, samples[$0] ?? PhaseSamples()) })
+            let snapshot = Snapshot(schemaVersion: 3, percentileDefinition: "nearest-rank: sorted[ceil(p*n)-1]", nominalFramePeriodNanos: nominalFramePeriodNanos, singleTickToleranceNanos: singleTickToleranceNanos, phaseSamples: completedSamples, windowEvidence: windowEvidence, preResetSnapshot: preResetSnapshot, postResetSnapshot: postResetSnapshot, duplicatePublications: duplicatePublications)
+            lock.unlock()
+            return String(data: (try? JSONEncoder().encode(snapshot)) ?? Data("{}".utf8), encoding: .utf8) ?? "{}"
+        #else
+            return "{}"
+        #endif
     }
 
     @inline(__always) static func now() -> UInt64 {
-#if DEBUG
-        lock.lock(); let active = enabled; lock.unlock(); return active ? DispatchTime.now().uptimeNanoseconds : 0
-#else
-        return 0
-#endif
+        #if DEBUG
+            lock.lock(); let active = enabled; lock.unlock(); return active ? DispatchTime.now().uptimeNanoseconds : 0
+        #else
+            return 0
+        #endif
     }
     @inline(__always) static func compiled(_ start: UInt64, generation: String) { record(start) { phase, elapsed, _ in mutate(phase) { samples in samples.compileCount += 1; append(elapsed, to: &samples.compileNanos) }; pendingCompileNanos[phase, default: [:]][generation] = elapsed } }
     @inline(__always) static func laidOut(_ start: UInt64, generation: String) { record(start) { phase, elapsed, end in mutate(phase) { samples in samples.layoutCount += 1; append(elapsed, to: &samples.layoutNanos); if let compile = pendingCompileNanos[phase]?.removeValue(forKey: generation) { append(compile + elapsed, to: &samples.combinedCompileLayoutNanos) } }; recordViewerWorkLocked(startNanos: start, endNanos: end, kind: .layout, phase: phase) } }
@@ -346,24 +352,24 @@ enum PreparedProseInstrumentation {
     static func imageDecoded() { incrementImageCounter { $0.imageDecodeCount += 1 } }
     static func retained(_ owner: Owner, scope: String, bytes: Int) { }
     static func invalidated(_ reason: InvalidationReason) {
-#if DEBUG
-        lock.lock(); if enabled, let phase { mutate(phase) { samples in samples.invalidations[reason.rawValue, default: 0] += 1 } }; lock.unlock()
-#endif
+        #if DEBUG
+            lock.lock(); if enabled, let phase { mutate(phase) { samples in samples.invalidations[reason.rawValue, default: 0] += 1 } }; lock.unlock()
+        #endif
     }
     static func duplicatePublication() {
-#if DEBUG
-        lock.lock(); if enabled { duplicatePublications += 1 }; lock.unlock()
-#endif
+        #if DEBUG
+            lock.lock(); if enabled { duplicatePublications += 1 }; lock.unlock()
+        #endif
     }
     private static func record(_ start: UInt64, _ body: (TraversalPhase, UInt64, UInt64) -> Void) {
-#if DEBUG
-        guard start != 0 else { return }; lock.lock(); defer { lock.unlock() }; guard enabled, let phase else { return }; let end = DispatchTime.now().uptimeNanoseconds; body(phase, end - start, end)
-#endif
+        #if DEBUG
+            guard start != 0 else { return }; lock.lock(); defer { lock.unlock() }; guard enabled, let phase else { return }; let end = DispatchTime.now().uptimeNanoseconds; body(phase, end - start, end)
+        #endif
     }
     private static func incrementImageCounter(_ body: (inout PhaseSamples) -> Void) {
-#if DEBUG
-        lock.lock(); defer { lock.unlock() }; guard enabled, let phase else { return }; mutate(phase, body)
-#endif
+        #if DEBUG
+            lock.lock(); defer { lock.unlock() }; guard enabled, let phase else { return }; mutate(phase, body)
+        #endif
     }
     private static func recordViewerWorkLocked(startNanos: UInt64, endNanos: UInt64, kind: ViewerWorkKind, phase: TraversalPhase) { guard startNanos < endNanos else { return }; viewerWorkSpans[phase, default: []].append(.init(startNanos: startNanos, endNanos: endNanos, kind: kind)) }
     private static func clippedWork(_ start: UInt64, _ end: UInt64, _ spans: [ViewerWorkSpan], kind: ViewerWorkKind) -> UInt64 {

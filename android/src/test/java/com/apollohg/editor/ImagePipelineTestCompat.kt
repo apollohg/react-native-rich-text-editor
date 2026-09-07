@@ -7,7 +7,7 @@ internal fun RenderImageDecoder.decodeSource(
     policy: ImageLoadingPolicy = ImageLoadingPolicy.DEFAULT,
     cancellation: RenderImageDecoder.Cancellation? = null,
     clock: MonotonicClock = MonotonicClock { android.os.SystemClock.elapsedRealtime() },
-    deadlineMs: Long = Long.MAX_VALUE,
+    deadlineMs: Long = Long.MAX_VALUE
 ): Bitmap? {
     val lease = decodeSourceLease(
         source,
@@ -15,7 +15,7 @@ internal fun RenderImageDecoder.decodeSource(
         cancellation,
         clock,
         deadlineMs,
-        DecodedBitmapPriority.VISIBLE,
+        DecodedBitmapPriority.VISIBLE
     ) ?: return null
     return lease.bitmap.also { lease.close() }
 }
@@ -23,12 +23,12 @@ internal fun RenderImageDecoder.decodeSource(
 internal fun RenderImageLoader.load(
     source: String,
     policy: ImageLoadingPolicy = ImageLoadingPolicy.DEFAULT,
-    onLoaded: (Bitmap?) -> Unit,
+    onLoaded: (Bitmap?) -> Unit
 ): RenderImageLoader.LoadHandle = loadLease(
     source,
     policy,
     DecodedBitmapBudget.nextOwnerId(),
-    DecodedBitmapPriority.VISIBLE,
+    DecodedBitmapPriority.VISIBLE
 ) { lease ->
     try {
         onLoaded(lease?.bitmap)
@@ -39,9 +39,9 @@ internal fun RenderImageLoader.load(
 
 internal fun RenderImageLoader.load(
     source: RenderImageLoader.PreparedSource,
-    onLoaded: (Bitmap?) -> Unit,
+    onLoaded: (Bitmap?) -> Unit
 ): RenderImageLoader.LoadHandle = load(
     source.source,
     source.policy,
-    onLoaded,
+    onLoaded
 )

@@ -19,7 +19,12 @@ class EditorSurfaceSelectionTest {
 
     @Test
     fun longPressAndDragUsesProductionBlockCoordinates() {
-        ActivityScenario.launch<EditorSurfaceActivity>(Intent(instrumentation.targetContext, EditorSurfaceActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)).use { scenario ->
+        ActivityScenario.launch<EditorSurfaceActivity>(
+            Intent(
+                instrumentation.targetContext,
+                EditorSurfaceActivity::class.java
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ).use { scenario ->
             instrumentation.waitForIdleSync()
             var start = PointF()
             var end = PointF()
@@ -31,15 +36,26 @@ class EditorSurfaceSelectionTest {
                 fun point(offset: Int): PointF {
                     val layout = activity.editor.layout
                     val line = layout.getLineForOffset(offset)
-                    return PointF(location[0] + activity.editor.totalPaddingLeft + layout.getPrimaryHorizontal(offset),
-                        location[1] + activity.editor.totalPaddingTop + (layout.getLineBaseline(line) + layout.getLineAscent(line) / 2f))
+                    return PointF(
+                        location[0] + activity.editor.totalPaddingLeft +
+                            layout.getPrimaryHorizontal(offset),
+                        location[1] + activity.editor.totalPaddingTop +
+                            (layout.getLineBaseline(line) + layout.getLineAscent(line) / 2f)
+                    )
                 }
                 start = point(6)
                 end = point(60)
             }
             val down = SystemClock.uptimeMillis()
             fun send(action: Int, point: PointF) {
-                val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, point.x, point.y, 0)
+                val event = MotionEvent.obtain(
+                    down,
+                    SystemClock.uptimeMillis(),
+                    action,
+                    point.x,
+                    point.y,
+                    0
+                )
                 assertTrue(instrumentation.uiAutomation.injectInputEvent(event, true))
                 event.recycle()
             }

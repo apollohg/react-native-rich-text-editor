@@ -1,4 +1,3 @@
-#[allow(dead_code)]
 impl CachedRenderBlocks {
     pub(crate) fn build(
         document: &Document,
@@ -209,12 +208,15 @@ impl CachedRenderBlocks {
                     language,
                     list_context,
                     ..
-                } => node_type.capacity().checked_add(language.as_ref().map_or(0, String::capacity))?.checked_add(
-                    list_context
-                        .as_ref()
-                        .and_then(|context| context.kind.as_ref())
-                        .map_or(0, String::capacity),
-                ),
+                } => node_type
+                    .capacity()
+                    .checked_add(language.as_ref().map_or(0, String::capacity))?
+                    .checked_add(
+                        list_context
+                            .as_ref()
+                            .and_then(|context| context.kind.as_ref())
+                            .map_or(0, String::capacity),
+                    ),
                 RenderElement::BlockEnd => Some(0),
             }
         }

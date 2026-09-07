@@ -1,28 +1,4 @@
 //! Strict standard y-sync protocol handling.
-//!
-//! One bounded entry point — [`CollaborationRuntime::receive_message`] —
-//! composes the sealed seams built by Tasks 6–8 and owns nothing else:
-//!
-//! - generation discipline and the `Handshaking`/`Synchronized` admission
-//!   gate come from the Task 8 state machine (checked before ANY decode);
-//! - Sync Step 1 replies are completely built through the engine's
-//!   read-only `encode_diff_v1` and reserved through the Task 7
-//!   `reserve_protocol_replies` seam BEFORE any engine commit, so
-//!   reply/outbox failure after a remote commit is impossible;
-//! - document effects flow exclusively through the Task 6 sealed
-//!   `prepare_remote_update_v1`/`commit_prepared_remote_update` split. The
-//!   protocol layer never touches a `yrs::Doc`, a transaction, or an
-//!   `Update` application.
-//!
-//! An accepted current-generation Sync Step 2 is the ONLY synchronization
-//! gate, including the server-owned `AwaitRemote -> RoomReady` promotion.
-//! extended the same classification pipeline to the standard y-protocols
-//! awareness (tag 1) and query-awareness (tag 3) messages: awareness
-//! payloads apply through the sealed `AwarenessCodec` (never touching
-//! document state, revisions, sync gating, or the document outbox), query
-//! replies are prebuilt and reserved exactly like Step 1 replies, and
-//! completing the handshake re-publishes the desired local awareness with
-//! a fresh clock. Auth and custom message types remain protocol errors.
 
 #![allow(
     clippy::result_large_err,
@@ -49,43 +25,22 @@ use super::outbox::OutboxReservationError;
 use super::state::{SocketCloseDisposition, TransportGeneration, TransportStateMachine};
 use super::CollaborationRuntime;
 
-/// Malformed protocol framing or update encoding; the generation closes
-/// retryably (a fresh handshake re-synchronizes through Step 1/Step 2).
-/// Frozen representative transport code in the shared error contract.
 pub const TRANSPORT_PROTOCOL_INVALID: &str = "TRANSPORT_PROTOCOL_INVALID";
-/// Inbound frame byte/count ceilings; deterministic, so incompatible.
 pub const TRANSPORT_FRAME_LIMIT_EXCEEDED: &str = "TRANSPORT_FRAME_LIMIT_EXCEEDED";
-/// Aggregate reply admission (response ceiling or saturated outbox);
-/// deterministic, so incompatible.
 pub const TRANSPORT_REPLY_LIMIT_EXCEEDED: &str = "TRANSPORT_REPLY_LIMIT_EXCEEDED";
-/// Schema-invalid, over-limit, or otherwise permanently inadmissible remote
-/// document state (including failed server-owned initialization); the
-/// underlying engine error rides along as the structured cause.
 pub const TRANSPORT_REMOTE_INADMISSIBLE: &str = "TRANSPORT_REMOTE_INADMISSIBLE";
-/// Engine-reported dependency-quarantine byte/work accounting exceeded the
-/// configured pending-update ceilings; deterministic, so incompatible.
 pub const TRANSPORT_DEPENDENCY_LIMIT_EXCEEDED: &str = "TRANSPORT_DEPENDENCY_LIMIT_EXCEEDED";
-/// Inbound awareness content exceeded a configured awareness ceiling (peer
-/// count, per-peer bytes, aggregate bytes); deterministic per-message
-/// admission, so incompatible.
 pub const TRANSPORT_AWARENESS_LIMIT_EXCEEDED: &str = "TRANSPORT_AWARENESS_LIMIT_EXCEEDED";
-/// Recoverable allocation/reservation exhaustion; retry may succeed.
 pub const TRANSPORT_RESOURCE_EXHAUSTED: &str = "TRANSPORT_RESOURCE_EXHAUSTED";
-/// Residual engine admission failures (defensive invariants, derived-state
-/// preparation); a reconnect resynchronizes from scratch, so retryable.
 pub const TRANSPORT_REMOTE_APPLY_FAILED: &str = "TRANSPORT_REMOTE_APPLY_FAILED";
 
-/// Wire action every structured refusal/close reports.
 const RECEIVE_ACTION: &str = "receiveMessage";
-/// `CollaborationLimits` field names charged by the receive path.
 const MAX_FRAME_BYTES_FIELD: &str = "maxFrameBytes";
 const MAX_FRAMES_PER_MESSAGE_FIELD: &str = "maxFramesPerMessage";
 const MAX_AGGREGATE_RESPONSE_BYTES_FIELD: &str = "maxAggregateResponseBytes";
 const MAX_PENDING_DEPENDENCY_BYTES_FIELD: &str = "maxPendingDependencyUpdateBytes";
 const MAX_PENDING_DEPENDENCY_WORK_FIELD: &str = "maxPendingDependencyUpdateWork";
 
-/// The session collaborators one receive composes; built by the session's
-/// field-disjoint split borrow.
 pub(crate) struct ReceiveContext<'a> {
     pub(crate) transport: &'a mut TransportStateMachine,
     pub(crate) engine: &'a mut YrsDocumentEngine,
@@ -94,10 +49,6 @@ pub(crate) struct ReceiveContext<'a> {
     pub(crate) now_millis: u64,
 }
 
-/// What one accepted receive did. Refusals (stale generation, wrong state,
-/// no runtime) return `Err` without touching anything; accepted messages
-/// always return an outcome, whose disposition reports whether the frame
-/// content forced the generation closed.
 #[derive(Debug)]
 pub(crate) struct ReceiveOutcome {
     pub(crate) frames_decoded: usize,
@@ -151,11 +102,6 @@ struct ReceiveFailure {
 }
 
 impl CollaborationRuntime {
-    /// Bounded standard y-sync frame handling for one inbound transport
-    /// message. Frozen flow order: generation gate -> bounded
-    /// classification/decode -> reply prebuild + reservation ->
-    /// candidate admission and same-engine commit (Step 2 gate included)
-    /// -> infallible reply installation.
     pub(crate) fn receive_message(
         &mut self,
         request_id: u64,
@@ -206,8 +152,6 @@ impl CollaborationRuntime {
                     .expect(
                         "the admitted live generation must remain closable for its own failure",
                     );
-                // Task 10 lifecycle rule: every generation close clears the
-                // transport-scoped peers while desired awareness survives.
                 self.outbox.release_lease();
                 outcome.peers_changed |= self.clear_transport_peers(engine);
                 outcome.transport_state = closed;
@@ -250,9 +194,6 @@ impl CollaborationRuntime {
         let frames = decode_protocol_frames(request_id, bytes, limits.max_frames_per_message)?;
         outcome.frames_decoded = frames.len();
 
-        // Pre-admit and reserve every reply BEFORE any engine commit
-        // (Step 1 idiom, shared by query-awareness answers and the
-        // handshake-completion awareness re-publish).
         let mut replies: Vec<Vec<u8>> = Vec::new();
         let mut reply_bytes_total = 0usize;
         let admit_reply = |message: Vec<u8>,
@@ -302,11 +243,7 @@ impl CollaborationRuntime {
                 | ProtocolFrame::Awareness(_) => {}
             }
         }
-        // A Step 2 on a Handshaking transport is the handshake-completion
-        // point: prebuild the desired-awareness re-publish (fresh clock —
-        // the designed mitigation for the Task 6 tombstone-migration gap)
-        // so it rides the same reservation. If the Step 2 later fails, the
-        // generation closes and the unconsumed reservation releases.
+
         let republish_included = if transport.state() == TransportState::Handshaking
             && frames
                 .iter()
@@ -335,8 +272,6 @@ impl CollaborationRuntime {
             )
         };
 
-        // Candidate admission and same-engine commit, frame by frame, with
-        // the Step 2 synchronization gate applied at commit time.
         for frame in &frames {
             match frame {
                 ProtocolFrame::SyncStep1(_) | ProtocolFrame::AwarenessQuery => {}
@@ -355,21 +290,14 @@ impl CollaborationRuntime {
                             outcome,
                         )?;
                     }
-                    // In `Synchronized`, a Step 2 is semantically an update:
-                    // admitted above, no transport or document transition.
                 }
                 ProtocolFrame::SyncUpdate(update) => {
-                    // Update frames NEVER synchronize or promote, in any
-                    // state: quarantine/admission rules only.
                     let commit = self.admit_remote_update(request_id, engine, limits, update)?;
                     if commit.changed {
                         outcome.remote_commit_applied = true;
                     }
                 }
                 ProtocolFrame::Awareness(payload) => {
-                    // Awareness frames never touch document state, sync
-                    // gating, or the document outbox: codec application
-                    // plus runtime activity stamping only.
                     self.apply_awareness_frame(engine, limits, payload)
                         .map_err(|error| classify_awareness_error(request_id, error))?;
                     outcome.peers_changed = true;
@@ -377,8 +305,6 @@ impl CollaborationRuntime {
             }
         }
 
-        // Infallible reply installation: capacity and storage were reserved
-        // before the first commit.
         if let Some(reservation) = reservation {
             outcome.replies_enqueued = replies.len();
             outcome.reply_bytes_enqueued = reply_bytes_total;
@@ -391,10 +317,6 @@ impl CollaborationRuntime {
         Ok(())
     }
 
-    /// The transition-table Step 2 rows for a `Handshaking` transport. An
-    /// accepted current-generation Step 2 is the ONLY synchronization gate:
-    /// `AwaitRemote` promotes to `RoomReady` exactly when the Step 2 itself
-    /// installed a valid configured fragment.
     fn apply_step2_synchronization_gate(
         &mut self,
         request_id: u64,
@@ -412,15 +334,11 @@ impl CollaborationRuntime {
         match *document_state {
             DocumentState::AwaitRemote => {
                 if commit_changed {
-                    // The sealed prepare path already proved the configured
-                    // fragment installed as schema-valid content.
                     *document_state = DocumentState::RoomReady;
                     outcome.document_promoted = true;
                     synchronize(transport);
                     Ok(())
                 } else {
-                    // No-op Step 2 (or one whose fragment never installed):
-                    // server-owned initialization deterministically failed.
                     Err(ReceiveFailure {
                         close: SocketCloseDisposition::Incompatible,
                         error: transport_error(
@@ -434,7 +352,6 @@ impl CollaborationRuntime {
                 }
             }
             DocumentState::RoomReady => {
-                // Valid Step 2, including a genuine no-op: synchronized.
                 synchronize(transport);
                 Ok(())
             }
@@ -445,11 +362,6 @@ impl CollaborationRuntime {
         }
     }
 
-    /// Prepare + commit one remote Update-v1 through the sealed Task 6
-    /// seams, admitting dependency-quarantine byte/work ceilings against the
-    /// exact prepared post-state before commit. The runtime never retains a
-    /// second payload copy: bytes stay inside the engine, the runtime keeps
-    /// only the byte-unit work counter.
     fn admit_remote_update(
         &mut self,
         request_id: u64,
@@ -457,10 +369,6 @@ impl CollaborationRuntime {
         limits: &CollaborationLimits,
         update: &[u8],
     ) -> Result<EngineCommit, ReceiveFailure> {
-        // Preparation owns temporary decode/merge buffers under the engine's
-        // maxEncodedStateBytes resource ceiling. The dependency ceilings
-        // below charge only the retained post-update candidate and its
-        // accumulated pending work.
         let prepared = engine
             .prepare_remote_update_v1(request_id, update)
             .map_err(|error| classify_admission_error(engine, request_id, update, error))?;
@@ -519,8 +427,6 @@ fn dependency_work_overflow(request_id: u64, limits: &CollaborationLimits) -> Re
     )
 }
 
-/// The framed Sync Step 1 message owed after `socket_opened`, built from
-/// the engine's read-only state vector.
 pub(crate) fn sync_step1_message(
     engine: &YrsDocumentEngine,
     request_id: u64,
@@ -564,7 +470,7 @@ pub(crate) fn frame_sync_update_message(update_v1: &[u8]) -> Vec<u8> {
 /// Strict bounded decode of one inbound transport message into protocol
 /// frames: standard sync frames plus awareness (tag 1) and query-awareness
 /// (tag 3). Anything else — truncation, trailing bytes, unknown
-/// message/sync tags, auth/custom messages, or an empty message —
+/// message/sync tags, auth/custom messages, or an empty message
 /// classifies as a protocol error. Frame payloads are kept raw; their
 /// update/state-vector/awareness semantics belong to the engine.
 fn decode_protocol_frames(
@@ -607,9 +513,6 @@ fn decode_protocol_frames(
                 }
             }
             MSG_AWARENESS => {
-                // The payload stays raw: whether it decodes as an
-                // `AwarenessUpdate` is the codec's call (a failure there
-                // classifies as the same protocol error).
                 let payload = cursor
                     .read_buf()
                     .map_err(|_| protocol_failure(request_id, "awarenessPayload"))?
@@ -758,11 +661,6 @@ fn classify_reply_build_error(request_id: u64, error: OperationError) -> Receive
 
 fn classify_reservation_error(request_id: u64, error: OutboxReservationError) -> ReceiveFailure {
     match error {
-        // The reply queue shares the outbox ceilings with pending offline
-        // document updates, which drain on delivery — retry CAN change the
-        // result, so saturation closes retryably (unlike the deterministic
-        // per-message ceilings). Otherwise an offline-full outbox would
-        // wedge the transport in `Incompatible` across detach/reattach.
         OutboxReservationError::Saturated {
             field,
             limit,

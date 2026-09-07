@@ -12,7 +12,6 @@ import android.view.inputmethod.CorrectionInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 
-
 internal data class SurroundingDeleteRange(
     val utf16Start: Int,
     val utf16End: Int,
@@ -20,14 +19,15 @@ internal data class SurroundingDeleteRange(
     val scalarEnd: Int
 )
 
-
-internal fun EditorInputConnection.shouldDeferPlainSurroundingDelete(beforeLength: Int, afterLength: Int): Boolean =
-    beforeLength.coerceAtLeast(0) + afterLength.coerceAtLeast(0) > 0
+internal fun EditorInputConnection.shouldDeferPlainSurroundingDelete(
+    beforeLength: Int,
+    afterLength: Int
+): Boolean = beforeLength.coerceAtLeast(0) + afterLength.coerceAtLeast(0) > 0
 
 internal fun EditorInputConnection.performMappedCompositionSurroundingDelete(
     beforeLength: Int,
     afterLength: Int,
-    deleteInCodePoints: Boolean,
+    deleteInCodePoints: Boolean
 ): Boolean {
     val mapper = currentMapper() ?: return true
     val rawStart = editorView.selectionStart
@@ -37,12 +37,22 @@ internal fun EditorInputConnection.performMappedCompositionSurroundingDelete(
     val imeEnd = mapper.rawToIme(maxOf(rawStart, rawEnd))
     val visibleText = mapper.visibleText.toString()
     val beforeUtf16Length = if (deleteInCodePoints) {
-        EditorInputConnection.codePointsToUtf16Length(visibleText, imeStart, beforeLength, forward = false)
+        EditorInputConnection.codePointsToUtf16Length(
+            visibleText,
+            imeStart,
+            beforeLength,
+            forward = false
+        )
     } else {
         beforeLength
     }
     val afterUtf16Length = if (deleteInCodePoints) {
-        EditorInputConnection.codePointsToUtf16Length(visibleText, imeEnd, afterLength, forward = true)
+        EditorInputConnection.codePointsToUtf16Length(
+            visibleText,
+            imeEnd,
+            afterLength,
+            forward = true
+        )
     } else {
         afterLength
     }
@@ -58,11 +68,11 @@ internal fun EditorInputConnection.performMappedCompositionSurroundingDelete(
     }
     val rawDeleteStart = mapper.imeToRaw(
         imeDeleteStart,
-        ImeTextCoordinateMapper.Affinity.AFTER,
+        ImeTextCoordinateMapper.Affinity.AFTER
     )
     val rawDeleteEnd = mapper.imeToRaw(
         imeDeleteEnd,
-        ImeTextCoordinateMapper.Affinity.BEFORE,
+        ImeTextCoordinateMapper.Affinity.BEFORE
     )
     editorView.runWithTransientInputMutationGuard {
         deleteVisibleTextInRawRange(rawDeleteStart, rawDeleteEnd, imeDeleteStart)
@@ -116,23 +126,23 @@ internal fun EditorInputConnection.performDeferredPlainSurroundingDelete(
         imeDeleteStart = maxOf(0, imeSelectionStart - beforeUtf16Length.coerceAtLeast(0))
         imeDeleteEnd = minOf(
             mapper.visibleText.length,
-            imeSelectionEnd + afterUtf16Length.coerceAtLeast(0),
+            imeSelectionEnd + afterUtf16Length.coerceAtLeast(0)
         )
     }
     val rawDeleteStart = mapper.imeToRaw(
         imeDeleteStart,
-        ImeTextCoordinateMapper.Affinity.AFTER,
+        ImeTextCoordinateMapper.Affinity.AFTER
     )
     val rawDeleteEnd = mapper.imeToRaw(
         imeDeleteEnd,
-        ImeTextCoordinateMapper.Affinity.BEFORE,
+        ImeTextCoordinateMapper.Affinity.BEFORE
     )
     val deleteRange = surroundingDeleteRange(
         text = beforeText,
         rawDeleteStart = rawDeleteStart,
         rawDeleteEnd = rawDeleteEnd,
         selectionStart = normalizedRawStart,
-        selectionEnd = normalizedRawEnd,
+        selectionEnd = normalizedRawEnd
     )
     val isCollapsedBackwardDelete =
         beforeLength == 1 &&
@@ -142,18 +152,18 @@ internal fun EditorInputConnection.performDeferredPlainSurroundingDelete(
     if (isCollapsedBackwardDelete) {
         val hiddenGapStart = mapper.imeToRaw(
             imeSelectionStart,
-            ImeTextCoordinateMapper.Affinity.BEFORE,
+            ImeTextCoordinateMapper.Affinity.BEFORE
         )
         if (
             hiddenGapStart < normalizedRawStart &&
             editorView.renderedRangeContainsGeneratedStructure(
                 hiddenGapStart,
-                normalizedRawStart,
+                normalizedRawStart
             )
         ) {
             editorView.recordImeTraceForTesting(
                 "structuralSurroundingDelete",
-                "before=$beforeLength after=$afterLength codePoints=$deleteInCodePoints hiddenGap=true",
+                "before=$beforeLength after=$afterLength codePoints=$deleteInCodePoints hiddenGap=true"
             )
             editorView.handleStructuralBackspace()
             return true
@@ -197,29 +207,32 @@ internal fun EditorInputConnection.performDeferredPlainSurroundingDelete(
         when (
             val outcome = editorView.deleteScalarRangeForPendingImeOperationForEditor(
                 deleteRange.scalarStart,
-                deleteRange.scalarEnd,
+                deleteRange.scalarEnd
             )
         ) {
             is EditorV2NativeIntentResult.Applied -> {
                 editorView.runWithDeferredRustUpdateApplication {
                     editorView.promoteOptimisticInputForEditor(
                         outcome.render,
-                        deleteRange.scalarStart,
+                        deleteRange.scalarStart
                     )
                 }
             }
+
             is EditorV2NativeIntentResult.Recovered -> {
                 editorView.restoreAuthoritativeInputForEditor(
                     authoritative,
-                    outcome.updateJson,
+                    outcome.updateJson
                 )
             }
+
             EditorV2NativeIntentResult.Rejected -> {
                 editorView.restoreAuthoritativeInputForEditor(authoritative)
             }
+
             null -> {
                 editorView.authorizeCurrentVisibleTextForPendingImeOperationForEditor(
-                    logicalCursorAfter = deleteRange.scalarStart,
+                    logicalCursorAfter = deleteRange.scalarStart
                 )
             }
         }
@@ -236,7 +249,7 @@ internal fun EditorInputConnection.surroundingDeleteRange(
     rawDeleteStart: Int,
     rawDeleteEnd: Int,
     selectionStart: Int,
-    selectionEnd: Int,
+    selectionEnd: Int
 ): SurroundingDeleteRange? {
     val (deleteStart, deleteEnd) = PositionBridge.snapRangeToScalarBoundaries(
         rawDeleteStart,
@@ -274,7 +287,7 @@ internal fun EditorInputConnection.visibleCodePointCount(text: String, start: In
 internal fun EditorInputConnection.deleteVisibleTextInRawRange(
     rawStart: Int,
     rawEnd: Int,
-    imeCursorAfter: Int,
+    imeCursorAfter: Int
 ): Boolean {
     val editable = editorView.text ?: return false
     val start = rawStart.coerceIn(0, editable.length)
@@ -300,7 +313,7 @@ internal fun EditorInputConnection.deleteVisibleTextInRawRange(
         val updatedMapper = currentMapper()
         val rawCursor = updatedMapper?.imeToRaw(
             imeCursorAfter,
-            ImeTextCoordinateMapper.Affinity.AFTER,
+            ImeTextCoordinateMapper.Affinity.AFTER
         ) ?: start.coerceIn(0, editable.length)
         Selection.setSelection(editable, rawCursor.coerceIn(0, editable.length))
     }

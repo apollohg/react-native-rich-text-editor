@@ -12,7 +12,8 @@ import java.lang.ref.WeakReference
 internal class ViewerFontEnvironment {
     companion object {
         private val warningLock = Any()
-        private val missingWarningsBySemanticGeneration = LinkedHashMap<String, MutableSet<String>>(64, 0.75f, true)
+        private val missingWarningsBySemanticGeneration =
+            LinkedHashMap<String, MutableSet<String>>(64, 0.75f, true)
         private const val MISSING_WARNING_GENERATION_LIMIT = 128
         private val familyLock = Any()
         private val registeredFamilies = mutableMapOf<String, Typeface>()
@@ -21,15 +22,25 @@ internal class ViewerFontEnvironment {
         private val genericPlatformFamilies = setOf(
             "default", "sans", "sans-serif", "serif", "monospace", "cursive", "casual",
             "sans-serif-smallcaps", "sans-serif-condensed", "sans-serif-light", "sans-serif-medium",
-            "sans-serif-black", "sans-serif-thin", "sans-serif-condensed-light",
+            "sans-serif-black", "sans-serif-thin", "sans-serif-condensed-light"
         )
-        private val platformFamilyAvailability = object : LinkedHashMap<String, Boolean>(64, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean = size > 128
+        private val platformFamilyAvailability = object : LinkedHashMap<String, Boolean>(
+            64,
+            0.75f,
+            true
+        ) {
+            override fun removeEldestEntry(
+                eldest: MutableMap.MutableEntry<String, Boolean>?
+            ): Boolean = size > 128
         }
+
         /** Test seam models the platform family resolver, not Typeface equality. */
         private var platformResolverForTesting: ((String) -> Boolean)? = null
 
-        internal data class ResolvedFamily(val typeface: Typeface, val isDemonstrablyMissing: Boolean)
+        internal data class ResolvedFamily(
+            val typeface: Typeface,
+            val isDemonstrablyMissing: Boolean
+        )
 
         /**
          * Custom-family loaders report the actual Typeface. A real registry
@@ -59,11 +70,17 @@ internal class ViewerFontEnvironment {
             if (changed) familyObservers.publish()
         }
 
-        internal fun resolveFamily(family: String?, style: Int, fallback: Typeface): ResolvedFamily {
+        internal fun resolveFamily(
+            family: String?,
+            style: Int,
+            fallback: Typeface
+        ): ResolvedFamily {
             val normalized = family?.trim().orEmpty()
             if (normalized.isEmpty()) return ResolvedFamily(Typeface.create(fallback, style), false)
             synchronized(familyLock) {
-                registeredFamilies[normalized]?.let { return ResolvedFamily(Typeface.create(it, style), false) }
+                registeredFamilies[normalized]?.let {
+                    return ResolvedFamily(Typeface.create(it, style), false)
+                }
             }
             // Generic platform families are part of Android's viewer contract,
             // not custom family probes. Resolve them before the injectable
@@ -73,7 +90,11 @@ internal class ViewerFontEnvironment {
                 return ResolvedFamily(Typeface.create(normalized, style), false)
             }
             synchronized(familyLock) {
-                if (normalized in demonstrablyMissingFamilies) return ResolvedFamily(Typeface.create(fallback, style), true)
+                if (normalized in
+                    demonstrablyMissingFamilies
+                ) {
+                    return ResolvedFamily(Typeface.create(fallback, style), true)
+                }
             }
             // API 34 exposes the resolved system family name. That is a public
             // resolver, unlike the old DEFAULT equality heuristic; cache it
@@ -101,7 +122,7 @@ internal class ViewerFontEnvironment {
             family: String?,
             style: Int,
             fallback: Typeface,
-            semanticGeneration: String,
+            semanticGeneration: String
         ): Typeface {
             val normalized = family?.trim().orEmpty()
             val resolved = resolveFamily(normalized, style, fallback)
@@ -134,15 +155,24 @@ internal class ViewerFontEnvironment {
 
         fun warnOnceForMissingFamily(family: String, semanticGeneration: String): Boolean {
             val shouldWarn = synchronized(warningLock) {
-                val families = missingWarningsBySemanticGeneration.getOrPut(semanticGeneration) { mutableSetOf() }
+                val families = missingWarningsBySemanticGeneration.getOrPut(semanticGeneration) {
+                    mutableSetOf()
+                }
                 val inserted = families.add(family)
-                while (missingWarningsBySemanticGeneration.size > MISSING_WARNING_GENERATION_LIMIT) {
+                while (missingWarningsBySemanticGeneration.size >
+                    MISSING_WARNING_GENERATION_LIMIT
+                ) {
                     val oldest = missingWarningsBySemanticGeneration.entries.iterator().next().key
                     missingWarningsBySemanticGeneration.remove(oldest)
                 }
                 inserted
             }
-            if (shouldWarn) Log.w("NativeEditorImage", "PreparedProseViewer: requested font family $family is unavailable; using system fallback")
+            if (shouldWarn) {
+                Log.w(
+                    "NativeEditorImage",
+                    "PreparedProseViewer: requested font family $family is unavailable; using system fallback"
+                )
+            }
             return shouldWarn
         }
 
@@ -194,8 +224,9 @@ internal class ViewerFontEnvironment {
 
     private fun deliverFamilyRevision(nextFamilyRevision: Long) {
         val shouldDeliver = synchronized(lock) {
-            if (!active || nextFamilyRevision <= lastFamilyRevision) false
-            else {
+            if (!active || nextFamilyRevision <= lastFamilyRevision) {
+                false
+            } else {
                 lastFamilyRevision = nextFamilyRevision
                 true
             }
@@ -234,7 +265,8 @@ internal class ViewerFontEnvironment {
                 pruneLocked()
                 revision to observers.mapNotNull { it.get() }
             }
-            val run = Runnable { delivery.second.forEach { it.deliverFamilyRevision(delivery.first) } }
+            val run =
+                Runnable { delivery.second.forEach { it.deliverFamilyRevision(delivery.first) } }
             if (Looper.myLooper() == Looper.getMainLooper()) run.run() else mainHandler.post(run)
         }
 
@@ -243,6 +275,8 @@ internal class ViewerFontEnvironment {
             revision = 0
         }
 
-        private fun pruneLocked() { observers.removeAll { it.get() == null } }
+        private fun pruneLocked() {
+            observers.removeAll { it.get() == null }
+        }
     }
 }

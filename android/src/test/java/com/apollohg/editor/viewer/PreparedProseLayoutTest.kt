@@ -1,20 +1,21 @@
 package com.apollohg.editor.viewer
-import android.graphics.Canvas
-import android.graphics.Bitmap
-import android.graphics.Rect
 import android.app.Activity
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Rect
 import android.os.Looper
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.view.View
 import android.view.ViewGroup
-import android.widget.FrameLayout
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
-import com.apollohg.editor.PreparedProseRecyclerHarness
+import android.widget.FrameLayout
+import com.apollohg.editor.OrderedListMarkerSpan
 import com.apollohg.editor.PreparedProseBenchmarkConfiguration
 import com.apollohg.editor.PreparedProsePerformanceGates
+import com.apollohg.editor.PreparedProseRecyclerHarness
 import com.apollohg.editor.ProseViewerConfiguration
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.ProseViewerErrorCode
@@ -22,23 +23,22 @@ import com.apollohg.editor.ProseViewerInteractionListenerAdapter
 import com.apollohg.editor.ProseViewerMention
 import com.apollohg.editor.ProseViewerSource
 import com.apollohg.editor.ProseViewerView
-import com.apollohg.editor.OrderedListMarkerSpan
 import com.apollohg.editor.RenderBridge
+import java.io.File
+import java.util.concurrent.TimeUnit
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.io.File
-import java.util.concurrent.TimeUnit
-import org.json.JSONArray
-import org.json.JSONObject
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -63,7 +63,7 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
             visibleText = "@alice",
             docPos = 0xFFFF_FFFFL,
             label = "@alice",
-            attrsJson = """{"id":"user-9","profile":{"kind":"clinician"}}""",
+            attrsJson = """{"id":"user-9","profile":{"kind":"clinician"}}"""
         )
 
         assertTrue(viewer.activatePreparedInteractionForTesting(interaction))
@@ -75,8 +75,8 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
 
         assertFalse(
             viewer.activatePreparedInteractionForTesting(
-                interaction.copy(docPos = 9, label = "@invalid", attrsJson = "[]"),
-            ),
+                interaction.copy(docPos = 9, label = "@invalid", attrsJson = "[]")
+            )
         )
         assertEquals(1, mentions.size)
         assertEquals("INVALID_MENTION_ATTRIBUTES", errors.single().code.value)
@@ -90,7 +90,7 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
             rects = listOf(Rect(0, 0, 20, 20)),
             href = "https://example.test",
             visibleText = "link",
-            label = "link",
+            label = "link"
         )
         val mention = PreparedProseInteraction(
             kind = PreparedProseInteraction.Kind.MENTION,
@@ -98,7 +98,7 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
             visibleText = "@Ada",
             docPos = 1,
             label = "@Ada",
-            attrsJson = "{}",
+            attrsJson = "{}"
         )
 
         assertFalse(viewer.activatePreparedInteractionForTesting(link))
@@ -107,14 +107,22 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
 
     @Test
     fun windowedRecyclerWarmRevisitUsesOnePrimePreparation() {
-        val corpus = JSONObject(context.assets.open("viewer-performance-corpus.json").bufferedReader().use { it.readText() })
+        val corpus =
+            JSONObject(
+                context.assets.open("viewer-performance-corpus.json").bufferedReader().use {
+                    it.readText()
+                }
+            )
         val entries = corpus.getJSONArray("documents").let { documents ->
             buildMap {
                 for (index in 0 until documents.length()) {
                     val document = documents.getJSONObject(index)
                     put(
                         document.getString("id"),
-                        PreparedProseRecyclerHarness.Entry(document.getString("id"), document.getJSONObject("contentJSON").toString()),
+                        PreparedProseRecyclerHarness.Entry(
+                            document.getString("id"),
+                            document.getJSONObject("contentJSON").toString()
+                        )
                     )
                 }
             }
@@ -125,10 +133,16 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
 
         shadowOf(context.getSystemService(AccessibilityManager::class.java)).setEnabled(true)
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
-        val harness = PreparedProseRecyclerHarness(activity, PreparedProseBenchmarkConfiguration.load(context))
-        activity.setContentView(FrameLayout(activity).apply {
-            addView(harness, FrameLayout.LayoutParams(390, 844))
-        })
+        val harness =
+            PreparedProseRecyclerHarness(
+                activity,
+                PreparedProseBenchmarkConfiguration.load(context)
+            )
+        activity.setContentView(
+            FrameLayout(activity).apply {
+                addView(harness, FrameLayout.LayoutParams(390, 844))
+            }
+        )
         shadowOf(Looper.getMainLooper()).idle()
 
         PreparedProseInstrumentation.beginBenchmark()
@@ -137,15 +151,18 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
             windows = listOf(shortWindow),
             entriesById = entries,
             phase = PreparedProseInstrumentation.TraversalPhase.COLD,
-            imagesEnabled = true,
+            imagesEnabled = true
         ) { shortResult = it }
         drainMainLooperUntil { shortResult != null }
         val traversal = requireNotNull(shortResult).getOrThrow().single()
-        assertTrue("prime must wait for the attached, bound leading holder", traversal.initialLeadingHolderAttached)
+        assertTrue(
+            "prime must wait for the attached, bound leading holder",
+            traversal.initialLeadingHolderAttached
+        )
         assertEquals(
             "prime compile=${traversal.prime.compileCount}, layout=${traversal.prime.layoutCount}, misses=${traversal.prime.cacheMisses}",
             60,
-            traversal.prime.residentKeyCount,
+            traversal.prime.residentKeyCount
         )
         assertEquals(0, traversal.warm.compileCount)
         assertEquals(0, traversal.warm.layoutCount)
@@ -158,7 +175,7 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
             windows = listOf(oneItem),
             entriesById = entries,
             phase = PreparedProseInstrumentation.TraversalPhase.COLD,
-            imagesEnabled = true,
+            imagesEnabled = true
         ) { oneItemResult = it }
         drainMainLooperUntil { oneItemResult != null }
         assertEquals(oneItem.id, requireNotNull(oneItemResult).getOrThrow().single().windowId)
@@ -180,15 +197,22 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
         val harnessSource = sequenceOf(
             File("src/sharedTest/java/com/apollohg/editor/NativePerformanceSupport.kt"),
             File("../android/src/sharedTest/java/com/apollohg/editor/NativePerformanceSupport.kt"),
-            File("../../android/src/sharedTest/java/com/apollohg/editor/NativePerformanceSupport.kt"),
+            File(
+                "../../android/src/sharedTest/java/com/apollohg/editor/NativePerformanceSupport.kt"
+            )
         ).firstOrNull(File::isFile)?.readText()
-        assertNotNull("PreparedProseRecyclerHarness source must be available to the contract test", harnessSource)
+        assertNotNull(
+            "PreparedProseRecyclerHarness source must be available to the contract test",
+            harnessSource
+        )
         val source = requireNotNull(harnessSource)
         assertTrue(source.contains("awaitInitialLeadingAttachment"))
         assertTrue(source.contains("submissionGeneration"))
         assertTrue(source.contains("boundSubmissionGeneration"))
         assertTrue(source.contains("boundEntryId"))
-        assertTrue(source.contains("holder?.boundSubmissionGeneration == active.submissionGeneration"))
+        assertTrue(
+            source.contains("holder?.boundSubmissionGeneration == active.submissionGeneration")
+        )
         assertTrue(source.contains("holder.boundEntryId == expectedEntryId"))
         assertTrue(source.contains("completeDirectionIfIdleAndAttached"))
         assertTrue(source.contains("smoothScrollToPosition(lastIndex)"))
@@ -245,7 +269,7 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
             viewer.accessibilityNodeProvider.performAction(
                 1,
                 AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
-                null,
+                null
             )
         )
         parent.clearEvents()
@@ -266,9 +290,9 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
         assertEquals(
             listOf(
                 AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED,
-                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
             ),
-            parent.eventTypes,
+            parent.eventTypes
         )
     }
 
@@ -286,7 +310,7 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
             viewer.accessibilityNodeProvider.performAction(
                 1,
                 AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
-                null,
+                null
             )
         )
         parent.clearEvents()
@@ -295,12 +319,15 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
 
         assertEquals(
             listOf(AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUS_CLEARED),
-            parent.eventTypes,
+            parent.eventTypes
         )
         assertEquals(0, parent.subtreeChangeCount())
         val retained = viewer.preparedLayoutForTesting
         assertNotNull(retained)
-        ProseViewerView::class.java.getDeclaredMethod("onAttachedToWindow").apply { isAccessible = true }.invoke(viewer)
+        ProseViewerView::class.java.getDeclaredMethod("onAttachedToWindow").apply {
+            isAccessible =
+                true
+        }.invoke(viewer)
         assertTrue(viewer.preparedLayoutForTesting === retained)
         assertEquals(0, parent.subtreeChangeCount())
     }
@@ -323,14 +350,14 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
             viewer.accessibilityNodeProvider.performAction(
                 1,
                 AccessibilityNodeInfo.ACTION_CLICK,
-                null,
+                null
             )
         )
         assertFalse(
             viewer.accessibilityNodeProvider.performAction(
                 1,
                 AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
-                null,
+                null
             )
         )
         assertEquals(0, activations)
@@ -350,7 +377,7 @@ internal class PreparedProseLayoutTest : PreparedProseLayoutTestFixture() {
             viewer.accessibilityNodeProvider.performAction(
                 1,
                 AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS,
-                null,
+                null
             )
         )
         var clearedNodeLabel: CharSequence? = null

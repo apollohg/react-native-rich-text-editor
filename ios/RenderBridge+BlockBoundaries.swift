@@ -1,6 +1,6 @@
-import UIKit
-import ImageIO
 import CryptoKit
+import ImageIO
+import UIKit
 
 extension RenderBridge {
     static func attributedStringApplyingLeadingTopLevelChildIndexIfNeeded(
@@ -199,7 +199,7 @@ extension RenderBridge {
 
         let nsString = result.string as NSString
         let paragraphRange = nsString.paragraphRange(for: NSRange(location: result.length - 1, length: 0))
-        var spacing: CGFloat? = nil
+        var spacing: CGFloat?
         result.enumerateAttribute(
             .paragraphStyle,
             in: paragraphRange,
@@ -303,8 +303,7 @@ extension RenderBridge {
             blockBaseFont: blockFont
         )
         if let paragraphStyle = (styledAttrs[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy()
-            as? NSMutableParagraphStyle
-        {
+            as? NSMutableParagraphStyle {
             paragraphStyle.paragraphSpacing = 0
             styledAttrs[.paragraphStyle] = paragraphStyle
         }

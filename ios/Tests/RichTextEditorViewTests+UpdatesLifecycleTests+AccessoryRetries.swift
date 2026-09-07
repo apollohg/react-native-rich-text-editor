@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testAccessoryToolbarPlacementDrainsPendingNativeAutocorrectBeforeReload() {
@@ -215,10 +215,11 @@ extension RichTextEditorViewTests {
             selectionOffset: 7,
             configure: { view, _ in
                 view.setAddonsJson(self.aliceMentionAddonsJson())
+            },
+            { view in
+                view.setAddonsJson(nil)
             }
-        ) { view in
-            view.setAddonsJson(nil)
-        }
+        )
     }
 
     func testStaleMentionClearRetryDoesNotHideFreshSuggestionsAfterRefreshSucceeds() {

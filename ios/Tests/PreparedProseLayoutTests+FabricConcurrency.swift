@@ -152,81 +152,81 @@ extension PreparedProseLayoutTests {
         XCTAssertEqual(registry.pendingFabricLeaseCountForTesting, 1)
     }
 
-#if DEBUG
-    func testTerminalReleaseAfterSidecarRegistrationRemovesOnlyItsExactSidecar() {
-        let registry = PreparedProseLayoutRegistry(
-            compile: { [document = self.document] _ in document },
-            prepare: { _, key, width, _ in
-                PreparedProseLayout(key: key, size: CGSize(width: width, height: 20), blocks: [], retainedBytes: 1)
-            }
-        )
-        let request = request()
-        let surface = FabricSurfaceToken(surfaceId: 91, componentTag: 910)
-        let h1: UInt64 = 1
-        let h2: UInt64 = 2
-        registry.registerFabricLease(surfaceId: surface.surfaceId, componentTag: surface.componentTag, leaseHandle: h1)
-        registry.registerFabricLease(surfaceId: surface.surfaceId, componentTag: surface.componentTag, leaseHandle: h2)
-        registry.fabricSidecarRegisteredForTesting = {
-            registry.releaseFabricLease(
-                surfaceId: surface.surfaceId,
-                componentTag: surface.componentTag,
-                leaseHandle: h1
+    #if DEBUG
+        func testTerminalReleaseAfterSidecarRegistrationRemovesOnlyItsExactSidecar() {
+            let registry = PreparedProseLayoutRegistry(
+                compile: { [document = self.document] _ in document },
+                prepare: { _, key, width, _ in
+                    PreparedProseLayout(key: key, size: CGSize(width: width, height: 20), blocks: [], retainedBytes: 1)
+                }
             )
-        }
-
-        _ = registry.measure(request: request, widthPoints: 160, scale: 2, fabricSurface: surface, fabricLeaseHandle: h1)
-
-        XCTAssertNil(FabricAttachmentSidecars.state(for: surface, leaseHandle: h1))
-        _ = registry.measure(request: request, widthPoints: 160, scale: 2, fabricSurface: surface, fabricLeaseHandle: h2)
-        XCTAssertNotNil(FabricAttachmentSidecars.state(for: surface, leaseHandle: h2))
-    }
-#endif
-
-#if DEBUG
-    func testConcurrentFabricMeasureRetainsGenerationPinAfterStaleMountMissCleanup() {
-        let registry = PreparedProseLayoutRegistry(
-            byteBudget: 1,
-            compile: { [document = self.document] _ in document },
-            prepare: { _, key, width, _ in
-                PreparedProseLayout(
-                    key: key,
-                    size: CGSize(width: width, height: 20),
-                    blocks: [],
-                    retainedBytes: Int(width)
+            let request = request()
+            let surface = FabricSurfaceToken(surfaceId: 91, componentTag: 910)
+            let h1: UInt64 = 1
+            let h2: UInt64 = 2
+            registry.registerFabricLease(surfaceId: surface.surfaceId, componentTag: surface.componentTag, leaseHandle: h1)
+            registry.registerFabricLease(surfaceId: surface.surfaceId, componentTag: surface.componentTag, leaseHandle: h2)
+            registry.fabricSidecarRegisteredForTesting = {
+                registry.releaseFabricLease(
+                    surfaceId: surface.surfaceId,
+                    componentTag: surface.componentTag,
+                    leaseHandle: h1
                 )
             }
-        )
-        let request = request()
-        let surface = FabricSurfaceToken(surfaceId: 11, componentTag: 101)
-        let generation = FabricGenerationToken(
-            surface: surface,
-            generationIdentity: canonicalFabricGenerationIdentity(request, registry: registry)
-        )
-        let exactCleanupReached = DispatchSemaphore(value: 0)
-        let allowPinDecision = DispatchSemaphore(value: 0)
-        let mountMissFinished = DispatchSemaphore(value: 0)
 
-        _ = registry.measure(request: request, widthPoints: 160, scale: 2, fabricSurface: surface)
-        registry.fabricMountMissAfterExactLeaseCleanupForTesting = {
-            exactCleanupReached.signal()
-            _ = allowPinDecision.wait(timeout: .now() + 1)
+            _ = registry.measure(request: request, widthPoints: 160, scale: 2, fabricSurface: surface, fabricLeaseHandle: h1)
+
+            XCTAssertNil(FabricAttachmentSidecars.state(for: surface, leaseHandle: h1))
+            _ = registry.measure(request: request, widthPoints: 160, scale: 2, fabricSurface: surface, fabricLeaseHandle: h2)
+            XCTAssertNotNil(FabricAttachmentSidecars.state(for: surface, leaseHandle: h2))
         }
-        DispatchQueue.global().async {
-            registry.releaseFabricMountMiss(generation, widthPoints: 160, scale: 2)
-            mountMissFinished.signal()
+    #endif
+
+    #if DEBUG
+        func testConcurrentFabricMeasureRetainsGenerationPinAfterStaleMountMissCleanup() {
+            let registry = PreparedProseLayoutRegistry(
+                byteBudget: 1,
+                compile: { [document = self.document] _ in document },
+                prepare: { _, key, width, _ in
+                    PreparedProseLayout(
+                        key: key,
+                        size: CGSize(width: width, height: 20),
+                        blocks: [],
+                        retainedBytes: Int(width)
+                    )
+                }
+            )
+            let request = request()
+            let surface = FabricSurfaceToken(surfaceId: 11, componentTag: 101)
+            let generation = FabricGenerationToken(
+                surface: surface,
+                generationIdentity: canonicalFabricGenerationIdentity(request, registry: registry)
+            )
+            let exactCleanupReached = DispatchSemaphore(value: 0)
+            let allowPinDecision = DispatchSemaphore(value: 0)
+            let mountMissFinished = DispatchSemaphore(value: 0)
+
+            _ = registry.measure(request: request, widthPoints: 160, scale: 2, fabricSurface: surface)
+            registry.fabricMountMissAfterExactLeaseCleanupForTesting = {
+                exactCleanupReached.signal()
+                _ = allowPinDecision.wait(timeout: .now() + 1)
+            }
+            DispatchQueue.global().async {
+                registry.releaseFabricMountMiss(generation, widthPoints: 160, scale: 2)
+                mountMissFinished.signal()
+            }
+
+            XCTAssertEqual(exactCleanupReached.wait(timeout: .now() + 1), .success)
+            let replacement = registry.measure(request: request, widthPoints: 140, scale: 2, fabricSurface: surface)
+            allowPinDecision.signal()
+            XCTAssertEqual(mountMissFinished.wait(timeout: .now() + 1), .success)
+
+            XCTAssertTrue(registry.hasFabricGenerationOwnershipForTesting(generation))
+            let drawingView = PreparedProseDrawingView(frame: .zero)
+            XCTAssertTrue(install(request, in: drawingView, surface: surface, registry: registry, width: 140))
+            XCTAssertTrue(drawingView.layout === replacement)
         }
-
-        XCTAssertEqual(exactCleanupReached.wait(timeout: .now() + 1), .success)
-        let replacement = registry.measure(request: request, widthPoints: 140, scale: 2, fabricSurface: surface)
-        allowPinDecision.signal()
-        XCTAssertEqual(mountMissFinished.wait(timeout: .now() + 1), .success)
-
-        XCTAssertTrue(registry.hasFabricGenerationOwnershipForTesting(generation))
-        let drawingView = PreparedProseDrawingView(frame: .zero)
-        XCTAssertTrue(install(request, in: drawingView, surface: surface, registry: registry, width: 140))
-        XCTAssertTrue(drawingView.layout === replacement)
-    }
-#endif
+    #endif
 
     func testReleasedFabricPreparationCannotResurrectItsGenerationAndNewHandleCanMount() {
         let preparationStarted = DispatchSemaphore(value: 0)

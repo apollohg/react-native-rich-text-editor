@@ -30,23 +30,31 @@ import org.junit.runner.RunWith
 @LargeTest
 class NativeDevicePerformanceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    // androidTest assets are packaged with the instrumentation APK. Production
-    // views and their display metrics must continue to use the target APK.
     private val testContext: Context = instrumentation.context
     private val targetContext: Context = instrumentation.targetContext
     private val baseFontSize = 16f
     private val textColor = Color.BLACK
 
-    /** Pixel 7 Task 14 gate; no caller-supplied counter JSON is accepted. */
     @Test
     fun performance_preparedProseCorpusGates_pixel7() {
-        val corpus = JSONObject(testContext.assets.open("viewer-performance-corpus.json").bufferedReader().use(BufferedReader::readText))
+        val corpus =
+            JSONObject(
+                testContext.assets.open(
+                    "viewer-performance-corpus.json"
+                ).bufferedReader().use(BufferedReader::readText)
+            )
         val configuration = PreparedProseBenchmarkConfiguration.load(testContext)
         val byId = buildMap {
             val documents = corpus.getJSONArray("documents")
             for (index in 0 until documents.length()) {
                 val entry = documents.getJSONObject(index)
-                put(entry.getString("id"), PreparedProseRecyclerHarness.Entry(entry.getString("id"), entry.getJSONObject("contentJSON").toString()))
+                put(
+                    entry.getString("id"),
+                    PreparedProseRecyclerHarness.Entry(
+                        entry.getString("id"),
+                        entry.getJSONObject("contentJSON").toString()
+                    )
+                )
             }
         }
         val warmWindows = corpus.getJSONArray("warmWindows").let { windows ->
@@ -58,7 +66,7 @@ class NativeDevicePerformanceTest {
                     PreparedProseRecyclerHarness.WarmWindow(
                         id = window.getString("id"),
                         primeIds = ids("primeIds"),
-                        warmIds = ids("warmIds"),
+                        warmIds = ids("warmIds")
                     )
                 }
             }
@@ -68,12 +76,17 @@ class NativeDevicePerformanceTest {
             scenario.onActivity { activity ->
                 val viewportWidth = PreparedProseRecyclerHarness.viewportWidthPx(activity)
                 val viewportHeight = PreparedProseRecyclerHarness.viewportHeightPx(activity)
-                activity.setContentView(FrameLayout(activity).apply {
-                    addView(
-                        PreparedProseRecyclerHarness(activity, configuration).also { harness = it },
-                        FrameLayout.LayoutParams(viewportWidth, viewportHeight),
-                    )
-                })
+                activity.setContentView(
+                    FrameLayout(activity).apply {
+                        addView(
+                            PreparedProseRecyclerHarness(activity, configuration).also {
+                                harness =
+                                    it
+                            },
+                            FrameLayout.LayoutParams(viewportWidth, viewportHeight)
+                        )
+                    }
+                )
             }
             instrumentation.waitForIdleSync()
             PreparedProseInstrumentation.beginBenchmark()
@@ -85,16 +98,18 @@ class NativeDevicePerformanceTest {
                 warmWindows,
                 byId,
                 PreparedProseInstrumentation.TraversalPhase.COLD,
-                imagesEnabled = true,
+                imagesEnabled = true
             )
             harness.traverseWindows(
                 instrumentation,
                 warmWindows,
                 byId,
                 PreparedProseInstrumentation.TraversalPhase.IMAGES_DISABLED,
-                imagesEnabled = false,
+                imagesEnabled = false
             )
-            check(harness.exportBeforeReset().isNotEmpty()) { "pre-reset prepared prose evidence must export" }
+            check(harness.exportBeforeReset().isNotEmpty()) {
+                "pre-reset prepared prose evidence must export"
+            }
             instrumentation.runOnMainSync { harness.resetCacheWhileMounted() }
         }
         val export = PreparedProseInstrumentation.exportJson()
@@ -102,7 +117,7 @@ class NativeDevicePerformanceTest {
         PreparedProsePerformanceGates.assertPasses(
             export,
             expectedDocuments = 1_000,
-            expectedWindows = warmWindows,
+            expectedWindows = warmWindows
         )
     }
 
@@ -143,14 +158,24 @@ class NativeDevicePerformanceTest {
                 )
                 setBaseStyle(baseFontSize, textColor, Color.WHITE)
                 applyUpdateJSON(updateJson, notifyListener = false)
-                layoutView(this, widthPx = 1080, heightPx = 2400, heightMode = View.MeasureSpec.AT_MOST)
+                layoutView(
+                    this,
+                    widthPx = 1080,
+                    heightPx = 2400,
+                    heightMode = View.MeasureSpec.AT_MOST
+                )
             }
         }
 
         val stats = measureOperation("applyUpdateJsonLargeDocument") {
             runOnMainSyncWithResult {
                 editText.applyUpdateJSON(updateJson, notifyListener = false)
-                layoutView(editText, widthPx = 1080, heightPx = 2400, heightMode = View.MeasureSpec.AT_MOST)
+                layoutView(
+                    editText,
+                    widthPx = 1080,
+                    heightPx = 2400,
+                    heightMode = View.MeasureSpec.AT_MOST
+                )
             }
 
             assertFalse("edit text should contain rendered content", editText.text.isNullOrEmpty())
@@ -180,13 +205,23 @@ class NativeDevicePerformanceTest {
             beforeEach = {
                 runOnMainSyncWithResult {
                     editText.applyUpdateJSON(initialUpdateJson, notifyListener = false)
-                    layoutView(editText, widthPx = 1080, heightPx = 2400, heightMode = View.MeasureSpec.AT_MOST)
+                    layoutView(
+                        editText,
+                        widthPx = 1080,
+                        heightPx = 2400,
+                        heightMode = View.MeasureSpec.AT_MOST
+                    )
                 }
             }
         ) {
             runOnMainSyncWithResult {
                 editText.applyUpdateJSON(patchedUpdateJson, notifyListener = false)
-                layoutView(editText, widthPx = 1080, heightPx = 2400, heightMode = View.MeasureSpec.AT_MOST)
+                layoutView(
+                    editText,
+                    widthPx = 1080,
+                    heightPx = 2400,
+                    heightMode = View.MeasureSpec.AT_MOST
+                )
             }
 
             assertFalse("edit text should contain rendered content", editText.text.isNullOrEmpty())
@@ -209,20 +244,35 @@ class NativeDevicePerformanceTest {
                     )
                     setBaseStyle(baseFontSize, textColor, Color.WHITE)
                     bindEditor(editorId)
-                    layoutView(this, widthPx = 1080, heightPx = 2400, heightMode = View.MeasureSpec.AT_MOST)
+                    layoutView(
+                        this,
+                        widthPx = 1080,
+                        heightPx = 2400,
+                        heightMode = View.MeasureSpec.AT_MOST
+                    )
                 }
             }
-            val typingOffset = NativePerformanceFixtureFactory.typingCursorOffset(editText.text ?: "")
+            val typingOffset = NativePerformanceFixtureFactory.typingCursorOffset(
+                editText.text ?: ""
+            )
 
             val stats = measureOperation("typingRoundTripLargeDocument") {
                 runOnMainSyncWithResult {
                     editText.setSelection(typingOffset)
                     editText.handleTextCommit("!")
                     editText.handleDelete(1, 0)
-                    layoutView(editText, widthPx = 1080, heightPx = 2400, heightMode = View.MeasureSpec.AT_MOST)
+                    layoutView(
+                        editText,
+                        widthPx = 1080,
+                        heightPx = 2400,
+                        heightMode = View.MeasureSpec.AT_MOST
+                    )
                 }
 
-                assertFalse("edit text should contain rendered content", editText.text.isNullOrEmpty())
+                assertFalse(
+                    "edit text should contain rendered content",
+                    editText.text.isNullOrEmpty()
+                )
                 assertNotNull("edit text should have a layout after typing", editText.layout)
             }
 
@@ -247,10 +297,17 @@ class NativeDevicePerformanceTest {
                     )
                     setBaseStyle(baseFontSize, textColor, Color.WHITE)
                     bindEditor(editorId)
-                    layoutView(this, widthPx = 1080, heightPx = 2400, heightMode = View.MeasureSpec.AT_MOST)
+                    layoutView(
+                        this,
+                        widthPx = 1080,
+                        heightPx = 2400,
+                        heightMode = View.MeasureSpec.AT_MOST
+                    )
                 }
             }
-            val splitOffset = NativePerformanceFixtureFactory.typingCursorOffset(editText.text ?: "")
+            val splitOffset = NativePerformanceFixtureFactory.typingCursorOffset(
+                editText.text ?: ""
+            )
 
             val stats = measureOperation(
                 name = "paragraphSplitRoundTripLargeDocument",
@@ -260,16 +317,29 @@ class NativeDevicePerformanceTest {
                             editText.applyUpdateJSON(update, notifyListener = false)
                         }
                         editText.setSelection(splitOffset)
-                        layoutView(editText, widthPx = 1080, heightPx = 2400, heightMode = View.MeasureSpec.AT_MOST)
+                        layoutView(
+                            editText,
+                            widthPx = 1080,
+                            heightPx = 2400,
+                            heightMode = View.MeasureSpec.AT_MOST
+                        )
                     }
                 }
             ) {
                 runOnMainSyncWithResult {
                     editText.handleTextCommit("\n")
-                    layoutView(editText, widthPx = 1080, heightPx = 2400, heightMode = View.MeasureSpec.AT_MOST)
+                    layoutView(
+                        editText,
+                        widthPx = 1080,
+                        heightPx = 2400,
+                        heightMode = View.MeasureSpec.AT_MOST
+                    )
                 }
 
-                assertNotNull("edit text should have a layout after paragraph split", editText.layout)
+                assertNotNull(
+                    "edit text should have a layout after paragraph split",
+                    editText.layout
+                )
             }
 
             reportStats(stats)
@@ -292,7 +362,12 @@ class NativeDevicePerformanceTest {
                     )
                     setBaseStyle(baseFontSize, textColor, Color.WHITE)
                     bindEditor(editorId)
-                    layoutView(this, widthPx = 1080, heightPx = 2400, heightMode = View.MeasureSpec.AT_MOST)
+                    layoutView(
+                        this,
+                        widthPx = 1080,
+                        heightPx = 2400,
+                        heightMode = View.MeasureSpec.AT_MOST
+                    )
                 }
             }
             val scrubOffsets = NativePerformanceFixtureFactory.selectionScrubOffsets(
@@ -326,11 +401,20 @@ class NativeDevicePerformanceTest {
         val updateJson = NativePerformanceFixtureFactory.largeUpdateJson()
         val richTextView = runOnMainSyncWithResult {
             RichTextEditorView(targetContext).apply {
-                configure(textSizePx = baseFontSize, textColor = textColor, backgroundColor = Color.WHITE)
+                configure(
+                    textSizePx = baseFontSize,
+                    textColor = textColor,
+                    backgroundColor = Color.WHITE
+                )
                 setRemoteSelectionEditorIdForTesting(1L)
                 setRemoteSelectionScalarResolverForTesting { _, docPos -> docPos }
                 editorEditText.applyUpdateJSON(updateJson, notifyListener = false)
-                layoutView(this, widthPx = 1080, heightPx = 1600, heightMode = View.MeasureSpec.EXACTLY)
+                layoutView(
+                    this,
+                    widthPx = 1080,
+                    heightPx = 1600,
+                    heightMode = View.MeasureSpec.EXACTLY
+                )
             }
         }
 
@@ -342,7 +426,12 @@ class NativeDevicePerformanceTest {
         )
         runOnMainSyncWithResult {
             richTextView.setRemoteSelections(selections)
-            layoutView(richTextView, widthPx = 1080, heightPx = 1600, heightMode = View.MeasureSpec.EXACTLY)
+            layoutView(
+                richTextView,
+                widthPx = 1080,
+                heightPx = 1600,
+                heightMode = View.MeasureSpec.EXACTLY
+            )
         }
 
         val bitmap = Bitmap.createBitmap(1080, 1600, Bitmap.Config.ARGB_8888)
@@ -352,29 +441,34 @@ class NativeDevicePerformanceTest {
             val hasVisibleCaret = runOnMainSyncWithResult {
                 bitmap.eraseColor(Color.TRANSPARENT)
                 richTextView.setRemoteSelections(selections)
-                layoutView(richTextView, widthPx = 1080, heightPx = 1600, heightMode = View.MeasureSpec.EXACTLY)
+                layoutView(
+                    richTextView,
+                    widthPx = 1080,
+                    heightPx = 1600,
+                    heightMode = View.MeasureSpec.EXACTLY
+                )
                 richTextView.draw(canvas)
                 richTextView.remoteSelectionDebugSnapshotsForTesting().any { it.caretRect != null }
             }
 
             assertTrue("remote selection overlay should resolve visible carets", hasVisibleCaret)
-            assertEquals("expected one snapshot per peer", selections.size, richTextView.remoteSelectionDebugSnapshotsForTesting().size)
+            assertEquals(
+                "expected one snapshot per peer",
+                selections.size,
+                richTextView.remoteSelectionDebugSnapshotsForTesting().size
+            )
         }
 
         reportStats(stats)
-        assertTrue("average remote selection refresh time should be positive", stats.averageMillis > 0.0)
+        assertTrue(
+            "average remote selection refresh time should be positive",
+            stats.averageMillis > 0.0
+        )
     }
 
-    private fun createV2Editor(): Pair<EditorV2Adapter, Long> {
-        return createPairedV2TestEditor()
-    }
+    private fun createV2Editor(): Pair<EditorV2Adapter, Long> = createPairedV2TestEditor()
 
-    private fun layoutView(
-        view: View,
-        widthPx: Int,
-        heightPx: Int,
-        heightMode: Int
-    ) {
+    private fun layoutView(view: View, widthPx: Int, heightPx: Int, heightMode: Int) {
         val widthSpec = View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY)
         val heightSpec = View.MeasureSpec.makeMeasureSpec(heightPx, heightMode)
         view.measure(widthSpec, heightSpec)
@@ -429,9 +523,9 @@ class NativeDevicePerformanceTest {
                 putString(
                     Instrumentation.REPORT_KEY_STREAMRESULT,
                     "[PreparedProseExport] package=${targetContext.packageName} " +
-                        "path=${output.absolutePath} bytes=${bytes.size} sha256=$sha256\n",
+                        "path=${output.absolutePath} bytes=${bytes.size} sha256=$sha256\n"
                 )
-            },
+            }
         )
     }
 

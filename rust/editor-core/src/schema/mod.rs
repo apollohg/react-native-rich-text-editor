@@ -1,5 +1,4 @@
 pub mod content_rule;
-#[allow(dead_code)]
 mod fingerprint;
 pub mod presets;
 

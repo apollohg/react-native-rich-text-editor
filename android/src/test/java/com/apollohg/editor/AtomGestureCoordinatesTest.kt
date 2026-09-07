@@ -33,21 +33,30 @@ class AtomGestureCoordinatesTest {
             override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
         }
         val appContext = AppContext::class.java.constructors.first { it.parameterTypes.size == 3 }
-            .newInstance(provider, ModuleRegistry(emptyList(), emptyList()), WeakReference(reactContext)) as AppContext
+            .newInstance(
+                provider,
+                ModuleRegistry(emptyList(), emptyList()),
+                WeakReference(reactContext)
+            ) as AppContext
         val editor = NativeEditorExpoView(reactContext, appContext)
         val events = mutableListOf<Map<String, Any>>()
         editor.onAtomLayoutForTesting = { events.add(it) }
         activity.setContentView(editor, FrameLayout.LayoutParams(400, 300))
         val view = editor.richTextView
         view.applyTheme(EditorTheme.fromJson("""{"contentInsets":{"top":18}}"""))
-        view.applyAtomRenderConfiguration(AtomRenderConfiguration(setOf("counterCard"), mapOf("counterCard" to 100f), emptyMap()))
+        view.applyAtomRenderConfiguration(
+            AtomRenderConfiguration(setOf("counterCard"), mapOf("counterCard" to 100f), emptyMap())
+        )
         view.editorEditText.applyRenderJSON(
             (0..4).joinToString(prefix = "[", postfix = "]") {
-                """{"type":"voidBlock","nodeType":"counterCard","docPos":${it * 2 + 1},"atomId":"counter-$it"}"""
+                """{"type":"voidBlock","nodeType":"counterCar""" +
+                    """d","docPos":${it * 2 + 1},"atomId":"counter-$it"}"""
             }
         )
-        editor.measure(View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(300, View.MeasureSpec.EXACTLY))
+        editor.measure(
+            View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(300, View.MeasureSpec.EXACTLY)
+        )
         editor.layout(0, 0, 400, 300)
         shadowOf(Looper.getMainLooper()).idle()
         val host = ReactViewGroup(reactContext).apply {
@@ -62,6 +71,7 @@ class AtomGestureCoordinatesTest {
         val hostLocation = IntArray(2).also(host::getLocationOnScreen)
         val editorLocation = IntArray(2).also(editor::getLocationOnScreen)
         val density = editor.resources.displayMetrics.density
+
         @Suppress("UNCHECKED_CAST")
         val positions = events.last()["positions"] as List<Map<String, Any>>
         val position = positions.single { it["key"] == "counter-2" }

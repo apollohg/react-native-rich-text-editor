@@ -1,5 +1,5 @@
-import XCTest
 import CoreText
+import XCTest
 
 extension RenderBridgeTests {
     func testRender_invalidJSON() {
@@ -144,7 +144,7 @@ extension RenderBridgeTests {
             "total": 3,
             "start": 1,
             "isFirst": true,
-            "isLast": false,
+            "isLast": false
         ]
         let ctx = BlockContext(nodeType: "listItem", depth: 1, listContext: listCtx)
         let style = RenderBridge.paragraphStyleForBlock(ctx, blockStack: [ctx])
@@ -167,15 +167,15 @@ extension RenderBridgeTests {
             "total": 1,
             "start": 1,
             "isFirst": true,
-            "isLast": true,
+            "isLast": true
         ]
         let topLevelCtx = BlockContext(nodeType: "paragraph", depth: 1, listContext: listCtx)
         let nestedCtx = BlockContext(nodeType: "paragraph", depth: 2, listContext: listCtx)
         let theme = EditorTheme(dictionary: [
             "list": [
                 "indent": 24,
-                "baseIndentMultiplier": 0,
-            ],
+                "baseIndentMultiplier": 0
+            ]
         ])
 
         let topLevelStyle = RenderBridge.paragraphStyleForBlock(
@@ -221,20 +221,20 @@ extension RenderBridgeTests {
                 "total": 1,
                 "start": 1,
                 "isFirst": true,
-                "isLast": true,
+                "isLast": true
             ]
         )
         let baseTheme = EditorTheme(dictionary: [
             "list": [
                 "indent": 24,
-                "markerScale": 1,
-            ],
+                "markerScale": 1
+            ]
         ])
         let scaledTheme = EditorTheme(dictionary: [
             "list": [
                 "indent": 24,
-                "markerScale": 2,
-            ],
+                "markerScale": 2
+            ]
         ])
 
         let largeBaseFont = UIFont.systemFont(ofSize: 40)
@@ -263,8 +263,8 @@ extension RenderBridgeTests {
                 "indent": 20,
                 "borderColor": "#aa5500",
                 "borderWidth": 4,
-                "markerGap": 10,
-            ],
+                "markerGap": 10
+            ]
         ])
 
         let style = RenderBridge.paragraphStyleForBlock(
@@ -323,7 +323,7 @@ extension RenderBridgeTests {
         [
             {"type": "blockStart", "nodeType": "blockquote", "depth": 0},
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Quoted item", "marks": []},
             {"type": "blockEnd"},
@@ -402,9 +402,9 @@ extension RenderBridgeTests {
                     "borderWidth": 4,
                     "markerGap": 10,
                     "text": [
-                        "color": "#334455",
-                    ],
-                ],
+                        "color": "#334455"
+                    ]
+                ]
             ])
         )
         let expectedTextColor = UIColor(
@@ -481,7 +481,7 @@ extension RenderBridgeTests {
             NSNumber(value: 1.5),
             NSNull(),
             "1",
-            NSNumber(value: UInt64(UInt32.max) + 1),
+            NSNumber(value: UInt64(UInt32.max) + 1)
         ] {
             let context: [String: Any] = ["ordered": true, "index": malformedIndex]
             XCTAssertEqual(
@@ -659,9 +659,11 @@ extension RenderBridgeTests {
     }
 
     func testStyleBoxResolvesAsymmetricBordersCornersAndImageFit() {
-        let box = EditorStyleBox(["borderTopWidth": 2, "borderLeftWidth": 4, "borderRightWidth": 0,
-                                  "borderBottomWidth": 3, "paddingLeft": 6, "borderTopLeftRadius": 20,
-                                  "borderTopRightRadius": 0, "resizeMode": "contain"])
+        let box = EditorStyleBox([
+            "borderTopWidth": 2, "borderLeftWidth": 4, "borderRightWidth": 0,
+            "borderBottomWidth": 3, "paddingLeft": 6, "borderTopLeftRadius": 20,
+            "borderTopRightRadius": 0, "resizeMode": "contain"
+        ])
         XCTAssertEqual(box.inset.left, 10)
         XCTAssertEqual(box.inset.right, 0)
         XCTAssertEqual(box.radii, [20, 0, 0, 0])
@@ -747,7 +749,8 @@ extension RenderBridgeTests {
         for language: Any in [42, true, ["bad"]] {
             blocks[0][0]["language"] = language
             object["renderBlocks"] = blocks
-            XCTAssertNil(EditorV2Adapter.parseAtomicRenderSnapshot(String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)))
+            let data = try JSONSerialization.data(withJSONObject: object)
+            XCTAssertNil(EditorV2Adapter.parseAtomicRenderSnapshot(try XCTUnwrap(String(data: data, encoding: .utf8))))
         }
     }
 
@@ -759,11 +762,14 @@ extension RenderBridgeTests {
         func snapshot(style: Any) throws -> String {
             object["renderBlocks"] = [[
                 ["type": "blockStart", "nodeType": "paragraph", "depth": 0],
-                ["type": "opaqueInlineAtom", "nodeType": "mention", "label": "Jay", "docPos": 1,
-                 "mentionTheme": ["node": ["style": style]]],
+                [
+                    "type": "opaqueInlineAtom", "nodeType": "mention", "label": "Jay", "docPos": 1,
+                    "mentionTheme": ["node": ["style": style]]
+                ],
                 ["type": "blockEnd"]
             ]]
-            return String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+            let data = try JSONSerialization.data(withJSONObject: object)
+            return try XCTUnwrap(String(data: data, encoding: .utf8))
         }
         XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(try snapshot(style: ["fontSize": 20, "color": "#123456ff", "borderLeftWidth": 3, "borderTopRightRadius": 8])))
         for style: Any in [[], ["unknown": 1], ["fontSize": -1], ["borderLeftWidth": true], ["color": "bad-color"], ["fontStyle": "oblique"]] {
@@ -836,7 +842,6 @@ extension RenderBridgeTests {
         XCTAssertTrue(quoteBoxes.contains { $0.box.color("borderLeftColor") == EditorTheme.color(from: "#123456ff") })
     }
 }
-
 
 extension RenderBridgeTests {
     func testRoundedBorderFillsCornersAroundRoundedInterior() throws {

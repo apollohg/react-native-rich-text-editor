@@ -13,11 +13,11 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.robolectric.Shadows.shadowOf
-import org.robolectric.Robolectric
-import org.robolectric.RuntimeEnvironment
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -99,7 +99,9 @@ internal class EditorInputConnectionCompositionTest : EditorInputConnectionTestS
         assertTrue(inputConnection!!.commitText("X", 1))
         assertTrue(inputConnection.deleteSurroundingText(1, 0))
         assertTrue(inputConnection.deleteSurroundingTextInCodePoints(1, 0))
-        assertTrue(inputConnection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL)))
+        assertTrue(
+            inputConnection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL))
+        )
         assertEquals("abc", editText.text?.toString())
         assertEquals(3, editText.selectionStart)
         assertEquals(3, editText.selectionEnd)

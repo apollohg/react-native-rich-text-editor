@@ -9,8 +9,7 @@ extension NativeEditorExpoView {
         if showsToolbar &&
             toolbarPlacement == "keyboard" &&
             richTextView.textView.isEditable &&
-            !shouldUseSystemAssistantToolbar
-        {
+            !shouldUseSystemAssistantToolbar {
             nextAccessoryView = accessoryToolbar
         } else if richTextView.textView.isEditable && !shouldUseSystemAssistantToolbar {
             nextAccessoryView = accessoryPlaceholder

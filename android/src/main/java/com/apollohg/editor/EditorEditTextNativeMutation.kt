@@ -1,9 +1,11 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.EditorEditText.Companion.NATIVE_TEXT_MUTATION_AFTER_BLUR_WINDOW_MS
 import android.os.SystemClock
+import com.apollohg.editor.EditorEditText.Companion.NATIVE_TEXT_MUTATION_AFTER_BLUR_WINDOW_MS
 
-internal fun EditorEditText.nativeTextMutationFromAuthorizedDiff(currentText: String): NativeTextMutation? {
+internal fun EditorEditText.nativeTextMutationFromAuthorizedDiff(
+    currentText: String
+): NativeTextMutation? {
     val authorizedText = lastAuthorizedText
     if (currentText == authorizedText) return null
 
@@ -80,7 +82,9 @@ internal fun EditorEditText.shouldAdoptNativeTextMutation(
     return shouldAdoptFinalNativeTextMutation(mutation)
 }
 
-internal fun EditorEditText.shouldAdoptFinalNativeTextMutation(mutation: NativeTextMutation): Boolean {
+internal fun EditorEditText.shouldAdoptFinalNativeTextMutation(
+    mutation: NativeTextMutation
+): Boolean {
     if (composingTextForEditor() != null) return false
     val trackedRange = compositionReplacementRange() ?: return true
     val authorizedText = lastAuthorizedText

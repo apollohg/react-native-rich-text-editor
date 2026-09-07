@@ -1,5 +1,5 @@
-import XCTest
 import UIKit
+import XCTest
 
 /// Production v2 adapter tests.
 ///
@@ -9,7 +9,6 @@ import UIKit
 /// `editorV2*` transactions/results — the legacy sentinel-id/JSON editing
 /// ABI no longer exists.
 final class EditorV2AdapterTests: XCTestCase {
-
 
     enum TestHookError: Error {
         case failed
@@ -74,15 +73,15 @@ final class EditorV2AdapterTests: XCTestCase {
     ) -> EditorV2Adapter {
         let result = editorV2Create(configJson: configJson, snapshotState: nil)
         guard let value = result.value,
-              result.error == nil,
-              let createdHandle = createdV2TestEditorHandle(value),
-              let adapter = EditorV2Adapter.attach(
+            result.error == nil,
+            let createdHandle = createdV2TestEditorHandle(value),
+            let adapter = EditorV2Adapter.attach(
                 editorId: createdHandle.handle,
                 roomBound: roomBound,
                 destroySession: destroySession,
                 setAwarenessSelection: setAwarenessSelection,
                 collaborationWake: collaborationWake
-              )
+            )
         else {
             let error = result.error
             XCTFail(
@@ -98,8 +97,8 @@ final class EditorV2AdapterTests: XCTestCase {
 
     func parseObject(_ json: String?, file: StaticString = #filePath, line: UInt = #line) -> [String: Any] {
         guard let json,
-              let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let data = json.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             XCTFail("expected JSON object, got: \(json ?? "nil")", file: file, line: line)
             return [:]
@@ -111,12 +110,12 @@ final class EditorV2AdapterTests: XCTestCase {
         _ json: String,
         file: StaticString = #filePath,
         line: UInt = #line,
-        _ mutate: (inout [String: Any]) -> Void
-    ) -> String {
+        _ mutate: (inout [String: Any]) throws -> Void
+    ) rethrows -> String {
         var object = parseObject(json, file: file, line: line)
-        mutate(&object)
+        try mutate(&object)
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
-              let result = String(data: data, encoding: .utf8)
+            let result = String(data: data, encoding: .utf8)
         else {
             XCTFail("failed to serialize mutated snapshot", file: file, line: line)
             return "{}"
@@ -135,8 +134,7 @@ final class EditorV2AdapterTests: XCTestCase {
         for block in blocks {
             for element in block {
                 if let type = element["type"] as? String, type == "textRun",
-                   let run = element["text"] as? String
-                {
+                let run = element["text"] as? String {
                     text += run
                 }
             }
@@ -187,12 +185,6 @@ final class EditorV2AdapterTests: XCTestCase {
         var last: FfiError? { errors.last }
     }
 
-
-
-
-
-
-
     func assertMalformedDestroyResultRetainsPairUntilRetry(
         _ malformedResult: FfiUnitResult,
         file: StaticString = #filePath,
@@ -203,8 +195,8 @@ final class EditorV2AdapterTests: XCTestCase {
             snapshotState: nil
         )
         guard let value = created.value,
-              created.error == nil,
-              let handle = createdV2TestEditorHandle(value)
+            created.error == nil,
+            let handle = createdV2TestEditorHandle(value)
         else {
             XCTFail("expected v2 editor creation to succeed", file: file, line: line)
             return
@@ -260,27 +252,20 @@ final class EditorV2AdapterTests: XCTestCase {
 
     func commandPreparation(_ result: String) -> String? {
         guard let data = result.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return nil
         }
         return object["blockedReason"] as? String
     }
 
-
-
-
-
-
-    /// The fixture matrix the Task 15 probe derivation was pinned against:
-    /// empty doc, nested lists, marks, emoji, void nodes, multi-block.
     static let accessorFixtures: [(String, String)] = [
         ("empty", ""),
         ("nested-lists", #"{"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}"#),
         ("marks", #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"plain "},{"type":"text","text":"bold","marks":[{"type":"bold"}]},{"type":"text","text":"italiclinked","marks":[{"type":"italic"},{"type":"link","attrs":{"href":"https://example.com"}}]}]}]}"#),
         ("emoji", "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"a\u{1F600}e\u{0301}\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}b\"}]}]}"),
         ("void-nodes", #"{"type":"doc","content":[{"type":"image","attrs":{"src":"https://example.com/a.png","alt":null,"title":null,"width":null,"height":null}},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#),
-        ("multi-block", #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"ab"}]},{"type":"paragraph","content":[{"type":"text","text":"cd"}]}]}"#),
+        ("multi-block", #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"ab"}]},{"type":"paragraph","content":[{"type":"text","text":"cd"}]}]}"#)
     ]
 
     func makeFixtureAdapter(_ contentJson: String) -> EditorV2Adapter {

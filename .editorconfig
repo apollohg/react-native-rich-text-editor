@@ -11,3 +11,16 @@ indent_size = 4
 [**.{html,json}]
 indent_style = space
 indent_size = 4
+
+[*.{kt,kts}]
+ktlint_code_style = android_studio
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[**/uniffi/**.{kt,kts}]
+ktlint = disabled
+
+[rust/bindings/**.{kt,kts}]
+ktlint = disabled

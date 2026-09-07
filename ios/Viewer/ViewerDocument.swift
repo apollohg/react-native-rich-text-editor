@@ -81,7 +81,7 @@ struct ProseViewerRequest: Hashable {
             configuration.imagePolicyJSON ?? "",
             configuration.imagesEnabled ? "1" : "0",
             mentionPrefix,
-            source.kind == .json ? "json" : "html",
+            source.kind == .json ? "json" : "html"
         ].joined(separator: "\u{1F}")
         return SHA256Digest.hex(input)
     }
@@ -100,7 +100,7 @@ struct ProseViewerRequest: Hashable {
             configuration.imagePolicyJSON ?? "",
             configuration.imagesEnabled ? "1" : "0",
             configuration.collapsesWhenEmpty ? "1" : "0",
-            mentionPrefix ?? "",
+            mentionPrefix ?? ""
         ].joined(separator: "\u{1F}"))
     }
 
@@ -113,7 +113,7 @@ struct ProseViewerRequest: Hashable {
             String(nativeFontRevision),
             String(Double(nativeFontScale).bitPattern),
             String(fontEnvironmentRevision),
-            appearance.identity,
+            appearance.identity
         ].joined(separator: "\u{1F}"))
     }
 
@@ -155,8 +155,7 @@ struct ProseViewerAppearance: Hashable {
         let contrast = UIAccessibilityContrast(rawValue: rawAccessibilityContrast) ?? .normal
         if rawUserInterfaceStyle == UIUserInterfaceStyle.light.rawValue
             || rawUserInterfaceStyle == UIUserInterfaceStyle.dark.rawValue,
-           let style = UIUserInterfaceStyle(rawValue: rawUserInterfaceStyle)
-        {
+            let style = UIUserInterfaceStyle(rawValue: rawUserInterfaceStyle) {
             self.init(userInterfaceStyle: style, accessibilityContrast: contrast)
         } else {
             self = .current

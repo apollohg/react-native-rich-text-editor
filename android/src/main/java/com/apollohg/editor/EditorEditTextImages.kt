@@ -1,12 +1,12 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.EditorEditText.SelectedImageGeometry
 import android.graphics.Color
 import android.graphics.RectF
 import android.text.Layout
-import android.text.Spanned
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.view.MotionEvent
+import com.apollohg.editor.EditorEditText.SelectedImageGeometry
 import kotlin.math.roundToInt
 
 internal fun EditorEditText.cancelPendingImageLoads() {
@@ -109,6 +109,7 @@ internal fun EditorEditText.handleImageTap(event: MotionEvent): Boolean {
             if (hit != null) requestFocus()
             return hit != null
         }
+
         MotionEvent.ACTION_MOVE -> {
             val gesture = pendingImageGesture ?: return false
             if (
@@ -121,12 +122,14 @@ internal fun EditorEditText.handleImageTap(event: MotionEvent): Boolean {
             }
             return true
         }
+
         MotionEvent.ACTION_POINTER_DOWN,
         MotionEvent.ACTION_POINTER_UP,
         MotionEvent.ACTION_CANCEL -> {
             pendingImageGesture = null
             return false
         }
+
         MotionEvent.ACTION_UP -> {
             val gesture = pendingImageGesture
             pendingImageGesture = null
@@ -145,11 +148,15 @@ internal fun EditorEditText.handleImageTap(event: MotionEvent): Boolean {
             performClick()
             return true
         }
+
         else -> return false
     }
 }
 
-internal fun EditorEditText.movedBeyondImageTouchSlop(gesture: ImageGesture, event: MotionEvent): Boolean {
+internal fun EditorEditText.movedBeyondImageTouchSlop(
+    gesture: ImageGesture,
+    event: MotionEvent
+): Boolean {
     val deltaX = event.x - gesture.downX
     val deltaY = event.y - gesture.downY
     return deltaX * deltaX + deltaY * deltaY > touchSlopPx * touchSlopPx
@@ -198,7 +205,7 @@ internal fun EditorEditText.clearExplicitSelectedImageRange() {
 internal fun EditorEditText.updateImageSelectionHighlightAppearance(
     start: Int = selectionStart,
     end: Int = selectionEnd,
-    focused: Boolean = isFocused,
+    focused: Boolean = isFocused
 ) {
     val content = text as? Spanned
     val shouldSuppress = focused &&
@@ -232,7 +239,11 @@ internal fun EditorEditText.resolvedSelectedImageRange(spannable: Spanned): Imag
     return ImageSelectionRange(start, end)
 }
 
-internal fun EditorEditText.isExactImageSpanRange(spannable: Spanned, start: Int, end: Int): Boolean {
+internal fun EditorEditText.isExactImageSpanRange(
+    spannable: Spanned,
+    start: Int,
+    end: Int
+): Boolean {
     if (start < 0 || end != start + 1) return false
     val imageSpan = spannable
         .getSpans(start, end, BlockImageSpan::class.java)

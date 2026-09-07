@@ -26,22 +26,45 @@ class EditorSurfaceActivity : Activity() {
         val pair = createPairedV2TestEditor()
         adapter = pair.first
         token = pair.second
-        adapter.setContentHtml("<p>Type here with the keyboard. This paragraph has different padding on its left and right edges.</p><blockquote><p>Nested block boxes share the text layout used for selection and caret placement.</p></blockquote><pre><code>const answer = 42;\nconsole.log(answer);</code></pre>" + "<p>Scroll down, select a word, and continue typing in the production editor.</p>".repeat(10))
+        adapter.setContentHtml(
+            "<p>Type here with the keyboard. This paragraph has different " +
+                "padding on its left and right edges.</p><blockquote><p>Nested " +
+                "block boxes share the text layout used for selection and caret " +
+                "placement.</p></blockquote><pre><code>const answer = " +
+                "42;\nconsole.log(answer);</code></pre>" +
+                (
+                    "<p>Scroll down, select a word, and continue typing in the " +
+                        "production editor.</p>"
+                    ).repeat(
+                    10
+                )
+        )
         richTextView = RichTextEditorView(this).apply {
-            applyTheme(EditorTheme.fromJson("""{"version":1,"styles":{"text":{"fontSize":18,"color":"#1d303aff"},"content":{"padding":12,"backgroundColor":"#ffffffff"},"paragraph":{"paddingLeft":16,"paddingRight":64,"paddingTop":8,"paddingBottom":8,"marginBottom":8,"backgroundColor":"#eff5f8ff"},"blockquote":{"paddingLeft":20,"paddingRight":8,"borderLeftWidth":4,"borderLeftColor":"#276b80ff","backgroundColor":"#e6f0f4ff"},"codeBlock":{"padding":16,"backgroundColor":"#e9edf1ff","borderRadius":8}}}"""))
+            applyTheme(
+                EditorTheme.fromJson(
+                    """{"version":1,"styles":{"text":{"fontSize":18,"color":"#1d303aff"},"content":{"padding":12,"backgroundColor":"#ffffffff"},"paragraph":{"paddingLeft":16,"paddingRight":64,"paddingTop":8,"paddingBottom":8,"marginBottom":8,"backgroundColor":"#eff5f8ff"},"blockquote":{"paddingLeft":20,"paddingRight":8,"borderLeftWidth":4,"borderLeftColor":"#276b80ff","backgroundColor":"#e6f0f4ff"},"codeBlock":{"padding":16,"backgroundColor":"#e9edf1ff","borderRadius":8}}}"""
+                )
+            )
             editorId = token
         }
-        setContentView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            fitsSystemWindows = true
-            setBackgroundColor(Color.WHITE)
-            addView(TextView(this@EditorSurfaceActivity).apply {
-                text = "Production Android editor"
-                textSize = 21f
-                setPadding(24, 24, 24, 16)
-            })
-            addView(richTextView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        })
+        setContentView(
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                fitsSystemWindows = true
+                setBackgroundColor(Color.WHITE)
+                addView(
+                    TextView(this@EditorSurfaceActivity).apply {
+                        text = "Production Android editor"
+                        textSize = 21f
+                        setPadding(24, 24, 24, 16)
+                    }
+                )
+                addView(
+                    richTextView,
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+                )
+            }
+        )
     }
 
     override fun onDestroy() {

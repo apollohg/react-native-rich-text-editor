@@ -1,6 +1,6 @@
-import UIKit
-import ImageIO
 import CryptoKit
+import ImageIO
+import UIKit
 enum RenderBridgeAttributes {
     /// Marks a character as a void element placeholder (hardBreak, horizontalRule).
     /// The value is the node type string (e.g. "hardBreak", "horizontalRule").
@@ -205,7 +205,7 @@ final class RenderBridge {
         let result = NSMutableAttributedString()
         var blockStack: [BlockContext] = []
         var isFirstBlock = true
-        var pendingTrailingParagraphSpacing: CGFloat? = nil
+        var pendingTrailingParagraphSpacing: CGFloat?
         var atomOccurrences: [String: Int] = [:]
 
         for (elementIndex, element) in elements.enumerated() {
@@ -304,7 +304,6 @@ final class RenderBridge {
                 atomOccurrences[nodeType] = occurrence + 1
                 let atomKey = (element["atomId"] as? String) ?? "\(nodeType):\(occurrence)"
 
-                // Add inter-block newline if not the first block.
                 if !isFirstBlock {
                     collapseTrailingSpacingBeforeHorizontalRuleIfNeeded(
                         in: result,
@@ -433,12 +432,11 @@ final class RenderBridge {
                 )
                 let nestedListItemContainer =
                     isListItemContainer && (theme?.list?.itemSpacing != nil)
-                    && blockStack.contains(where: {
-                        isListItemNodeType($0.nodeType) && $0.listContext != nil
-                    })
+                        && blockStack.contains(where: {
+                            isListItemNodeType($0.nodeType) && $0.listContext != nil
+                        })
 
                 if !isListItemContainer && !isTransparentLayoutContainer {
-                    // Add inter-block newline before non-first rendered blocks.
                     if !isFirstBlock {
                         applyPendingTrailingParagraphSpacing(
                             in: result,
@@ -448,8 +446,7 @@ final class RenderBridge {
                         if ctx.nodeType == "codeBlock" {
                             newlineBlockStack = []
                         } else if blockquoteDepth(in: blockStack + [ctx]) > 0,
-                           !trailingRenderedContentHasBlockquote(in: result)
-                        {
+                                  !trailingRenderedContentHasBlockquote(in: result) {
                             newlineBlockStack = []
                         } else {
                             newlineBlockStack = blockStack + [ctx]
@@ -491,10 +488,9 @@ final class RenderBridge {
                 }
                 ctx.styleStart = result.length
 
-                // Push block context for inline children to reference.
                 blockStack.append(ctx)
 
-                var markerListContext: [String: Any]? = nil
+                var markerListContext: [String: Any]?
                 if !isListItemContainer {
                     if let directListContext = listContext {
                         markerListContext = directListContext
@@ -697,18 +693,6 @@ final class RenderBridge {
         let height = ceil(usedRect.height + topInset + bottomInset)
         return height
     }
-
-    // MARK: - Mark Handling
-
-    // MARK: - Void Inline Elements
-
-    // MARK: - Void Block Elements
-
-    // MARK: - Opaque Atoms
-
-    // MARK: - Block Styling
-
-    // MARK: - List Markers
 
     // MARK: - Private Helpers
 

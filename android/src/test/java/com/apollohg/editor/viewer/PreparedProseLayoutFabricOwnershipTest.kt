@@ -1,20 +1,21 @@
 package com.apollohg.editor.viewer
-import android.graphics.Canvas
-import android.graphics.Bitmap
-import android.graphics.Rect
 import android.app.Activity
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Rect
 import android.os.Looper
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.view.View
 import android.view.ViewGroup
-import android.widget.FrameLayout
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
-import com.apollohg.editor.PreparedProseRecyclerHarness
+import android.widget.FrameLayout
+import com.apollohg.editor.OrderedListMarkerSpan
 import com.apollohg.editor.PreparedProseBenchmarkConfiguration
 import com.apollohg.editor.PreparedProsePerformanceGates
+import com.apollohg.editor.PreparedProseRecyclerHarness
 import com.apollohg.editor.ProseViewerConfiguration
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.ProseViewerErrorCode
@@ -22,23 +23,22 @@ import com.apollohg.editor.ProseViewerInteractionListenerAdapter
 import com.apollohg.editor.ProseViewerMention
 import com.apollohg.editor.ProseViewerSource
 import com.apollohg.editor.ProseViewerView
-import com.apollohg.editor.OrderedListMarkerSpan
 import com.apollohg.editor.RenderBridge
+import java.io.File
+import java.util.concurrent.TimeUnit
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.io.File
-import java.util.concurrent.TimeUnit
-import org.json.JSONArray
-import org.json.JSONObject
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -63,10 +63,12 @@ internal class PreparedProseLayoutFabricOwnershipTest : PreparedProseLayoutTestF
         assertEquals(null, registry.acquirePreparedMountTicket(second))
         val completion = java.util.concurrent.CountDownLatch(1)
         var prepared = false
-        assertTrue(registry.prepareForFabricMount(second) { succeeded ->
-            prepared = succeeded
-            completion.countDown()
-        })
+        assertTrue(
+            registry.prepareForFabricMount(second) { succeeded ->
+                prepared = succeeded
+                completion.countDown()
+            }
+        )
         assertTrue(completion.await(5, TimeUnit.SECONDS))
         assertTrue(prepared)
         val ticket = requireNotNull(registry.acquirePreparedMountTicket(second))
@@ -87,7 +89,7 @@ internal class PreparedProseLayoutFabricOwnershipTest : PreparedProseLayoutTestF
                 theme: PreparedProseTheme,
                 widthPx: Int,
                 density: Float,
-                collapsesWhenEmpty: Boolean,
+                collapsesWhenEmpty: Boolean
             ): PreparedProseLayout {
                 if (widthPx == 320) {
                     firstStarted.countDown()
@@ -168,7 +170,7 @@ internal class PreparedProseLayoutFabricOwnershipTest : PreparedProseLayoutTestF
                 320,
                 1f,
                 surface,
-                fabricLeaseHandle = index + 1L,
+                fabricLeaseHandle = index + 1L
             )
         }
 
@@ -190,7 +192,15 @@ internal class PreparedProseLayoutFabricOwnershipTest : PreparedProseLayoutTestF
         registry.measure(request, 320, 1f, surface, fabricLeaseHandle = h1.leaseHandle)
         registry.measure(request, 320, 1f, surface, fabricLeaseHandle = h2.leaseHandle)
 
-        assertEquals(null, registry.acquireForFabricMount(FabricGenerationToken(surface, request.generationIdentity, 3), request, 320, 1f))
+        assertEquals(
+            null,
+            registry.acquireForFabricMount(
+                FabricGenerationToken(surface, request.generationIdentity, 3),
+                request,
+                320,
+                1f
+            )
+        )
         registry.releaseFabricMountMiss(h1, 320, 1f)
         registry.measure(request, 0, 1f, surface, fabricLeaseHandle = h1.leaseHandle)
 
@@ -267,7 +277,10 @@ internal class PreparedProseLayoutFabricOwnershipTest : PreparedProseLayoutTestF
         registry.measure(second, 320, 1f, surface, handle)
         registry.activateFabricGeneration(g2)
 
-        assertEquals(g2.generationIdentity, registry.permittedFabricGenerationForTesting(FabricLeaseOwner(surface, handle)))
+        assertEquals(
+            g2.generationIdentity,
+            registry.permittedFabricGenerationForTesting(FabricLeaseOwner(surface, handle))
+        )
         assertEquals(null, registry.acquireForFabricMount(g1, first, 320, 1f))
         assertNotNull(registry.acquireForFabricMount(g2, second, 320, 1f))
 
@@ -307,7 +320,8 @@ internal class PreparedProseLayoutFabricOwnershipTest : PreparedProseLayoutTestF
         val isolatedHandle = 44L
         val g1 = FabricGenerationToken(surface, first.generationIdentity, handle)
         val g2 = FabricGenerationToken(surface, second.generationIdentity, handle)
-        val isolated = FabricGenerationToken(isolatedSurface, first.generationIdentity, isolatedHandle)
+        val isolated =
+            FabricGenerationToken(isolatedSurface, first.generationIdentity, isolatedHandle)
         registry.registerFabricLease(surface, handle)
         registry.registerFabricLease(isolatedSurface, isolatedHandle)
 
@@ -404,7 +418,7 @@ internal class PreparedProseLayoutFabricOwnershipTest : PreparedProseLayoutTestF
         val generation = FabricGenerationToken(
             FabricSurfaceToken(54, 540),
             key.generationIdentity,
-            54,
+            54
         )
         val owner = FabricLeaseOwner(generation.surface, generation.leaseHandle)
         cache.value(key, generation) { testArtifact(key, retainedBytes = 1) }
@@ -438,7 +452,11 @@ internal class PreparedProseLayoutFabricOwnershipTest : PreparedProseLayoutTestF
     fun `pending Fabric leases are bounded without evicting the current handoff`() {
         val cache = PreparedProseLayoutCache(byteBudget = 100, pendingLeaseBudget = 2)
         val generations = (1L..3L).map { handle ->
-            FabricGenerationToken(FabricSurfaceToken(16, 160 + handle.toInt()), "pending-$handle", handle)
+            FabricGenerationToken(
+                FabricSurfaceToken(16, 160 + handle.toInt()),
+                "pending-$handle",
+                handle
+            )
         }
         val keys = generations.map { generation -> testLayoutKey(generation.generationIdentity) }
 
@@ -447,11 +465,18 @@ internal class PreparedProseLayoutFabricOwnershipTest : PreparedProseLayoutTestF
         }
 
         assertEquals(2, cache.pendingLeaseCountForTesting)
-        assertTrue(cache.acquireForFabricMount(generations.last(), keys.last().widthPx, keys.last().densityBits) != null)
+        assertTrue(
+            cache.acquireForFabricMount(
+                generations.last(),
+                keys.last().widthPx,
+                keys.last().densityBits
+            ) !=
+                null
+        )
     }
 
     @Test
-    fun `pending entry cap evicts duplicate metadata without touching mounted or preferred owners`() {
+    fun `pending cap evicts duplicate metadata but preserves mounted and preferred owners`() {
         val cache = PreparedProseLayoutCache(byteBudget = 1, pendingLeaseBudget = 2)
         val key = testLayoutKey("shared duplicate")
         val artifact = testArtifact(key, retainedBytes = 80)
@@ -464,13 +489,19 @@ internal class PreparedProseLayoutFabricOwnershipTest : PreparedProseLayoutTestF
         assertTrue(cache.value(key, mounted) { artifact } === artifact)
         assertTrue(cache.acquireForFabricMount(mounted, key.widthPx, key.densityBits) === artifact)
         listOf(firstPending, secondPending, preferred).forEach { generation ->
-            assertTrue(cache.value(key, generation) { error("live artifact must be reused") } === artifact)
+            assertTrue(
+                cache.value(key, generation) {
+                    error("live artifact must be reused")
+                } === artifact
+            )
         }
 
         assertEquals(2, cache.pendingLeaseCountForTesting)
         assertEquals(3, cache.leaseCountForTesting)
         assertEquals(null, cache.acquireForFabricMount(firstPending, key.widthPx, key.densityBits))
-        assertTrue(cache.acquireForFabricMount(preferred, key.widthPx, key.densityBits) === artifact)
+        assertTrue(
+            cache.acquireForFabricMount(preferred, key.widthPx, key.densityBits) === artifact
+        )
     }
 
     @Test
@@ -478,21 +509,42 @@ internal class PreparedProseLayoutFabricOwnershipTest : PreparedProseLayoutTestF
         val cache = PreparedProseLayoutCache(byteBudget = 1, pendingLeaseBudget = 1)
         val sharedKey = testLayoutKey("mounted duplicate")
         val shared = testArtifact(sharedKey, retainedBytes = 80)
-        val mountedOwner = FabricGenerationToken(FabricSurfaceToken(17, 171), sharedKey.generationIdentity, 1)
-        val pendingOwner = FabricGenerationToken(FabricSurfaceToken(17, 172), sharedKey.generationIdentity, 2)
+        val mountedOwner =
+            FabricGenerationToken(FabricSurfaceToken(17, 171), sharedKey.generationIdentity, 1)
+        val pendingOwner =
+            FabricGenerationToken(FabricSurfaceToken(17, 172), sharedKey.generationIdentity, 2)
         val oversizedKey = testLayoutKey("oversized pending")
-        val oversizedOwner = FabricGenerationToken(FabricSurfaceToken(17, 173), oversizedKey.generationIdentity, 3)
+        val oversizedOwner =
+            FabricGenerationToken(FabricSurfaceToken(17, 173), oversizedKey.generationIdentity, 3)
 
         assertTrue(cache.value(sharedKey, mountedOwner) { shared } === shared)
-        assertTrue(cache.acquireForFabricMount(mountedOwner, sharedKey.widthPx, sharedKey.densityBits) === shared)
-        assertTrue(cache.value(sharedKey, pendingOwner) { error("mounted artifact must be reused") } === shared)
+        assertTrue(
+            cache.acquireForFabricMount(mountedOwner, sharedKey.widthPx, sharedKey.densityBits) ===
+                shared
+        )
+        assertTrue(
+            cache.value(sharedKey, pendingOwner) {
+                error("mounted artifact must be reused")
+            } ===
+                shared
+        )
         cache.value(oversizedKey, oversizedOwner) { testArtifact(oversizedKey, retainedBytes = 80) }
 
         // Removing pendingOwner frees no bytes, but metadata pressure still
         // bounds it. The mounted owner remains intact and the current pending
         // handoff is preferred.
-        assertEquals(null, cache.acquireForFabricMount(pendingOwner, sharedKey.widthPx, sharedKey.densityBits))
-        assertTrue(cache.acquireForFabricMount(oversizedOwner, oversizedKey.widthPx, oversizedKey.densityBits) != null)
+        assertEquals(
+            null,
+            cache.acquireForFabricMount(pendingOwner, sharedKey.widthPx, sharedKey.densityBits)
+        )
+        assertTrue(
+            cache.acquireForFabricMount(
+                oversizedOwner,
+                oversizedKey.widthPx,
+                oversizedKey.densityBits
+            ) !=
+                null
+        )
     }
 
     @Test

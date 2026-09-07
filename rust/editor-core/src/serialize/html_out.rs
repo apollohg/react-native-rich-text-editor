@@ -223,7 +223,6 @@ fn serialize_opaque_node(node: &Node, buf: &mut String) {
     buf.push('<');
     buf.push_str(tag);
 
-    // Restore HTML attributes
     if let Some(html_attrs) = attrs.get("html_attrs") {
         if let Some(obj) = html_attrs.as_object() {
             for (key, val) in obj {
@@ -238,7 +237,6 @@ fn serialize_opaque_node(node: &Node, buf: &mut String) {
         }
     }
 
-    // Check if this is a void HTML element
     const VOID_HTML_ELEMENTS: &[&str] = &[
         "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
         "source", "track", "wbr",
@@ -250,7 +248,6 @@ fn serialize_opaque_node(node: &Node, buf: &mut String) {
 
     buf.push('>');
 
-    // Emit inner HTML if stored, otherwise use text content
     if let Some(inner_html) = attrs.get("inner_html").and_then(|v| v.as_str()) {
         buf.push_str(inner_html);
     } else if let Some(text) = attrs.get("text_content").and_then(|v| v.as_str()) {

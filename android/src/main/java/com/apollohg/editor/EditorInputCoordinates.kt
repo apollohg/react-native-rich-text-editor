@@ -12,19 +12,24 @@ import android.view.inputmethod.CorrectionInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 
-
 internal fun EditorInputConnection.isCurrentInputSession(): Boolean =
     !closedForInput && editorView.activeInputConnection === this &&
         editorView.isInputConnectionCurrentForEditor(boundEditorId, boundGeneration)
 
 internal fun EditorInputConnection.currentMapper(): ImeTextCoordinateMapper? =
-    if (isCurrentInputSession()) editorView.imeTextCoordinateMapperForEditor(boundMapperGeneration) else null
+    if (isCurrentInputSession()) {
+        editorView.imeTextCoordinateMapperForEditor(
+            boundMapperGeneration
+        )
+    } else {
+        null
+    }
 
 internal fun EditorInputConnection.imeTextSlice(
     mapper: ImeTextCoordinateMapper,
     start: Int,
     end: Int,
-    flags: Int,
+    flags: Int
 ): CharSequence {
     val slice = mapper.visibleText.subSequence(start, end)
     return if ((flags and InputConnection.GET_TEXT_WITH_STYLES) != 0 && slice is Spanned) {
@@ -83,7 +88,7 @@ internal fun EditorInputConnection.refreshComposingTextFromEditable() {
     val composingText = if (mapper != null) {
         mapper.visibleText.subSequence(
             mapper.rawToIme(start),
-            mapper.rawToIme(end),
+            mapper.rawToIme(end)
         ).toString()
     } else {
         editable.subSequence(start, end).toString()
@@ -91,7 +96,10 @@ internal fun EditorInputConnection.refreshComposingTextFromEditable() {
     editorView.setComposingTextForEditor(composingText)
 }
 
-internal fun EditorInputConnection.deleteTransientTextAroundSelection(beforeLength: Int, afterLength: Int): Boolean {
+internal fun EditorInputConnection.deleteTransientTextAroundSelection(
+    beforeLength: Int,
+    afterLength: Int
+): Boolean {
     val editable = editorView.text ?: return false
     val rawStart = editorView.selectionStart
     val rawEnd = editorView.selectionEnd
@@ -181,10 +189,3 @@ internal fun EditorInputConnection.currentComposingSpanRawRange(): Pair<Int, Int
     }
     return start to end
 }
-
-/**
- * Called for hardware keyboard key events.
- *
- * Intercepts DEL (backspace) and ENTER to route through Rust. Other key
- * events are passed through to the base connection.
- */

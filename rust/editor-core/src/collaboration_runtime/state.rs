@@ -307,10 +307,6 @@ impl TransportStateMachine {
         }
     }
 
-    /// Crate-private Task 9 seam: an accepted current-generation Sync
-    /// Step 2 turns `Handshaking` into `Synchronized`. Generation-checked
-    /// like every callback; the attempt stays live so its close callbacks
-    /// remain current. Never touches document state.
     pub(crate) fn mark_synchronized(
         &mut self,
         request_id: u64,
@@ -329,11 +325,6 @@ impl TransportStateMachine {
         Ok(())
     }
 
-    /// Task 9 read-only frame admission gate, checked before ANY decode
-    /// work: a frame is processed only when it carries the live generation
-    /// and the transport is `Handshaking` or `Synchronized`. Never
-    /// transitions — closing a generation on protocol failure goes through
-    /// [`Self::socket_closed`] with a Rust-owned disposition.
     pub(crate) fn admit_receive(
         &self,
         request_id: u64,
@@ -346,10 +337,6 @@ impl TransportStateMachine {
         }
     }
 
-    /// Read-only outbound-lease admission gate: retaining the next outbound
-    /// frame is generation-scoped wire work with the same
-    /// admission law as [`Self::admit_receive`] (live generation while
-    /// `Handshaking`/`Synchronized`), under its own action label.
     pub(crate) fn admit_outbound_lease(
         &self,
         request_id: u64,
@@ -362,14 +349,6 @@ impl TransportStateMachine {
         }
     }
 
-    /// Task 11 snapshot-restore settle: `Detached`/`Disconnected` ->
-    /// `Disconnected`. The session restore gate admits only those two
-    /// states, so no attempt can be live here; this is the designed
-    /// "sync-generation state cleared" write — the transport returns to the
-    /// room's disconnected row, where a fresh [`Self::drive`] is due again.
-    /// `last_issued` deliberately stays monotonic: resetting it would
-    /// reissue generation values and revive stale callbacks. Infallible —
-    /// restore runs it only after the engine candidate installed.
     pub(crate) fn settle_for_restore(&mut self) {
         debug_assert!(
             matches!(
@@ -385,9 +364,6 @@ impl TransportStateMachine {
         self.reset_retry_for_fresh_drive();
     }
 
-    /// Lifecycle teardown writer used by session destroy: transport state
-    /// becomes `Destroyed` and any live attempt is retired. Not a
-    /// request-scoped transition — destroy wins from every state.
     pub(crate) fn teardown_destroyed(&mut self) {
         self.live_attempt = None;
         self.state = TransportState::Destroyed;
@@ -395,11 +371,6 @@ impl TransportStateMachine {
         self.retry_schedule_exhausted = false;
     }
 
-    /// Test-only state injection for policy-matrix cells that are
-    /// unreachable through real transitions (see
-    /// `EditorSession::set_transport_state_for_test`). Forced states carry
-    /// no live attempt, so every generation-carrying callback on them is
-    /// stale by construction and the machine's invariants hold.
     pub(crate) fn set_state_for_test(&mut self, state: TransportState) {
         self.live_attempt = None;
         self.state = state;

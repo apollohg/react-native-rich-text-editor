@@ -289,8 +289,6 @@ fn record_cached_full_transition() {
 }
 
 #[inline]
-// Not reachable from production call paths after the legacy runtime removal;
-// exercised by crate tests.
 #[allow(dead_code)]
 fn record_legacy_safe_patch_full_render_pass() {
     #[cfg(test)]
@@ -322,7 +320,6 @@ pub struct RenderBlocksPatch {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum CachedRenderError {
     ResourceLimitExceeded,
     AllocationFailed,
@@ -350,7 +347,6 @@ impl Drop for CachedRenderBlock {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) struct CachedRenderBlocks {
     blocks: Vec<CachedRenderBlock>,
     document_root_seal: Node,
@@ -358,7 +354,6 @@ pub(crate) struct CachedRenderBlocks {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub(crate) enum CachedRenderTransitionUpdate {
     None,
     Patch(RenderBlocksPatch),
@@ -406,7 +401,6 @@ pub(crate) fn try_incremental(
             results.push((i, elements));
         }
 
-        // Advance position past this child regardless
         pos = pos
             .checked_add(child.node_size())
             .ok_or(CachedRenderError::PositionOverflow)?;
@@ -449,8 +443,6 @@ pub fn flatten_render_blocks(blocks: &[Vec<RenderElement>]) -> Vec<RenderElement
     elements
 }
 
-// Not reachable from production call paths after the legacy runtime removal;
-// exercised by crate tests.
 #[allow(dead_code)]
 pub fn contiguous_render_blocks_patch(
     old_doc: &Document,
@@ -504,8 +496,6 @@ pub fn contiguous_render_blocks_patch(
 /// Derive a contiguous render patch and prove it reconstructs the complete
 /// new render. Compiler hints may widen the exact rendered diff, never narrow
 /// it. `Err(full)` is the safe fallback whenever the proof cannot be made.
-// Not reachable from production call paths after the Task 16C legacy runtime
-// removal; exercised by crate tests.
 #[allow(dead_code)]
 pub fn safe_contiguous_render_blocks_patch(
     old_doc: &Document,

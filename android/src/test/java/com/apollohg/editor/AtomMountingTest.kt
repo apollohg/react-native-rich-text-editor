@@ -45,7 +45,7 @@ class AtomMountingTest {
             AtomRenderConfiguration(
                 registeredNodeTypes = setOf("counterCard"),
                 estimatedHeightsDp = mapOf("counterCard" to 72f),
-                measuredHeightsPx = emptyMap(),
+                measuredHeightsPx = emptyMap()
             )
         )
         editor.applyRenderJSON(
@@ -60,7 +60,11 @@ class AtomMountingTest {
         )
         val content = editor.text as android.text.Spanned
         val newline = content.toString().indexOf('\n')
-        val spacer = content.getSpans(newline, newline + 1, ParagraphSpacerSpan::class.java).single()
+        val spacer = content.getSpans(
+            newline,
+            newline + 1,
+            ParagraphSpacerSpan::class.java
+        ).single()
 
         assertEquals(11, spacer.spacingPx)
     }
@@ -148,22 +152,24 @@ class AtomMountingTest {
         assertSame(editor.richTextView.editorContentFrame, host.parent)
         assertTrue(
             "editor=${editor.width}x${editor.height}, viewport=${editor.richTextView.editorScrollView.height}",
-            editor.richTextView.editorScrollView.scrollY > 0,
+            editor.richTextView.editorScrollView.scrollY > 0
         )
         assertTrue(
-            "atomY=$atomY, hostHeight=${host.height}, spanHeight=${atomSpans(editor.richTextView).last().reservedHeightPx}",
-            atomY in 0 until bitmap.height,
+            "atomY=$atomY, hostHeight=${host.height}, spanHeight=${atomSpans(
+                editor.richTextView
+            ).last().reservedHeightPx}",
+            atomY in 0 until bitmap.height
         )
         assertEquals(
             initialWindowPosition[1] - editor.richTextView.editorScrollView.scrollY,
-            atomY,
+            atomY
         )
         assertEquals(1, drawCount)
         assertEquals(initialAtomY, host.top)
         assertEquals(0f, host.translationY)
         assertEquals(
             View.OVER_SCROLL_IF_CONTENT_SCROLLS,
-            editor.richTextView.editorScrollView.overScrollMode,
+            editor.richTextView.editorScrollView.overScrollMode
         )
     }
 
@@ -177,7 +183,7 @@ class AtomMountingTest {
             layoutParams = FrameLayout.LayoutParams(280, ViewGroup.LayoutParams.WRAP_CONTENT)
             measure(
                 View.MeasureSpec.makeMeasureSpec(280, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(132, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(132, View.MeasureSpec.EXACTLY)
             )
             layout(0, 0, 280, 132)
         }
@@ -185,10 +191,14 @@ class AtomMountingTest {
 
         view.measure(
             View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(500, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(500, View.MeasureSpec.AT_MOST)
         )
 
-        assertEquals(view.editorEditText.measuredWidth - view.editorEditText.compoundPaddingLeft - view.editorEditText.compoundPaddingRight, child.measuredWidth)
+        assertEquals(
+            view.editorEditText.measuredWidth - view.editorEditText.compoundPaddingLeft -
+                view.editorEditText.compoundPaddingRight,
+            child.measuredWidth
+        )
         assertEquals(132, child.measuredHeight)
     }
 
@@ -205,7 +215,7 @@ class AtomMountingTest {
             addView(renderedCard)
             measure(
                 View.MeasureSpec.makeMeasureSpec(280, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(500, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(500, View.MeasureSpec.EXACTLY)
             )
             layout(0, 0, 280, 500)
         }
@@ -321,7 +331,7 @@ class AtomMountingTest {
         val child = atomChild(view.context, "counterCard:0").apply {
             measure(
                 View.MeasureSpec.makeMeasureSpec(280, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(132, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(132, View.MeasureSpec.EXACTLY)
             )
             layout(0, 0, 280, 132)
         }
@@ -350,7 +360,7 @@ class AtomMountingTest {
             layoutParams = FrameLayout.LayoutParams(280, 132)
             measure(
                 View.MeasureSpec.makeMeasureSpec(280, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(132, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(132, View.MeasureSpec.EXACTLY)
             )
             layout(0, 0, 280, 132)
         }
@@ -363,7 +373,7 @@ class AtomMountingTest {
         root.getLocationOnScreen(rootLocation)
         val coords = floatArrayOf(
             childLocation[0] - rootLocation[0] + 50f,
-            childLocation[1] - rootLocation[1] + 50f,
+            childLocation[1] - rootLocation[1] + 50f
         )
 
         val target = TouchTargetHelper.findTargetTagAndCoordinatesForTouch(
@@ -371,7 +381,7 @@ class AtomMountingTest {
             coords[1],
             root,
             coords,
-            null,
+            null
         )
 
         assertEquals(child.id, target)
@@ -396,7 +406,7 @@ class AtomMountingTest {
             addView(action, FrameLayout.LayoutParams(280, 100))
             measure(
                 View.MeasureSpec.makeMeasureSpec(280, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY)
             )
             layout(0, 0, 280, 100)
         }
@@ -423,7 +433,7 @@ class AtomMountingTest {
 
         assertTrue(
             "editor=${editor.width}x${editor.height}, before=$scrollAfterVerticalMove, after=${editor.richTextView.editorScrollView.scrollY}",
-            editor.richTextView.editorScrollView.scrollY > scrollAfterVerticalMove,
+            editor.richTextView.editorScrollView.scrollY > scrollAfterVerticalMove
         )
         assertEquals(0, presses)
     }
@@ -447,7 +457,7 @@ class AtomMountingTest {
             addView(action, FrameLayout.LayoutParams(280, 100))
             measure(
                 View.MeasureSpec.makeMeasureSpec(280, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY)
             )
             layout(0, 0, 280, 100)
         }
@@ -494,7 +504,7 @@ class AtomMountingTest {
             addView(action, FrameLayout.LayoutParams(280, 100))
             measure(
                 View.MeasureSpec.makeMeasureSpec(280, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.EXACTLY)
             )
             layout(0, 0, 280, 100)
         }
@@ -528,8 +538,12 @@ class AtomMountingTest {
         val secondSpan = spans.single { it.atomKey == "second" }
         val text = requireNotNull(view.editorEditText.text)
         val textLayout = requireNotNull(view.editorEditText.layout)
-        val firstY = textLayout.getLineTop(textLayout.getLineForOffset(text.getSpanStart(firstSpan)))
-        val secondY = textLayout.getLineTop(textLayout.getLineForOffset(text.getSpanStart(secondSpan)))
+        val firstY = textLayout.getLineTop(
+            textLayout.getLineForOffset(text.getSpanStart(firstSpan))
+        )
+        val secondY = textLayout.getLineTop(
+            textLayout.getLineForOffset(text.getSpanStart(secondSpan))
+        )
 
         assertEquals(firstY - secondY, first.top - second.top)
     }
@@ -556,8 +570,14 @@ class AtomMountingTest {
         assertFalse(host.isLayoutRequested)
         assertSame(editor.editorContentFrame, first.parent)
         assertSame(editor.editorContentFrame, second.parent)
-        assertEquals(editor.editorContentFrame.childCount - 2, editor.editorContentFrame.indexOfChild(first))
-        assertEquals(editor.editorContentFrame.childCount - 1, editor.editorContentFrame.indexOfChild(second))
+        assertEquals(
+            editor.editorContentFrame.childCount - 2,
+            editor.editorContentFrame.indexOfChild(first)
+        )
+        assertEquals(
+            editor.editorContentFrame.childCount - 1,
+            editor.editorContentFrame.indexOfChild(second)
+        )
     }
 
     @Test
@@ -623,21 +643,42 @@ class AtomMountingTest {
         val density = editor.resources.displayMetrics.density
         val expectedWidth = (
             editText.width - editText.compoundPaddingLeft - editText.compoundPaddingRight
-        ).toFloat() / density
+            ).toFloat() / density
         val expectedX = (editText.left + editText.compoundPaddingLeft) / density
         val expectedY = (
             editText.top +
                 editText.totalPaddingTop +
                 textLayout.getLineTop(textLayout.getLineForOffset(spanStart)) -
                 editText.scrollY
-        ) / density
+            ) / density
         val event = events.last()
         assertEquals(expectedWidth, event["width"] as Float)
         assertEquals(
-            listOf(mapOf("key" to "counterCard:0", "x" to expectedX, "y" to expectedY, "hostX" to expectedX, "hostY" to expectedY, "height" to span.reservedHeightPx / density, "width" to (editText.width - editText.compoundPaddingLeft - editText.compoundPaddingRight) / density)),
-            event["positions"],
+            listOf(
+                mapOf(
+                    "key" to "counterCard:0",
+                    "x" to expectedX,
+                    "y" to expectedY,
+                    "hostX" to expectedX,
+                    "hostY" to expectedY,
+                    "height" to span.reservedHeightPx / density,
+                    "width" to
+                        (
+                            editText.width - editText.compoundPaddingLeft -
+                                editText.compoundPaddingRight
+                            ) /
+                        density
+                )
+            ),
+            event["positions"]
         )
-        assertEquals(mapOf("y" to 0f, "height" to editor.richTextView.editorScrollView.height / density), event["viewport"])
+        assertEquals(
+            mapOf(
+                "y" to 0f,
+                "height" to editor.richTextView.editorScrollView.height / density
+            ),
+            event["viewport"]
+        )
         val previousCount = events.size
         editor.richTextView.editorScrollView.scrollTo(0, 10)
         editor.richTextView.emitAtomLayoutIfAvailable(force = true)
@@ -692,7 +733,7 @@ class AtomMountingTest {
         assertTrue(scrollY > 0)
         assertEquals(
             initialPositions,
-            events.last(),
+            events.last()
         )
         assertTrue(events.size > initialCount)
     }
@@ -725,7 +766,9 @@ class AtomMountingTest {
         layout(view, 320, 240)
         val card = View(view.context)
         val host = ReactViewGroup(view.context).apply { addView(card) }
-        val width = view.editorEditText.width - view.editorEditText.compoundPaddingLeft - view.editorEditText.compoundPaddingRight
+        val width =
+            view.editorEditText.width - view.editorEditText.compoundPaddingLeft -
+                view.editorEditText.compoundPaddingRight
         host.layout(0, 0, width, 80)
         card.layout(0, 0, width, 80)
         view.mountAtomChild(host, "first")
@@ -751,7 +794,10 @@ class AtomMountingTest {
             setTag(R.id.view_tag_native_id, "prose-atom-content:first")
         }
         val button = View(view.context)
-        val host = ReactViewGroup(view.context).apply { addView(root); addView(button) }
+        val host = ReactViewGroup(view.context).apply {
+            addView(root)
+            addView(button)
+        }
         val width = view.editorEditText.width
         host.layout(0, 0, width, 100)
         root.layout(0, 0, width, 100)
@@ -787,7 +833,8 @@ class AtomMountingTest {
         }
         val button = View(view.context).apply { layout(20, 20, 60, 60) }
         val host = ReactViewGroup(view.context).apply {
-            addView(root); addView(button)
+            addView(root)
+            addView(button)
             layout(0, 0, 320, 80)
         }
         view.mountAtomChild(host, "first")
@@ -809,8 +856,10 @@ class AtomMountingTest {
         val parent = object : FrameLayout(activity) {
             override fun requestLayout() = Unit
             override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-                super.onMeasure(MeasureSpec.makeMeasureSpec(320, MeasureSpec.EXACTLY),
-                    MeasureSpec.makeMeasureSpec(240, MeasureSpec.EXACTLY))
+                super.onMeasure(
+                    MeasureSpec.makeMeasureSpec(320, MeasureSpec.EXACTLY),
+                    MeasureSpec.makeMeasureSpec(240, MeasureSpec.EXACTLY)
+                )
             }
         }
         val editor = nativeEditorView().apply { onAtomLayoutForTesting = {} }
@@ -852,7 +901,9 @@ class AtomMountingTest {
         val view = RichTextEditorView(activity)
         installAtoms(view, listOf("first", "second", "third", "fourth", "fifth"))
         layout(view, 320, 240)
-        val width = view.editorEditText.width - view.editorEditText.compoundPaddingLeft - view.editorEditText.compoundPaddingRight
+        val width =
+            view.editorEditText.width - view.editorEditText.compoundPaddingLeft -
+                view.editorEditText.compoundPaddingRight
         val host = atomChild(activity, "first").apply { layout(0, 0, width, 100) }
         view.mountAtomChild(host, "first")
         layout(view, 320, 240)
@@ -861,7 +912,8 @@ class AtomMountingTest {
         val anchor = text.getSpanStart(atomSpans(view).first { it.atomKey == "second" })
         fun anchorY(): Int {
             val layout = requireNotNull(view.editorEditText.layout)
-            return layout.getLineTop(layout.getLineForOffset(anchor)) - view.editorScrollView.scrollY
+            return layout.getLineTop(layout.getLineForOffset(anchor)) -
+                view.editorScrollView.scrollY
         }
         val before = anchorY()
         host.layout(0, host.top, width, host.top + 180)
@@ -934,5 +986,4 @@ class AtomMountingTest {
         view.layout(0, 0, width, height)
         shadowOf(Looper.getMainLooper()).idle()
     }
-
 }

@@ -12,7 +12,7 @@ fn can_toggle_blockquote_transaction_oracle(
         return false;
     };
     let pos = selection.from(document);
-    let mut transaction = Transaction::new(Source::Format);
+    let mut transaction = Transaction::new();
     if let Some((start, quote)) =
         containing_node_at(document, schema, pos, |_, name| name == blockquote_type)
     {
@@ -73,7 +73,7 @@ fn can_apply_list_type_transaction_oracle(
         return false;
     }
     let pos = selection.from(document);
-    let mut transaction = Transaction::new(Source::Format);
+    let mut transaction = Transaction::new();
     if let Some((start, list)) = containing_node_at(document, schema, pos, |role, _| {
         matches!(role, NodeRole::List { .. })
     }) {
@@ -169,7 +169,7 @@ fn can_toggle_task_item(
     let Some(node_pos) = node_delete_start_pos(document, &path) else {
         return false;
     };
-    let mut transaction = Transaction::new(Source::Input);
+    let mut transaction = Transaction::new();
     transaction.add_step(Step::UpdateNodeAttrs {
         pos: node_pos,
         attrs,

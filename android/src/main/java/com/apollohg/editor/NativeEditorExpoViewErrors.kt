@@ -1,32 +1,36 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.NativeEditorExpoView.PendingEditorErrorEvent
-import com.apollohg.editor.NativeEditorExpoView.EditorErrorBinding
 import android.os.Looper
+import com.apollohg.editor.NativeEditorExpoView.EditorErrorBinding
+import com.apollohg.editor.NativeEditorExpoView.PendingEditorErrorEvent
 
 internal fun NativeEditorExpoView.bindEditorErrorCallbackIfLive(viewToken: Long) {
     if (!isAttachedToNativeWindow || richTextView.editorId != viewToken ||
         richTextView.editorEditText.editorId != viewToken
-    ) return
+    ) {
+        return
+    }
     val adapter = EditorV2Registry.adapterForViewToken(viewToken) ?: return
     val editorId = publicHandleForViewToken(viewToken) ?: return
     val existing = editorErrorBinding
     if (existing?.adapter === adapter && existing.viewToken == viewToken &&
         existing.editorId == editorId
-    ) return
+    ) {
+        return
+    }
     clearEditorErrorBinding("claim")
     val binding = EditorErrorBinding(
         adapter = adapter,
         editorId = editorId,
         viewToken = viewToken,
         callbackToken = nextNativeEditorErrorCallbackToken.incrementAndGet(),
-        generation = ++nextEditorErrorBindingGeneration,
+        generation = ++nextEditorErrorBindingGeneration
     )
     editorErrorBinding = binding
     adapter.bindAutonomousErrorOwner(
         binding.callbackToken,
         callback = { error -> queueEditorError(binding, error) },
-        onReleased = { releaseEditorErrorBinding(binding) },
+        onReleased = { releaseEditorErrorBinding(binding) }
     )
 }
 
@@ -49,14 +53,17 @@ internal fun NativeEditorExpoView.clearEditorErrorBinding(reason: String) {
     clearPendingEditorErrorDispatchQueue(reason)
 }
 
-internal fun NativeEditorExpoView.queueEditorError(binding: EditorErrorBinding, error: EditorV2Error) {
+internal fun NativeEditorExpoView.queueEditorError(
+    binding: EditorErrorBinding,
+    error: EditorV2Error
+) {
     val event = PendingEditorErrorEvent(
         adapter = binding.adapter,
         editorId = binding.editorId,
         viewToken = binding.viewToken,
         callbackToken = binding.callbackToken,
         bindingGeneration = binding.generation,
-        error = error,
+        error = error
     )
     if (Looper.myLooper() == Looper.getMainLooper()) {
         enqueueEditorError(event)
@@ -86,7 +93,7 @@ internal fun NativeEditorExpoView.drainPendingEditorErrorEvents() {
         if (!isLiveEditorErrorBinding(event)) continue
         val payload = mapOf<String, Any>(
             "editorId" to event.editorId,
-            "error" to event.error.toJSMap(),
+            "error" to event.error.toJSMap()
         )
         dispatchEditorError(payload)
     }
@@ -101,7 +108,9 @@ internal fun NativeEditorExpoView.dispatchEditorError(payload: Map<String, Any>)
     onEditorError(payload)
 }
 
-internal fun NativeEditorExpoView.isLiveEditorErrorBinding(event: PendingEditorErrorEvent): Boolean {
+internal fun NativeEditorExpoView.isLiveEditorErrorBinding(
+    event: PendingEditorErrorEvent
+): Boolean {
     val binding = editorErrorBinding ?: return false
     return isAttachedToNativeWindow &&
         !NativeEditorViewRegistry.isDestroyed(event.viewToken) &&
@@ -130,6 +139,8 @@ internal fun NativeEditorExpoView.clearPendingEditorErrorDispatchQueue(reason: S
     }
 }
 
-internal fun NativeEditorExpoView.pendingEditorErrorEventCountForTestingImpl(): Int = pendingEditorErrorEvents.size
+internal fun NativeEditorExpoView.pendingEditorErrorEventCountForTestingImpl(): Int =
+    pendingEditorErrorEvents.size
 
-internal fun NativeEditorExpoView.editorErrorCallbackTokenForTestingImpl(): Long? = editorErrorBinding?.callbackToken
+internal fun NativeEditorExpoView.editorErrorCallbackTokenForTestingImpl(): Long? =
+    editorErrorBinding?.callbackToken

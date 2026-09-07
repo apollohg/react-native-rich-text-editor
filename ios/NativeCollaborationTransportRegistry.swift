@@ -208,7 +208,7 @@ enum NativeCollaborationTransportRegistry {
             processor.queue.async {
                 var payload: [String: Any] = [
                     "editorId": String(editorId),
-                    "eventSequence": String(sequence),
+                    "eventSequence": String(sequence)
                 ]
                 switch event {
                 case let .directive(directive, generation, wakeReason):
@@ -224,7 +224,7 @@ enum NativeCollaborationTransportRegistry {
                         "remoteCommitApplied": directive.remoteCommitApplied,
                         "peersChanged": directive.peersChanged,
                         "renewedLocal": directive.renewedLocal,
-                        "expiredPeerCount": directive.expiredPeers.count,
+                        "expiredPeerCount": directive.expiredPeers.count
                     ]
                 case let .error(error, generation):
                     payload["kind"] = "error"
@@ -247,7 +247,7 @@ enum NativeCollaborationTransportRegistry {
                         payload["phase"] = "message"
                         payload["frame"] = [
                             "type": "binary",
-                            "data": data.base64EncodedString(),
+                            "data": data.base64EncodedString()
                         ]
                     }
                 }
@@ -369,7 +369,7 @@ enum NativeCollaborationTransportRegistry {
               Set(object.keys).isSubset(of: Set([
                 "protocols",
                 "timeoutMillis",
-                "terminalCloseCodes",
+                "terminalCloseCodes"
               ])),
               let protocols = object["protocols"] as? [String],
               !protocols.isEmpty,
@@ -496,7 +496,7 @@ enum NativeCollaborationTransportRegistry {
         var value: [String: Any] = [
             "domain": error.domain,
             "code": error.code,
-            "message": error.message,
+            "message": error.message
         ]
         if let requestId = error.requestId { value["requestId"] = requestId }
         if let operationIndex = error.operationIndex { value["operationIndex"] = operationIndex }

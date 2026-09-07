@@ -1,5 +1,5 @@
-import UIKit
 import CoreText
+import UIKit
 
 /// Draws list markers visually in the gutter without inserting them into the
 /// editable text storage. This keeps UIKit paragraph-start behaviors, such as
@@ -233,7 +233,7 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             box.box.draw(in: rect, context: context)
             let labelHeight = box.label?.size().height ?? 0
             box.label?.draw(at: CGPoint(x: rect.minX + box.padding.left,
-                                       y: rect.minY + box.padding.top + (rect.height - box.padding.top - box.padding.bottom - labelHeight) / 2))
+                y: rect.minY + box.padding.top + (rect.height - box.padding.top - box.padding.bottom - labelHeight) / 2))
         }
     }
 
@@ -255,9 +255,9 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             }
             guard !union.isNull else { continue }
             let rect = CGRect(x: origin.x + descriptor.leading + container.lineFragmentPadding,
-                              y: origin.y + union.minY - descriptor.topInset,
-                              width: max(0, container.size.width - descriptor.leading - descriptor.trailing - container.lineFragmentPadding * 2),
-                              height: union.height + descriptor.topInset + descriptor.bottomInset)
+                y: origin.y + union.minY - descriptor.topInset,
+                width: max(0, container.size.width - descriptor.leading - descriptor.trailing - container.lineFragmentPadding * 2),
+                height: union.height + descriptor.topInset + descriptor.bottomInset)
             descriptor.box.draw(in: rect, context: context)
         }
     }
@@ -344,16 +344,14 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         guard paragraphStart < textStorage.length else { return nil }
         guard !Self.isParagraphStartCreatedByHardBreak(paragraphStart, in: textStorage) else { return nil }
 
-        // Only a task item's paragraph qualifies.
         guard let listContext = textStorage.attribute(
-                  RenderBridgeAttributes.listMarkerContext,
-                  at: paragraphStart,
-                  effectiveRange: nil
-              ) as? [String: Any],
-              (listContext["kind"] as? String) == "task"
+            RenderBridgeAttributes.listMarkerContext,
+            at: paragraphStart,
+            effectiveRange: nil
+        ) as? [String: Any],
+            (listContext["kind"] as? String) == "task"
         else { return nil }
 
-        // Existing marker-rect math, applied to just this paragraph.
         let startGlyphIndex = glyphIndexForCharacter(at: paragraphStart)
         guard startGlyphIndex < numberOfGlyphs else { return nil }
 
@@ -499,7 +497,7 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
                 : markerFont(for: listContext, baseFont: baseFont, markerScale: markerScale)
             let markerText = attrs[RenderBridgeAttributes.orderedListMarkerLabel] as? String
                 ?? RenderBridge.listMarkerString(listContext: listContext)
-                    .trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: .whitespaces)
             let markerOrigin = Self.orderedMarkerDrawingOrigin(
                 usedRect: usedRect,
                 lineFragmentRect: lineFragmentRect,
@@ -512,7 +510,7 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
             )
             let markerAttrs: [NSAttributedString.Key: Any] = [
                 .font: markerFont,
-                .foregroundColor: textColor,
+                .foregroundColor: textColor
             ]
             NSAttributedString(string: markerText, attributes: markerAttrs).draw(at: markerOrigin)
             return
@@ -840,7 +838,7 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         let referenceRect = usedRect.height > 0 ? usedRect : lineFragmentRect
         let visibleMarkerText = markerText.trimmingCharacters(in: .whitespaces)
         let markerSize = (visibleMarkerText as NSString).size(withAttributes: [
-            .font: markerFont,
+            .font: markerFont
         ])
         let x = origin.x + referenceRect.minX - markerGap - ceil(markerSize.width)
         let y = origin.y + baselineY - markerFont.ascender

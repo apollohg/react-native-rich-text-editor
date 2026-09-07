@@ -145,7 +145,7 @@ fn run_stateful_trace(trace: &[ActionSpec], coverage: &RefCell<Coverage>) {
             yrs.stored_marks().map(<[Mark]>::to_vec),
         );
         let (operation, legacy_steps) = stateful_inline_scenario(spec, &legacy, &schema, coverage);
-        let mut legacy_transaction = Transaction::new(Source::Api);
+        let mut legacy_transaction = Transaction::new();
         for step in legacy_steps {
             legacy_transaction.add_step(step);
         }
@@ -245,7 +245,7 @@ fn run_custom_root_case(coverage: &RefCell<Coverage>) {
     let rendered = rendered_text(&document, &schema);
     let at = revisioned(&rendered, 2, 3, coverage);
     let pos = legacy_position(&document, &schema, 2);
-    let mut legacy = Transaction::new(Source::Api);
+    let mut legacy = Transaction::new();
     legacy.add_step(Step::InsertText {
         pos,
         text: "!".into(),
@@ -344,7 +344,7 @@ fn run_evolving_list_chain(salt: u64, coverage: &RefCell<Coverage>) {
             _ => unreachable!(),
         };
 
-        let mut legacy_transaction = Transaction::new(Source::Api);
+        let mut legacy_transaction = Transaction::new();
         legacy_transaction.add_step(step);
         legacy = legacy_transaction
             .apply_with_limits(&legacy, &schema, &ResourceLimits::default())

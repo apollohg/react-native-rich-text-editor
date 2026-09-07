@@ -1,6 +1,6 @@
 import CoreText
-import XCTest
 import UIKit
+import XCTest
 
 final class EditorHighlightingTests: XCTestCase {
     func testMissingProviderReportsErrorBeforeCodeContentExists() {
@@ -69,7 +69,7 @@ extension EditorHighlightingTests {
         let line = try XCTUnwrap(highlighted.blocks.flatMap(\.fragments).first { $0.kind == .text }?.line)
         let run = try XCTUnwrap((CTLineGetGlyphRuns(line) as? [CTRun])?.first)
         let attributes = CTRunGetAttributes(run) as NSDictionary
-        XCTAssertEqual(attributes[kCTForegroundColorAttributeName] as! CGColor, UIColor.red.cgColor)
+        XCTAssertEqual(try unwrapCoreTextAttribute(attributes[kCTForegroundColorAttributeName], as: CGColor.self), UIColor.red.cgColor)
         XCTAssertFalse(plain === highlighted)
         let alreadyPainted = expectation(forNotification: PreparedProseDrawingView.codeHighlightingDidResolve, object: remounted)
         alreadyPainted.isInverted = true

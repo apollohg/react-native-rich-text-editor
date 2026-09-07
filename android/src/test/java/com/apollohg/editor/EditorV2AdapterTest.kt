@@ -130,7 +130,7 @@ internal class EditorV2AdapterTest : EditorV2AdapterTestFixture() {
         adapter.onAutonomousError = errors::add
 
         backend.nextApplyNativeIntentResult = EditorV2CallResult.Err(
-            EditorV2Error("operation", "MUTATION_REJECTED", "rejected"),
+            EditorV2Error("operation", "MUTATION_REJECTED", "rejected")
         )
         assertEquals(EditorV2NativeIntentResult.Rejected, adapter.deleteScalarRangeNative(1, 2))
         assertEquals(listOf("MUTATION_REJECTED"), errors.map { it.code })
@@ -162,7 +162,8 @@ internal class EditorV2AdapterTest : EditorV2AdapterTestFixture() {
         val html = adapter.insertContentHtmlAtSelection("<strong>CD</strong>", 2, 2)
         assertEquals("abCD", renderedText(html))
 
-        val fragment = "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"X\"}]}]}"
+        val fragment = "{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\"," +
+            "\"content\":[{\"type\":\"text\",\"text\":\"X\"}]}]}"
         val json = adapter.insertContentJsonAtSelection(fragment, 4, 4)
         assertNotNull(json)
         assertEquals("abCD\nX", documentText(adapter))
@@ -192,17 +193,17 @@ internal class EditorV2AdapterTest : EditorV2AdapterTestFixture() {
         try {
             editText.applyUpdateJSON(
                 imageAtomicRenderSnapshot(revision = "1", width = 140),
-                notifyListener = false,
+                notifyListener = false
             )
             val initialText = editText.text as Spanned
             val initialImage = initialText.getSpans(
                 0,
                 initialText.length,
-                BlockImageSpan::class.java,
+                BlockImageSpan::class.java
             ).single()
             editText.setSelection(
                 initialText.getSpanStart(initialImage),
-                initialText.getSpanEnd(initialImage),
+                initialText.getSpanEnd(initialImage)
             )
             backend.nextRenderUpdateResult = EditorV2CallResult.Ok(
                 imageAtomicRenderSnapshot(revision = "2", width = 120)
@@ -214,7 +215,7 @@ internal class EditorV2AdapterTest : EditorV2AdapterTestFixture() {
             val resizedImage = resizedText.getSpans(
                 0,
                 resizedText.length,
-                BlockImageSpan::class.java,
+                BlockImageSpan::class.java
             ).single()
             assertEquals(resizedText.getSpanStart(resizedImage), editText.selectionStart)
             assertEquals(resizedText.getSpanEnd(resizedImage), editText.selectionEnd)
@@ -260,7 +261,8 @@ internal class EditorV2AdapterTest : EditorV2AdapterTestFixture() {
             "deleteAndSplit" to { adapter.deleteAndSplit(0, 1)?.updateJson },
             "insertNode" to { adapter.insertNode("hardBreak", 1, 1) },
             "insertContentHtml" to { adapter.insertContentHtmlAtSelection("<p>x</p>", 1, 1) },
-            "insertContentJson" to { adapter.insertContentJsonAtSelection("{\"type\":\"paragraph\"}", 1, 1) },
+            "insertContentJson" to
+                { adapter.insertContentJsonAtSelection("{\"type\":\"paragraph\"}", 1, 1) },
             "toggleMark" to { adapter.toggleMark("bold", 0, 1) },
             "setMark" to { adapter.setMark("link", "{\"href\":\"https://example.com\"}", 0, 1) },
             "unsetMark" to { adapter.unsetMark("bold", 0, 1) },
@@ -274,7 +276,7 @@ internal class EditorV2AdapterTest : EditorV2AdapterTestFixture() {
             "toggleTaskItemChecked" to { adapter.toggleTaskItemCheckedAtSelection(1, 1) },
             "resizeImage" to { adapter.resizeImageAtDocPos(0, 10, 10) },
             "undo" to { adapter.undo() },
-            "redo" to { adapter.redo() },
+            "redo" to { adapter.redo() }
         )
         for ((name, mutate) in mutations) {
             assertNull("read-only $name must be rejected", mutate())
@@ -313,9 +315,28 @@ internal class EditorV2AdapterTest : EditorV2AdapterTestFixture() {
         backend.calls.clear()
         val update = adapter.insertText("REBASED", 0)
         assertNotNull("a stale input returns the authoritative refresh", update)
-        assertEquals("the keystroke is attempted once", 1L, backend.calls.count { it == "applyInput" }.toLong())
-        assertEquals("a race refreshes exclusively through atomic renders", 0, backend.calls.count { it == "getState" })
-        assertEquals("one render recovers the race", 1, backend.calls.count { it == "renderUpdate" })
+        assertEquals(
+            "the keystroke is attempted once",
+            1L,
+            backend.calls.count {
+                it == "applyInput"
+            }.toLong()
+        )
+        assertEquals(
+            "a race refreshes exclusively through atomic renders",
+            0,
+            backend.calls.count {
+                it ==
+                    "getState"
+            }
+        )
+        assertEquals(
+            "one render recovers the race",
+            1,
+            backend.calls.count {
+                it == "renderUpdate"
+            }
+        )
         assertEquals("EXTbase", renderedText(update))
         assertEquals("EXTbase", documentText(adapter))
 

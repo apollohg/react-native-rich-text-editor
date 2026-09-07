@@ -440,13 +440,6 @@ fn stale_generations_and_wrong_states_refuse_before_any_decode() {
 
 #[test]
 fn malformed_frames_close_the_generation_with_a_protocol_error() {
-    // Strict standard y-protocols framing: truncated frames, unknown
-    // message/sync tags, non-protocol messages, empty messages, trailing
-    // garbage, and malformed update payloads all classify as protocol
-    // errors and close the generation retryably. Task 10 moved awareness
-    // (tag 1) and query-awareness (tag 3) to the accepted set — their
-    // positive coverage lives in `collaboration_awareness_test.rs` — while
-    // auth and custom tags stay rejected.
     let malformed_messages: Vec<(&str, Vec<u8>)> = vec![
         ("empty message", vec![]),
         ("truncated message tag", vec![0x80]),

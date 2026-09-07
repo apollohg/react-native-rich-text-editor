@@ -1,8 +1,8 @@
 package com.apollohg.editor
 
 import android.os.SystemClock
-import org.json.JSONObject
 import java.nio.ByteBuffer
+import org.json.JSONObject
 
 internal data class ImageLoadingPolicy(
     val maxSourceBytes: Int,
@@ -12,7 +12,7 @@ internal data class ImageLoadingPolicy(
     val maxConcurrentRequests: Int,
     val maxPendingRequests: Int,
     val maxDecodeDimensionPx: Int,
-    val maxDecodedBytes: Int,
+    val maxDecodedBytes: Int
 ) {
     companion object {
         val DEFAULT = ImageLoadingPolicy(
@@ -23,7 +23,7 @@ internal data class ImageLoadingPolicy(
             maxConcurrentRequests = 2,
             maxPendingRequests = 64,
             maxDecodeDimensionPx = 2_048,
-            maxDecodedBytes = 32 * 1024 * 1024,
+            maxDecodedBytes = 32 * 1024 * 1024
         )
 
         fun fromJson(json: String?): ImageLoadingPolicy {
@@ -33,7 +33,9 @@ internal data class ImageLoadingPolicy(
                 val doubleValue = value.toDouble()
                 if (!doubleValue.isFinite() || doubleValue % 1.0 != 0.0 || doubleValue <= 0.0 ||
                     doubleValue > hardMaximum.toDouble()
-                ) return fallback
+                ) {
+                    return fallback
+                }
                 return doubleValue.toInt()
             }
             return ImageLoadingPolicy(
@@ -44,7 +46,7 @@ internal data class ImageLoadingPolicy(
                 boundedPositiveInt("maxConcurrentRequests", DEFAULT.maxConcurrentRequests, 16),
                 boundedPositiveInt("maxPendingRequests", DEFAULT.maxPendingRequests, 512),
                 boundedPositiveInt("maxDecodeDimensionPx", DEFAULT.maxDecodeDimensionPx, 8_192),
-                boundedPositiveInt("maxDecodedBytes", DEFAULT.maxDecodedBytes, 256 * 1024 * 1024),
+                boundedPositiveInt("maxDecodedBytes", DEFAULT.maxDecodedBytes, 256 * 1024 * 1024)
             )
         }
 
@@ -69,5 +71,8 @@ internal fun interface MonotonicClock {
 internal val systemMonotonicClock = MonotonicClock { SystemClock.elapsedRealtime() }
 
 internal fun deadlineAfter(startedAtMs: Long, timeoutMs: Int): Long =
-    if (startedAtMs > Long.MAX_VALUE - timeoutMs.toLong()) Long.MAX_VALUE
-    else startedAtMs + timeoutMs.toLong()
+    if (startedAtMs > Long.MAX_VALUE - timeoutMs.toLong()) {
+        Long.MAX_VALUE
+    } else {
+        startedAtMs + timeoutMs.toLong()
+    }

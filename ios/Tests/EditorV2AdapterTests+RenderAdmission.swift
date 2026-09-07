@@ -1,5 +1,5 @@
-import XCTest
 import UIKit
+import XCTest
 
 extension EditorV2AdapterTests {
     func testRevisionMismatchRefusesSelectionRelativeInputWithoutReplay() {
@@ -115,7 +115,7 @@ extension EditorV2AdapterTests {
                 "baseDocumentVersion": object["documentVersion"]!,
                 "startIndex": 0,
                 "deleteCount": 0,
-                "renderBlocks": renderBlocks,
+                "renderBlocks": renderBlocks
             ]
         }
 
@@ -144,11 +144,11 @@ extension EditorV2AdapterTests {
                         "id": "user-alice",
                         "label": "Alice Chen",
                         "mentionSuggestionChar": "@",
-                        "type": "user",
+                        "type": "user"
                     ],
-                    "mentionTheme": ["node": ["textColor": "#336EC1"]],
+                    "mentionTheme": ["node": ["textColor": "#336EC1"]]
                 ],
-                ["type": "blockEnd"],
+                ["type": "blockEnd"]
             ]]
         }
 
@@ -174,23 +174,23 @@ extension EditorV2AdapterTests {
             "type": "voidBlock",
             "nodeType": "counterCard",
             "docPos": 1,
-            "atomId": "y1-2",
+            "atomId": "y1-2"
         ]))
         XCTAssertNil(adopt([
             "type": "voidBlock",
             "nodeType": "counterCard",
             "docPos": 1,
-            "atomId": 7,
+            "atomId": 7
         ]))
         XCTAssertNil(adopt([
             "type": "voidInline",
             "nodeType": "hardBreak",
             "docPos": 1,
-            "atomId": "y1-2",
+            "atomId": "y1-2"
         ]))
     }
 
-    func testMalformedAtomicRenderNestedVariantsLeaveEveryCacheUnchanged() {
+    func testMalformedAtomicRenderNestedVariantsLeaveEveryCacheUnchanged() throws {
         let adapter = makeAdapter()
         let spy = ErrorSpy()
         adapter.onAutonomousError = spy.record
@@ -204,16 +204,16 @@ extension EditorV2AdapterTests {
         let baseline = adapter.cacheStateForTesting
         let baselineDebugNotes = adapter.debugNotes
 
-        let variants: [(String, (inout [String: Any]) -> Void)] = [
+        let variants: [(String, (inout [String: Any]) throws -> Void)] = [
             ("extra top-level field", { $0["legacyRevision"] = 1 }),
             ("null selection", { $0["selection"] = NSNull() }),
             ("selection extra field", { object in
-                var selection = object["selection"] as! [String: Any]
+                var selection = try XCTUnwrap(object["selection"] as? [String: Any])
                 selection["legacyAnchor"] = 0
                 object["selection"] = selection
             }),
             ("selection scalar above u32", { object in
-                var selection = object["selection"] as! [String: Any]
+                var selection = try XCTUnwrap(object["selection"] as? [String: Any])
                 selection["anchorScalar"] = NSNumber(value: UInt64(UInt32.max) + 1)
                 object["selection"] = selection
             }),
@@ -224,7 +224,7 @@ extension EditorV2AdapterTests {
                 $0["selection"] = ["type": "all", "anchor": 0]
             }),
             ("invalid text mark", { object in
-                var blocks = object["renderBlocks"] as! [[[String: Any]]]
+                var blocks = try XCTUnwrap(object["renderBlocks"] as? [[[String: Any]]])
                 let index = blocks[0].firstIndex { $0["type"] as? String == "textRun" }!
                 var textRun = blocks[0][index]
                 textRun["marks"] = [["type": 7]]
@@ -232,13 +232,13 @@ extension EditorV2AdapterTests {
                 object["renderBlocks"] = blocks
             }),
             ("text run extra field", { object in
-                var blocks = object["renderBlocks"] as! [[[String: Any]]]
+                var blocks = try XCTUnwrap(object["renderBlocks"] as? [[[String: Any]]])
                 let index = blocks[0].firstIndex { $0["type"] as? String == "textRun" }!
                 blocks[0][index]["legacyText"] = "base"
                 object["renderBlocks"] = blocks
             }),
             ("block start list u32 above range", { object in
-                var blocks = object["renderBlocks"] as! [[[String: Any]]]
+                var blocks = try XCTUnwrap(object["renderBlocks"] as? [[[String: Any]]])
                 let index = blocks[0].firstIndex { $0["type"] as? String == "blockStart" }!
                 var blockStart = blocks[0][index]
                 blockStart["listContext"] = [
@@ -247,13 +247,13 @@ extension EditorV2AdapterTests {
                     "total": 1,
                     "start": 1,
                     "isFirst": true,
-                    "isLast": true,
+                    "isLast": true
                 ]
                 blocks[0][index] = blockStart
                 object["renderBlocks"] = blocks
             }),
             ("block start invalid list boolean", { object in
-                var blocks = object["renderBlocks"] as! [[[String: Any]]]
+                var blocks = try XCTUnwrap(object["renderBlocks"] as? [[[String: Any]]])
                 let index = blocks[0].firstIndex { $0["type"] as? String == "blockStart" }!
                 var blockStart = blocks[0][index]
                 blockStart["listContext"] = [
@@ -262,7 +262,7 @@ extension EditorV2AdapterTests {
                     "total": 1,
                     "start": 1,
                     "isFirst": true,
-                    "isLast": true,
+                    "isLast": true
                 ]
                 blocks[0][index] = blockStart
                 object["renderBlocks"] = blocks
@@ -275,14 +275,14 @@ extension EditorV2AdapterTests {
                     "type": "voidInline",
                     "nodeType": "image",
                     "docPos": 0,
-                    "attrs": [],
+                    "attrs": []
                 ]]
             }),
             ("void block fractional doc position", {
                 $0["renderBlocks"] = [[
                     "type": "voidBlock",
                     "nodeType": "image",
-                    "docPos": 0.5,
+                    "docPos": 0.5
                 ]]
             }),
             ("opaque inline invalid mention theme", {
@@ -291,7 +291,7 @@ extension EditorV2AdapterTests {
                     "nodeType": "mention",
                     "label": "Ada",
                     "docPos": 0,
-                    "mentionTheme": ["node": ["borderWidth": true]],
+                    "mentionTheme": ["node": ["borderWidth": true]]
                 ]]
             }),
             ("opaque block extra field", {
@@ -300,7 +300,7 @@ extension EditorV2AdapterTests {
                     "nodeType": "unknown",
                     "label": "Unknown",
                     "docPos": 0,
-                    "legacy": true,
+                    "legacy": true
                 ]]
             }),
             ("opaque inline array attrs", {
@@ -309,7 +309,7 @@ extension EditorV2AdapterTests {
                     "nodeType": "mention",
                     "label": "Ada",
                     "docPos": 0,
-                    "attrs": [],
+                    "attrs": []
                 ]]
             }),
             ("render patch invalid nested element", { object in
@@ -317,7 +317,7 @@ extension EditorV2AdapterTests {
                     "baseDocumentVersion": object["documentVersion"]!,
                     "startIndex": 0,
                     "deleteCount": 0,
-                    "renderBlocks": [["type": "unknownElement"]],
+                    "renderBlocks": [["type": "unknownElement"]]
                 ]
             }),
             ("render patch fractional start", { object in
@@ -325,26 +325,26 @@ extension EditorV2AdapterTests {
                     "baseDocumentVersion": object["documentVersion"]!,
                     "startIndex": 0.5,
                     "deleteCount": 0,
-                    "renderBlocks": object["renderBlocks"]!,
+                    "renderBlocks": object["renderBlocks"]!
                 ]
             }),
             ("active-state extra field", { object in
-                var active = object["activeState"] as! [String: Any]
+                var active = try XCTUnwrap(object["activeState"] as? [String: Any])
                 active["legacy"] = false
                 object["activeState"] = active
             }),
             ("active-state non-boolean map value", { object in
-                var active = object["activeState"] as! [String: Any]
+                var active = try XCTUnwrap(object["activeState"] as? [String: Any])
                 active["marks"] = ["bold": "yes"]
                 object["activeState"] = active
             }),
             ("active-state non-record mark attrs", { object in
-                var active = object["activeState"] as! [String: Any]
+                var active = try XCTUnwrap(object["activeState"] as? [String: Any])
                 active["markAttrs"] = ["link": "https://example.com"]
                 object["activeState"] = active
             }),
             ("active-state non-string insertion", { object in
-                var active = object["activeState"] as! [String: Any]
+                var active = try XCTUnwrap(object["activeState"] as? [String: Any])
                 active["insertableNodes"] = ["image", 1]
                 object["activeState"] = active
             }),
@@ -356,12 +356,12 @@ extension EditorV2AdapterTests {
             ("scalar length above u32", {
                 $0["scalarLength"] = NSNumber(value: UInt64(UInt32.max) + 1)
             }),
-            ("scalar length fractional", { $0["scalarLength"] = 0.5 }),
+            ("scalar length fractional", { $0["scalarLength"] = 0.5 })
         ]
 
         for (name, mutate) in variants {
             let errorsBefore = spy.errors.count
-            let malformed = mutatedObjectJSON(raw, mutate)
+            let malformed = try mutatedObjectJSON(raw, mutate)
             XCTAssertNil(adapter.adoptExternalRender(malformed), name)
             XCTAssertEqual(adapter.cacheStateForTesting, baseline, name)
             XCTAssertEqual(adapter.debugNotes, baselineDebugNotes, name)

@@ -7,9 +7,9 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Looper
 import android.provider.Settings
+import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
-import android.text.InputType
 import android.text.style.AbsoluteSizeSpan
 import android.view.MotionEvent
 import android.view.View
@@ -28,10 +28,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Shadows.shadowOf
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -46,16 +46,16 @@ internal class EditorInputConnectionInputTest : EditorInputConnectionTestFixture
                     JSONObject()
                         .put("type", "blockStart")
                         .put("nodeType", "paragraph")
-                        .put("depth", 0),
+                        .put("depth", 0)
                 )
                 .put(
                     JSONObject()
                         .put("type", "textRun")
                         .put("text", "Alpha")
-                        .put("marks", JSONArray()),
+                        .put("marks", JSONArray())
                 )
                 .put(JSONObject().put("type", "blockEnd"))
-                .toString(),
+                .toString()
         )
         editText.setSelection(5)
         val authoritative = editText.captureAuthoritativeInputSnapshotForEditor()
@@ -69,7 +69,7 @@ internal class EditorInputConnectionInputTest : EditorInputConnectionTestFixture
                 JSONObject()
                     .put("startIndex", 0)
                     .put("deleteCount", 1)
-                    .put("renderBlocks", JSONArray().put(paragraphRenderBlock("Alpha"))),
+                    .put("renderBlocks", JSONArray().put(paragraphRenderBlock("Alpha")))
             )
             .toString()
 
@@ -159,11 +159,14 @@ internal class EditorInputConnectionInputTest : EditorInputConnectionTestFixture
         val inputConnection = requireNotNull(editText.onCreateInputConnection(EditorInfo()))
 
         val before = requireNotNull(
-            inputConnection.getTextBeforeCursor(20, InputConnection.GET_TEXT_WITH_STYLES),
+            inputConnection.getTextBeforeCursor(20, InputConnection.GET_TEXT_WITH_STYLES)
         )
         assertEquals("a\uD83D\uDE00", before.toString())
         assertTrue(before is Spanned)
-        assertEquals(1, (before as Spanned).getSpans(0, before.length, AbsoluteSizeSpan::class.java).size)
+        assertEquals(
+            1,
+            (before as Spanned).getSpans(0, before.length, AbsoluteSizeSpan::class.java).size
+        )
         assertEquals("b", inputConnection.getTextAfterCursor(20, 0).toString())
 
         editText.setSelection(1, 6)
@@ -411,7 +414,7 @@ internal class EditorInputConnectionInputTest : EditorInputConnectionTestFixture
     }
 
     @Test
-    fun `external clear after preflight native mutation keeps same editor input connection accepting input`() {
+    fun `external clear after preflight mutation keeps input connection accepting input`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson(""), notifyListener = false)
         assertTrue(editText.requestFocus())

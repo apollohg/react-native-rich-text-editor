@@ -1,9 +1,9 @@
 package com.apollohg.editor
 
-import android.text.NoCopySpan
 import android.text.Annotation
-import android.text.SpannableString
+import android.text.NoCopySpan
 import android.text.Selection
+import android.text.SpannableString
 import android.text.Spanned
 
 internal class ImeTextCoordinateMapper private constructor(
@@ -11,15 +11,14 @@ internal class ImeTextCoordinateMapper private constructor(
     val generation: Long,
     private val rawToImeOffsets: IntArray,
     private val imeToRawBeforeOffsets: IntArray,
-    private val imeToRawAfterOffsets: IntArray,
+    private val imeToRawAfterOffsets: IntArray
 ) {
     enum class Affinity {
         BEFORE,
-        AFTER,
+        AFTER
     }
 
-    fun rawToIme(offset: Int): Int =
-        rawToImeOffsets[offset.coerceIn(0, rawToImeOffsets.lastIndex)]
+    fun rawToIme(offset: Int): Int = rawToImeOffsets[offset.coerceIn(0, rawToImeOffsets.lastIndex)]
 
     fun imeToRaw(offset: Int, affinity: Affinity): Int {
         val clamped = offset.coerceIn(0, imeToRawBeforeOffsets.lastIndex)
@@ -79,7 +78,7 @@ internal class ImeTextCoordinateMapper private constructor(
                                 span,
                                 rawToIme[rawStart.coerceIn(0, raw.length)],
                                 rawToIme[rawEnd.coerceIn(0, raw.length)],
-                                flags,
+                                flags
                             )
                         }
                     }
@@ -93,7 +92,7 @@ internal class ImeTextCoordinateMapper private constructor(
                 generation = generation,
                 rawToImeOffsets = rawToIme,
                 imeToRawBeforeOffsets = imeToRawBefore,
-                imeToRawAfterOffsets = imeToRawAfter,
+                imeToRawAfterOffsets = imeToRawAfter
             )
         }
 

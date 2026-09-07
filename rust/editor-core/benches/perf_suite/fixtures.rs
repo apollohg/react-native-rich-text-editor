@@ -204,12 +204,6 @@ fn build_editing_case_expectation(before: &Value, after: Value) -> EditingCaseEx
     }
 }
 
-/// v2-native expected fixture: the pre-cutover harness derived expected
-/// selections, active state, and render blocks from a throwaway legacy
-/// `Editor`. Those derivations are the same retained code paths the v2
-/// render accessor uses today (serializer -> `PositionMap` ->
-/// `editor_state` -> `render::incremental`), so the expectations are
-/// computed from the expected document directly.
 struct ExpectedEditingFixture {
     document: crate::model::Document,
     schema: crate::schema::Schema,

@@ -1,8 +1,8 @@
 package com.apollohg.editor
 
 import android.text.Annotation
-import android.text.Spanned
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import org.json.JSONObject
 
 internal fun EditorEditText.parseRenderPatch(raw: org.json.JSONObject?): ParsedRenderPatch? {
@@ -23,7 +23,7 @@ internal fun EditorEditText.parseRenderPatch(raw: org.json.JSONObject?): ParsedR
 
 internal fun EditorEditText.patchMatchesCurrentRenderBlocks(
     patch: ParsedRenderPatch,
-    updateDocumentVersion: String?,
+    updateDocumentVersion: String?
 ): Boolean = if (patch.baseDocumentVersion == null) {
     updateDocumentVersion == null && currentRenderBlocksDocumentVersion == null
 } else {
@@ -33,7 +33,7 @@ internal fun EditorEditText.patchMatchesCurrentRenderBlocks(
 internal fun EditorEditText.retainCurrentRenderBlocks(
     blocks: org.json.JSONArray?,
     documentVersion: String?,
-    needFullApply: Boolean,
+    needFullApply: Boolean
 ) {
     currentRenderBlocksJson = blocks?.let(::cloneJsonArray)
     currentRenderBlocksDocumentVersion = documentVersion.takeIf { blocks != null }
@@ -48,7 +48,7 @@ internal fun EditorEditText.invalidateCurrentRenderBlocks() {
 
 internal fun EditorEditText.recoverRenderPatchBaseMismatch(
     notifyListener: Boolean,
-    refreshInputConnectionForExternalUpdate: Boolean,
+    refreshInputConnectionForExternalUpdate: Boolean
 ): Boolean {
     invalidateCurrentRenderBlocks()
     if (recoveringRenderPatchBaseMismatch) return false
@@ -59,7 +59,7 @@ internal fun EditorEditText.recoverRenderPatchBaseMismatch(
         applyUpdateJSON(
             recovery,
             notifyListener = notifyListener,
-            refreshInputConnectionForExternalUpdate = refreshInputConnectionForExternalUpdate,
+            refreshInputConnectionForExternalUpdate = refreshInputConnectionForExternalUpdate
         )
     } finally {
         recoveringRenderPatchBaseMismatch = false
@@ -71,12 +71,18 @@ internal fun EditorEditText.hasTopLevelChildMetadata(content: Spanned): Boolean 
         it.key == RenderBridge.NATIVE_TOP_LEVEL_CHILD_INDEX_ANNOTATION
     }
 
-internal fun EditorEditText.firstCharacterOffsetForTopLevelChildIndex(content: Spanned, index: Int): Int? {
+internal fun EditorEditText.firstCharacterOffsetForTopLevelChildIndex(
+    content: Spanned,
+    index: Int
+): Int? {
     val targetValue = index.toString()
     return content
         .getSpans(0, content.length, Annotation::class.java)
         .asSequence()
-        .filter { it.key == RenderBridge.NATIVE_TOP_LEVEL_CHILD_INDEX_ANNOTATION && it.value == targetValue }
+        .filter {
+            it.key == RenderBridge.NATIVE_TOP_LEVEL_CHILD_INDEX_ANNOTATION &&
+                it.value == targetValue
+        }
         .mapNotNull { span ->
             val spanStart = content.getSpanStart(span)
             val spanEnd = content.getSpanEnd(span)
@@ -87,13 +93,20 @@ internal fun EditorEditText.firstCharacterOffsetForTopLevelChildIndex(content: S
                 while (candidate < spanEnd && candidate < content.length) {
                     when (content[candidate]) {
                         '\n', '\r' -> {
-                            val isHardBreak = content.getSpans(candidate, candidate + 1, Annotation::class.java).any {
-                                it.key == "nativeVoidNodeType" && EditorNodeTypes.isHardBreak(it.value) &&
-                                    content.getSpanStart(it) <= candidate && content.getSpanEnd(it) > candidate
+                            val isHardBreak = content.getSpans(
+                                candidate,
+                                candidate + 1,
+                                Annotation::class.java
+                            ).any {
+                                it.key == "nativeVoidNodeType" &&
+                                    EditorNodeTypes.isHardBreak(it.value) &&
+                                    content.getSpanStart(it) <= candidate &&
+                                    content.getSpanEnd(it) > candidate
                             }
                             if (isHardBreak) return@mapNotNull candidate
                             candidate += 1
                         }
+
                         else -> return@mapNotNull candidate
                     }
                 }
@@ -116,7 +129,11 @@ internal fun EditorEditText.replacementRangeForRenderPatch(
     return RenderReplaceRange(start = start, endExclusive = endExclusive)
 }
 
-internal fun EditorEditText.spannedRangeContainsImageSpan(content: Spanned, start: Int, endExclusive: Int): Boolean {
+internal fun EditorEditText.spannedRangeContainsImageSpan(
+    content: Spanned,
+    start: Int,
+    endExclusive: Int
+): Boolean {
     if (start >= endExclusive) return false
     return content.getSpans(start, endExclusive, BlockImageSpan::class.java).isNotEmpty()
 }
@@ -127,7 +144,7 @@ internal fun EditorEditText.spannedContainsImageSpan(content: Spanned): Boolean 
 internal fun EditorEditText.spannedRangeContainsUnstableAtom(
     content: Spanned,
     start: Int,
-    endExclusive: Int,
+    endExclusive: Int
 ): Boolean {
     if (start >= endExclusive) return false
     return content.getSpans(start, endExclusive, AtomBlockSpan::class.java)
@@ -140,19 +157,18 @@ internal fun EditorEditText.spannedContainsUnstableAtom(content: Spanned): Boole
 internal fun EditorEditText.buildPatchedSpannable(
     patch: ParsedRenderPatch,
     includeTrailingInterBlockSeparator: Boolean
-): android.text.SpannableStringBuilder =
-    RenderBridge.buildSpannableFromBlocks(
-        patch.renderBlocks,
-        startIndex = patch.startIndex,
-        includeTrailingInterBlockSeparator = includeTrailingInterBlockSeparator,
-        baseFontSize = baseFontSize,
-        textColor = baseTextColor,
-        theme = theme,
-        density = resources.displayMetrics.density,
-        hostView = this,
-        atomConfiguration = atomRenderConfiguration,
-        reuseImages = false,
-    )
+): android.text.SpannableStringBuilder = RenderBridge.buildSpannableFromBlocks(
+    patch.renderBlocks,
+    startIndex = patch.startIndex,
+    includeTrailingInterBlockSeparator = includeTrailingInterBlockSeparator,
+    baseFontSize = baseFontSize,
+    textColor = baseTextColor,
+    theme = theme,
+    density = resources.displayMetrics.density,
+    hostView = this,
+    atomConfiguration = atomRenderConfiguration,
+    reuseImages = false
+)
 
 internal fun EditorEditText.cloneJsonArray(array: org.json.JSONArray): org.json.JSONArray =
     org.json.JSONArray().also { clone ->

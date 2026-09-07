@@ -10,7 +10,7 @@ fn test_wrap_single_paragraph_in_bullet_list() {
     // WrapInList from=0 to=7 should wrap the single paragraph in a bullet list.
     // Expected: <doc><ul><li><p>Hello</p></li></ul></doc>
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::WrapInList {
         from: 0,
         to: 7,
@@ -57,7 +57,7 @@ fn test_wrap_two_paragraphs_in_bullet_list() {
         paragraph(vec![text("A")]),
         paragraph(vec![text("B")]),
     ]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::WrapInList {
         from: 0,
         to: 6,
@@ -93,7 +93,7 @@ fn test_wrap_in_ordered_list_with_start_attr() {
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Item")])]));
     let mut attrs = HashMap::new();
     attrs.insert("start".to_string(), serde_json::Value::Number(3.into()));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::WrapInList {
         from: 0,
         to: 6,
@@ -145,7 +145,7 @@ fn test_wrap_in_list_applies_item_attrs_to_created_items() {
     let schema = Schema::new(nodes, base_schema.all_marks().cloned().collect());
     let mut item_attrs = HashMap::new();
     item_attrs.insert("checked".to_string(), serde_json::Value::Bool(true));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::WrapInList {
         from: 0,
         to: 6,
@@ -183,7 +183,7 @@ fn test_wrap_already_listed_content_errors() {
     let (d, schema) = doc_and_schema(doc(vec![bullet_list(vec![list_item(vec![paragraph(
         vec![text("Hello")],
     )])])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::WrapInList {
         from: 0,
         to: 11,
@@ -222,7 +222,7 @@ fn test_wrap_middle_paragraphs_preserves_surrounding() {
         paragraph(vec![text("Wrap Me")]),
         paragraph(vec![text("After")]),
     ]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::WrapInList {
         from: 8,
         to: 17,
@@ -263,7 +263,7 @@ fn test_wrap_middle_paragraphs_preserves_surrounding() {
 fn test_wrap_invalid_list_type_errors() {
     // Using a non-list type should error.
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("A")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::WrapInList {
         from: 0,
         to: 3,
@@ -295,7 +295,7 @@ fn test_unwrap_only_list_item() {
         vec![text("Hello")],
     )])])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::UnwrapFromList { pos: 3 });
 
     let (new_doc, _map) = tx
@@ -329,7 +329,7 @@ fn test_unwrap_first_of_two_items() {
         list_item(vec![paragraph(vec![text("B")])]),
     ])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::UnwrapFromList { pos: 3 });
 
     let (new_doc, _map) = tx
@@ -389,7 +389,7 @@ fn test_unwrap_last_of_two_items() {
         list_item(vec![paragraph(vec![text("B")])]),
     ])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::UnwrapFromList { pos: 8 });
 
     let (new_doc, _map) = tx
@@ -440,7 +440,7 @@ fn test_unwrap_middle_item_splits_list() {
         list_item(vec![paragraph(vec![text("C")])]),
     ])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::UnwrapFromList { pos: 8 });
 
     let (new_doc, _map) = tx
@@ -479,7 +479,7 @@ fn test_unwrap_middle_item_splits_list() {
 fn test_unwrap_from_list_pos_not_in_list_errors() {
     // Position is inside a paragraph that is not in a list — should error.
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("A")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::UnwrapFromList { pos: 1 });
 
     let result = tx.apply(&d, &schema);
@@ -497,7 +497,7 @@ fn test_indent_list_item_nests_under_previous_sibling() {
         list_item(vec![paragraph(vec![text("C")])]),
     ])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::IndentListItem { pos: 8 });
 
     let (new_doc, _map) = tx.apply(&d, &schema).expect("indent should succeed");
@@ -526,7 +526,7 @@ fn test_indent_first_list_item_is_noop() {
         list_item(vec![paragraph(vec![text("B")])]),
     ])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::IndentListItem { pos: 3 });
 
     let (new_doc, _map) = tx
@@ -550,7 +550,7 @@ fn test_outdent_nested_list_item_lifts_after_parent_item() {
         list_item(vec![paragraph(vec![text("D")])]),
     ])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::OutdentListItem { pos: 8 });
 
     let (new_doc, _map) = tx.apply(&d, &schema).expect("outdent should succeed");
@@ -606,7 +606,7 @@ fn test_outdent_nested_prosemirror_list_item_lifts_after_parent_item() {
     )]);
     let document = Document::new(root);
     let schema = crate::schema::presets::prosemirror_schema();
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::OutdentListItem { pos: 8 });
 
     let (new_doc, _) = tx
@@ -625,7 +625,7 @@ fn test_outdent_top_level_list_item_is_noop() {
         list_item(vec![paragraph(vec![text("B")])]),
     ])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::OutdentListItem { pos: 8 });
 
     let (new_doc, _map) = tx
@@ -646,7 +646,7 @@ fn test_wrap_then_unwrap_round_trip_single_paragraph() {
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
 
     // Step 1: Wrap
-    let mut tx_wrap = Transaction::new(Source::Input);
+    let mut tx_wrap = Transaction::new();
     tx_wrap.add_step(Step::WrapInList {
         from: 0,
         to: 7,
@@ -668,7 +668,7 @@ fn test_wrap_then_unwrap_round_trip_single_paragraph() {
     //   pos 1: inside ul, before <li>
     //   pos 2: inside li, before <p>
     //   pos 3: inside p, before "H"
-    let mut tx_unwrap = Transaction::new(Source::Input);
+    let mut tx_unwrap = Transaction::new();
     tx_unwrap.add_step(Step::UnwrapFromList { pos: 3 });
     let (final_doc, _) = tx_unwrap
         .apply(&wrapped_doc, &schema)
@@ -698,7 +698,7 @@ fn test_wrap_then_unwrap_round_trip_two_paragraphs() {
     ]));
 
     // Wrap
-    let mut tx_wrap = Transaction::new(Source::Input);
+    let mut tx_wrap = Transaction::new();
     tx_wrap.add_step(Step::WrapInList {
         from: 0,
         to: 6,
@@ -710,7 +710,7 @@ fn test_wrap_then_unwrap_round_trip_two_paragraphs() {
     let (wrapped_doc, _) = tx_wrap.apply(&d, &schema).expect("wrap should succeed");
 
     // Unwrap first item (pos 3 = inside first paragraph in first list item)
-    let mut tx1 = Transaction::new(Source::Input);
+    let mut tx1 = Transaction::new();
     tx1.add_step(Step::UnwrapFromList { pos: 3 });
     let (after_first_unwrap, _) = tx1
         .apply(&wrapped_doc, &schema)
@@ -730,7 +730,7 @@ fn test_wrap_then_unwrap_round_trip_two_paragraphs() {
     //   pos 4: inside ul, before <li>
     //   pos 5: inside li, before <p>
     //   pos 6: inside p, before "B"
-    let mut tx2 = Transaction::new(Source::Input);
+    let mut tx2 = Transaction::new();
     tx2.add_step(Step::UnwrapFromList { pos: 6 });
     let (final_doc, _) = tx2
         .apply(&after_first_unwrap, &schema)
@@ -750,7 +750,7 @@ fn test_step_map_wrap_in_list() {
     // Positions at or after should shift by +4 (two opens before, two closes after).
     // Actually, positions inside the paragraph shift by +2 (ul open + li open before the p).
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::WrapInList {
         from: 0,
         to: 7,
@@ -783,7 +783,7 @@ fn test_step_map_unwrap_from_list() {
     let (d, schema) = doc_and_schema(doc(vec![bullet_list(vec![list_item(vec![paragraph(
         vec![text("Hello")],
     )])])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::UnwrapFromList { pos: 3 });
 
     let (_new_doc, map) = tx.apply(&d, &schema).expect("unwrap should succeed");
@@ -803,7 +803,7 @@ fn test_step_map_unwrap_last_list_item_preserves_lifted_content_position() {
         list_item(vec![paragraph(vec![text("A")])]),
         list_item(vec![paragraph(vec![])]),
     ])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::UnwrapFromList { pos: 8 });
 
     let (_new_doc, map) = tx

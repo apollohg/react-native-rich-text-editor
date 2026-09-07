@@ -5,10 +5,9 @@ enum class EditorHeightBehavior {
     AUTO_GROW;
 
     companion object {
-        fun fromRaw(rawValue: String?): EditorHeightBehavior =
-            when (rawValue) {
-                "autoGrow" -> AUTO_GROW
-                else -> FIXED
-            }
+        fun fromRaw(rawValue: String?): EditorHeightBehavior = when (rawValue) {
+            "autoGrow" -> AUTO_GROW
+            else -> FIXED
+        }
     }
 }

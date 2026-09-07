@@ -6,13 +6,13 @@ import java.io.File
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.CopyOnWriteArrayList
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -38,8 +38,20 @@ internal class RenderImageLoaderPolicyDecodingTest : RenderImageLoaderPolicyTest
         val policy = ImageLoadingPolicy.DEFAULT.copy(maxSourceBytes = 3)
         val connections = ArrayDeque<HttpURLConnection>().apply {
             add(FakeConnection(URL("https://example.com/404"), status = 404))
-            add(FakeConnection(URL("https://example.com/declared"), bytes = byteArrayOf(1, 2, 3, 4), declaredLength = 4))
-            add(FakeConnection(URL("https://example.com/chunked"), bytes = byteArrayOf(1, 2, 3, 4), declaredLength = -1))
+            add(
+                FakeConnection(
+                    URL("https://example.com/declared"),
+                    bytes = byteArrayOf(1, 2, 3, 4),
+                    declaredLength = 4
+                )
+            )
+            add(
+                FakeConnection(
+                    URL("https://example.com/chunked"),
+                    bytes = byteArrayOf(1, 2, 3, 4),
+                    declaredLength = -1
+                )
+            )
         }
         RenderImageDecoder.connectionFactoryOverride = { connections.removeFirst() }
 
@@ -126,8 +138,8 @@ internal class RenderImageLoaderPolicyDecodingTest : RenderImageLoaderPolicyTest
             "data:image/png;base64,AQ==",
             ImageLoadingPolicy.DEFAULT.copy(
                 maxDecodeDimensionPx = 128,
-                maxDecodedBytes = 1_024,
-            ),
+                maxDecodedBytes = 1_024
+            )
         )
 
         requireNotNull(decoded)

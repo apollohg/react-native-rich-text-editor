@@ -8,12 +8,12 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
-import androidx.appcompat.widget.AppCompatTextView
 import androidx.appcompat.content.res.AppCompatResources
+import androidx.appcompat.widget.AppCompatTextView
 import androidx.core.view.setPadding
 import com.google.android.material.R as MaterialR
-import org.json.JSONObject
 import kotlin.math.roundToInt
+import org.json.JSONObject
 
 internal fun withAlpha(color: Int, alphaFraction: Float): Int {
     val alpha = (alphaFraction.coerceIn(0f, 1f) * 255).roundToInt()
@@ -68,6 +68,7 @@ internal class MentionSuggestionChipView(
             when (motionEvent.actionMasked) {
                 android.view.MotionEvent.ACTION_DOWN,
                 android.view.MotionEvent.ACTION_MOVE -> updateAppearance(highlighted = true)
+
                 android.view.MotionEvent.ACTION_CANCEL,
                 android.view.MotionEvent.ACTION_UP -> updateAppearance(highlighted = false)
             }
@@ -82,7 +83,8 @@ internal class MentionSuggestionChipView(
         this.trigger = trigger
         titleView.text = suggestion.displayLabel(trigger)
         subtitleView.text = suggestion.subtitle
-        subtitleView.visibility = if (suggestion.subtitle.isNullOrBlank()) View.GONE else View.VISIBLE
+        subtitleView.visibility =
+            if (suggestion.subtitle.isNullOrBlank()) View.GONE else View.VISIBLE
     }
 
     fun applyTheme(
@@ -96,7 +98,17 @@ internal class MentionSuggestionChipView(
         subtitleView.visibility = if (hasSubtitle) View.VISIBLE else View.GONE
         background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = (if (toolbarAppearance == EditorToolbarAppearance.NATIVE) 20f else (option?.borderRadius ?: 12f)) * density
+            cornerRadius =
+                (
+                    if (toolbarAppearance ==
+                        EditorToolbarAppearance.NATIVE
+                    ) {
+                        20f
+                    } else {
+                        (option?.borderRadius ?: 12f)
+                    }
+                    ) *
+                density
             setColor(
                 if (toolbarAppearance == EditorToolbarAppearance.NATIVE) {
                     Color.TRANSPARENT
@@ -206,7 +218,9 @@ internal class MentionSuggestionChipView(
                 AppCompatResources.getColorStateList(context, typedValue.resourceId)
                     ?.defaultColor
                     ?.let { return it }
-            } else if (typedValue.type in TypedValue.TYPE_FIRST_COLOR_INT..TypedValue.TYPE_LAST_COLOR_INT) {
+            } else if (typedValue.type in
+                TypedValue.TYPE_FIRST_COLOR_INT..TypedValue.TYPE_LAST_COLOR_INT
+            ) {
                 return typedValue.data
             }
         }

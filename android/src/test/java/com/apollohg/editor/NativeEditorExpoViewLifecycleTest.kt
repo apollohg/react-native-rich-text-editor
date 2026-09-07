@@ -7,6 +7,8 @@ import android.view.Window
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.ScrollView
+import java.time.Duration
+import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -22,8 +24,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
-import java.util.concurrent.atomic.AtomicBoolean
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -70,7 +70,16 @@ internal class NativeEditorExpoViewLifecycleTest : NativeEditorExpoViewTestFixtu
             @Suppress("UNCHECKED_CAST")
             val error = payload["error"] as Map<String, Any?>
             assertEquals(
-                setOf("domain", "code", "message", "requestId", "operationIndex", "limit", "actual", "detailsJson"),
+                setOf(
+                    "domain",
+                    "code",
+                    "message",
+                    "requestId",
+                    "operationIndex",
+                    "limit",
+                    "actual",
+                    "detailsJson"
+                ),
                 error.keys
             )
             assertEquals("boundary", error["domain"])
@@ -125,7 +134,8 @@ internal class NativeEditorExpoViewLifecycleTest : NativeEditorExpoViewTestFixtu
         val firstExpoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val secondExpoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val firstView = NativeEditorExpoView(firstExpoContext.context, firstExpoContext.appContext)
-        val secondView = NativeEditorExpoView(secondExpoContext.context, secondExpoContext.appContext)
+        val secondView =
+            NativeEditorExpoView(secondExpoContext.context, secondExpoContext.appContext)
         val backend = FakeEditorV2Backend()
         val adapter = attachAdapterForViewTest(backend)
         val viewToken = EditorV2Registry.register(adapter)
@@ -289,7 +299,8 @@ internal class NativeEditorExpoViewLifecycleTest : NativeEditorExpoViewTestFixtu
         val firstExpoContext = testExpoContext(activity)
         val secondExpoContext = testExpoContext(activity)
         val firstView = NativeEditorExpoView(firstExpoContext.context, firstExpoContext.appContext)
-        val secondView = NativeEditorExpoView(secondExpoContext.context, secondExpoContext.appContext)
+        val secondView =
+            NativeEditorExpoView(secondExpoContext.context, secondExpoContext.appContext)
         val originalChildCount = host.childCount
         val originalCallback = activity.window.callback
         val firstForeignCallback = object : Window.Callback by originalCallback {}
@@ -492,7 +503,7 @@ internal class NativeEditorExpoViewLifecycleTest : NativeEditorExpoViewTestFixtu
     }
 
     @Test
-    fun `outside tap route clears a pruned final weak view and restores the latest foreign callback`() {
+    fun `outside tap clears pruned final weak view and restores latest foreign callback`() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val expoContext = testExpoContext(activity)
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)

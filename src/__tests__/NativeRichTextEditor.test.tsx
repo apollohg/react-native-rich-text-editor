@@ -26,9 +26,6 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
     it('accepts only handle-bound view props and never creates a session on mount', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
 
-        // The @ts-expect-error assertions are the public hard-cutover
-        // contract. Each field belongs to NativeEditorCreateConfig, never
-        // to the mounted view.
         const removedComponentProps: readonly NativeRichTextEditorProps[] = [
             {
                 documentHandle: handle,

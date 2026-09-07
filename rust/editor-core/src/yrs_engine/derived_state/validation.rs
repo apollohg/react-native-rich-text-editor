@@ -296,7 +296,7 @@ impl PartialEq for DocumentValidationCertificate {
 
 impl Eq for DocumentValidationCertificate {}
 
-#[allow(dead_code)] // E1 evidence API is consumed by E2 and admission-oracle tests.
+#[allow(dead_code)]
 impl DocumentValidationCertificate {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn from_report(

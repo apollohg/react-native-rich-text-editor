@@ -25,7 +25,7 @@ object RenderBridge {
         val reusableImages: MutableList<BlockImageSpan> = mutableListOf(),
         var isFirstBlock: Boolean = true,
         var nextBlockSpacingBefore: Float? = null,
-        var pendingListBoundarySpacing: Float? = null,
+        var pendingListBoundarySpacing: Float? = null
     ) {
         fun replaceNextBlockSpacing(spacing: Float?) {
             nextBlockSpacingBefore = spacing
@@ -106,9 +106,12 @@ object RenderBridge {
         density: Float = 1f,
         hostView: View? = null,
         atomConfiguration: AtomRenderConfiguration? = null,
-        reuseImages: Boolean = true,
+        reuseImages: Boolean = true
     ): SpannableStringBuilder {
-        val state = RenderBuildState(reusableImages = if (reuseImages) reusableImages(hostView) else mutableListOf())
+        val state =
+            RenderBuildState(
+                reusableImages = if (reuseImages) reusableImages(hostView) else mutableListOf()
+            )
         for (blockOffset in 0 until blocks.length()) {
             val blockElements = blocks.optJSONArray(blockOffset) ?: continue
             appendElements(
@@ -141,15 +144,14 @@ object RenderBridge {
 
     private fun reusableImages(host: View?): MutableList<BlockImageSpan> =
         if (host is EditorEditText) {
-            host.text.getSpans(0, host.length(), BlockImageSpan::class.java).filter { it.canReuseFor(host) }.toMutableList()
-        } else mutableListOf()
+            host.text.getSpans(0, host.length(), BlockImageSpan::class.java).filter {
+                it.canReuseFor(host)
+            }.toMutableList()
+        } else {
+            mutableListOf()
+        }
 
-    fun measureHeight(
-        json: String,
-        themeJson: String?,
-        width: Float,
-        density: Float
-    ): Float {
+    fun measureHeight(json: String, themeJson: String?, width: Float, density: Float): Float {
         if (width <= 0) return 0f
 
         val theme = EditorTheme.fromJson(themeJson)
@@ -166,7 +168,11 @@ object RenderBridge {
             hostView = null
         )
 
-        if (spannable.isEmpty() && spannable.getSpans(0, 0, EditorBlockBoxSpan::class.java).isEmpty()) return 0f
+        if (spannable.isEmpty() &&
+            spannable.getSpans(0, 0, EditorBlockBoxSpan::class.java).isEmpty()
+        ) {
+            return 0f
+        }
 
         val contentInsets = theme?.contentInsets
         val topInset = ((contentInsets?.top ?: 0f) * density).toInt()
@@ -181,7 +187,8 @@ object RenderBridge {
 
         val availableWidth = (width - leftInset - rightInset).coerceAtLeast(0f).toInt()
 
-        val staticLayout = EditorDocumentLayout(spannable, paint, availableWidth, includeFontPadding = true)
+        val staticLayout =
+            EditorDocumentLayout(spannable, paint, availableWidth, includeFontPadding = true)
 
         val height = staticLayout.height + topInset + bottomInset
         return height.toFloat()
@@ -207,7 +214,6 @@ object RenderBridge {
             LayoutConstants.UNORDERED_LIST_BULLET
         }
     }
-
 }
 
 internal fun JSONObject.optPositiveFiniteFloat(key: String): Float? {

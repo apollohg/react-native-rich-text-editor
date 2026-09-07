@@ -1,5 +1,5 @@
-import XCTest
 import UIKit
+import XCTest
 
 extension EditorV2AdapterTests {
     func testUndoRedoRoundTrip() {
@@ -42,8 +42,8 @@ extension EditorV2AdapterTests {
             snapshotState: nil
         )
         guard let value = created.value,
-              created.error == nil,
-              let handle = createdV2TestEditorHandle(value)
+            created.error == nil,
+            let handle = createdV2TestEditorHandle(value)
         else {
             XCTFail("expected v2 editor creation to succeed")
             return
@@ -134,8 +134,8 @@ extension EditorV2AdapterTests {
             snapshotState: nil
         )
         guard let value = created.value,
-              created.error == nil,
-              let handle = createdV2TestEditorHandle(value)
+            created.error == nil,
+            let handle = createdV2TestEditorHandle(value)
         else {
             XCTFail("expected v2 editor creation to succeed")
             return
@@ -199,8 +199,8 @@ extension EditorV2AdapterTests {
             snapshotState: nil
         )
         guard let value = created.value,
-              created.error == nil,
-              let handle = createdV2TestEditorHandle(value)
+            created.error == nil,
+            let handle = createdV2TestEditorHandle(value)
         else {
             XCTFail("expected v2 editor creation to succeed")
             return
@@ -280,8 +280,8 @@ extension EditorV2AdapterTests {
             snapshotState: nil
         )
         guard let value = created.value,
-              created.error == nil,
-              let handle = createdV2TestEditorHandle(value)
+            created.error == nil,
+            let handle = createdV2TestEditorHandle(value)
         else {
             XCTFail("expected v2 editor creation to succeed")
             return

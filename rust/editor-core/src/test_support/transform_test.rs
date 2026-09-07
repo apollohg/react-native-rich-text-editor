@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::model::{Document, Fragment, Mark, Node};
 use crate::schema::presets::tiptap_schema;
 use crate::schema::{AttrSpec, Schema};
-use crate::transform::{Source, Step, Transaction};
+use crate::transform::{Step, Transaction};
 
 #[test]
 fn document_stats_remains_constructible_with_the_original_public_fields() {
@@ -73,7 +73,7 @@ fn test_insert_text_middle_of_word() {
     // Insert "X" at pos 2 (between "H" and "ello")
     // Expected: <doc><p>HXello</p></doc>
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 2,
         text: "X".to_string(),
@@ -100,7 +100,7 @@ fn test_insert_text_start_of_paragraph() {
     // <doc><p>Hello</p></doc>
     // Insert at pos 1 (start of paragraph content)
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 1,
         text: "X".to_string(),
@@ -122,7 +122,7 @@ fn test_insert_text_end_of_paragraph() {
     // <doc><p>Hello</p></doc>
     // pos 6 = end of paragraph content (after 'o')
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 6,
         text: "!".to_string(),
@@ -145,7 +145,7 @@ fn test_insert_text_with_bold_mark_between_plain() {
     // Insert bold "X" at pos 3 (between "He" and "llo")
     // Expected 3 text nodes: "He" (plain), "X" (bold), "llo" (plain)
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 3,
         text: "X".to_string(),
@@ -179,7 +179,7 @@ fn test_insert_emoji_text() {
     // Insert family emoji (7 scalars) at pos 2
     let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hi")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 2,
         text: family.to_string(),
@@ -200,7 +200,7 @@ fn test_insert_emoji_text() {
 fn test_insert_text_into_empty_paragraph() {
     // <doc><p></p></doc> — pos 1 is inside empty paragraph
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 1,
         text: "A".to_string(),
@@ -222,7 +222,7 @@ fn test_insert_text_merges_with_adjacent_same_marks() {
         text_with_marks("He", vec![bold()]),
         text_with_marks("llo", vec![bold()]),
     ])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 3,
         text: "X".to_string(),
@@ -253,7 +253,7 @@ fn test_delete_range_middle_of_text() {
     // Delete [2,4] (positions inside paragraph content: "el")
     // Expected: <doc><p>Hlo</p></doc>
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::DeleteRange { from: 2, to: 4 });
 
     let (new_doc, _map) = tx.apply(&doc, &schema).expect("delete should succeed");
@@ -275,7 +275,7 @@ fn test_delete_entire_text_content() {
     // Delete [1,6] — the entire paragraph content
     // Expected: <doc><p></p></doc> (empty paragraph remains)
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::DeleteRange { from: 1, to: 6 });
 
     let (new_doc, _map) = tx
@@ -316,7 +316,7 @@ fn test_delete_across_differently_marked_text_nodes() {
         text_with_marks("ll", vec![bold()]),
         text("o"),
     ])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::DeleteRange { from: 2, to: 5 });
 
     let (new_doc, _map) = tx
@@ -334,7 +334,7 @@ fn test_add_bold_to_range() {
     // <doc><p>Hello</p></doc>
     // Add bold to [2,4] → <doc><p>H<b>el</b>lo</p></doc>
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Format);
+    let mut tx = Transaction::new();
     tx.add_step(Step::AddMark {
         from: 2,
         to: 4,
@@ -381,7 +381,7 @@ fn test_add_bold_to_already_bold_text() {
         "Hello",
         vec![bold()],
     )])]));
-    let mut tx = Transaction::new(Source::Format);
+    let mut tx = Transaction::new();
     tx.add_step(Step::AddMark {
         from: 1,
         to: 6,
@@ -412,7 +412,7 @@ fn test_add_italic_to_bold_text() {
         "Hello",
         vec![bold()],
     )])]));
-    let mut tx = Transaction::new(Source::Format);
+    let mut tx = Transaction::new();
     tx.add_step(Step::AddMark {
         from: 2,
         to: 5,
@@ -452,7 +452,7 @@ fn test_remove_bold_from_bold_text() {
         "Hello",
         vec![bold()],
     )])]));
-    let mut tx = Transaction::new(Source::Format);
+    let mut tx = Transaction::new();
     tx.add_step(Step::RemoveMark {
         from: 1,
         to: 6,
@@ -482,7 +482,7 @@ fn test_remove_bold_from_partially_bold_range() {
         text_with_marks("ell", vec![bold()]),
         text("o"),
     ])]));
-    let mut tx = Transaction::new(Source::Format);
+    let mut tx = Transaction::new();
     tx.add_step(Step::RemoveMark {
         from: 1,
         to: 6,
@@ -513,7 +513,7 @@ fn test_remove_bold_preserves_italic() {
         "Hello",
         vec![bold(), italic()],
     )])]));
-    let mut tx = Transaction::new(Source::Format);
+    let mut tx = Transaction::new();
     tx.add_step(Step::RemoveMark {
         from: 1,
         to: 6,
@@ -542,7 +542,7 @@ fn test_insert_text_directly_into_doc_is_error() {
     // Inserting text at pos 0 (doc level, before any paragraph) should fail
     // because doc expects block+ children, not text
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 0,
         text: "X".to_string(),
@@ -560,7 +560,7 @@ fn test_insert_text_directly_into_doc_is_error() {
 fn test_valid_transaction_passes_validation() {
     // A well-formed insert should succeed
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 3,
         text: "X".to_string(),
@@ -577,7 +577,7 @@ fn test_valid_transaction_passes_validation() {
 fn test_step_map_after_insert_text() {
     // After InsertText(pos=2, "XY"), position 5 should map to 7 (+2 shift)
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 2,
         text: "XY".to_string(),
@@ -608,7 +608,7 @@ fn test_step_map_after_insert_text() {
 fn test_step_map_after_delete_range() {
     // After DeleteRange(2,4), position 5 should map to 3 (-2 shift)
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::DeleteRange { from: 2, to: 4 });
 
     let (_new_doc, map) = tx.apply(&doc, &schema).expect("delete should succeed");
@@ -636,7 +636,7 @@ fn test_step_map_composing_multiple_steps() {
     // Insert at pos 2, then delete at pos 5..7
     // The map should compose both transformations
     let (doc, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello world")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::InsertText {
         pos: 2,
         text: "X".to_string(),

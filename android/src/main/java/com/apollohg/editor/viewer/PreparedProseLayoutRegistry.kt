@@ -1,10 +1,10 @@
 package com.apollohg.editor.viewer
 
 import com.apollohg.editor.ProseViewerError
+import java.security.MessageDigest
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import java.security.MessageDigest
 
 internal data class PreparedMountTicket(
     val generation: FabricGenerationToken,
@@ -13,7 +13,7 @@ internal data class PreparedMountTicket(
     val contentOriginXPx: Int,
     val contentOriginYPx: Int,
     val densityBits: Int,
-    val artifact: PreparedProseLayout,
+    val artifact: PreparedProseLayout
 )
 
 /** Shared, thread-safe compiler and prepared-layout registry for View and Fabric hosts. */
@@ -23,12 +23,9 @@ internal class PreparedProseLayoutRegistry(
     byteBudget: Long = 32L * 1024L * 1024L,
     private val compiledByteBudget: Long = 8L * 1024L * 1024L,
     private val compilationFailureBudget: Int = 128,
-    private val themeEntryBudget: Int = 128,
+    private val themeEntryBudget: Int = 128
 ) {
-    internal data class BenchmarkResidentCensus(
-        val count: Int,
-        val digest: String,
-    )
+    internal data class BenchmarkResidentCensus(val count: Int, val digest: String)
     private sealed interface Compilation {
         data class Document(val value: ViewerDocument) : Compilation
         data class Failure(val error: ProseViewerError) : Compilation
@@ -37,11 +34,13 @@ internal class PreparedProseLayoutRegistry(
     private val compilerLock = Any()
     private val compiled = LinkedHashMap<String, ViewerDocument>(16, 0.75f, true)
     private val compilationFailures = LinkedHashMap<String, ProseViewerError>(16, 0.75f, true)
+
     /** Resolved once per generation and bounded independently of layout entries. */
     private val themes = LinkedHashMap<String, PreparedProseTheme>(16, 0.75f, true)
     private val compilationInFlight = ConcurrentHashMap<String, CompletableFuture<Compilation>>()
     private val documentsByFabricGeneration = mutableMapOf<FabricGenerationToken, ViewerDocument>()
     private val failuresByFabricGeneration = mutableMapOf<FabricGenerationToken, ProseViewerError>()
+
     /**
      * Active C++ state-family guards. Entries exist only while Fabric holds a
      * state snapshot; terminal JNI cleanup removes them rather than leaving
@@ -49,11 +48,13 @@ internal class PreparedProseLayoutRegistry(
      */
     private class FabricLeaseState {
         val active = AtomicBoolean(true)
+
         /** Null means Yoga may prepare before the first component commit. */
         var permittedGenerationIdentity: String? = null
     }
 
     private val fabricLeaseLock = Any()
+
     /** Bounded to currently-live state-family handles; terminal cleanup removes entries. */
     private val activeFabricLeases = mutableMapOf<FabricLeaseOwner, FabricLeaseState>()
     private data class FinalLayoutSpec(
@@ -65,7 +66,7 @@ internal class PreparedProseLayoutRegistry(
         val contentOriginYPx: Int,
         val surface: FabricSurfaceToken,
         val leaseHandle: Long,
-        val fontScale: Float,
+        val fontScale: Float
     )
     private data class PreparedMountTicketMetadata(
         val revision: Long,
@@ -73,11 +74,13 @@ internal class PreparedProseLayoutRegistry(
         val contentWidthPx: Int,
         val contentOriginXPx: Int,
         val contentOriginYPx: Int,
-        val densityBits: Int,
+        val densityBits: Int
     )
     private val finalLayoutSpecs = mutableMapOf<FabricGenerationToken, FinalLayoutSpec>()
-    private val preparedMountTickets = mutableMapOf<FabricGenerationToken, PreparedMountTicketMetadata>()
-    private val finalPreparationInFlight = ConcurrentHashMap<FabricGenerationToken, CompletableFuture<Boolean>>()
+    private val preparedMountTickets =
+        mutableMapOf<FabricGenerationToken, PreparedMountTicketMetadata>()
+    private val finalPreparationInFlight =
+        ConcurrentHashMap<FabricGenerationToken, CompletableFuture<Boolean>>()
     private var finalLayoutRevision = 0L
     private val layoutCache = PreparedProseLayoutCache(byteBudget = byteBudget)
     private var compiledRetainedBytes = 0L
@@ -98,19 +101,23 @@ internal class PreparedProseLayoutRegistry(
         if (existing != null) return existing.join().documentOrThrow()
         val compileStarted = PreparedProseInstrumentation.now()
         val result = try {
-            Compilation.Document(compiler(request).also { document ->
-                if (!document.semanticKey.matches(Regex("[0-9a-f]{64}"))) {
-                    throw ProseViewerError.compiler(
-                        "viewer",
-                        "INVALID_SEMANTIC_KEY",
-                        "The compiler returned an invalid semantic key.",
-                    )
+            Compilation.Document(
+                compiler(request).also { document ->
+                    if (!document.semanticKey.matches(Regex("[0-9a-f]{64}"))) {
+                        throw ProseViewerError.compiler(
+                            "viewer",
+                            "INVALID_SEMANTIC_KEY",
+                            "The compiler returned an invalid semantic key."
+                        )
+                    }
                 }
-            })
+            )
         } catch (error: ProseViewerError) {
             Compilation.Failure(error)
         } catch (throwable: Throwable) {
-            Compilation.Failure(ProseViewerError.layout(throwable.message ?: "Document compilation failed."))
+            Compilation.Failure(
+                ProseViewerError.layout(throwable.message ?: "Document compilation failed.")
+            )
         }
         PreparedProseInstrumentation.compiled(compileStarted, request.generationIdentity)
         synchronized(compilerLock) {
@@ -119,8 +126,13 @@ internal class PreparedProseLayoutRegistry(
                     compiled[cacheKey] = result.value
                     compiledRetainedBytes += result.value.retainedBytes
                     trimCompiledLocked()
-                    PreparedProseInstrumentation.retained(PreparedProseInstrumentation.Owner.COMPILED, "registry", compiledRetainedBytes)
+                    PreparedProseInstrumentation.retained(
+                        PreparedProseInstrumentation.Owner.COMPILED,
+                        "registry",
+                        compiledRetainedBytes
+                    )
                 }
+
                 is Compilation.Failure -> {
                     compilationFailures[cacheKey] = result.error
                     while (compilationFailures.size > compilationFailureBudget) {
@@ -143,7 +155,7 @@ internal class PreparedProseLayoutRegistry(
         compiledDocument: ViewerDocument? = null,
         fontScale: Float = 1f,
         measurementImageState: ViewerAttachmentRevisionState? = null,
-        fabricLeaseEligibility: (() -> Boolean)? = null,
+        fabricLeaseEligibility: (() -> Boolean)? = null
     ): PreparedProseLayout {
         val generation = fabricSurface?.takeIf { fabricLeaseHandle > 0 }
             ?.let { FabricGenerationToken(it, request.generationIdentity, fabricLeaseHandle) }
@@ -153,7 +165,9 @@ internal class PreparedProseLayoutRegistry(
             // An old zero-width pass is not a lifecycle event.  Retire only
             // this handle's pending handoffs and leave every mounted layout,
             // including a newer H2, untouched.
-            generation?.takeIf { isLeaseActive(it, leaseActive) }?.let { layoutCache.releasePendingLease(it) }
+            generation?.takeIf {
+                isLeaseActive(it, leaseActive)
+            }?.let { layoutCache.releasePendingLease(it) }
             return invalidWidthArtifact(request)
         }
         val densityBits = density.toRawBits().toLong()
@@ -169,14 +183,25 @@ internal class PreparedProseLayoutRegistry(
             }
         }
         return try {
-            if (ownedGeneration != null && !isLeaseActive(ownedGeneration, leaseActive)) return invalidWidthArtifact(request)
+            if (ownedGeneration != null &&
+                !isLeaseActive(ownedGeneration, leaseActive)
+            ) {
+                return invalidWidthArtifact(request)
+            }
             val document = preparedDocument(request, ownedGeneration, compiledDocument, leaseActive)
-            if (ownedGeneration != null && !isLeaseActive(ownedGeneration, leaseActive)) return invalidWidthArtifact(request)
+            if (ownedGeneration != null &&
+                !isLeaseActive(ownedGeneration, leaseActive)
+            ) {
+                return invalidWidthArtifact(request)
+            }
             val theme = resolveTheme(request, density, fontScale)
             val key = layoutKey(document, request, widthPx, densityBits)
             layoutCache.value(key, ownedGeneration, shouldCreateFabricLease = {
                 ownedGeneration == null ||
-                    (isLeaseActive(ownedGeneration, leaseActive) && fabricLeaseEligibility?.invoke() != false)
+                    (
+                        isLeaseActive(ownedGeneration, leaseActive) &&
+                            fabricLeaseEligibility?.invoke() != false
+                        )
             }) {
                 val layoutStarted = PreparedProseInstrumentation.now()
                 layoutPreparationCount += 1
@@ -189,18 +214,27 @@ internal class PreparedProseLayoutRegistry(
                             widthPx,
                             density,
                             request.configuration.collapsesWhenEmpty,
-                            request.semanticGenerationIdentity,
+                            request.semanticGenerationIdentity
                         )
                     }
                     val artifact = if (imageMeasurementState != null) {
-                        FabricAttachmentSidecars.withMeasurementState(imageMeasurementState, prepare)
-                    } else prepare()
+                        FabricAttachmentSidecars.withMeasurementState(
+                            imageMeasurementState,
+                            prepare
+                        )
+                    } else {
+                        prepare()
+                    }
                     PreparedProseInstrumentation.laidOut(layoutStarted, request.generationIdentity)
                     artifact
                 } catch (error: ProseViewerError) {
                     PreparedProseLayout.error(key, widthPx, error)
                 } catch (throwable: Throwable) {
-                    PreparedProseLayout.error(key, widthPx, ProseViewerError.layout(throwable.message ?: "Layout preparation failed."))
+                    PreparedProseLayout.error(
+                        key,
+                        widthPx,
+                        ProseViewerError.layout(throwable.message ?: "Layout preparation failed.")
+                    )
                 }
             }
         } catch (error: ProseViewerError) {
@@ -213,14 +247,14 @@ internal class PreparedProseLayoutRegistry(
         generation: FabricGenerationToken,
         request: ProseViewerRequest,
         widthPx: Int,
-        density: Float,
+        density: Float
     ): PreparedProseLayout? {
         if (!isValidMeasurement(widthPx, density)) return null
         return layoutCache.acquireForFabricMount(
             generation,
             widthPx,
             density.toRawBits().toLong(),
-            allowCompletedFallback = true,
+            allowCompletedFallback = true
         ) { isLeaseActive(generation, activeLeaseFor(generation)) }
     }
 
@@ -232,12 +266,12 @@ internal class PreparedProseLayoutRegistry(
         contentOriginYPx: Int,
         fabricSurface: FabricSurfaceToken,
         fabricLeaseHandle: Long,
-        fontScale: Float = 1f,
+        fontScale: Float = 1f
     ): PreparedProseLayout {
         val generation = FabricGenerationToken(
             fabricSurface,
             request.generationIdentity,
-            fabricLeaseHandle,
+            fabricLeaseHandle
         )
         val spec = synchronized(fabricLeaseLock) {
             check(finalLayoutRevision < Long.MAX_VALUE) { "Final layout revision space exhausted." }
@@ -250,7 +284,7 @@ internal class PreparedProseLayoutRegistry(
                 contentOriginYPx,
                 fabricSurface,
                 fabricLeaseHandle,
-                fontScale,
+                fontScale
             ).also {
                 if (isLeaseActiveLocked(generation)) finalLayoutSpecs[generation] = it
             }
@@ -260,7 +294,7 @@ internal class PreparedProseLayoutRegistry(
 
     private fun prepareFinalLayoutSpec(
         generation: FabricGenerationToken,
-        spec: FinalLayoutSpec,
+        spec: FinalLayoutSpec
     ): PreparedProseLayout {
         val artifact = measure(
             spec.request,
@@ -273,7 +307,7 @@ internal class PreparedProseLayoutRegistry(
                 synchronized(fabricLeaseLock) {
                     isLeaseActiveLocked(generation) && finalLayoutSpecs[generation] === spec
                 }
-            },
+            }
         )
         if (
             artifact.widthPx != spec.widthPx ||
@@ -287,7 +321,7 @@ internal class PreparedProseLayoutRegistry(
             spec.widthPx,
             spec.contentOriginXPx,
             spec.contentOriginYPx,
-            spec.density.toRawBits(),
+            spec.density.toRawBits()
         )
         synchronized(fabricLeaseLock) {
             if (
@@ -302,7 +336,7 @@ internal class PreparedProseLayoutRegistry(
 
     fun acquirePreparedMountTicket(
         generation: FabricGenerationToken,
-        expectedNativeFontRevision: Long? = null,
+        expectedNativeFontRevision: Long? = null
     ): PreparedMountTicket? {
         val metadata = synchronized(fabricLeaseLock) {
             if (isLeaseActiveLocked(generation)) {
@@ -317,7 +351,7 @@ internal class PreparedProseLayoutRegistry(
         val artifact = layoutCache.acquireForFabricMount(
             generation,
             metadata.contentWidthPx,
-            metadata.densityBits.toLong(),
+            metadata.densityBits.toLong()
         ) {
             synchronized(fabricLeaseLock) {
                 isLeaseActiveLocked(generation) && preparedMountTickets[generation] === metadata
@@ -330,13 +364,13 @@ internal class PreparedProseLayoutRegistry(
             metadata.contentOriginXPx,
             metadata.contentOriginYPx,
             metadata.densityBits,
-            artifact,
+            artifact
         )
     }
 
     fun prepareForFabricMount(
         generation: FabricGenerationToken,
-        onPrepared: (Boolean) -> Unit,
+        onPrepared: (Boolean) -> Unit
     ): Boolean {
         val spec = synchronized(fabricLeaseLock) {
             if (isLeaseActiveLocked(generation)) {
@@ -407,10 +441,14 @@ internal class PreparedProseLayoutRegistry(
             if (!state.active.get()) return
             state.permittedGenerationIdentity = generation.generationIdentity
             finalLayoutSpecs.keys
-                .filter { FabricLeaseOwner(it.surface, it.leaseHandle) == owner && it != generation }
+                .filter {
+                    FabricLeaseOwner(it.surface, it.leaseHandle) == owner && it != generation
+                }
                 .forEach(finalLayoutSpecs::remove)
             preparedMountTickets.keys
-                .filter { FabricLeaseOwner(it.surface, it.leaseHandle) == owner && it != generation }
+                .filter {
+                    FabricLeaseOwner(it.surface, it.leaseHandle) == owner && it != generation
+                }
                 .forEach(preparedMountTickets::remove)
         }
         finalPreparationInFlight.keys
@@ -418,7 +456,9 @@ internal class PreparedProseLayoutRegistry(
             .forEach { finalPreparationInFlight.remove(it)?.cancel(false) }
         synchronized(compilerLock) {
             val tokens = (documentsByFabricGeneration.keys + failuresByFabricGeneration.keys)
-                .filter { FabricLeaseOwner(it.surface, it.leaseHandle) == owner && it != generation }
+                .filter {
+                    FabricLeaseOwner(it.surface, it.leaseHandle) == owner && it != generation
+                }
                 .toSet()
             tokens.forEach {
                 documentsByFabricGeneration.remove(it)
@@ -442,9 +482,11 @@ internal class PreparedProseLayoutRegistry(
         synchronized(fabricLeaseLock) {
             // A View can terminally recycle before Yoga's first bind. Create
             // its inactive guard now so any later bind is rejected.
-            (activeFabricLeases[owner] ?: FabricLeaseState().also {
-                activeFabricLeases[owner] = it
-            }).active.set(false)
+            (
+                activeFabricLeases[owner] ?: FabricLeaseState().also {
+                    activeFabricLeases[owner] = it
+                }
+                ).active.set(false)
         }
         sweepFabricOwner(owner)
     }
@@ -467,16 +509,26 @@ internal class PreparedProseLayoutRegistry(
         synchronized(fabricLeaseLock) {
             finalLayoutSpecs.keys.filter { FabricLeaseOwner(it.surface, it.leaseHandle) == owner }
                 .forEach(finalLayoutSpecs::remove)
-            preparedMountTickets.keys.filter { FabricLeaseOwner(it.surface, it.leaseHandle) == owner }
+            preparedMountTickets.keys.filter {
+                FabricLeaseOwner(it.surface, it.leaseHandle) == owner
+            }
                 .forEach(preparedMountTickets::remove)
         }
-        finalPreparationInFlight.keys.filter { FabricLeaseOwner(it.surface, it.leaseHandle) == owner }
+        finalPreparationInFlight.keys.filter {
+            FabricLeaseOwner(it.surface, it.leaseHandle) == owner
+        }
             .forEach { finalPreparationInFlight.remove(it)?.cancel(false) }
         layoutCache.releaseOwner(owner)
         FabricAttachmentSidecars.remove(owner)
         synchronized(compilerLock) {
-            documentsByFabricGeneration.keys.removeAll { it.surface == owner.surface && it.leaseHandle == owner.leaseHandle }
-            failuresByFabricGeneration.keys.removeAll { it.surface == owner.surface && it.leaseHandle == owner.leaseHandle }
+            documentsByFabricGeneration.keys.removeAll {
+                it.surface == owner.surface &&
+                    it.leaseHandle == owner.leaseHandle
+            }
+            failuresByFabricGeneration.keys.removeAll {
+                it.surface == owner.surface &&
+                    it.leaseHandle == owner.leaseHandle
+            }
         }
     }
 
@@ -485,7 +537,9 @@ internal class PreparedProseLayoutRegistry(
             activeFabricLeases.keys.filter { it.surface == surface }
                 .forEach { activeFabricLeases[it]?.active?.set(false) }
             finalLayoutSpecs.keys.filter { it.surface == surface }.forEach(finalLayoutSpecs::remove)
-            preparedMountTickets.keys.filter { it.surface == surface }.forEach(preparedMountTickets::remove)
+            preparedMountTickets.keys.filter {
+                it.surface == surface
+            }.forEach(preparedMountTickets::remove)
         }
         finalPreparationInFlight.keys.filter { it.surface == surface }
             .forEach { finalPreparationInFlight.remove(it)?.cancel(false) }
@@ -507,8 +561,12 @@ internal class PreparedProseLayoutRegistry(
         synchronized(fabricLeaseLock) {
             activeFabricLeases.keys.filter { it.surface.surfaceId == surfaceId }
                 .forEach { activeFabricLeases[it]?.active?.set(false) }
-            finalLayoutSpecs.keys.filter { it.surface.surfaceId == surfaceId }.forEach(finalLayoutSpecs::remove)
-            preparedMountTickets.keys.filter { it.surface.surfaceId == surfaceId }.forEach(preparedMountTickets::remove)
+            finalLayoutSpecs.keys.filter {
+                it.surface.surfaceId == surfaceId
+            }.forEach(finalLayoutSpecs::remove)
+            preparedMountTickets.keys.filter {
+                it.surface.surfaceId == surfaceId
+            }.forEach(preparedMountTickets::remove)
         }
         finalPreparationInFlight.keys.filter { it.surface.surfaceId == surfaceId }
             .forEach { finalPreparationInFlight.remove(it)?.cancel(false) }
@@ -533,7 +591,8 @@ internal class PreparedProseLayoutRegistry(
         }
     }
 
-    fun registerDirectMounted(owner: String, layout: PreparedProseLayout) = layoutCache.registerDirectMount(owner, layout)
+    fun registerDirectMounted(owner: String, layout: PreparedProseLayout) =
+        layoutCache.registerDirectMount(owner, layout)
     fun releaseDirectMounted(owner: String) = layoutCache.releaseDirectMount(owner)
 
     internal fun beginBenchmarkResidentCensus() = layoutCache.beginBenchmarkCensus()
@@ -551,7 +610,9 @@ internal class PreparedProseLayoutRegistry(
     }
 
     fun didReceiveMemoryWarning() {
-        PreparedProseInstrumentation.invalidated(PreparedProseInstrumentation.InvalidationReason.MEMORY_PRESSURE)
+        PreparedProseInstrumentation.invalidated(
+            PreparedProseInstrumentation.InvalidationReason.MEMORY_PRESSURE
+        )
         PreparedProseInstrumentation.capturePreResetSnapshot()
         layoutCache.removeAllUnmounted()
         synchronized(compilerLock) {
@@ -563,44 +624,66 @@ internal class PreparedProseLayoutRegistry(
             compiledRetainedBytes = 0
             themeRetainedBytes = 0
         }
-        PreparedProseInstrumentation.retained(PreparedProseInstrumentation.Owner.COMPILED, "registry", 0L)
+        PreparedProseInstrumentation.retained(
+            PreparedProseInstrumentation.Owner.COMPILED,
+            "registry",
+            0L
+        )
         PreparedProseInstrumentation.cacheUpdated(compiledBytes = 0L, compiledResidentCount = 0L)
         PreparedProseInstrumentation.capturePostResetSnapshot()
     }
 
-    internal val preparedLayoutCacheCountForTesting: Int get() = layoutCache.completedCountForTesting
+    internal val preparedLayoutCacheCountForTesting: Int
+        get() = layoutCache.completedCountForTesting
     internal val layoutRetainedBytesForTesting: Long get() = layoutCache.retainedBytesForTesting
     internal val fabricLeaseCountForTesting: Int get() = layoutCache.leaseCountForTesting
     internal val fabricGenerationPinCountForTesting: Int get() = synchronized(compilerLock) {
         documentsByFabricGeneration.size + failuresByFabricGeneration.size
     }
-    internal val preparedThemeCountForTesting: Int get() = synchronized(compilerLock) { themes.size }
-    internal val activeFabricLeaseCountForTesting: Int get() = synchronized(fabricLeaseLock) { activeFabricLeases.size }
+    internal val preparedThemeCountForTesting: Int get() = synchronized(compilerLock) {
+        themes.size
+    }
+    internal val activeFabricLeaseCountForTesting: Int get() = synchronized(fabricLeaseLock) {
+        activeFabricLeases.size
+    }
     internal fun permittedFabricGenerationForTesting(owner: FabricLeaseOwner): String? =
         synchronized(fabricLeaseLock) { activeFabricLeases[owner]?.permittedGenerationIdentity }
-    private fun hasFabricLease(generation: FabricGenerationToken): Boolean = layoutCache.hasLease(generation)
+    private fun hasFabricLease(generation: FabricGenerationToken): Boolean =
+        layoutCache.hasLease(generation)
 
     private fun preparedDocument(
         request: ProseViewerRequest,
         generation: FabricGenerationToken?,
         suppliedDocument: ViewerDocument?,
-        leaseActive: FabricLeaseState?,
+        leaseActive: FabricLeaseState?
     ): ViewerDocument {
-        if (generation != null) synchronized(compilerLock) {
-            documentsByFabricGeneration[generation]?.let { return it }
-            failuresByFabricGeneration[generation]?.let { throw it }
+        if (generation != null) {
+            synchronized(compilerLock) {
+                documentsByFabricGeneration[generation]?.let { return it }
+                failuresByFabricGeneration[generation]?.let { throw it }
+            }
         }
         return try {
             // Pins deliberately retain only compiler semantics. Theme paints are
             // density-local measurement inputs and must never cross a density change.
             val semanticDocument = suppliedDocument ?: compileDocument(request)
-            if (generation != null) synchronized(compilerLock) {
-                if (isLeaseActive(generation, leaseActive)) documentsByFabricGeneration[generation] = semanticDocument
+            if (generation != null) {
+                synchronized(compilerLock) {
+                    if (isLeaseActive(generation, leaseActive)) {
+                        documentsByFabricGeneration[generation] =
+                            semanticDocument
+                    }
+                }
             }
             semanticDocument
         } catch (error: ProseViewerError) {
-            if (generation != null) synchronized(compilerLock) {
-                if (isLeaseActive(generation, leaseActive)) failuresByFabricGeneration[generation] = error
+            if (generation != null) {
+                synchronized(compilerLock) {
+                    if (isLeaseActive(generation, leaseActive)) {
+                        failuresByFabricGeneration[generation] =
+                            error
+                    }
+                }
             }
             throw error
         }
@@ -612,7 +695,7 @@ internal class PreparedProseLayoutRegistry(
         densityBits: Long,
         error: ProseViewerError,
         fabricGeneration: FabricGenerationToken?,
-        leaseActive: FabricLeaseState?,
+        leaseActive: FabricLeaseState?
     ): PreparedProseLayout {
         val key = ProseLayoutKey(
             semanticKey = "error:${request.compiledCacheKey}",
@@ -623,7 +706,7 @@ internal class PreparedProseLayoutRegistry(
             densityBits = densityBits,
             attachmentRevision = request.attachmentRevision,
             generationIdentity = request.generationIdentity,
-            semanticGenerationIdentity = request.semanticGenerationIdentity,
+            semanticGenerationIdentity = request.semanticGenerationIdentity
         )
         return layoutCache.value(key, fabricGeneration, shouldCreateFabricLease = {
             fabricGeneration == null || isLeaseActive(fabricGeneration, leaseActive)
@@ -640,23 +723,27 @@ internal class PreparedProseLayoutRegistry(
             densityBits = 0,
             attachmentRevision = request.attachmentRevision,
             generationIdentity = request.generationIdentity,
-            semanticGenerationIdentity = request.semanticGenerationIdentity,
+            semanticGenerationIdentity = request.semanticGenerationIdentity
         )
         return PreparedProseLayout.error(key, 0, ProseViewerError.invalidWidth())
     }
 
-    private fun layoutKey(document: ViewerDocument, request: ProseViewerRequest, widthPx: Int, densityBits: Long) =
-        ProseLayoutKey(
-            semanticKey = document.semanticKey,
-            widthPx = widthPx,
-            themeDigest = request.themeDigest,
-            nativeFontRevision = request.nativeFontRevision,
-            fontEnvironmentRevision = request.fontEnvironmentRevision,
-            densityBits = densityBits,
-            attachmentRevision = request.attachmentRevision,
-            generationIdentity = request.generationIdentity,
-            semanticGenerationIdentity = request.semanticGenerationIdentity,
-        )
+    private fun layoutKey(
+        document: ViewerDocument,
+        request: ProseViewerRequest,
+        widthPx: Int,
+        densityBits: Long
+    ) = ProseLayoutKey(
+        semanticKey = document.semanticKey,
+        widthPx = widthPx,
+        themeDigest = request.themeDigest,
+        nativeFontRevision = request.nativeFontRevision,
+        fontEnvironmentRevision = request.fontEnvironmentRevision,
+        densityBits = densityBits,
+        attachmentRevision = request.attachmentRevision,
+        generationIdentity = request.generationIdentity,
+        semanticGenerationIdentity = request.semanticGenerationIdentity
+    )
 
     private fun trimCompiledLocked() {
         while (compiledRetainedBytes > compiledByteBudget && compiled.isNotEmpty()) {
@@ -664,35 +751,46 @@ internal class PreparedProseLayoutRegistry(
             compiled.remove(oldest.key)
             compiledRetainedBytes -= oldest.value.retainedBytes
         }
-        PreparedProseInstrumentation.retained(PreparedProseInstrumentation.Owner.COMPILED, "registry", compiledRetainedBytes)
+        PreparedProseInstrumentation.retained(
+            PreparedProseInstrumentation.Owner.COMPILED,
+            "registry",
+            compiledRetainedBytes
+        )
         PreparedProseInstrumentation.cacheUpdated(
             compiledBytes = compiledRetainedBytes,
-            compiledResidentCount = compiled.size.toLong(),
+            compiledResidentCount = compiled.size.toLong()
         )
     }
 
-    private fun resolveTheme(request: ProseViewerRequest, density: Float, fontScale: Float): PreparedProseTheme = synchronized(compilerLock) {
+    private fun resolveTheme(
+        request: ProseViewerRequest,
+        density: Float,
+        fontScale: Float
+    ): PreparedProseTheme = synchronized(compilerLock) {
         val key = "${request.generationIdentity}:${density.toRawBits()}:${fontScale.toRawBits()}"
         themes[key]?.let { return@synchronized it }
         val resolved = PreparedProseTheme.resolve(
             request.configuration.themeJson,
             density,
             fontScale,
-            request.semanticGenerationIdentity,
+            request.semanticGenerationIdentity
         )
-        val highlighting = com.apollohg.editor.NativeCodeHighlightingConfig.fromJson(org.json.JSONObject(request.configuration.configJson).optJSONObject("codeHighlighting"))
+        val highlighting = com.apollohg.editor.NativeCodeHighlightingConfig.fromJson(
+            org.json.JSONObject(request.configuration.configJson).optJSONObject("codeHighlighting")
+        )
         highlighting?.let { com.apollohg.editor.CodeHighlightingRegistry.provider(it.provider) }
         val configured = resolved.copy(codeHighlighting = highlighting)
         themes[key] = configured
         themeRetainedBytes += resolved.retainedBytes
-        while ((themeRetainedBytes > themeByteBudget || themes.size > themeEntryBudget) && themes.isNotEmpty()) {
+        while ((themeRetainedBytes > themeByteBudget || themes.size > themeEntryBudget) &&
+            themes.isNotEmpty()
+        ) {
             val oldest = themes.entries.first()
             themes.remove(oldest.key)
             themeRetainedBytes -= oldest.value.retainedBytes
         }
         configured
     }
-
 
     private fun Compilation.documentOrThrow(): ViewerDocument = when (this) {
         is Compilation.Document -> value
@@ -703,20 +801,26 @@ internal class PreparedProseLayoutRegistry(
         widthPx > 0 && density.isFinite() && density > 0f
 
     private fun activeLeaseFor(generation: FabricGenerationToken): FabricLeaseState? =
-        synchronized(fabricLeaseLock) { activeFabricLeases[FabricLeaseOwner(generation.surface, generation.leaseHandle)] }
-
-    private fun isLeaseActiveLocked(generation: FabricGenerationToken): Boolean =
-        isLeaseActive(
-            generation,
-            activeFabricLeases[FabricLeaseOwner(generation.surface, generation.leaseHandle)],
-        )
-
-    private fun isLeaseActive(generation: FabricGenerationToken, lease: FabricLeaseState?): Boolean =
-        lease?.active?.get() == true && synchronized(fabricLeaseLock) {
-            activeFabricLeases[FabricLeaseOwner(generation.surface, generation.leaseHandle)] === lease &&
-                (lease.permittedGenerationIdentity == null ||
-                    lease.permittedGenerationIdentity == generation.generationIdentity)
+        synchronized(fabricLeaseLock) {
+            activeFabricLeases[FabricLeaseOwner(generation.surface, generation.leaseHandle)]
         }
+
+    private fun isLeaseActiveLocked(generation: FabricGenerationToken): Boolean = isLeaseActive(
+        generation,
+        activeFabricLeases[FabricLeaseOwner(generation.surface, generation.leaseHandle)]
+    )
+
+    private fun isLeaseActive(
+        generation: FabricGenerationToken,
+        lease: FabricLeaseState?
+    ): Boolean = lease?.active?.get() == true && synchronized(fabricLeaseLock) {
+        activeFabricLeases[FabricLeaseOwner(generation.surface, generation.leaseHandle)] ===
+            lease &&
+            (
+                lease.permittedGenerationIdentity == null ||
+                    lease.permittedGenerationIdentity == generation.generationIdentity
+                )
+    }
 
     companion object {
         val shared = PreparedProseLayoutRegistry()

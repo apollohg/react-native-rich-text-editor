@@ -70,8 +70,7 @@ extension EditorAccessoryToolbarView {
             sources += 1
         }
         if #available(iOS 15.0, *),
-           Self.paintsBackground(button.configuration?.background.backgroundColor)
-        {
+           Self.paintsBackground(button.configuration?.background.backgroundColor) {
             sources += 1
         }
         return sources

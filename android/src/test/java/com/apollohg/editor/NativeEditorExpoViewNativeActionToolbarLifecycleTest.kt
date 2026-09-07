@@ -3,6 +3,7 @@ import android.app.Activity
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
+import java.time.Duration
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -17,11 +18,11 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
-internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEditorExpoViewNativeActionTestFixture() {
+internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest :
+    NativeEditorExpoViewNativeActionTestFixture() {
     @Test
     fun `pending controlled update parks native toolbar action until cleared`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
@@ -44,7 +45,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
         }
 
         val action = NativeToolbarItem(
-            type = ToolbarItemKind.action,
+            type = ToolbarItemKind.ACTION,
             key = "custom",
             label = "Custom"
         )
@@ -66,7 +67,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
     }
 
     @Test
-    fun `parked native toolbar action survives controlled update document version acknowledgement`() {
+    fun `parked toolbar action survives controlled document version acknowledgement`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
         val editorId = 779855L
@@ -93,7 +94,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
 
         view.handleToolbarItemPressForTesting(
             NativeToolbarItem(
-                type = ToolbarItemKind.action,
+                type = ToolbarItemKind.ACTION,
                 key = "custom",
                 label = "Custom"
             )
@@ -151,7 +152,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
 
         view.handleToolbarItemPressForTesting(
             NativeToolbarItem(
-                type = ToolbarItemKind.action,
+                type = ToolbarItemKind.ACTION,
                 key = "custom",
                 label = "Custom"
             )
@@ -200,7 +201,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
 
         view.handleToolbarItemPressForTesting(
             NativeToolbarItem(
-                type = ToolbarItemKind.action,
+                type = ToolbarItemKind.ACTION,
                 key = "custom",
                 label = "Custom"
             )
@@ -219,7 +220,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
     }
 
     @Test
-    fun `toolbar visibility placement and editability changes clear parked native toolbar action`() {
+    fun `toolbar visibility placement and editability changes clear parked action`() {
         val cases = listOf<(NativeEditorExpoView) -> Unit>(
             { view -> view.setShowToolbar(false) },
             { view -> view.setToolbarPlacement("inline") },
@@ -248,7 +249,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
 
             view.handleToolbarItemPressForTesting(
                 NativeToolbarItem(
-                    type = ToolbarItemKind.action,
+                    type = ToolbarItemKind.ACTION,
                     key = "custom",
                     label = "Custom"
                 )
@@ -301,7 +302,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
         view.setPendingEditorUpdateRevision(1)
         view.handleToolbarItemPressForTesting(
             NativeToolbarItem(
-                type = ToolbarItemKind.action,
+                type = ToolbarItemKind.ACTION,
                 key = "custom",
                 label = "Custom"
             )
@@ -323,7 +324,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
     }
 
     @Test
-    fun `toolbar preserved blur keeps parked native toolbar action current while refocus is pending`() {
+    fun `toolbar blur keeps parked action current while refocus is pending`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
         val editorId = 778857L
@@ -349,7 +350,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
         view.setPendingEditorUpdateRevision(1)
         view.handleToolbarItemPressForTesting(
             NativeToolbarItem(
-                type = ToolbarItemKind.action,
+                type = ToolbarItemKind.ACTION,
                 key = "custom",
                 label = "Custom"
             )
@@ -391,7 +392,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
 
         view.handleToolbarItemPressForTesting(
             NativeToolbarItem(
-                type = ToolbarItemKind.action,
+                type = ToolbarItemKind.ACTION,
                 key = "custom",
                 label = "Custom"
             )
@@ -464,7 +465,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
         view.setEditable(false)
         view.handleToolbarItemPressForTesting(
             NativeToolbarItem(
-                type = ToolbarItemKind.action,
+                type = ToolbarItemKind.ACTION,
                 key = "custom",
                 label = "Custom"
             )
@@ -501,7 +502,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
 
         view.handleToolbarItemPressForTesting(
             NativeToolbarItem(
-                type = ToolbarItemKind.action,
+                type = ToolbarItemKind.ACTION,
                 key = "custom",
                 label = "Custom"
             )
@@ -546,7 +547,7 @@ internal class NativeEditorExpoViewNativeActionToolbarLifecycleTest : NativeEdit
         }
 
         val action = NativeToolbarItem(
-            type = ToolbarItemKind.action,
+            type = ToolbarItemKind.ACTION,
             key = "custom",
             label = "Custom"
         )

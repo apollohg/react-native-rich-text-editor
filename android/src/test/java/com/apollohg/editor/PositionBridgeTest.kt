@@ -29,7 +29,6 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class PositionBridgeTest {
 
-
     /** ASCII characters are 1 UTF-16 code unit = 1 scalar each. */
     @Test
     fun `utf16ToScalar - ASCII only`() {
@@ -37,15 +36,18 @@ class PositionBridgeTest {
         // "Hello" = 5 UTF-16 code units = 5 scalars
         assertEquals(
             "Offset 0 should map to scalar 0",
-            0, PositionBridge.utf16ToScalar(0, text)
+            0,
+            PositionBridge.utf16ToScalar(0, text)
         )
         assertEquals(
             "Offset 1 in ASCII should map to scalar 1",
-            1, PositionBridge.utf16ToScalar(1, text)
+            1,
+            PositionBridge.utf16ToScalar(1, text)
         )
         assertEquals(
             "Offset 5 (end of 'Hello') should map to scalar 5",
-            5, PositionBridge.utf16ToScalar(5, text)
+            5,
+            PositionBridge.utf16ToScalar(5, text)
         )
     }
 
@@ -54,21 +56,21 @@ class PositionBridgeTest {
     fun `utf16ToScalar - empty string`() {
         assertEquals(
             "Empty string at offset 0 should return scalar 0",
-            0, PositionBridge.utf16ToScalar(0, "")
+            0,
+            PositionBridge.utf16ToScalar(0, "")
         )
     }
-
 
     /** BMP characters (e.g. U+00E9, e-acute) are 1 UTF-16 code unit, 1 scalar. */
     @Test
     fun `utf16ToScalar - BMP characters`() {
-        val text = "caf\u00E9"  // "cafe" with accent
+        val text = "caf\u00E9" // "cafe" with accent
         assertEquals(
             "BMP character: UTF-16 offset 4 should be scalar 4",
-            4, PositionBridge.utf16ToScalar(4, text)
+            4,
+            PositionBridge.utf16ToScalar(4, text)
         )
     }
-
 
     /**
      * Characters above U+FFFF (supplementary plane) are encoded as
@@ -77,7 +79,7 @@ class PositionBridgeTest {
     @Test
     fun `utf16ToScalar - surrogate pair`() {
         // U+1F600 (grinning face) = 2 UTF-16 code units, 1 scalar
-        val text = "A\uD83D\uDE00B"  // "A" + U+1F600 + "B"
+        val text = "A\uD83D\uDE00B" // "A" + U+1F600 + "B"
         // UTF-16: A(1) + U+1F600(2) + B(1) = 4 code units
         // Scalars: A(1) + U+1F600(1) + B(1) = 3 scalars
 
@@ -85,11 +87,13 @@ class PositionBridgeTest {
         assertEquals("After 'A', before emoji", 1, PositionBridge.utf16ToScalar(1, text))
         assertEquals(
             "After emoji (UTF-16 offset 3 = scalar 2)",
-            2, PositionBridge.utf16ToScalar(3, text)
+            2,
+            PositionBridge.utf16ToScalar(3, text)
         )
         assertEquals(
             "After 'B' (end of string)",
-            3, PositionBridge.utf16ToScalar(4, text)
+            3,
+            PositionBridge.utf16ToScalar(4, text)
         )
     }
 
@@ -107,11 +111,13 @@ class PositionBridgeTest {
 
         assertEquals(
             "Family emoji should be $expectedUtf16Count UTF-16 code units",
-            expectedUtf16Count, text.length
+            expectedUtf16Count,
+            text.length
         )
         assertEquals(
             "Family emoji should be $expectedScalarCount Unicode scalars",
-            expectedScalarCount, text.codePointCount(0, text.length)
+            expectedScalarCount,
+            text.codePointCount(0, text.length)
         )
         assertEquals(
             "Full family emoji: UTF-16 end should map to scalar end",
@@ -120,18 +126,19 @@ class PositionBridgeTest {
         )
     }
 
-
     /** CJK characters in the BMP: 1 UTF-16 = 1 scalar. */
     @Test
     fun `utf16ToScalar - CJK`() {
-        val text = "\u4F60\u597D"  // nihao
+        val text = "\u4F60\u597D" // nihao
         assertEquals(
             "CJK character at offset 1 should be scalar 1",
-            1, PositionBridge.utf16ToScalar(1, text)
+            1,
+            PositionBridge.utf16ToScalar(1, text)
         )
         assertEquals(
             "End of CJK string should be scalar 2",
-            2, PositionBridge.utf16ToScalar(2, text)
+            2,
+            PositionBridge.utf16ToScalar(2, text)
         )
     }
 
@@ -139,15 +146,15 @@ class PositionBridgeTest {
     @Test
     fun `utf16ToScalar - CJK Extension B`() {
         // U+20000 (CJK Unified Ideographs Extension B) = 2 UTF-16 code units, 1 scalar
-        val text = "A\uD840\uDC00B"  // A + U+20000 + B
+        val text = "A\uD840\uDC00B" // A + U+20000 + B
         // UTF-16: A(1) + U+20000(2) + B(1) = 4
         // Scalars: A(1) + U+20000(1) + B(1) = 3
         assertEquals(
             "After CJK Extension B character",
-            2, PositionBridge.utf16ToScalar(3, text)
+            2,
+            PositionBridge.utf16ToScalar(3, text)
         )
     }
-
 
     /** Mixed ASCII, emoji, and CJK in one string. */
     @Test
@@ -159,11 +166,11 @@ class PositionBridgeTest {
         assertEquals("After 'Hi'", 2, PositionBridge.utf16ToScalar(2, text))
         assertEquals(
             "After emoji (UTF-16 offset 4 = scalar 3)",
-            3, PositionBridge.utf16ToScalar(4, text)
+            3,
+            PositionBridge.utf16ToScalar(4, text)
         )
         assertEquals("End of mixed string", 6, PositionBridge.utf16ToScalar(7, text))
     }
-
 
     /**
      * Flag emoji are composed of two regional indicator symbols.
@@ -171,57 +178,61 @@ class PositionBridgeTest {
      */
     @Test
     fun `utf16ToScalar - flag emoji`() {
-        val text = "A\uD83C\uDDFA\uD83C\uDDF8B"  // A + U+1F1FA + U+1F1F8 + B
+        val text = "A\uD83C\uDDFA\uD83C\uDDF8B" // A + U+1F1FA + U+1F1F8 + B
         // UTF-16: A(1) + U+1F1FA(2) + U+1F1F8(2) + B(1) = 6
         // Scalars: A(1) + U+1F1FA(1) + U+1F1F8(1) + B(1) = 4
 
         assertEquals("After 'A'", 1, PositionBridge.utf16ToScalar(1, text))
         assertEquals(
             "After flag emoji (UTF-16 offset 5 = scalar 3)",
-            3, PositionBridge.utf16ToScalar(5, text)
+            3,
+            PositionBridge.utf16ToScalar(5, text)
         )
         assertEquals("After 'B'", 4, PositionBridge.utf16ToScalar(6, text))
     }
-
 
     @Test
     fun `scalarToUtf16 - ASCII only`() {
         val text = "Hello"
         assertEquals(
             "Scalar 0 should map to UTF-16 offset 0",
-            0, PositionBridge.scalarToUtf16(0, text)
+            0,
+            PositionBridge.scalarToUtf16(0, text)
         )
         assertEquals(
             "Scalar 3 in ASCII should map to UTF-16 offset 3",
-            3, PositionBridge.scalarToUtf16(3, text)
+            3,
+            PositionBridge.scalarToUtf16(3, text)
         )
         assertEquals(
             "Scalar 5 (end) should map to UTF-16 offset 5",
-            5, PositionBridge.scalarToUtf16(5, text)
+            5,
+            PositionBridge.scalarToUtf16(5, text)
         )
     }
 
-
     @Test
     fun `scalarToUtf16 - surrogate pair`() {
-        val text = "A\uD83D\uDE00B"  // A + U+1F600 + B
+        val text = "A\uD83D\uDE00B" // A + U+1F600 + B
         // Scalar 0 = A -> UTF-16 offset 0
         // Scalar 1 = U+1F600 -> UTF-16 offset 1
         // Scalar 2 = B -> UTF-16 offset 3 (after 2 UTF-16 code units for emoji)
         assertEquals(
             "Scalar 1 (emoji start) should be UTF-16 offset 1",
-            1, PositionBridge.scalarToUtf16(1, text)
+            1,
+            PositionBridge.scalarToUtf16(1, text)
         )
         assertEquals(
             "Scalar 2 (after emoji) should be UTF-16 offset 3",
-            3, PositionBridge.scalarToUtf16(2, text)
+            3,
+            PositionBridge.scalarToUtf16(2, text)
         )
         assertEquals(
             "Scalar 3 (after B) should be UTF-16 offset 4",
-            4, PositionBridge.scalarToUtf16(3, text)
+            4,
+            PositionBridge.scalarToUtf16(3, text)
         )
     }
-
 
     @Test
     fun `scalarToUtf16 - family emoji`() {
@@ -229,10 +240,10 @@ class PositionBridgeTest {
         // 7 scalars, 11 UTF-16 code units
         assertEquals(
             "End of family emoji: scalar 7 -> UTF-16 offset 11",
-            11, PositionBridge.scalarToUtf16(7, text)
+            11,
+            PositionBridge.scalarToUtf16(7, text)
         )
     }
-
 
     /** Verify that scalar->utf16->scalar roundtrips exactly. */
     @Test
@@ -251,8 +262,9 @@ class PositionBridgeTest {
                 val backToScalar = PositionBridge.utf16ToScalar(utf16, text)
                 assertEquals(
                     "Roundtrip for '$label' at scalar $scalarOffset: " +
-                            "utf16=$utf16, back=$backToScalar - should equal original scalar",
-                    scalarOffset, backToScalar
+                        "utf16=$utf16, back=$backToScalar - should equal original scalar",
+                    scalarOffset,
+                    backToScalar
                 )
             }
         }
@@ -279,13 +291,12 @@ class PositionBridgeTest {
                 val backToUtf16 = PositionBridge.scalarToUtf16(scalar, text)
                 assertTrue(
                     "Roundtrip for '$label' at UTF-16 offset $utf16Offset: " +
-                            "scalar=$scalar, back=$backToUtf16",
+                        "scalar=$scalar, back=$backToUtf16",
                     backToUtf16 >= utf16Offset - 1
                 )
             }
         }
     }
-
 
     /** Snapping at an already-valid boundary returns the same offset. */
     @Test
@@ -294,7 +305,8 @@ class PositionBridgeTest {
         for (i in 0..5) {
             assertEquals(
                 "ASCII offset $i is already on a grapheme boundary",
-                i, PositionBridge.snapToGraphemeBoundary(i, text)
+                i,
+                PositionBridge.snapToGraphemeBoundary(i, text)
             )
         }
     }
@@ -308,7 +320,8 @@ class PositionBridgeTest {
         val snapped = PositionBridge.snapToGraphemeBoundary(2, text)
         assertEquals(
             "Mid-surrogate offset 2 should snap to 3 (end of emoji grapheme)",
-            3, snapped
+            3,
+            snapped
         )
     }
 
@@ -322,7 +335,8 @@ class PositionBridgeTest {
             val snapped = PositionBridge.snapToGraphemeBoundary(midOffset, text)
             assertEquals(
                 "Mid-family-emoji offset $midOffset should snap to 11 (end of grapheme)",
-                11, snapped
+                11,
+                snapped
             )
         }
     }
@@ -335,7 +349,8 @@ class PositionBridgeTest {
         val snapped = PositionBridge.snapToGraphemeBoundary(1, text)
         assertEquals(
             "Between base and combining character should snap to end of grapheme",
-            2, snapped
+            2,
+            snapped
         )
     }
 
@@ -344,11 +359,13 @@ class PositionBridgeTest {
     fun `snapToGraphemeBoundary - empty string`() {
         assertEquals(
             "Empty string should always return 0",
-            0, PositionBridge.snapToGraphemeBoundary(0, "")
+            0,
+            PositionBridge.snapToGraphemeBoundary(0, "")
         )
         assertEquals(
             "Empty string with out-of-range offset should return 0",
-            0, PositionBridge.snapToGraphemeBoundary(5, "")
+            0,
+            PositionBridge.snapToGraphemeBoundary(5, "")
         )
     }
 
@@ -358,7 +375,8 @@ class PositionBridgeTest {
         val text = "Hello"
         assertEquals(
             "At end of string should return end offset",
-            5, PositionBridge.snapToGraphemeBoundary(5, text)
+            5,
+            PositionBridge.snapToGraphemeBoundary(5, text)
         )
     }
 
@@ -368,21 +386,23 @@ class PositionBridgeTest {
         val text = "Hello"
         assertEquals(
             "Negative offset should clamp to 0",
-            0, PositionBridge.snapToGraphemeBoundary(-1, text)
+            0,
+            PositionBridge.snapToGraphemeBoundary(-1, text)
         )
     }
 
     /** Flag emoji mid-offset snapping. */
     @Test
     fun `snapToGraphemeBoundary - flag emoji`() {
-        val text = "\uD83C\uDDFA\uD83C\uDDF8"  // US flag
+        val text = "\uD83C\uDDFA\uD83C\uDDF8" // US flag
         // 4 UTF-16 code units, 1 grapheme cluster.
         // Offsets 1, 2, 3 should snap to 4.
         for (midOffset in 1..3) {
             val snapped = PositionBridge.snapToGraphemeBoundary(midOffset, text)
             assertEquals(
                 "Mid-flag-emoji offset $midOffset should snap to 4",
-                4, snapped
+                4,
+                snapped
             )
         }
     }
@@ -404,14 +424,14 @@ class PositionBridgeTest {
         assertEquals(0 to 2, PositionBridge.snapRangeToScalarBoundaries(1, 1, text))
     }
 
-
     /** Offset beyond string length should be clamped. */
     @Test
     fun `utf16ToScalar - offset beyond string length`() {
         val text = "Hi"
         assertEquals(
             "Offset beyond length should count all scalars",
-            2, PositionBridge.utf16ToScalar(10, text)
+            2,
+            PositionBridge.utf16ToScalar(10, text)
         )
     }
 
@@ -421,7 +441,8 @@ class PositionBridgeTest {
         val text = "Hi"
         assertEquals(
             "Scalar beyond count should return full UTF-16 length",
-            2, PositionBridge.scalarToUtf16(10, text)
+            2,
+            PositionBridge.scalarToUtf16(10, text)
         )
     }
 
@@ -443,7 +464,8 @@ class PositionBridgeTest {
         // but we already incremented scalarCount. So result is 2.
         assertEquals(
             "Mid-surrogate offset 2: implementation counts the emoji scalar",
-            2, scalar
+            2,
+            scalar
         )
     }
 }

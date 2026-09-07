@@ -3,7 +3,8 @@ package com.apollohg.editor
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
 import org.json.JSONObject
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -16,7 +17,8 @@ import org.robolectric.annotation.Config
 internal class EditorAtomSelectionEventRegressionTest : NativeEditorExpoViewTestSupport() {
     @Test
     fun `backspace selecting card emits Node selection instead of a document commit`() {
-        val created = UniffiEditorV2Backend.create("""
+        val created = UniffiEditorV2Backend.create(
+            """
             {"schema":{"nodes":[
                 {"name":"doc","content":"block+","role":"doc"},
                 {"name":"paragraph","content":"text*","group":"block","role":"textBlock"},
@@ -25,10 +27,16 @@ internal class EditorAtomSelectionEventRegressionTest : NativeEditorExpoViewTest
             ],"marks":[]},"initialization":{"type":"localJson","json":{
                 "type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]},{"type":"counterCard"},{"type":"paragraph"}]
             }}}
-        """.trimIndent(), null) as EditorV2CallResult.Ok
-        val adapter = requireNotNull(EditorV2Adapter.attach(
-            UniffiEditorV2Backend, JSONObject(created.value).getString("editorId"), roomBound = false,
-        ))
+            """.trimIndent(),
+            null
+        ) as EditorV2CallResult.Ok
+        val adapter = requireNotNull(
+            EditorV2Adapter.attach(
+                UniffiEditorV2Backend,
+                JSONObject(created.value).getString("editorId"),
+                roomBound = false
+            )
+        )
         val token = EditorV2Registry.register(adapter)
         val context = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(context.context, context.appContext)
@@ -43,7 +51,11 @@ internal class EditorAtomSelectionEventRegressionTest : NativeEditorExpoViewTest
             view.setEditorId(token)
             val editor = view.richTextView.editorEditText
             editor.applyAtomRenderConfiguration(
-                AtomRenderConfiguration(setOf("counterCard"), mapOf("counterCard" to 72f), emptyMap())
+                AtomRenderConfiguration(
+                    setOf("counterCard"),
+                    mapOf("counterCard" to 72f),
+                    emptyMap()
+                )
             )
             editor.setSelection(editor.text!!.length)
             val input = requireNotNull(editor.onCreateInputConnection(EditorInfo()))

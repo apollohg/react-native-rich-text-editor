@@ -13,14 +13,14 @@ internal fun EditorEditText.localTextDragFor(event: DragEvent): LocalTextDrag? {
     val (start, end) = PositionBridge.snapRangeToScalarBoundaries(
         selection.first,
         selection.second,
-        currentText,
+        currentText
     )
     if (start >= end || containsInterBlockBoundary(start, end)) return null
     return LocalTextDrag(
         PositionBridge.utf16ToScalar(start, currentText),
         PositionBridge.utf16ToScalar(end, currentText),
         lastAppliedDocumentVersion,
-        editorId,
+        editorId
     )
 }
 
@@ -33,10 +33,17 @@ internal fun EditorEditText.containsInterBlockBoundary(start: Int, end: Int): Bo
     }
 }
 
-internal fun EditorEditText.performLocalSelectionDrop(drag: LocalTextDrag, destination: Int): Boolean {
+internal fun EditorEditText.performLocalSelectionDrop(
+    drag: LocalTextDrag,
+    destination: Int
+): Boolean {
     if (destination in drag.scalarFrom..drag.scalarTo) return false
     if (drag.editorId != editorId || drag.documentVersion == null) return false
-    if (lastAppliedDocumentVersion == null || lastAppliedDocumentVersion != drag.documentVersion) return false
+    if (lastAppliedDocumentVersion == null ||
+        lastAppliedDocumentVersion != drag.documentVersion
+    ) {
+        return false
+    }
     if (!prepareForExternalInteractionMutation()) return false
     if (lastAppliedDocumentVersion != drag.documentVersion) return false
     onMoveSelectionScalarForTesting?.let { callback ->
@@ -53,8 +60,8 @@ internal fun EditorEditText.performLocalSelectionDropForTestingImpl(
     scalarFrom: Int,
     scalarTo: Int,
     destination: Int,
-    documentVersion: String?,
+    documentVersion: String?
 ): Boolean = performLocalSelectionDrop(
     LocalTextDrag(scalarFrom, scalarTo, documentVersion, editorId),
-    destination,
+    destination
 )

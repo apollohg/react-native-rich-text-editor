@@ -36,7 +36,7 @@ internal fun EditorEditText.resolveCaretWidth(attrs: AttributeSet?, defStyleAttr
         attrs,
         intArrayOf(android.R.attr.textCursorDrawable),
         defStyleAttr,
-        0,
+        0
     )
     try {
         val drawable = attributes.getDrawable(0)
@@ -53,11 +53,11 @@ internal fun EditorEditText.resolveCaretWidth(attrs: AttributeSet?, defStyleAttr
     return 2f * resources.displayMetrics.density
 }
 
-    /**
-     * The native caret is tinted by the theme's `colorControlActivated`; resolve
-     * the same value so the replacement keeps the platform appearance, falling
-     * back to the text color when the attribute is not a color.
-     */
+/**
+ * The native caret is tinted by the theme's `colorControlActivated`; resolve
+ * the same value so the replacement keeps the platform appearance, falling
+ * back to the text color when the attribute is not a color.
+ */
 internal fun EditorEditText.resolveCaretColor(): Int {
     val resolved = TypedValue()
     val found = context.theme.resolveAttribute(
@@ -72,7 +72,15 @@ internal fun EditorEditText.resolveCaretColor(): Int {
 
 internal fun EditorEditText.clipLegacyNativeCursorTail(canvas: Canvas) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) return
-    if (!CaretGeometry.shouldRender(isFocused, hasWindowFocus(), selectionStart, selectionEnd)) return
+    if (!CaretGeometry.shouldRender(
+            isFocused,
+            hasWindowFocus(),
+            selectionStart,
+            selectionEnd
+        )
+    ) {
+        return
+    }
     val textLayout = layout ?: return
     val offset = selectionEnd.coerceIn(0, textLayout.text.length)
     val bounds = CaretGeometry.verticalBounds(textLayout, offset, paint, textLayout.text)

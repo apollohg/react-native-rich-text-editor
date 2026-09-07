@@ -1,13 +1,17 @@
 package com.apollohg.editor
-import android.os.Looper
 import android.content.Context
+import android.os.Looper
 import android.view.inputmethod.EditorInfo
-import java.math.BigDecimal
-import java.lang.ref.WeakReference
 import expo.modules.core.ModuleRegistry
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.ModulesProvider
 import expo.modules.kotlin.modules.Module
+import java.lang.ref.WeakReference
+import java.math.BigDecimal
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
@@ -22,10 +26,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import uniffi.editor_core.FfiError
 import uniffi.editor_core.FfiJsonResult
 import uniffi.editor_core.FfiUnitResult
@@ -38,12 +38,12 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"localEmpty\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val adapter = EditorV2Adapter.attach(
             backend,
             JSONObject(created.value).getString("editorId"),
-            roomBound = false,
+            roomBound = false
         )!!
         val viewToken = EditorV2Registry.register(adapter)
         NativeEditorViewRegistry.markEditorCreated(viewToken)
@@ -54,13 +54,24 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
                 preparationDuringDestroy = NativeEditorViewRegistry.prepareForCommandJSON(viewToken)
                 FfiUnitResult(
                     null,
-                    FfiError("operation", "OPERATION_INVALID", "retryable", null, null, null, null, null),
+                    FfiError(
+                        "operation",
+                        "OPERATION_INVALID",
+                        "retryable",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null
+                    )
                 )
             }
 
             assertEquals("OPERATION_INVALID", result.error?.code)
             assertTrue(preparationDuringDestroy!!.contains("\"blockedReason\":\"destroyed\""))
-            assertTrue(NativeEditorViewRegistry.prepareForCommandJSON(viewToken).contains("\"ready\":true"))
+            assertTrue(
+                NativeEditorViewRegistry.prepareForCommandJSON(viewToken).contains("\"ready\":true")
+            )
             assertEquals(viewToken, EditorV2Registry.viewTokenForHandle(adapter.editorId))
         } finally {
             EditorV2Registry.remove(adapter.editorId)
@@ -73,7 +84,7 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"room\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val editorId = JSONObject(created.value).getString("editorId")
         NativeCollaborationTransportRegistry.transportFactoryForTesting = { id, sink ->
@@ -81,19 +92,19 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
                 editorId = id,
                 backend = backend,
                 socketFactory = neverSocketFactory(),
-                eventSink = sink,
+                eventSink = sink
             )
         }
         assertNull(
             NativeCollaborationTransportRegistry.configure(
                 collaborationRuntimeToken,
                 editorId,
-                "{\"url\":\"wss://collab.example/room\",\"connect\":false}",
+                "{\"url\":\"wss://collab.example/room\",\"connect\":false}"
             )
         )
         val retryable = FfiUnitResult(
             null,
-            FfiError("operation", "OPERATION_INVALID", "retry", null, null, null, null, null),
+            FfiError("operation", "OPERATION_INVALID", "retry", null, null, null, null, null)
         )
 
         assertEquals(retryable, destroyEditorV2FromModule(editorId) { retryable })
@@ -112,7 +123,7 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
             NativeCollaborationTransportRegistry.configure(
                 collaborationRuntimeToken,
                 editorId,
-                "{\"url\":\"wss://collab.example/room\",\"connect\":false}",
+                "{\"url\":\"wss://collab.example/room\",\"connect\":false}"
             )
         )
         val alreadyTerminal = destroyEditorV2FromModule(editorId) {
@@ -126,8 +137,8 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
                     null,
                     null,
                     null,
-                    null,
-                ),
+                    null
+                )
             )
         }
         assertEquals("ENGINE_DESTROYED", alreadyTerminal.error?.code)
@@ -139,7 +150,7 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"room\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val editorId = JSONObject(created.value).getString("editorId")
         val transports = mutableListOf<AndroidCollaborationTransport>()
@@ -148,7 +159,7 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
                 editorId = id,
                 backend = backend,
                 socketFactory = neverSocketFactory(),
-                eventSink = sink,
+                eventSink = sink
             ).also(transports::add)
         }
         val config = "{\"url\":\"wss://collab.example/room\",\"connect\":true}"
@@ -156,7 +167,7 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
             NativeCollaborationTransportRegistry.configure(
                 collaborationRuntimeToken,
                 editorId,
-                config,
+                config
             )
         )
         val entered = CountDownLatch(1)
@@ -170,7 +181,7 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
             NativeCollaborationTransportRegistry.configure(
                 collaborationRuntimeToken,
                 editorId,
-                null,
+                null
             )
         )
         val replacementResult = AtomicReference<EditorV2Error?>()
@@ -180,7 +191,7 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
                 NativeCollaborationTransportRegistry.configure(
                     collaborationRuntimeToken,
                     editorId,
-                    config,
+                    config
                 )
             )
             replacementDone.countDown()
@@ -199,12 +210,12 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"localEmpty\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val adapter = EditorV2Adapter.attach(
             backend,
             JSONObject(created.value).getString("editorId"),
-            roomBound = false,
+            roomBound = false
         )!!
         val viewToken = EditorV2Registry.register(adapter)
         NativeEditorViewRegistry.markEditorCreated(viewToken)
@@ -223,7 +234,16 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
                 if (destroyAttempts == 1) {
                     FfiUnitResult(
                         null,
-                        FfiError("operation", "OPERATION_INVALID", "retryable", null, null, null, null, null),
+                        FfiError(
+                            "operation",
+                            "OPERATION_INVALID",
+                            "retryable",
+                            null,
+                            null,
+                            null,
+                            null,
+                            null
+                        )
                     )
                 } else {
                     FfiUnitResult(true, null)
@@ -234,7 +254,9 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
             assertEquals("retryable", first.error?.message)
             assertEquals(viewToken, EditorV2Registry.viewTokenForHandle(adapter.editorId))
             assertFalse(EditorV2Registry.isHandleDestroyReservedForTesting(adapter.editorId))
-            assertTrue(NativeEditorViewRegistry.prepareForCommandJSON(viewToken).contains("\"ready\":true"))
+            assertTrue(
+                NativeEditorViewRegistry.prepareForCommandJSON(viewToken).contains("\"ready\":true")
+            )
 
             EditorV2Registry.onHandleDestroyReservationAcquiredForTesting = null
             val retry = destroyEditorV2FromModule(adapter.editorId, destroy)
@@ -257,12 +279,12 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"localEmpty\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val adapter = EditorV2Adapter.attach(
             backend,
             JSONObject(created.value).getString("editorId"),
-            roomBound = false,
+            roomBound = false
         )!!
         val viewToken = EditorV2Registry.register(adapter)
         NativeEditorViewRegistry.markEditorCreated(viewToken)
@@ -308,12 +330,12 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"localEmpty\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val adapter = EditorV2Adapter.attach(
             backend,
             JSONObject(created.value).getString("editorId"),
-            roomBound = false,
+            roomBound = false
         )!!
         val viewToken = EditorV2Registry.register(adapter)
         NativeEditorViewRegistry.markEditorCreated(viewToken)
@@ -326,7 +348,7 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
                 assertTrue(NativeEditorViewRegistry.isDestroyed(viewToken))
                 assertTrue(
                     NativeEditorViewRegistry.prepareForCommandJSON(viewToken)
-                        .contains("\"ready\":false"),
+                        .contains("\"ready\":false")
                 )
             }
         }
@@ -379,12 +401,12 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"localEmpty\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val adapter = EditorV2Adapter.attach(
             backend,
             JSONObject(created.value).getString("editorId"),
-            roomBound = false,
+            roomBound = false
         )!!
         val viewToken = EditorV2Registry.register(adapter)
         NativeEditorViewRegistry.markEditorCreated(viewToken)
@@ -409,8 +431,8 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
                         null,
                         null,
                         null,
-                        null,
-                    ),
+                        null
+                    )
                 )
             } else {
                 FfiUnitResult(true, null)
@@ -457,16 +479,16 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
         try {
             assertEquals(
                 NativeEditorDestroyReservationResult.RESERVED,
-                NativeEditorViewRegistry.acquireDestroyReservation(editorId),
+                NativeEditorViewRegistry.acquireDestroyReservation(editorId)
             )
             assertEquals(
                 NativeEditorDestroyReservationResult.ALREADY_IN_PROGRESS,
-                NativeEditorViewRegistry.acquireDestroyReservation(editorId),
+                NativeEditorViewRegistry.acquireDestroyReservation(editorId)
             )
             NativeEditorViewRegistry.rollbackDestroy(editorId)
             assertEquals(
                 NativeEditorDestroyReservationResult.RESERVED,
-                NativeEditorViewRegistry.acquireDestroyReservation(editorId),
+                NativeEditorViewRegistry.acquireDestroyReservation(editorId)
             )
         } finally {
             NativeEditorViewRegistry.rollbackDestroy(editorId)
@@ -479,12 +501,12 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"localEmpty\"}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val adapter = EditorV2Adapter.attach(
             backend,
             JSONObject(created.value).getString("editorId"),
-            roomBound = false,
+            roomBound = false
         )!!
         val viewToken = EditorV2Registry.register(adapter)
         var destroyAttempts = 0
@@ -502,8 +524,8 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
                         null,
                         null,
                         null,
-                        null,
-                    ),
+                        null
+                    )
                 )
             }
 
@@ -544,9 +566,9 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
                     null,
                     null,
                     null,
-                    null,
-                ),
-            ),
+                    null
+                )
+            )
         )
     }
 
@@ -557,12 +579,12 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
         val backend = FakeEditorV2Backend()
         val created = backend.create(
             "{\"initialization\":{\"type\":\"localEmpty\"},\"policy\":{\"readOnly\":true}}",
-            null,
+            null
         ) as EditorV2CallResult.Ok
         val adapter = EditorV2Adapter.attach(
             backend,
             JSONObject(created.value).getString("editorId"),
-            roomBound = false,
+            roomBound = false
         )!!
         val viewToken = EditorV2Registry.register(adapter)
         val errors = mutableListOf<Map<String, Any>>()
@@ -597,11 +619,14 @@ internal class NativeEditorModuleDestroyTest : NativeEditorModuleTestFixture() {
 
             assertFalse("module destroy must not deadlock waiting for main", worker.isAlive)
             assertTrue(completed.get())
-            assertNotNull("owner release must defer view cleanup to main", view.editorErrorCallbackTokenForTesting())
+            assertNotNull(
+                "owner release must defer view cleanup to main",
+                view.editorErrorCallbackTokenForTesting()
+            )
             assertEquals(1, view.pendingEditorErrorEventCountForTesting())
             assertTrue(
                 "the canonical handle stays owned until deferred view cleanup releases its reservation",
-                EditorV2Registry.isHandleDestroyReservedForTesting(adapter.editorId),
+                EditorV2Registry.isHandleDestroyReservedForTesting(adapter.editorId)
             )
             var contenderFfiCalls = 0
             val contender = destroyEditorV2FromModule(adapter.editorId) {

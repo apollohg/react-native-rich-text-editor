@@ -83,10 +83,9 @@ class KeyboardToolbarImeAnimationControllerTest {
     private fun imeAnimation(): WindowInsetsAnimationCompat =
         WindowInsetsAnimationCompat(WindowInsetsCompat.Type.ime(), null, 250L)
 
-    private fun imeInsets(bottom: Int): WindowInsetsCompat =
-        WindowInsetsCompat.Builder()
-            .setInsets(WindowInsetsCompat.Type.ime(), Insets.of(0, 0, 0, bottom))
-            .build()
+    private fun imeInsets(bottom: Int): WindowInsetsCompat = WindowInsetsCompat.Builder()
+        .setInsets(WindowInsetsCompat.Type.ime(), Insets.of(0, 0, 0, bottom))
+        .build()
 
     private fun animationBounds(): WindowInsetsAnimationCompat.BoundsCompat =
         WindowInsetsAnimationCompat.BoundsCompat(Insets.NONE, Insets.NONE)

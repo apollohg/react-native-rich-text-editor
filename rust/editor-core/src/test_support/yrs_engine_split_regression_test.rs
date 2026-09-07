@@ -505,11 +505,6 @@ fn split_at_end_of_blockquote_paragraph_creates_sibling_inside_quote() {
 
 #[test]
 fn split_block_on_empty_blockquote_paragraph_exits_quote() {
-    // Ported from the deleted legacy `code_review_fixes_test` suite (Task 18D):
-    // the only dedicated pin of `command_planner::plan_empty_blockquote_exit`.
-    // Return (TypedCommand::SplitBlock, the production Return-key path) with the
-    // caret in an empty blockquote paragraph must lift the caret out of the
-    // quote into a sibling paragraph instead of splitting inside it.
     let mut engine = engine();
     import(
         &mut engine,

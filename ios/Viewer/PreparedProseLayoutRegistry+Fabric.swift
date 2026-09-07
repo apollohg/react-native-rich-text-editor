@@ -450,9 +450,9 @@ extension PreparedProseLayoutRegistry {
             displayScale: scale,
             leaseHandle: generation.leaseHandle
         )
-#if DEBUG
-        fabricMountMissAfterExactLeaseCleanupForTesting?()
-#endif
+        #if DEBUG
+            fabricMountMissAfterExactLeaseCleanupForTesting?()
+        #endif
 
         // A measure already in preparation will retain ownership once it
         // reaches its post-cache decision. Do not let a stale mount callback

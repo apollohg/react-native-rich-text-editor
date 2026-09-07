@@ -333,8 +333,7 @@ extension NativeCollaborationTransport {
         guard isCurrent(token: token, generation: generation) else { return }
         let backendCode: UInt32?
         if let code,
-           config?.protocolAdapter?.terminalCloseCodes.contains(code) == true
-        {
+           config?.protocolAdapter?.terminalCloseCodes.contains(code) == true {
             backendCode = UInt32(URLSessionWebSocketTask.CloseCode.policyViolation.rawValue)
         } else {
             backendCode = code

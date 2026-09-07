@@ -21,8 +21,8 @@ extension NativeCollaborationTransport {
             }
             let generationToOpen = object["generationToOpen"] as? String
             let nextDeadlineMillis = object["nextDeadlineMillis"] as? String
-            guard (object["generationToOpen"] is NSNull || generationToOpen != nil),
-                  (object["nextDeadlineMillis"] is NSNull || nextDeadlineMillis != nil),
+            guard object["generationToOpen"] is NSNull || generationToOpen != nil,
+                  object["nextDeadlineMillis"] is NSNull || nextDeadlineMillis != nil,
                   generationToOpen.map({ canonicalUInt64($0) != nil }) ?? true,
                   nextDeadlineMillis.map({ canonicalUInt64($0) != nil }) ?? true
             else {

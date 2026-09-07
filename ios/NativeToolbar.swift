@@ -58,11 +58,11 @@ final class EditorAccessoryToolbarView: UIInputView {
         resolvedAppearance == .native
     }
     var usesUIGlassEffectForTesting: Bool {
-#if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            return blurView.effect is UIGlassEffect
-        }
-#endif
+        #if compiler(>=6.2)
+            if #available(iOS 26.0, *) {
+                return blurView.effect is UIGlassEffect
+            }
+        #endif
         return false
     }
     var chromeBorderWidthForTesting: CGFloat {
@@ -141,8 +141,7 @@ final class EditorAccessoryToolbarView: UIInputView {
         if let expandedGroupKey,
            !items.contains(where: {
                $0.type == .group && $0.key == expandedGroupKey && ($0.presentation ?? .expand) == .expand
-           })
-        {
+           }) {
             self.expandedGroupKey = nil
         }
         rebuildButtons()
@@ -182,11 +181,11 @@ final class EditorAccessoryToolbarView: UIInputView {
         let targetBorderWidth: CGFloat = usesTransparentMentionChrome
             ? 0
             : (usesNativeAppearance
-            ? (1 / UIScreen.main.scale)
-            : resolvedBorderWidth)
+                ? (1 / UIScreen.main.scale)
+                : resolvedBorderWidth)
         let targetClipsToBounds =
             !usesTransparentMentionChrome
-            && (usesNativeAppearance || resolvedBorderRadius > 0)
+                && (usesNativeAppearance || resolvedBorderRadius > 0)
         let targetShadowOpacity: Float =
             usesNativeAppearance && !usesTransparentMentionChrome ? 0.08 : 0
         let targetShadowRadius: CGFloat =
@@ -204,14 +203,14 @@ final class EditorAccessoryToolbarView: UIInputView {
             chromeView.layer.cornerCurve = .continuous
         }
         #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            let cornerConfig: UICornerConfiguration = usesNativeAppearance
-                ? .capsule(maximumRadius: 24)
-                : .uniformCorners(radius: .fixed(Double(resolvedBorderRadius)))
-            chromeView.cornerConfiguration = cornerConfig
-            blurView.cornerConfiguration = cornerConfig
-            glassTintView.cornerConfiguration = cornerConfig
-        }
+            if #available(iOS 26.0, *) {
+                let cornerConfig: UICornerConfiguration = usesNativeAppearance
+                    ? .capsule(maximumRadius: 24)
+                    : .uniformCorners(radius: .fixed(Double(resolvedBorderRadius)))
+                chromeView.cornerConfiguration = cornerConfig
+                blurView.cornerConfiguration = cornerConfig
+                glassTintView.cornerConfiguration = cornerConfig
+            }
         #endif
         chromeView.layer.shadowOffset = CGSize(width: 0, height: 2)
         chromeView.layer.shadowColor = UIColor.black.cgColor
@@ -327,8 +326,7 @@ final class EditorAccessoryToolbarView: UIInputView {
         }
         for (index, button) in nextButtons.enumerated() {
             if mentionStackView.arrangedSubviews.indices.contains(index),
-               mentionStackView.arrangedSubviews[index] === button
-            {
+               mentionStackView.arrangedSubviews[index] === button {
                 continue
             }
             if mentionStackView.arrangedSubviews.contains(where: { $0 === button }) {
@@ -526,7 +524,7 @@ final class EditorAccessoryToolbarView: UIInputView {
             ),
             stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -6),
             stackView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor, constant: -12),
-            scrollViewHeight,
+            scrollViewHeight
         ])
 
     }
@@ -569,9 +567,9 @@ final class EditorAccessoryToolbarView: UIInputView {
     private var usesTransparentMentionChrome: Bool {
         guard resolvedAppearance == .native, !mentionButtons.isEmpty else { return false }
         #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            return true
-        }
+            if #available(iOS 26.0, *) {
+                return true
+            }
         #endif
         return false
     }

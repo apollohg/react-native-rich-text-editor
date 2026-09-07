@@ -6,15 +6,10 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Annotation
 import android.text.Layout
-import android.text.Spanned
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.util.Base64
-import android.view.View
-import android.view.ViewGroup
-import android.widget.TextView
-import kotlin.math.abs
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
@@ -24,6 +19,14 @@ import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.text.style.URLSpan
 import android.text.style.UnderlineSpan
+import android.util.Base64
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -34,9 +37,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -104,7 +104,7 @@ internal class RenderBridgeParsingTest : RenderBridgeTestFixture() {
         val monoSpan = typefaceSpans.find { it.family == "monospace" }
         assertNotNull(
             "Code mark should produce monospace TypefaceSpan. " +
-                    "Families found: ${typefaceSpans.map { it.family }}",
+                "Families found: ${typefaceSpans.map { it.family }}",
             monoSpan
         )
 
@@ -130,8 +130,9 @@ internal class RenderBridgeParsingTest : RenderBridgeTestFixture() {
         val result = RenderBridge.buildSpannable(json, baseFontSize, textColor)
 
         assertEquals(
-            "Hard break should render as newline. Got: '${result}'",
-            "Line 1\nLine 2", result.toString()
+            "Hard break should render as newline. Got: '$result'",
+            "Line 1\nLine 2",
+            result.toString()
         )
     }
 
@@ -169,7 +170,13 @@ internal class RenderBridgeParsingTest : RenderBridgeTestFixture() {
         assertEquals(
             "Horizontal rule should not reserve glyph width for the replacement character",
             0,
-            hrSpan.getSize(TextPaint().apply { textSize = baseFontSize }, result, hrOffset, hrOffset + 1, replacementMetrics)
+            hrSpan.getSize(
+                TextPaint().apply { textSize = baseFontSize },
+                result,
+                hrOffset,
+                hrOffset + 1,
+                replacementMetrics
+            )
         )
 
         val layout = StaticLayout.Builder
@@ -177,7 +184,8 @@ internal class RenderBridgeParsingTest : RenderBridgeTestFixture() {
             .build()
         val hrLine = layout.getLineForOffset(hrOffset)
         assertTrue(
-            "Horizontal rule line should not report a visible replacement glyph width; actual width=${layout.getLineWidth(hrLine)}",
+            "Horizontal rule line should not report a visible replacement glyph width; " +
+                "actual width=${layout.getLineWidth(hrLine)}",
             layout.getLineWidth(hrLine) <= 1f
         )
     }
@@ -236,7 +244,8 @@ internal class RenderBridgeParsingTest : RenderBridgeTestFixture() {
         val result = RenderBridge.buildSpannable("not valid json", baseFontSize, textColor)
         assertEquals(
             "Invalid JSON should produce empty SpannableStringBuilder",
-            "", result.toString()
+            "",
+            result.toString()
         )
     }
 
@@ -245,7 +254,8 @@ internal class RenderBridgeParsingTest : RenderBridgeTestFixture() {
         val result = RenderBridge.buildSpannable("[]", baseFontSize, textColor)
         assertEquals(
             "Empty array should produce empty SpannableStringBuilder",
-            "", result.toString()
+            "",
+            result.toString()
         )
     }
 
@@ -273,7 +283,8 @@ internal class RenderBridgeParsingTest : RenderBridgeTestFixture() {
         val actualIndent = marginSpans[0].getLeadingMargin(true)
         assertEquals(
             "Depth 2 paragraph should have ${expectedIndent}px indent",
-            expectedIndent, actualIndent
+            expectedIndent,
+            actualIndent
         )
     }
 
@@ -386,7 +397,9 @@ internal class RenderBridgeParsingTest : RenderBridgeTestFixture() {
         val marginSummary = result
             .getSpans(0, result.length, LeadingMarginSpan.Standard::class.java)
             .joinToString(" | ") {
-                "start=${result.getSpanStart(it)} end=${result.getSpanEnd(it)} margin=${it.getLeadingMargin(true)}"
+                "start=${result.getSpanStart(
+                    it
+                )} end=${result.getSpanEnd(it)} margin=${it.getLeadingMargin(true)}"
             }
 
         val outerAligned = kotlin.math.abs(firstLeft - secondLeft) <= 0.01f

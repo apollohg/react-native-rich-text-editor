@@ -1,13 +1,14 @@
 import Foundation
 
 extension EditorV2Adapter {
+    enum MutationKind {
+        case transaction(changed: Bool, revision: UInt64)
+        case notApplicable
+        case replacement(changed: Bool, revision: UInt64)
+    }
+
     struct MutationOutcome {
-        enum Kind {
-            case transaction(changed: Bool, revision: UInt64)
-            case notApplicable
-            case replacement(changed: Bool, revision: UInt64)
-        }
-        let kind: Kind
+        let kind: MutationKind
     }
 
     func parseMutationOutcome(_ json: String) -> MutationOutcome? {
@@ -61,7 +62,7 @@ extension EditorV2Adapter {
         [
             "type": type,
             "anchor": Int(clampScalar(anchor)),
-            "head": Int(clampScalar(head)),
+            "head": Int(clampScalar(head))
         ]
     }
 
@@ -82,7 +83,7 @@ extension EditorV2Adapter {
             [
                 "ownerId": String(nativeOwnerId),
                 "positionEpoch": String(positionEpoch),
-                "intent": intent,
+                "intent": intent
             ],
             includeBaseRevision: false
         ) { requestJson in
@@ -126,7 +127,7 @@ extension EditorV2Adapter {
             switch outcome.kind {
             case .notApplicable:
                 documentChanged = false
-            case .transaction(_, _), .replacement(_, _):
+            case .transaction, .replacement:
                 guard let data = value.data(using: .utf8),
                       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let didChangeDocument = object["documentChanged"] as? Bool
@@ -255,57 +256,57 @@ extension EditorV2Adapter {
         case .failure(let error):
             return handleMutationError(error)
         case .success(let value):
-                guard let outcome = parseMutationOutcome(value) else {
-                    emit(contractError("v2 mutation outcome violates the frozen shape"))
-                    return nil
+            guard let outcome = parseMutationOutcome(value) else {
+                emit(contractError("v2 mutation outcome violates the frozen shape"))
+                return nil
+            }
+            let postSelectionMirror = mirror
+            let preSelection = pre
+            let changed: Bool
+            switch outcome.kind {
+            case .transaction(let didChange, let revision):
+                changed = didChange
+                baseDocumentRevision = revision
+                if let postSelectionMirror, !adoptEngineSelection {
+                    lastSyncedScalarSelection = postSelectionMirror
                 }
-                let postSelectionMirror = mirror
-                let preSelection = pre
-                let changed: Bool
-                switch outcome.kind {
-                case .transaction(let didChange, let revision):
-                    changed = didChange
-                    baseDocumentRevision = revision
-                    if let postSelectionMirror, !adoptEngineSelection {
-                        lastSyncedScalarSelection = postSelectionMirror
-                    }
-                case .notApplicable:
-                    // Nothing applicable: no commit happened; surface the current
-                    // state (legacy no-op command parity) and skip the drain.
-                    return refreshInternal(mirrorSelection: postSelectionMirror ?? preSelection)?.updateJSON
-                case .replacement(let didChange, let revision):
-                    changed = didChange
-                    baseDocumentRevision = revision
-                    // Whole-root replacement resets the engine-side selection;
-                    // the cached sync point is no longer valid.
-                    lastSyncedScalarSelection = nil
-                }
-                guard let update = refreshInternal(
-                    mirrorSelection: adoptEngineSelection
-                        ? nil
-                        : postSelectionMirror ?? (includeSelectionInUpdate ? preSelection : nil),
-                    // Paste and composition-preserving paths still derive active
-                    // and history state from the authoritative post-operation
-                    // selection. Only the view-facing selection is omitted so
-                    // UIKit retains its IME-owned caret.
-                    strippingViewSelection: !adoptEngineSelection
-                        && postSelectionMirror == nil
-                        && !includeSelectionInUpdate
-                )?.updateJSON else {
-                    return nil
-                }
-                if adoptEngineSelection {
-                    // The refresh adopted the engine's own post-command selection;
-                    // that is now the view's caret, so it becomes the sync point.
-                    // Leaving the pre-command offsets here would make the next
-                    // ensureSelection push a stale caret back into the engine.
-                    lastSyncedScalarSelection = cachedAuthoritativeScalarSelection
-                }
-                if changed && publishMutation {
-                    publishCachedCollaborationSelection()
-                    notifyCollaborationMutation()
-                }
-                return update
+            case .notApplicable:
+                // Nothing applicable: no commit happened; surface the current
+                // state (legacy no-op command parity) and skip the drain.
+                return refreshInternal(mirrorSelection: postSelectionMirror ?? preSelection)?.updateJSON
+            case .replacement(let didChange, let revision):
+                changed = didChange
+                baseDocumentRevision = revision
+                // Whole-root replacement resets the engine-side selection;
+                // the cached sync point is no longer valid.
+                lastSyncedScalarSelection = nil
+            }
+            guard let update = refreshInternal(
+                mirrorSelection: adoptEngineSelection
+                    ? nil
+                    : postSelectionMirror ?? (includeSelectionInUpdate ? preSelection : nil),
+                // Paste and composition-preserving paths still derive active
+                // and history state from the authoritative post-operation
+                // selection. Only the view-facing selection is omitted so
+                // UIKit retains its IME-owned caret.
+                strippingViewSelection: !adoptEngineSelection
+                    && postSelectionMirror == nil
+                    && !includeSelectionInUpdate
+            )?.updateJSON else {
+                return nil
+            }
+            if adoptEngineSelection {
+                // The refresh adopted the engine's own post-command selection;
+                // that is now the view's caret, so it becomes the sync point.
+                // Leaving the pre-command offsets here would make the next
+                // ensureSelection push a stale caret back into the engine.
+                lastSyncedScalarSelection = cachedAuthoritativeScalarSelection
+            }
+            if changed && publishMutation {
+                publishCachedCollaborationSelection()
+                notifyCollaborationMutation()
+            }
+            return update
         }
     }
 

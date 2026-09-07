@@ -1,8 +1,7 @@
 package com.apollohg.editor
 
-
-import org.json.JSONObject
 import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * The v2 adapter.
@@ -25,7 +24,7 @@ internal class EditorV2Adapter private constructor(
     internal val backend: EditorV2Backend,
     val editorId: String,
     internal val roomBound: Boolean,
-    internal val collaborationWake: (String, CollaborationWakeReason) -> Unit,
+    internal val collaborationWake: (String, CollaborationWakeReason) -> Unit
 ) : EditorV2Driver {
 
     var onAutonomousError: ((EditorV2Error) -> Unit)? = null
@@ -33,7 +32,7 @@ internal class EditorV2Adapter private constructor(
     private data class AutonomousErrorOwner(
         val token: Long,
         val callback: (EditorV2Error) -> Unit,
-        val onReleased: () -> Unit,
+        val onReleased: () -> Unit
     )
 
     /** One live native-view binding exclusively owns autonomous errors. */
@@ -41,6 +40,7 @@ internal class EditorV2Adapter private constructor(
 
     var baseDocumentRevision: ULong = 0uL
         internal set
+
     /** Paired with [baseDocumentRevision] by the same locked render read. */
     var stateRevision: ULong = 0uL
         internal set
@@ -81,7 +81,7 @@ internal class EditorV2Adapter private constructor(
             roomBound: Boolean,
             collaborationWake: (String, CollaborationWakeReason) -> Unit = { id, reason ->
                 NativeCollaborationTransportRegistry.notifyOutboundAvailable(id, reason)
-            },
+            }
         ): EditorV2Adapter? {
             if (!isCanonicalDecimalEditorId(editorId)) return null
             // Attachment establishes only that the handle is live. The first
@@ -91,17 +91,19 @@ internal class EditorV2Adapter private constructor(
             return EditorV2Adapter(backend, editorId, roomBound, collaborationWake)
         }
 
-        private fun isCanonicalDecimalEditorId(editorId: String): Boolean =
-            editorId.isNotEmpty() &&
-                editorId.all { it in '0'..'9' } &&
-                (editorId == "0" || editorId.first() != '0') &&
-                editorId.toULongOrNull() != null
+        private fun isCanonicalDecimalEditorId(editorId: String): Boolean = editorId.isNotEmpty() &&
+            editorId.all { it in '0'..'9' } &&
+            (editorId == "0" || editorId.first() != '0') &&
+            editorId.toULongOrNull() != null
 
         fun contractError(message: String): EditorV2Error =
             EditorV2Error(domain = "boundary", code = "FFI_RESULT_INVALID", message = message)
 
-        internal fun destroyedError(): EditorV2Error =
-            EditorV2Error(domain = "lifecycle", code = "ENGINE_DESTROYED", message = "editor session is destroyed")
+        internal fun destroyedError(): EditorV2Error = EditorV2Error(
+            domain = "lifecycle",
+            code = "ENGINE_DESTROYED",
+            message = "editor session is destroyed"
+        )
     }
 
     fun destroy(): EditorV2Error? {
@@ -116,19 +118,17 @@ internal class EditorV2Adapter private constructor(
         return error
     }
 
-
-    private fun requestIdExhaustedError(): EditorV2Error =
-        EditorV2Error(
-            domain = "boundary",
-            code = "CONFIG_INVALID",
-            message = "v2 request id counter exhausted",
-            requestId = nextRequestId.toString(),
-            limit = ULong.MAX_VALUE.toString(),
-        )
+    private fun requestIdExhaustedError(): EditorV2Error = EditorV2Error(
+        domain = "boundary",
+        code = "CONFIG_INVALID",
+        message = "v2 request id counter exhausted",
+        requestId = nextRequestId.toString(),
+        limit = ULong.MAX_VALUE.toString()
+    )
 
     private fun buildEnvelope(
         payload: JSONObject,
-        includeBaseRevision: Boolean = true,
+        includeBaseRevision: Boolean = true
     ): EditorV2CallResult<String> {
         if (nextRequestId == ULong.MAX_VALUE) {
             return EditorV2CallResult.Err(requestIdExhaustedError())
@@ -137,25 +137,30 @@ internal class EditorV2Adapter private constructor(
         lastRequestIdForTesting = nextRequestId
         val parts = mutableListOf(
             "\"version\":1",
-            "\"requestId\":${JSONObject.quote(nextRequestId.toString())}",
+            "\"requestId\":${JSONObject.quote(nextRequestId.toString())}"
         )
         if (includeBaseRevision) {
-            parts.add("\"baseDocumentRevision\":${JSONObject.quote(baseDocumentRevision.toString())}")
+            parts.add(
+                "\"baseDocumentRevision\":${JSONObject.quote(baseDocumentRevision.toString())}"
+            )
         }
         val payloadJson = payload.toString()
         if (payloadJson.length > 2) {
             parts.add(payloadJson.substring(1, payloadJson.length - 1))
         }
-        return EditorV2CallResult.Ok(parts.joinToString(separator = ",", prefix = "{", postfix = "}"))
+        return EditorV2CallResult.Ok(
+            parts.joinToString(separator = ",", prefix = "{", postfix = "}")
+        )
     }
 
     internal fun callWithEnvelope(
         payload: JSONObject,
         includeBaseRevision: Boolean = true,
-        call: (String) -> EditorV2CallResult<String>,
+        call: (String) -> EditorV2CallResult<String>
     ): EditorV2CallResult<String> =
         when (val envelope = buildEnvelope(payload, includeBaseRevision)) {
             is EditorV2CallResult.Err -> envelope
+
             is EditorV2CallResult.Ok -> {
                 backendEnvelopeCallCountForTesting += 1
                 call(envelope.value)
@@ -178,14 +183,13 @@ internal class EditorV2Adapter private constructor(
             JSONObject()
                 .put("type", "text")
                 .put("anchor", positionEnvelope(anchor, affinity))
-                .put("head", positionEnvelope(head, affinity)),
+                .put("head", positionEnvelope(head, affinity))
         )
-
 
     internal fun bindAutonomousErrorOwner(
         token: Long,
         callback: (EditorV2Error) -> Unit,
-        onReleased: () -> Unit,
+        onReleased: () -> Unit
     ) {
         val displaced = synchronized(this) {
             autonomousErrorOwner.also {
@@ -273,9 +277,18 @@ internal class EditorV2Adapter private constructor(
     internal var latestJSDrivenDocumentRevision: ULong = 0uL
 
     private fun parseExternalReset(resetJson: String): JSONObject? {
-        val reset = try { JSONObject(resetJson) } catch (_: Exception) { null }
+        val reset = try {
+            JSONObject(resetJson)
+        } catch (_: Exception) {
+            null
+        }
         if (reset == null || reset.optString("history") != "resetAndClear" ||
-            reset.keys().asSequence().toSet() != setOf("history", "documentRevision", if (reset.has("setJson")) "setJson" else "setHtml") ||
+            reset.keys().asSequence().toSet() !=
+            setOf(
+                "history",
+                "documentRevision",
+                if (reset.has("setJson")) "setJson" else "setHtml"
+            ) ||
             (reset.opt("setJson") !is JSONObject && reset.opt("setHtml") !is String) ||
             canonicalV2U64(reset.opt("documentRevision") as? String) == null
         ) {
@@ -285,23 +298,37 @@ internal class EditorV2Adapter private constructor(
         return reset
     }
 
-    internal fun validateExternalReset(resetJson: String): Boolean = parseExternalReset(resetJson) != null
+    internal fun validateExternalReset(resetJson: String): Boolean =
+        parseExternalReset(resetJson) != null
 
     @Synchronized
     internal fun adoptExternalReset(renderJson: String, resetJson: String): String? {
         val reset = parseExternalReset(resetJson) ?: return null
         val current = refreshFromRustState(null) ?: return null
-        if (parseAtomicRenderSnapshot(current)?.documentRevision == reset.getString("documentRevision").toULong()) {
+        if (parseAtomicRenderSnapshot(current)?.documentRevision ==
+            reset.getString("documentRevision").toULong()
+        ) {
             return adoptExternalRender(renderJson)
         }
-        if (latestJSDrivenDocumentRevision > reset.getString("documentRevision").toULong()) return current
+        if (latestJSDrivenDocumentRevision >
+            reset.getString("documentRevision").toULong()
+        ) {
+            return current
+        }
         when (val result = backend.getState(editorId)) {
             is EditorV2CallResult.Err -> {
                 emit(result.error)
                 return null
             }
+
             is EditorV2CallResult.Ok -> {
-                val origin = try { JSONObject(result.value).getString("documentOrigin") } catch (_: Exception) { null }
+                val origin = try {
+                    JSONObject(result.value).getString("documentOrigin")
+                } catch (
+                    _: Exception
+                ) {
+                    null
+                }
                 if (origin == null) {
                     emit(contractError("v2 reset state violates the frozen shape"))
                     return null
@@ -310,15 +337,22 @@ internal class EditorV2Adapter private constructor(
             }
         }
         reset.remove("documentRevision")
-        return when (val result = callWithEnvelope(reset, includeBaseRevision = false) { requestJson ->
-            backend.replaceDocument(editorId, requestJson)
-        }) {
+        return when (
+            val result = callWithEnvelope(reset, includeBaseRevision = false) { requestJson ->
+                backend.replaceDocument(editorId, requestJson)
+            }
+        ) {
             is EditorV2CallResult.Err -> {
                 emit(result.error)
                 null
             }
+
             is EditorV2CallResult.Ok -> {
-                val commit = try { JSONObject(result.value) } catch (_: Exception) { null }
+                val commit = try {
+                    JSONObject(result.value)
+                } catch (_: Exception) {
+                    null
+                }
                 if (commit?.opt("changed") !is Boolean ||
                     (commit.opt("documentRevision") as? String)?.toULongOrNull() == null
                 ) {
@@ -355,7 +389,7 @@ internal class EditorV2Adapter private constructor(
             pinned.snapshot,
             stripViewSelection = false,
             engineOwnedSelection = true,
-            resolvedPositionEpoch = pinned.positionEpoch,
+            resolvedPositionEpoch = pinned.positionEpoch
         )
     }
 
@@ -399,6 +433,7 @@ internal class EditorV2Adapter private constructor(
                 emit(result.error)
                 null
             }
+
             is EditorV2CallResult.Ok -> try {
                 JSONObject(result.value).getString("html")
             } catch (error: Exception) {
@@ -420,6 +455,7 @@ internal class EditorV2Adapter private constructor(
                 emit(result.error)
                 null
             }
+
             is EditorV2CallResult.Ok -> result.value
         }
     }
@@ -431,14 +467,18 @@ internal class EditorV2Adapter private constructor(
         cachedHistoryState?.let { exactBool(it.opt("canRedo")) }
 
     override fun selectionJson(): String? {
-        val update = refreshInternal(cachedAuthoritativeScalarSelection?.copyOf(), stripViewSelection = false) ?: return null
+        val update =
+            refreshInternal(
+                cachedAuthoritativeScalarSelection?.copyOf(),
+                stripViewSelection = false
+            )
+                ?: return null
         return try {
             JSONObject(update).getJSONObject("selection").toString()
         } catch (error: Exception) {
             null
         }
     }
-
 
     override fun syncSelection(anchor: Int, head: Int): EditorV2SelectionSync? {
         if (destroyed) {
@@ -447,23 +487,26 @@ internal class EditorV2Adapter private constructor(
         }
         if (nativeOwnerId != null) {
             val previousDocumentRevision = baseDocumentRevision
-            val update = performNativeIntent(nativeIntent("setSelection", anchor, head)).updateJsonOrNull()
-                ?: return null
+            val update =
+                performNativeIntent(nativeIntent("setSelection", anchor, head)).updateJsonOrNull()
+                    ?: return null
             val mapping = textDocumentSelection(update) ?: return null
             publishCollaborationSelection(mapping[0], mapping[1])
             return EditorV2SelectionSync(
                 mapping[0],
                 mapping[1],
-                update.takeIf { baseDocumentRevision != previousDocumentRevision },
+                update.takeIf { baseDocumentRevision != previousDocumentRevision }
             )
         }
         var refreshedUpdateJson: String? = null
         val mapping = when (val outcome = ensureSelection(anchor, head)) {
             is SelectionSyncOutcome.Ok -> resolveSelectionMapping(anchor, head)
+
             is SelectionSyncOutcome.Refreshed -> {
                 refreshedUpdateJson = outcome.updateJson
                 textDocumentSelection(outcome.updateJson)
             }
+
             is SelectionSyncOutcome.Failed -> return null
         }
         if (mapping == null) return null
@@ -475,8 +518,9 @@ internal class EditorV2Adapter private constructor(
         if (destroyed) return null
         if (nativeOwnerId != null) {
             val previousDocumentRevision = baseDocumentRevision
-            val update = performNativeIntent(nativeIntent("setSelection", anchor, head)).updateJsonOrNull()
-                ?: return null
+            val update =
+                performNativeIntent(nativeIntent("setSelection", anchor, head)).updateJsonOrNull()
+                    ?: return null
             val mapping = textDocumentSelection(update) ?: return update
             publishCollaborationSelection(mapping[0], mapping[1])
             return update.takeIf { baseDocumentRevision != previousDocumentRevision }
@@ -488,10 +532,12 @@ internal class EditorV2Adapter private constructor(
                 val selection = lastSyncedScalarSelection ?: return null
                 resolveSelectionMapping(selection[0], selection[1])
             }
+
             is SelectionSyncOutcome.Refreshed -> {
                 refreshedUpdateJson = outcome.updateJson
                 textDocumentSelection(outcome.updateJson)
             }
+
             is SelectionSyncOutcome.Failed -> return null
         } ?: return refreshedUpdateJson
         publishCollaborationSelection(mapping[0], mapping[1])
@@ -515,7 +561,7 @@ internal class EditorV2Adapter private constructor(
         return performMutation(
             preSelection = intArrayOf(atScalarPos, atScalarPos),
             postSelectionMirror = intArrayOf(postCaret, postCaret),
-            includeSelectionInUpdate = true,
+            includeSelectionInUpdate = true
         ) {
             callWithEnvelope(JSONObject().put("text", text)) { requestJson ->
                 backend.applyInput(editorId, requestJson)
@@ -539,13 +585,13 @@ internal class EditorV2Adapter private constructor(
         return performMutation(
             preSelection = intArrayOf(scalarFrom, scalarTo),
             postSelectionMirror = intArrayOf(postCaret, postCaret),
-            includeSelectionInUpdate = true,
+            includeSelectionInUpdate = true
         ) {
             callWithEnvelope(
                 JSONObject().put(
                     "command",
-                    JSONObject().put("type", "replaceSelectionText").put("text", text),
-                ),
+                    JSONObject().put("type", "replaceSelectionText").put("text", text)
+                )
             ) { requestJson ->
                 backend.applyCommand(editorId, requestJson)
             }
@@ -555,7 +601,7 @@ internal class EditorV2Adapter private constructor(
     override fun replaceTextRangeNative(
         scalarFrom: Int,
         scalarTo: Int,
-        text: String,
+        text: String
     ): EditorV2NativeIntentResult {
         if (nativeOwnerId == null) return EditorV2NativeIntentResult.Rejected
         if (text.isEmpty()) {
@@ -565,28 +611,28 @@ internal class EditorV2Adapter private constructor(
                 return refreshUnchangedNativeOutcome(
                     performNativeIntent(
                         nativeIntent("setSelection", clampedFrom, clampedFrom),
-                        reportPositionEpochInvalid = true,
+                        reportPositionEpochInvalid = true
                     )
                 )
             }
             return refreshUnchangedNativeOutcome(
                 performNativeIntent(
                     nativeIntent("deleteRange", clampedFrom, clampedTo),
-                    reportPositionEpochInvalid = true,
+                    reportPositionEpochInvalid = true
                 )
             )
         }
         return refreshUnchangedNativeOutcome(
             performNativeIntent(
                 nativeIntent("replaceSelectionText", scalarFrom, scalarTo).put("text", text),
-                reportPositionEpochInvalid = true,
+                reportPositionEpochInvalid = true
             )
         )
     }
 
     override fun deleteScalarRangeNative(
         scalarFrom: Int,
-        scalarTo: Int,
+        scalarTo: Int
     ): EditorV2NativeIntentResult {
         if (nativeOwnerId == null) return EditorV2NativeIntentResult.Rejected
         val clampedFrom = clampScalar(scalarFrom)
@@ -597,7 +643,7 @@ internal class EditorV2Adapter private constructor(
             nativeIntent("deleteRange", clampedFrom, clampedTo)
         }
         return refreshUnchangedNativeOutcome(
-            performNativeIntent(intent, reportPositionEpochInvalid = true),
+            performNativeIntent(intent, reportPositionEpochInvalid = true)
         )
     }
 
@@ -610,7 +656,7 @@ internal class EditorV2Adapter private constructor(
         }
         return performMutation(
             postSelectionMirror = intArrayOf(clampedFrom, clampedFrom),
-            includeSelectionInUpdate = true,
+            includeSelectionInUpdate = true
         ) {
             callWithEnvelope(
                 JSONObject().put(
@@ -621,9 +667,9 @@ internal class EditorV2Adapter private constructor(
                             "range",
                             JSONObject()
                                 .put("from", positionEnvelope(clampedFrom))
-                                .put("to", positionEnvelope(clampedTo)),
-                        ),
-                ),
+                                .put("to", positionEnvelope(clampedTo))
+                        )
+                )
             ) { requestJson ->
                 backend.applyCommand(editorId, requestJson)
             }
@@ -632,53 +678,76 @@ internal class EditorV2Adapter private constructor(
 
     override fun deleteBackwardAtSelection(anchor: Int, head: Int): String? {
         if (nativeOwnerId != null) {
-            return performNativeIntent(nativeIntent("deleteBackward", anchor, head)).updateJsonOrNull()
+            return performNativeIntent(
+                nativeIntent("deleteBackward", anchor, head)
+            ).updateJsonOrNull()
         }
         val postCaret = if (anchor == head) (anchor - 1).coerceAtLeast(0) else minOf(anchor, head)
         return performMutation(
             preSelection = intArrayOf(anchor, head),
             postSelectionMirror = intArrayOf(postCaret, postCaret),
-            includeSelectionInUpdate = true,
+            includeSelectionInUpdate = true
         ) {
-            callWithEnvelope(JSONObject().put("command", JSONObject().put("type", "deleteBackward"))) { requestJson ->
+            callWithEnvelope(
+                JSONObject().put("command", JSONObject().put("type", "deleteBackward"))
+            ) { requestJson ->
                 backend.applyCommand(editorId, requestJson)
             }
         }
     }
 
-    override fun splitBlockAt(scalarPos: Int): EditorV2SplitRender? =
-        if (nativeOwnerId != null) {
-            when (val outcome = performNativeIntent(nativeIntent("splitBlock", scalarPos, scalarPos))) {
-                is EditorV2NativeIntentResult.Applied ->
-                    EditorV2SplitRender(outcome.render.updateJson, outcome.render.changed)
-                is EditorV2NativeIntentResult.Recovered ->
-                    EditorV2SplitRender(outcome.updateJson, false)
-                EditorV2NativeIntentResult.Rejected -> null
-            }
-        } else performSplitMutation(
-            preSelection = intArrayOf(scalarPos, scalarPos),
-            postSelectionMirror = intArrayOf(scalarPos + 1, scalarPos + 1),
+    override fun splitBlockAt(scalarPos: Int): EditorV2SplitRender? = if (nativeOwnerId != null) {
+        when (
+            val outcome = performNativeIntent(
+                nativeIntent("splitBlock", scalarPos, scalarPos)
+            )
         ) {
-            callWithEnvelope(JSONObject().put("command", JSONObject().put("type", "splitBlock"))) { requestJson ->
+            is EditorV2NativeIntentResult.Applied ->
+                EditorV2SplitRender(outcome.render.updateJson, outcome.render.changed)
+
+            is EditorV2NativeIntentResult.Recovered ->
+                EditorV2SplitRender(outcome.updateJson, false)
+
+            EditorV2NativeIntentResult.Rejected -> null
+        }
+    } else {
+        performSplitMutation(
+            preSelection = intArrayOf(scalarPos, scalarPos),
+            postSelectionMirror = intArrayOf(scalarPos + 1, scalarPos + 1)
+        ) {
+            callWithEnvelope(
+                JSONObject().put("command", JSONObject().put("type", "splitBlock"))
+            ) { requestJson ->
                 backend.applyCommand(editorId, requestJson)
             }
         }
+    }
 
     override fun deleteAndSplit(scalarFrom: Int, scalarTo: Int): EditorV2SplitRender? =
         if (nativeOwnerId != null) {
-            when (val outcome = performNativeIntent(nativeIntent("deleteAndSplit", scalarFrom, scalarTo))) {
+            when (
+                val outcome = performNativeIntent(
+                    nativeIntent("deleteAndSplit", scalarFrom, scalarTo)
+                )
+            ) {
                 is EditorV2NativeIntentResult.Applied ->
                     EditorV2SplitRender(outcome.render.updateJson, outcome.render.changed)
+
                 is EditorV2NativeIntentResult.Recovered ->
                     EditorV2SplitRender(outcome.updateJson, false)
+
                 EditorV2NativeIntentResult.Rejected -> null
             }
-        } else performSplitMutation(
-            preSelection = intArrayOf(scalarFrom, scalarTo),
-            postSelectionMirror = intArrayOf(scalarFrom + 1, scalarFrom + 1),
-        ) {
-            callWithEnvelope(JSONObject().put("command", JSONObject().put("type", "deleteAndSplit"))) { requestJson ->
-                backend.applyCommand(editorId, requestJson)
+        } else {
+            performSplitMutation(
+                preSelection = intArrayOf(scalarFrom, scalarTo),
+                postSelectionMirror = intArrayOf(scalarFrom + 1, scalarFrom + 1)
+            ) {
+                callWithEnvelope(
+                    JSONObject().put("command", JSONObject().put("type", "deleteAndSplit"))
+                ) { requestJson ->
+                    backend.applyCommand(editorId, requestJson)
+                }
             }
         }
 
@@ -692,19 +761,26 @@ internal class EditorV2Adapter private constructor(
                     "range",
                     JSONObject()
                         .put("from", positionEnvelope(from))
-                        .put("to", positionEnvelope(to)),
+                        .put("to", positionEnvelope(to))
                 )
                 .put("at", positionEnvelope(destination)),
             anchor,
-            head,
+            head
         )
     }
 
-    override fun insertNode(nodeType: String, anchor: Int, head: Int): String? =
-        commandAtSelection(JSONObject().put("type", "insertNode").put("nodeType", nodeType), anchor, head)
+    override fun insertNode(nodeType: String, anchor: Int, head: Int): String? = commandAtSelection(
+        JSONObject().put("type", "insertNode").put("nodeType", nodeType),
+        anchor,
+        head
+    )
 
     override fun insertContentHtmlAtSelection(html: String, anchor: Int, head: Int): String? =
-        commandAtSelection(JSONObject().put("type", "insertContentHtml").put("html", html), anchor, head)
+        commandAtSelection(
+            JSONObject().put("type", "insertContentHtml").put("html", html),
+            anchor,
+            head
+        )
 
     override fun insertContentJsonAtSelection(json: String, anchor: Int, head: Int): String? {
         val fragment = try {
@@ -713,11 +789,18 @@ internal class EditorV2Adapter private constructor(
             emit(contractError("insertContentJson fragment is not valid JSON"))
             return null
         }
-        return commandAtSelection(JSONObject().put("type", "insertContentJson").put("json", fragment), anchor, head)
+        return commandAtSelection(
+            JSONObject().put("type", "insertContentJson").put("json", fragment),
+            anchor,
+            head
+        )
     }
 
-    override fun toggleMark(markName: String, anchor: Int, head: Int): String? =
-        commandAtSelection(JSONObject().put("type", "toggleMark").put("markType", markName), anchor, head)
+    override fun toggleMark(markName: String, anchor: Int, head: Int): String? = commandAtSelection(
+        JSONObject().put("type", "toggleMark").put("markType", markName),
+        anchor,
+        head
+    )
 
     override fun setMark(markName: String, attrsJson: String, anchor: Int, head: Int): String? {
         val attrs = try {
@@ -729,15 +812,21 @@ internal class EditorV2Adapter private constructor(
         return commandAtSelection(
             JSONObject().put("type", "setMark").put("markType", markName).put("attrs", attrs),
             anchor,
-            head,
+            head
         )
     }
 
-    override fun unsetMark(markName: String, anchor: Int, head: Int): String? =
-        commandAtSelection(JSONObject().put("type", "unsetMark").put("markType", markName), anchor, head)
+    override fun unsetMark(markName: String, anchor: Int, head: Int): String? = commandAtSelection(
+        JSONObject().put("type", "unsetMark").put("markType", markName),
+        anchor,
+        head
+    )
 
-    override fun toggleHeading(level: Int, anchor: Int, head: Int): String? =
-        commandAtSelection(JSONObject().put("type", "toggleHeading").put("level", level), anchor, head)
+    override fun toggleHeading(level: Int, anchor: Int, head: Int): String? = commandAtSelection(
+        JSONObject().put("type", "toggleHeading").put("level", level),
+        anchor,
+        head
+    )
 
     override fun toggleCodeBlock(anchor: Int, head: Int): String? =
         commandAtSelection(JSONObject().put("type", "toggleCodeBlock"), anchor, head)
@@ -748,9 +837,12 @@ internal class EditorV2Adapter private constructor(
     override fun wrapInList(listType: String, anchor: Int, head: Int): String? {
         val itemType = EditorNodeTypes.listItemType(listType)
         return commandAtSelection(
-            JSONObject().put("type", "wrapInList").put("listType", listType).put("itemType", itemType),
+            JSONObject().put(
+                "type",
+                "wrapInList"
+            ).put("listType", listType).put("itemType", itemType),
             anchor,
-            head,
+            head
         )
     }
 
@@ -776,8 +868,8 @@ internal class EditorV2Adapter private constructor(
                         .put("type", "resizeImage")
                         .put("at", positionEnvelope(scalar))
                         .put("width", width)
-                        .put("height", height),
-                ),
+                        .put("height", height)
+                )
             ) { requestJson ->
                 backend.applyCommand(editorId, requestJson)
             }
@@ -790,10 +882,11 @@ internal class EditorV2Adapter private constructor(
     override fun redo(): String? =
         performHistoryMutation { requestJson -> backend.redo(editorId, requestJson) }
 
-
     override fun setContentHtml(html: String): String? =
         performMutation(postSelectionMirror = intArrayOf(0, 0), includeSelectionInUpdate = true) {
-            callWithEnvelope(JSONObject().put("setHtml", html).put("history", "resetAndClear")) { requestJson ->
+            callWithEnvelope(
+                JSONObject().put("setHtml", html).put("history", "resetAndClear")
+            ) { requestJson ->
                 backend.applyLocalApi(editorId, requestJson)
             }
         }
@@ -805,8 +898,13 @@ internal class EditorV2Adapter private constructor(
             emit(contractError("setContentJson document is not valid JSON"))
             return null
         }
-        return performMutation(postSelectionMirror = intArrayOf(0, 0), includeSelectionInUpdate = true) {
-            callWithEnvelope(JSONObject().put("setJson", document).put("history", "resetAndClear")) { requestJson ->
+        return performMutation(
+            postSelectionMirror = intArrayOf(0, 0),
+            includeSelectionInUpdate = true
+        ) {
+            callWithEnvelope(
+                JSONObject().put("setJson", document).put("history", "resetAndClear")
+            ) { requestJson ->
                 backend.applyLocalApi(editorId, requestJson)
             }
         }

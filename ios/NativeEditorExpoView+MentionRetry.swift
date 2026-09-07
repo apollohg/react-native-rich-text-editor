@@ -27,8 +27,7 @@ extension NativeEditorExpoView {
             return
         }
         if let retryScope,
-           !isMentionSuggestionRetryScopeCurrent(retryScope)
-        {
+           !isMentionSuggestionRetryScopeCurrent(retryScope) {
             return
         }
 
@@ -61,12 +60,11 @@ extension NativeEditorExpoView {
         }
         if let retryScope,
            !doesMentionQueryState(
-                queryState,
-                match: retryScope,
-                acceptingPreflightDocumentVersion: documentVersion(fromUpdateJSON: preparation.updateJSON),
-                currentText: richTextView.textView.text ?? ""
-           )
-        {
+               queryState,
+               match: retryScope,
+               acceptingPreflightDocumentVersion: documentVersion(fromUpdateJSON: preparation.updateJSON),
+               currentText: richTextView.textView.text ?? ""
+           ) {
             return
         }
         guard let currentSuggestion = filteredMentionSuggestions(
@@ -95,8 +93,8 @@ extension NativeEditorExpoView {
             "type": "doc",
             "content": [[
                 "type": "mention",
-                "attrs": attrs,
-            ]],
+                "attrs": attrs
+            ]]
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8)
@@ -171,8 +169,7 @@ extension NativeEditorExpoView {
         var acceptedPreflightVersionChange = false
         if let retryVersion = retry.documentVersion,
            let currentVersion,
-           currentVersion != retryVersion
-        {
+           currentVersion != retryVersion {
             guard let preflightDocumentVersion,
                   currentVersion == preflightDocumentVersion
             else {
@@ -191,8 +188,8 @@ extension NativeEditorExpoView {
 
         guard let currentText,
               let diff = mentionRetryTextDiff(
-                from: retry.textSnapshot,
-                to: currentText
+                  from: retry.textSnapshot,
+                  to: currentText
               ),
               let mappedRange = mappedMentionRetryRange(retry, through: diff)
         else {
@@ -215,8 +212,7 @@ extension NativeEditorExpoView {
         let currentVersion = currentDocumentVersion()
         if let retryVersion = retry.documentVersion,
            let currentVersion,
-           currentVersion != retryVersion
-        {
+           currentVersion != retryVersion {
             return false
         }
         return true
@@ -232,8 +228,7 @@ extension NativeEditorExpoView {
 
         var prefix = 0
         while prefix < sharedLength,
-              oldScalars[prefix] == newScalars[prefix]
-        {
+              oldScalars[prefix] == newScalars[prefix] {
             prefix += 1
         }
 
@@ -241,8 +236,7 @@ extension NativeEditorExpoView {
         var newEnd = newScalars.count
         while oldEnd > prefix,
               newEnd > prefix,
-              oldScalars[oldEnd - 1] == newScalars[newEnd - 1]
-        {
+              oldScalars[oldEnd - 1] == newScalars[newEnd - 1] {
             oldEnd -= 1
             newEnd -= 1
         }

@@ -166,8 +166,7 @@ final class NativeEditorViewRegistry {
                 return Self.commandPreparationJSON(ready: false, blockedReason: "destroying")
             }
             if !self.activeEditorIds.contains(editorId),
-               EditorV2Registry.adapter(forLegacyId: editorId) == nil
-            {
+               EditorV2Registry.adapter(forLegacyId: editorId) == nil {
                 return Self.commandPreparationJSON(ready: false, blockedReason: "destroyed")
             }
             let views = self.liveRegisteredViews(editorId: editorId).compactMap(\.view)

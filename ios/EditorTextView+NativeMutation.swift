@@ -1,5 +1,5 @@
-import UIKit
 import os
+import UIKit
 
 extension EditorTextView {
     struct NativeTextMutation {
@@ -462,7 +462,7 @@ extension EditorTextView {
     func sharedUtf16ScalarBoundary(atOrBefore offset: Int, in lhs: String, and rhs: String) -> Int {
         var candidate = min(max(offset, 0), lhs.utf16.count, rhs.utf16.count)
         while candidate > 0,
-              (!isUtf16ScalarBoundary(candidate, in: lhs) || !isUtf16ScalarBoundary(candidate, in: rhs)) {
+              !isUtf16ScalarBoundary(candidate, in: lhs) || !isUtf16ScalarBoundary(candidate, in: rhs) {
             candidate -= 1
         }
         return candidate

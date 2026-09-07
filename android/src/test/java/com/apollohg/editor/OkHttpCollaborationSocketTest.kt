@@ -1,5 +1,7 @@
 package com.apollohg.editor
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -7,8 +9,6 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 class OkHttpCollaborationSocketTest {
     @Test
@@ -44,8 +44,8 @@ class OkHttpCollaborationSocketTest {
                 onClosed = { code ->
                     if (code == 1000) closed.countDown()
                 },
-                onFailure = {},
-            ),
+                onFailure = {}
+            )
         )
 
         try {

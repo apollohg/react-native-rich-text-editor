@@ -274,7 +274,7 @@ impl MutationLookupSeed {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[allow(dead_code)] // Candidate publication is consumed by the next candidate-swap slice.
+
     pub(crate) fn prepare_candidate_publication<T: ReadTxn>(
         self,
         request_id: u64,

@@ -15,11 +15,17 @@ internal fun exactV2U32(value: Number?): UInt? {
     value ?: return null
     return when (value) {
         is Byte -> value.toLong().takeIf { it >= 0 }?.toUInt()
+
         is Short -> value.toLong().takeIf { it >= 0 }?.toUInt()
+
         is Int -> value.toLong().takeIf { it >= 0 }?.toUInt()
+
         is Long -> value.takeIf { it >= 0L && it <= UInt.MAX_VALUE.toLong() }?.toUInt()
+
         is Float -> exactV2U32FromDouble(value.toDouble())
+
         is Double -> exactV2U32FromDouble(value)
+
         // Expo's numeric bridge supplies only the primitive boxed forms
         // above. Reject arbitrary Number implementations rather than first
         // rounding them to Double and accidentally accepting a lossy value.

@@ -22,21 +22,85 @@ internal data class NativeToolbarItem(
 ) {
     companion object {
         val defaults = listOf(
-            NativeToolbarItem(ToolbarItemKind.mark, label = "Bold", icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.bold), mark = "bold"),
-            NativeToolbarItem(ToolbarItemKind.mark, label = "Italic", icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.italic), mark = "italic"),
-            NativeToolbarItem(ToolbarItemKind.mark, label = "Underline", icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.underline), mark = "underline"),
-            NativeToolbarItem(ToolbarItemKind.mark, label = "Strikethrough", icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.strike), mark = "strike"),
-            NativeToolbarItem(ToolbarItemKind.blockquote, label = "Blockquote", icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.blockquote)),
-            NativeToolbarItem(ToolbarItemKind.separator),
-            NativeToolbarItem(ToolbarItemKind.list, label = "Bullet List", icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.bulletList), listType = ToolbarListType.bullet_list),
-            NativeToolbarItem(ToolbarItemKind.list, label = "Ordered List", icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.orderedList), listType = ToolbarListType.ordered_list),
-            NativeToolbarItem(ToolbarItemKind.command, label = "Indent List", icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.indentList), command = ToolbarCommand.indentList),
-            NativeToolbarItem(ToolbarItemKind.command, label = "Outdent List", icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.outdentList), command = ToolbarCommand.outdentList),
-            NativeToolbarItem(ToolbarItemKind.node, label = "Line Break", icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.lineBreak), nodeType = "hard_break"),
-            NativeToolbarItem(ToolbarItemKind.node, label = "Horizontal Rule", icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.horizontalRule), nodeType = "horizontal_rule"),
-            NativeToolbarItem(ToolbarItemKind.separator),
-            NativeToolbarItem(ToolbarItemKind.command, label = "Undo", icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.undo), command = ToolbarCommand.undo),
-            NativeToolbarItem(ToolbarItemKind.command, label = "Redo", icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.redo), command = ToolbarCommand.redo)
+            NativeToolbarItem(
+                ToolbarItemKind.MARK,
+                label = "Bold",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.BOLD),
+                mark = "bold"
+            ),
+            NativeToolbarItem(
+                ToolbarItemKind.MARK,
+                label = "Italic",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.ITALIC),
+                mark = "italic"
+            ),
+            NativeToolbarItem(
+                ToolbarItemKind.MARK,
+                label = "Underline",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.UNDERLINE),
+                mark = "underline"
+            ),
+            NativeToolbarItem(
+                ToolbarItemKind.MARK,
+                label = "Strikethrough",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.STRIKE),
+                mark = "strike"
+            ),
+            NativeToolbarItem(
+                ToolbarItemKind.BLOCKQUOTE,
+                label = "Blockquote",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.BLOCKQUOTE)
+            ),
+            NativeToolbarItem(ToolbarItemKind.SEPARATOR),
+            NativeToolbarItem(
+                ToolbarItemKind.LIST,
+                label = "Bullet List",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.BULLET_LIST),
+                listType = ToolbarListType.BULLET_LIST
+            ),
+            NativeToolbarItem(
+                ToolbarItemKind.LIST,
+                label = "Ordered List",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.ORDERED_LIST),
+                listType = ToolbarListType.ORDERED_LIST
+            ),
+            NativeToolbarItem(
+                ToolbarItemKind.COMMAND,
+                label = "Indent List",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.INDENT_LIST),
+                command = ToolbarCommand.INDENT_LIST
+            ),
+            NativeToolbarItem(
+                ToolbarItemKind.COMMAND,
+                label = "Outdent List",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.OUTDENT_LIST),
+                command = ToolbarCommand.OUTDENT_LIST
+            ),
+            NativeToolbarItem(
+                ToolbarItemKind.NODE,
+                label = "Line Break",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.LINE_BREAK),
+                nodeType = "hard_break"
+            ),
+            NativeToolbarItem(
+                ToolbarItemKind.NODE,
+                label = "Horizontal Rule",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.HORIZONTAL_RULE),
+                nodeType = "horizontal_rule"
+            ),
+            NativeToolbarItem(ToolbarItemKind.SEPARATOR),
+            NativeToolbarItem(
+                ToolbarItemKind.COMMAND,
+                label = "Undo",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.UNDO),
+                command = ToolbarCommand.UNDO
+            ),
+            NativeToolbarItem(
+                ToolbarItemKind.COMMAND,
+                label = "Redo",
+                icon = NativeToolbarIcon(defaultId = ToolbarDefaultIconId.REDO),
+                command = ToolbarCommand.REDO
+            )
         )
 
         private fun parseItem(
@@ -45,62 +109,104 @@ internal data class NativeToolbarItem(
             allowSeparator: Boolean = true
         ): NativeToolbarItem? {
             val type = runCatching {
-                ToolbarItemKind.valueOf(rawItem.getString("type"))
+                ToolbarItemKind.fromWireValue(rawItem.getString("type"))
             }.getOrNull() ?: return null
             val key = rawItem.toolbarNullableString("key")
             val placement = rawItem.toolbarNullableString("placement")?.let {
-                runCatching { ToolbarItemPlacement.valueOf(it) }.getOrNull()
+                runCatching { ToolbarItemPlacement.fromWireValue(it) }.getOrNull()
             }
             val parsed = when (type) {
-                ToolbarItemKind.separator -> {
+                ToolbarItemKind.SEPARATOR -> {
                     if (!allowSeparator) {
                         null
                     } else {
                         NativeToolbarItem(type = type, key = key, placement = placement)
                     }
                 }
-                ToolbarItemKind.mark -> {
-                    val icon = NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
+
+                ToolbarItemKind.MARK -> {
+                    val icon =
+                        NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
                     val mark = rawItem.toolbarNullableString("mark") ?: return null
                     val label = rawItem.toolbarNullableString("label") ?: return null
                     NativeToolbarItem(type, key, label, icon, mark = mark, placement = placement)
                 }
-                ToolbarItemKind.heading -> {
-                    val icon = NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
+
+                ToolbarItemKind.HEADING -> {
+                    val icon =
+                        NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
                     val level = rawItem.optInt("level", -1)
                     if (level !in 1..6) return null
                     val label = rawItem.toolbarNullableString("label") ?: return null
-                    NativeToolbarItem(type, key, label, icon, headingLevel = level, placement = placement)
+                    NativeToolbarItem(
+                        type,
+                        key,
+                        label,
+                        icon,
+                        headingLevel = level,
+                        placement = placement
+                    )
                 }
-                ToolbarItemKind.blockquote -> {
-                    val icon = NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
+
+                ToolbarItemKind.BLOCKQUOTE -> {
+                    val icon =
+                        NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
                     val label = rawItem.toolbarNullableString("label") ?: return null
                     NativeToolbarItem(type, key, label, icon, placement = placement)
                 }
-                ToolbarItemKind.list -> {
-                    val icon = NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
+
+                ToolbarItemKind.LIST -> {
+                    val icon =
+                        NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
                     val listType = runCatching {
-                        ToolbarListType.valueOf(rawItem.getString("listType"))
+                        ToolbarListType.fromWireValue(rawItem.getString("listType"))
                     }.getOrNull() ?: return null
                     val label = rawItem.toolbarNullableString("label") ?: return null
-                    NativeToolbarItem(type, key, label, icon, listType = listType, placement = placement)
+                    NativeToolbarItem(
+                        type,
+                        key,
+                        label,
+                        icon,
+                        listType = listType,
+                        placement = placement
+                    )
                 }
-                ToolbarItemKind.command -> {
-                    val icon = NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
+
+                ToolbarItemKind.COMMAND -> {
+                    val icon =
+                        NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
                     val command = runCatching {
-                        ToolbarCommand.valueOf(rawItem.getString("command"))
+                        ToolbarCommand.fromWireValue(rawItem.getString("command"))
                     }.getOrNull() ?: return null
                     val label = rawItem.toolbarNullableString("label") ?: return null
-                    NativeToolbarItem(type, key, label, icon, command = command, placement = placement)
+                    NativeToolbarItem(
+                        type,
+                        key,
+                        label,
+                        icon,
+                        command = command,
+                        placement = placement
+                    )
                 }
-                ToolbarItemKind.node -> {
-                    val icon = NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
+
+                ToolbarItemKind.NODE -> {
+                    val icon =
+                        NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
                     val nodeType = rawItem.toolbarNullableString("nodeType") ?: return null
                     val label = rawItem.toolbarNullableString("label") ?: return null
-                    NativeToolbarItem(type, key, label, icon, nodeType = nodeType, placement = placement)
+                    NativeToolbarItem(
+                        type,
+                        key,
+                        label,
+                        icon,
+                        nodeType = nodeType,
+                        placement = placement
+                    )
                 }
-                ToolbarItemKind.action -> {
-                    val icon = NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
+
+                ToolbarItemKind.ACTION -> {
+                    val icon =
+                        NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
                     val keyValue = rawItem.toolbarNullableString("key") ?: return null
                     val label = rawItem.toolbarNullableString("label") ?: return null
                     NativeToolbarItem(
@@ -113,14 +219,16 @@ internal data class NativeToolbarItem(
                         isDisabled = rawItem.optBoolean("isDisabled", false)
                     )
                 }
-                ToolbarItemKind.group -> {
+
+                ToolbarItemKind.GROUP -> {
                     if (!allowGroup) return null
                     val keyValue = rawItem.toolbarNullableString("key") ?: return null
-                    val icon = NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
+                    val icon =
+                        NativeToolbarIcon.fromJson(rawItem.optJSONObject("icon")) ?: return null
                     val label = rawItem.toolbarNullableString("label") ?: return null
                     val presentation = rawItem.toolbarNullableString("presentation")?.let {
-                        runCatching { ToolbarGroupPresentation.valueOf(it) }.getOrNull()
-                    } ?: ToolbarGroupPresentation.expand
+                        runCatching { ToolbarGroupPresentation.fromWireValue(it) }.getOrNull()
+                    } ?: ToolbarGroupPresentation.EXPAND
                     val rawChildren = rawItem.optJSONArray("items") ?: return null
                     val children = mutableListOf<NativeToolbarItem>()
                     for (childIndex in 0 until rawChildren.length()) {

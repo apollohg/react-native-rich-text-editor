@@ -1,5 +1,5 @@
-import XCTest
 import CoreText
+import XCTest
 
 extension RenderBridgeTests {
     /// A single paragraph with unstyled text should produce the text with base font.
@@ -36,7 +36,7 @@ extension RenderBridgeTests {
         let blocks: [[[String: Any]]] = [[
             ["type": "blockStart", "nodeType": "paragraph", "depth": 0],
             ["type": "textRun", "text": "😀", "marks": []],
-            ["type": "blockEnd"],
+            ["type": "blockEnd"]
         ]]
 
         let result = RenderBridge.renderBlocks(
@@ -236,8 +236,8 @@ extension RenderBridgeTests {
                     "fontSize": 18,
                     "fontWeight": "700",
                     "fontStyle": "italic",
-                    "underline": false,
-                ],
+                    "underline": false
+                ]
             ])
         )
 
@@ -259,7 +259,7 @@ extension RenderBridgeTests {
         let blocks: [[[String: Any]]] = [[
             ["type": "blockStart", "nodeType": "paragraph", "depth": 0],
             ["type": "textRun", "text": "Hello", "marks": []],
-            ["type": "blockEnd"],
+            ["type": "blockEnd"]
         ]]
 
         let result = RenderBridge.renderBlocks(
@@ -308,10 +308,15 @@ extension RenderBridgeTests {
     /// Inline code must retain every requested emphasis trait through the same
     /// monospace resolver used by prepared viewer runs.
     func testRender_inlineCodeMatchesViewerForBoldAndItalicCombinations() {
-        let cases: [(name: String, marks: [Any], traits: UIFontDescriptor.SymbolicTraits)] = [
-            ("bold", ["code", "bold"], [.traitBold]),
-            ("italic", ["code", "italic"], [.traitItalic]),
-            ("bold italic", ["code", "bold", "italic"], [.traitBold, .traitItalic]),
+        struct MarkCase {
+            let name: String
+            let marks: [Any]
+            let traits: UIFontDescriptor.SymbolicTraits
+        }
+        let cases: [MarkCase] = [
+            MarkCase(name: "bold", marks: ["code", "bold"], traits: [.traitBold]),
+            MarkCase(name: "italic", marks: ["code", "italic"], traits: [.traitItalic]),
+            MarkCase(name: "bold italic", marks: ["code", "bold", "italic"], traits: [.traitBold, .traitItalic])
         ]
         let viewer = ViewerFontEnvironment(notificationCenter: .default)
 
@@ -349,7 +354,7 @@ extension RenderBridgeTests {
 
     func testRender_inlineCodePreservesTraitsWithThemedCustomLinkFamily() {
         let theme = EditorTheme(dictionary: [
-            "links": ["fontFamily": "AppleColorEmoji"],
+            "links": ["fontFamily": "AppleColorEmoji"]
         ])
         let requested: UIFontDescriptor.SymbolicTraits = [.traitBold, .traitItalic]
         let font = RenderBridge.attributesForMarks(

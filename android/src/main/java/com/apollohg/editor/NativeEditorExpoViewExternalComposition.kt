@@ -12,20 +12,26 @@ internal fun NativeEditorExpoView.beginExternalTextCompositionImpl(sessionId: St
     if (started) {
         activeExternalTextComposition = ActiveExternalTextComposition(
             sessionId = sessionId,
-            editorId = eventEditorId(richTextView.editorId),
+            editorId = eventEditorId(richTextView.editorId)
         )
     }
     return resultJson
 }
 
-internal fun NativeEditorExpoView.updateExternalTextCompositionImpl(sessionId: String, text: String): String =
-    richTextView.editorEditText.updateExternalTextComposition(sessionId, text)
+internal fun NativeEditorExpoView.updateExternalTextCompositionImpl(
+    sessionId: String,
+    text: String
+): String = richTextView.editorEditText.updateExternalTextComposition(sessionId, text)
 
-internal fun NativeEditorExpoView.commitExternalTextCompositionImpl(sessionId: String, finalText: String): String =
-    richTextView.editorEditText.commitExternalTextComposition(sessionId, finalText)
+internal fun NativeEditorExpoView.commitExternalTextCompositionImpl(
+    sessionId: String,
+    finalText: String
+): String = richTextView.editorEditText.commitExternalTextComposition(sessionId, finalText)
 
-internal fun NativeEditorExpoView.cancelExternalTextCompositionImpl(sessionId: String, cause: String): String =
-    richTextView.editorEditText.cancelExternalTextComposition(sessionId, cause)
+internal fun NativeEditorExpoView.cancelExternalTextCompositionImpl(
+    sessionId: String,
+    cause: String
+): String = richTextView.editorEditText.cancelExternalTextComposition(sessionId, cause)
 
 internal fun NativeEditorExpoView.cancelActiveExternalTextComposition(cause: String) {
     val composition = activeExternalTextComposition ?: return

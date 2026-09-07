@@ -1,8 +1,8 @@
 package com.apollohg.editor
 
+import kotlin.math.roundToInt
 import org.json.JSONArray
 import org.json.JSONObject
-import kotlin.math.roundToInt
 
 object LayoutConstants {
     /** Base indentation per depth level (pixels at base scale). */
@@ -54,7 +54,7 @@ object LayoutConstants {
     const val SYNTHETIC_PLACEHOLDER_CHARACTER: String = "\u200B"
 
     /** Background color for inline code spans (light gray). */
-    const val CODE_BACKGROUND_COLOR: Int = 0x1A000000  // 10% black
+    const val CODE_BACKGROUND_COLOR: Int = 0x1A000000 // 10% black
 }
 
 data class BlockContext(
@@ -114,7 +114,4 @@ internal data class PendingLeadingMargin(
     val blockquoteBaseIndentPx: Int = 0
 )
 
-internal data class PendingCodeBlockSpan(
-    val start: Int,
-    val end: Int
-)
+internal data class PendingCodeBlockSpan(val start: Int, val end: Int)

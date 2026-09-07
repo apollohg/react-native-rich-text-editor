@@ -204,9 +204,6 @@ fn render_update_cannot_mix_fields_with_a_concurrent_mutation() {
     destroy_handle(&id);
 }
 
-// Hard cutover: without a mirror, the snapshot carries and evaluates the
-// authoritative engine selection. A supplied mirror explicitly replaces
-// that selection for the snapshot.
 const ACTIVE_STATE_DOC: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"plain "},{"type":"text","text":"bold","marks":[{"type":"bold"}]}]}]}"#;
 
 #[test]

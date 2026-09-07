@@ -109,8 +109,6 @@ impl Document {
 
     /// Total token size of the document including the root node's open and
     /// close tags.
-    // Not reachable from production call paths after the Task 16C legacy runtime
-    // removal; exercised by crate tests.
     #[allow(dead_code)]
     pub fn doc_size(&self) -> u32 {
         self.root.node_size()
@@ -139,9 +137,7 @@ impl Document {
         let mut path: SmallVec<[u32; 8]> = SmallVec::new();
         let mut result = resolved_pos::resolve_in_node(&self.root, pos, &mut path)?;
 
-        // Fill in the absolute position.
         result.pos = pos;
-        // depth = 1 (doc) + number of path entries
         result.depth = 1 + result.node_path.len();
 
         Ok(result)

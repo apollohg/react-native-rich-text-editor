@@ -11,8 +11,6 @@ const BEFORE: &str =
     r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Hello"}]}]}"#;
 const AFTER: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Hello"}]},{"type":"paragraph","content":[{"type":"text","text":"World"}]}]}"#;
 
-// Task 16B: a bounded command-planning work budget is a deterministic
-// operation limit, not allocation-class resource exhaustion.
 #[test]
 fn structural_diff_work_budget_excess_is_an_operation_limit_not_resource_exhaustion() {
     let schema = tiptap_schema();

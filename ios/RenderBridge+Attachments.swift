@@ -1,16 +1,16 @@
-import UIKit
-import ImageIO
 import CryptoKit
+import ImageIO
+import UIKit
 
 struct BlockContext {
     let nodeType: String
     let depth: UInt8
     var listContext: [String: Any]?
-    var topLevelChildIndex: Int? = nil
-    var listMarkerContext: [String: Any]? = nil
+    var topLevelChildIndex: Int?
+    var listMarkerContext: [String: Any]?
     var markerPending: Bool = false
     var styleStart: Int = 0
-    var language: String? = nil
+    var language: String?
 }
 
 // MARK: - HorizontalRuleAttachment

@@ -4,8 +4,8 @@ import android.text.Spanned
 import org.json.JSONObject
 
 /**
-     * Insert text at a scalar position via the Rust editor.
-     */
+ * Insert text at a scalar position via the Rust editor.
+ */
 internal fun EditorEditText.insertTextInRust(text: String, atScalarPos: Int) {
     if (!hasLiveEditor()) return
     onInsertTextInRustForTesting?.let { callback ->
@@ -17,7 +17,11 @@ internal fun EditorEditText.insertTextInRust(text: String, atScalarPos: Int) {
     }
 }
 
-internal fun EditorEditText.replaceTextRangeInRust(scalarFrom: Int, scalarTo: Int, text: String): Boolean {
+internal fun EditorEditText.replaceTextRangeInRust(
+    scalarFrom: Int,
+    scalarTo: Int,
+    text: String
+): Boolean {
     if (!hasLiveEditor()) return false
     onReplaceTextInRustForTesting?.let { callback ->
         callback(scalarFrom, scalarTo, text)
@@ -72,8 +76,17 @@ internal fun EditorEditText.requestedCursorScalar(
 ): Int? {
     if (newCursorPosition == 1) return null
     val rawStart = PositionBridge.scalarToUtf16(scalarFrom, currentText)
-    val inCodeBlock = (text as? Spanned)?.getSpans(rawStart, rawStart, CodeBlockSpan::class.java)?.isNotEmpty() == true
-    val effectiveText = if (inCodeBlock) insertedText else insertedText.replace("\r\n", "\n").replace('\r', '\n')
+    val inCodeBlock =
+        (text as? Spanned)?.getSpans(rawStart, rawStart, CodeBlockSpan::class.java)?.isNotEmpty() ==
+            true
+    val effectiveText = if (inCodeBlock) {
+        insertedText
+    } else {
+        insertedText.replace(
+            "\r\n",
+            "\n"
+        ).replace('\r', '\n')
+    }
     val insertedScalarLength = effectiveText.codePointCount(0, effectiveText.length)
     val currentScalarLength = currentText.codePointCount(0, currentText.length)
     val nextScalarLength =
@@ -107,12 +120,12 @@ internal fun EditorEditText.applyRequestedCursorScalar(requestedCursorScalar: In
     }
 }
 
-    /**
-     * Delete a scalar range via the Rust editor.
-     *
-     * @param scalarFrom Start scalar offset (inclusive).
-     * @param scalarTo End scalar offset (exclusive).
-     */
+/**
+ * Delete a scalar range via the Rust editor.
+ *
+ * @param scalarFrom Start scalar offset (inclusive).
+ * @param scalarTo End scalar offset (exclusive).
+ */
 internal fun EditorEditText.deleteRangeInRust(scalarFrom: Int, scalarTo: Int) {
     if (!hasLiveEditor()) return
     if (scalarFrom >= scalarTo) return
@@ -125,7 +138,10 @@ internal fun EditorEditText.deleteRangeInRust(scalarFrom: Int, scalarTo: Int) {
     }
 }
 
-internal fun EditorEditText.deleteBackwardAtSelectionScalarInRust(scalarAnchor: Int, scalarHead: Int) {
+internal fun EditorEditText.deleteBackwardAtSelectionScalarInRust(
+    scalarAnchor: Int,
+    scalarHead: Int
+) {
     if (!hasLiveEditor()) return
     onDeleteBackwardAtSelectionScalarInRustForTesting?.let { callback ->
         callback(scalarAnchor, scalarHead)
@@ -137,18 +153,25 @@ internal fun EditorEditText.deleteBackwardAtSelectionScalarInRust(scalarAnchor: 
     }
 }
 
-internal fun EditorEditText.toggleTaskItemCheckedAtSelectionScalarInRust(scalarAnchor: Int, scalarHead: Int) {
+internal fun EditorEditText.toggleTaskItemCheckedAtSelectionScalarInRust(
+    scalarAnchor: Int,
+    scalarHead: Int
+) {
     if (!hasLiveEditor()) return
     onToggleTaskItemCheckedAtSelectionScalarInRustForTesting?.let { callback ->
         callback(scalarAnchor, scalarHead)
         return
     }
     v2Driver?.let { driver ->
-        val selection = currentLogicalScalarSelection() ?: rawScalarSelection(text?.toString().orEmpty())
+        val selection =
+            currentLogicalScalarSelection() ?: rawScalarSelection(text?.toString().orEmpty())
         driver.toggleTaskItemCheckedAtSelection(scalarAnchor, scalarHead)?.let { update ->
             applyRustUpdateJSON(update)
             if (selection != null) {
-                driver.syncSelectionQuiet(selection.first, selection.second)?.let(::applyRustUpdateJSON)
+                driver.syncSelectionQuiet(
+                    selection.first,
+                    selection.second
+                )?.let(::applyRustUpdateJSON)
                 val currentText = text?.toString().orEmpty()
                 setSelection(
                     PositionBridge.scalarToUtf16(selection.first, currentText),
@@ -159,9 +182,9 @@ internal fun EditorEditText.toggleTaskItemCheckedAtSelectionScalarInRust(scalarA
     }
 }
 
-    /**
-     * Split a block at a scalar position via the Rust editor.
-     */
+/**
+ * Split a block at a scalar position via the Rust editor.
+ */
 internal fun EditorEditText.splitBlockInRust(atScalarPos: Int) {
     if (!hasLiveEditor()) return
     onSplitBlockInRustForTesting?.let { callback ->
@@ -172,7 +195,7 @@ internal fun EditorEditText.splitBlockInRust(atScalarPos: Int) {
         driver.splitBlockAt(atScalarPos)?.let { result ->
             applyRustUpdateJSON(
                 result.updateJson,
-                lineBoundaryRefreshSource = if (result.committed) "splitBlock" else null,
+                lineBoundaryRefreshSource = if (result.committed) "splitBlock" else null
             )
         }
     }
@@ -188,7 +211,7 @@ internal fun EditorEditText.deleteAndSplitInRust(scalarFrom: Int, scalarTo: Int)
         driver.deleteAndSplit(scalarFrom, scalarTo)?.let { result ->
             applyRustUpdateJSON(
                 result.updateJson,
-                lineBoundaryRefreshSource = if (result.committed) "deleteAndSplit" else null,
+                lineBoundaryRefreshSource = if (result.committed) "deleteAndSplit" else null
             )
         }
     }
@@ -228,9 +251,9 @@ internal fun EditorEditText.preferredHardBreakNodeType(): String {
     }
 }
 
-    /**
-     * Paste HTML content through Rust.
-     */
+/**
+ * Paste HTML content through Rust.
+ */
 internal fun EditorEditText.pasteHTML(html: String) {
     if (!hasLiveEditor()) return
     syncCurrentSelectionToRust()
@@ -249,9 +272,9 @@ internal fun EditorEditText.pasteHTML(html: String) {
     }
 }
 
-    /**
-     * Paste plain text through Rust.
-     */
+/**
+ * Paste plain text through Rust.
+ */
 internal fun EditorEditText.pastePlainText(text: String) {
     val (scalarStart, scalarEnd) = currentScalarSelection() ?: return
     insertPlainTextRangeInRust(scalarStart, scalarEnd, text)

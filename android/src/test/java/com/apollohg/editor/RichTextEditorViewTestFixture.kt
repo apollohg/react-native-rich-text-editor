@@ -1,19 +1,21 @@
 package com.apollohg.editor
-import android.graphics.Color
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Rect
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
-import android.widget.LinearLayout
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -26,11 +28,10 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 internal abstract class RichTextEditorViewTestFixture {
-    protected class InterceptAwareFrameLayout(context: android.content.Context) : FrameLayout(context) {
+    protected class InterceptAwareFrameLayout(context: android.content.Context) :
+        FrameLayout(context) {
         var disallowInterceptRequested = false
 
         override fun requestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {
@@ -63,7 +64,7 @@ internal abstract class RichTextEditorViewTestFixture {
     protected data class ImageResizeGestureFixture(
         val parent: InterceptAwareFrameLayout,
         val view: RichTextEditorView,
-        val resizeCommands: MutableList<Triple<Int, Int, Int>>,
+        val resizeCommands: MutableList<Triple<Int, Int, Int>>
     )
 
     protected fun autoGrowCaretVisibilityFixture(
@@ -98,17 +99,16 @@ internal abstract class RichTextEditorViewTestFixture {
         return CaretVisibilityFixture(parent, editText)
     }
 
-    protected fun exampleTheme(markerScale: Float = 2f): EditorTheme? =
-        EditorTheme.fromJson(
-            """
+    protected fun exampleTheme(markerScale: Float = 2f): EditorTheme? = EditorTheme.fromJson(
+        """
             {
               "backgroundColor": "#f6f1e8",
               "text": { "color": "#2a2118", "fontSize": 17 },
               "paragraph": { "spacingAfter": 16 },
               "list": { "indent": 14, "itemSpacing": 6, "markerColor": "#9a4f2d", "markerScale": $markerScale }
             }
-            """.trimIndent()
-        )
+        """.trimIndent()
+    )
 
     protected fun exampleRenderJson(): String = """
         [
@@ -175,7 +175,10 @@ internal abstract class RichTextEditorViewTestFixture {
         )
         for (index in 1..fillerLineCount) {
             blocks.append(
-                """,{"type":"blockStart","nodeType":"paragraph","depth":0},{"type":"textRun","text":"Filler line $index","marks":[]},{"type":"blockEnd"}"""
+
+                """,{"type":"blockStart","nodeType":"paragraph","depth":0},""" +
+                    """{"type":"textRun","text":"Filler line $index","marks":[]},""" +
+                    """{"type":"blockEnd"}"""
             )
         }
         return "[$blocks]"
@@ -212,8 +215,8 @@ internal abstract class RichTextEditorViewTestFixture {
             view,
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            ),
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
         )
         val widthSpec = View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY)
         val heightSpec = View.MeasureSpec.makeMeasureSpec(300, View.MeasureSpec.EXACTLY)
@@ -244,22 +247,20 @@ internal abstract class RichTextEditorViewTestFixture {
         ]
     """.trimIndent()
 
-    protected fun paragraphRenderBlock(text: String): JSONArray {
-        return JSONArray().apply {
-            put(
-                JSONObject()
-                    .put("type", "blockStart")
-                    .put("nodeType", "paragraph")
-                    .put("depth", 0)
-            )
-            put(
-                JSONObject()
-                    .put("type", "textRun")
-                    .put("text", text)
-                    .put("marks", JSONArray())
-            )
-            put(JSONObject().put("type", "blockEnd"))
-        }
+    protected fun paragraphRenderBlock(text: String): JSONArray = JSONArray().apply {
+        put(
+            JSONObject()
+                .put("type", "blockStart")
+                .put("nodeType", "paragraph")
+                .put("depth", 0)
+        )
+        put(
+            JSONObject()
+                .put("type", "textRun")
+                .put("text", text)
+                .put("marks", JSONArray())
+        )
+        put(JSONObject().put("type", "blockEnd"))
     }
 
     protected enum class ListRenderState { INITIAL, NESTED_EMPTY, PARENT_EMPTY }
@@ -330,18 +331,16 @@ internal abstract class RichTextEditorViewTestFixture {
         blocks: JSONArray,
         includeFullRenderBlocks: Boolean = true,
         renderPatch: JSONObject? = null
-    ): String {
-        return JSONObject().apply {
-            if (includeFullRenderBlocks) {
-                put("renderBlocks", blocks)
-            }
-            if (renderPatch != null) {
-                put("renderPatch", renderPatch)
-            }
-        }.toString()
-    }
+    ): String = JSONObject().apply {
+        if (includeFullRenderBlocks) {
+            put("renderBlocks", blocks)
+        }
+        if (renderPatch != null) {
+            put("renderPatch", renderPatch)
+        }
+    }.toString()
 
-    /**
+    /*
      * An empty bullet is content the user can see, so the placeholder must go.
      *
      * The document renders no characters at all — the bullet marker comes from

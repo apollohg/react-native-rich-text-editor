@@ -137,10 +137,3 @@ fn outbox_reservation_operation_error(
         }
     }
 }
-
-// The methods in this block carrying `#[allow(dead_code)]` are the engine's
-// plain convenience surface and test-support probes: they are exercised by
-// crate tests and the cfg(test) bridge/document-api test support, while
-// production entry points reach the same behavior through the
-// `_with_outbox`/prepared variants used by `ffi_v2`. The constructors and the
-// production seams in this block are genuinely live and carry no allow.

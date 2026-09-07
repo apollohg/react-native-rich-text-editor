@@ -28,7 +28,7 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
                 .put("baseDocumentVersion", "1")
                 .put("startIndex", 0)
                 .put("deleteCount", 0)
-                .put("renderBlocks", blocks),
+                .put("renderBlocks", blocks)
         )
 
         assertNotNull(adoptExternalRender(adapter, snapshot.toString()))
@@ -114,7 +114,7 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
         adapter.claimNativeBindingIfUnowned(99L)
         assertNotNull(adapter.currentStateJson())
         backend.nextRenderUpdateResult = EditorV2CallResult.Err(
-            EditorV2Error("render", "RENDER_FAILED", "transient"),
+            EditorV2Error("render", "RENDER_FAILED", "transient")
         )
 
         val outcome = adapter.deleteScalarRangeNative(1, 2)
@@ -253,11 +253,13 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
     }
 
     @Test
-    fun `external atomic adoption serves authoritative selection and history without split state reads`() {
+    fun `atomic adoption serves authoritative selection and history without split reads`() {
         val adapter = makeAdapter()
         adapter.setContentHtml("<p>ab</p>")
         val session = sessionOf(adapter)
-        val snapshot = JSONObject(atomicRenderSnapshot("ab", session.revision.toString(), selectionScalar = 2))
+        val snapshot = JSONObject(
+            atomicRenderSnapshot("ab", session.revision.toString(), selectionScalar = 2)
+        )
             .put("historyState", JSONObject().put("canUndo", false).put("canRedo", true))
             .toString()
 
@@ -284,7 +286,8 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
         session.anchor = 2
         session.head = 2
         session.revision += 1u
-        val externalSnapshot = atomicRenderSnapshot("ab", session.revision.toString(), selectionScalar = 2)
+        val externalSnapshot =
+            atomicRenderSnapshot("ab", session.revision.toString(), selectionScalar = 2)
         assertNotNull(adoptExternalRender(adapter, externalSnapshot))
 
         backend.calls.clear()

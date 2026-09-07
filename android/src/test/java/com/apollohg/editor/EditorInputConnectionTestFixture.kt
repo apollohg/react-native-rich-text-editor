@@ -7,9 +7,9 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Looper
 import android.provider.Settings
+import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
-import android.text.InputType
 import android.text.style.AbsoluteSizeSpan
 import android.view.MotionEvent
 import android.view.View
@@ -28,29 +28,28 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Shadows.shadowOf
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
-internal abstract class EditorInputConnectionTestFixture : EditorInputConnectionTestSupport(){
+internal abstract class EditorInputConnectionTestFixture : EditorInputConnectionTestSupport() {
     protected fun terminalAtomEditText(
         activity: Activity,
         renderJson: String =
-            """[{"type":"voidBlock","nodeType":"counterCard","docPos":1,"atomId":"counter-1"}]""",
-    ): EditorEditText =
-        EditorEditText(activity).apply {
-            applyAtomRenderConfiguration(
-                AtomRenderConfiguration(
-                    registeredNodeTypes = setOf("counterCard"),
-                    estimatedHeightsDp = mapOf("counterCard" to 72f),
-                    measuredHeightsPx = emptyMap(),
-                )
+            """[{"type":"voidBlock","nodeType":"counterCard","docPos":1,"atomId":"counter-1"}]"""
+    ): EditorEditText = EditorEditText(activity).apply {
+        applyAtomRenderConfiguration(
+            AtomRenderConfiguration(
+                registeredNodeTypes = setOf("counterCard"),
+                estimatedHeightsDp = mapOf("counterCard" to 72f),
+                measuredHeightsPx = emptyMap()
             )
-            applyRenderJSON(renderJson)
-            editorId = 9_001L
-        }
+        )
+        applyRenderJSON(renderJson)
+        editorId = 9_001L
+    }
 
     protected fun paragraphThenAtomRenderJson(): String =
         """
@@ -267,10 +266,13 @@ internal abstract class EditorInputConnectionTestFixture : EditorInputConnection
         }
     }
 
-    protected fun JSONObject.errorCode(): String =
-        getJSONObject("error").getString("code")
+    protected fun JSONObject.errorCode(): String = getJSONObject("error").getString("code")
 
-    protected fun withDefaultInputMethod(context: Context, inputMethodId: String, block: () -> Unit) {
+    protected fun withDefaultInputMethod(
+        context: Context,
+        inputMethodId: String,
+        block: () -> Unit
+    ) {
         val previous = Settings.Secure.getString(
             context.contentResolver,
             Settings.Secure.DEFAULT_INPUT_METHOD

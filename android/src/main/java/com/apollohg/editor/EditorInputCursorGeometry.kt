@@ -24,22 +24,34 @@ internal fun EditorEditText.buildSurfaceCursorAnchorInfo(): CursorAnchorInfo {
     getLocalVisibleRect(visible)
     visible.offset(-scrollX, -scrollY)
     fun flags(left: Float, top: Float, right: Float, bottom: Float, rtl: Boolean): Int {
-        val overlaps = left <= visible.right && right >= visible.left && top < visible.bottom && bottom > visible.top
+        val overlaps =
+            left <= visible.right && right >= visible.left && top < visible.bottom &&
+                bottom > visible.top
         var result = if (overlaps) CursorAnchorInfo.FLAG_HAS_VISIBLE_REGION else 0
-        if (left < visible.left || right > visible.right || top < visible.top || bottom > visible.bottom || !overlaps) {
+        if (left < visible.left || right > visible.right || top < visible.top ||
+            bottom > visible.bottom ||
+            !overlaps
+        ) {
             result = result or CursorAnchorInfo.FLAG_HAS_INVISIBLE_REGION
         }
         if (rtl) result = result or CursorAnchorInfo.FLAG_IS_RTL
         return result
     }
-    fun top(line: Int): Float = originY + ((layout as? EditorDocumentLayout)?.textLineTop(line) ?: layout.getLineTop(line))
-    fun bottom(line: Int): Float = originY + ((layout as? EditorDocumentLayout)?.textLineBottom(line) ?: layout.getLineBottom(line))
+    fun top(line: Int): Float =
+        originY + ((layout as? EditorDocumentLayout)?.textLineTop(line) ?: layout.getLineTop(line))
+    fun bottom(line: Int): Float = originY +
+        ((layout as? EditorDocumentLayout)?.textLineBottom(line) ?: layout.getLineBottom(line))
     val line = layout.getLineForOffset(end)
     val x = originX + layout.getPrimaryHorizontal(end)
     val top = top(line)
     val bottom = bottom(line)
-    builder.setInsertionMarkerLocation(x, top, originY + layout.getLineBaseline(line), bottom,
-        flags(x, top, x, bottom, layout.getParagraphDirection(line) == Layout.DIR_RIGHT_TO_LEFT))
+    builder.setInsertionMarkerLocation(
+        x,
+        top,
+        originY + layout.getLineBaseline(line),
+        bottom,
+        flags(x, top, x, bottom, layout.getParagraphDirection(line) == Layout.DIR_RIGHT_TO_LEFT)
+    )
     val composingStart = BaseInputConnection.getComposingSpanStart(raw)
     val composingEnd = BaseInputConnection.getComposingSpanEnd(raw)
     if (composingStart >= 0 && composingEnd >= composingStart) {
@@ -48,15 +60,48 @@ internal fun EditorEditText.buildSurfaceCursorAnchorInfo(): CursorAnchorInfo {
         builder.setComposingText(imeStart, mapper.visibleText.subSequence(imeStart, imeEnd))
         var offset = imeStart
         while (offset < imeEnd) {
-            val next = (offset + Character.charCount(Character.codePointAt(mapper.visibleText, offset))).coerceAtMost(imeEnd)
+            val next = (
+                offset +
+                    Character.charCount(Character.codePointAt(mapper.visibleText, offset))
+                ).coerceAtMost(imeEnd)
             val rawStart = mapper.imeToRaw(offset, ImeTextCoordinateMapper.Affinity.AFTER)
             val rawEnd = mapper.imeToRaw(next, ImeTextCoordinateMapper.Affinity.BEFORE)
             val characterLine = layout.getLineForOffset(rawStart)
             val leading = originX + layout.getPrimaryHorizontal(rawStart)
-            val trailing = originX + if (layout.getLineForOffset(rawEnd) == characterLine) layout.getPrimaryHorizontal(rawEnd) else layout.getLineRight(characterLine)
-            val bounds = RectF(minOf(leading, trailing), top(characterLine), maxOf(leading, trailing), bottom(characterLine))
-            val characterFlags = flags(bounds.left, bounds.top, bounds.right, bounds.bottom, layout.isRtlCharAt(rawStart))
-            for (unit in offset until next) builder.addCharacterBounds(unit, bounds.left, bounds.top, bounds.right, bounds.bottom, characterFlags)
+            val trailing =
+                originX +
+                    if (layout.getLineForOffset(rawEnd) ==
+                        characterLine
+                    ) {
+                        layout.getPrimaryHorizontal(rawEnd)
+                    } else {
+                        layout.getLineRight(characterLine)
+                    }
+            val bounds =
+                RectF(
+                    minOf(leading, trailing),
+                    top(characterLine),
+                    maxOf(leading, trailing),
+                    bottom(characterLine)
+                )
+            val characterFlags =
+                flags(
+                    bounds.left,
+                    bounds.top,
+                    bounds.right,
+                    bounds.bottom,
+                    layout.isRtlCharAt(rawStart)
+                )
+            for (unit in offset until next) {
+                builder.addCharacterBounds(
+                    unit,
+                    bounds.left,
+                    bounds.top,
+                    bounds.right,
+                    bounds.bottom,
+                    characterFlags
+                )
+            }
             offset = next
         }
     }

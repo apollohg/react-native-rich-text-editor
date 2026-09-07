@@ -4,7 +4,8 @@ import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -17,7 +18,9 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
     fun `rejected multiline composition restores authorized display`() {
         val harness = realExternalCompositionHarness(
             "safe",
-            """{"initialization":{"type":"localEmpty"},"limits":{"editing":{"maxOperationsPerTransaction":3}}}"""
+
+            """{"initialization":{"type":"localEmpty"}""" +
+                ""","limits":{"editing":{"maxOperationsPerTransaction":3}}}"""
         )
         try {
             val editor = harness.editText
@@ -34,7 +37,9 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
             assertEquals(revision, harness.adapter.baseDocumentRevision)
             assertEquals("safe", editor.text.toString())
             assertEquals(-1, BaseInputConnection.getComposingSpanStart(editor.editableText))
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -48,8 +53,13 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
             assertEquals("<p>a😀b</p>", harness.adapter.documentHtml())
             input.commitText("日本", 1)
             assertEquals("<p>a日本b</p>", harness.adapter.documentHtml())
-            assertEquals("a日本b", requireNotNull(input.getExtractedText(ExtractedTextRequest(), 0)).text.toString())
-        } finally { harness.adapter.destroy() }
+            assertEquals(
+                "a日本b",
+                requireNotNull(input.getExtractedText(ExtractedTextRequest(), 0)).text.toString()
+            )
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -62,7 +72,9 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
             assertEquals("<p>a文b</p>", harness.adapter.documentHtml())
             assertEquals("a文b", harness.editText.text.toString())
             assertEquals(2, harness.editText.selectionEnd)
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -77,7 +89,9 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
             assertTrue(input.commitText("日本", 1, null))
             assertEquals("<p>b日本re</p>", harness.adapter.documentHtml())
             assertEquals("b日本re", harness.editText.text.toString())
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -87,10 +101,16 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
             harness.editText.setSelection(0)
             val input = requireNotNull(harness.editText.onCreateInputConnection(EditorInfo()))
             assertTrue(input.replaceText(1, 6, "文\n字", 1, null))
-            assertEquals(harness.editText.imeTraceSnapshotForTesting().joinToString("\n"), "<p>a文</p><p>字ail</p>", harness.adapter.documentHtml())
+            assertEquals(
+                harness.editText.imeTraceSnapshotForTesting().joinToString("\n"),
+                "<p>a文</p><p>字ail</p>",
+                harness.adapter.documentHtml()
+            )
             assertEquals("a文\n字ail", harness.editText.text.toString())
             assertEquals(4, harness.editText.selectionEnd)
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -102,7 +122,9 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
                 input.replaceText(1, 3, "x\r\ny", cursor, null)
                 assertEquals("<p>ax</p><p>ydtail</p>", harness.adapter.documentHtml())
                 assertEquals(3 + cursor, harness.editText.selectionEnd)
-            } finally { harness.adapter.destroy() }
+            } finally {
+                harness.adapter.destroy()
+            }
         }
     }
 
@@ -116,8 +138,13 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
             assertTrue(input.replaceText(3, 7, "end", 1, null))
             assertEquals("<p>日本 end</p>", harness.adapter.documentHtml())
             assertEquals("日本 end", harness.editText.text.toString())
-            assertEquals(-1, BaseInputConnection.getComposingSpanStart(harness.editText.editableText))
-        } finally { harness.adapter.destroy() }
+            assertEquals(
+                -1,
+                BaseInputConnection.getComposingSpanStart(harness.editText.editableText)
+            )
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -126,14 +153,18 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
         try {
             val editor = harness.editText
             val input = requireNotNull(editor.onCreateInputConnection(EditorInfo()))
-            val clipboard = editor.context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            val clipboard = editor.context.getSystemService(
+                android.content.Context.CLIPBOARD_SERVICE
+            ) as android.content.ClipboardManager
             clipboard.setPrimaryClip(android.content.ClipData.newPlainText("", "bad"))
             editor.invalidateInputConnectionsForEditor()
             input.performContextMenuAction(android.R.id.paste)
             input.performEditorAction(EditorInfo.IME_ACTION_UNSPECIFIED)
             assertEquals("<p>safe</p>", harness.adapter.documentHtml())
             assertEquals("safe", editor.text.toString())
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -147,7 +178,9 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
             old.setComposingText("bad", 1, null)
             assertEquals("<p>safe</p>", harness.adapter.documentHtml())
             assertEquals("safe", harness.editText.text.toString())
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -160,7 +193,9 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
             input.replaceText(0, 4, "bad", 1, null)
             assertEquals("<p>safe</p>", harness.adapter.documentHtml())
             assertEquals("safe", harness.editText.text.toString())
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -172,14 +207,20 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
             val wordStart = mapper.visibleText.toString().indexOf("Alpha")
             input.setComposingRegion(wordStart + 1, wordStart + 4, null)
             input.setSelection(wordStart + 2, wordStart + 2)
-            assertTrue(harness.editText.text.toString().contains(LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER))
+            assertTrue(
+                harness.editText.text.toString().contains(
+                    LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER
+                )
+            )
             val snapshot = requireNotNull(input.takeSnapshot())
             assertEquals(mapper.visibleText.toString(), snapshot.surroundingText.text.toString())
             assertEquals(wordStart + 2, snapshot.selectionStart)
             assertEquals(wordStart + 2, snapshot.selectionEnd)
             assertEquals(wordStart + 1, snapshot.compositionStart)
             assertEquals(wordStart + 4, snapshot.compositionEnd)
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -188,7 +229,11 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
         try {
             val input = requireNotNull(harness.editText.onCreateInputConnection(EditorInfo()))
             val mapper = requireNotNull(harness.editText.imeTextCoordinateMapperForEditor())
-            assertTrue(harness.editText.text.toString().contains(LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER))
+            assertTrue(
+                harness.editText.text.toString().contains(
+                    LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER
+                )
+            )
             input.setSelection(1, 4)
             val extracted = requireNotNull(input.getExtractedText(ExtractedTextRequest(), 0))
             assertEquals(mapper.visibleText.toString(), extracted.text.toString())
@@ -198,6 +243,8 @@ internal class EditorModernInputConnectionTest : EditorInputConnectionTestFixtur
             assertEquals(mapper.visibleText.toString(), surrounding.text.toString())
             assertEquals(1, surrounding.selectionStart)
             assertEquals(4, surrounding.selectionEnd)
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 }

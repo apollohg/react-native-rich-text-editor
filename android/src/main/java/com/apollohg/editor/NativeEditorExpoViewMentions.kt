@@ -21,7 +21,9 @@ internal fun NativeEditorExpoView.refreshMentionQuery() {
 
     mentionQueryState = queryState
     val suggestions = filteredMentionSuggestions(queryState, mentions)
-    keyboardToolbarView.applyMentionTheme(richTextView.editorEditText.theme?.mentions ?: mentions.theme)
+    keyboardToolbarView.applyMentionTheme(
+        richTextView.editorEditText.theme?.mentions ?: mentions.theme
+    )
     syncKeyboardToolbarMentionSuggestions(suggestions, mentions.trigger)
     emitMentionQueryChange(
         queryState.query,
@@ -128,7 +130,11 @@ internal fun NativeEditorExpoView.resolvedMentionAttrs(
     return attrs
 }
 
-internal fun NativeEditorExpoView.emitMentionSelect(trigger: String, suggestion: NativeMentionSuggestion, attrs: JSONObject) {
+internal fun NativeEditorExpoView.emitMentionSelect(
+    trigger: String,
+    suggestion: NativeMentionSuggestion,
+    attrs: JSONObject
+) {
     val eventJson = JSONObject()
         .put("type", "mentionsSelect")
         .put("trigger", trigger)
@@ -138,7 +144,12 @@ internal fun NativeEditorExpoView.emitMentionSelect(trigger: String, suggestion:
             lastDocumentVersion?.let { put("documentVersion", it) }
         }
         .toString()
-    emitAddonEvent(mapOf("eventJson" to eventJson, "editorId" to eventEditorId(richTextView.editorId)))
+    emitAddonEvent(
+        mapOf(
+            "eventJson" to eventJson,
+            "editorId" to eventEditorId(richTextView.editorId)
+        )
+    )
 }
 
 internal fun NativeEditorExpoView.emitMentionSelectRequest(
@@ -162,7 +173,12 @@ internal fun NativeEditorExpoView.emitMentionSelectRequest(
                 ?.let { put("documentVersion", it) }
         }
         .toString()
-    emitAddonEvent(mapOf("eventJson" to eventJson, "editorId" to eventEditorId(richTextView.editorId)))
+    emitAddonEvent(
+        mapOf(
+            "eventJson" to eventJson,
+            "editorId" to eventEditorId(richTextView.editorId)
+        )
+    )
 }
 
 internal fun NativeEditorExpoView.insertMentionSuggestion(
@@ -207,7 +223,13 @@ internal fun NativeEditorExpoView.insertMentionSuggestion(
     mentionQueryState = queryState
     val attrs = resolvedMentionAttrs(mentions.trigger, suggestion)
     if (mentions.resolveSelectionAttrs || mentions.resolveTheme) {
-        emitMentionSelectRequest(mentions.trigger, suggestion, attrs, queryState, preflightUpdateJSON)
+        emitMentionSelectRequest(
+            mentions.trigger,
+            suggestion,
+            attrs,
+            queryState,
+            preflightUpdateJSON
+        )
         lastMentionEventJson = null
         clearMentionQueryState()
         return

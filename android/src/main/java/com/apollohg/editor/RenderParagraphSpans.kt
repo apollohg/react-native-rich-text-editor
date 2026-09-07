@@ -6,9 +6,7 @@ import android.text.Spanned
 import android.text.style.LineHeightSpan
 import android.text.style.ReplacementSpan
 
-class FixedLineHeightSpan(
-    private val lineHeightPx: Int
-) : LineHeightSpan {
+class FixedLineHeightSpan(private val lineHeightPx: Int) : LineHeightSpan {
     override fun chooseHeight(
         text: CharSequence,
         start: Int,
@@ -87,15 +85,28 @@ class ParagraphSpacerSpan(
 }
 
 class MarkerGapSpan(private val widthPx: Float) : ReplacementSpan() {
-    override fun getSize(paint: Paint, text: CharSequence, start: Int, end: Int, fm: Paint.FontMetricsInt?): Int =
-        kotlin.math.ceil(widthPx).toInt()
+    override fun getSize(
+        paint: Paint,
+        text: CharSequence,
+        start: Int,
+        end: Int,
+        fm: Paint.FontMetricsInt?
+    ): Int = kotlin.math.ceil(widthPx).toInt()
 
-    override fun draw(canvas: Canvas, text: CharSequence, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) = Unit
+    override fun draw(
+        canvas: Canvas,
+        text: CharSequence,
+        start: Int,
+        end: Int,
+        x: Float,
+        top: Int,
+        y: Int,
+        bottom: Int,
+        paint: Paint
+    ) = Unit
 }
 
-internal class OrderedListMarkerSpan(
-    internal val label: String
-) : ReplacementSpan() {
+internal class OrderedListMarkerSpan(internal val label: String) : ReplacementSpan() {
     override fun getSize(
         paint: Paint,
         text: CharSequence,
@@ -132,9 +143,7 @@ class CenteredBulletSpan(
         start: Int,
         end: Int,
         fm: Paint.FontMetricsInt?
-    ): Int {
-        return kotlin.math.ceil(markerWidthPx).toInt()
-    }
+    ): Int = kotlin.math.ceil(markerWidthPx).toInt()
 
     override fun draw(
         canvas: Canvas,
@@ -166,11 +175,8 @@ class CenteredBulletSpan(
         paint.textSize = previousSize
     }
 
-    fun textSideGapPx(x: Float): Float {
-        return (x + markerWidthPx) - (resolvedCenterX(x) + bulletRadiusPx)
-    }
+    fun textSideGapPx(x: Float): Float = (x + markerWidthPx) - (resolvedCenterX(x) + bulletRadiusPx)
 
-    private fun resolvedCenterX(x: Float): Float {
-        return x + markerWidthPx - markerGapToTextPx - bulletRadiusPx
-    }
+    private fun resolvedCenterX(x: Float): Float =
+        x + markerWidthPx - markerGapToTextPx - bulletRadiusPx
 }

@@ -27,23 +27,47 @@ class PreparedProseCullingTest {
 
     @Test
     fun `negative top margins keep overlapping text inside culling bounds`() {
-        val layout = prepared(""""h2":{"fontSize":17,"marginTop":100,"marginBottom":0},"h3":{"fontSize":17,"marginTop":-130,"marginBottom":0}""")
-        val text = layout.blocks.map { block -> block.fragments.single { it.kind == PreparedProseFragmentKind.TEXT } }
+        val layout =
+            prepared(
+                """"h2":{"fontSize":17,"marginTop":100,"marginBottom":0},"h3":{"fontSize":17,"marginTop":-130,"marginBottom":0}"""
+            )
+        val text = layout.blocks.map { block ->
+            block.fragments.single {
+                it.kind ==
+                    PreparedProseFragmentKind.TEXT
+            }
+        }
         assertTrue(text[2].bounds.top < text[0].bounds.bottom)
         assertVisibleText(layout, Rect(0, 0, 300, text[0].bounds.bottom))
     }
 
     @Test
     fun `negative bottom margins do not cull the preceding visible text`() {
-        val layout = prepared(""""paragraph":{"marginBottom":-80},"h2":{"fontSize":17,"marginTop":0,"marginBottom":0},"h3":{"fontSize":17,"marginTop":0,"marginBottom":0}""")
-        val firstText = layout.blocks.first().fragments.single { it.kind == PreparedProseFragmentKind.TEXT }
+        val layout =
+            prepared(
+                """"paragraph":{"marginBottom":-80},"h2":{"fontSize":17,"marginTop":0,"marginBottom":0},"h3":{"fontSize":17,"marginTop":0,"marginBottom":0}"""
+            )
+        val firstText = layout.blocks.first().fragments.single {
+            it.kind ==
+                PreparedProseFragmentKind.TEXT
+        }
         assertVisibleText(layout, Rect(0, firstText.bounds.top, 300, firstText.bounds.bottom))
     }
 
     private fun assertVisibleText(layout: PreparedProseLayout, clip: Rect) {
-        val expected = layout.blocks.flatMap { it.fragments }.filter { it.kind == PreparedProseFragmentKind.TEXT && Rect.intersects(it.bounds, clip) }
+        val expected = layout.blocks.flatMap { it.fragments }.filter {
+            it.kind ==
+                PreparedProseFragmentKind.TEXT &&
+                Rect.intersects(it.bounds, clip)
+        }
         val actual = mutableListOf<PreparedProseFragment>()
-        layout.forEachFragmentIntersecting(clip) { if (it.kind == PreparedProseFragmentKind.TEXT) actual += it }
+        layout.forEachFragmentIntersecting(clip) {
+            if (it.kind ==
+                PreparedProseFragmentKind.TEXT
+            ) {
+                actual += it
+            }
+        }
         assertTrue(expected.isNotEmpty())
         assertEquals(expected, actual)
     }
@@ -53,13 +77,29 @@ class PreparedProseCullingTest {
     }
 
     private fun withBounds(vararg bounds: Rect) = PreparedProseLayout(
-        key(), 300, 250, bounds.map { PreparedProseBlock(emptyList(), it) }, retainedBytes = 0,
+        key(),
+        300,
+        250,
+        bounds.map { PreparedProseBlock(emptyList(), it) },
+        retainedBytes = 0
     )
 
     private fun prepared(styles: String): PreparedProseLayout {
-        val blocks = listOf("paragraph", "h2", "h3").map { ViewerBlock(it, 0, false, null, null, listOf(ViewerInline.Text("text", emptyList()))) }
-        val theme = PreparedProseTheme.resolve("""{"version":1,"styles":{"text":{"fontSize":17,"lineHeight":27},$styles}}""", 1f)
-        return StaticLayoutAndroidProseLayoutEngine().prepare(ViewerDocument("overlap", blocks, false, 0), key(), theme, 300, 1f, false)
+        val blocks = listOf("paragraph", "h2", "h3").map {
+            ViewerBlock(it, 0, false, null, null, listOf(ViewerInline.Text("text", emptyList())))
+        }
+        val theme = PreparedProseTheme.resolve(
+            """{"version":1,"styles":{"text":{"fontSize":17,"lineHeight":27},$styles}}""",
+            1f
+        )
+        return StaticLayoutAndroidProseLayoutEngine().prepare(
+            ViewerDocument("overlap", blocks, false, 0),
+            key(),
+            theme,
+            300,
+            1f,
+            false
+        )
     }
 
     private fun key() = ProseLayoutKey("overlap", 300, "overlap", 0, 0, 0, 0, "overlap")

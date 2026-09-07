@@ -88,11 +88,7 @@ pub(crate) struct NativeRenderCursor {
 pub(crate) struct SessionPolicy {
     read_only: bool,
     input_filter: Option<String>,
-    /// Lazily compiled `input_filter` pattern (Task 12 tracked Minor: the
-    /// legacy `InputFilter` compiles once at construction while the bridge
-    /// recompiled per keystroke). The lazy cell preserves the exact
-    /// request-time behavior: an invalid pattern surfaces the identical
-    /// `CONFIG_INVALID` from the same call sites, replayed from the cache.
+    /// Cache invalid patterns too, so each request returns the same CONFIG_INVALID error.
     input_filter_regex: std::sync::OnceLock<Result<regex::Regex, String>>,
     allow_base64_images: bool,
 }
@@ -156,11 +152,6 @@ impl SessionPolicy {
         self.read_only
     }
 
-    /// The input filter pattern compiled at most once per policy (Task 12
-    /// tracked Minor): the first request compiles and caches the `Regex`;
-    /// an invalid pattern caches the compile error message and replays it
-    /// verbatim on every request. Semantics are exactly the per-character
-    /// `is_match` filter the legacy `InputFilter` applies.
     pub(crate) fn input_filter_regex(&self) -> Option<Result<&regex::Regex, String>> {
         self.input_filter.as_deref().map(|pattern| {
             self.input_filter_regex
@@ -261,10 +252,6 @@ pub(crate) fn replacement_session_error(
             SessionError::from(admission)
         }
         crate::yrs_engine::RootReplacementError::Transaction(transaction) => {
-            // Frozen Task 1 mapping: the engine emits
-            // OPERATION_RESOURCE_EXHAUSTED only for allocation/reservation
-            // failures (Task 7: outbox reservation), which preserve their
-            // code; deterministic ceilings keep their existing stable codes.
             let failure_class = if transaction.code == "OPERATION_RESOURCE_EXHAUSTED" {
                 OperationFailureClass::AllocationOrReservation
             } else {

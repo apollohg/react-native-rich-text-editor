@@ -1,6 +1,6 @@
-import XCTest
-import UIKit
 import CoreText
+import UIKit
+import XCTest
 
 extension PreparedProseRevisionTests {
     func testMissingFamilyWarningSurvivesFontEnvironmentReplacementButNewSemanticGenerationWarns() {

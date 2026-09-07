@@ -10,8 +10,8 @@ import android.os.Looper
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewGroup
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -22,7 +22,7 @@ internal data class AtomLayoutPosition(
     val xPx: Int,
     val yPx: Int,
     val heightPx: Int,
-    val widthPx: Int,
+    val widthPx: Int
 )
 
 /** Container view that owns the native editor text field. */
@@ -41,10 +41,18 @@ class RichTextEditorView @JvmOverloads constructor(
             val screenBottom = scrollY + height
             if (viewportBottomInsetPx <= 0 || rect.bottom <= child.bottom ||
                 rect.bottom <= screenBottom || rect.top <= scrollY
-            ) return delta
+            ) {
+                return delta
+            }
 
             // ScrollView's reveal clamp omits the padding reserved for the keyboard.
-            val requested = if (rect.height() > height) rect.top - scrollY else rect.bottom - screenBottom
+            val requested = if (rect.height() >
+                height
+            ) {
+                rect.top - scrollY
+            } else {
+                rect.bottom - screenBottom
+            }
             val available = (child.bottom + paddingBottom - screenBottom).coerceAtLeast(0)
             return maxOf(delta, minOf(requested, available))
         }
@@ -60,6 +68,7 @@ class RichTextEditorView @JvmOverloads constructor(
             when (action) {
                 MotionEvent.ACTION_DOWN,
                 MotionEvent.ACTION_MOVE -> parent?.requestDisallowInterceptTouchEvent(true)
+
                 MotionEvent.ACTION_UP,
                 MotionEvent.ACTION_CANCEL -> parent?.requestDisallowInterceptTouchEvent(false)
             }
@@ -73,7 +82,9 @@ class RichTextEditorView @JvmOverloads constructor(
                 atomDown = atomHostViews.values.any { child ->
                     val x = ev.x + scrollX - editorContentFrame.left
                     val y = ev.y + scrollY - editorContentFrame.top
-                    child.visibility == View.VISIBLE && x >= child.left && x < child.right && y >= child.top && y < child.bottom
+                    child.visibility == View.VISIBLE && x >= child.left && x < child.right &&
+                        y >= child.top &&
+                        y < child.bottom
                 }
                 pendingAtomAnchor = null
             }
@@ -92,8 +103,6 @@ class RichTextEditorView @JvmOverloads constructor(
             updateParentIntercept(ev.actionMasked)
             return super.onTouchEvent(ev)
         }
-
-
     }
 
     private inner class EditorContentFrame(context: Context) : FrameLayout(context) {
@@ -102,7 +111,7 @@ class RichTextEditorView @JvmOverloads constructor(
             parentWidthMeasureSpec: Int,
             widthUsed: Int,
             parentHeightMeasureSpec: Int,
-            heightUsed: Int,
+            heightUsed: Int
         ) {
             if (child === editorEditText) {
                 super.measureChildWithMargins(
@@ -110,20 +119,23 @@ class RichTextEditorView @JvmOverloads constructor(
                     parentWidthMeasureSpec,
                     widthUsed,
                     parentHeightMeasureSpec,
-                    heightUsed,
+                    heightUsed
                 )
                 return
             }
-            val width = atomHostViews.entries.firstOrNull { it.value === child }?.key?.let(::atomWidthPx)
-                ?: child.measuredWidth.takeIf { it > 0 }
-                ?: child.width.coerceAtLeast(0)
+            val width =
+                atomHostViews.entries.firstOrNull { it.value === child }?.key?.let(::atomWidthPx)
+                    ?: child.measuredWidth.takeIf { it > 0 }
+                    ?: child.width.coerceAtLeast(0)
             val height = renderedAtomHeightPx(child)
-                ?: atomHostViews.entries.firstOrNull { it.value === child }?.key?.let(::atomSpan)?.reservedHeightPx
+                ?: atomHostViews.entries.firstOrNull {
+                    it.value === child
+                }?.key?.let(::atomSpan)?.reservedHeightPx
                 ?: child.measuredHeight.takeIf { it > 0 }
                 ?: child.height.coerceAtLeast(0)
             child.measure(
                 MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY)
             )
         }
 
@@ -212,8 +224,13 @@ class RichTextEditorView @JvmOverloads constructor(
             )
         )
         val decorationLayer = EditorDecorationLayer(context)
-        editorViewport.addView(decorationLayer, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        editorViewport.addView(
+            decorationLayer,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
         decorationLayer.addView(
             remoteSelectionOverlayView,
             FrameLayout.LayoutParams(
@@ -270,7 +287,8 @@ class RichTextEditorView @JvmOverloads constructor(
                 val childHeight = editorScrollView.getChildAt(0)?.height ?: 0
                 val maxScrollY = maxOf(
                     0,
-                    childHeight + editorScrollView.paddingTop + editorScrollView.paddingBottom - editorScrollView.height
+                    childHeight + editorScrollView.paddingTop + editorScrollView.paddingBottom -
+                        editorScrollView.height
                 )
                 editorScrollView.scrollTo(0, previousScrollY.coerceIn(0, maxScrollY))
                 refreshOverlays()
@@ -324,7 +342,10 @@ class RichTextEditorView @JvmOverloads constructor(
     internal fun orderAtomChildren(children: List<View>) {
         val keys = atomHostViews.entries.associate { it.value to it.key }
         children.forEach { child ->
-            keys[child]?.let { key -> atomHostViews.remove(key); atomHostViews[key] = child }
+            keys[child]?.let { key ->
+                atomHostViews.remove(key)
+                atomHostViews[key] = child
+            }
         }
         ensureAtomHostZOrder()
     }
@@ -337,7 +358,12 @@ class RichTextEditorView @JvmOverloads constructor(
         if (clearHeights) measuredAtomHeightsPx.clear()
     }
 
-    private fun scheduleAtomMeasurement(child: View, atomKey: String, observedWidth: Int = child.width, observedHeight: Int = child.height) {
+    private fun scheduleAtomMeasurement(
+        child: View,
+        atomKey: String,
+        observedWidth: Int = child.width,
+        observedHeight: Int = child.height
+    ) {
         if (pendingAtomMeasurements.containsKey(child)) return
         val generation = atomMeasurementGeneration
         val width = atomWidthPx(atomKey) ?: observedWidth.takeIf { it > 0 } ?: return
@@ -346,10 +372,16 @@ class RichTextEditorView @JvmOverloads constructor(
         val measurement = Runnable {
             pendingAtomMeasurements.remove(child)
             if (generation != atomMeasurementGeneration || owner != currentEditorId ||
-                atomHostViews[atomKey] !== child || child.parent !== editorContentFrame || (atomWidthPx(atomKey) ?: width) != width) return@Runnable
+                atomHostViews[atomKey] !== child || child.parent !== editorContentFrame ||
+                (atomWidthPx(atomKey) ?: width) != width
+            ) {
+                return@Runnable
+            }
             val height = if (child !is ViewGroup || child.childCount == 0) {
                 observedHeight.takeIf { observedWidth == width && it >= 0 }
-            } else renderedAtomHeightPx(child, width)
+            } else {
+                renderedAtomHeightPx(child, width)
+            }
             if (height == null) return@Runnable
             constrainAtomHostBounds(child, width, height)
             setAtomHeight(atomKey, height)
@@ -366,19 +398,30 @@ class RichTextEditorView @JvmOverloads constructor(
     private fun atomContentWidthPx(): Int? = (
         (editorEditText.width.takeIf { it > 0 } ?: editorEditText.measuredWidth) -
             editorEditText.compoundPaddingLeft - editorEditText.compoundPaddingRight
-    ).takeIf { it > 0 }
+        ).takeIf { it > 0 }
 
     private fun renderedAtomHeightPx(host: View, expectedWidth: Int? = null): Int? {
         val group = host as? ViewGroup
         if (group == null || group.childCount == 0) {
-            return host.height.takeIf { host.isLaidOut && (expectedWidth == null || host.width == expectedWidth) }
+            return host.height.takeIf {
+                host.isLaidOut &&
+                    (expectedWidth == null || host.width == expectedWidth)
+            }
         }
-        val measurementRoot = (0 until group.childCount).asSequence().map(group::getChildAt).firstOrNull {
-            (it.getTag(com.facebook.react.R.id.view_tag_native_id) as? String)?.startsWith("prose-atom-content:") == true
+        val measurementRoot = (0 until group.childCount).asSequence().map(
+            group::getChildAt
+        ).firstOrNull {
+            (
+                it.getTag(
+                    com.facebook.react.R.id.view_tag_native_id
+                ) as? String
+                )?.startsWith("prose-atom-content:") ==
+                true
         }
         if (measurementRoot != null) {
             return measurementRoot.height.takeIf {
-                measurementRoot.isLaidOut && (expectedWidth == null || measurementRoot.width == expectedWidth)
+                measurementRoot.isLaidOut &&
+                    (expectedWidth == null || measurementRoot.width == expectedWidth)
             }
         }
         var bottom = 0
@@ -398,10 +441,14 @@ class RichTextEditorView @JvmOverloads constructor(
         if (width <= 0 || height < 0) return
         positioningAtoms = true
         try {
-            host.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY))
+            host.measure(
+                MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY)
+            )
             host.layout(host.left, host.top, host.left + width, host.top + height)
-        } finally { positioningAtoms = false }
+        } finally {
+            positioningAtoms = false
+        }
     }
 
     internal fun unmountAtomChild(child: View): Boolean {
@@ -417,7 +464,9 @@ class RichTextEditorView @JvmOverloads constructor(
         measuredAtomHeightsPx.remove(atomKey)
         val nodeType = atomSpan(atomKey)?.nodeType
         val fallbackHeight = atomRenderConfiguration?.let { configuration ->
-            nodeType?.let { configuration.reservedHeightPx(atomKey, it, resources.displayMetrics.density) }
+            nodeType?.let {
+                configuration.reservedHeightPx(atomKey, it, resources.displayMetrics.density)
+            }
         } ?: 0
         captureAtomScrollAnchor()
         editorEditText.applyAtomHeight(atomKey, fallbackHeight, resolvedAtomRenderConfiguration())
@@ -441,7 +490,12 @@ class RichTextEditorView @JvmOverloads constructor(
         val layout = editorEditText.layout ?: return
         val top = editorScrollView.scrollY - editorEditText.top - editorEditText.totalPaddingTop
         val line = layout.getLineForVertical(top.coerceAtLeast(0))
-        pendingAtomAnchor = AtomScrollAnchor(layout.getLineStart(line), layout.getLineTop(line), editorScrollView.scrollY)
+        pendingAtomAnchor =
+            AtomScrollAnchor(
+                layout.getLineStart(line),
+                layout.getLineTop(line),
+                editorScrollView.scrollY
+            )
     }
 
     private fun restoreAtomScrollAnchor() {
@@ -450,20 +504,33 @@ class RichTextEditorView @JvmOverloads constructor(
         val layout = editorEditText.layout ?: return
         val offset = anchor.offset.coerceIn(0, layout.text.length)
         val delta = layout.getLineTop(layout.getLineForOffset(offset)) - anchor.top
-        editorScrollView.scrollTo(editorScrollView.scrollX, (anchor.scrollY + delta).coerceAtLeast(0))
+        editorScrollView.scrollTo(
+            editorScrollView.scrollX,
+            (anchor.scrollY + delta).coerceAtLeast(0)
+        )
     }
 
     private fun resolvedAtomRenderConfiguration(): AtomRenderConfiguration? {
         val configuration = atomRenderConfiguration ?: return null
-        return configuration.copy(measuredHeightsPx = configuration.measuredHeightsPx + measuredAtomHeightsPx)
+        return configuration.copy(
+            measuredHeightsPx =
+                configuration.measuredHeightsPx + measuredAtomHeightsPx
+        )
     }
 
     private fun atomSpan(atomKey: String): AtomBlockSpan? {
         val content = editorEditText.text as? android.text.Spanned ?: return null
-        return content.getSpans(0, content.length, AtomBlockSpan::class.java).firstOrNull { it.atomKey == atomKey }
+        return content.getSpans(0, content.length, AtomBlockSpan::class.java).firstOrNull {
+            it.atomKey ==
+                atomKey
+        }
     }
 
-    private fun atomBounds(span: AtomBlockSpan, content: android.text.Spanned, layout: android.text.Layout): Rect? {
+    private fun atomBounds(
+        span: AtomBlockSpan,
+        content: android.text.Spanned,
+        layout: android.text.Layout
+    ): Rect? {
         val offset = content.getSpanStart(span)
         if (offset < 0) return null
         val line = layout.getLineForOffset(offset)
@@ -473,14 +540,20 @@ class RichTextEditorView @JvmOverloads constructor(
         val top = composite?.textLineTop(line) ?: layout.getLineTop(line)
         val x = editorEditText.left + editorEditText.compoundPaddingLeft
         val y = editorEditText.top + editorEditText.totalPaddingTop
-        return Rect(x + left.roundToInt(), y + top, x + right.roundToInt(), y + top + span.reservedHeightPx)
+        return Rect(
+            x + left.roundToInt(),
+            y + top,
+            x + right.roundToInt(),
+            y + top + span.reservedHeightPx
+        )
     }
 
     private fun atomWidthPx(atomKey: String): Int? {
         if (atomContentWidthPx() == null) return null
         val content = editorEditText.text as? android.text.Spanned ?: return atomContentWidthPx()
         val layout = editorEditText.layout ?: return atomContentWidthPx()
-        return atomSpan(atomKey)?.let { atomBounds(it, content, layout)?.width() } ?: atomContentWidthPx()
+        return atomSpan(atomKey)?.let { atomBounds(it, content, layout)?.width() }
+            ?: atomContentWidthPx()
     }
 
     internal fun layoutAtomHostViews() {
@@ -499,24 +572,43 @@ class RichTextEditorView @JvmOverloads constructor(
         try {
             for ((key, child) in atomHostViews) {
                 val bounds = spans[key]?.let { atomBounds(it, content, textLayout) }
-                if (bounds == null) { child.visibility = View.INVISIBLE; continue }
+                if (bounds == null) {
+                    child.visibility = View.INVISIBLE
+                    continue
+                }
                 child.translationX = 0f
                 child.translationY = 0f
-                if (child.measuredWidth != bounds.width() || child.measuredHeight != bounds.height()) {
-                    child.measure(MeasureSpec.makeMeasureSpec(bounds.width().coerceAtLeast(0), MeasureSpec.EXACTLY),
-                        MeasureSpec.makeMeasureSpec(bounds.height().coerceAtLeast(0), MeasureSpec.EXACTLY))
+                if (child.measuredWidth != bounds.width() ||
+                    child.measuredHeight != bounds.height()
+                ) {
+                    child.measure(
+                        MeasureSpec.makeMeasureSpec(
+                            bounds.width().coerceAtLeast(0),
+                            MeasureSpec.EXACTLY
+                        ),
+                        MeasureSpec.makeMeasureSpec(
+                            bounds.height().coerceAtLeast(0),
+                            MeasureSpec.EXACTLY
+                        )
+                    )
                 }
                 child.layout(bounds.left, bounds.top, bounds.right, bounds.bottom)
                 child.visibility = View.VISIBLE
             }
-        } finally { positioningAtoms = false }
+        } finally {
+            positioningAtoms = false
+        }
         ensureAtomHostZOrder()
     }
 
     private fun ensureAtomHostZOrder() {
         val atoms = atomHostViews.values.filter { it.parent === editorContentFrame }
         val first = editorContentFrame.childCount - atoms.size
-        if (first >= 0 && atoms.indices.all { editorContentFrame.getChildAt(first + it) === atoms[it] }) return
+        if (first >= 0 &&
+            atoms.indices.all { editorContentFrame.getChildAt(first + it) === atoms[it] }
+        ) {
+            return
+        }
         atoms.forEach(editorContentFrame::bringChildToFront)
     }
 
@@ -524,17 +616,31 @@ class RichTextEditorView @JvmOverloads constructor(
         if (atomRenderConfiguration == null || atomContentWidthPx() == null) return
         val content = editorEditText.text as? android.text.Spanned ?: return
         val layout = editorEditText.layout ?: return
-        emitAtomLayoutIfAvailable(content, layout, content.getSpans(0, content.length, AtomBlockSpan::class.java).toList(), force)
+        emitAtomLayoutIfAvailable(
+            content,
+            layout,
+            content.getSpans(0, content.length, AtomBlockSpan::class.java).toList(),
+            force
+        )
     }
 
-    private fun emitAtomLayoutIfAvailable(content: android.text.Spanned, layout: android.text.Layout,
-                                         spans: List<AtomBlockSpan>, force: Boolean = false) {
+    private fun emitAtomLayoutIfAvailable(
+        content: android.text.Spanned,
+        layout: android.text.Layout,
+        spans: List<AtomBlockSpan>,
+        force: Boolean = false
+    ) {
         if (atomRenderConfiguration == null) return
         val width = atomContentWidthPx() ?: return
         val positions = spans.mapNotNull { span ->
-            atomBounds(span, content, layout)?.let { AtomLayoutPosition(span.atomKey, it.left, it.top, it.height(), it.width()) }
+            atomBounds(span, content, layout)?.let {
+                AtomLayoutPosition(span.atomKey, it.left, it.top, it.height(), it.width())
+            }
         }
-        if (force || editorScrollView.height != lastAtomViewportHeight || width != lastAtomContentWidthPx || positions != lastAtomLayoutPositions) {
+        if (force || editorScrollView.height != lastAtomViewportHeight ||
+            width != lastAtomContentWidthPx ||
+            positions != lastAtomLayoutPositions
+        ) {
             lastAtomViewportHeight = editorScrollView.height
             lastAtomContentWidthPx = width
             lastAtomLayoutPositions = positions
@@ -722,7 +828,10 @@ class RichTextEditorView @JvmOverloads constructor(
         )
         val desiredHeight = editorViewport.measuredHeight + paddingTop + paddingBottom
         val measuredHeight = when (MeasureSpec.getMode(heightMeasureSpec)) {
-            MeasureSpec.AT_MOST -> desiredHeight.coerceAtMost(MeasureSpec.getSize(heightMeasureSpec))
+            MeasureSpec.AT_MOST -> desiredHeight.coerceAtMost(
+                MeasureSpec.getSize(heightMeasureSpec)
+            )
+
             else -> desiredHeight
         }
         setMeasuredDimension(measuredWidth, measuredHeight)
@@ -736,13 +845,13 @@ class RichTextEditorView @JvmOverloads constructor(
             if (available > editorViewport.height) {
                 editorViewport.measure(
                     MeasureSpec.makeMeasureSpec(editorViewport.width, MeasureSpec.EXACTLY),
-                    MeasureSpec.makeMeasureSpec(available, MeasureSpec.EXACTLY),
+                    MeasureSpec.makeMeasureSpec(available, MeasureSpec.EXACTLY)
                 )
                 editorViewport.layout(
                     editorViewport.left,
                     paddingTop,
                     editorViewport.right,
-                    paddingTop + available,
+                    paddingTop + available
                 )
             }
         }
@@ -781,11 +890,10 @@ class RichTextEditorView @JvmOverloads constructor(
             LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f)
         }
 
-    private fun createEditorLayoutParams(): FrameLayout.LayoutParams =
-        FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        )
+    private fun createEditorLayoutParams(): FrameLayout.LayoutParams = FrameLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.MATCH_PARENT
+    )
 
     internal fun selectedImageGeometry(): EditorEditText.SelectedImageGeometry? {
         val geometry = editorEditText.selectedImageGeometry() ?: return null
@@ -803,9 +911,11 @@ class RichTextEditorView @JvmOverloads constructor(
         val rect = editorEditText.caretRect() ?: return null
         return RectF(
             editorViewport.left + editorScrollView.left + editorEditText.left + rect.left,
-            editorViewport.top + editorScrollView.top + editorEditText.top + rect.top - editorScrollView.scrollY,
+            editorViewport.top + editorScrollView.top + editorEditText.top + rect.top -
+                editorScrollView.scrollY,
             editorViewport.left + editorScrollView.left + editorEditText.left + rect.right,
-            editorViewport.top + editorScrollView.top + editorEditText.top + rect.bottom - editorScrollView.scrollY
+            editorViewport.top + editorScrollView.top + editorEditText.top + rect.bottom -
+                editorScrollView.scrollY
         )
     }
 

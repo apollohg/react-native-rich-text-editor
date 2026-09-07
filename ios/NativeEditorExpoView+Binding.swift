@@ -88,8 +88,7 @@ extension NativeEditorExpoView {
         }
         if id != 0 {
             if let initialBindUpdateJSON,
-               let state = NativeToolbarState(updateJSON: initialBindUpdateJSON)
-            {
+               let state = NativeToolbarState(updateJSON: initialBindUpdateJSON) {
                 toolbarState = state
                 accessoryToolbar.apply(state: state)
             } else {
@@ -173,8 +172,7 @@ extension NativeEditorExpoView {
         autonomousErrorBindingGeneration &+= 1
         pendingAutonomousErrors.removeAll()
         if let adapter = autonomousErrorBindingAdapter,
-           let token = autonomousErrorBindingToken
-        {
+           let token = autonomousErrorBindingToken {
             adapter.clearAutonomousErrorOwner(token: token)
         }
         autonomousErrorBindingAdapter = nil
@@ -258,11 +256,11 @@ extension NativeEditorExpoView {
             "operationIndex": error.operationIndex ?? NSNull(),
             "limit": error.limit ?? NSNull(),
             "actual": error.actual ?? NSNull(),
-            "detailsJson": error.detailsJson ?? NSNull(),
+            "detailsJson": error.detailsJson ?? NSNull()
         ]
         let payload: [String: Any] = [
             "editorId": editorId,
-            "error": errorRecord,
+            "error": errorRecord
         ]
         return payload
     }

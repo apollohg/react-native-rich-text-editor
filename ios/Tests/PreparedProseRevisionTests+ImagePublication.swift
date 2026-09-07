@@ -1,6 +1,6 @@
-import XCTest
-import UIKit
 import CoreText
+import UIKit
+import XCTest
 
 extension PreparedProseRevisionTests {
     func testDisabledImagesDoNotCreateAttachmentsOrRequests() {
@@ -154,7 +154,7 @@ extension PreparedProseRevisionTests {
         defer { window.isHidden = true }
         drawing.imagePixels = [
             offscreen.id: UIImage(),
-            visible.id: UIImage(),
+            visible.id: UIImage()
         ]
 
         drawing.updateConfiguredImagesForVisibleWindow()
@@ -230,7 +230,7 @@ extension PreparedProseRevisionTests {
             ProseViewerRequest(source: base.source, configuration: .init(configJSON: base.configuration.configJSON, themeJSON: "{\"paragraph\":{\"fontSize\":18}}", imagePolicyJSON: base.configuration.imagePolicyJSON, imagesEnabled: true, collapsesWhenEmpty: true)),
             ProseViewerRequest(source: base.source, configuration: .init(configJSON: base.configuration.configJSON, themeJSON: base.configuration.themeJSON, imagePolicyJSON: "{\"maxDecodedBytes\":2048}", imagesEnabled: true, collapsesWhenEmpty: true)),
             ProseViewerRequest(source: base.source, configuration: .init(configJSON: base.configuration.configJSON, themeJSON: base.configuration.themeJSON, imagePolicyJSON: base.configuration.imagePolicyJSON, imagesEnabled: false, collapsesWhenEmpty: true)),
-            ProseViewerRequest(source: base.source, configuration: .init(configJSON: base.configuration.configJSON, themeJSON: base.configuration.themeJSON, imagePolicyJSON: base.configuration.imagePolicyJSON, imagesEnabled: true, collapsesWhenEmpty: false)),
+            ProseViewerRequest(source: base.source, configuration: .init(configJSON: base.configuration.configJSON, themeJSON: base.configuration.themeJSON, imagePolicyJSON: base.configuration.imagePolicyJSON, imagesEnabled: true, collapsesWhenEmpty: false))
         ]
         variants.forEach { XCTAssertNotEqual(base.semanticGenerationIdentity, $0.semanticGenerationIdentity) }
     }

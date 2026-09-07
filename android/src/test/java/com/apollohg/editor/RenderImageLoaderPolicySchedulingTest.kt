@@ -6,13 +6,13 @@ import java.io.File
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.CopyOnWriteArrayList
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -121,7 +121,9 @@ internal class RenderImageLoaderPolicySchedulingTest : RenderImageLoaderPolicyTe
             readTimeoutMs = (interval + 1).toInt(),
             requestTimeoutMs = trickle.getInt("requestTimeoutMs")
         )
-        assertNull(RenderImageDecoder.readBounded(TrickleInputStream(clock, interval), policy, clock))
+        assertNull(
+            RenderImageDecoder.readBounded(TrickleInputStream(clock, interval), policy, clock)
+        )
         assertEquals(trickle.getLong("expectedTerminalMs"), clock.elapsedRealtime())
         assertEquals("timeout", trickle.getString("expectedOutcome"))
     }
@@ -131,7 +133,8 @@ internal class RenderImageLoaderPolicySchedulingTest : RenderImageLoaderPolicyTe
         val stream = BlockingInputStream()
         val connection = FakeConnection(URL("https://example.com/deadline.png"), stream = stream)
         RenderImageDecoder.connectionFactoryOverride = { connection }
-        val callbackResult = AtomicReference<Bitmap?>(Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888))
+        val callbackResult =
+            AtomicReference<Bitmap?>(Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888))
         val completed = CountDownLatch(1)
         val policy = ImageLoadingPolicy.DEFAULT.copy(requestTimeoutMs = 50)
 
@@ -177,7 +180,12 @@ internal class RenderImageLoaderPolicySchedulingTest : RenderImageLoaderPolicyTe
 
         assertEquals(0L, completed.count)
         assertNull(result)
-        assertFalse(RenderImageLoader.isCachedForTesting(source, ImageLoadingPolicy.DEFAULT.copy(requestTimeoutMs = 30)))
+        assertFalse(
+            RenderImageLoader.isCachedForTesting(
+                source,
+                ImageLoadingPolicy.DEFAULT.copy(requestTimeoutMs = 30)
+            )
+        )
         assertEquals(0, RenderImageLoader.globalAdmissionCountForTesting())
     }
 
@@ -328,7 +336,10 @@ internal class RenderImageLoaderPolicySchedulingTest : RenderImageLoaderPolicyTe
             release.await(2, TimeUnit.SECONDS)
             Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
         }
-        val policy = ImageLoadingPolicy.DEFAULT.copy(maxConcurrentRequests = 1, maxPendingRequests = 1)
+        val policy = ImageLoadingPolicy.DEFAULT.copy(
+            maxConcurrentRequests = 1,
+            maxPendingRequests = 1
+        )
         val rejected = AtomicBoolean(false)
 
         RenderImageLoader.load("https://example.com/1", policy) { }
@@ -347,7 +358,10 @@ internal class RenderImageLoaderPolicySchedulingTest : RenderImageLoaderPolicyTe
         RenderImageLoader.decodeSourceOverride = { _, _ ->
             Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
         }
-        val handle = RenderImageLoader.load("data:image/png;base64,AQ==", ImageLoadingPolicy.DEFAULT) {
+        val handle = RenderImageLoader.load(
+            "data:image/png;base64,AQ==",
+            ImageLoadingPolicy.DEFAULT
+        ) {
             callbacks.incrementAndGet()
         }
         assertEquals(0, callbacks.get())
@@ -369,7 +383,10 @@ internal class RenderImageLoaderPolicySchedulingTest : RenderImageLoaderPolicyTe
             }
             Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
         }
-        val policy = ImageLoadingPolicy.DEFAULT.copy(maxConcurrentRequests = 1, maxPendingRequests = 1)
+        val policy = ImageLoadingPolicy.DEFAULT.copy(
+            maxConcurrentRequests = 1,
+            maxPendingRequests = 1
+        )
         val thirdLoaded = CountDownLatch(1)
         val thirdRejected = AtomicBoolean(false)
 
@@ -524,14 +541,18 @@ internal class RenderImageLoaderPolicySchedulingTest : RenderImageLoaderPolicyTe
             release.await(2, TimeUnit.SECONDS)
             Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
         }
-        val policy = ImageLoadingPolicy.DEFAULT.copy(maxConcurrentRequests = 1, maxPendingRequests = 16)
+        val policy = ImageLoadingPolicy.DEFAULT.copy(
+            maxConcurrentRequests = 1,
+            maxPendingRequests = 16
+        )
         val handles = mutableListOf<RenderImageLoader.LoadHandle>()
         handles += RenderImageLoader.load("https://example.com/mixed/deduped", policy) { }
         repeat(10) {
             handles += RenderImageLoader.load("https://example.com/mixed/deduped", policy) { }
         }
         repeat(10) { index ->
-            handles += RenderImageLoader.load("https://example.com/mixed/pending/$index", policy) { }
+            handles +=
+                RenderImageLoader.load("https://example.com/mixed/pending/$index", policy) { }
         }
         repeat(10) {
             handles += RenderImageLoader.load(cachedSource) { }

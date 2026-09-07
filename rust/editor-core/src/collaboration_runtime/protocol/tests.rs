@@ -94,9 +94,6 @@ fn decode_accepts_exact_multi_frame_messages_and_keeps_raw_payloads() {
 
 #[test]
 fn decode_strictly_rejects_everything_that_is_not_a_protocol_frame() {
-    // Task 10 extended the decoder to awareness (tag 1) and
-    // query-awareness (tag 3); auth, custom, and malformed frames stay
-    // protocol errors.
     let cases: [(&str, Vec<u8>); 8] = [
         ("empty", vec![]),
         ("truncated message tag", vec![0x80]),

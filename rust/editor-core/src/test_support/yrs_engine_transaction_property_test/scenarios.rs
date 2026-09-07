@@ -259,7 +259,7 @@ fn run_scenario(spec: &ActionSpec, coverage: &RefCell<Coverage>) {
         legacy_steps,
     } = scenario(spec, coverage);
     let mut legacy = from_prosemirror_json(&source, &schema, UnknownTypeMode::Preserve).unwrap();
-    let mut legacy_transaction = Transaction::new(Source::Api);
+    let mut legacy_transaction = Transaction::new();
     for step in legacy_steps {
         legacy_transaction.add_step(step);
     }

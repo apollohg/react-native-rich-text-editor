@@ -31,7 +31,7 @@ struct EditorStyleSheet {
         switch Self.element(element) {
         case "codeBlock":
             values = ["backgroundColor": UIColor.secondarySystemBackground, "paddingLeft": 12, "paddingRight": 12,
-                      "paddingTop": 8, "paddingBottom": 8, "borderRadius": 8]
+                "paddingTop": 8, "paddingBottom": 8, "borderRadius": 8]
         case "blockquote":
             values = ["borderLeftWidth": 3, "borderLeftColor": UIColor.systemGray3, "paddingLeft": 16]
         case "paragraph": values = ["marginBottom": 8]
@@ -191,7 +191,7 @@ struct EditorStyleBox {
         let outer = [CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY), CGPoint(x: rect.minX, y: rect.maxY)]
         // Extend side clips through the rounded inner corners.
         let reach = min(edges.left + edges.right > 0 ? rect.width / (edges.left + edges.right) : .infinity,
-                        edges.top + edges.bottom > 0 ? rect.height / (edges.top + edges.bottom) : .infinity)
+            edges.top + edges.bottom > 0 ? rect.height / (edges.top + edges.bottom) : .infinity)
         guard reach.isFinite else { return }
         let join = rect.inset(by: UIEdgeInsets(top: edges.top * reach, left: edges.left * reach, bottom: edges.bottom * reach, right: edges.right * reach))
         let inside = [CGPoint(x: join.minX, y: join.minY), CGPoint(x: join.maxX, y: join.minY), CGPoint(x: join.maxX, y: join.maxY), CGPoint(x: join.minX, y: join.maxY)]
@@ -308,6 +308,12 @@ final class EditorRenderedBox: NSObject {
     }
 }
 
+private struct EditorStyledSpan {
+    let box: EditorRenderedBox
+    let parent: ObjectIdentifier?
+    let range: NSRange
+}
+
 extension RenderBridge {
     static func closeStyledBlock(_ context: BlockContext, ancestors: [BlockContext], in result: NSMutableAttributedString, theme: EditorTheme?, baseFont: UIFont, textColor: UIColor, omitBottomMargin: Bool = false) {
         guard let sheet = theme?.styleSheet else { return }
@@ -343,22 +349,20 @@ extension RenderBridge {
                     style.paragraphSpacing = (isContainer ? style.paragraphSpacing : 0) + box.outerInsets.bottom
                 }
                 result.addAttribute(.paragraphStyle, value: style, range: subrange)
-                if leading { descriptor.topInset = style.paragraphSpacingBefore - box.margin.top }
-                else { descriptor.bottomInset = style.paragraphSpacing - box.margin.bottom }
+                if leading { descriptor.topInset = style.paragraphSpacingBefore - box.margin.top } else { descriptor.bottomInset = style.paragraphSpacing - box.margin.bottom }
             }
         }
     }
 
     static func collapseStyledSiblingMargins(in result: NSMutableAttributedString) {
-        typealias Span = (box: EditorRenderedBox, parent: ObjectIdentifier?, range: NSRange)
-        var spans: [ObjectIdentifier: Span] = [:]
+        var spans: [ObjectIdentifier: EditorStyledSpan] = [:]
         result.enumerateAttributes(in: NSRange(location: 0, length: result.length)) { attributes, range, _ in
             var boxes = attributes[editorStyleBoxesAttribute] as? [EditorRenderedBox] ?? []
             if let spacingBox = attributes[editorBlockSpacingBoxAttribute] as? EditorRenderedBox { boxes.append(spacingBox) }
             for (index, box) in boxes.enumerated() {
                 let identity = ObjectIdentifier(box)
                 let parent = index > 0 ? ObjectIdentifier(boxes[index - 1]) : nil
-                spans[identity] = (box, parent, spans[identity].map { NSUnionRange($0.range, range) } ?? range)
+                spans[identity] = EditorStyledSpan(box: box, parent: parent, range: spans[identity].map { NSUnionRange($0.range, range) } ?? range)
             }
         }
         let text = result.string as NSString
@@ -414,7 +418,7 @@ final class EditorMentionRenderedBox: NSObject {
         let measured = label?.size() ?? .zero
         let lineHeight = box.number("lineHeight", fallback: measured.height)
         size = CGSize(width: ceil(measured.width) + padding.left + padding.right,
-                      height: ceil(max(measured.height, lineHeight)) + padding.top + padding.bottom)
+            height: ceil(max(measured.height, lineHeight)) + padding.top + padding.bottom)
     }
 }
 

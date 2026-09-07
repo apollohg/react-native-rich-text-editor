@@ -1,5 +1,5 @@
-import XCTest
 import CoreText
+import XCTest
 
 extension RenderBridgeTests {
     func testWrappedListTextAlignsWithFirstLine() {
@@ -18,8 +18,8 @@ extension RenderBridgeTests {
                 "text": ["fontSize": 17],
                 "paragraph": ["lineHeight": 27, "marginBottom": 12],
                 "orderedList": ["indent": 20, "baseIndentMultiplier": 1],
-                "listMarker": ["scale": 1, "gap": 8],
-            ],
+                "listMarker": ["scale": 1, "gap": 8]
+            ]
         ])
         let rendered = RenderBridge.renderElements(fromJSON: json, baseFont: baseFont, textColor: textColor, theme: theme)
         for padding: CGFloat in [0, 5] {
@@ -51,8 +51,8 @@ extension RenderBridgeTests {
             "horizontalRule": [
                 "color": "#445566",
                 "thickness": 3,
-                "verticalMargin": 12,
-            ],
+                "verticalMargin": 12
+            ]
         ])
 
         let result = RenderBridge.renderElements(
@@ -149,7 +149,7 @@ extension RenderBridgeTests {
             origin: .zero
         )
         let markerWidth = ceil(("12." as NSString).size(withAttributes: [
-            .font: markerFont,
+            .font: markerFont
         ]).width)
 
         XCTAssertEqual(
@@ -177,10 +177,10 @@ extension RenderBridgeTests {
             origin: .zero
         )
         let visibleWidth = ceil(("12." as NSString).size(withAttributes: [
-            .font: markerFont,
+            .font: markerFont
         ]).width)
         let fullWidth = ceil((markerText as NSString).size(withAttributes: [
-            .font: markerFont,
+            .font: markerFont
         ]).width)
 
         XCTAssertEqual(
@@ -199,7 +199,7 @@ extension RenderBridgeTests {
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
             {"type": "textRun", "text": "Bold", "marks": ["bold"]},
             {"type": "textRun", "text": " start", "marks": []},
@@ -236,7 +236,7 @@ extension RenderBridgeTests {
         sourceStyle.maximumLineHeight = 28
 
         let markerStyle = EditorLayoutManager.markerParagraphStyle(from: [
-            .paragraphStyle: sourceStyle,
+            .paragraphStyle: sourceStyle
         ])
 
         XCTAssertEqual(markerStyle.minimumLineHeight, 28, accuracy: 0.1)
@@ -296,16 +296,16 @@ extension RenderBridgeTests {
     func testUnorderedBulletDrawingRectReproducesTallLineHeightListItem() {
         let theme = EditorTheme(dictionary: [
             "paragraph": [
-                "lineHeight": 32,
+                "lineHeight": 32
             ],
             "list": [
-                "markerScale": 2,
-            ],
+                "markerScale": 2
+            ]
         ])
         let json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 1,
-             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
             {"type": "blockStart", "nodeType": "paragraph", "depth": 2},
             {"type": "textRun", "text": "Bullet item", "marks": []},
             {"type": "blockEnd"},
@@ -363,7 +363,7 @@ extension RenderBridgeTests {
         let boldFont = UIFont(descriptor: boldDescriptor, size: baseFont.pointSize)
         let resolved = EditorLayoutManager.markerBaseFont(from: [
             .font: boldFont,
-            RenderBridgeAttributes.listMarkerBaseFont: baseFont,
+            RenderBridgeAttributes.listMarkerBaseFont: baseFont
         ])
 
         XCTAssertFalse(

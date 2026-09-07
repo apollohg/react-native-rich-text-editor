@@ -283,12 +283,7 @@ impl YrsDocumentEngine {
             .get_or_insert_with(|| super::awareness::AwarenessCodec::bind(doc))
     }
 
-    /// Task 10 wiring: read-only resolution of one peer awareness sticky
-    /// cursor point (the serialized `StickyIndex` form the sticky-position
-    /// surface produces) to a ProseMirror document position against the
-    /// current authoritative store. Invalid or unresolvable points return
-    /// `None` — the runtime degrades the peer projection to cursor-less
-    /// rather than erroring. Never mutates document state.
+    /// Unresolvable sticky points return None so peer projections can omit the cursor.
     pub fn resolve_awareness_sticky_doc_pos(&self, sticky_json: &serde_json::Value) -> Option<u32> {
         let sticky: yrs::StickyIndex = serde_json::from_value(sticky_json.clone()).ok()?;
         let txn = self.doc.transact();
@@ -494,7 +489,6 @@ impl YrsDocumentEngine {
             .map(|state| &state.relative_selection)
     }
 
-    #[allow(dead_code)]
     pub fn resolved_selection(&self) -> Option<&super::ResolvedSelection> {
         self.debug_assert_derived_revision_keys();
         self.derived_state
@@ -502,7 +496,6 @@ impl YrsDocumentEngine {
             .map(|state| &state.resolved_selection)
     }
 
-    #[allow(dead_code)]
     pub fn stored_marks(&self) -> Option<&[crate::model::Mark]> {
         self.debug_assert_derived_revision_keys();
         self.derived_state

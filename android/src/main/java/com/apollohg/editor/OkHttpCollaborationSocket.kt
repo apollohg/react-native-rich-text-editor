@@ -13,7 +13,7 @@ internal data class CollaborationSocketCallbacks(
     val onTextMessage: (String) -> Unit,
     val onClosing: (Int) -> Unit,
     val onClosed: (Int) -> Unit,
-    val onFailure: () -> Unit,
+    val onFailure: () -> Unit
 )
 
 internal interface CollaborationSocket {
@@ -28,17 +28,16 @@ internal interface CollaborationSocketFactory {
     fun makeSocket(
         url: String,
         protocols: List<String>,
-        callbacks: CollaborationSocketCallbacks,
+        callbacks: CollaborationSocketCallbacks
     ): CollaborationSocket
 }
 
-internal class OkHttpCollaborationSocketFactory(
-    private val client: OkHttpClient = OkHttpClient(),
-) : CollaborationSocketFactory {
+internal class OkHttpCollaborationSocketFactory(private val client: OkHttpClient = OkHttpClient()) :
+    CollaborationSocketFactory {
     override fun makeSocket(
         url: String,
         protocols: List<String>,
-        callbacks: CollaborationSocketCallbacks,
+        callbacks: CollaborationSocketCallbacks
     ): CollaborationSocket = OkHttpCollaborationSocket(client, url, protocols, callbacks)
 }
 
@@ -46,7 +45,7 @@ private class OkHttpCollaborationSocket(
     private val client: OkHttpClient,
     private val url: String,
     private val protocols: List<String>,
-    private val callbacks: CollaborationSocketCallbacks,
+    private val callbacks: CollaborationSocketCallbacks
 ) : CollaborationSocket {
     private var webSocket: WebSocket? = null
 
@@ -81,18 +80,21 @@ private class OkHttpCollaborationSocket(
                     callbacks.onClosed(code)
                 }
 
-                override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
+                override fun onFailure(
+                    webSocket: WebSocket,
+                    error: Throwable,
+                    response: Response?
+                ) {
                     callbacks.onFailure()
                 }
-            },
+            }
         )
     }
 
     override fun send(data: ByteString): Boolean = webSocket?.send(data) == true
     override fun send(text: String): Boolean = webSocket?.send(text) == true
 
-    override fun close(code: Int, reason: String?): Boolean =
-        webSocket?.close(code, reason) == true
+    override fun close(code: Int, reason: String?): Boolean = webSocket?.close(code, reason) == true
 
     override fun cancel() {
         webSocket?.cancel()

@@ -1,19 +1,21 @@
 package com.apollohg.editor
-import android.graphics.Color
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Rect
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
-import android.widget.LinearLayout
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -26,8 +28,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -189,7 +189,7 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
             val liveImageSpan = liveText.getSpans(
                 0,
                 liveText.length,
-                BlockImageSpan::class.java,
+                BlockImageSpan::class.java
             ).single()
             val imageOffset = liveText.getSpanStart(liveImageSpan)
             val layout = requireNotNull(view.editorEditText.layout)
@@ -203,11 +203,11 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
 
             assertTrue(
                 "Image top ${imageRect.top} must not precede its line top $imageLineTop",
-                imageRect.top >= imageLineTop,
+                imageRect.top >= imageLineTop
             )
             assertTrue(
                 "Following line top $followingLineTop must not precede image bottom ${imageRect.bottom}",
-                followingLineTop >= imageRect.bottom,
+                followingLineTop >= imageRect.bottom
             )
         } finally {
             releaseDecode.countDown()
@@ -235,15 +235,21 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
                 val spans = text.getSpans(0, text.length, BlockImageSpan::class.java)
                 fixture.view.editorEditText.setSelection(
                     text.getSpanStart(spans[1]),
-                    text.getSpanEnd(spans[1]),
+                    text.getSpanEnd(spans[1])
                 )
                 fixture.view.editorEditText.onSelectionOrContentMayChange?.invoke()
-            },
+            }
         )
 
         transitions.forEach { (name, transition) ->
             val fixture = imageResizeGestureFixture(
-                if (name == "image identity replacement") twoImageRenderJson() else imageRenderJson(),
+                if (name ==
+                    "image identity replacement"
+                ) {
+                    twoImageRenderJson()
+                } else {
+                    imageRenderJson()
+                }
             )
             val rect = requireNotNull(fixture.view.imageResizeOverlayRectForTesting())
             val down = MotionEvent.obtain(
@@ -252,7 +258,7 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
                 MotionEvent.ACTION_DOWN,
                 rect.right,
                 rect.bottom,
-                0,
+                0
             )
             assertTrue(name, fixture.view.dispatchImageResizeTouchForTesting(down))
             down.recycle()
@@ -267,7 +273,7 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
                 MotionEvent.ACTION_UP,
                 rect.right + 20f,
                 rect.bottom + 20f,
-                0,
+                0
             )
             fixture.view.dispatchImageResizeTouchForTesting(up)
             up.recycle()
@@ -281,8 +287,22 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
         val rect = requireNotNull(fixture.view.imageResizeOverlayRectForTesting())
         val events = listOf(
             MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, rect.right, rect.bottom, 0),
-            MotionEvent.obtain(0, 8, MotionEvent.ACTION_MOVE, rect.right + 24f, rect.bottom + 24f, 0),
-            MotionEvent.obtain(0, 16, MotionEvent.ACTION_UP, rect.right + 24f, rect.bottom + 24f, 0),
+            MotionEvent.obtain(
+                0,
+                8,
+                MotionEvent.ACTION_MOVE,
+                rect.right + 24f,
+                rect.bottom + 24f,
+                0
+            ),
+            MotionEvent.obtain(
+                0,
+                16,
+                MotionEvent.ACTION_UP,
+                rect.right + 24f,
+                rect.bottom + 24f,
+                0
+            )
         )
 
         events.forEach { event ->
@@ -301,8 +321,15 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
         val downX = rect.left + (20f * density)
         val events = listOf(
             MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, downX, rect.bottom, 0),
-            MotionEvent.obtain(0, 8, MotionEvent.ACTION_MOVE, rect.left - 24f, rect.bottom + 24f, 0),
-            MotionEvent.obtain(0, 16, MotionEvent.ACTION_UP, rect.left - 24f, rect.bottom + 24f, 0),
+            MotionEvent.obtain(
+                0,
+                8,
+                MotionEvent.ACTION_MOVE,
+                rect.left - 24f,
+                rect.bottom + 24f,
+                0
+            ),
+            MotionEvent.obtain(0, 16, MotionEvent.ACTION_UP, rect.left - 24f, rect.bottom + 24f, 0)
         )
 
         events.forEach { event ->
@@ -323,14 +350,18 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
                 if (child is ViewGroup) yieldAll(descendants(child))
             }
         }
-        val overlay = descendants(fixture.view.editorViewport).filterIsInstance<ImageResizeOverlayView>().single()
+        val overlay = descendants(
+            fixture.view.editorViewport
+        ).filterIsInstance<ImageResizeOverlayView>().single()
         val rect = requireNotNull(fixture.view.imageResizeOverlayRectForTesting())
 
         val exclusions = overlay.systemGestureExclusionRects
         assertEquals(4, exclusions.size)
-        assertTrue(exclusions.any { exclusion ->
-            exclusion.contains(rect.left.toInt(), rect.top.toInt())
-        })
+        assertTrue(
+            exclusions.any { exclusion ->
+                exclusion.contains(rect.left.toInt(), rect.top.toInt())
+            }
+        )
 
         fixture.view.setImageResizingEnabled(false)
 
@@ -405,9 +436,30 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
         val first = requireNotNull(spans[0].currentDrawRect())
         val second = requireNotNull(spans[1].currentDrawRect())
 
-        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, first.centerX(), first.centerY(), 0)
-        val move = MotionEvent.obtain(0, 8, MotionEvent.ACTION_MOVE, second.centerX(), second.centerY(), 0)
-        val up = MotionEvent.obtain(0, 16, MotionEvent.ACTION_UP, second.centerX(), second.centerY(), 0)
+        val down = MotionEvent.obtain(
+            0,
+            0,
+            MotionEvent.ACTION_DOWN,
+            first.centerX(),
+            first.centerY(),
+            0
+        )
+        val move = MotionEvent.obtain(
+            0,
+            8,
+            MotionEvent.ACTION_MOVE,
+            second.centerX(),
+            second.centerY(),
+            0
+        )
+        val up = MotionEvent.obtain(
+            0,
+            16,
+            MotionEvent.ACTION_UP,
+            second.centerX(),
+            second.centerY(),
+            0
+        )
         view.editorEditText.onTouchEvent(down)
         view.editorEditText.onTouchEvent(move)
         view.editorEditText.onTouchEvent(up)
@@ -484,6 +536,9 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
         view.editorEditText.onTouchEvent(up)
         up.recycle()
 
-        assertNull("Tapping an image should not show the resize overlay when disabled", view.imageResizeOverlayRectForTesting())
+        assertNull(
+            "Tapping an image should not show the resize overlay when disabled",
+            view.imageResizeOverlayRectForTesting()
+        )
     }
 }

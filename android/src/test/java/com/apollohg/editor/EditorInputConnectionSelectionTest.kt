@@ -7,9 +7,9 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Looper
 import android.provider.Settings
+import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
-import android.text.InputType
 import android.text.style.AbsoluteSizeSpan
 import android.view.MotionEvent
 import android.view.View
@@ -28,10 +28,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Shadows.shadowOf
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -50,8 +50,11 @@ internal class EditorInputConnectionSelectionTest : EditorInputConnectionTestFix
         shadowOf(Looper.getMainLooper()).idle()
 
         val trace = editText.imeTraceSnapshotForTesting()
-        assertTrue(trace.toString(), trace.any {
-            it.contains("updateSelectionAfterRestart:source=privateImeOptions sel=1..1")
-        })
+        assertTrue(
+            trace.toString(),
+            trace.any {
+                it.contains("updateSelectionAfterRestart:source=privateImeOptions sel=1..1")
+            }
+        )
     }
 }

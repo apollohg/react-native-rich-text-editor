@@ -1,5 +1,5 @@
-import UIKit
 import os
+import UIKit
 
 /// UITextView that intercepts input and routes it through editor-core.
 ///
@@ -165,10 +165,10 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     var onApplyingRustTextForTesting: (() -> Void)?
     var captureApplyUpdateTraceForTesting = false
     var lastApplyUpdateTraceForTesting: ApplyUpdateTrace?
-    var currentRenderBlocks: [[[String: Any]]]? = nil
+    var currentRenderBlocks: [[[String: Any]]]?
     var currentRenderBlocksDocumentVersion: UInt64?
     var recoveringRenderPatchBaseMismatch = false
-    var currentTopLevelChildMetadata: [TopLevelChildMetadata]? = nil
+    var currentTopLevelChildMetadata: [TopLevelChildMetadata]?
     var renderAppearanceRevision: UInt64 = 1
     var lastAppliedRenderAppearanceRevision: UInt64 = 0
 
@@ -331,12 +331,10 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         smartDashesType = .no
         smartInsertDeleteType = .no
 
-        // Allow scrolling and text selection.
         isScrollEnabled = heightBehavior == .fixed
         isEditable = true
         isSelectable = true
 
-        // Set a reasonable default font.
         font = baseFont
         textColor = baseTextColor
         backgroundColor = baseBackgroundColor
@@ -530,8 +528,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     override func closestPosition(to point: CGPoint) -> UITextPosition? {
         if atomAttachmentRange(at: point) != nil,
            let selectedTextRange,
-           selectedTextRange.isEmpty
-        {
+           selectedTextRange.isEmpty {
             return selectedTextRange.start
         }
         return super.closestPosition(to: point)
@@ -543,8 +540,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     ) -> UITextPosition? {
         if atomAttachmentRange(at: point) != nil,
            let selectedTextRange,
-           selectedTextRange.isEmpty
-        {
+           selectedTextRange.isEmpty {
             return selectedTextRange.start
         }
         return super.closestPosition(to: point, within: range)
@@ -562,8 +558,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     override func insertText(_ text: String) {
         ensureInternalTextViewDelegate()
         if isApplyingRustState
-            || (!isReplayingDeferredInsertText && !deferredInsertTexts.isEmpty)
-        {
+            || (!isReplayingDeferredInsertText && !deferredInsertTexts.isEmpty) {
             enqueueDeferredInsertText(text)
             return
         }
@@ -588,13 +583,11 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             return
         }
 
-        // Get the current cursor position as a scalar offset.
         let scalarPos = PositionBridge.cursorScalarOffset(in: self)
         Self.inputLog.debug(
             "[insertText] text=\(self.preview(text), privacy: .public) scalarPos=\(scalarPos) selection=\(self.selectionSummary(), privacy: .public) textState=\(self.textSnapshotSummary(), privacy: .public)"
         )
 
-        // If there's a range selection, atomically replace it.
         if let selectedRange = selectedTextRange, !selectedRange.isEmpty {
             let range = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
             performInterceptedInput {
@@ -629,7 +622,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
                 input: "\t",
                 modifierFlags: [.shift],
                 action: #selector(handleOutdentKeyCommand)
-            ),
+            )
         ]
     }
 
@@ -668,7 +661,6 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         )
 
         if !selectedRange.isEmpty {
-            // Range selection: delete the entire range.
             let range = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
             performInterceptedInput {
                 deleteScalarRangeInRust(from: range.from, to: range.to)
@@ -724,8 +716,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             }
 
             if cursorUtf16Offset > 0,
-               (textStorage.string as NSString).character(at: cursorUtf16Offset - 1) == 0x200B
-            {
+               (textStorage.string as NSString).character(at: cursorUtf16Offset - 1) == 0x200B {
                 performInterceptedInput {
                     deleteBackwardAtSelectionScalarInRust(anchor: cursorPos, head: cursorPos)
                 }
@@ -801,7 +792,6 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             "[replace] text=\(self.preview(replacementText), privacy: .public) scalarRange=\(scalarRange.from)-\(scalarRange.to) selection=\(self.selectionSummary(), privacy: .public) textState=\(self.textSnapshotSummary(), privacy: .public)"
         )
 
-        // Atomically replace the range with the new text via Rust.
         performInterceptedInput {
             let updateJSON = EditorV2Shadow.replaceTextScalar(
                 id: editorId,
@@ -906,7 +896,6 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
 
         let pasteboard = UIPasteboard.general
 
-        // Try HTML first for rich paste.
         if let htmlData = pasteboard.data(forPasteboardType: "public.html"),
            let html = String(data: htmlData, encoding: .utf8) {
             performInterceptedInput {
@@ -915,14 +904,12 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             return
         }
 
-        // Try attributed string (e.g. from Notes, Pages).
         if let rtfData = pasteboard.data(forPasteboardType: "public.rtf") {
             if let attrStr = try? NSAttributedString(
                 data: rtfData,
                 options: [.documentType: NSAttributedString.DocumentType.rtf],
                 documentAttributes: nil
             ) {
-                // Convert attributed string to HTML for Rust processing.
                 if let htmlData = try? attrStr.data(
                     from: NSRange(location: 0, length: attrStr.length),
                     documentAttributes: [.documentType: NSAttributedString.DocumentType.html]
@@ -938,7 +925,6 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             }
         }
 
-        // Fallback to plain text.
         if let text = pasteboard.string {
             performInterceptedInput {
                 pastePlainText(text)

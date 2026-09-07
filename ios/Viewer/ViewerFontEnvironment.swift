@@ -6,7 +6,7 @@ import UIKit
 @objc(PREPViewerFontEnvironment)
 public final class ViewerFontEnvironment: NSObject {
     @objc public static let didInvalidateNotification = Notification.Name("com.apollohg.editor.viewer.fontEnvironmentDidInvalidate")
-    @objc(sharedEnvironment) public class var sharedEnvironment: ViewerFontEnvironment { shared }
+    @objc(sharedEnvironment) public static var sharedEnvironment: ViewerFontEnvironment { shared }
     static let shared = ViewerFontEnvironment()
 
     private let lock = NSLock()
@@ -42,7 +42,7 @@ public final class ViewerFontEnvironment: NSObject {
             // This is the documented Core Text notification. The former
             // string literal was private/undocumented and did not reliably
             // observe registrations made by Core Text font loaders.
-            notificationCenter.addObserver(forName: Self.registeredFontsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in self?.invalidateRegisteredFonts() },
+            notificationCenter.addObserver(forName: Self.registeredFontsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in self?.invalidateRegisteredFonts() }
         ]
     }
 
@@ -153,9 +153,9 @@ public final class ViewerFontEnvironment: NSObject {
     private static func genericFamily(for family: String) -> GenericFamily? {
         switch family.lowercased() {
         case "default", "system", "system-ui", "sans", "sans-serif", "ui-sans-serif",
-             "cursive", "casual", "sans-serif-smallcaps", "sans-serif-condensed",
-             "sans-serif-light", "sans-serif-medium", "sans-serif-black", "sans-serif-thin",
-             "sans-serif-condensed-light":
+            "cursive", "casual", "sans-serif-smallcaps", "sans-serif-condensed",
+            "sans-serif-light", "sans-serif-medium", "sans-serif-black", "sans-serif-thin",
+            "sans-serif-condensed-light":
             return .system
         case "serif", "ui-serif":
             return .serif

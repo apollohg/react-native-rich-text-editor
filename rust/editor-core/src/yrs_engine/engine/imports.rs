@@ -281,21 +281,6 @@ impl YrsDocumentEngine {
         self.commit_root_replacement(request_id, source, history, outbox)
     }
 
-    /// Same-store whole-document replacement from HTML. See
-    /// [`Self::prepare_root_replacement_json`].
-    #[allow(dead_code)]
-    pub fn prepare_root_replacement_html(
-        &mut self,
-        request_id: u64,
-        input: &str,
-        options: &FromHtmlOptions,
-        history: yrs_engine::ReplacementHistory,
-    ) -> Result<yrs_engine::TransactionCommit, yrs_engine::RootReplacementError> {
-        self.prepare_root_replacement_html_with_outbox(request_id, input, options, history, None)
-    }
-
-    /// [`Self::prepare_root_replacement_html`] with an optionally attached
-    /// collaboration outbox for bounded outbound update capture.
     pub(crate) fn prepare_root_replacement_html_with_outbox(
         &mut self,
         request_id: u64,

@@ -6,7 +6,7 @@ use crate::schema::content_rule::ContentRule;
 use crate::schema::presets::tiptap_schema;
 use crate::schema::{AttrSpec, NodeRole, NodeSpec, Schema};
 use crate::selection::Selection;
-use crate::transform::{Source, Step, Transaction};
+use crate::transform::{Step, Transaction};
 use crate::yrs_engine::{
     Affinity, EditingLimitOverrides, EditingLimits, EditorOffsetKind, HistoryPolicy,
     InitializationMode, RevisionedPosition, RevisionedRange, SelectionInput, SelectionIntent,
@@ -99,7 +99,7 @@ fn transaction(engine: &YrsDocumentEngine, operations: Vec<TypedOperation>) -> T
 }
 
 fn legacy(engine: &YrsDocumentEngine, steps: Vec<Step>) -> crate::model::Document {
-    let mut transaction = Transaction::new(Source::Input);
+    let mut transaction = Transaction::new();
     for step in steps {
         transaction.add_step(step);
     }

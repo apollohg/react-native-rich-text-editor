@@ -1,20 +1,21 @@
 package com.apollohg.editor.viewer
-import android.graphics.Canvas
-import android.graphics.Bitmap
-import android.graphics.Rect
 import android.app.Activity
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Rect
 import android.os.Looper
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.view.View
 import android.view.ViewGroup
-import android.widget.FrameLayout
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
-import com.apollohg.editor.PreparedProseRecyclerHarness
+import android.widget.FrameLayout
+import com.apollohg.editor.OrderedListMarkerSpan
 import com.apollohg.editor.PreparedProseBenchmarkConfiguration
 import com.apollohg.editor.PreparedProsePerformanceGates
+import com.apollohg.editor.PreparedProseRecyclerHarness
 import com.apollohg.editor.ProseViewerConfiguration
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.ProseViewerErrorCode
@@ -22,23 +23,22 @@ import com.apollohg.editor.ProseViewerInteractionListenerAdapter
 import com.apollohg.editor.ProseViewerMention
 import com.apollohg.editor.ProseViewerSource
 import com.apollohg.editor.ProseViewerView
-import com.apollohg.editor.OrderedListMarkerSpan
 import com.apollohg.editor.RenderBridge
+import java.io.File
+import java.util.concurrent.TimeUnit
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.io.File
-import java.util.concurrent.TimeUnit
-import org.json.JSONArray
-import org.json.JSONObject
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -52,12 +52,31 @@ internal class PreparedProseLayoutFabricMeasurementTest : PreparedProseLayoutTes
 
         val generation = FabricGenerationToken(surface, request.generationIdentity, 1)
         registry.registerFabricLease(surface, generation.leaseHandle)
-        registry.measure(request, widthPx = 320, density = 1f, fabricSurface = surface, fabricLeaseHandle = generation.leaseHandle)
-        val artifact = registry.acquireForFabricMount(generation, request, widthPx = 320, density = 1f)
+        registry.measure(
+            request,
+            widthPx = 320,
+            density = 1f,
+            fabricSurface = surface,
+            fabricLeaseHandle = generation.leaseHandle
+        )
+        val artifact = registry.acquireForFabricMount(
+            generation,
+            request,
+            widthPx = 320,
+            density = 1f
+        )
         val drawingView = PreparedProseDrawingView(context)
         drawingView.install(artifact)
         drawingView.layout(0, 0, 320, artifact!!.heightPx)
-        drawingView.draw(Canvas(Bitmap.createBitmap(320, artifact.heightPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)))
+        drawingView.draw(
+            Canvas(
+                Bitmap.createBitmap(
+                    320,
+                    artifact.heightPx.coerceAtLeast(1),
+                    Bitmap.Config.ARGB_8888
+                )
+            )
+        )
 
         assertEquals(1, engine.preparationCount)
     }
@@ -78,7 +97,7 @@ internal class PreparedProseLayoutFabricMeasurementTest : PreparedProseLayoutTes
             widthPx = measuredWidthPx,
             density = 2.625f,
             fabricSurface = surface,
-            fabricLeaseHandle = generation.leaseHandle,
+            fabricLeaseHandle = generation.leaseHandle
         )
         val mounted = registry.acquireForFabricMount(generation, request, laidOutWidthPx, 2.625f)
 
@@ -105,7 +124,7 @@ internal class PreparedProseLayoutFabricMeasurementTest : PreparedProseLayoutTes
             contentOriginXPx = 17,
             contentOriginYPx = 23,
             fabricSurface = surface,
-            fabricLeaseHandle = generation.leaseHandle,
+            fabricLeaseHandle = generation.leaseHandle
         )
         registry.activateFabricGeneration(generation)
 
@@ -113,8 +132,8 @@ internal class PreparedProseLayoutFabricMeasurementTest : PreparedProseLayoutTes
             null,
             registry.acquirePreparedMountTicket(
                 generation,
-                expectedNativeFontRevision = request.nativeFontRevision + 1,
-            ),
+                expectedNativeFontRevision = request.nativeFontRevision + 1
+            )
         )
         val ticket = requireNotNull(registry.acquirePreparedMountTicket(generation))
         assertEquals(request.nativeFontRevision, ticket.nativeFontRevision)
@@ -135,7 +154,13 @@ internal class PreparedProseLayoutFabricMeasurementTest : PreparedProseLayoutTes
         val generation = FabricGenerationToken(surface, request.generationIdentity, 2)
 
         registry.registerFabricLease(surface, generation.leaseHandle)
-        registry.measure(request, widthPx = 896, density = 2.625f, fabricSurface = surface, fabricLeaseHandle = generation.leaseHandle)
+        registry.measure(
+            request,
+            widthPx = 896,
+            density = 2.625f,
+            fabricSurface = surface,
+            fabricLeaseHandle = generation.leaseHandle
+        )
 
         assertEquals(null, registry.acquireForFabricMount(generation, request, 894, 2.625f))
         assertEquals(null, registry.acquireForFabricMount(generation, request, 898, 2.625f))
@@ -151,8 +176,20 @@ internal class PreparedProseLayoutFabricMeasurementTest : PreparedProseLayoutTes
         val generation = FabricGenerationToken(surface, request.generationIdentity, 2)
 
         registry.registerFabricLease(surface, generation.leaseHandle)
-        registry.measure(request, widthPx = 895, density = 2.625f, fabricSurface = surface, fabricLeaseHandle = generation.leaseHandle)
-        val exact = registry.measure(request, widthPx = 896, density = 2.625f, fabricSurface = surface, fabricLeaseHandle = generation.leaseHandle)
+        registry.measure(
+            request,
+            widthPx = 895,
+            density = 2.625f,
+            fabricSurface = surface,
+            fabricLeaseHandle = generation.leaseHandle
+        )
+        val exact = registry.measure(
+            request,
+            widthPx = 896,
+            density = 2.625f,
+            fabricSurface = surface,
+            fabricLeaseHandle = generation.leaseHandle
+        )
 
         assertTrue(registry.acquireForFabricMount(generation, request, 896, 2.625f) === exact)
     }
@@ -166,7 +203,7 @@ internal class PreparedProseLayoutFabricMeasurementTest : PreparedProseLayoutTes
             base,
             base.copy(attachmentRevision = 1),
             base.copy(nativeFontRevision = 1),
-            base.copy(fontEnvironmentRevision = 1),
+            base.copy(fontEnvironmentRevision = 1)
         )
 
         requests.forEach { registry.measure(it, widthPx = 320, density = 1f) }
@@ -180,7 +217,7 @@ internal class PreparedProseLayoutFabricMeasurementTest : PreparedProseLayoutTes
         val registry = PreparedProseLayoutRegistry(
             compiler = CountingDocumentCompiler(::testDocument),
             layoutEngine = CountingLayoutEngine(),
-            byteBudget = 1,
+            byteBudget = 1
         )
         val request = request("too large to retain")
         val surface = FabricSurfaceToken(9, 91)

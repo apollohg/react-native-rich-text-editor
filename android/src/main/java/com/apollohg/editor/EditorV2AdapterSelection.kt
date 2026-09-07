@@ -1,8 +1,7 @@
 package com.apollohg.editor
 
-import org.json.JSONObject
 import org.json.JSONArray
-
+import org.json.JSONObject
 
 internal sealed interface SelectionSyncOutcome {
     object Ok : SelectionSyncOutcome
@@ -17,10 +16,13 @@ internal fun EditorV2Adapter.clampScalar(scalar: Int): Int {
 
 internal fun EditorV2Adapter.selectAtomNode(docPos: Int): String? {
     val selection = JSONObject().put("type", "atom").put("docPos", docPos).put("edge", "node")
-    return when (val result = callWithEnvelope(JSONObject().put("selection", selection)) {
-        backend.setSelection(editorId, it)
-    }) {
+    return when (
+        val result = callWithEnvelope(JSONObject().put("selection", selection)) {
+            backend.setSelection(editorId, it)
+        }
+    ) {
         is EditorV2CallResult.Err -> handleMutationError(result.error)
+
         is EditorV2CallResult.Ok -> {
             invalidateCachedAtomicState(null)
             recoverNativeRender()
@@ -51,7 +53,7 @@ internal fun EditorV2Adapter.ensureSelection(anchor: Int, head: Int): SelectionS
     // changes only the stickiness of the SAME position.
     val collapsed = clampedAnchor == clampedHead
     var result = callWithEnvelope(
-        selectionEnvelope(clampedAnchor, clampedHead, if (collapsed) "after" else "before"),
+        selectionEnvelope(clampedAnchor, clampedHead, if (collapsed) "after" else "before")
     ) { requestJson ->
         backend.setSelection(editorId, requestJson)
     }
@@ -59,9 +61,12 @@ internal fun EditorV2Adapter.ensureSelection(anchor: Int, head: Int): SelectionS
         result is EditorV2CallResult.Err &&
         result.error.code == "POSITION_INVALID"
     ) {
-        result = callWithEnvelope(selectionEnvelope(clampedAnchor, clampedHead, "before")) { requestJson ->
-            backend.setSelection(editorId, requestJson)
-        }
+        result =
+            callWithEnvelope(
+                selectionEnvelope(clampedAnchor, clampedHead, "before")
+            ) { requestJson ->
+                backend.setSelection(editorId, requestJson)
+            }
     }
     return when (result) {
         is EditorV2CallResult.Ok -> {
@@ -82,6 +87,7 @@ internal fun EditorV2Adapter.ensureSelection(anchor: Int, head: Int): SelectionS
             cachedAtomicRenderDocumentRevision = null
             SelectionSyncOutcome.Ok
         }
+
         is EditorV2CallResult.Err -> {
             if (result.error.code == "REVISION_MISMATCH") {
                 val update = refreshInternal(null, stripViewSelection = false)
@@ -104,7 +110,7 @@ internal fun EditorV2Adapter.textDocumentSelection(updateJson: String): IntArray
         if (selection.optString("type") != "text") return null
         intArrayOf(
             scalarField(selection, "anchor") ?: return null,
-            scalarField(selection, "head") ?: return null,
+            scalarField(selection, "head") ?: return null
         )
     } catch (error: Exception) {
         null
@@ -119,13 +125,14 @@ internal fun EditorV2Adapter.resolveSelectionMapping(anchor: Int, head: Int): In
             debugNotes.add("resolveScalarSelection ${result.error.domain}/${result.error.code}")
             return null
         }
+
         is EditorV2CallResult.Ok -> result.value
     }
     return try {
         val selection = JSONObject(resolved)
         intArrayOf(
             scalarField(selection, "anchor") ?: return null,
-            scalarField(selection, "head") ?: return null,
+            scalarField(selection, "head") ?: return null
         )
     } catch (error: Exception) {
         null
@@ -149,10 +156,11 @@ internal fun EditorV2Adapter.publishCollaborationSelection(docAnchor: Int, docHe
     when (
         val result = backend.collaborationSetAwarenessSelection(
             editorId,
-            selectionJson,
+            selectionJson
         )
     ) {
         is EditorV2CallResult.Err -> emit(result.error)
+
         is EditorV2CallResult.Ok -> {
             val outboundChanged = try {
                 val value = JSONObject(result.value)
@@ -168,7 +176,11 @@ internal fun EditorV2Adapter.publishCollaborationSelection(docAnchor: Int, docHe
                 null
             }
             if (outboundChanged == null) {
-                emit(EditorV2Adapter.contractError("awareness selection result violates the frozen shape"))
+                emit(
+                    EditorV2Adapter.contractError(
+                        "awareness selection result violates the frozen shape"
+                    )
+                )
             } else if (outboundChanged) {
                 collaborationWake(editorId, CollaborationWakeReason.AWARENESS)
             }
@@ -182,7 +194,10 @@ internal fun EditorV2Adapter.mapPosition(result: EditorV2CallResult<String>, key
             emit(result.error)
             null
         }
+
         is EditorV2CallResult.Ok -> try {
             scalarField(JSONObject(result.value), key)
-        } catch (error: Exception) { null }
+        } catch (error: Exception) {
+            null
+        }
     }

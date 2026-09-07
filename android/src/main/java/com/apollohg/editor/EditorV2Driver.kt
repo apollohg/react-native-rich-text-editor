@@ -4,21 +4,18 @@ package com.apollohg.editor
  * Render returned by a block-split request. A refresh-only render keeps the
  * native view coherent but must not be treated as a locally committed split.
  */
-internal data class EditorV2SplitRender(
-    val updateJson: String,
-    val committed: Boolean,
-)
+internal data class EditorV2SplitRender(val updateJson: String, val committed: Boolean)
 
 internal data class EditorV2SelectionSync(
     val docAnchor: Int,
     val docHead: Int,
-    val refreshedUpdateJson: String?,
+    val refreshedUpdateJson: String?
 )
 
 internal data class EditorV2NativeMutationRender(
     val updateJson: String,
     val changed: Boolean,
-    val documentChanged: Boolean,
+    val documentChanged: Boolean
 )
 
 internal sealed interface EditorV2NativeIntentResult {
@@ -42,7 +39,7 @@ internal interface EditorV2Driver {
     fun replaceTextRangeNative(
         scalarFrom: Int,
         scalarTo: Int,
-        text: String,
+        text: String
     ): EditorV2NativeIntentResult
     fun deleteScalarRangeNative(scalarFrom: Int, scalarTo: Int): EditorV2NativeIntentResult
     fun deleteBackwardAtSelection(anchor: Int, head: Int): String?
@@ -87,5 +84,4 @@ internal interface EditorV2Driver {
 
     /** Stale-revision recovery: refresh from Rust state, never retry the failed op. */
     fun refreshFromRustState(mirrorSelection: IntArray?): String?
-
 }

@@ -1,12 +1,33 @@
 package com.apollohg.editor
 
-import expo.modules.kotlin.modules.Module
-import expo.modules.kotlin.modules.ModuleDefinition
 import com.apollohg.editor.viewer.PreparedProseInstrumentation
 import com.apollohg.editor.viewer.PreparedProseLayoutRegistry
+import expo.modules.kotlin.modules.Module
+import expo.modules.kotlin.modules.ModuleDefinition
 import org.json.JSONArray
 import org.json.JSONObject
-import uniffi.editor_core.*
+import uniffi.editor_core.FfiError
+import uniffi.editor_core.FfiJsonResult
+import uniffi.editor_core.FfiSnapshotExportResult
+import uniffi.editor_core.FfiUnitResult
+import uniffi.editor_core.editorV2ApplyCommand
+import uniffi.editor_core.editorV2ApplyInput
+import uniffi.editor_core.editorV2ApplyLocalApi
+import uniffi.editor_core.editorV2CollaborationPeers
+import uniffi.editor_core.editorV2CollaborationSetAwareness
+import uniffi.editor_core.editorV2Create
+import uniffi.editor_core.editorV2Destroy
+import uniffi.editor_core.editorV2GetContentSnapshot
+import uniffi.editor_core.editorV2GetDocumentHtml
+import uniffi.editor_core.editorV2GetDocumentJson
+import uniffi.editor_core.editorV2GetState
+import uniffi.editor_core.editorV2Redo
+import uniffi.editor_core.editorV2RenderUpdate
+import uniffi.editor_core.editorV2ReplaceDocument
+import uniffi.editor_core.editorV2SetSelection
+import uniffi.editor_core.editorV2SnapshotExport
+import uniffi.editor_core.editorV2SnapshotRestore
+import uniffi.editor_core.editorV2Undo
 
 private fun destroyAlreadyInProgressResult(): FfiUnitResult = FfiUnitResult(
     null,
@@ -18,8 +39,8 @@ private fun destroyAlreadyInProgressResult(): FfiUnitResult = FfiUnitResult(
         null,
         null,
         null,
-        null,
-    ),
+        null
+    )
 )
 
 /**
@@ -50,12 +71,12 @@ internal fun destroyEditorThenInvalidate(
  */
 internal fun destroyEditorV2FromModule(
     editorId: String,
-    destroy: (String) -> FfiUnitResult = ::editorV2Destroy,
+    destroy: (String) -> FfiUnitResult = ::editorV2Destroy
 ): FfiUnitResult {
     val canonicalHandle = canonicalV2U64(editorId) ?: return destroy(editorId)
     if (
         EditorV2Registry.acquireHandleDestroyReservation(canonicalHandle) !=
-            EditorV2DestroyReservationResult.RESERVED
+        EditorV2DestroyReservationResult.RESERVED
     ) {
         return destroyAlreadyInProgressResult()
     }
@@ -78,21 +99,26 @@ internal fun destroyEditorV2FromModule(
         val result = destroy(canonicalHandle)
         invokeDestroyTestingHook(
             EditorV2Registry.onDestroyFfiResultReceivedForTesting,
-            canonicalHandle,
+            canonicalHandle
         )
         val error = result.error
         when {
             result.value == true && error == null -> Unit
+
             result.value == null &&
                 error?.domain == "lifecycle" &&
                 error.code in setOf("ENGINE_DESTROYED", "ENGINE_DESTROYING") -> Unit
+
             result.value == null && error != null -> {
                 if (reserved) NativeEditorViewRegistry.rollbackDestroy(viewToken!!)
                 return result
             }
+
             else -> {
                 if (reserved) NativeEditorViewRegistry.rollbackDestroy(viewToken!!)
-                return invalidDestroyResult("v2 destroy result violates the frozen unit-result shape")
+                return invalidDestroyResult(
+                    "v2 destroy result violates the frozen unit-result shape"
+                )
             }
         }
 
@@ -102,7 +128,7 @@ internal fun destroyEditorV2FromModule(
         EditorV2Registry.dropPair(canonicalHandle)
         invokeDestroyTestingHook(
             EditorV2Registry.onPairRemovedBeforeDestroyFinalizationForTesting,
-            canonicalHandle,
+            canonicalHandle
         )
         if (reserved) {
             // Off-main finalization can finish after its bounded wait. Keep
@@ -134,8 +160,8 @@ private fun invalidDestroyResult(message: String): FfiUnitResult = FfiUnitResult
         null,
         null,
         null,
-        null,
-    ),
+        null
+    )
 )
 
 // ── Frozen v2 result-record bridging ─────────────────────────────────────
@@ -151,7 +177,7 @@ private fun FfiError.toJSMap(): Map<String, Any?> = mapOf(
     "operationIndex" to operationIndex,
     "limit" to limit,
     "actual" to actual,
-    "detailsJson" to detailsJson,
+    "detailsJson" to detailsJson
 )
 
 internal fun EditorV2Error.toJSMap(): Map<String, Any?> = mapOf(
@@ -162,7 +188,7 @@ internal fun EditorV2Error.toJSMap(): Map<String, Any?> = mapOf(
     "operationIndex" to operationIndex,
     "limit" to limit,
     "actual" to actual,
-    "detailsJson" to detailsJson,
+    "detailsJson" to detailsJson
 )
 
 private fun FfiJsonResult.toJSMap(): Map<String, Any?> =
@@ -175,7 +201,7 @@ private fun FfiSnapshotExportResult.toJSMap(): Map<String, Any?> = mapOf(
     "value" to value?.let {
         mapOf("metadataJson" to it.metadataJson, "encodedState" to it.encodedState)
     },
-    "error" to error?.toJSMap(),
+    "error" to error?.toJSMap()
 )
 
 private fun v2BoundaryErrorRecord(message: String): Map<String, Any?> = mapOf(
@@ -188,8 +214,8 @@ private fun v2BoundaryErrorRecord(message: String): Map<String, Any?> = mapOf(
         "operationIndex" to null,
         "limit" to null,
         "actual" to null,
-        "detailsJson" to null,
-    ),
+        "detailsJson" to null
+    )
 )
 
 private fun v2InvalidFfiResultRecord(message: String): Map<String, Any?> = mapOf(
@@ -197,8 +223,8 @@ private fun v2InvalidFfiResultRecord(message: String): Map<String, Any?> = mapOf
     "error" to EditorV2Error(
         domain = "boundary",
         code = "FFI_RESULT_INVALID",
-        message = message,
-    ).toJSMap(),
+        message = message
+    ).toJSMap()
 )
 
 private fun createdV2SessionHandle(value: String, requireExactShape: Boolean): String? {
@@ -222,7 +248,7 @@ internal fun createEditorV2FromModule(
     configJson: String,
     snapshotState: ByteArray?,
     create: (String, ByteArray?) -> FfiJsonResult = ::editorV2Create,
-    destroy: (String) -> FfiUnitResult = ::editorV2Destroy,
+    destroy: (String) -> FfiUnitResult = ::editorV2Destroy
 ): Map<String, Any?> {
     val result = create(configJson, snapshotState)
     val value = result.value
@@ -251,33 +277,41 @@ internal fun createEditorV2FromModule(
     return result.toJSMap()
 }
 
-private fun mutationResult(
-    editorId: String,
-    operation: () -> FfiJsonResult,
-): Map<String, Any?> {
-    val adapter = EditorV2Registry.viewTokenForHandle(editorId)?.let(EditorV2Registry::adapterForViewToken)
-    val result = if (adapter == null) operation() else synchronized(adapter) {
-        val result = operation()
-        if (result.error == null && result.value != null) {
-            val outcome = runCatching { JSONObject(result.value!!) }.getOrNull()
-            var revision = (outcome?.opt("documentRevision") as? String)?.toULongOrNull()
-            if (revision == null && outcome?.optBoolean("changed", false) == true) {
-                revision = runCatching {
-                    JSONObject(editorV2GetState(editorId).value!!).getString("documentRevision").toULong()
-                }.getOrNull()
+private fun mutationResult(editorId: String, operation: () -> FfiJsonResult): Map<String, Any?> {
+    val adapter = EditorV2Registry.viewTokenForHandle(
+        editorId
+    )?.let(EditorV2Registry::adapterForViewToken)
+    val result = if (adapter == null) {
+        operation()
+    } else {
+        synchronized(adapter) {
+            val result = operation()
+            if (result.error == null && result.value != null) {
+                val outcome = runCatching { JSONObject(result.value!!) }.getOrNull()
+                var revision = (outcome?.opt("documentRevision") as? String)?.toULongOrNull()
+                if (revision == null && outcome?.optBoolean("changed", false) == true) {
+                    revision = runCatching {
+                        JSONObject(
+                            editorV2GetState(editorId).value!!
+                        ).getString("documentRevision").toULong()
+                    }.getOrNull()
+                }
+                if (revision != null) {
+                    adapter.latestJSDrivenDocumentRevision =
+                        maxOf(adapter.latestJSDrivenDocumentRevision, revision)
+                }
             }
-            if (revision != null) {
-                adapter.latestJSDrivenDocumentRevision = maxOf(adapter.latestJSDrivenDocumentRevision, revision)
-            }
+            result
         }
-        result
     }
     if (result.error == null && result.value != null) {
-        val changed = runCatching { JSONObject(result.value!!).optBoolean("changed", false) }.getOrDefault(false)
+        val changed = runCatching {
+            JSONObject(result.value!!).optBoolean("changed", false)
+        }.getOrDefault(false)
         if (changed) {
             NativeCollaborationTransportRegistry.notifyOutboundAvailable(
                 editorId,
-                CollaborationWakeReason.MODULE_MUTATION,
+                CollaborationWakeReason.MODULE_MUTATION
             )
         }
     }
@@ -304,7 +338,9 @@ class NativeEditorModule : Module() {
         }
         Function("preparedProseBenchmarkReset") {
             PreparedProseLayoutRegistry.shared.didReceiveMemoryWarning()
-            PreparedProseInstrumentation.invalidated(PreparedProseInstrumentation.InvalidationReason.CACHE_RESET)
+            PreparedProseInstrumentation.invalidated(
+                PreparedProseInstrumentation.InvalidationReason.CACHE_RESET
+            )
         }
         Function("preparedProseBenchmarkExport") {
             PreparedProseInstrumentation.exportJson()
@@ -321,7 +357,7 @@ class NativeEditorModule : Module() {
         }
         OnActivityEntersBackground {
             collaborationRuntimeToken?.let(
-                NativeCollaborationTransportRegistry::enterBackground,
+                NativeCollaborationTransportRegistry::enterBackground
             )
         }
         OnActivityEntersForeground {
@@ -335,7 +371,6 @@ class NativeEditorModule : Module() {
             collaborationRuntimeToken = null
             ownerToken?.let(NativeCollaborationTransportRegistry::destroyRuntime)
         }
-
 
         Function("editorV2Create") { configJson: String, snapshotState: ByteArray? ->
             createEditorV2FromModule(configJson, snapshotState)
@@ -376,47 +411,54 @@ class NativeEditorModule : Module() {
         Function("editorV2Redo") { editorId: String, requestJson: String ->
             mutationResult(editorId) { editorV2Redo(editorId, requestJson) }
         }
-        Function("editorV2RenderUpdate") { editorId: String, mirrorScalarAnchor: Double?, mirrorScalarHead: Double? ->
+        Function("editorV2RenderUpdate") {
+                editorId: String,
+                mirrorScalarAnchor: Double?,
+                mirrorScalarHead: Double?
+            ->
             // The render accessor for the interactive component: after a
             // JS-driven engine change the component fetches the current
             // render update here and pushes it to the bound view.
             val anchor = mirrorScalarAnchor?.let(::exactV2U32)
             val head = mirrorScalarHead?.let(::exactV2U32)
-            if ((mirrorScalarAnchor != null && anchor == null) || (mirrorScalarHead != null && head == null)) {
+            if ((mirrorScalarAnchor != null && anchor == null) ||
+                (mirrorScalarHead != null && head == null)
+            ) {
                 return@Function v2BoundaryErrorRecord("invalid render mirror")
             }
             editorV2RenderUpdate(editorId, anchor, head).toJSMap()
         }
 
-
         Function("editorV2CollaborationConfigureTransport") {
-            editorId: String,
-            configJsonOrNull: String? ->
+                editorId: String,
+                configJsonOrNull: String?
+            ->
             val error = NativeCollaborationTransportRegistry.configure(
                 collaborationRuntimeToken,
                 editorId,
-                configJsonOrNull,
+                configJsonOrNull
             )
             mapOf(
                 "value" to if (error == null) true else null,
-                "error" to error?.toJSMap(),
+                "error" to error?.toJSMap()
             )
         }
         Function("editorV2CollaborationResolveProtocolAdapter") {
-            editorId: String,
-            attemptId: String,
-            eventId: String,
-            responseJson: String ->
+                editorId: String,
+                attemptId: String,
+                eventId: String,
+                responseJson: String
+            ->
             val error = NativeCollaborationTransportRegistry.resolveProtocolAdapter(
                 collaborationRuntimeToken,
                 editorId,
                 attemptId,
                 eventId,
-                responseJson,
+                responseJson
             )
             mapOf(
                 "value" to if (error == null) true else null,
-                "error" to error?.toJSMap(),
+                "error" to error?.toJSMap()
             )
         }
         Function("editorV2CollaborationSetAwareness") { editorId: String, awarenessJson: String ->
@@ -424,7 +466,7 @@ class NativeEditorModule : Module() {
             if (result.value == true && result.error == null) {
                 NativeCollaborationTransportRegistry.notifyOutboundAvailable(
                     editorId,
-                    CollaborationWakeReason.AWARENESS,
+                    CollaborationWakeReason.AWARENESS
                 )
             }
             result.toJSMap()
@@ -436,7 +478,11 @@ class NativeEditorModule : Module() {
         Function("editorV2SnapshotExport") { editorId: String ->
             editorV2SnapshotExport(editorId).toJSMap()
         }
-        Function("editorV2SnapshotRestore") { editorId: String, metadataJson: String, encodedState: ByteArray ->
+        Function("editorV2SnapshotRestore") {
+                editorId: String,
+                metadataJson: String,
+                encodedState: ByteArray
+            ->
             mutationResult(editorId) {
                 editorV2SnapshotRestore(editorId, metadataJson, encodedState)
             }
@@ -462,7 +508,9 @@ class NativeEditorModule : Module() {
                 }
                 GetChildCount { parent -> parent.atomChildCount }
                 GetChildViewAt<android.view.View> { parent, index -> parent.atomChildAt(index) }
-                RemoveChildView<android.view.View> { parent, child -> parent.removeAtomChild(child) }
+                RemoveChildView<android.view.View> { parent, child ->
+                    parent.removeAtomChild(child)
+                }
                 RemoveChildViewAt { parent, index -> parent.removeAtomChildAt(index) }
             }
 
@@ -520,7 +568,10 @@ class NativeEditorModule : Module() {
             Prop("atomsJson") { view: NativeEditorExpoView, atomsJson: String? ->
                 view.setAtomsJson(atomsJson)
             }
-            Prop("remoteSelectionsJson") { view: NativeEditorExpoView, remoteSelectionsJson: String? ->
+            Prop("remoteSelectionsJson") {
+                    view: NativeEditorExpoView,
+                    remoteSelectionsJson: String?
+                ->
                 view.setRemoteSelectionsJson(remoteSelectionsJson)
             }
             Prop("toolbarItemsJson") { view: NativeEditorExpoView, toolbarItemsJson: String? ->
@@ -535,25 +586,46 @@ class NativeEditorModule : Module() {
             Prop("editorUpdateJson") { view: NativeEditorExpoView, editorUpdateJson: String? ->
                 view.setPendingEditorUpdateJson(editorUpdateJson)
             }
-            Prop("editorUpdateEditorId") { view: NativeEditorExpoView, editorUpdateEditorId: String? ->
+            Prop("editorUpdateEditorId") {
+                    view: NativeEditorExpoView,
+                    editorUpdateEditorId: String?
+                ->
                 view.setPendingEditorUpdateEditorHandle(canonicalV2U64(editorUpdateEditorId))
             }
-            Prop("editorUpdateRevision") { view: NativeEditorExpoView, editorUpdateRevision: Double? ->
+            Prop("editorUpdateRevision") {
+                    view: NativeEditorExpoView,
+                    editorUpdateRevision: Double?
+                ->
                 view.setPendingEditorUpdateRevision(
                     exactV2U32(editorUpdateRevision)?.toLong()
-                        ?: throw IllegalArgumentException("editorUpdateRevision must be an exact u32"),
+                        ?: throw IllegalArgumentException(
+                            "editorUpdateRevision must be an exact u32"
+                        )
                 )
             }
-            Prop("editorResetUpdateJson") { view: NativeEditorExpoView, editorResetUpdateJson: String? ->
+            Prop("editorResetUpdateJson") {
+                    view: NativeEditorExpoView,
+                    editorResetUpdateJson: String?
+                ->
                 view.setPendingEditorResetUpdateJson(editorResetUpdateJson)
             }
-            Prop("editorResetUpdateEditorId") { view: NativeEditorExpoView, editorResetUpdateEditorId: String? ->
-                view.setPendingEditorResetUpdateEditorHandle(canonicalV2U64(editorResetUpdateEditorId))
+            Prop("editorResetUpdateEditorId") {
+                    view: NativeEditorExpoView,
+                    editorResetUpdateEditorId: String?
+                ->
+                view.setPendingEditorResetUpdateEditorHandle(
+                    canonicalV2U64(editorResetUpdateEditorId)
+                )
             }
-            Prop("editorResetUpdateRevision") { view: NativeEditorExpoView, editorResetUpdateRevision: Double? ->
+            Prop("editorResetUpdateRevision") {
+                    view: NativeEditorExpoView,
+                    editorResetUpdateRevision: Double?
+                ->
                 view.setPendingEditorResetUpdateRevision(
                     exactV2U32(editorResetUpdateRevision)?.toLong()
-                        ?: throw IllegalArgumentException("editorResetUpdateRevision must be an exact u32"),
+                        ?: throw IllegalArgumentException(
+                            "editorResetUpdateRevision must be an exact u32"
+                        )
                 )
             }
             OnViewDidUpdateProps { view: NativeEditorExpoView ->
@@ -576,24 +648,40 @@ class NativeEditorModule : Module() {
                 view.applyEditorUpdate(updateJson)
             }
 
-            AsyncFunction("applyEditorResetUpdate") { view: NativeEditorExpoView, updateJson: String ->
+            AsyncFunction("applyEditorResetUpdate") {
+                    view: NativeEditorExpoView,
+                    updateJson: String
+                ->
                 view.applyEditorResetUpdate(updateJson)
             }
 
-            AsyncFunction("beginExternalTextComposition") { view: NativeEditorExpoView, sessionId: String ->
+            AsyncFunction("beginExternalTextComposition") {
+                    view: NativeEditorExpoView,
+                    sessionId: String
+                ->
                 view.beginExternalTextComposition(sessionId)
             }
-            AsyncFunction("updateExternalTextComposition") { view: NativeEditorExpoView, sessionId: String, text: String ->
+            AsyncFunction("updateExternalTextComposition") {
+                    view: NativeEditorExpoView,
+                    sessionId: String,
+                    text: String
+                ->
                 view.updateExternalTextComposition(sessionId, text)
             }
-            AsyncFunction("commitExternalTextComposition") { view: NativeEditorExpoView, sessionId: String, text: String ->
+            AsyncFunction("commitExternalTextComposition") {
+                    view: NativeEditorExpoView,
+                    sessionId: String,
+                    text: String
+                ->
                 view.commitExternalTextComposition(sessionId, text)
             }
-            AsyncFunction("cancelExternalTextComposition") { view: NativeEditorExpoView, sessionId: String, cause: String ->
+            AsyncFunction("cancelExternalTextComposition") {
+                    view: NativeEditorExpoView,
+                    sessionId: String,
+                    cause: String
+                ->
                 view.cancelExternalTextComposition(sessionId, cause)
             }
-
         }
-
     }
 }

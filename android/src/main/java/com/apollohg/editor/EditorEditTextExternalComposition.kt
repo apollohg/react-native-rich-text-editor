@@ -1,8 +1,8 @@
 package com.apollohg.editor
 
 import android.text.Selection
-import android.text.Spanned
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.view.inputmethod.BaseInputConnection
 import org.json.JSONObject
 
@@ -53,7 +53,7 @@ internal fun EditorEditText.beginExternalTextCompositionImpl(sessionId: String):
             return externalCompositionEndedErrorJSON(sessionId)
         }
     }
-    if (!prepareForExternalEditorUpdateInternal().ready) {
+    if (!prepareExternalUpdateInternal().ready) {
         return externalCompositionErrorJSON(
             sessionId,
             "EXTERNAL_COMPOSITION_UNAVAILABLE",
@@ -79,7 +79,10 @@ internal fun EditorEditText.beginExternalTextCompositionImpl(sessionId: String):
     return externalCompositionActiveJSON(sessionId)
 }
 
-internal fun EditorEditText.updateExternalTextCompositionImpl(sessionId: String, text: String): String {
+internal fun EditorEditText.updateExternalTextCompositionImpl(
+    sessionId: String,
+    text: String
+): String {
     val state = externalTextComposition
     if (state?.sessionId != sessionId) {
         return externalCompositionEndedErrorJSON(sessionId)
@@ -88,7 +91,10 @@ internal fun EditorEditText.updateExternalTextCompositionImpl(sessionId: String,
     return externalCompositionActiveJSON(sessionId)
 }
 
-internal fun EditorEditText.commitExternalTextCompositionImpl(sessionId: String, finalText: String): String {
+internal fun EditorEditText.commitExternalTextCompositionImpl(
+    sessionId: String,
+    finalText: String
+): String {
     if (externalTextComposition?.sessionId != sessionId) {
         return externalTextCompositionTerminalResults[sessionId]
             ?: externalCompositionEndedErrorJSON(sessionId)
@@ -98,7 +104,10 @@ internal fun EditorEditText.commitExternalTextCompositionImpl(sessionId: String,
         ?: externalCompositionEndedErrorJSON(sessionId)
 }
 
-internal fun EditorEditText.cancelExternalTextCompositionImpl(sessionId: String, cause: String): String {
+internal fun EditorEditText.cancelExternalTextCompositionImpl(
+    sessionId: String,
+    cause: String
+): String {
     if (cause !in setOf("consumer", "documentChange", "lifecycle")) {
         return externalCompositionErrorJSON(
             sessionId,
@@ -294,12 +303,11 @@ internal fun EditorEditText.emitExternalTextCompositionEnd(sessionId: String, re
     editorListener?.onExternalTextCompositionEnded(resultJson)
 }
 
-internal fun EditorEditText.externalCompositionActiveJSON(sessionId: String): String =
-    JSONObject()
-        .put("version", 1)
-        .put("type", "active")
-        .put("sessionId", sessionId)
-        .toString()
+internal fun EditorEditText.externalCompositionActiveJSON(sessionId: String): String = JSONObject()
+    .put("version", 1)
+    .put("type", "active")
+    .put("sessionId", sessionId)
+    .toString()
 
 internal fun EditorEditText.externalCompositionEndedJSON(
     sessionId: String,
@@ -335,13 +343,15 @@ internal fun EditorEditText.externalCompositionErrorJSON(
     .put("error", externalCompositionErrorPayload(code, message))
     .toString()
 
-internal fun EditorEditText.externalCompositionErrorPayload(code: String, message: String): JSONObject =
-    JSONObject()
-        .put("domain", "lifecycle")
-        .put("code", code)
-        .put("message", message)
-        .put("requestId", JSONObject.NULL)
-        .put("operationIndex", JSONObject.NULL)
-        .put("limit", JSONObject.NULL)
-        .put("actual", JSONObject.NULL)
-        .put("details", JSONObject.NULL)
+internal fun EditorEditText.externalCompositionErrorPayload(
+    code: String,
+    message: String
+): JSONObject = JSONObject()
+    .put("domain", "lifecycle")
+    .put("code", code)
+    .put("message", message)
+    .put("requestId", JSONObject.NULL)
+    .put("operationIndex", JSONObject.NULL)
+    .put("limit", JSONObject.NULL)
+    .put("actual", JSONObject.NULL)
+    .put("details", JSONObject.NULL)

@@ -1,14 +1,14 @@
 package com.apollohg.editor.viewer
 
 import org.json.JSONObject
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
-import org.robolectric.RuntimeEnvironment
-import org.robolectric.annotation.Config
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -22,13 +22,17 @@ class PreparedProseInstrumentationContractTest {
         for (index in 0 until oneTick.length()) {
             assertEquals(
                 PreparedProseInstrumentation.FrameClassification(1, false),
-                PreparedProseInstrumentation.classifyFrame(oneTick.getLong(index), period, tolerance),
+                PreparedProseInstrumentation.classifyFrame(
+                    oneTick.getLong(index),
+                    period,
+                    tolerance
+                )
             )
         }
         val delayed = fixture.getLong("delayedDeltaNanos")
         assertEquals(
             PreparedProseInstrumentation.FrameClassification(3, true),
-            PreparedProseInstrumentation.classifyFrame(delayed, period, tolerance),
+            PreparedProseInstrumentation.classifyFrame(delayed, period, tolerance)
         )
 
         assertFalse(
@@ -36,31 +40,47 @@ class PreparedProseInstrumentationContractTest {
                 0L,
                 24_000_000L,
                 listOf(
-                    PreparedProseInstrumentation.ViewerWorkSpan(10_000_000L, 20_000_000L, PreparedProseInstrumentation.ViewerWorkKind.DRAW),
-                    PreparedProseInstrumentation.ViewerWorkSpan(10_000_000L, 20_000_000L, PreparedProseInstrumentation.ViewerWorkKind.LAYOUT),
+                    PreparedProseInstrumentation.ViewerWorkSpan(
+                        10_000_000L,
+                        20_000_000L,
+                        PreparedProseInstrumentation.ViewerWorkKind.DRAW
+                    ),
+                    PreparedProseInstrumentation.ViewerWorkSpan(
+                        10_000_000L,
+                        20_000_000L,
+                        PreparedProseInstrumentation.ViewerWorkKind.LAYOUT
+                    )
                 ),
                 delayed,
-                period,
-            ),
+                period
+            )
         )
         assertTrue(
             PreparedProseInstrumentation.viewerCaused(
                 0L,
                 delayed,
                 listOf(
-                    PreparedProseInstrumentation.ViewerWorkSpan(0L, 12_000_000L, PreparedProseInstrumentation.ViewerWorkKind.LAYOUT),
-                    PreparedProseInstrumentation.ViewerWorkSpan(12_000_000L, 24_000_000L, PreparedProseInstrumentation.ViewerWorkKind.DRAW),
+                    PreparedProseInstrumentation.ViewerWorkSpan(
+                        0L,
+                        12_000_000L,
+                        PreparedProseInstrumentation.ViewerWorkKind.LAYOUT
+                    ),
+                    PreparedProseInstrumentation.ViewerWorkSpan(
+                        12_000_000L,
+                        24_000_000L,
+                        PreparedProseInstrumentation.ViewerWorkKind.DRAW
+                    )
                 ),
                 delayed,
-                period,
-            ),
+                period
+            )
         )
 
         PreparedProseInstrumentation.beginBenchmark()
         listOf(
             PreparedProseInstrumentation.TraversalPhase.COLD,
             PreparedProseInstrumentation.TraversalPhase.WARM,
-            PreparedProseInstrumentation.TraversalPhase.IMAGES_DISABLED,
+            PreparedProseInstrumentation.TraversalPhase.IMAGES_DISABLED
         ).forEach {
             PreparedProseInstrumentation.beginPhase(it)
             PreparedProseInstrumentation.endPhase()
@@ -77,7 +97,7 @@ class PreparedProseInstrumentationContractTest {
                 "unmountedCurrentResidentCount",
                 "unmountedHighWaterResidentCount",
                 "compiledCurrentBytes",
-                "compiledCurrentResidentCount",
+                "compiledCurrentResidentCount"
             ).forEach { field -> assertEquals(0L, snapshot.getLong(field)) }
         }
         val phases = export.getJSONObject("phaseSamples")
@@ -89,7 +109,9 @@ class PreparedProseInstrumentationContractTest {
     }
 
     private fun fixture(): JSONObject {
-        val stream = RuntimeEnvironment.getApplication().assets.open("prepared-prose-harness-static-fixtures.json")
+        val stream = RuntimeEnvironment.getApplication().assets.open(
+            "prepared-prose-harness-static-fixtures.json"
+        )
         return JSONObject(stream.bufferedReader().use { it.readText() })
     }
 }

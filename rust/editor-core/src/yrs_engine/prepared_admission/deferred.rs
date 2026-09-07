@@ -498,6 +498,7 @@ impl DeferredCommandAdmission {
         self.undo_units
     }
 
+    #[cfg(test)]
     pub(crate) fn into_eager(self) -> OperationResult<super::compiler::PreparedSemanticAdmission> {
         self.pre_admit_seed_independent()?;
         let exact_len = self.candidate_canonical.serialized_len();

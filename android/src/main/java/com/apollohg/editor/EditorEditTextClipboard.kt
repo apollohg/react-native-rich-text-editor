@@ -16,11 +16,12 @@ internal fun EditorEditText.prepareForExternalInteractionMutation(): Boolean =
 
 internal fun EditorEditText.handlePaste(plainTextOnly: Boolean) {
     val selectionRange = normalizedUtf16SelectionRange()
-    if (selectionRange != null && isCollapsedAtomBoundarySelection(selectionRange.first, selectionRange.second)) {
+    if (selectionRange != null &&
+        isCollapsedAtomBoundarySelection(selectionRange.first, selectionRange.second)
+    ) {
         return
     }
     if (editorId == 0L) {
-        // Dev mode: default paste behavior.
         baseTextContextMenuItem(
             if (plainTextOnly) android.R.id.pasteAsPlainText else android.R.id.paste
         )
@@ -36,14 +37,12 @@ internal fun EditorEditText.handlePaste(plainTextOnly: Boolean) {
 
     val item = clip.getItemAt(0)
 
-    // Try HTML first for rich paste.
     val htmlText = item.htmlText
     if (!plainTextOnly && htmlText != null) {
         pasteHTML(htmlText)
         return
     }
 
-    // Fallback to plain text.
     val plainText = item.text?.toString() ?: item.coerceToText(context)?.toString()
     if (plainText != null) {
         pastePlainText(plainText)

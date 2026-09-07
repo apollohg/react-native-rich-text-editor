@@ -14,7 +14,6 @@ extension EditorTextView: NSTextStorageDelegate {
         range editedRange: NSRange,
         changeInLength delta: Int
     ) {
-        // Only care about actual character edits, not attribute-only changes.
         guard editedMask.contains(.editedCharacters) else { return }
         // Skip if this change came from our own Rust apply path, transient IME
         // composition, or an inline prediction. iOS inline predictions (iOS 17+)
@@ -26,20 +25,17 @@ extension EditorTextView: NSTextStorageDelegate {
            delta < 0,
            cleanupRanges.contains(where: {
                $0.location == editedRange.location && $0.length == -delta
-           })
-        {
+           }) {
             pendingNativeTextMutation = nil
             nativeTextMutationCommitScheduled = false
             restoreAfterLocalTextDragCleanup()
             return
         }
 
-        // Skip if no editor is bound yet (nothing to reconcile against).
         guard editorId != 0 else { return }
 
         PositionBridge.invalidateCache(for: self)
 
-        // Compare current text storage content against last authorized snapshot.
         let currentText = textStorage.string
         guard currentText != lastAuthorizedText else { return }
         currentTopLevelChildMetadata = nil
@@ -47,11 +43,10 @@ extension EditorTextView: NSTextStorageDelegate {
         let allowAfterBlur = canAdoptNativeTextMutationAfterBlur()
         if let mutation = nativeTextMutationFromAuthorizedDiff(currentText: currentText),
            isInterceptingInput
-                || shouldAdoptNativeTextStorageMutation(
-                    mutation,
-                    allowAfterBlur: allowAfterBlur
-                )
-        {
+           || shouldAdoptNativeTextStorageMutation(
+               mutation,
+               allowAfterBlur: allowAfterBlur
+           ) {
             scheduleNativeTextMutationCommit(mutation)
             return
         }

@@ -6,7 +6,8 @@ import android.view.View
 import android.view.inputmethod.CursorAnchorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -25,8 +26,11 @@ class PrototypeCursorReportingTest {
     @Implements(InputMethodManager::class)
     class RecordingInputMethodManager : ShadowInputMethodManager() {
         val updates = mutableListOf<CursorAnchorInfo>()
+
         @Implementation
-        fun updateCursorAnchorInfo(view: View, info: CursorAnchorInfo) { updates += info }
+        fun updateCursorAnchorInfo(view: View, info: CursorAnchorInfo) {
+            updates += info
+        }
     }
 
     @Test
@@ -35,9 +39,14 @@ class PrototypeCursorReportingTest {
         PrototypeDocumentSession(listOf("First", "Second")).use { session ->
             val editor = PrototypeEditorView(activity, session)
             activity.setContentView(editor)
-            editor.measure(View.MeasureSpec.makeMeasureSpec(380, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.AT_MOST))
+            editor.measure(
+                View.MeasureSpec.makeMeasureSpec(380, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.AT_MOST)
+            )
             editor.layout(0, 0, editor.measuredWidth, editor.measuredHeight)
-            val manager = activity.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            val manager = activity.getSystemService(
+                Context.INPUT_METHOD_SERVICE
+            ) as InputMethodManager
             val recorder = Shadow.extract<RecordingInputMethodManager>(manager)
             editor.requestCursorUpdates(InputConnection.CURSOR_UPDATE_MONITOR)
             editor.onViewportChanged()

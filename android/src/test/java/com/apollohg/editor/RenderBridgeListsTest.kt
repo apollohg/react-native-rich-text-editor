@@ -6,15 +6,10 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Annotation
 import android.text.Layout
-import android.text.Spanned
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.util.Base64
-import android.view.View
-import android.view.ViewGroup
-import android.widget.TextView
-import kotlin.math.abs
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
@@ -24,6 +19,14 @@ import android.text.style.StyleSpan
 import android.text.style.TypefaceSpan
 import android.text.style.URLSpan
 import android.text.style.UnderlineSpan
+import android.util.Base64
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -35,9 +38,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -54,14 +54,19 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
             {"type":"textRun","text":"Another paragraph","marks":[]},
             {"type":"blockEnd"},{"type":"blockEnd"}
         ]"""
-        val theme = EditorTheme.fromJson("""{"version":1,"styles":{"paragraph":{"paddingLeft":10}}}""")
+        val theme = EditorTheme.fromJson(
+            """{"version":1,"styles":{"paragraph":{"paddingLeft":10}}}"""
+        )
         val result = RenderBridge.buildSpannable(json, baseFontSize, textColor, theme)
         val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = baseFontSize }
         val layout = EditorDocumentLayout(result, paint, 150)
         val textStart = result.toString().indexOf("word")
         assertTrue(layout.getLineStart(1) < result.toString().indexOf('\n'))
-        assertEquals(layout.getPrimaryHorizontal(textStart),
-            layout.getPrimaryHorizontal(layout.getLineStart(1)), 0.01f)
+        assertEquals(
+            layout.getPrimaryHorizontal(textStart),
+            layout.getPrimaryHorizontal(layout.getLineStart(1)),
+            0.01f
+        )
     }
 
     @Test
@@ -79,27 +84,48 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
                 {"type":"textRun","text":"word word word word word word word word word word","marks":[]},
                 {"type":"blockEnd"},{"type":"blockEnd"}
             ]"""
-            val themes = listOf(null, EditorTheme.fromJson("""{
+            val themes =
+                listOf(
+                    null,
+                    EditorTheme.fromJson(
+                        """{
                 "version":1,"styles":{
                     "text":{"fontSize":17},
                     "listMarker":{"gap":8,"ordered":{"schemes":["upperRoman"]}},
                     "checkbox":{"size":19,"gap":7}
                 }
-            }"""))
-            for (theme in themes) for (density in listOf(1f, 2.625f)) {
-                val result = RenderBridge.buildSpannable(json, baseFontSize * density, textColor, theme, density)
-                val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = baseFontSize * density }
-                val width = (150 * density).toInt()
-                val layouts = listOf(
-                    StaticLayout.Builder.obtain(result, 0, result.length, paint, width).build(),
-                    EditorDocumentLayout(result, paint, width)
+            }"""
+                    )
                 )
-                val textStart = result.toString().indexOf("word")
-                for (layout in layouts) {
-                    assertTrue(layout.lineCount > 1)
-                    for (line in 1 until layout.lineCount) {
-                        assertEquals("$context density=$density", layout.getPrimaryHorizontal(textStart),
-                            layout.getPrimaryHorizontal(layout.getLineStart(line)), 0.01f)
+            for (theme in themes) {
+                for (density in listOf(1f, 2.625f)) {
+                    val result = RenderBridge.buildSpannable(
+                        json,
+                        baseFontSize * density,
+                        textColor,
+                        theme,
+                        density
+                    )
+                    val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                        textSize =
+                            baseFontSize * density
+                    }
+                    val width = (150 * density).toInt()
+                    val layouts = listOf(
+                        StaticLayout.Builder.obtain(result, 0, result.length, paint, width).build(),
+                        EditorDocumentLayout(result, paint, width)
+                    )
+                    val textStart = result.toString().indexOf("word")
+                    for (layout in layouts) {
+                        assertTrue(layout.lineCount > 1)
+                        for (line in 1 until layout.lineCount) {
+                            assertEquals(
+                                "$context density=$density",
+                                layout.getPrimaryHorizontal(textStart),
+                                layout.getPrimaryHorizontal(layout.getLineStart(line)),
+                                0.01f
+                            )
+                        }
                     }
                 }
             }
@@ -107,7 +133,7 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
     }
 
     @Test
-    fun `render - scalar positions follow canonical marker while replacement paints longer label`() {
+    fun `scalar positions follow canonical marker while replacement paints longer label`() {
         val json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
@@ -119,7 +145,7 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
         ]
         """.trimIndent()
         val theme = EditorTheme.fromJson(
-            """{"list":{"orderedMarker":{"schemes":["upperRoman"],"suffix":")"}}}""",
+            """{"list":{"orderedMarker":{"schemes":["upperRoman"],"suffix":")"}}}"""
         )
 
         val rendered = RenderBridge.buildSpannable(json, baseFontSize, textColor, theme)
@@ -127,17 +153,26 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
         val markerSpan = rendered.getSpans(
             0,
             rendered.length,
-            OrderedListMarkerSpan::class.java,
+            OrderedListMarkerSpan::class.java
         ).single()
         val canonicalTextStart = 4
 
         assertEquals("27. Item", backingText)
         assertEquals("XXVII)", markerSpan.label)
-        assertTrue(markerSpan.label.length != rendered.getSpanEnd(markerSpan) - rendered.getSpanStart(markerSpan))
+        assertTrue(
+            markerSpan.label.length !=
+                rendered.getSpanEnd(markerSpan) - rendered.getSpanStart(markerSpan)
+        )
         assertEquals(0, rendered.getSpanStart(markerSpan))
         assertEquals(3, rendered.getSpanEnd(markerSpan))
-        assertEquals(canonicalTextStart, PositionBridge.utf16ToScalar(canonicalTextStart, backingText))
-        assertEquals(canonicalTextStart, PositionBridge.scalarToUtf16(canonicalTextStart, backingText))
+        assertEquals(
+            canonicalTextStart,
+            PositionBridge.utf16ToScalar(canonicalTextStart, backingText)
+        )
+        assertEquals(
+            canonicalTextStart,
+            PositionBridge.scalarToUtf16(canonicalTextStart, backingText)
+        )
     }
 
     @Test
@@ -194,7 +229,9 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
             "listItem" to
                 """{"ordered":true,"index":1,"total":1,"start":1,"isFirst":true,"isLast":true}""",
             "taskItem" to
-                """{"ordered":false,"index":1,"total":1,"start":1,"isFirst":true,"isLast":true,"kind":"task","checked":false}"""
+
+                """{"ordered":false,"index":1,"total":1,"start":1,"isFirst":true""" +
+                ""","isLast":true,"kind":"task","checked":false}"""
         )
 
         cases.forEach { (nodeType, listContext) ->
@@ -227,7 +264,8 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
         val marker = RenderBridge.listMarkerString(ctx)
         assertEquals(
             "Unordered list should produce bullet + space",
-            "\u2022 ", marker
+            "\u2022 ",
+            marker
         )
     }
 
@@ -331,8 +369,15 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
         val separatorIndex = result.toString().indexOf('\n')
 
         assertTrue("Expected a separator newline between list items", separatorIndex >= 0)
-        val spacerSpans = result.getSpans(separatorIndex, separatorIndex + 1, ParagraphSpacerSpan::class.java)
-        assertTrue("List item separator should receive ParagraphSpacerSpan from itemSpacing", spacerSpans.isNotEmpty())
+        val spacerSpans = result.getSpans(
+            separatorIndex,
+            separatorIndex + 1,
+            ParagraphSpacerSpan::class.java
+        )
+        assertTrue(
+            "List item separator should receive ParagraphSpacerSpan from itemSpacing",
+            spacerSpans.isNotEmpty()
+        )
     }
 
     @Test
@@ -374,7 +419,7 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
             val span = result.getSpans(
                 separatorIndex,
                 separatorIndex + 1,
-                ParagraphSpacerSpan::class.java,
+                ParagraphSpacerSpan::class.java
             ).single()
             val paint = Paint().apply { textSize = baseFontSize }
             val natural = paint.fontMetricsInt
@@ -383,7 +428,10 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
             return spaced.descent - natural.descent
         }
 
-        fun separatorAfter(text: String): Int = result.indexOf('\n', result.indexOf(text) + text.length)
+        fun separatorAfter(text: String): Int = result.indexOf(
+            '\n',
+            result.indexOf(text) + text.length
+        )
 
         assertEquals(6, spacingAt(separatorAfter("First item")))
         assertEquals(20, spacingAt(separatorAfter("Nested item")))
@@ -415,11 +463,14 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
             """{"list":{"itemSpacing":6,"spacingAfter":20}}"""
         )
         val result = RenderBridge.buildSpannable(json, baseFontSize, textColor, theme, 1f)
-        val separatorIndex = result.indexOf('\n', result.indexOf("Nested item") + "Nested item".length)
+        val separatorIndex = result.indexOf(
+            '\n',
+            result.indexOf("Nested item") + "Nested item".length
+        )
         val span = result.getSpans(
             separatorIndex,
             separatorIndex + 1,
-            ParagraphSpacerSpan::class.java,
+            ParagraphSpacerSpan::class.java
         ).single()
         val paint = Paint().apply { textSize = baseFontSize }
         val natural = paint.fontMetricsInt
@@ -430,7 +481,7 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
     }
 
     @Test
-    fun `render - nested first list item does not inherit paragraph spacing when itemSpacing is zero`() {
+    fun `nested first item skips paragraph spacing when itemSpacing is zero`() {
         val json = """
         [
             {"type": "blockStart", "nodeType": "listItem", "depth": 0,
@@ -460,7 +511,11 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
         val separatorIndex = result.toString().indexOf('\n')
 
         assertTrue("Expected a separator newline before nested list item", separatorIndex >= 0)
-        val spacerSpans = result.getSpans(separatorIndex, separatorIndex + 1, ParagraphSpacerSpan::class.java)
+        val spacerSpans = result.getSpans(
+            separatorIndex,
+            separatorIndex + 1,
+            ParagraphSpacerSpan::class.java
+        )
         assertTrue(
             "Nested list separator should not keep parent paragraph spacing when itemSpacing is zero",
             spacerSpans.isEmpty()
@@ -491,7 +546,7 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
         val spacerSpans = result.getSpans(
             separatorIndex,
             separatorIndex + 1,
-            ParagraphSpacerSpan::class.java,
+            ParagraphSpacerSpan::class.java
         )
 
         assertTrue(spacerSpans.isEmpty())
@@ -544,7 +599,11 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
         )
 
         val result = RenderBridge.buildSpannable(json, baseFontSize, textColor, theme, 1f)
-        val marginSpan = result.getSpans(0, result.length, LeadingMarginSpan.Standard::class.java).single()
+        val marginSpan = result.getSpans(
+            0,
+            result.length,
+            LeadingMarginSpan.Standard::class.java
+        ).single()
 
         assertEquals(0, marginSpan.getLeadingMargin(true))
         assertEquals(LayoutConstants.LIST_MARKER_WIDTH.toInt(), marginSpan.getLeadingMargin(false))
@@ -580,9 +639,23 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
         )
 
         val baseResult = RenderBridge.buildSpannable(json, baseFontSize, textColor, baseTheme, 1f)
-        val scaledResult = RenderBridge.buildSpannable(json, baseFontSize, textColor, scaledTheme, 1f)
-        val baseMargin = baseResult.getSpans(0, baseResult.length, LeadingMarginSpan.Standard::class.java).single()
-        val scaledMargin = scaledResult.getSpans(0, scaledResult.length, LeadingMarginSpan.Standard::class.java).single()
+        val scaledResult = RenderBridge.buildSpannable(
+            json,
+            baseFontSize,
+            textColor,
+            scaledTheme,
+            1f
+        )
+        val baseMargin = baseResult.getSpans(
+            0,
+            baseResult.length,
+            LeadingMarginSpan.Standard::class.java
+        ).single()
+        val scaledMargin = scaledResult.getSpans(
+            0,
+            scaledResult.length,
+            LeadingMarginSpan.Standard::class.java
+        ).single()
 
         assertEquals(baseMargin.getLeadingMargin(false), scaledMargin.getLeadingMargin(false))
     }
@@ -639,10 +712,16 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
         assertTrue("List items should have LeadingMarginSpans", allMargins.isNotEmpty())
 
         val firstItemMargin = allMargins.firstOrNull { result.getSpanStart(it) == 0 }
-        assertNotNull("First item should have a paragraph-scoped LeadingMarginSpan", firstItemMargin)
+        assertNotNull(
+            "First item should have a paragraph-scoped LeadingMarginSpan",
+            firstItemMargin
+        )
 
         val indentedItemMargin = allMargins.firstOrNull { result.getSpanStart(it) > newlineIndex }
-        assertNotNull("Indented item should have its own paragraph-scoped LeadingMarginSpan", indentedItemMargin)
+        assertNotNull(
+            "Indented item should have its own paragraph-scoped LeadingMarginSpan",
+            indentedItemMargin
+        )
 
         val firstIndent = firstItemMargin!!.getLeadingMargin(true)
         val indentedIndent = indentedItemMargin!!.getLeadingMargin(true)
@@ -784,7 +863,11 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
         paint.color = Color.RED
         paint.style = Paint.Style.STROKE
 
-        val bitmap = android.graphics.Bitmap.createBitmap(100, 100, android.graphics.Bitmap.Config.ARGB_8888)
+        val bitmap = android.graphics.Bitmap.createBitmap(
+            100,
+            100,
+            android.graphics.Bitmap.Config.ARGB_8888
+        )
         val canvas = android.graphics.Canvas(bitmap)
 
         span.draw(canvas, "•", 0, 1, 0f, 0, 20, 40, paint)

@@ -14,7 +14,7 @@ internal data class EditorV2Error(
     val operationIndex: String? = null,
     val limit: String? = null,
     val actual: String? = null,
-    val detailsJson: String? = null,
+    val detailsJson: String? = null
 )
 
 internal sealed interface EditorV2CallResult<out T> {
@@ -48,38 +48,38 @@ internal interface EditorV2Backend {
     fun collaborationSocketOpen(
         editorId: String,
         generation: String,
-        nowMillis: String,
+        nowMillis: String
     ): EditorV2CallResult<String>
     fun collaborationReceive(
         editorId: String,
         generation: String,
         message: ByteArray,
-        nowMillis: String,
+        nowMillis: String
     ): EditorV2CallResult<String>
     fun collaborationSocketClose(
         editorId: String,
         generation: String,
         code: UInt?,
         reason: String?,
-        nowMillis: String,
+        nowMillis: String
     ): EditorV2CallResult<String>
     fun collaborationLeaseOutbound(editorId: String, generation: String): EditorV2LeaseResult
     fun collaborationAckOutbound(
         editorId: String,
         generation: String,
-        leaseId: String,
+        leaseId: String
     ): EditorV2CallResult<String>
     fun collaborationNackOutbound(
         editorId: String,
         generation: String,
-        leaseId: String,
+        leaseId: String
     ): EditorV2CallResult<String>
     fun collaborationDetach(editorId: String): EditorV2Error?
     fun collaborationReattach(editorId: String): EditorV2Error?
     fun collaborationPeers(editorId: String): EditorV2CallResult<String>
     fun collaborationSetAwarenessSelection(
         editorId: String,
-        selectionJson: String,
+        selectionJson: String
     ): EditorV2CallResult<String>
     fun snapshotExport(editorId: String): EditorV2CallResult<Pair<String, ByteArray>>
 
@@ -90,17 +90,21 @@ internal interface EditorV2Backend {
      * extent. The adapter must parse and adopt this one result as-is; it
      * must never stitch it to a separate `getState` response.
      */
-    fun renderUpdate(editorId: String, mirrorAnchor: Int?, mirrorHead: Int?): EditorV2CallResult<String>
+    fun renderUpdate(
+        editorId: String,
+        mirrorAnchor: Int?,
+        mirrorHead: Int?
+    ): EditorV2CallResult<String>
     fun renderNative(
         editorId: String,
         ownerId: String,
         mirrorAnchor: Int?,
-        mirrorHead: Int?,
+        mirrorHead: Int?
     ): EditorV2CallResult<String>
     fun pinPositionEpoch(
         editorId: String,
         ownerId: String,
-        documentRevision: String,
+        documentRevision: String
     ): EditorV2CallResult<String>
     fun applyNativeIntent(editorId: String, requestJson: String): EditorV2CallResult<String>
     fun releaseNativeBinding(editorId: String, ownerId: String): EditorV2Error?

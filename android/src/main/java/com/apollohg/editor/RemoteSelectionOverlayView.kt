@@ -17,7 +17,7 @@ data class RemoteSelectionDecoration(
     val head: Int,
     val color: Int,
     val name: String?,
-    val isFocused: Boolean,
+    val isFocused: Boolean
 ) {
     companion object {
         fun fromJson(context: Context, json: String?): List<RemoteSelectionDecoration> {
@@ -43,19 +43,17 @@ data class RemoteSelectionDecoration(
                             head = head,
                             color = color,
                             name = item.optString("name").takeIf { it.isNotBlank() },
-                            isFocused = item.optBoolean("isFocused", false),
+                            isFocused = item.optBoolean("isFocused", false)
                         )
                     )
                 }
             }
         }
 
-        private fun parseColor(raw: String, fallbackColor: Int): Int {
-            return try {
-                Color.parseColor(raw)
-            } catch (_: Throwable) {
-                fallbackColor
-            }
+        private fun parseColor(raw: String, fallbackColor: Int): Int = try {
+            Color.parseColor(raw)
+        } catch (_: Throwable) {
+            fallbackColor
         }
 
         private fun resolveFallbackColor(context: Context): Int {
@@ -74,7 +72,9 @@ data class RemoteSelectionDecoration(
                     AppCompatResources.getColorStateList(context, typedValue.resourceId)
                         ?.defaultColor
                         ?.let { return it }
-                } else if (typedValue.type in TypedValue.TYPE_FIRST_COLOR_INT..TypedValue.TYPE_LAST_COLOR_INT) {
+                } else if (typedValue.type in
+                    TypedValue.TYPE_FIRST_COLOR_INT..TypedValue.TYPE_LAST_COLOR_INT
+                ) {
                     return typedValue.data
                 }
             }
@@ -83,22 +83,19 @@ data class RemoteSelectionDecoration(
     }
 }
 
-data class RemoteSelectionDebugSnapshot(
-    val clientId: String,
-    val caretRect: RectF?,
-)
+data class RemoteSelectionDebugSnapshot(val clientId: String, val caretRect: RectF?)
 
 class RemoteSelectionOverlayView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
-    defStyleAttr: Int = 0,
+    defStyleAttr: Int = 0
 ) : PointerTransparentView(context, attrs, defStyleAttr) {
     private data class CachedSelectionGeometry(
         val clientId: String,
         val selectionPath: Path?,
         val selectionColor: Int,
         val caretRect: RectF?,
-        val caretColor: Int,
+        val caretColor: Int
     )
 
     private data class GeometrySnapshot(
@@ -110,13 +107,13 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
         val baseY: Int,
         val width: Int,
         val height: Int,
-        val selections: List<RemoteSelectionDecoration>,
+        val selections: List<RemoteSelectionDecoration>
     )
 
     private data class GeometryContext(
         val snapshot: GeometrySnapshot,
         val layout: android.text.Layout,
-        val caretWidth: Float,
+        val caretWidth: Float
     )
 
     private var editorView: RichTextEditorView? = null
@@ -159,18 +156,16 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
-    fun hasSelectionsOrCachedGeometry(): Boolean {
-        return remoteSelections.isNotEmpty() || cachedGeometry.isNotEmpty()
-    }
+    fun hasSelectionsOrCachedGeometry(): Boolean =
+        remoteSelections.isNotEmpty() || cachedGeometry.isNotEmpty()
 
-    fun debugSnapshotsForTesting(): List<RemoteSelectionDebugSnapshot> {
-        return ensureGeometry().map { geometry ->
+    fun debugSnapshotsForTesting(): List<RemoteSelectionDebugSnapshot> =
+        ensureGeometry().map { geometry ->
             RemoteSelectionDebugSnapshot(
                 clientId = geometry.clientId,
-                caretRect = geometry.caretRect?.let(::RectF),
+                caretRect = geometry.caretRect?.let(::RectF)
             )
         }
-    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -216,7 +211,10 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
             val endDoc = maxOf(selection.anchor, selection.head)
             val startScalar = docToScalarResolver(editorId, startDoc)
             val endScalar = docToScalarResolver(editorId, endDoc)
-            val startUtf16 = PositionBridge.scalarToUtf16(startScalar, text).coerceIn(0, text.length)
+            val startUtf16 = PositionBridge.scalarToUtf16(
+                startScalar,
+                text
+            ).coerceIn(0, text.length)
             val endUtf16 = PositionBridge.scalarToUtf16(endScalar, text).coerceIn(0, text.length)
 
             val selectionPath = if (startUtf16 != endUtf16) {
@@ -239,9 +237,9 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
                     baseX = context.snapshot.baseX.toFloat(),
                     baseY = context.snapshot.baseY.toFloat(),
                     caretWidth = context.caretWidth,
-                    isFocused = selection.isFocused,
+                    isFocused = selection.isFocused
                 ),
-                caretColor = selection.color,
+                caretColor = selection.color
             )
         }
 
@@ -258,8 +256,9 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
         val editText = editorView.editorEditText
         val layout = editText.layout ?: return null
         val text = editText.text?.toString() ?: return null
-        val baseX = editorView.editorViewport.left + editorView.editorScrollView.left + editText.left +
-            editText.compoundPaddingLeft
+        val baseX =
+            editorView.editorViewport.left + editorView.editorScrollView.left + editText.left +
+                editText.compoundPaddingLeft
         val baseY = editorView.editorViewport.top + editorView.editorScrollView.top + editText.top +
             editText.compoundPaddingTop - editorView.editorScrollView.scrollY
         val caretWidth = maxOf(2f, resources.displayMetrics.density)
@@ -274,10 +273,10 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
                 baseY = baseY,
                 width = width,
                 height = height,
-                selections = remoteSelections,
+                selections = remoteSelections
             ),
             layout = layout,
-            caretWidth = caretWidth,
+            caretWidth = caretWidth
         )
     }
 
@@ -292,7 +291,7 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
         baseX: Float,
         baseY: Float,
         caretWidth: Float,
-        isFocused: Boolean,
+        isFocused: Boolean
     ): RectF? {
         if (!isFocused) return null
 

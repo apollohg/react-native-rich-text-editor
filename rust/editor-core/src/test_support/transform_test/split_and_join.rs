@@ -11,7 +11,7 @@ fn test_split_block_middle_of_text() {
     //   pos 6: paragraph content offset 5 (after "o", end of paragraph)
     //   pos 7: doc content, after </p> close tag
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::SplitBlock {
         pos: 3,
         node_type: "paragraph".to_string(),
@@ -56,7 +56,7 @@ fn test_split_block_at_start_of_paragraph() {
     // <doc><p>Hello</p></doc>
     // Split at pos 1 (start of paragraph content) → <doc><p></p><p>Hello</p></doc>
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::SplitBlock {
         pos: 1,
         node_type: "paragraph".to_string(),
@@ -89,7 +89,7 @@ fn test_split_block_at_end_of_paragraph() {
     // <doc><p>Hello</p></doc>
     // Split at pos 6 (end of paragraph content, after "Hello") → <doc><p>Hello</p><p></p></doc>
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::SplitBlock {
         pos: 6,
         node_type: "paragraph".to_string(),
@@ -135,7 +135,7 @@ fn test_split_block_inside_list_item() {
         vec![text("Hello")],
     )])])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::SplitBlock {
         pos: 5,
         node_type: "paragraph".to_string(),
@@ -182,7 +182,7 @@ fn test_split_block_preserves_marks_on_both_sides() {
         text_with_marks("llo", vec![italic()]),
     ])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::SplitBlock {
         pos: 3,
         node_type: "paragraph".to_string(),
@@ -227,7 +227,7 @@ fn test_split_block_splits_marked_text_node() {
         vec![bold()],
     )])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::SplitBlock {
         pos: 3,
         node_type: "paragraph".to_string(),
@@ -264,7 +264,7 @@ fn test_split_block_with_different_node_type() {
     // This is the default behavior — both blocks keep the paragraph type.
     // The first block keeps the original type, the second uses node_type from the step.
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::SplitBlock {
         pos: 3,
         node_type: "paragraph".to_string(),
@@ -284,7 +284,7 @@ fn test_split_block_empty_paragraph() {
     // <doc><p></p></doc>
     // Split at pos 1 (inside empty paragraph) → <doc><p></p><p></p></doc>
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::SplitBlock {
         pos: 1,
         node_type: "paragraph".to_string(),
@@ -317,7 +317,7 @@ fn test_join_blocks_two_paragraphs() {
         paragraph(vec![text("llo")]),
     ]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::JoinBlocks { pos: 4 });
 
     let (new_doc, _map) = tx
@@ -352,7 +352,7 @@ fn test_join_blocks_merges_text_with_same_marks() {
         paragraph(vec![text_with_marks("llo", vec![bold()])]),
     ]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::JoinBlocks { pos: 4 });
 
     let (new_doc, _map) = tx
@@ -383,7 +383,7 @@ fn test_join_blocks_preserves_different_marks() {
         paragraph(vec![text_with_marks("llo", vec![italic()])]),
     ]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::JoinBlocks { pos: 4 });
 
     let (new_doc, _map) = tx
@@ -416,7 +416,7 @@ fn test_join_blocks_uses_first_block_type() {
         paragraph(vec![text("B")]),
     ]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::JoinBlocks { pos: 3 });
 
     let (new_doc, _map) = tx.apply(&d, &schema).expect("join should succeed");
@@ -433,7 +433,7 @@ fn test_join_blocks_with_empty_first_paragraph() {
     // Join at pos 2 (between the two paragraphs at doc level)
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![]), paragraph(vec![text("Hello")])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::JoinBlocks { pos: 2 });
 
     let (new_doc, _map) = tx
@@ -451,7 +451,7 @@ fn test_join_blocks_with_empty_second_paragraph() {
     // Join at pos 7 (between the two paragraphs at doc level)
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")]), paragraph(vec![])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::JoinBlocks { pos: 7 });
 
     let (new_doc, _map) = tx
@@ -486,7 +486,7 @@ fn test_join_blocks_list_items() {
         list_item(vec![paragraph(vec![text("llo")])]),
     ])]));
 
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::JoinBlocks { pos: 7 });
 
     let (new_doc, _map) = tx
@@ -518,7 +518,7 @@ fn test_step_map_split_block() {
     // SplitBlock at pos 3: inserts 2 tokens (close + open tag)
     // Positions before 3 unchanged, positions at 3 and after shift by +2
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::SplitBlock {
         pos: 3,
         node_type: "paragraph".to_string(),
@@ -557,7 +557,7 @@ fn test_step_map_join_blocks() {
         paragraph(vec![text("He")]),
         paragraph(vec![text("llo")]),
     ]));
-    let mut tx = Transaction::new(Source::Input);
+    let mut tx = Transaction::new();
     tx.add_step(Step::JoinBlocks { pos: 4 });
 
     let (_new_doc, map) = tx.apply(&d, &schema).expect("join should succeed");
@@ -601,7 +601,7 @@ fn test_split_then_join_round_trip() {
     let (d, schema) = doc_and_schema(doc(vec![paragraph(vec![text("Hello")])]));
 
     // Step 1: Split
-    let mut tx_split = Transaction::new(Source::Input);
+    let mut tx_split = Transaction::new();
     tx_split.add_step(Step::SplitBlock {
         pos: 3,
         node_type: "paragraph".to_string(),
@@ -613,7 +613,7 @@ fn test_split_then_join_round_trip() {
     // Step 2: Join
     // After split at pos 3, the boundary is at pos 4 (first p size = 1+2+1 = 4,
     // so doc content offset 4 is between the two paragraphs).
-    let mut tx_join = Transaction::new(Source::Input);
+    let mut tx_join = Transaction::new();
     tx_join.add_step(Step::JoinBlocks { pos: 4 });
     let (joined_doc, _) = tx_join
         .apply(&split_doc, &schema)

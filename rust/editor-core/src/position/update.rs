@@ -37,7 +37,6 @@ impl PositionMap {
             return;
         }
 
-        // Try incremental update for simple single-range edits.
         if mode == UpdateMode::InlineTextOnly {
             if let Some(range) = step_map.single_range() {
                 if self.try_incremental_update(range, old_doc, new_doc, schema) {
@@ -46,7 +45,6 @@ impl PositionMap {
             }
         }
 
-        // Fallback: full rebuild
         *self = build_position_map(new_doc, schema);
     }
 
@@ -61,24 +59,19 @@ impl PositionMap {
         new_doc: &Document,
         schema: &Schema,
     ) -> bool {
-        // Find which block contains the edit position (using current deltas).
         let block_idx = match self.find_block_for_doc_pos(pos) {
             Some(idx) => idx,
             None => return false,
         };
 
-        // Capture what we need from the old block before mutating.
         let old_doc_end = self.effective_doc_end(block_idx);
         let old_scalar_len = self.blocks[block_idx].scalar_len;
 
-        // Check that the entire edit range falls within this one block.
         let edit_end = pos + deleted;
         if edit_end > old_doc_end {
-            // Edit spans multiple blocks — fall back to full rebuild.
             return false;
         }
 
-        // Compute the doc delta.
         let doc_delta = inserted as i32 - deleted as i32;
         let old_block = self.blocks[block_idx].clone();
 
@@ -117,10 +110,8 @@ impl PositionMap {
 
         let scalar_delta = rebuilt_block.scalar_len as i32 - old_scalar_len as i32;
 
-        // Update the modified block in-place.
         self.blocks[block_idx] = rebuilt_block;
 
-        // Record delta for trailing blocks.
         if block_idx + 1 < self.blocks.len() {
             self.prefix_deltas
                 .insert(block_idx + 1, doc_delta, scalar_delta);

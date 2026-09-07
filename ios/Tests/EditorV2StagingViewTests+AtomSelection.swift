@@ -1,9 +1,12 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension EditorV2StagingViewTests {
     func testStagingBindRendersFromV2Session() {
-        let (view, adapter, window) = makeBoundView()
+        let bound = makeBoundView()
+        let view = bound.view
+        let adapter = bound.adapter
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
 
         XCTAssertEqual(view.textView.textStorage.string, "Hello")
@@ -12,7 +15,9 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingEditorOwnsTextDragAndDropDelegates() {
-        let (view, _, window) = makeBoundView()
+        let bound = makeBoundView()
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
 
         XCTAssertTrue(view.textView.textDragDelegate === view.textView)
@@ -20,7 +25,9 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingTerminalAtomDoesNotExposeAdjacentCaretsOrExtraHeight() {
-        let (view, _, window) = makeTerminalAtomView()
+        let bound = makeTerminalAtomView()
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let atomRect = terminalAtomRect(in: view.textView)
         for offset in [0, view.textView.textStorage.length] {
@@ -42,9 +49,11 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingAtomBoundarySelectionRestoresLastParagraphCaret() {
-        let (view, _, window) = makeTerminalAtomView(
+        let bound = makeTerminalAtomView(
             html: #"<p>Before</p><div data-type="counter-card" data-count="7"></div>"#
         )
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let validRange = NSRange(location: 3, length: 0)
         setCollapsedCaret(in: view.textView, utf16Offset: validRange.location)
@@ -59,7 +68,9 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingTypingAtTerminalAtomBoundaryDoesNotChangeDocument() {
-        let (view, _, window) = makeTerminalAtomView()
+        let bound = makeTerminalAtomView()
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let htmlBefore = EditorV2Shadow.getHtml(id: view.editorId)
         setCollapsedCaret(in: view.textView, utf16Offset: view.textView.textStorage.length)
@@ -71,7 +82,9 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingReturnAtTerminalAtomBoundaryDoesNotChangeDocument() {
-        let (view, _, window) = makeTerminalAtomView()
+        let bound = makeTerminalAtomView()
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let htmlBefore = EditorV2Shadow.getHtml(id: view.editorId)
         setCollapsedCaret(in: view.textView, utf16Offset: view.textView.textStorage.length)
@@ -83,7 +96,9 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingBackspaceInEmptyParagraphAfterTerminalAtomKeepsAtom() {
-        let (view, _, window) = makeTerminalAtomView()
+        let bound = makeTerminalAtomView()
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let htmlBefore = EditorV2Shadow.getHtml(id: view.editorId)
         setCollapsedCaret(in: view.textView, utf16Offset: view.textView.textStorage.length)
@@ -96,9 +111,11 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingAtomLineHitKeepsExistingParagraphPosition() throws {
-        let (view, _, window) = makeTerminalAtomView(
+        let bound = makeTerminalAtomView(
             html: #"<p>Before</p><div data-type="counter-card" data-count="7"></div>"#
         )
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let textView = view.textView
         let atomRect = terminalAtomRect(in: textView)
@@ -128,7 +145,7 @@ extension EditorV2StagingViewTests {
     }
 
     func testStagingFixedHeightParagraphHitBeforeOffscreenAtomMovesCaret() throws {
-        let (view, _, window) = makeTerminalAtomView(
+        let bound = makeTerminalAtomView(
             html: #"""
             <p>First line</p><p>Second line</p><p>Third line</p><p>Fourth line</p>
             <p>Fifth line</p><p>Sixth line</p><p>Seventh line</p><p>Eighth line</p>
@@ -138,6 +155,8 @@ extension EditorV2StagingViewTests {
             initialFrame: .zero,
             finalFrame: CGRect(x: 0, y: 0, width: 320, height: 480)
         )
+        let view = bound.view
+        let window = bound.window
         defer { view.removeFromSuperview(); window.isHidden = true }
         let textView = view.textView
         view.applyTheme(EditorTheme(dictionary: [
@@ -145,8 +164,8 @@ extension EditorV2StagingViewTests {
                 "top": 28,
                 "right": 20,
                 "bottom": 336,
-                "left": 20,
-            ],
+                "left": 20
+            ]
         ]))
         view.layoutIfNeeded()
         XCTAssertTrue(textView.becomeFirstResponder())

@@ -272,7 +272,7 @@ final class PreparedProseRenderingTests: XCTestCase {
     func testCompilerBackedJSONAndHTMLFixturesPreserveInheritedContexts() throws {
         for fixture in Fixture.structuralFixtures {
             try withCompiledDocument(source: fixture.source, configJSON: fixture.configJSON) { document in
-                XCTAssertTrue(fixture.expectedKinds.isSubset(of: preparedKinds(for: document)), fixture.name)
+                XCTAssertTrue(fixture.expectedKinds.isSubset(of: try preparedKinds(for: document)), fixture.name)
                 XCTAssertTrue(fixture.assertDocument(document), fixture.name)
             }
         }
@@ -373,22 +373,22 @@ final class PreparedProseRenderingTests: XCTestCase {
             let runs = layout.blocks.flatMap(\.fragments).compactMap(\.line).flatMap(coreTextRuns)
             let strikes = layout.blocks.flatMap(\.fragments).filter { $0.kind == .strike }
 
-            XCTAssertTrue(runs.contains { fontTraits($0).contains(.traitBold) })
-            XCTAssertTrue(runs.contains { fontTraits($0).contains(.traitItalic) })
-            XCTAssertTrue(runs.contains {
-                fontTraits($0).contains(.traitBold)
+            XCTAssertTrue(try runs.contains { try fontTraits($0).contains(.traitBold) })
+            XCTAssertTrue(try runs.contains { try fontTraits($0).contains(.traitItalic) })
+            XCTAssertTrue(try runs.contains {
+                try fontTraits($0).contains(.traitBold)
                     && fontTraits($0).contains(.traitItalic)
                     && fontTraits($0).contains(.traitMonoSpace)
-                    && CTFontGetSize(font($0)) == 19
+                    && CTFontGetSize(try font($0)) == 19
             })
             XCTAssertTrue(runs.contains { underlineStyle($0) == CTUnderlineStyle.single.rawValue })
-            XCTAssertTrue(runs.contains { CTFontGetSymbolicTraits(font($0)).contains(.traitMonoSpace) })
-            XCTAssertTrue(runs.contains { UIColor(cgColor: foreground($0)).isEqual(EditorTheme.color(from: "#007AFF")!) })
-            XCTAssertTrue(runs.contains { UIColor(cgColor: foreground($0)).isEqual(EditorTheme.color(from: "#FF0000")!) })
-            XCTAssertTrue(runs.contains { UIColor(cgColor: foreground($0)).isEqual(EditorTheme.color(from: "#00AA00")!) })
-            XCTAssertTrue(runs.contains { background($0) != nil })
-            XCTAssertTrue(runs.contains { CTFontCopyFamilyName(font($0)) as String == "Courier" })
-            XCTAssertTrue(runs.contains { CTFontGetSize(font($0)) == 19 })
+            XCTAssertTrue(try runs.contains { CTFontGetSymbolicTraits(try font($0)).contains(.traitMonoSpace) })
+            XCTAssertTrue(try runs.contains { UIColor(cgColor: try foreground($0)).isEqual(EditorTheme.color(from: "#007AFF")!) })
+            XCTAssertTrue(try runs.contains { UIColor(cgColor: try foreground($0)).isEqual(EditorTheme.color(from: "#FF0000")!) })
+            XCTAssertTrue(try runs.contains { UIColor(cgColor: try foreground($0)).isEqual(EditorTheme.color(from: "#00AA00")!) })
+            XCTAssertTrue(try runs.contains { try background($0) != nil })
+            XCTAssertTrue(try runs.contains { CTFontCopyFamilyName(try font($0)) as String == "Courier" })
+            XCTAssertTrue(try runs.contains { CTFontGetSize(try font($0)) == 19 })
             XCTAssertFalse(strikes.isEmpty)
             XCTAssertTrue(strikes.allSatisfy { $0.bounds.width > 0 && $0.bounds.height > 0 })
             XCTAssertTrue(strikes.allSatisfy { strike in
@@ -403,7 +403,7 @@ final class PreparedProseRenderingTests: XCTestCase {
     func testCoreTextFontBridgePreservesSystemFontIdentityAndWeightedTraits() {
         let fonts = [
             UIFont.systemFont(ofSize: 17),
-            UIFont.systemFont(ofSize: 17, weight: .semibold),
+            UIFont.systemFont(ofSize: 17, weight: .semibold)
         ]
 
         for font in fonts {
@@ -426,10 +426,10 @@ final class PreparedProseRenderingTests: XCTestCase {
             )
             let fragments = layout.blocks.flatMap(\.fragments)
             guard let listBlock = layout.blocks.first(where: { $0.fragments.contains { $0.kind == .marker } }),
-                  let marker = listBlock.fragments.first(where: { $0.kind == .marker }),
-                  let firstText = listBlock.fragments.first(where: { $0.kind == .text }),
-                  let quoteBorder = fragments.first(where: { $0.kind == .border }),
-                  let codeBackground = fragments.first(where: { $0.kind == .background })
+                let marker = listBlock.fragments.first(where: { $0.kind == .marker }),
+                let firstText = listBlock.fragments.first(where: { $0.kind == .text }),
+                let quoteBorder = fragments.first(where: { $0.kind == .border }),
+                let codeBackground = fragments.first(where: { $0.kind == .background })
             else { return XCTFail("edge fixture must prepare marker, text, quote border, and code background") }
 
             XCTAssertLessThanOrEqual(marker.bounds.maxX, firstText.bounds.minX)
@@ -470,17 +470,22 @@ final class PreparedProseRenderingTests: XCTestCase {
     }
 
     func testTerminalBlockSpacingDoesNotIncreaseViewerHeight() throws {
-        let fixtures: [(source: FixtureSource, themeJSON: String, expectedGap: CGFloat)] = [
-            (
-                .json(#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]},{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}"#),
-                #"{"paragraph":{"spacingAfter":13},"contentInsets":{"bottom":7}}"#,
-                13
+        struct SpacingFixture {
+            let source: FixtureSource
+            let themeJSON: String
+            let expectedGap: CGFloat
+        }
+        let fixtures: [SpacingFixture] = [
+            SpacingFixture(
+                source: .json(#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]},{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}"#),
+                themeJSON: #"{"paragraph":{"spacingAfter":13},"contentInsets":{"bottom":7}}"#,
+                expectedGap: 13
             ),
-            (
-                .json(#"{"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}"#),
-                #"{"list":{"itemSpacing":11,"spacingAfter":20},"contentInsets":{"bottom":7}}"#,
-                11
-            ),
+            SpacingFixture(
+                source: .json(#"{"type":"doc","content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}"#),
+                themeJSON: #"{"list":{"itemSpacing":11,"spacingAfter":20},"contentInsets":{"bottom":7}}"#,
+                expectedGap: 11
+            )
         ]
 
         for fixture in fixtures {
@@ -579,7 +584,7 @@ final class PreparedProseRenderingTests: XCTestCase {
             let regularRun = try XCTUnwrap(coreTextRuns(try XCTUnwrap(regularMarker.line)).first)
             let scaledRun = try XCTUnwrap(coreTextRuns(try XCTUnwrap(scaledMarker.line)).first)
 
-            XCTAssertEqual(CTFontGetSize(font(scaledRun)), CTFontGetSize(font(regularRun)), accuracy: 0.001)
+            XCTAssertEqual(CTFontGetSize(try font(scaledRun)), CTFontGetSize(try font(regularRun)), accuracy: 0.001)
         }
     }
 
@@ -615,8 +620,8 @@ final class PreparedProseRenderingTests: XCTestCase {
         return try CoreTextProseLayoutEngine().prepare(document: themed, key: key, widthPoints: 320, displayScale: 2)
     }
 
-    private func preparedKinds(for document: ViewerDocument) -> Set<PreparedProseFragmentKind> {
-        let layout = try! prepare(document, themeJSON: Fixture.themeJSON)
+    private func preparedKinds(for document: ViewerDocument) throws -> Set<PreparedProseFragmentKind> {
+        let layout = try prepare(document, themeJSON: Fixture.themeJSON)
         return Set(layout.blocks.flatMap(\.fragments).map(\.kind))
     }
 
@@ -725,25 +730,25 @@ final class PreparedProseRenderingTests: XCTestCase {
         CTRunGetAttributes(run) as? [NSAttributedString.Key: Any] ?? [:]
     }
 
-    private func font(_ run: CTRun) -> CTFont {
-        attributes(run)[kCTFontAttributeName as NSAttributedString.Key] as! CTFont
+    private func font(_ run: CTRun) throws -> CTFont {
+        try unwrapCoreTextAttribute(attributes(run)[kCTFontAttributeName as NSAttributedString.Key], as: CTFont.self)
     }
 
-    private func foreground(_ run: CTRun) -> CGColor {
-        attributes(run)[kCTForegroundColorAttributeName as NSAttributedString.Key] as! CGColor
+    private func foreground(_ run: CTRun) throws -> CGColor {
+        try unwrapCoreTextAttribute(attributes(run)[kCTForegroundColorAttributeName as NSAttributedString.Key], as: CGColor.self)
     }
 
-    private func background(_ run: CTRun) -> CGColor? {
+    private func background(_ run: CTRun) throws -> CGColor? {
         guard let value = attributes(run)[kCTBackgroundColorAttributeName as NSAttributedString.Key] else { return nil }
-        return (value as! CGColor)
+        return try unwrapCoreTextAttribute(value, as: CGColor.self)
     }
 
     private func underlineStyle(_ run: CTRun) -> Int32? {
         (attributes(run)[kCTUnderlineStyleAttributeName as NSAttributedString.Key] as? NSNumber)?.int32Value
     }
 
-    private func fontTraits(_ run: CTRun) -> CTFontSymbolicTraits {
-        CTFontGetSymbolicTraits(font(run))
+    private func fontTraits(_ run: CTRun) throws -> CTFontSymbolicTraits {
+        CTFontGetSymbolicTraits(try font(run))
     }
 }
 
@@ -805,7 +810,7 @@ private struct Fixture {
                 document.blocks.contains { $0.nodeType == "horizontal_rule" }
                     && document.blocks.contains { $0.listContext?.kind == "task" && $0.listContext?.checked == true }
             }
-        ),
+        )
     ]
 
     static let markSource = FixtureSource.json(##"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"bold","marks":[{"type":"bold"}]},{"type":"text","text":"italic","marks":[{"type":"italic"}]},{"type":"text","text":"under","marks":[{"type":"underline"}]},{"type":"text","text":"strike","marks":[{"type":"strike"}]},{"type":"text","text":"code","marks":[{"type":"code"}]},{"type":"text","text":"link","marks":[{"type":"link","attrs":{"href":"https://example.test"}}]},{"type":"text","text":"red","marks":[{"type":"textColor","attrs":{"color":"#FF0000"}}]},{"type":"text","text":"link-color","marks":[{"type":"link","attrs":{"href":"https://example.test"}},{"type":"textColor","attrs":{"color":"#00AA00"}}]},{"type":"text","text":"highlight","marks":[{"type":"highlight","attrs":{"color":"#FFF176"}}]},{"type":"text","text":"sized","marks":[{"type":"textStyle","attrs":{"fontFamily":"Courier","fontSize":19}}]},{"type":"text","text":"combo","marks":[{"type":"code"},{"type":"bold"},{"type":"italic"},{"type":"textStyle","attrs":{"fontFamily":"monospace","fontSize":19}}]}]}]}"##)
@@ -830,4 +835,16 @@ private struct Fixture {
         assertDocument: { document in document.blocks.contains { $0.nodeType == "opaqueBlock" } }
     )
     static let compilerFixtures = structuralFixtures + [markFixture, edgeFixture, multiBlockList, unicodeFixture]
+}
+
+func unwrapCoreTextAttribute(_ value: Any?, as type: CGColor.Type) throws -> CGColor {
+    let object = try XCTUnwrap(value.map { $0 as AnyObject })
+    let color = CFGetTypeID(object) == CGColor.typeID ? unsafeDowncast(object, to: type) : nil
+    return try XCTUnwrap(color)
+}
+
+func unwrapCoreTextAttribute(_ value: Any?, as type: CTFont.Type) throws -> CTFont {
+    let object = try XCTUnwrap(value.map { $0 as AnyObject })
+    let font = CFGetTypeID(object) == CTFontGetTypeID() ? unsafeDowncast(object, to: type) : nil
+    return try XCTUnwrap(font)
 }

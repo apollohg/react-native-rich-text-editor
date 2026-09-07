@@ -3,15 +3,19 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.text.Layout
 import android.text.StaticLayout
-import android.text.TextPaint
 import android.text.TextDirectionHeuristics
+import android.text.TextPaint
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.MotionEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
+import java.text.Bidi
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.min
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -23,10 +27,6 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import uniffi.editor_core.FfiViewerMark
-import java.text.Bidi
-import kotlin.math.ceil
-import kotlin.math.max
-import kotlin.math.min
 
 internal abstract class PreparedProseAccessibilityTestFixture {
     protected fun key(document: ViewerDocument) = ProseLayoutKey(
@@ -37,19 +37,19 @@ internal abstract class PreparedProseAccessibilityTestFixture {
         fontEnvironmentRevision = 0,
         densityBits = 1f.toRawBits().toLong(),
         attachmentRevision = 0,
-        generationIdentity = "fixture",
+        generationIdentity = "fixture"
     )
 
     protected fun layoutFor(
         text: String,
         width: Int,
-        textDirection: android.text.TextDirectionHeuristic = TextDirectionHeuristics.FIRSTSTRONG_LTR,
+        textDirection: android.text.TextDirectionHeuristic = TextDirectionHeuristics.FIRSTSTRONG_LTR
     ): StaticLayout = StaticLayout.Builder.obtain(
         text,
         0,
         text.length,
         TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 18f },
-        width,
+        width
     ).setTextDirection(textDirection).build()
 
     protected fun assertFallbackMatchesCompleteLineBidi(
@@ -57,11 +57,17 @@ internal abstract class PreparedProseAccessibilityTestFixture {
         start: Int,
         end: Int,
         line: Int,
-        width: Int,
+        width: Int
     ) {
         val lineStart = layout.getLineStart(line)
         val rawLineEnd = layout.getLineEnd(line)
-        val lineEnd = if (rawLineEnd > lineStart && layout.text[rawLineEnd - 1] == '\n') rawLineEnd - 1 else rawLineEnd
+        val lineEnd = if (rawLineEnd > lineStart &&
+            layout.text[rawLineEnd - 1] == '\n'
+        ) {
+            rawLineEnd - 1
+        } else {
+            rawLineEnd
+        }
         val direction = if (layout.getParagraphDirection(line) == Layout.DIR_RIGHT_TO_LEFT) {
             Bidi.DIRECTION_RIGHT_TO_LEFT
         } else {
@@ -78,20 +84,24 @@ internal abstract class PreparedProseAccessibilityTestFixture {
                     runEnd = runEnd,
                     runIsRtl = run.isRtl,
                     line = line,
-                    width = width,
+                    width = width
                 )?.let(::add)
             }
         }
 
         assertEquals(expected, fallbackSelectionRectsForLine(layout, start, end, line, width))
         assertTrue(expected.size >= 2)
-        assertTrue(expected.all { it.left in 0..width && it.right in 0..width && it.left < it.right })
+        assertTrue(
+            expected.all {
+                it.left in 0..width && it.right in 0..width && it.left < it.right
+            }
+        )
     }
 
     protected fun assertFallbackVisualRunRect(
         layout: StaticLayout,
         run: ExpectedVisualRun,
-        width: Int,
+        width: Int
     ) {
         val rect = requireNotNull(
             fallbackSelectionRectForVisualRun(
@@ -100,7 +110,7 @@ internal abstract class PreparedProseAccessibilityTestFixture {
                 runEnd = run.documentEnd,
                 runIsRtl = run.isRtl,
                 line = 0,
-                width = width,
+                width = width
             )
         )
         val startEdge = if (run.isRtl) FallbackVisualEdge.RIGHT else FallbackVisualEdge.LEFT
@@ -112,9 +122,9 @@ internal abstract class PreparedProseAccessibilityTestFixture {
                 kotlin.math.floor(min(start, end)).toInt().coerceIn(0, width),
                 layout.getLineTop(0),
                 ceil(max(start, end)).toInt().coerceIn(0, width),
-                layout.getLineBottom(0),
+                layout.getLineBottom(0)
             ),
-            rect,
+            rect
         )
     }
 
@@ -123,7 +133,7 @@ internal abstract class PreparedProseAccessibilityTestFixture {
         continuation: String,
         paragraphDirection: Int,
         terminalRunIsRtl: Boolean,
-        expectedVisualLogicalOrder: List<Int>,
+        expectedVisualLogicalOrder: List<Int>
     ) {
         val text = firstLine + continuation
         val lineEnd = firstLine.length
@@ -140,33 +150,43 @@ internal abstract class PreparedProseAccessibilityTestFixture {
         assertEquals(
             "the fixture must retain the inherited paragraph direction",
             paragraphDirection == Layout.DIR_LEFT_TO_RIGHT,
-            bidi.baseIsLeftToRight(),
+            bidi.baseIsLeftToRight()
         )
         val logicalRuns = List(bidi.runCount) { logicalIndex ->
-                FallbackLogicalBidiRun(
-                    logicalIndex = logicalIndex,
-                    documentStart = bidi.getRunStart(logicalIndex),
-                    documentEnd = bidi.getRunLimit(logicalIndex),
-                    level = bidi.getRunLevel(logicalIndex).toByte(),
-                )
-            }
+            FallbackLogicalBidiRun(
+                logicalIndex = logicalIndex,
+                documentStart = bidi.getRunStart(logicalIndex),
+                documentEnd = bidi.getRunLimit(logicalIndex),
+                level = bidi.getRunLevel(logicalIndex).toByte()
+            )
+        }
         val visualRuns = visualBidiRuns(logicalRuns)
         assertEquals(
             expectedVisualLogicalOrder,
-            visualRuns.map { it.logicalRun.logicalIndex },
+            visualRuns.map { it.logicalRun.logicalIndex }
         )
         val terminal = visualRuns.single {
             it.documentEnd == lineEnd && it.isRtl == terminalRunIsRtl
         }
-        assertTrue(text.subSequence(terminal.documentStart, terminal.documentEnd).any { it.isLetter() })
+        assertTrue(
+            text.subSequence(terminal.documentStart, terminal.documentEnd).any {
+                it.isLetter()
+            }
+        )
         val terminalEdge = if (terminal.isRtl) FallbackVisualEdge.LEFT else FallbackVisualEdge.RIGHT
         val neighbor = when (terminalEdge) {
             FallbackVisualEdge.LEFT -> visualRuns[terminal.visualIndex - 1]
             FallbackVisualEdge.RIGHT -> visualRuns[terminal.visualIndex + 1]
         }
         assertEquals(
-            if (terminalEdge == FallbackVisualEdge.LEFT) terminal.visualIndex - 1 else terminal.visualIndex + 1,
-            neighbor.visualIndex,
+            if (terminalEdge ==
+                FallbackVisualEdge.LEFT
+            ) {
+                terminal.visualIndex - 1
+            } else {
+                terminal.visualIndex + 1
+            },
+            neighbor.visualIndex
         )
         val neighborEdge = if (terminalEdge == FallbackVisualEdge.LEFT) {
             FallbackVisualEdge.RIGHT
@@ -174,8 +194,11 @@ internal abstract class PreparedProseAccessibilityTestFixture {
             FallbackVisualEdge.LEFT
         }
         val neighborOffset = when (neighborEdge) {
-            FallbackVisualEdge.LEFT -> if (neighbor.isRtl) neighbor.documentEnd else neighbor.documentStart
-            FallbackVisualEdge.RIGHT -> if (neighbor.isRtl) neighbor.documentStart else neighbor.documentEnd
+            FallbackVisualEdge.LEFT ->
+                if (neighbor.isRtl) neighbor.documentEnd else neighbor.documentStart
+
+            FallbackVisualEdge.RIGHT ->
+                if (neighbor.isRtl) neighbor.documentStart else neighbor.documentEnd
         }
         // At this directional boundary the same logical offset has two cursor
         // positions. The adjacent visual run supplies the terminal edge by
@@ -186,8 +209,20 @@ internal abstract class PreparedProseAccessibilityTestFixture {
         visualRuns.forEach { run ->
             val left = run.visualIndex * MIXED_SOFT_WRAP_CHARACTER_WIDTH_PX.toFloat()
             val right = left + MIXED_SOFT_WRAP_CHARACTER_WIDTH_PX
-            logicalCaretPositions[FixedLogicalCaret(run.logicalRun, run.affinityAt(FallbackVisualEdge.LEFT))] = left
-            logicalCaretPositions[FixedLogicalCaret(run.logicalRun, run.affinityAt(FallbackVisualEdge.RIGHT))] = right
+            logicalCaretPositions[
+                FixedLogicalCaret(
+                    run.logicalRun,
+                    run.affinityAt(FallbackVisualEdge.LEFT)
+                )
+            ] =
+                left
+            logicalCaretPositions[
+                FixedLogicalCaret(
+                    run.logicalRun,
+                    run.affinityAt(FallbackVisualEdge.RIGHT)
+                )
+            ] =
+                right
         }
         fun positionAt(offset: Int, affinity: FallbackLogicalCaretAffinity): Float {
             val run = logicalRuns.single {
@@ -209,7 +244,15 @@ internal abstract class PreparedProseAccessibilityTestFixture {
             bottom = 30,
             width = width,
             logicalRuns = logicalRuns,
-            outerLineBoundary = { edge -> if (edge == FallbackVisualEdge.LEFT) 0f else width.toFloat() },
+            outerLineBoundary = { edge ->
+                if (edge ==
+                    FallbackVisualEdge.LEFT
+                ) {
+                    0f
+                } else {
+                    width.toFloat()
+                }
+            },
             primaryHorizontal = { offset ->
                 positionAt(
                     offset,
@@ -217,7 +260,7 @@ internal abstract class PreparedProseAccessibilityTestFixture {
                         FallbackLogicalCaretAffinity.TRAILING_PREVIOUS
                     } else {
                         FallbackLogicalCaretAffinity.LEADING_NEXT
-                    },
+                    }
                 )
             },
             secondaryHorizontal = { offset ->
@@ -227,14 +270,14 @@ internal abstract class PreparedProseAccessibilityTestFixture {
                         FallbackLogicalCaretAffinity.LEADING_NEXT
                     } else {
                         FallbackLogicalCaretAffinity.TRAILING_PREVIOUS
-                    },
+                    }
                 )
-            },
+            }
         )
         val rect = fallbackSelectionRectsForGeometry(
             geometry = geometry,
             start = terminal.documentStart,
-            end = terminal.documentEnd,
+            end = terminal.documentEnd
         ).single()
         val startBoundary = requireNotNull(
             logicalCaretPositions[
@@ -242,28 +285,33 @@ internal abstract class PreparedProseAccessibilityTestFixture {
             ]
         )
         val terminalBoundary = requireNotNull(
-            logicalCaretPositions[FixedLogicalCaret(neighbor.logicalRun, neighbor.affinityAt(neighborEdge))]
+            logicalCaretPositions[
+                FixedLogicalCaret(
+                    neighbor.logicalRun,
+                    neighbor.affinityAt(neighborEdge)
+                )
+            ]
         )
         assertNotEquals(
             "shared logical offset must retain distinct terminal and adjacent-run caret positions",
             startBoundary,
-            terminalBoundary,
+            terminalBoundary
         )
         assertEquals(
             Rect(
                 kotlin.math.floor(min(startBoundary, terminalBoundary)).toInt().coerceIn(0, width),
                 geometry.top,
                 ceil(max(startBoundary, terminalBoundary)).toInt().coerceIn(0, width),
-                geometry.bottom,
+                geometry.bottom
             ),
-            rect,
+            rect
         )
         assertTrue(rect.left < rect.right)
     }
 
     protected data class FixedLogicalCaret(
         val run: FallbackLogicalBidiRun,
-        val affinity: FallbackLogicalCaretAffinity,
+        val affinity: FallbackLogicalCaretAffinity
     )
 
     protected fun affinityGeometry(
@@ -277,7 +325,7 @@ internal abstract class PreparedProseAccessibilityTestFixture {
             if (edge == FallbackVisualEdge.LEFT) 0f else 200f
         },
         primaryHorizontal: (Int) -> Float = { offset -> 10f + offset },
-        secondaryHorizontal: (Int) -> Float = { offset -> 100f + offset },
+        secondaryHorizontal: (Int) -> Float = { offset -> 100f + offset }
     ): FallbackLineGeometry {
         val logicalRuns = runs ?: requireNotNull(levels).mapIndexed { index, level ->
             FallbackLogicalBidiRun(index, index, index + 1, level.toByte())
@@ -294,7 +342,7 @@ internal abstract class PreparedProseAccessibilityTestFixture {
             logicalRuns = logicalRuns,
             outerLineBoundary = outerLineBoundary,
             primaryHorizontal = primaryHorizontal,
-            secondaryHorizontal = secondaryHorizontal,
+            secondaryHorizontal = secondaryHorizontal
         )
     }
 
@@ -304,7 +352,7 @@ internal abstract class PreparedProseAccessibilityTestFixture {
         val documentStart: Int,
         val documentEnd: Int,
         val isRtl: Boolean,
-        val level: Byte,
+        val level: Byte
     )
 
     /**
@@ -321,11 +369,19 @@ internal abstract class PreparedProseAccessibilityTestFixture {
                 documentStart = documentOffset + bidi.getRunStart(logicalIndex),
                 documentEnd = documentOffset + bidi.getRunLimit(logicalIndex),
                 isRtl = (bidi.getRunLevel(logicalIndex) and 1) == 1,
-                level = bidi.getRunLevel(logicalIndex).toByte(),
+                level = bidi.getRunLevel(logicalIndex).toByte()
             )
         }
         val reordered: Array<Any> = Array(logical.size) { logical[it] }
-        Bidi.reorderVisually(ByteArray(logical.size) { logical[it].level }, 0, reordered, 0, reordered.size)
+        Bidi.reorderVisually(
+            ByteArray(logical.size) {
+                logical[it].level
+            },
+            0,
+            reordered,
+            0,
+            reordered.size
+        )
         return reordered.mapIndexed { visualIndex, value ->
             (value as ExpectedVisualRun).copy(visualIndex = visualIndex)
         }
@@ -334,11 +390,17 @@ internal abstract class PreparedProseAccessibilityTestFixture {
     protected fun visualEdgeBoundary(
         layout: StaticLayout,
         offset: Int,
-        edge: FallbackVisualEdge,
+        edge: FallbackVisualEdge
     ): Float {
         val primary = layout.getPrimaryHorizontal(offset)
         val secondary = layout.getSecondaryHorizontal(offset)
-        return if (edge == FallbackVisualEdge.RIGHT) max(primary, secondary) else min(primary, secondary)
+        return if (edge ==
+            FallbackVisualEdge.RIGHT
+        ) {
+            max(primary, secondary)
+        } else {
+            min(primary, secondary)
+        }
     }
 
     protected companion object {
@@ -354,7 +416,7 @@ internal abstract class PreparedProseAccessibilityTestFixture {
             fontEnvironmentRevision = 0,
             densityBits = 1f.toRawBits().toLong(),
             attachmentRevision = 0,
-            generationIdentity = generation,
+            generationIdentity = generation
         ),
         widthPx = 100,
         heightPx = 20,
@@ -365,18 +427,18 @@ internal abstract class PreparedProseAccessibilityTestFixture {
                 rects = listOf(Rect(0, 0, 20, 20)),
                 href = "https://example.test/$generation",
                 visibleText = generation,
-                label = generation,
-            ),
+                label = generation
+            )
         ),
         accessibilityNodes = listOf(
             PreparedProseAccessibilityNode(
                 interactionIndex = 0,
                 role = PreparedProseAccessibilityNode.Role.LINK,
                 label = generation,
-                bounds = Rect(0, 0, 20, 20),
-            ),
+                bounds = Rect(0, 0, 20, 20)
+            )
         ),
-        retainedBytes = 0,
+        retainedBytes = 0
     )
 
     protected fun interactiveArtifact(): PreparedProseLayout {
@@ -391,8 +453,8 @@ internal abstract class PreparedProseAccessibilityTestFixture {
                     visibleText = "@Ada",
                     docPos = 1,
                     label = "@Ada",
-                    attrsJson = "{}",
-                ),
+                    attrsJson = "{}"
+                )
             ),
             accessibilityNodes = listOf(
                 base.accessibilityNodes.single(),
@@ -400,9 +462,9 @@ internal abstract class PreparedProseAccessibilityTestFixture {
                     interactionIndex = 1,
                     role = PreparedProseAccessibilityNode.Role.MENTION,
                     label = "@Ada",
-                    bounds = Rect(30, 40, 50, 60),
-                ),
-            ),
+                    bounds = Rect(30, 40, 50, 60)
+                )
+            )
         )
     }
 
@@ -423,19 +485,20 @@ internal abstract class PreparedProseAccessibilityTestFixture {
         parent: CapturingAccessibilityParent,
         child: View,
         width: Int = 100,
-        height: Int = 100,
+        height: Int = 100
     ) {
         parent.addView(child)
         (child as? PreparedProseDrawingView)?.accessibilityVisibilityForTesting = { true }
         parent.measure(
             View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)
         )
         parent.layout(0, 0, width, height)
         child.layout(0, 0, width, height)
     }
 
-    protected class CapturingAccessibilityParent(context: android.content.Context) : ViewGroup(context) {
+    protected class CapturingAccessibilityParent(context: android.content.Context) :
+        ViewGroup(context) {
         init {
             shadowOf(context.getSystemService(AccessibilityManager::class.java)).setEnabled(true)
         }
@@ -444,7 +507,10 @@ internal abstract class PreparedProseAccessibilityTestFixture {
         private val changeTypes = mutableListOf<Int>()
         var onEvent: ((AccessibilityEvent) -> Unit)? = null
 
-        override fun requestSendAccessibilityEvent(child: View, event: AccessibilityEvent): Boolean {
+        override fun requestSendAccessibilityEvent(
+            child: View,
+            event: AccessibilityEvent
+        ): Boolean {
             onEvent?.invoke(event)
             eventTypes += event.eventType
             changeTypes += event.contentChangeTypes

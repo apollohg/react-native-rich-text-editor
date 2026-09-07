@@ -7,7 +7,9 @@ import android.view.DragEvent
 import android.view.View
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -26,7 +28,9 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             val editor = harness.editText
             measure(editor)
             editor.setSelection(0)
-            val clipboard = editor.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clipboard = editor.context.getSystemService(
+                Context.CLIPBOARD_SERVICE
+            ) as ClipboardManager
             clipboard.setPrimaryClip(ClipData.newPlainText("clipboard", "keep"))
             val clip = ClipData.newPlainText("external", "X\nY")
             assertTrue(send(editor, DragEvent.ACTION_DRAG_STARTED, clip))
@@ -36,7 +40,9 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             assertEquals("a😀X\nYb", editor.text.toString())
             assertEquals("keep", clipboard.primaryClip!!.getItemAt(0).text.toString())
             assertTrue(send(editor, DragEvent.ACTION_DRAG_ENDED, clip))
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -53,7 +59,9 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             editor.isEditable = false
             assertFalse(send(editor, DragEvent.ACTION_DROP, clip, 2))
             assertEquals("<p>safe</p>", harness.adapter.documentHtml())
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -71,7 +79,9 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             assertTrue(send(editor, DragEvent.ACTION_DROP, clip, editor.text.length))
             assertEquals("<p>日本 tail!</p>", harness.adapter.documentHtml())
             assertEquals(-1, BaseInputConnection.getComposingSpanStart(editor.editableText))
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
@@ -105,14 +115,18 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             editor.blockExternalEditorUpdatePreparationForTesting = true
             assertFalse(send(editor, DragEvent.ACTION_DROP, clip, 1))
             assertEquals("<p>safe</p>", harness.adapter.documentHtml())
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     @Test
     fun `detaching the surface retires its accepted drag`() {
         val harness = realExternalCompositionHarness("safe")
         try {
-            val activity = org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup().get()
+            val activity = org.robolectric.Robolectric.buildActivity(
+                android.app.Activity::class.java
+            ).setup().get()
             val editor = harness.editText
             activity.setContentView(editor)
             measure(editor)
@@ -121,26 +135,52 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             activity.setContentView(View(activity))
             assertFalse(send(editor, DragEvent.ACTION_DROP, clip, 1))
             assertEquals("<p>safe</p>", harness.adapter.documentHtml())
-        } finally { harness.adapter.destroy() }
+        } finally {
+            harness.adapter.destroy()
+        }
     }
 
     private fun measure(editor: EditorEditText) {
-        editor.measure(View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.AT_MOST))
+        editor.measure(
+            View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.AT_MOST)
+        )
         editor.layout(0, 0, editor.measuredWidth, editor.measuredHeight)
     }
 
-    private fun send(editor: EditorEditText, action: Int, clip: ClipData, offset: Int = 0): Boolean {
+    private fun send(
+        editor: EditorEditText,
+        action: Int,
+        clip: ClipData,
+        offset: Int = 0
+    ): Boolean {
         val line = editor.layout.getLineForOffset(offset)
         val event = ReflectionHelpers.callStaticMethod<DragEvent>(DragEvent::class.java, "obtain")
         ReflectionHelpers.setField(event, "mAction", action)
-        ReflectionHelpers.setField(event, "mX", editor.layout.getPrimaryHorizontal(offset) + editor.totalPaddingLeft)
-        ReflectionHelpers.setField(event, "mY", editor.layout.editorTextLineTop(line).toFloat() + editor.totalPaddingTop + 1f)
+        ReflectionHelpers.setField(
+            event,
+            "mX",
+            editor.layout.getPrimaryHorizontal(offset) + editor.totalPaddingLeft
+        )
+        ReflectionHelpers.setField(
+            event,
+            "mY",
+            editor.layout.editorTextLineTop(line).toFloat() + editor.totalPaddingTop + 1f
+        )
         ReflectionHelpers.setField(event, "mClipData", clip)
         ReflectionHelpers.setField(event, "mClipDescription", clip.description)
         ReflectionHelpers.setField(event, "mLocalState", Any())
         if (action == DragEvent.ACTION_DROP) {
-            assertEquals("drop coordinate must target requested UTF16 boundary", offset, editor.getOffsetForPosition(event.x, event.y))
+            assertEquals(
+                "drop coordinate must target requested UTF16 boundary",
+                offset,
+                editor.getOffsetForPosition(event.x, event.y)
+            )
         }
-        return try { editor.onDragEvent(event) } finally { ReflectionHelpers.callInstanceMethod<Unit>(event, "recycle") }
+        return try {
+            editor.onDragEvent(event)
+        } finally {
+            ReflectionHelpers.callInstanceMethod<Unit>(event, "recycle")
+        }
     }
 }

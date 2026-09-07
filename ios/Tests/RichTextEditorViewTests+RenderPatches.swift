@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testVersionedParagraphSplitKeepsCollapsedSiblingMargins() throws {
@@ -127,10 +127,10 @@ extension RichTextEditorViewTests {
         view.layoutIfNeeded()
 
         guard let originalTargetRange = firstImageRange(in: view.textView),
-              let originalDocPos = (view.textView.textStorage.attributes(
-                  at: originalTargetRange.location,
-                  effectiveRange: nil
-              )[RenderBridgeAttributes.docPos] as? NSNumber)?.uint32Value
+            let originalDocPos = (view.textView.textStorage.attributes(
+                at: originalTargetRange.location,
+                effectiveRange: nil
+            )[RenderBridgeAttributes.docPos] as? NSNumber)?.uint32Value
         else {
             XCTFail("expected the target image and its document position")
             return
@@ -146,10 +146,10 @@ extension RichTextEditorViewTests {
         view.layoutIfNeeded()
 
         guard let targetRange = firstImageRange(in: view.textView),
-              let refreshedDocPos = (view.textView.textStorage.attributes(
-                  at: targetRange.location,
-                  effectiveRange: nil
-              )[RenderBridgeAttributes.docPos] as? NSNumber)?.uint32Value
+            let refreshedDocPos = (view.textView.textStorage.attributes(
+                at: targetRange.location,
+                effectiveRange: nil
+            )[RenderBridgeAttributes.docPos] as? NSNumber)?.uint32Value
         else {
             XCTFail("expected the target image after the atomic render")
             return
@@ -240,7 +240,7 @@ extension RichTextEditorViewTests {
         explicitPatchUpdate["renderPatch"] = [
             "startIndex": 0,
             "deleteCount": 0,
-            "renderBlocks": [finalRenderBlocks[0]],
+            "renderBlocks": [finalRenderBlocks[0]]
         ]
         let explicitPatchData = try JSONSerialization.data(withJSONObject: explicitPatchUpdate)
         let explicitPatchJSON = try XCTUnwrap(String(data: explicitPatchData, encoding: .utf8))
@@ -307,9 +307,9 @@ extension RichTextEditorViewTests {
                 "renderBlocks": [[
                     ["type": "blockStart", "nodeType": "paragraph", "depth": 0],
                     ["type": "textRun", "text": "Corrupt", "marks": []],
-                    ["type": "blockEnd"],
-                ]],
-            ],
+                    ["type": "blockEnd"]
+                ]]
+            ]
         ]
         let staleData = try JSONSerialization.data(withJSONObject: stalePatch)
         let staleJSON = try XCTUnwrap(String(data: staleData, encoding: .utf8))
@@ -396,12 +396,12 @@ extension RichTextEditorViewTests {
 
         let updatedDocument = """
         {
-          "type": "doc",
-          "content": [
+        "type": "doc",
+        "content": [
             {"type": "paragraph", "content": [{"type": "text", "text": "Alpha"}]},
             {"type": "paragraph", "content": [{"type": "text", "text": "Better"}]},
             {"type": "paragraph", "content": [{"type": "text", "text": "Gamma"}]}
-          ]
+        ]
         }
         """
         let update = EditorV2Shadow.setJson(id: editorId, json: updatedDocument)

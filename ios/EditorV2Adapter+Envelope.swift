@@ -188,8 +188,7 @@ extension EditorV2Adapter {
         }
         if let data = try? JSONSerialization.data(withJSONObject: payload),
            let payloadJson = String(data: data, encoding: .utf8),
-           payloadJson.count > 2
-        {
+           payloadJson.count > 2 {
             parts.append(String(payloadJson.dropFirst().dropLast()))
         }
         return .success("{\(parts.joined(separator: ","))}")

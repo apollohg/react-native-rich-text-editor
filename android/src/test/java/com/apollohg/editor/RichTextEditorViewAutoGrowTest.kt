@@ -1,19 +1,21 @@
 package com.apollohg.editor
-import android.graphics.Color
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Rect
 import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
-import android.widget.LinearLayout
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -26,8 +28,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -43,7 +43,8 @@ internal class RichTextEditorViewAutoGrowTest : RichTextEditorViewTestFixture() 
         editText.layout(0, 0, editText.measuredWidth, editText.measuredHeight)
 
         val expectedHeight =
-            (editText.layout?.height ?: 0) + editText.compoundPaddingTop + editText.compoundPaddingBottom
+            (editText.layout?.height ?: 0) + editText.compoundPaddingTop +
+                editText.compoundPaddingBottom
 
         assertTrue(expectedHeight > 0)
         assertEquals(expectedHeight, editText.resolveAutoGrowHeight())
@@ -88,7 +89,10 @@ internal class RichTextEditorViewAutoGrowTest : RichTextEditorViewTestFixture() 
         )
         val expectedContentHeight = richTextEditorView.editorEditText.resolveAutoGrowHeight()
 
-        val oversizedExactHeightSpec = View.MeasureSpec.makeMeasureSpec(1600, View.MeasureSpec.EXACTLY)
+        val oversizedExactHeightSpec = View.MeasureSpec.makeMeasureSpec(
+            1600,
+            View.MeasureSpec.EXACTLY
+        )
         richTextEditorView.measure(widthSpec, oversizedExactHeightSpec)
         richTextEditorView.layout(
             0,
@@ -120,7 +124,7 @@ internal class RichTextEditorViewAutoGrowTest : RichTextEditorViewTestFixture() 
         assertEquals(1200, subject.measuredHeight)
         val resolvedHeight = subject.resolveAutoGrowHeight()
         assertEquals(
-                "expected=$expectedHeight resolved=$resolvedHeight " +
+            "expected=$expectedHeight resolved=$resolvedHeight " +
                 "isLaidOut=${subject.isLaidOut} measuredWidth=${subject.measuredWidth} " +
                 "layoutHeight=${subject.layout?.height} lineHeight=${subject.lineHeight} " +
                 "compoundPaddingTop=${subject.compoundPaddingTop} compoundPaddingBottom=${subject.compoundPaddingBottom}",
@@ -152,7 +156,10 @@ internal class RichTextEditorViewAutoGrowTest : RichTextEditorViewTestFixture() 
         )
         subject.setText("Short content")
         val staleHeight = expectedHeight + 320
-        val exactHeightSpec = View.MeasureSpec.makeMeasureSpec(staleHeight, View.MeasureSpec.EXACTLY)
+        val exactHeightSpec = View.MeasureSpec.makeMeasureSpec(
+            staleHeight,
+            View.MeasureSpec.EXACTLY
+        )
         subject.measure(widthSpec, exactHeightSpec)
         subject.layout(0, 0, subject.measuredWidth, subject.measuredHeight)
 
@@ -196,7 +203,10 @@ internal class RichTextEditorViewAutoGrowTest : RichTextEditorViewTestFixture() 
         val shortHeight = subject.resolveAutoGrowHeight()
 
         // Simulate React Native feeding the previous contentHeight back as an exact height.
-        val exactShortHeightSpec = View.MeasureSpec.makeMeasureSpec(shortHeight, View.MeasureSpec.EXACTLY)
+        val exactShortHeightSpec = View.MeasureSpec.makeMeasureSpec(
+            shortHeight,
+            View.MeasureSpec.EXACTLY
+        )
         subject.measure(widthSpec, exactShortHeightSpec)
         subject.layout(0, 0, subject.measuredWidth, subject.measuredHeight)
 
@@ -241,7 +251,10 @@ internal class RichTextEditorViewAutoGrowTest : RichTextEditorViewTestFixture() 
         val tallHeight = subject.resolveAutoGrowHeight()
 
         // Simulate React Native feeding the previous contentHeight back as an exact height.
-        val exactTallHeightSpec = View.MeasureSpec.makeMeasureSpec(tallHeight, View.MeasureSpec.EXACTLY)
+        val exactTallHeightSpec = View.MeasureSpec.makeMeasureSpec(
+            tallHeight,
+            View.MeasureSpec.EXACTLY
+        )
         subject.measure(widthSpec, exactTallHeightSpec)
         subject.layout(0, 0, subject.measuredWidth, subject.measuredHeight)
 
@@ -398,7 +411,8 @@ internal class RichTextEditorViewAutoGrowTest : RichTextEditorViewTestFixture() 
         )
         assertTrue(
             "Pre-layout fallback height should not exceed the measured spacer layout height",
-            richTextEditorView.editorEditText.resolveAutoGrowHeight() <= richTextEditorView.measuredHeight
+            richTextEditorView.editorEditText.resolveAutoGrowHeight() <=
+                richTextEditorView.measuredHeight
         )
     }
 

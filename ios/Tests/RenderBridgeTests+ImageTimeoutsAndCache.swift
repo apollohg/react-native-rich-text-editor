@@ -1,5 +1,5 @@
-import XCTest
 import CoreText
+import XCTest
 
 extension RenderBridgeTests {
     func testImageTimeoutControllerSeparatesConnectAndReadIdleTimeouts() {
@@ -178,7 +178,7 @@ extension RenderBridgeTests {
             imagePolicy(requestTimeout: baseline.requestTimeout + 1),
             imagePolicy(maxConcurrentRequests: baseline.maxConcurrentRequests + 1),
             imagePolicy(maxPendingRequests: baseline.maxPendingRequests + 1),
-            imagePolicy(maxDecodeDimension: baseline.maxDecodeDimension + 1),
+            imagePolicy(maxDecodeDimension: baseline.maxDecodeDimension + 1)
         ]
 
         for variant in variants {

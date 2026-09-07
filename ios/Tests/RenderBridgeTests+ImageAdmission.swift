@@ -1,5 +1,5 @@
-import XCTest
 import CoreText
+import XCTest
 
 extension RenderBridgeTests {
     func testImageLoadingPolicyDefaultsMatchPublicContract() {
@@ -17,13 +17,13 @@ extension RenderBridgeTests {
     func testImageLoadingPolicyParsesPositiveIntegersAndDefaultsInvalidValues() {
         let policy = ImageLoadingPolicy.from(json: """
         {
-          "maxSourceBytes": 4096,
-          "connectTimeoutMs": 1500,
-          "readTimeoutMs": 2750,
-          "requestTimeoutMs": 4500,
-          "maxConcurrentRequests": 3,
-          "maxPendingRequests": 7,
-          "maxDecodeDimensionPx": 512
+        "maxSourceBytes": 4096,
+        "connectTimeoutMs": 1500,
+        "readTimeoutMs": 2750,
+        "requestTimeoutMs": 4500,
+        "maxConcurrentRequests": 3,
+        "maxPendingRequests": 7,
+        "maxDecodeDimensionPx": 512
         }
         """)
 
@@ -44,13 +44,13 @@ extension RenderBridgeTests {
     func testImageLoadingPolicyAcceptsExactHardCeilings() {
         let policy = ImageLoadingPolicy.from(json: """
         {
-          "maxSourceBytes": 67108864,
-          "connectTimeoutMs": 600000,
-          "readTimeoutMs": 600000,
-          "requestTimeoutMs": 600000,
-          "maxConcurrentRequests": 16,
-          "maxPendingRequests": 512,
-          "maxDecodeDimensionPx": 8192
+        "maxSourceBytes": 67108864,
+        "connectTimeoutMs": 600000,
+        "readTimeoutMs": 600000,
+        "requestTimeoutMs": 600000,
+        "maxConcurrentRequests": 16,
+        "maxPendingRequests": 512,
+        "maxDecodeDimensionPx": 8192
         }
         """)
 
@@ -148,7 +148,7 @@ extension RenderBridgeTests {
             (#"width="1in" height="0.5in""#, 96, 48),
             (#"width="120""#, 120, 60),
             (#"height="60""#, 120, 60),
-            ("", 200, 100),
+            ("", 200, 100)
         ]
         for (attributes, width, height) in dimensions {
             let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" \(attributes) viewBox=\"0 0 200 100\"><rect width=\"200\" height=\"100\"/></svg>"
@@ -162,7 +162,7 @@ extension RenderBridgeTests {
         let rejected = [
             ##"<mask id="clip"><rect width="1000000" height="1000000" fill="white"/></mask>"##,
             ##"<clipPath id="clip"><rect width="10" height="10"/><path d="M0 0H10V10H0Z" clip-rule="evenodd"/></clipPath>"##,
-            ##"<clipPath id="clip"><text x="0" y="10">Sample</text></clipPath>"##,
+            ##"<clipPath id="clip"><text x="0" y="10">Sample</text></clipPath>"##
         ]
         for definition in rejected {
             let attribute = definition.hasPrefix("<mask") ? "mask" : "clip-path"
@@ -183,7 +183,7 @@ extension RenderBridgeTests {
             #"<!DOCTYPE svg [<!ENTITY remote SYSTEM "https://example.test/secret">]><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><text>&remote;</text></svg>"#,
             #"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><image href="https://example.test/a.png"/></svg>"#,
             ##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><use id="loop" href="#loop"/></svg>"##,
-            #"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><script>alert(1)</script></svg>"#,
+            #"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><script>alert(1)</script></svg>"#
         ]
         for input in inputs {
             let owner = RenderImageLoadOwner(policy: .default, transport: ImmediateImageTransport(result: .success(Data(input.utf8))))

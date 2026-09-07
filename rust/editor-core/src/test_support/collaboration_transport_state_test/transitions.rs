@@ -438,8 +438,6 @@ fn await_remote_rooms_connect_without_document_promotion() {
         DocumentState::AwaitRemote
     );
 
-    // The full connect/handshake/synchronize path is transport-only: the
-    // AwaitRemote -> RoomReady promotion belongs to Task 9's Step 2 handling.
     let generation = drive_generation(id, 181).unwrap();
     open_socket_and_ack_step1(id, 182, generation).unwrap();
     assert_eq!(

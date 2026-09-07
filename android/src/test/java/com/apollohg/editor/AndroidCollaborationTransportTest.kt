@@ -1,5 +1,7 @@
 package com.apollohg.editor
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import okio.ByteString
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -8,8 +10,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 
 /** Every teardown path must emit the close handshake that reaps peer presence. */
 @RunWith(RobolectricTestRunner::class)
@@ -18,7 +18,7 @@ class AndroidCollaborationTransportTest {
 
     private class RecordingSocket(
         private val callbacks: CollaborationSocketCallbacks,
-        private val closeSucceeds: Boolean,
+        private val closeSucceeds: Boolean
     ) : CollaborationSocket {
         val events = mutableListOf<String>()
 
@@ -49,20 +49,19 @@ class AndroidCollaborationTransportTest {
         }
     }
 
-    private class RecordingSocketFactory(
-        private val closeSucceeds: Boolean = true,
-    ) : CollaborationSocketFactory {
+    private class RecordingSocketFactory(private val closeSucceeds: Boolean = true) :
+        CollaborationSocketFactory {
         val sockets = mutableListOf<RecordingSocket>()
 
         override fun makeSocket(
             url: String,
             protocols: List<String>,
-            callbacks: CollaborationSocketCallbacks,
+            callbacks: CollaborationSocketCallbacks
         ): CollaborationSocket = RecordingSocket(callbacks, closeSucceeds).also { sockets.add(it) }
     }
 
     private fun connectedTransport(
-        factory: RecordingSocketFactory,
+        factory: RecordingSocketFactory
     ): Pair<AndroidCollaborationTransport, FakeEditorV2Backend> {
         val backend = FakeEditorV2Backend()
         backend.collaborationGenerationToOpen = GENERATION
@@ -72,13 +71,13 @@ class AndroidCollaborationTransportTest {
             editorId = editorId,
             backend = backend,
             socketFactory = factory,
-            clock = CollaborationMonotonicClock { 0L },
+            clock = CollaborationMonotonicClock { 0L }
         )
         transport.configure(config(CONNECTED_URL, connect = true))
         assertEquals(
             "the fixture must reach an open socket before teardown is exercised",
             1,
-            factory.sockets.size,
+            factory.sockets.size
         )
         return transport to backend
     }
@@ -99,7 +98,7 @@ class AndroidCollaborationTransportTest {
         assertEquals(
             "destroy must complete the close handshake, not drop the connection",
             goingAwayClose(),
-            factory.sockets.single().events,
+            factory.sockets.single().events
         )
     }
 
@@ -136,7 +135,7 @@ class AndroidCollaborationTransportTest {
         assertEquals(
             "a socket that cannot enqueue a close frame must still be cancelled",
             goingAwayClose() + "cancel",
-            factory.sockets.single().events,
+            factory.sockets.single().events
         )
     }
 
@@ -165,7 +164,7 @@ class AndroidCollaborationTransportTest {
 
         assertTrue(
             "the native session must be detached on teardown",
-            backend.calls.contains("collaborationDetach"),
+            backend.calls.contains("collaborationDetach")
         )
     }
 
@@ -192,7 +191,7 @@ class AndroidCollaborationTransportTest {
         transport.awaitIdleForTesting()
         assertEquals(
             AndroidCollaborationTransport.HostState.FOREGROUND,
-            transport.hostStateForTesting(),
+            transport.hostStateForTesting()
         )
         transport.destroyAsync()
         assertTrue(transport.awaitDestroyedForTesting())
@@ -207,7 +206,7 @@ class AndroidCollaborationTransportTest {
             editorId = editorId,
             backend = backend,
             socketFactory = RecordingSocketFactory(),
-            clock = CollaborationMonotonicClock { 0L },
+            clock = CollaborationMonotonicClock { 0L }
         )
         val retained = config(RETIRED_URL, connect = false)
         val replacement = config(CONNECTED_URL, connect = true)
@@ -215,7 +214,7 @@ class AndroidCollaborationTransportTest {
         backend.nextCollaborationReattachError = EditorV2Error(
             "transport",
             "REATTACH_FAILED",
-            "retry",
+            "retry"
         )
 
         assertEquals("REATTACH_FAILED", transport.configure(replacement)?.code)
@@ -238,7 +237,7 @@ class AndroidCollaborationTransportTest {
         assertTrue(transport.awaitDestroyedForTesting())
         assertEquals(
             detachCountBeforeDestroy + 1,
-            backend.calls.count { it == "collaborationDetach" },
+            backend.calls.count { it == "collaborationDetach" }
         )
     }
 

@@ -3,25 +3,31 @@ package com.apollohg.editor.prototype
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ViewConfiguration
-import android.widget.LinearLayout
-import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
+import android.widget.LinearLayout
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import org.junit.Assert.*
+import java.io.File
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class PrototypeEditorDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     private fun launch() = ActivityScenario.launch<PrototypeEditorActivity>(
-        Intent(instrumentation.targetContext, PrototypeEditorActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        Intent(
+            instrumentation.targetContext,
+            PrototypeEditorActivity::class.java
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     )
 
     @Test
@@ -39,14 +45,25 @@ class PrototypeEditorDeviceTest {
                 val connection = editor.activeConnection()
                 val before = session.committedText
                 val separator = before.indexOf('\n')
-                assertFalse(editor.documentLayout.selection(session.selectionStart, session.selectionEnd).isEmpty)
+                assertFalse(
+                    editor.documentLayout.selection(
+                        session.selectionStart,
+                        session.selectionEnd
+                    ).isEmpty
+                )
                 assertTrue(connection.setComposingText("にほん", 1))
                 assertEquals(before, session.committedText)
                 assertTrue(connection.setComposingText("日本語", 1))
                 val caret = editor.documentLayout.caret(session.selectionEnd)
-                assertEquals(session.selectionEnd, editor.documentLayout.offsetAt(caret.left, caret.centerY()))
+                assertEquals(
+                    session.selectionEnd,
+                    editor.documentLayout.offsetAt(caret.left, caret.centerY())
+                )
                 assertTrue(connection.commitText("日本語", 1))
-                assertEquals(before.take(separator - 4) + "日本語" + before.drop(separator + 5), session.committedText)
+                assertEquals(
+                    before.take(separator - 4) + "日本語" + before.drop(separator + 5),
+                    session.committedText
+                )
                 assertEquals(session.committedText, session.editable.toString())
                 assertTrue(connection.commitText("\n", 1))
                 assertTrue(session.committedText.contains('\n'))
@@ -59,10 +76,11 @@ class PrototypeEditorDeviceTest {
         launch().use { scenario ->
             instrumentation.waitForIdleSync()
             scenario.onActivity { activity ->
-                activity.scroller.layoutParams = (activity.scroller.layoutParams as LinearLayout.LayoutParams).apply {
-                    weight = 0f
-                    height = activity.editor.height / 2
-                }
+                activity.scroller.layoutParams =
+                    (activity.scroller.layoutParams as LinearLayout.LayoutParams).apply {
+                        weight = 0f
+                        height = activity.editor.height / 2
+                    }
             }
             instrumentation.waitForIdleSync()
             var contentTop = 0
@@ -97,8 +115,14 @@ class PrototypeEditorDeviceTest {
             scenario.onActivity { activity ->
                 val separator = activity.session.editable.indexOf('\n')
                 assertEquals(oldAtomHeight + 120, activity.atom.height)
-                assertEquals(oldSecondTop + 120, activity.editor.documentLayout.caret(separator + 1).top, 0.01f)
-                assertTrue(activity.editor.documentLayout.caret(separator + 1).top >= activity.atom.bottom)
+                assertEquals(
+                    oldSecondTop + 120,
+                    activity.editor.documentLayout.caret(separator + 1).top,
+                    0.01f
+                )
+                assertTrue(
+                    activity.editor.documentLayout.caret(separator + 1).top >= activity.atom.bottom
+                )
             }
         }
     }
@@ -142,15 +166,19 @@ class PrototypeEditorDeviceTest {
         launch().use { scenario ->
             instrumentation.waitForIdleSync()
             scenario.onActivity { activity ->
-                activity.scroller.layoutParams = (activity.scroller.layoutParams as LinearLayout.LayoutParams).apply {
-                    weight = 0f
-                    height = activity.editor.height / 3
-                }
+                activity.scroller.layoutParams =
+                    (activity.scroller.layoutParams as LinearLayout.LayoutParams).apply {
+                        weight = 0f
+                        height = activity.editor.height / 3
+                    }
             }
             instrumentation.waitForIdleSync()
             scenario.onActivity { activity ->
                 val second = activity.session.editable.indexOf('\n') + 1
-                activity.scroller.scrollTo(0, activity.editor.documentLayout.caret(second).top.toInt() + 50)
+                activity.scroller.scrollTo(
+                    0,
+                    activity.editor.documentLayout.caret(second).top.toInt() + 50
+                )
             }
             instrumentation.waitForIdleSync()
             var anchor = 0
@@ -158,15 +186,21 @@ class PrototypeEditorDeviceTest {
             var oldHeight = 0
             scenario.onActivity { activity ->
                 assertTrue(activity.scroller.scrollY >= activity.atom.bottom)
-                anchor = activity.editor.documentLayout.offsetAt(0f, activity.scroller.scrollY.toFloat())
-                screenY = activity.editor.documentLayout.caret(anchor).top - activity.scroller.scrollY
+                anchor =
+                    activity.editor.documentLayout.offsetAt(0f, activity.scroller.scrollY.toFloat())
+                screenY =
+                    activity.editor.documentLayout.caret(anchor).top - activity.scroller.scrollY
                 oldHeight = activity.atom.height
                 activity.resizeAtom(oldHeight + 120)
             }
             instrumentation.waitForIdleSync()
             scenario.onActivity { activity ->
                 assertEquals(oldHeight + 120, activity.atom.height)
-                assertEquals(screenY, activity.editor.documentLayout.caret(anchor).top - activity.scroller.scrollY, 1f)
+                assertEquals(
+                    screenY,
+                    activity.editor.documentLayout.caret(anchor).top - activity.scroller.scrollY,
+                    1f
+                )
             }
         }
     }
@@ -185,7 +219,11 @@ class PrototypeEditorDeviceTest {
                 assertEquals(activity.session.committedText, activity.session.editable.toString())
             }
             val image = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
-            val file = File(instrumentation.targetContext.getExternalFilesDir(null), "android-layout-prototype.png")
+            val file =
+                File(
+                    instrumentation.targetContext.getExternalFilesDir(null),
+                    "android-layout-prototype.png"
+                )
             file.outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
             image.recycle()
         }

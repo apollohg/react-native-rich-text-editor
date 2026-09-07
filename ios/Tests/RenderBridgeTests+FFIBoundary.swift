@@ -1,5 +1,5 @@
-import XCTest
 import CoreText
+import XCTest
 
 extension RenderBridgeTests {
     func testNativeCollaborationSocketUsesRustHardMessageCeiling() {
@@ -80,7 +80,7 @@ extension RenderBridgeTests {
             NSNumber(value: Double.infinity),
             NSNumber(value: UInt64(UInt32.max) + 1),
             NSNumber(value: Double(UInt32.max) + 0.5),
-            NSNumber(value: true),
+            NSNumber(value: true)
         ] {
             XCTAssertNil(v2ExactUInt32(invalid), "must reject \(invalid)")
         }
@@ -220,7 +220,7 @@ extension RenderBridgeTests {
             snapshotState: nil
         )
         guard let value = created["value"] as? String,
-              let handle = createdV2TestEditorHandle(value)
+            let handle = createdV2TestEditorHandle(value)
         else {
             XCTFail("expected module session creation")
             return
@@ -246,7 +246,7 @@ extension RenderBridgeTests {
             snapshotState: nil
         )
         guard let value = created["value"] as? String,
-              let handle = createdV2TestEditorHandle(value)
+            let handle = createdV2TestEditorHandle(value)
         else {
             XCTFail("expected room session creation")
             return

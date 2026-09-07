@@ -1,5 +1,5 @@
-import XCTest
 import ExpoModulesCore
+import XCTest
 
 extension RichTextEditorViewTests {
     func testNativeCommitEventPayloadKeepsTheCommittedUpdateSourceAndRevision() throws {
@@ -94,7 +94,7 @@ extension RichTextEditorViewTests {
         try applySelection([
             "type": "node",
             "pos": EditorV2Shadow.scalarToDoc(id: editorId, scalar: 1),
-            "posScalar": 1,
+            "posScalar": 1
         ])
         XCTAssertEqual(PositionBridge.cursorScalarOffset(in: textView), 2)
 

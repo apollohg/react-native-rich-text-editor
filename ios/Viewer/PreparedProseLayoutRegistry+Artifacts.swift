@@ -48,10 +48,11 @@ extension PreparedProseLayoutRegistry {
             shouldCreateFabricLease: {
                 guard let fabricGeneration else { return true }
                 return self.isFabricLeaseActive(fabricGeneration)
+            },
+            build: {
+                self.errorArtifact(key: key, width: width, error: error)
             }
-        ) {
-            self.errorArtifact(key: key, width: width, error: error)
-        }) ?? errorArtifact(key: key, width: width, error: error)
+        )) ?? errorArtifact(key: key, width: width, error: error)
     }
 
     private func errorLayoutKey(
@@ -221,7 +222,7 @@ extension PreparedProseLayoutRegistry {
     /// matching release callback. Unowned values form a byte/count-bounded
     /// LRU, so background source churn cannot grow this cache without limit.
     private func trimThemesToBudget() {
-        while (themesByGeneration.count > themeEntryBudget || themesRetainedBytes > themeByteBudget),
+        while themesByGeneration.count > themeEntryBudget || themesRetainedBytes > themeByteBudget,
               let oldest = themeAccessOrder.first(where: { themeOwnerCounts[$0, default: 0] == 0 }) {
             themeAccessOrder.removeAll { $0 == oldest }
             if let theme = themesByGeneration.removeValue(forKey: oldest) {

@@ -2,19 +2,19 @@ package com.apollohg.editor
 
 import android.os.Handler
 import android.os.Looper
-import org.json.JSONObject
 import java.lang.ref.WeakReference
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import org.json.JSONObject
 
 private const val DESTROY_INVALIDATION_AWAIT_TIMEOUT_MS = 250L
 
 internal enum class NativeEditorDestroyReservationResult {
     RESERVED,
     ALREADY_IN_PROGRESS,
-    UNAVAILABLE,
+    UNAVAILABLE
 }
 
 private class WeakNativeEditorExpoView private constructor(
@@ -37,11 +37,13 @@ internal object NativeEditorViewRegistry {
 
     private val liveEditorIds = mutableSetOf<Long>()
     private val viewsByEditorId = mutableMapOf<Long, MutableList<WeakNativeEditorExpoView>>()
-    private val inputViewsByEditorId = mutableMapOf<Long, MutableList<WeakReference<EditorEditText>>>()
+    private val inputViewsByEditorId =
+        mutableMapOf<Long, MutableList<WeakReference<EditorEditText>>>()
     private val detachedEditorOwnersByEditorId = mutableMapOf<Long, WeakNativeEditorExpoView>()
     private val destroyingEditorIds = mutableSetOf<Long>()
     private val destroyReservationWasLive = mutableMapOf<Long, Boolean>()
     private val mainHandler = Handler(Looper.getMainLooper())
+
     @Volatile
     internal var onFinalizeDestroyForTesting: ((Long) -> Unit)? = null
 
@@ -62,7 +64,9 @@ internal object NativeEditorViewRegistry {
             !liveEditorIds.contains(editorId) &&
             !isKnownDetachedOwner &&
             !rustEditorExists(editorId)
-        ) return false
+        ) {
+            return false
+        }
         val views = viewsByEditorId.getOrPut(editorId) { mutableListOf() }
         views.removeAll { it.view.get() == null || it.view.get() === view }
         views += WeakNativeEditorExpoView(view)
@@ -290,19 +294,21 @@ internal object NativeEditorViewRegistry {
             return prepare()
         }
 
-        val result = AtomicReference(commandPreparationJSON(ready = false, blockedReason = "unknown"))
+        val result =
+            AtomicReference(commandPreparationJSON(ready = false, blockedReason = "unknown"))
         val state = AtomicInteger(PREFLIGHT_STATE_QUEUED)
         val latch = CountDownLatch(1)
         if (!mainHandler.post {
-            try {
-                if (state.compareAndSet(PREFLIGHT_STATE_QUEUED, PREFLIGHT_STATE_RUNNING)) {
-                    result.set(prepare())
-                    state.set(PREFLIGHT_STATE_DONE)
+                try {
+                    if (state.compareAndSet(PREFLIGHT_STATE_QUEUED, PREFLIGHT_STATE_RUNNING)) {
+                        result.set(prepare())
+                        state.set(PREFLIGHT_STATE_DONE)
+                    }
+                } finally {
+                    latch.countDown()
                 }
-            } finally {
-                latch.countDown()
             }
-        }) {
+        ) {
             return commandPreparationJSON(ready = false, blockedReason = "unknown")
         }
         try {
@@ -349,17 +355,15 @@ internal object NativeEditorViewRegistry {
         ready: Boolean,
         updateJSON: String? = null,
         blockedReason: String? = null
-    ): String {
-        return JSONObject().apply {
-            put("ready", ready)
-            if (updateJSON != null) {
-                put("updateJSON", updateJSON)
-            }
-            if (!ready && blockedReason != null) {
-                put("blockedReason", blockedReason)
-            }
-        }.toString()
-    }
+    ): String = JSONObject().apply {
+        put("ready", ready)
+        if (updateJSON != null) {
+            put("updateJSON", updateJSON)
+        }
+        if (!ready && blockedReason != null) {
+            put("blockedReason", blockedReason)
+        }
+    }.toString()
 
     private const val PREFLIGHT_STATE_QUEUED = 0
     private const val PREFLIGHT_STATE_RUNNING = 1

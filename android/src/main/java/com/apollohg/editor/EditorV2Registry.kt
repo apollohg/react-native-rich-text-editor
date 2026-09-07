@@ -5,7 +5,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 internal enum class EditorV2DestroyReservationResult {
     RESERVED,
-    ALREADY_IN_PROGRESS,
+    ALREADY_IN_PROGRESS
 }
 
 internal fun <T> invokeDestroyTestingHook(hook: ((T) -> Unit)?, value: T) {
@@ -25,7 +25,7 @@ internal object EditorV2Registry {
     private data class Pairing(
         val handle: String,
         val viewToken: Long,
-        val adapter: EditorV2Adapter,
+        val adapter: EditorV2Adapter
     )
 
     private val pairingsByHandle = ConcurrentHashMap<String, Pairing>()
@@ -35,8 +35,10 @@ internal object EditorV2Registry {
 
     @Volatile
     internal var onHandleDestroyReservationAcquiredForTesting: ((String) -> Unit)? = null
+
     @Volatile
     internal var onDestroyFfiResultReceivedForTesting: ((String) -> Unit)? = null
+
     @Volatile
     internal var onPairRemovedBeforeDestroyFinalizationForTesting: ((String) -> Unit)? = null
 
@@ -71,7 +73,8 @@ internal object EditorV2Registry {
     internal fun isHandleDestroyReservedForTesting(handle: String): Boolean =
         destroyingHandles.contains(handle)
 
-    fun adapterForViewToken(viewToken: Long): EditorV2Adapter? = pairingsByViewToken[viewToken]?.adapter
+    fun adapterForViewToken(viewToken: Long): EditorV2Adapter? =
+        pairingsByViewToken[viewToken]?.adapter
 
     fun handleForViewToken(viewToken: Long): String? = pairingsByViewToken[viewToken]?.handle
 

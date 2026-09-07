@@ -1,10 +1,5 @@
 name: NativeEditorTests
 
-# Task 16 production cutover: there is only ONE variant. The legacy runtime
-# is deleted; every configuration compiles the production v2-only UniFFI
-# bindings (ios/Generated_editor_core.swift) and links the v2-only
-# ios/EditorCore.xcframework. The former `Staging` configuration
-# XCFramework) is gone — the v2 adapter path is now unconditional.
 configs:
   Debug: debug
   Release: release

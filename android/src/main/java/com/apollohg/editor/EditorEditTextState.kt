@@ -18,10 +18,7 @@ internal data class ParsedRenderPatch(
     val renderBlocks: org.json.JSONArray
 )
 
-internal data class RenderReplaceRange(
-    val start: Int,
-    val endExclusive: Int
-)
+internal data class RenderReplaceRange(val start: Int, val endExclusive: Int)
 
 internal data class ParagraphSpanSnapshot(
     val span: Any,
@@ -37,10 +34,7 @@ internal data class PatchApplyTrace(
     val applyRenderNanos: Long
 )
 
-internal data class ImageSelectionRange(
-    val start: Int,
-    val end: Int
-)
+internal data class ImageSelectionRange(val start: Int, val end: Int)
 
 internal data class LogicalSelectionSnapshot(
     val scalarAnchor: Int,
@@ -50,11 +44,7 @@ internal data class LogicalSelectionSnapshot(
     val documentVersion: String?
 )
 
-internal data class ImageSpanHit(
-    val span: BlockImageSpan,
-    val start: Int,
-    val end: Int
-)
+internal data class ImageSpanHit(val span: BlockImageSpan, val start: Int, val end: Int)
 
 internal data class ImageGesture(
     val target: BlockImageSpan,
@@ -67,7 +57,7 @@ internal data class LocalTextDrag(
     val scalarFrom: Int,
     val scalarTo: Int,
     val documentVersion: String?,
-    val editorId: Long,
+    val editorId: Long
 )
 
 internal data class NativeTextMutation(
@@ -120,7 +110,4 @@ internal class TransientComposingStyleSpan(style: Int) :
     StyleSpan(style),
     TransientComposingTextStyleSpan
 
-internal data class OptimisticInlineSpan(
-    val span: Any,
-    val flags: Int
-)
+internal data class OptimisticInlineSpan(val span: Any, val flags: Int)

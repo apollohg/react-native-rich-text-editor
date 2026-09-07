@@ -14,10 +14,10 @@ import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import androidx.appcompat.R as AppCompatR
+import androidx.appcompat.content.res.AppCompatResources
 import androidx.appcompat.view.ContextThemeWrapper
 import androidx.appcompat.widget.AppCompatButton
 import androidx.appcompat.widget.PopupMenu
-import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.view.setPadding
 import com.google.android.material.R as MaterialR
 import com.google.android.material.color.DynamicColors
@@ -34,10 +34,7 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
         private const val NATIVE_GROUP_SPACING_DP = 12
     }
 
-    private data class ButtonBinding(
-        val item: NativeToolbarItem,
-        val button: AppCompatButton
-    )
+    private data class ButtonBinding(val item: NativeToolbarItem, val button: AppCompatButton)
 
     var onPressItem: ((NativeToolbarItem) -> Unit)? = null
     var onSelectMentionSuggestion: ((NativeMentionSuggestion) -> Unit)? = null
@@ -213,9 +210,9 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
 
     internal fun buttonLabelsForPlacementForTesting(placement: ToolbarItemPlacement): List<String> {
         val row = when (placement) {
-            ToolbarItemPlacement.start -> startRow
-            ToolbarItemPlacement.scroll -> contentRow
-            ToolbarItemPlacement.end -> endRow
+            ToolbarItemPlacement.START -> startRow
+            ToolbarItemPlacement.SCROLL -> contentRow
+            ToolbarItemPlacement.END -> endRow
         }
         return (0 until row.childCount).mapNotNull { index ->
             (row.getChildAt(index) as? AppCompatButton)?.contentDescription?.toString()
@@ -231,8 +228,7 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
     internal fun mentionChipAtForTesting(index: Int): MentionSuggestionChipView? =
         mentionChips.getOrNull(index)
 
-    internal fun separatorAtForTesting(index: Int): View? =
-        separators.getOrNull(index)
+    internal fun separatorAtForTesting(index: Int): View? = separators.getOrNull(index)
 
     private fun rebuildContent(preserveScrollPosition: Boolean = true) {
         val targetScrollX = if (preserveScrollPosition) centerScrollView.scrollX else 0
@@ -260,7 +256,10 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
         post {
             if (generation != rebuildGeneration) return@post
             val contentWidth = contentRow.width
-            val viewportWidth = (centerScrollView.width - centerScrollView.paddingLeft - centerScrollView.paddingRight).coerceAtLeast(0)
+            val viewportWidth = (
+                centerScrollView.width - centerScrollView.paddingLeft -
+                    centerScrollView.paddingRight
+                ).coerceAtLeast(0)
             val maxScrollX = (contentWidth - viewportWidth).coerceAtLeast(0)
             centerScrollView.scrollTo(targetScrollX.coerceIn(0, maxScrollX), 0)
         }
@@ -276,7 +275,7 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
     private fun rebuildButtonPlacement(items: List<NativeToolbarItem>, container: LinearLayout) {
         val themedContext = currentThemedContext()
         for (item in items) {
-            if (item.type == ToolbarItemKind.separator) {
+            if (item.type == ToolbarItemKind.SEPARATOR) {
                 val separator = View(context)
                 configureSeparator(separator)
                 separators.add(separator)
@@ -296,10 +295,13 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
                 contentDescription = item.label
                 setOnClickListener {
                     when (item.type) {
-                        ToolbarItemKind.group -> handleGroupButtonPress(this, item)
+                        ToolbarItemKind.GROUP -> handleGroupButtonPress(this, item)
+
                         else -> {
                             onPressItem?.invoke(item.copy(parentGroupKey = null))
-                            if (item.parentGroupKey != null && expandedGroupKey == item.parentGroupKey) {
+                            if (item.parentGroupKey != null &&
+                                expandedGroupKey == item.parentGroupKey
+                            ) {
                                 expandedGroupKey = null
                                 rebuildContent()
                             }
@@ -316,7 +318,11 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
             )
             button.layoutParams = params
             val binding = ButtonBinding(item, button)
-            applyButtonLayout(binding, appearance = theme?.appearance ?: EditorToolbarAppearance.CUSTOM)
+            applyButtonLayout(
+                binding,
+                appearance =
+                    theme?.appearance ?: EditorToolbarAppearance.CUSTOM
+            )
             bindings.add(binding)
             container.addView(button)
         }
@@ -376,11 +382,11 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
 
     private fun compactItems(items: List<NativeToolbarItem>): List<NativeToolbarItem> {
         return items.filterIndexed { index, item ->
-            if (item.type != ToolbarItemKind.separator) return@filterIndexed true
+            if (item.type != ToolbarItemKind.SEPARATOR) return@filterIndexed true
             index > 0 &&
                 index < items.lastIndex &&
-                items[index - 1].type != ToolbarItemKind.separator &&
-                items[index + 1].type != ToolbarItemKind.separator
+                items[index - 1].type != ToolbarItemKind.SEPARATOR &&
+                items[index + 1].type != ToolbarItemKind.SEPARATOR
         }
     }
 
@@ -389,12 +395,17 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
         for (item in compactItems(items)) {
             visible += item
             if (
-                item.type == ToolbarItemKind.group &&
-                    (item.presentation ?: ToolbarGroupPresentation.expand) == ToolbarGroupPresentation.expand &&
-                    expandedGroupKey == item.key
+                item.type == ToolbarItemKind.GROUP &&
+                (item.presentation ?: ToolbarGroupPresentation.EXPAND) ==
+                ToolbarGroupPresentation.EXPAND &&
+                expandedGroupKey == item.key
             ) {
                 visible += item.items.map { child ->
-                    child.copy(parentGroupKey = item.key, placement = child.placement ?: item.placement)
+                    child.copy(
+                        parentGroupKey = item.key,
+                        placement =
+                            child.placement ?: item.placement
+                    )
                 }
             }
         }
@@ -412,10 +423,10 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
         val scroll = mutableListOf<NativeToolbarItem>()
         val end = mutableListOf<NativeToolbarItem>()
         for (item in visibleItems()) {
-            when (item.placement ?: ToolbarItemPlacement.scroll) {
-                ToolbarItemPlacement.start -> start += item
-                ToolbarItemPlacement.end -> end += item
-                ToolbarItemPlacement.scroll -> scroll += item
+            when (item.placement ?: ToolbarItemPlacement.SCROLL) {
+                ToolbarItemPlacement.START -> start += item
+                ToolbarItemPlacement.END -> end += item
+                ToolbarItemPlacement.SCROLL -> scroll += item
             }
         }
         return VisibleToolbarItemsByPlacement(
@@ -428,21 +439,23 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
     private fun containsExpandableGroup(items: List<NativeToolbarItem>, key: String?): Boolean {
         key ?: return false
         return items.any {
-            it.type == ToolbarItemKind.group &&
+            it.type == ToolbarItemKind.GROUP &&
                 it.key == key &&
-                (it.presentation ?: ToolbarGroupPresentation.expand) == ToolbarGroupPresentation.expand
+                (it.presentation ?: ToolbarGroupPresentation.EXPAND) ==
+                ToolbarGroupPresentation.EXPAND
         }
     }
 
     private fun handleGroupButtonPress(anchor: View, item: NativeToolbarItem) {
         if (item.items.isEmpty()) return
-        when (item.presentation ?: ToolbarGroupPresentation.expand) {
-            ToolbarGroupPresentation.expand -> {
+        when (item.presentation ?: ToolbarGroupPresentation.EXPAND) {
+            ToolbarGroupPresentation.EXPAND -> {
                 val key = item.key ?: return
                 expandedGroupKey = if (expandedGroupKey == key) null else key
                 rebuildContent()
             }
-            ToolbarGroupPresentation.menu -> showGroupMenu(anchor, item)
+
+            ToolbarGroupPresentation.MENU -> showGroupMenu(anchor, item)
         }
     }
 
@@ -456,7 +469,8 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
             menuItem.isChecked = active
         }
         popupMenu.setOnMenuItemClickListener { menuItem ->
-            val child = item.items.getOrNull(menuItem.itemId) ?: return@setOnMenuItemClickListener false
+            val child =
+                item.items.getOrNull(menuItem.itemId) ?: return@setOnMenuItemClickListener false
             onPressItem?.invoke(child)
             true
         }
@@ -524,37 +538,42 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
         val appearance = theme?.appearance ?: EditorToolbarAppearance.CUSTOM
         applyButtonLayout(binding, appearance)
         val textColor = when {
-            !enabled -> buttonStyle?.disabledColor
-                ?: theme?.buttonDisabledColor
-                ?: withAlpha(
-                    resolveColorAttr(
-                        MaterialR.attr.colorOnSurface,
-                        android.R.attr.textColorPrimary
-                    ),
-                    0.38f
-                )
-            active -> buttonStyle?.activeColor
-                ?: theme?.buttonActiveColor
-                ?: if (appearance == EditorToolbarAppearance.NATIVE) {
-                    resolveColorAttr(
-                        MaterialR.attr.colorOnSecondaryContainer,
-                        MaterialR.attr.colorOnPrimaryContainer,
-                        MaterialR.attr.colorOnSurface,
-                        android.R.attr.textColorPrimary
+            !enabled ->
+                buttonStyle?.disabledColor
+                    ?: theme?.buttonDisabledColor
+                    ?: withAlpha(
+                        resolveColorAttr(
+                            MaterialR.attr.colorOnSurface,
+                            android.R.attr.textColorPrimary
+                        ),
+                        0.38f
                     )
-                } else {
-                    resolveColorAttr(
-                        AppCompatR.attr.colorPrimary,
-                        android.R.attr.textColorPrimary
+
+            active ->
+                buttonStyle?.activeColor
+                    ?: theme?.buttonActiveColor
+                    ?: if (appearance == EditorToolbarAppearance.NATIVE) {
+                        resolveColorAttr(
+                            MaterialR.attr.colorOnSecondaryContainer,
+                            MaterialR.attr.colorOnPrimaryContainer,
+                            MaterialR.attr.colorOnSurface,
+                            android.R.attr.textColorPrimary
+                        )
+                    } else {
+                        resolveColorAttr(
+                            AppCompatR.attr.colorPrimary,
+                            android.R.attr.textColorPrimary
+                        )
+                    }
+
+            else ->
+                buttonStyle?.color
+                    ?: theme?.buttonColor
+                    ?: resolveColorAttr(
+                        MaterialR.attr.colorOnSurfaceVariant,
+                        MaterialR.attr.colorOnSurface,
+                        android.R.attr.textColorSecondary
                     )
-                }
-            else -> buttonStyle?.color
-                ?: theme?.buttonColor
-                ?: resolveColorAttr(
-                    MaterialR.attr.colorOnSurfaceVariant,
-                    MaterialR.attr.colorOnSurface,
-                    android.R.attr.textColorSecondary
-                )
         }
         val inactiveBackgroundColor = buttonStyle?.backgroundColor
             ?: theme?.buttonBackgroundColor
@@ -611,56 +630,66 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
         state: NativeToolbarState
     ): Pair<Boolean, Boolean> {
         return when (item.type) {
-            ToolbarItemKind.mark -> {
+            ToolbarItemKind.MARK -> {
                 val mark = item.mark.orEmpty()
                 Pair(state.allowedMarks.contains(mark), state.marks[mark] == true)
             }
-            ToolbarItemKind.heading -> {
+
+            ToolbarItemKind.HEADING -> {
                 val level = item.headingLevel ?: return Pair(false, false)
                 Pair(
                     state.commands["toggleHeading$level"] == true,
                     state.nodes["h$level"] == true
                 )
             }
-            ToolbarItemKind.blockquote -> Pair(
+
+            ToolbarItemKind.BLOCKQUOTE -> Pair(
                 state.commands["toggleBlockquote"] == true,
                 state.nodes["blockquote"] == true
             )
-            ToolbarItemKind.list -> when (item.listType) {
-                ToolbarListType.bulletList,
-                ToolbarListType.bullet_list -> Pair(
+
+            ToolbarItemKind.LIST -> when (item.listType) {
+                ToolbarListType.CAMEL_CASE_BULLET_LIST,
+                ToolbarListType.BULLET_LIST -> Pair(
                     state.commands["wrapBulletList"] == true,
-                    state.nodes[item.listType.name] == true
+                    state.nodes[item.listType.wireValue] == true
                 )
-                ToolbarListType.orderedList,
-                ToolbarListType.ordered_list -> Pair(
+
+                ToolbarListType.CAMEL_CASE_ORDERED_LIST,
+                ToolbarListType.ORDERED_LIST -> Pair(
                     state.commands["wrapOrderedList"] == true,
-                    state.nodes[item.listType.name] == true
+                    state.nodes[item.listType.wireValue] == true
                 )
+
                 null -> Pair(false, false)
             }
-            ToolbarItemKind.command -> when (item.command) {
-                ToolbarCommand.indentList -> Pair(state.commands["indentList"] == true, false)
-                ToolbarCommand.outdentList -> Pair(state.commands["outdentList"] == true, false)
-                ToolbarCommand.undo -> Pair(state.canUndo, false)
-                ToolbarCommand.redo -> Pair(state.canRedo, false)
+
+            ToolbarItemKind.COMMAND -> when (item.command) {
+                ToolbarCommand.INDENT_LIST -> Pair(state.commands["indentList"] == true, false)
+                ToolbarCommand.OUTDENT_LIST -> Pair(state.commands["outdentList"] == true, false)
+                ToolbarCommand.UNDO -> Pair(state.canUndo, false)
+                ToolbarCommand.REDO -> Pair(state.canRedo, false)
                 null -> Pair(false, false)
             }
-            ToolbarItemKind.node -> {
+
+            ToolbarItemKind.NODE -> {
                 val nodeType = item.nodeType.orEmpty()
                 Pair(state.insertableNodes.contains(nodeType), state.nodes[nodeType] == true)
             }
-            ToolbarItemKind.action -> Pair(!item.isDisabled, item.isActive)
-            ToolbarItemKind.group -> Pair(
+
+            ToolbarItemKind.ACTION -> Pair(!item.isDisabled, item.isActive)
+
+            ToolbarItemKind.GROUP -> Pair(
                 item.items.any { child -> buttonState(child, state).first },
                 item.items.any { child -> buttonState(child, state).second } ||
                     (
-                        (item.presentation ?: ToolbarGroupPresentation.expand) ==
-                            ToolbarGroupPresentation.expand &&
+                        (item.presentation ?: ToolbarGroupPresentation.EXPAND) ==
+                            ToolbarGroupPresentation.EXPAND &&
                             expandedGroupKey == item.key
                         )
             )
-            ToolbarItemKind.separator -> Pair(false, false)
+
+            ToolbarItemKind.SEPARATOR -> Pair(false, false)
         }
     }
 
@@ -687,7 +716,9 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
                 AppCompatResources.getColorStateList(themedContext, typedValue.resourceId)
                     ?.defaultColor
                     ?.let { return it }
-            } else if (typedValue.type in TypedValue.TYPE_FIRST_COLOR_INT..TypedValue.TYPE_LAST_COLOR_INT) {
+            } else if (typedValue.type in
+                TypedValue.TYPE_FIRST_COLOR_INT..TypedValue.TYPE_LAST_COLOR_INT
+            ) {
                 return typedValue.data
             }
         }
@@ -713,14 +744,13 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
         )
     }
 
-    private fun resolveSeparatorColor(): Int =
-        theme?.separatorColor
-            ?: theme?.borderColor
-            ?: resolveColorAttr(
-                MaterialR.attr.colorOutlineVariant,
-                MaterialR.attr.colorOutline,
-                android.R.attr.textColorHint
-            )
+    private fun resolveSeparatorColor(): Int = theme?.separatorColor
+        ?: theme?.borderColor
+        ?: resolveColorAttr(
+            MaterialR.attr.colorOutlineVariant,
+            MaterialR.attr.colorOutline,
+            android.R.attr.textColorHint
+        )
 
     private fun updateContainerLayout(appearance: EditorToolbarAppearance) {
         val isNative = appearance == EditorToolbarAppearance.NATIVE
@@ -733,7 +763,8 @@ internal class EditorKeyboardToolbarView(context: Context) : FrameLayout(context
                 12
             }
         )
-        val verticalPadding = dp(resolvedVerticalPaddingDp(isNative, toolbarHeightDp, buttonSizeDp).roundToInt())
+        val verticalPadding =
+            dp(resolvedVerticalPaddingDp(isNative, toolbarHeightDp, buttonSizeDp).roundToInt())
         rootRow.setPadding(horizontalPadding, verticalPadding, horizontalPadding, verticalPadding)
         rootRow.minimumHeight = dp(toolbarHeightDp.roundToInt())
         startRow.gravity = Gravity.START or Gravity.CENTER_VERTICAL

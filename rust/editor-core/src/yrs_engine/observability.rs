@@ -28,7 +28,6 @@ pub(crate) struct FullPassCounts {
     pub ordinary_step_applications: usize,
 }
 
-#[allow(dead_code)] // Later deferred-admission tasks install the lifecycle transition sites.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PreparedAdmissionCounts {
     pub staged_seed_preparations: usize,
@@ -153,17 +152,14 @@ pub(crate) fn take_full_pass_counts_for_test() -> FullPassCounts {
     FULL_PASS_COUNTS.replace(FullPassCounts::default())
 }
 
-#[allow(dead_code)] // Exercised when the deferred-admission lifecycle is wired in later tasks.
 pub(crate) fn reset_prepared_admission_counts_for_test() {
     PREPARED_ADMISSION_COUNTS.set(PreparedAdmissionCounts::default());
 }
 
-#[allow(dead_code)] // Exercised when the deferred-admission lifecycle is wired in later tasks.
 pub(crate) fn take_prepared_admission_counts_for_test() -> PreparedAdmissionCounts {
     PREPARED_ADMISSION_COUNTS.replace(PreparedAdmissionCounts::default())
 }
 
-#[allow(dead_code)] // Exercised as deferred-admission lifecycle stages are wired in.
 pub(crate) fn record_staged_seed_preparation() {
     PREPARED_ADMISSION_COUNTS.with(|counts| {
         let mut next = counts.get();
@@ -172,7 +168,6 @@ pub(crate) fn record_staged_seed_preparation() {
     });
 }
 
-#[allow(dead_code)] // Exercised as deferred-admission lifecycle stages are wired in.
 pub(crate) fn record_installed_base_seed_publication() {
     PREPARED_ADMISSION_COUNTS.with(|counts| {
         let mut next = counts.get();
@@ -182,7 +177,6 @@ pub(crate) fn record_installed_base_seed_publication() {
     });
 }
 
-#[allow(dead_code)] // Exercised as deferred-admission lifecycle stages are wired in.
 pub(crate) fn record_staged_identity_materialization() {
     PREPARED_ADMISSION_COUNTS.with(|counts| {
         let mut next = counts.get();

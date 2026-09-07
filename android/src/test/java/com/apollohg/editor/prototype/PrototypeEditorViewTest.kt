@@ -2,12 +2,15 @@ package com.apollohg.editor.prototype
 
 import android.app.Activity
 import android.graphics.Rect
-import android.view.View
 import android.view.KeyEvent
+import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.ScrollView
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -28,9 +31,19 @@ class PrototypeEditorViewTest {
             activity.setContentView(view)
             size(view)
             session.setSelection(2, 2)
-            assertTrue(view.onKeyDown(KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN)))
+            assertTrue(
+                view.onKeyDown(
+                    KeyEvent.KEYCODE_DPAD_DOWN,
+                    KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN)
+                )
+            )
             assertTrue("Selection must enter second paragraph", session.selectionEnd >= 6)
-            assertTrue(view.onKeyDown(KeyEvent.KEYCODE_DPAD_UP, KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP)))
+            assertTrue(
+                view.onKeyDown(
+                    KeyEvent.KEYCODE_DPAD_UP,
+                    KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP)
+                )
+            )
             assertTrue("Selection must return to first paragraph", session.selectionEnd <= 5)
         }
     }
@@ -48,7 +61,10 @@ class PrototypeEditorViewTest {
             assertTrue(connection.setComposingText("日本語", 1))
             size(view)
             val caret = view.documentLayout.caret(session.selectionEnd)
-            assertEquals(session.selectionEnd, view.documentLayout.offsetAt(caret.left, caret.centerY()))
+            assertEquals(
+                session.selectionEnd,
+                view.documentLayout.offsetAt(caret.left, caret.centerY())
+            )
             assertEquals("First paragraph\nSecond paragraph", session.committedText)
             assertTrue(connection.finishComposingText())
             assertEquals(session.editable.toString(), session.committedText)
@@ -61,7 +77,10 @@ class PrototypeEditorViewTest {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         PrototypeDocumentSession(listOf("First paragraph", "Second paragraph")).use { session ->
             val editor = PrototypeEditorView(activity, session)
-            val atom = Button(activity).apply { text = "Native atom"; minimumHeight = 0 }
+            val atom = Button(activity).apply {
+                text = "Native atom"
+                minimumHeight = 0
+            }
             editor.mountAtom(atom, 80)
             val scroll = ScrollView(activity).apply { addView(editor) }
             activity.setContentView(scroll)
@@ -81,7 +100,10 @@ class PrototypeEditorViewTest {
     }
 
     private fun size(view: View) {
-        view.measure(View.MeasureSpec.makeMeasureSpec(380, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.AT_MOST))
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(380, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.AT_MOST)
+        )
         view.layout(0, 0, view.measuredWidth, view.measuredHeight)
     }
 }

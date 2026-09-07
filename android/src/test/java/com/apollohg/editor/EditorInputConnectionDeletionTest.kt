@@ -7,9 +7,9 @@ import android.graphics.Color
 import android.os.Bundle
 import android.os.Looper
 import android.provider.Settings
+import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
-import android.text.InputType
 import android.text.style.AbsoluteSizeSpan
 import android.view.MotionEvent
 import android.view.View
@@ -28,10 +28,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Shadows.shadowOf
-import org.robolectric.RobolectricTestRunner
 import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -79,7 +79,7 @@ internal class EditorInputConnectionDeletionTest : EditorInputConnectionTestFixt
             harness.editText.editorListener = listener
             harness.editText.setSelection(5)
             harness.backend.nextRenderUpdateResult = EditorV2CallResult.Err(
-                EditorV2Error("render", "RENDER_FAILED", "transient"),
+                EditorV2Error("render", "RENDER_FAILED", "transient")
             )
             var authorizedDuringNativeIntent: String? = null
             harness.backend.onApplyNativeIntent = {
@@ -109,7 +109,7 @@ internal class EditorInputConnectionDeletionTest : EditorInputConnectionTestFixt
         try {
             harness.editText.setSelection(5)
             harness.backend.nextApplyNativeIntentResult = EditorV2CallResult.Err(
-                EditorV2Error("operation", "MUTATION_REJECTED", "rejected"),
+                EditorV2Error("operation", "MUTATION_REJECTED", "rejected")
             )
             val inputConnection = harness.editText.onCreateInputConnection(EditorInfo())!!
 
@@ -225,10 +225,18 @@ internal class EditorInputConnectionDeletionTest : EditorInputConnectionTestFixt
     fun `random collapsed backspaces keep native render equal to Rust`() {
         val initialHtml = buildString {
             append("<p><strong>Native Editor</strong> example app.</p>")
-            append("<p>Use this screen to test focus, theme updates, lists, line breaks, toolbar behavior, and optional addons.</p>")
-            append("<p>Enable mentions above, then type @ after a space, on a blank line, or after punctuation to show native mention suggestions in the toolbar.</p>")
-            append("<blockquote><p>Blockquotes can wrap one or more blocks and inherit theme styling.</p></blockquote>")
-            append("<ul><li><p>Try typing</p></li><li><p>Try list indenting</p><ul><li>Multiple levels are supported</li></ul></li></ul>")
+            append(
+                "<p>Use this screen to test focus, theme updates, lists, line breaks, toolbar behavior, and optional addons.</p>"
+            )
+            append(
+                "<p>Enable mentions above, then type @ after a space, on a blank line, or after punctuation to show native mention suggestions in the toolbar.</p>"
+            )
+            append(
+                "<blockquote><p>Blockquotes can wrap one or more blocks and inherit theme styling.</p></blockquote>"
+            )
+            append(
+                "<ul><li><p>Try typing</p></li><li><p>Try list indenting</p><ul><li>Multiple levels are supported</li></ul></li></ul>"
+            )
             append("<p></p>")
         }
 
@@ -245,7 +253,8 @@ internal class EditorInputConnectionDeletionTest : EditorInputConnectionTestFixt
                 shadowOf(Looper.getMainLooper()).idle()
 
                 assertEquals(
-                    "seed=$seed step=$step offset=$offset\n" + harness.editText.imeTraceSnapshotForTesting().joinToString("\n"),
+                    "seed=$seed step=$step offset=$offset\n" +
+                        harness.editText.imeTraceSnapshotForTesting().joinToString("\n"),
                     harness.expectedText(),
                     harness.editText.text.toString()
                 )
@@ -284,7 +293,10 @@ internal class EditorInputConnectionDeletionTest : EditorInputConnectionTestFixt
         assertTrue(deleteConnection.deleteSurroundingText(1, 0))
 
         assertEquals("draf", deleteHarness.editText.text.toString())
-        assertEquals("interaction", JSONObject(deleteListener.externalCompositionEnds.single()).getString("cause"))
+        assertEquals(
+            "interaction",
+            JSONObject(deleteListener.externalCompositionEnds.single()).getString("cause")
+        )
 
         val selectionHarness = externalCompositionHarness("arrival")
         val selectionListener = RecordingEditorListener()
@@ -298,7 +310,10 @@ internal class EditorInputConnectionDeletionTest : EditorInputConnectionTestFixt
 
         assertEquals("draft", selectionHarness.editText.text.toString())
         assertEquals(0, selectionHarness.editText.selectionStart)
-        assertEquals("interaction", JSONObject(selectionListener.externalCompositionEnds.single()).getString("cause"))
+        assertEquals(
+            "interaction",
+            JSONObject(selectionListener.externalCompositionEnds.single()).getString("cause")
+        )
     }
 
     @Test
