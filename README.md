@@ -4,7 +4,7 @@
 
 See the [documentation](https://github.com/apollohg/react-native-rich-text-editor/wiki) for guides and API references. The package is under active development; review the [changelog](./CHANGELOG.md) before upgrading between major versions.
 
-<img src="https://github.com/apollohg/react-native-rich-text-editor/wiki/images/banner.png" alt="Example editor on iOS" width="100%" />
+<img src="https://github.com/apollohg/react-native-rich-text-editor/wiki/images/github-banner.png" alt="Example editor on iOS" width="100%" />
 
 ## Highlights
 
