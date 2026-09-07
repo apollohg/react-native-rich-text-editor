@@ -20,21 +20,24 @@ function CounterCard({
     updateError,
 }: AtomComponentProps<CounterAttrs>) {
     const { title, count } = attrs;
+
     const adjust = useCallback(
         (delta: number) => {
-            void updateAttrs((current) => ({ count: current.count + delta })).catch(() => {});
+            void updateAttrs(current => ({ count: current.count + delta })).catch(() => {
+            });
         },
-        [updateAttrs]
+        [ updateAttrs ]
     );
 
-    const decrement = useCallback(() => adjust(-1), [adjust]);
-    const increment = useCallback(() => adjust(1), [adjust]);
+    const decrement = useCallback(() => adjust(-1), [ adjust ]);
+    const increment = useCallback(() => adjust(1), [ adjust ]);
 
     return (
         <View
             accessibilityLabel={`${title}, ${count}`}
             accessibilityState={{ selected }}
-            style={[styles.card, selected && styles.cardSelected]}>
+            style={[ styles.card, selected && styles.cardSelected ]}
+        >
             <View style={styles.summary}>
                 <Text numberOfLines={1} style={styles.title}>
                     {title}
@@ -45,30 +48,32 @@ function CounterCard({
                         (readOnly
                             ? 'Read-only counter'
                             : isViewer
-                              ? 'Viewer counter'
-                              : 'Custom block')}
+                                ? 'Viewer counter'
+                                : 'Custom block')}
                 </Text>
             </View>
             <View style={styles.stepper}>
                 <Pressable
                     disabled={readOnly || interactive === false}
                     accessibilityState={{ disabled: readOnly || interactive === false }}
-                    accessibilityRole='button'
-                    accessibilityLabel='Subtract one'
+                    accessibilityRole={'button'}
+                    accessibilityLabel={'Subtract one'}
                     hitSlop={SPACE.xs}
                     onPress={decrement}
-                    style={({ pressed }) => [styles.stepButton, pressed && styles.pressed]}>
+                    style={({ pressed }) => [ styles.stepButton, pressed && styles.pressed ]}
+                >
                     <Text style={styles.stepLabel}>−</Text>
                 </Pressable>
                 <Text style={styles.count}>{count}</Text>
                 <Pressable
                     disabled={readOnly || interactive === false}
                     accessibilityState={{ disabled: readOnly || interactive === false }}
-                    accessibilityRole='button'
-                    accessibilityLabel='Add one'
+                    accessibilityRole={'button'}
+                    accessibilityLabel={'Add one'}
                     hitSlop={SPACE.xs}
                     onPress={increment}
-                    style={({ pressed }) => [styles.stepButton, pressed && styles.pressed]}>
+                    style={({ pressed }) => [ styles.stepButton, pressed && styles.pressed ]}
+                >
                     <Text style={styles.stepLabel}>+</Text>
                 </Pressable>
             </View>
@@ -155,6 +160,6 @@ const styles = StyleSheet.create({
         fontSize: FONT_SIZE.stat,
         lineHeight: LINE_HEIGHT.stat,
         fontWeight: '700',
-        fontVariant: ['tabular-nums'],
+        fontVariant: [ 'tabular-nums' ],
     },
 });

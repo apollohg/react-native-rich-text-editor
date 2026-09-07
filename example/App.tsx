@@ -44,10 +44,10 @@ const NEW_COUNTER_TITLE = 'New counter';
 
 const documentSchema = withAtomsSchema(
     withTaskListSchema(withImagesSchema(withMentionsSchema(defaultSchema))),
-    [counterCardAtom]
+    [ counterCardAtom ]
 );
 
-const editorAtoms = [counterCardAtom];
+const editorAtoms = [ counterCardAtom ];
 
 const codeHighlightingAddon = createCodeHighlightingAddon({ theme: 'InspiredGitHub' });
 
@@ -56,7 +56,7 @@ const NO_MENTION_SUGGESTIONS: readonly MentionSuggestion[] = [];
 export default function App() {
     return (
         <SafeAreaProvider>
-            <StatusBar style='light' />
+            <StatusBar style={'light'} />
             <EditorScreen />
         </SafeAreaProvider>
     );
@@ -65,11 +65,13 @@ export default function App() {
 function EditorScreen() {
     const insets = useSafeAreaInsets();
     const editorRef = useRef<RichTextEditorRef>(null);
-    const [mentionSuggestions, setMentionSuggestions] =
+
+    const [ mentionSuggestions, setMentionSuggestions ] =
         useState<readonly MentionSuggestion[]>(NO_MENTION_SUGGESTIONS);
-    const [linkRequest, setLinkRequest] = useState<LinkRequestContext | null>(null);
-    const [taskListActive, setTaskListActive] = useState(false);
-    const [taskListAvailable, setTaskListAvailable] = useState(false);
+
+    const [ linkRequest, setLinkRequest ] = useState<LinkRequestContext | null>(null);
+    const [ taskListActive, setTaskListActive ] = useState(false);
+    const [ taskListAvailable, setTaskListAvailable ] = useState(false);
 
     const documentHandle = useMemo(
         () =>
@@ -80,12 +82,12 @@ function EditorScreen() {
         []
     );
 
-    useEffect(() => () => documentHandle.destroy(), [documentHandle]);
+    useEffect(() => () => documentHandle.destroy(), [ documentHandle ]);
 
     /** Keeps the previous list when the filter result is unchanged, so the addons prop is stable across keystrokes. */
     const handleMentionQueryChange = useCallback((event: MentionQueryChangeEvent) => {
         const next = filterMentionSuggestions(event.isActive ? event.query : null);
-        setMentionSuggestions((current) => (sameSuggestions(current, next) ? current : next));
+        setMentionSuggestions(current => (sameSuggestions(current, next) ? current : next));
     }, []);
 
     const addons = useMemo<EditorAddons>(
@@ -98,7 +100,7 @@ function EditorScreen() {
                 onQueryChange: handleMentionQueryChange,
             }),
         ],
-        [handleMentionQueryChange, mentionSuggestions]
+        [ handleMentionQueryChange, mentionSuggestions ]
     );
 
     const handleActiveStateChange = useCallback((state: ReadonlyActiveState) => {
@@ -108,7 +110,7 @@ function EditorScreen() {
 
     const toolbarItems = useMemo(
         () => buildToolbarItems({ taskListActive, taskListAvailable }),
-        [taskListActive, taskListAvailable]
+        [ taskListActive, taskListAvailable ]
     );
 
     const handleToolbarAction = useCallback((key: string) => {
@@ -117,6 +119,7 @@ function EditorScreen() {
                 editorRef.current?.insertContentJson(
                     counterCardAtom.buildFragmentJson({ title: NEW_COUNTER_TITLE, count: 0 })
                 );
+
                 break;
             case TOGGLE_TASK_LIST_ACTION_KEY:
                 editorRef.current?.toggleList(TASK_LIST_NODE_NAME);
@@ -125,7 +128,7 @@ function EditorScreen() {
     }, []);
 
     const handleRequestImage = useCallback((context: ImageRequestContext) => {
-        void pickImageUri().then((uri) => {
+        void pickImageUri().then(uri => {
             if (uri != null) {
                 context.insertImage(uri);
             }
@@ -136,16 +139,17 @@ function EditorScreen() {
 
     const theme = useMemo<EditorTheme>(() => {
         const content = editorTheme.content;
+
         return {
             ...editorTheme,
             content: { ...content, paddingBottom: content.paddingBottom + insets.bottom },
         };
-    }, [insets.bottom]);
+    }, [ insets.bottom ]);
 
     return (
         <View style={styles.screen}>
-            <View style={[styles.header, { paddingTop: insets.top + SPACE.lg }]}>
-                <Text accessibilityRole='header' style={styles.title}>
+            <View style={[ styles.header, { paddingTop: insets.top + SPACE.lg } ]}>
+                <Text accessibilityRole={'header'} style={styles.title}>
                     {APP_TITLE}
                 </Text>
             </View>
@@ -158,12 +162,12 @@ function EditorScreen() {
                     addons={addons}
                     theme={theme}
                     toolbarItems={toolbarItems}
-                    toolbarPlacement='keyboard'
-                    heightBehavior='fixed'
+                    toolbarPlacement={'keyboard'}
+                    heightBehavior={'fixed'}
                     placeholder={EDITOR_PLACEHOLDER}
-                    accessibilityLabel='Document'
-                    accessibilityHint='Formatting is available from the toolbar above the keyboard.'
-                    autoCapitalize='sentences'
+                    accessibilityLabel={'Document'}
+                    accessibilityHint={'Formatting is available from the toolbar above the keyboard.'}
+                    autoCapitalize={'sentences'}
                     autoCorrect
                     allowImageResizing
                     onActiveStateChange={handleActiveStateChange}
@@ -184,12 +188,15 @@ function filterMentionSuggestions(query: string | null): readonly MentionSuggest
     if (query == null) {
         return NO_MENTION_SUGGESTIONS;
     }
+
     const needle = query.trim().toLowerCase();
+
     if (needle.length === 0) {
         return MENTION_SUGGESTIONS;
     }
+
     return MENTION_SUGGESTIONS.filter(
-        (suggestion) =>
+        suggestion =>
             suggestion.title.toLowerCase().includes(needle) ||
             (suggestion.label ?? '').toLowerCase().includes(needle)
     );
@@ -205,11 +212,13 @@ function sameSuggestions(
 /** Opens the photo library and downsizes the pick to the editor's decode limit. */
 async function pickImageUri(): Promise<string | null> {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
     if (!permission.granted) {
         return null;
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({ quality: 1 });
+
     if (result.canceled || result.assets.length === 0) {
         return null;
     }
@@ -217,14 +226,18 @@ async function pickImageUri(): Promise<string | null> {
     const asset = result.assets[0];
     const decodeLimit = DEFAULT_EDITOR_IMAGE_LOADING_POLICY.maxDecodeDimensionPx;
     const context = ImageManipulator.manipulate(asset.uri);
+
     if (asset.width > decodeLimit) {
         context.resize({ width: decodeLimit });
     }
+
     const rendered = await context.renderAsync();
+
     const saved = await rendered.saveAsync({
         format: SaveFormat.JPEG,
         compress: PICKED_IMAGE_COMPRESSION,
     });
+
     return saved.uri;
 }
 

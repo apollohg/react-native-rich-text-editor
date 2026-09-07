@@ -26,13 +26,14 @@ const taskItemNodeSpec: NodeSpec = {
 
 /** Adds the checklist nodes to a schema, mirroring `withImagesSchema`. */
 export function withTaskListSchema(schema: SchemaDefinition): SchemaDefinition {
-    const hasTaskList = schema.nodes.some((node) => node.name === TASK_LIST_NODE_NAME);
+    const hasTaskList = schema.nodes.some(node => node.name === TASK_LIST_NODE_NAME);
+
     if (hasTaskList) {
         return schema;
     }
 
     return {
         ...schema,
-        nodes: [...schema.nodes, taskListNodeSpec, taskItemNodeSpec],
+        nodes: [ ...schema.nodes, taskListNodeSpec, taskItemNodeSpec ],
     };
 }

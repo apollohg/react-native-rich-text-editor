@@ -24,7 +24,7 @@ type LinkEditorModalProps = {
 /** Bottom sheet driven by `onRequestLink`. Saving an empty URL removes the link. */
 export function LinkEditorModal({ request, onClose }: LinkEditorModalProps) {
     const inputRef = useRef<TextInput>(null);
-    const [href, setHref] = useState('');
+    const [ href, setHref ] = useState('');
     const visible = request != null;
     const isActive = request?.isActive ?? false;
 
@@ -32,58 +32,65 @@ export function LinkEditorModal({ request, onClose }: LinkEditorModalProps) {
         if (request == null) {
             return;
         }
+
         setHref(request.href ?? '');
         const handle = requestAnimationFrame(() => inputRef.current?.focus());
+
         return () => cancelAnimationFrame(handle);
-    }, [request]);
+    }, [ request ]);
 
     const apply = useCallback(() => {
         if (request == null) {
             return;
         }
+
         const trimmed = href.trim();
+
         if (trimmed.length === 0) {
             request.unsetLink();
         } else {
             request.setLink(trimmed);
         }
+
         onClose();
-    }, [href, onClose, request]);
+    }, [ href, onClose, request ]);
 
     const remove = useCallback(() => {
         request?.unsetLink();
         onClose();
-    }, [onClose, request]);
+    }, [ onClose, request ]);
 
     return (
         <Modal
-            animationType='fade'
+            animationType={'fade'}
             transparent
             visible={visible}
             onRequestClose={onClose}
-            accessibilityViewIsModal>
+            accessibilityViewIsModal
+        >
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                style={styles.backdrop}>
+                style={styles.backdrop}
+            >
                 <Pressable
-                    accessibilityLabel='Close'
-                    accessibilityRole='button'
+                    accessibilityLabel={'Close'}
+                    accessibilityRole={'button'}
                     onPress={onClose}
                     style={styles.dismissArea}
                 />
                 <View style={styles.sheet}>
-                    <Text accessibilityRole='header' style={styles.title}>
+                    <Text accessibilityRole={'header'} style={styles.title}>
                         {isActive ? 'Edit link' : 'Add link'}
                     </Text>
                     <TextInput
                         ref={inputRef}
-                        accessibilityLabel='Link URL'
-                        autoCapitalize='none'
+                        accessibilityLabel={'Link URL'}
+                        autoCapitalize={'none'}
                         autoCorrect={false}
-                        keyboardType='url'
-                        placeholder='https://'
+                        keyboardType={'url'}
+                        placeholder={'https://'}
                         placeholderTextColor={PALETTE.inkFaint}
-                        returnKeyType='done'
+                        returnKeyType={'done'}
                         style={styles.input}
                         value={href}
                         onChangeText={setHref}
@@ -92,31 +99,34 @@ export function LinkEditorModal({ request, onClose }: LinkEditorModalProps) {
                     <View style={styles.actions}>
                         {isActive ? (
                             <Pressable
-                                accessibilityRole='button'
-                                accessibilityLabel='Remove link'
+                                accessibilityRole={'button'}
+                                accessibilityLabel={'Remove link'}
                                 onPress={remove}
-                                style={({ pressed }) => [styles.button, pressed && styles.pressed]}>
-                                <Text style={[styles.buttonLabel, styles.removeLabel]}>Remove</Text>
+                                style={({ pressed }) => [ styles.button, pressed && styles.pressed ]}
+                            >
+                                <Text style={[ styles.buttonLabel, styles.removeLabel ]}>Remove</Text>
                             </Pressable>
                         ) : null}
                         <View style={styles.spacer} />
                         <Pressable
-                            accessibilityRole='button'
-                            accessibilityLabel='Cancel'
+                            accessibilityRole={'button'}
+                            accessibilityLabel={'Cancel'}
                             onPress={onClose}
-                            style={({ pressed }) => [styles.button, pressed && styles.pressed]}>
+                            style={({ pressed }) => [ styles.button, pressed && styles.pressed ]}
+                        >
                             <Text style={styles.buttonLabel}>Cancel</Text>
                         </Pressable>
                         <Pressable
-                            accessibilityRole='button'
-                            accessibilityLabel='Save link'
+                            accessibilityRole={'button'}
+                            accessibilityLabel={'Save link'}
                             onPress={apply}
                             style={({ pressed }) => [
                                 styles.button,
                                 styles.primaryButton,
                                 pressed && styles.pressed,
-                            ]}>
-                            <Text style={[styles.buttonLabel, styles.primaryLabel]}>Save</Text>
+                            ]}
+                        >
+                            <Text style={[ styles.buttonLabel, styles.primaryLabel ]}>Save</Text>
                         </Pressable>
                     </View>
                 </View>

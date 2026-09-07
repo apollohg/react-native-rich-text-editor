@@ -36,7 +36,7 @@ function paragraph(...content: readonly DocumentJSON[]): DocumentJSON {
 }
 
 function heading(level: number, title: string): DocumentJSON {
-    return { type: 'heading', attrs: { level }, content: [text(title)] };
+    return { type: 'heading', attrs: { level }, content: [ text(title) ] };
 }
 
 function listItem(...content: readonly DocumentJSON[]): DocumentJSON {
@@ -44,7 +44,7 @@ function listItem(...content: readonly DocumentJSON[]): DocumentJSON {
 }
 
 function taskItem(checked: boolean, label: string): DocumentJSON {
-    return { type: TASK_ITEM_NODE_NAME, attrs: { checked }, content: [paragraph(text(label))] };
+    return { type: TASK_ITEM_NODE_NAME, attrs: { checked }, content: [ paragraph(text(label)) ] };
 }
 
 /**
@@ -70,12 +70,12 @@ export const INITIAL_DOCUMENT: DocumentJSON = {
         ),
         {
             type: 'blockquote',
-            content: [paragraph(text('Type @ anywhere to mention someone on the team.'))],
+            content: [ paragraph(text('Type @ anywhere to mention someone on the team.')) ],
         },
         {
             type: 'codeBlock',
             attrs: { language: 'typescript' },
-            content: [text('const greet = (name: string) => {\n    return `Hello, ${name}!`;\n};')],
+            content: [ text('const greet = (name: string) => {\n    return `Hello, ${name}!`;\n};') ],
         },
         heading(2, 'Today'),
         {
@@ -92,7 +92,7 @@ export const INITIAL_DOCUMENT: DocumentJSON = {
             content: [
                 listItem(paragraph(text('Try nested lists')), {
                     type: 'bullet_list',
-                    content: [listItem(paragraph(text('Indent and outdent from the toolbar')))],
+                    content: [ listItem(paragraph(text('Indent and outdent from the toolbar'))) ],
                 }),
                 listItem(paragraph(text('Tap the image to resize it'))),
             ],

@@ -60,7 +60,7 @@ export const RADIUS = {
 /** WCAG 2.5.5 minimum touch target. */
 export const MIN_TOUCH_TARGET = 44;
 
-const HEADING_SIZES = [32, 25, 21, 19, 17, 16] as const;
+const HEADING_SIZES = [ 32, 25, 21, 19, 17, 16 ] as const;
 const HEADING_LINE_HEIGHT_RATIO = 1.2;
 const HEADING_SPACING_RATIO = 0.35;
 
@@ -173,6 +173,7 @@ export const mentionTheme: EditorMentionTheme = {
 
 function headingStyle(index: number): EditorTextStyle {
     const fontSize = HEADING_SIZES[index];
+
     return {
         fontFamily: SERIF_FAMILY,
         color: PALETTE.ink,
