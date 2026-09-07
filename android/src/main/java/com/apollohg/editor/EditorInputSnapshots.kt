@@ -1,6 +1,7 @@
 package com.apollohg.editor
 
 import android.content.Context
+import androidx.annotation.RequiresApi
 import android.text.TextUtils
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.ExtractedText
@@ -36,6 +37,7 @@ private fun EditorInputConnection.buildExtractedText(mapper: ImeTextCoordinateMa
         this.flags = if (editorView.inputType and android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE == 0) ExtractedText.FLAG_SINGLE_LINE else 0
     }
 
+@RequiresApi(31)
 internal fun EditorInputConnection.surroundingTextForIme(beforeLength: Int, afterLength: Int, flags: Int): SurroundingText? {
     if (beforeLength < 0 || afterLength < 0) return null
     val mapper = currentMapper() ?: return null
@@ -47,6 +49,7 @@ internal fun EditorInputConnection.surroundingTextForIme(beforeLength: Int, afte
     return SurroundingText(imeTextSlice(mapper, start, end, flags), from - start, to - start, start)
 }
 
+@RequiresApi(33)
 internal fun EditorInputConnection.snapshotForIme(): TextSnapshot? {
     val surrounding = surroundingTextForIme(1024, 1024, InputConnection.GET_TEXT_WITH_STYLES) ?: return null
     val mapper = currentMapper() ?: return null

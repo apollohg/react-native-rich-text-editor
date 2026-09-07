@@ -34,10 +34,13 @@ internal class EditorSurfaceInputConnection(private val surface: EditorTextSurfa
 
     override fun requestCursorUpdates(cursorUpdateMode: Int): Boolean {
         val modes = InputConnection.CURSOR_UPDATE_IMMEDIATE or InputConnection.CURSOR_UPDATE_MONITOR
-        return requestCursorUpdates(cursorUpdateMode and modes, cursorUpdateMode and modes.inv())
+        return requestSurfaceCursorUpdates(cursorUpdateMode and modes, cursorUpdateMode and modes.inv())
     }
 
-    override fun requestCursorUpdates(cursorUpdateMode: Int, cursorUpdateFilter: Int): Boolean {
+    override fun requestCursorUpdates(cursorUpdateMode: Int, cursorUpdateFilter: Int): Boolean =
+        requestSurfaceCursorUpdates(cursorUpdateMode, cursorUpdateFilter)
+
+    private fun requestSurfaceCursorUpdates(cursorUpdateMode: Int, cursorUpdateFilter: Int): Boolean {
         val supported = InputConnection.CURSOR_UPDATE_FILTER_INSERTION_MARKER or InputConnection.CURSOR_UPDATE_FILTER_CHARACTER_BOUNDS
         if (closed || cursorUpdateFilter and supported.inv() != 0) return false
         return surface.requestSurfaceCursorUpdates(cursorUpdateMode)

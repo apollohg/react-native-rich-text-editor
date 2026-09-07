@@ -33,12 +33,13 @@ internal class EditorTextSurfaceInteraction(
     private val handleDrawables by lazy {
         val attributes = view.context.obtainStyledAttributes(
             attrs,
-            intArrayOf(android.R.attr.textSelectHandleLeft, android.R.attr.textSelectHandleRight),
+            R.styleable.EditorSelectionHandles,
             defStyleAttr,
             0,
         )
         try {
-            attributes.getDrawable(0)?.mutate() to attributes.getDrawable(1)?.mutate()
+            attributes.getDrawable(R.styleable.EditorSelectionHandles_android_textSelectHandleLeft)?.mutate() to
+                attributes.getDrawable(R.styleable.EditorSelectionHandles_android_textSelectHandleRight)?.mutate()
         } finally {
             attributes.recycle()
         }

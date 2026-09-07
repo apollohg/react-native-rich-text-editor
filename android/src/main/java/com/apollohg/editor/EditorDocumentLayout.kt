@@ -1,6 +1,7 @@
 package com.apollohg.editor
 
 import android.graphics.Canvas
+import android.graphics.text.LineBreaker
 import android.graphics.Paint
 import android.graphics.Matrix
 import android.graphics.Path
@@ -142,7 +143,7 @@ internal class EditorDocumentLayout(
                 .setAlignment(alignment)
                 .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_LTR)
                 .setLineSpacing(spacingAdd, spacingMultiplier)
-                .apply { if (Build.VERSION.SDK_INT >= 26) setJustificationMode(if (key.justify) JUSTIFICATION_MODE_INTER_WORD else JUSTIFICATION_MODE_NONE) }
+                .apply { if (Build.VERSION.SDK_INT >= 26) setJustificationMode(if (key.justify) LineBreaker.JUSTIFICATION_MODE_INTER_WORD else LineBreaker.JUSTIFICATION_MODE_NONE) }
                 .build()
             if (cached != null) reused++
             val emptyExtra = ((emptyStyles.maxOfOrNull { it.lineHeightPx ?: 0 } ?: 0) - shaped.height).coerceAtLeast(0)

@@ -22,8 +22,16 @@ internal class CodeBlockMetadataSpan(val language: String?)
 
 internal class EditorCodeHighlightSpan(private val range: CodeHighlightRange) : MetricAffectingSpan() {
     override fun updateMeasureState(paint: TextPaint) {
-        val traits = (if (range.fontStyle and 1 != 0) Typeface.BOLD else 0) or (if (range.fontStyle and 4 != 0) Typeface.ITALIC else 0)
-        if (traits != 0) paint.typeface = Typeface.create(paint.typeface, (paint.typeface?.style ?: 0) or traits)
+        if (range.fontStyle and 5 == 0) return
+        val bold = range.fontStyle and 1 != 0 || paint.typeface?.isBold == true
+        val italic = range.fontStyle and 4 != 0 || paint.typeface?.isItalic == true
+        val style = when {
+            bold && italic -> Typeface.BOLD_ITALIC
+            bold -> Typeface.BOLD
+            italic -> Typeface.ITALIC
+            else -> Typeface.NORMAL
+        }
+        paint.typeface = Typeface.create(paint.typeface, style)
     }
     override fun updateDrawState(paint: TextPaint) {
         updateMeasureState(paint)

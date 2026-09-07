@@ -1,0 +1,6 @@
+<resources>
+    <declare-styleable name="EditorSelectionHandles">
+        <attr name="android:textSelectHandleLeft" />
+        <attr name="android:textSelectHandleRight" />
+    </declare-styleable>
+</resources>

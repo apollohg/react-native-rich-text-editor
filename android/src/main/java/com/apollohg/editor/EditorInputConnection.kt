@@ -1,6 +1,7 @@
 package com.apollohg.editor
 
 import android.os.Handler
+import androidx.annotation.RequiresApi
 import android.os.Looper
 import android.os.SystemClock
 import android.text.Selection
@@ -133,9 +134,11 @@ class EditorInputConnection(
     override fun getExtractedText(request: ExtractedTextRequest?, flags: Int): ExtractedText? =
         extractedTextForIme(request, flags)
 
+    @RequiresApi(31)
     override fun getSurroundingText(beforeLength: Int, afterLength: Int, flags: Int): SurroundingText? =
         surroundingTextForIme(beforeLength, afterLength, flags)
 
+    @RequiresApi(33)
     override fun takeSnapshot(): TextSnapshot? = snapshotForIme()
 
     override fun beginBatchEdit(): Boolean = isCurrentInputSession() && super.beginBatchEdit()

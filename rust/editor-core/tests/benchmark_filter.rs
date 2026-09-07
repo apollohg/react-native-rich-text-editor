@@ -4,6 +4,13 @@ mod benchmark_filter;
 use std::cell::Cell;
 use std::sync::OnceLock;
 
+const PERF_SUITE_SOURCE: &str = concat!(
+    include_str!("../benches/perf_suite.rs"),
+    include_str!("../benches/perf_suite/cases.rs"),
+    include_str!("../benches/perf_suite/measurement.rs"),
+    include_str!("../benches/perf_suite/fixtures.rs"),
+);
+
 #[test]
 fn misses_are_lazy_while_name_and_group_matches_execute() {
     for (filter, name, group, expected_calls) in [
@@ -47,10 +54,7 @@ fn filtered_out_case_does_not_initialize_its_case_fixture() {
 
 #[test]
 fn yrs_editing_semantics_cases_are_declared_exactly_once() {
-    let source = include_str!("../benches/perf_suite.rs");
-    // Task 16C (user directive 2026-07-20): the legacy runtime and its
-    // reference benchmark cases/fixtures were deleted; only the Yrs cases
-    // remain, verified after timing against v2-native expected derivations.
+    let source = PERF_SUITE_SOURCE;
     let expected = [
         "yrs.edit.insert_char.article.1x",
         "yrs.edit.typing_burst.article.1x",
@@ -117,7 +121,7 @@ fn yrs_editing_semantics_cases_are_declared_exactly_once() {
 
 #[test]
 fn yrs_editing_semantics_verifiers_require_exact_expected_documents() {
-    let source = include_str!("../benches/perf_suite.rs");
+    let source = PERF_SUITE_SOURCE;
 
     assert!(
         source.contains("fn build_pure_bold_document("),
@@ -160,7 +164,7 @@ fn yrs_editing_semantics_verifiers_require_exact_expected_documents() {
 
 #[test]
 fn yrs_editing_semantics_verifies_returned_outputs_after_timing() {
-    let source = include_str!("../benches/perf_suite.rs");
+    let source = PERF_SUITE_SOURCE;
     let verified_runner = source
         .split_once("fn verified_bench_case")
         .expect("verified benchmark runner must exist")

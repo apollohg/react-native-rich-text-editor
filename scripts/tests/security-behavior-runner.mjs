@@ -35,7 +35,7 @@ export function securityBehaviorCommands({ root, pinnedCargo }) {
             [
                 ':react-native-rich-text-editor:testDebugUnitTest',
                 '--tests',
-                'com.apollohg.editor.RenderImageLoaderPolicyTest.shared whitespace base64 and trickle fixtures execute against Android boundary',
+                'com.apollohg.editor.RenderImageLoaderPolicySchedulingTest.shared whitespace base64 and trickle fixtures execute against Android boundary',
             ],
             resolve(root, 'example/android'),
         ],
