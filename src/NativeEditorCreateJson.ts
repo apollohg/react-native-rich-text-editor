@@ -95,7 +95,10 @@ export type V2JsonSerializationFrame =
     | V2JsonSerializationObjectFrame;
 
 export function chargeV2JsonWork(state: V2JsonNormalizationTraversal, label: string): void {
-    if (state.work >= V2_CREATE_JSON_MAX_WORK) invalidV2JsonValue(label);
+    if (state.work >= V2_CREATE_JSON_MAX_WORK) {
+        invalidV2JsonValue(label);
+    }
+
     state.work += 1;
 }
 
@@ -111,6 +114,7 @@ export function chargeV2JsonBytes(
     ) {
         invalidV2JsonValue(label);
     }
+
     budget.bytes += amount;
 }
 
@@ -118,7 +122,10 @@ export function chargeV2JsonSerializationWork(
     state: V2JsonSerializationState,
     label: string
 ): void {
-    if (state.work >= V2_CREATE_WIRE_MAX_BYTES) invalidV2JsonValue(label);
+    if (state.work >= V2_CREATE_WIRE_MAX_BYTES) {
+        invalidV2JsonValue(label);
+    }
+
     state.work += 1;
 }
 
@@ -134,13 +141,16 @@ export function chargeV2JsonSerializationBytes(
     ) {
         invalidV2JsonValue(label);
     }
+
     state.bytes += amount;
 }
 
 export function utf8V2JsonByteLength(value: string): number {
     let bytes = 0;
+
     for (let index = 0; index < value.length; index += 1) {
         const code = V2_CREATE_STRING_CHAR_CODE_AT.call(value, index);
+
         if (code <= 0x7f) {
             bytes += 1;
         } else if (code <= 0x7ff) {
@@ -150,6 +160,7 @@ export function utf8V2JsonByteLength(value: string): number {
                 index + 1 < value.length
                     ? V2_CREATE_STRING_CHAR_CODE_AT.call(value, index + 1)
                     : -1;
+
             if (next >= 0xdc00 && next <= 0xdfff) {
                 bytes += 4;
                 index += 1;
@@ -160,11 +171,15 @@ export function utf8V2JsonByteLength(value: string): number {
             bytes += 3;
         }
     }
+
     return bytes;
 }
 
 export function serializeV2JsonNumber(value: number, label: string): string {
-    if (!Number.isFinite(value)) invalidV2JsonValue(label);
+    if (!Number.isFinite(value)) {
+        invalidV2JsonValue(label);
+    }
+
     return value === 0 ? '0' : V2_CREATE_NUMBER_TO_STRING.call(value);
 }
 
@@ -174,8 +189,10 @@ export function chargeV2JsonStringBytes(
     label: string
 ): void {
     chargeV2JsonBytes(budget, 2, label);
+
     for (let index = 0; index < value.length; index += 1) {
         const code = V2_CREATE_STRING_CHAR_CODE_AT.call(value, index);
+
         if (code === 0x22 || code === 0x5c || code === 0x08 || code === 0x09) {
             chargeV2JsonBytes(budget, 2, label);
         } else if (code === 0x0a || code === 0x0c || code === 0x0d) {
@@ -191,6 +208,7 @@ export function chargeV2JsonStringBytes(
                 index + 1 < value.length
                     ? V2_CREATE_STRING_CHAR_CODE_AT.call(value, index + 1)
                     : -1;
+
             if (next >= 0xdc00 && next <= 0xdfff) {
                 chargeV2JsonBytes(budget, 4, label);
                 index += 1;
@@ -212,8 +230,11 @@ export function normalizeV2JsonValue(
     budget: V2JsonNormalizationBudget = { bytes: 0 }
 ): unknown {
     let normalizedRoot: unknown;
+
     const frames: V2JsonNormalizationFrame[] = [
-        { type: 'value', value, depth: 0, target: null, key: null },
+        {
+            type: 'value', value, depth: 0, target: null, key: null,
+        },
     ];
 
     const installNormalizedValue = (
@@ -223,9 +244,14 @@ export function normalizeV2JsonValue(
     ): void => {
         if (target === null) {
             normalizedRoot = normalized;
+
             return;
         }
-        if (key === null) invalidV2JsonValue(label);
+
+        if (key === null) {
+            invalidV2JsonValue(label);
+        }
+
         Object.defineProperty(target, key, {
             configurable: true,
             enumerable: true,
@@ -236,23 +262,34 @@ export function normalizeV2JsonValue(
 
     while (frames.length > 0) {
         const frame = frames.pop();
-        if (frame === undefined) invalidV2JsonValue(label);
+
+        if (frame === undefined) {
+            invalidV2JsonValue(label);
+        }
 
         if (frame.type === 'array') {
             if (frame.nextKeyIndex === frame.keys.length) {
-                if (frame.elementCount !== frame.length) invalidV2JsonValue(label);
+                if (frame.elementCount !== frame.length) {
+                    invalidV2JsonValue(label);
+                }
+
                 Object.setPrototypeOf(frame.normalized, null);
                 continue;
             }
+
             const key = frame.keys[frame.nextKeyIndex];
+
             if (key === 'length') {
                 frames.push({ ...frame, nextKeyIndex: frame.nextKeyIndex + 1 });
                 continue;
             }
+
             if (typeof key !== 'string' || !/^(0|[1-9]\d*)$/.test(key)) {
                 invalidV2JsonValue(label);
             }
+
             const index = Number(key);
+
             if (
                 !Number.isSafeInteger(index) ||
                 index !== frame.elementCount ||
@@ -261,7 +298,9 @@ export function normalizeV2JsonValue(
             ) {
                 invalidV2JsonValue(label);
             }
+
             const descriptor = Object.getOwnPropertyDescriptor(frame.value, key);
+
             if (
                 descriptor === undefined ||
                 !('value' in descriptor) ||
@@ -269,12 +308,17 @@ export function normalizeV2JsonValue(
             ) {
                 invalidV2JsonValue(label);
             }
-            if (frame.elementCount > 0) chargeV2JsonBytes(budget, 1, label);
+
+            if (frame.elementCount > 0) {
+                chargeV2JsonBytes(budget, 1, label);
+            }
+
             frames.push({
                 ...frame,
                 nextKeyIndex: frame.nextKeyIndex + 1,
                 elementCount: frame.elementCount + 1,
             });
+
             frames.push({
                 type: 'value',
                 value: descriptor.value,
@@ -282,14 +326,23 @@ export function normalizeV2JsonValue(
                 target: frame.normalized,
                 key: frame.elementCount,
             });
+
             continue;
         }
 
         if (frame.type === 'object') {
-            if (frame.nextKeyIndex === frame.keys.length) continue;
+            if (frame.nextKeyIndex === frame.keys.length) {
+                continue;
+            }
+
             const key = frame.keys[frame.nextKeyIndex];
-            if (typeof key !== 'string') invalidV2JsonValue(label);
+
+            if (typeof key !== 'string') {
+                invalidV2JsonValue(label);
+            }
+
             const descriptor = Object.getOwnPropertyDescriptor(frame.value, key);
+
             if (
                 descriptor === undefined ||
                 !('value' in descriptor) ||
@@ -297,21 +350,29 @@ export function normalizeV2JsonValue(
             ) {
                 invalidV2JsonValue(label);
             }
+
             if (descriptor.value === undefined) {
                 frames.push({
                     ...frame,
                     nextKeyIndex: frame.nextKeyIndex + 1,
                 });
+
                 continue;
             }
-            if (frame.fieldCount > 0) chargeV2JsonBytes(budget, 1, label);
+
+            if (frame.fieldCount > 0) {
+                chargeV2JsonBytes(budget, 1, label);
+            }
+
             chargeV2JsonStringBytes(key, budget, label);
             chargeV2JsonBytes(budget, 1, label);
+
             frames.push({
                 ...frame,
                 nextKeyIndex: frame.nextKeyIndex + 1,
                 fieldCount: frame.fieldCount + 1,
             });
+
             frames.push({
                 type: 'value',
                 value: descriptor.value,
@@ -319,42 +380,62 @@ export function normalizeV2JsonValue(
                 target: frame.normalized,
                 key,
             });
+
             continue;
         }
 
-        if (frame.depth > V2_CREATE_JSON_MAX_DEPTH) invalidV2JsonValue(label);
+        if (frame.depth > V2_CREATE_JSON_MAX_DEPTH) {
+            invalidV2JsonValue(label);
+        }
+
         chargeV2JsonWork(traversal, label);
+
         if (frame.value === null) {
             chargeV2JsonBytes(budget, 4, label);
             installNormalizedValue(frame.target, frame.key, frame.value);
             continue;
         }
+
         if (typeof frame.value === 'string') {
             chargeV2JsonStringBytes(frame.value, budget, label);
             installNormalizedValue(frame.target, frame.key, frame.value);
             continue;
         }
+
         if (typeof frame.value === 'boolean') {
             chargeV2JsonBytes(budget, frame.value ? 4 : 5, label);
             installNormalizedValue(frame.target, frame.key, frame.value);
             continue;
         }
+
         if (typeof frame.value === 'number') {
             const serialized = serializeV2JsonNumber(frame.value, label);
             chargeV2JsonBytes(budget, serialized.length, label);
             installNormalizedValue(frame.target, frame.key, frame.value);
             continue;
         }
-        if (typeof frame.value !== 'object') invalidV2JsonValue(label);
 
-        if (traversal.seen.has(frame.value)) invalidV2JsonValue(label);
+        if (typeof frame.value !== 'object') {
+            invalidV2JsonValue(label);
+        }
+
+        if (traversal.seen.has(frame.value)) {
+            invalidV2JsonValue(label);
+        }
+
         traversal.seen.add(frame.value);
         chargeV2JsonBytes(budget, 2, label);
         const childDepth = frame.depth + 1;
+
         if (Array.isArray(frame.value)) {
             const prototype = Object.getPrototypeOf(frame.value);
-            if (prototype !== Array.prototype && prototype !== null) invalidV2JsonValue(label);
+
+            if (prototype !== Array.prototype && prototype !== null) {
+                invalidV2JsonValue(label);
+            }
+
             const lengthDescriptor = Object.getOwnPropertyDescriptor(frame.value, 'length');
+
             if (
                 lengthDescriptor === undefined ||
                 !('value' in lengthDescriptor) ||
@@ -362,8 +443,10 @@ export function normalizeV2JsonValue(
             ) {
                 invalidV2JsonValue(label);
             }
+
             const normalized: unknown[] = [];
             installNormalizedValue(frame.target, frame.key, normalized);
+
             frames.push({
                 type: 'array',
                 value: frame.value,
@@ -374,12 +457,17 @@ export function normalizeV2JsonValue(
                 nextKeyIndex: 0,
                 elementCount: 0,
             });
+
             continue;
         }
 
-        if (!isV2CreateRecord(frame.value)) invalidV2JsonValue(label);
+        if (!isV2CreateRecord(frame.value)) {
+            invalidV2JsonValue(label);
+        }
+
         const normalized = emptyV2CreateRecord();
         installNormalizedValue(frame.target, frame.key, normalized);
+
         frames.push({
             type: 'object',
             value: frame.value,
@@ -391,17 +479,22 @@ export function normalizeV2JsonValue(
         });
     }
 
-    if (normalizedRoot === undefined) invalidV2JsonValue(label);
+    if (normalizedRoot === undefined) {
+        invalidV2JsonValue(label);
+    }
+
     return normalizedRoot;
 }
 
 export class V2JsonSerializationWriter {
     private readonly _chunks: string[] = [];
+
     private _current = '';
 
     append(value: string, state: V2JsonSerializationState, label: string): void {
         chargeV2JsonSerializationBytes(state, utf8V2JsonByteLength(value), label);
         this._current += value;
+
         if (this._current.length >= V2_CREATE_JSON_OUTPUT_CHUNK_SIZE) {
             this._chunks.push(this._current);
             this._current = '';
@@ -409,7 +502,10 @@ export class V2JsonSerializationWriter {
     }
 
     finish(): string {
-        if (this._current.length > 0) this._chunks.push(this._current);
+        if (this._current.length > 0) {
+            this._chunks.push(this._current);
+        }
+
         return this._chunks.join('');
     }
 }
@@ -422,10 +518,12 @@ export function appendV2JsonString(
 ): void {
     writer.append('"', state, label);
     let segmentStart = 0;
+
     for (let index = 0; index < value.length; index += 1) {
         chargeV2JsonSerializationWork(state, label);
         const code = V2_CREATE_STRING_CHAR_CODE_AT.call(value, index);
         let escape: string | undefined;
+
         switch (code) {
             case 0x08:
                 escape = '\\b';
@@ -456,6 +554,7 @@ export function appendV2JsonString(
                         index + 1 < value.length
                             ? V2_CREATE_STRING_CHAR_CODE_AT.call(value, index + 1)
                             : -1;
+
                     if (next >= 0xdc00 && next <= 0xdfff) {
                         chargeV2JsonSerializationWork(state, label);
                         index += 1;
@@ -465,18 +564,26 @@ export function appendV2JsonString(
                 } else if (code >= 0xdc00 && code <= 0xdfff) {
                     escape = `\\u${code.toString(16).padStart(4, '0')}`;
                 }
+
                 break;
         }
-        if (escape === undefined) continue;
+
+        if (escape === undefined) {
+            continue;
+        }
+
         if (segmentStart < index) {
             writer.append(V2_CREATE_STRING_SLICE.call(value, segmentStart, index), state, label);
         }
+
         writer.append(escape, state, label);
         segmentStart = index + 1;
     }
+
     if (segmentStart < value.length) {
         writer.append(V2_CREATE_STRING_SLICE.call(value, segmentStart), state, label);
     }
+
     writer.append('"', state, label);
 }
 
@@ -484,19 +591,27 @@ export function serializeV2CreateEnvelope(value: Record<string, unknown>): strin
     const label = 'v2 create config';
     const writer = new V2JsonSerializationWriter();
     const state: V2JsonSerializationState = { bytes: 0, work: 0 };
-    const frames: V2JsonSerializationFrame[] = [{ type: 'value', value, depth: 0 }];
+    const frames: V2JsonSerializationFrame[] = [ { type: 'value', value, depth: 0 } ];
 
     while (frames.length > 0) {
         const frame = frames.pop();
-        if (frame === undefined) invalidV2JsonValue(label);
+
+        if (frame === undefined) {
+            invalidV2JsonValue(label);
+        }
 
         if (frame.type === 'array') {
             if (frame.index === frame.length) {
                 writer.append(']', state, label);
                 continue;
             }
-            if (frame.index > 0) writer.append(',', state, label);
+
+            if (frame.index > 0) {
+                writer.append(',', state, label);
+            }
+
             const descriptor = Object.getOwnPropertyDescriptor(frame.value, String(frame.index));
+
             if (
                 descriptor === undefined ||
                 !('value' in descriptor) ||
@@ -504,6 +619,7 @@ export function serializeV2CreateEnvelope(value: Record<string, unknown>): strin
             ) {
                 invalidV2JsonValue(label);
             }
+
             frames.push({ ...frame, index: frame.index + 1 });
             frames.push({ type: 'value', value: descriptor.value, depth: frame.depth + 1 });
             continue;
@@ -514,9 +630,14 @@ export function serializeV2CreateEnvelope(value: Record<string, unknown>): strin
                 writer.append('}', state, label);
                 continue;
             }
-            if (frame.index > 0) writer.append(',', state, label);
+
+            if (frame.index > 0) {
+                writer.append(',', state, label);
+            }
+
             const key = frame.keys[frame.index];
             const descriptor = Object.getOwnPropertyDescriptor(frame.value, key);
+
             if (
                 descriptor === undefined ||
                 !('value' in descriptor) ||
@@ -524,6 +645,7 @@ export function serializeV2CreateEnvelope(value: Record<string, unknown>): strin
             ) {
                 invalidV2JsonValue(label);
             }
+
             appendV2JsonString(writer, key, state, label);
             writer.append(':', state, label);
             frames.push({ ...frame, index: frame.index + 1 });
@@ -531,8 +653,12 @@ export function serializeV2CreateEnvelope(value: Record<string, unknown>): strin
             continue;
         }
 
-        if (frame.depth > V2_CREATE_ENVELOPE_JSON_MAX_DEPTH) invalidV2JsonValue(label);
+        if (frame.depth > V2_CREATE_ENVELOPE_JSON_MAX_DEPTH) {
+            invalidV2JsonValue(label);
+        }
+
         chargeV2JsonSerializationWork(state, label);
+
         if (frame.value === null) {
             writer.append('null', state, label);
         } else if (typeof frame.value === 'string') {
@@ -542,8 +668,12 @@ export function serializeV2CreateEnvelope(value: Record<string, unknown>): strin
         } else if (typeof frame.value === 'number') {
             writer.append(serializeV2JsonNumber(frame.value, label), state, label);
         } else if (Array.isArray(frame.value)) {
-            if (Object.getPrototypeOf(frame.value) !== null) invalidV2JsonValue(label);
+            if (Object.getPrototypeOf(frame.value) !== null) {
+                invalidV2JsonValue(label);
+            }
+
             const lengthDescriptor = Object.getOwnPropertyDescriptor(frame.value, 'length');
+
             if (
                 lengthDescriptor === undefined ||
                 !('value' in lengthDescriptor) ||
@@ -551,7 +681,9 @@ export function serializeV2CreateEnvelope(value: Record<string, unknown>): strin
             ) {
                 invalidV2JsonValue(label);
             }
+
             writer.append('[', state, label);
+
             frames.push({
                 type: 'array',
                 value: frame.value,
@@ -561,8 +693,13 @@ export function serializeV2CreateEnvelope(value: Record<string, unknown>): strin
             });
         } else if (isV2CreateRecord(frame.value) && Object.getPrototypeOf(frame.value) === null) {
             const keys = Reflect.ownKeys(frame.value);
-            if (keys.some((key) => typeof key !== 'string')) invalidV2JsonValue(label);
+
+            if (keys.some(key => typeof key !== 'string')) {
+                invalidV2JsonValue(label);
+            }
+
             writer.append('{', state, label);
+
             frames.push({
                 type: 'object',
                 value: frame.value,

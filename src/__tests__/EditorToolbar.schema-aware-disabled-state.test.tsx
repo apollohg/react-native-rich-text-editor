@@ -9,16 +9,18 @@ describe('EditorToolbar', () => {
                     marks: {},
                     nodes: {},
                     commands: {},
-                    allowedMarks: ['bold', 'italic'],
+                    allowedMarks: [ 'bold', 'italic' ],
                     insertableNodes: [],
                 },
             });
 
             expect(getByLabelText('Bold').props.accessibilityState.disabled).toBeFalsy();
             expect(getByLabelText('Italic').props.accessibilityState.disabled).toBeFalsy();
+
             expect(getByLabelText('Underline').props.accessibilityState).toEqual(
                 expect.objectContaining({ disabled: true })
             );
+
             expect(getByLabelText('Strikethrough').props.accessibilityState).toEqual(
                 expect.objectContaining({ disabled: true })
             );
@@ -26,6 +28,7 @@ describe('EditorToolbar', () => {
 
         it('link button stays enabled inside headings when link is allowed', () => {
             const onRequestLink = jest.fn();
+
             const { getByLabelText } = renderToolbar({
                 toolbarItems: [
                     { type: 'link', label: 'Link', icon: { type: 'default', id: 'link' } },
@@ -34,7 +37,7 @@ describe('EditorToolbar', () => {
                     marks: {},
                     nodes: { h2: true },
                     commands: {},
-                    allowedMarks: ['link'],
+                    allowedMarks: [ 'link' ],
                     insertableNodes: [],
                 },
                 onRequestLink,
@@ -49,7 +52,7 @@ describe('EditorToolbar', () => {
                     marks: {},
                     nodes: {},
                     commands: {},
-                    allowedMarks: ['bold', 'italic', 'underline', 'strike'],
+                    allowedMarks: [ 'bold', 'italic', 'underline', 'strike' ],
                     insertableNodes: [],
                 },
             });
@@ -65,7 +68,7 @@ describe('EditorToolbar', () => {
                     marks: {},
                     nodes: {},
                     commands: {},
-                    allowedMarks: ['bold', 'italic', 'underline', 'strike'],
+                    allowedMarks: [ 'bold', 'italic', 'underline', 'strike' ],
                     insertableNodes: [],
                 },
             });
@@ -82,7 +85,7 @@ describe('EditorToolbar', () => {
                     nodes: {},
                     commands: {},
                     allowedMarks: [],
-                    insertableNodes: ['hard_break'],
+                    insertableNodes: [ 'hard_break' ],
                 },
             });
 
@@ -96,7 +99,7 @@ describe('EditorToolbar', () => {
                     nodes: {},
                     commands: {},
                     allowedMarks: [],
-                    insertableNodes: ['horizontal_rule'],
+                    insertableNodes: [ 'horizontal_rule' ],
                 },
             });
 
@@ -133,6 +136,7 @@ describe('EditorToolbar', () => {
             expect(getByLabelText('Bullet List').props.accessibilityState).toEqual(
                 expect.objectContaining({ disabled: true })
             );
+
             expect(getByLabelText('Ordered List').props.accessibilityState).toEqual(
                 expect.objectContaining({ disabled: true })
             );
@@ -182,12 +186,15 @@ describe('EditorToolbar', () => {
             expect(getByLabelText('Bold').props.accessibilityState).toEqual(
                 expect.objectContaining({ disabled: true })
             );
+
             expect(getByLabelText('Italic').props.accessibilityState).toEqual(
                 expect.objectContaining({ disabled: true })
             );
+
             expect(getByLabelText('Line Break').props.accessibilityState).toEqual(
                 expect.objectContaining({ disabled: true })
             );
+
             expect(getByLabelText('Horizontal Rule').props.accessibilityState).toEqual(
                 expect.objectContaining({ disabled: true })
             );

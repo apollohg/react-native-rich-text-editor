@@ -6,10 +6,17 @@ import reactHooksPlugin from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 // @ts-ignore
 import eslintReactNative from 'eslint-plugin-react-native';
+import { createSlopConfig } from 'eslint-plugin-slop';
 
 export default defineConfig([
     {
         ignores: [
+            '.tmp/**',
+            '.worktrees/**',
+            '**/dist/**',
+            'coverage/**',
+            'ios-tests/Pods/**',
+            'ios-tests/build/**',
             'ios',
             'android',
             'example',
@@ -17,13 +24,16 @@ export default defineConfig([
             '**/node_modules/**',
         ],
     },
+    ...createSlopConfig({
+        inspection: 'full',
+    }),
     {
         extends: [
             eslint.configs.recommended,
             ...tseslint.configs.recommendedTypeChecked,
         ],
         plugins: {
-            'react-hooks': reactHooksPlugin as unknown as ESLint.Plugin,
+            'react-hooks': reactHooksPlugin as ESLint.Plugin,
             'react-native': eslintReactNative,
             '@stylistic': stylistic,
         },
@@ -124,6 +134,7 @@ export default defineConfig([
                 'error',
                 {
                     ignoreRestSiblings: true,
+                    argsIgnorePattern: '^_',
                 },
             ],
             '@typescript-eslint/restrict-template-expressions': [
@@ -152,8 +163,8 @@ export default defineConfig([
             '@stylistic/array-element-newline': [
                 'error',
                 {
-                    ArrayExpression: 'consistent',
-                    ArrayPattern: { minItems: 4 },
+                    ArrayExpression: { minItems: 5, consistent: true },
+                    ArrayPattern: { minItems: 5, consistent: true },
                 },
             ],
             '@stylistic/object-curly-spacing': [ 'error', 'always' ],
@@ -167,9 +178,11 @@ export default defineConfig([
                 'error',
                 {
                     ObjectExpression: {
+                        minProperties: 5,
                         consistent: true,
                     },
                     ObjectPattern: {
+                        minProperties: 5,
                         consistent: true,
                     },
                 },
@@ -209,12 +222,19 @@ export default defineConfig([
                     next: '*',
                 },
             ],
-            '@stylistic/max-len': ['error', {
-                'comments': 80,
-                'ignoreUrls': true
-            }],
             'react-hooks/rules-of-hooks': 'error',
             'react-hooks/exhaustive-deps': 'error',
+        },
+    },
+    {
+        files: [ '**/*.{js,mjs,cjs}', 'src/__tests__/**/*.{ts,tsx}', 'eslint.config.ts' ],
+        extends: [ tseslint.configs.disableTypeChecked ],
+    },
+    {
+        files: [ 'src/__tests__/**/*.{ts,tsx}' ],
+        rules: {
+            // Fixtures deliberately exercise malformed native and public API values.
+            'slop/no-chained-type-assertions': 'off',
         },
     },
 ]);

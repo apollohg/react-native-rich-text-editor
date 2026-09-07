@@ -200,7 +200,7 @@ export interface RichTextEditorProps {
     /** Remote awareness selections rendered as native overlays. */
     remoteSelections?: readonly RemoteSelectionDecoration[];
     /**
-     * Shared v2 document session — the only construction path. The native
+     * Shared v2 document session : the only construction path. The native
      * view binds to the same session (its editorId is passed straight to the
      * view), so typing, IME, selection, and toolbar commands flow through
      * the native v2 adapters into the shared engine while this component

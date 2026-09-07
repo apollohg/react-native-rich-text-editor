@@ -11,6 +11,7 @@ describe('EditorToolbar', () => {
             });
 
             const undoButton = getByLabelText('Undo');
+
             expect(undoButton.props.accessibilityState).toEqual(
                 expect.objectContaining({ disabled: true })
             );
@@ -32,6 +33,7 @@ describe('EditorToolbar', () => {
             });
 
             const redoButton = getByLabelText('Redo');
+
             expect(redoButton.props.accessibilityState).toEqual(
                 expect.objectContaining({ disabled: true })
             );
@@ -61,6 +63,7 @@ describe('EditorToolbar', () => {
             expect(getByLabelText('Indent List').props.accessibilityState).toEqual(
                 expect.objectContaining({ disabled: true })
             );
+
             expect(getByLabelText('Outdent List').props.accessibilityState).toEqual(
                 expect.objectContaining({ disabled: true })
             );
@@ -80,6 +83,7 @@ describe('EditorToolbar', () => {
             expect(getByLabelText('Indent List').props.accessibilityState).toEqual(
                 expect.objectContaining({ disabled: true })
             );
+
             expect(getByLabelText('Outdent List').props.accessibilityState.disabled).toBeFalsy();
         });
 

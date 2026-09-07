@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { useEditorToolbarState } from './useEditorToolbarState';
+import { type useEditorToolbarState } from './useEditorToolbarState';
 import {
     type EditorToolbarLeafItem,
     type EditorToolbarItemPlacement,
@@ -88,6 +88,7 @@ export function useEditorToolbarItems(
                     if (onToggleMark) {
                         return () => onToggleMark(item.mark);
                     }
+
                     switch (item.mark) {
                         case 'bold':
                             return onToggleBold;
@@ -100,10 +101,12 @@ export function useEditorToolbarItems(
                         default:
                             return null;
                     }
+
                 case 'list':
                     if (onToggleListType) {
                         return () => onToggleListType(item.listType);
                     }
+
                     return item.listType === 'bulletList' || item.listType === 'bullet_list'
                         ? (onToggleBulletList ?? null)
                         : (onToggleOrderedList ?? null);
@@ -115,10 +118,12 @@ export function useEditorToolbarItems(
                     return onToggleHeading ? () => onToggleHeading(item.level) : null;
                 case 'blockquote':
                     return onToggleBlockquote ?? null;
+
                 case 'node':
                     if (onInsertNodeType) {
                         return () => onInsertNodeType(item.nodeType);
                     }
+
                     switch (item.nodeType) {
                         case 'hardBreak':
                         case 'hard_break':
@@ -129,10 +134,12 @@ export function useEditorToolbarItems(
                         default:
                             return null;
                     }
+
                 case 'command':
                     if (onRunCommand) {
                         return () => onRunCommand(item.command);
                     }
+
                     switch (item.command) {
                         case 'indentList':
                             return onIndentList ?? null;
@@ -143,6 +150,8 @@ export function useEditorToolbarItems(
                         case 'redo':
                             return onRedo;
                     }
+
+                    // Falls through for unsupported commands.
                 case 'action':
                     return onToolbarAction ? () => onToolbarAction(item.key) : null;
             }
@@ -177,22 +186,22 @@ export function useEditorToolbarItems(
             item.key != null
                 ? `${prefix}${item.key}`
                 : item.type === 'mark'
-                  ? `${prefix}mark:${item.mark}:${index}`
-                  : item.type === 'link'
-                    ? `${prefix}link:${index}`
-                    : item.type === 'image'
-                      ? `${prefix}image:${index}`
-                      : item.type === 'heading'
-                        ? `${prefix}heading:${item.level}:${index}`
-                        : item.type === 'blockquote'
-                          ? `${prefix}blockquote:${index}`
-                          : item.type === 'list'
-                            ? `${prefix}list:${item.listType}:${index}`
-                            : item.type === 'command'
-                              ? `${prefix}command:${item.command}:${index}`
-                              : item.type === 'node'
-                                ? `${prefix}node:${item.nodeType}:${index}`
-                                : `${prefix}action:${item.key}:${index}`,
+                    ? `${prefix}mark:${item.mark}:${index}`
+                    : item.type === 'link'
+                        ? `${prefix}link:${index}`
+                        : item.type === 'image'
+                            ? `${prefix}image:${index}`
+                            : item.type === 'heading'
+                                ? `${prefix}heading:${item.level}:${index}`
+                                : item.type === 'blockquote'
+                                    ? `${prefix}blockquote:${index}`
+                                    : item.type === 'list'
+                                        ? `${prefix}list:${item.listType}:${index}`
+                                        : item.type === 'command'
+                                            ? `${prefix}command:${item.command}:${index}`
+                                            : item.type === 'node'
+                                                ? `${prefix}node:${item.nodeType}:${index}`
+                                                : `${prefix}action:${String(item.key)}:${index}`,
         []
     );
 
@@ -206,12 +215,14 @@ export function useEditorToolbarItems(
         ): ToolbarButton | null => {
             const resolvedPlacement = resolveToolbarItemPlacement(item.placement ?? placement);
             const action = getActionForItem(item);
+
             if (!action) {
                 return null;
             }
 
             let isActive = false;
             let isDisabled = false;
+
             switch (item.type) {
                 case 'mark':
                     isActive = isMarkActive(item.mark);
@@ -224,24 +235,28 @@ export function useEditorToolbarItems(
                 case 'image':
                     isDisabled = !insertableNodes.includes('image') || !onRequestImage;
                     break;
+
                 case 'heading': {
                     const headingNodeType = `h${item.level}`;
                     isActive = !!nodes[headingNodeType];
                     isDisabled = !commands[`toggleHeading${item.level}`];
                     break;
                 }
+
                 case 'blockquote':
                     isActive = !!nodes['blockquote'];
                     isDisabled = !commands['toggleBlockquote'];
                     break;
                 case 'list':
                     isActive = !!nodes[item.listType];
+
                     isDisabled =
                         !commands[
                             item.listType === 'bulletList' || item.listType === 'bullet_list'
                                 ? 'wrapBulletList'
                                 : 'wrapOrderedList'
                         ];
+
                     break;
                 case 'command':
                     switch (item.command) {
@@ -258,6 +273,7 @@ export function useEditorToolbarItems(
                             isDisabled = !historyState.canRedo;
                             break;
                     }
+
                     break;
                 case 'action':
                     isActive = !!item.isActive;
@@ -304,8 +320,10 @@ export function useEditorToolbarItems(
             if (entry.type !== 'separator') {
                 return true;
             }
+
             const previous = list[index - 1];
             const next = list[index + 1];
+
             return (
                 previous != null &&
                 previous.type !== 'separator' &&
@@ -319,6 +337,7 @@ export function useEditorToolbarItems(
         const scrollEntries: ToolbarRenderedItem[] = [];
         const endEntries: ToolbarRenderedItem[] = [];
         const nextGroups = new Map<string, ToolbarGroupButton>();
+
         const entriesForPlacement = (placement: EditorToolbarItemPlacement) =>
             placement === 'start' ? startEntries : placement === 'end' ? endEntries : scrollEntries;
 
@@ -326,27 +345,31 @@ export function useEditorToolbarItems(
             const item = toolbarItems[index];
             const placement = resolveToolbarItemPlacement(item.placement);
             const targetEntries = entriesForPlacement(placement);
+
             if (item.type === 'separator') {
                 targetEntries.push({
                     type: 'separator',
                     key: item.key ?? `separator:${index}`,
                     placement,
                 });
+
                 continue;
             }
 
             if (item.type === 'group') {
                 const children = item.items
                     .map((child, childIndex) =>
-                        resolveButton(child, childIndex, `${item.key}:`, item.key, placement)
-                    )
+                        resolveButton(child, childIndex, `${item.key}:`, item.key, placement))
                     .filter((child): child is ToolbarButton => child != null);
+
                 if (children.length === 0) {
                     continue;
                 }
+
                 const presentation = item.presentation ?? 'expand';
                 const isExpanded = presentation === 'expand' && expandedGroupKey === item.key;
                 const isMenuOpen = presentation === 'menu' && menuState?.groupKey === item.key;
+
                 const group: ToolbarGroupButton = {
                     key: item.key,
                     label: item.label,
@@ -355,13 +378,15 @@ export function useEditorToolbarItems(
                     presentation,
                     placement,
                     children,
-                    isActive: children.some((child) => child.isActive) || isExpanded || isMenuOpen,
-                    isDisabled: children.every((child) => child.isDisabled),
+                    isActive: children.some(child => child.isActive) || isExpanded || isMenuOpen,
+                    isDisabled: children.every(child => child.isDisabled),
                     isExpanded,
                     isOpen: isExpanded || isMenuOpen,
                 };
+
                 nextGroups.set(group.key, group);
                 targetEntries.push({ type: 'group', group });
+
                 if (group.isExpanded) {
                     for (const child of children) {
                         entriesForPlacement(child.placement).push({
@@ -370,10 +395,12 @@ export function useEditorToolbarItems(
                         });
                     }
                 }
+
                 continue;
             }
 
             const button = resolveButton(item, index, '', undefined, placement);
+
             if (button) {
                 targetEntries.push({ type: 'button', button });
             }
@@ -385,6 +412,7 @@ export function useEditorToolbarItems(
             endItems: compactRenderedItems(endEntries),
             groupsByKey: nextGroups,
         };
-    }, [expandedGroupKey, menuState?.groupKey, resolveButton, toolbarItems]);
+    }, [ expandedGroupKey, menuState?.groupKey, resolveButton, toolbarItems ]);
+
     return { startItems, scrollItems, endItems, groupsByKey };
 }

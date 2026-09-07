@@ -2,7 +2,7 @@
 // socket, and Rust owns lifecycle state, generations, y-sync framing, the
 // outbox, awareness clocks, peer expiry, retry eligibility, and close
 // classification. Those contracts are covered by the Rust and platform
-// suites — never re-asserted here through a JavaScript simulation.
+// suites : never re-asserted here through a JavaScript simulation.
 //
 // TypeScript owns exactly what this file tests: declaring transport intent
 // on one authentic document handle, rendering the state/peers/errors the
@@ -10,45 +10,31 @@
 // the binding down. It drives the faithful fake native v2 runtime in
 // ./helpers/nativeEditorV2Fake.
 
-import { readFileSync } from 'fs';
-
-import { join } from 'path';
-
-import {
-    createFakeNativeEditorV2Runtime,
-    fakeDocForText,
-    V2_FAKE_AWARENESS_FRAME,
-    V2_FAKE_STEP2_FRAME,
-    V2_FAKE_UPDATE_FRAME,
-    type FakeNativeEditorV2Runtime,
-} from './nativeEditorV2Fake';
+import { createFakeNativeEditorV2Runtime, fakeDocForText, V2_FAKE_STEP2_FRAME, type FakeNativeEditorV2Runtime } from './nativeEditorV2Fake';
 
 export const mockNativeModule: Record<string, jest.Mock> = {};
 
 jest.mock('expo-modules-core', () => {
     const React = require('react');
     const { View } = require('react-native');
+
     const MockNativeView = React.forwardRef(
         (props: Record<string, unknown>, ref: React.Ref<unknown>) => {
             React.useImperativeHandle(ref, () => ({}));
+
             return React.createElement(View, { testID: 'native-editor-view', ...props });
         }
     );
+
     MockNativeView.displayName = 'MockNativeView';
+
     return {
         requireNativeModule: () => mockNativeModule,
         requireNativeViewManager: () => MockNativeView,
     };
 });
 
-import { act, renderHook } from '@testing-library/react-native';
-
-import {
-    createYjsCollaborationController,
-    useYjsCollaboration,
-    type YjsCollaborationOptions,
-    type YjsCollaborationState,
-} from '../../YjsCollaboration';
+import { createYjsCollaborationController, type YjsCollaborationOptions, type YjsCollaborationState } from '../../YjsCollaboration';
 
 import {
     createNativeEditorDocumentHandle,
@@ -59,8 +45,6 @@ import {
     type NativeEditorLocalAwarenessIntent,
     type NativeEditorPeerInfo,
 } from '../../NativeEditorBridge';
-
-import * as PublicApi from '../../index';
 
 export const TRANSPORT_URL = 'wss://example.test/collaboration';
 
@@ -109,6 +93,7 @@ export function createRoomHandle(
     } = {}
 ): NativeEditorDocumentHandle {
     const documentId = options.documentId ?? 'doc-1';
+
     return createNativeEditorDocumentHandle({
         initialization: {
             type: 'room',
@@ -116,17 +101,17 @@ export function createRoomHandle(
             lineageId: 'lineage-1',
             ...(options.withSnapshot
                 ? {
-                      snapshot: {
-                          metadata: {
-                              formatVersion: 1,
-                              documentId,
-                              lineageId: 'lineage-1',
-                              fragmentName: 'prosemirror',
-                              schemaFingerprint: 'fakefingerprint',
-                          },
-                          encodedState: snapshotState(SNAPSHOT_DOC),
-                      },
-                  }
+                    snapshot: {
+                        metadata: {
+                            formatVersion: 1,
+                            documentId,
+                            lineageId: 'lineage-1',
+                            fragmentName: 'prosemirror',
+                            schemaFingerprint: 'fakefingerprint',
+                        },
+                        encodedState: snapshotState(SNAPSHOT_DOC),
+                    },
+                }
                 : {}),
         },
         ...(options.limits === undefined ? {} : { limits: options.limits }),
@@ -154,23 +139,31 @@ export function setupController(
     const errors: Error[] = [];
     const peersLog: NativeEditorPeerInfo[][] = [];
     const handle = overrides.handle ?? createRoomHandle();
+
     const controller = createYjsCollaborationController({
         documentId: 'doc-1',
         handle,
         transport: { url: TRANSPORT_URL, connect: false },
-        onStateChange: (state) => states.push({ ...state }),
-        onError: (error) => errors.push(error),
-        onPeersChange: (peers) => peersLog.push(peers),
+        onStateChange: state => states.push({ ...state }),
+        onError: error => errors.push(error),
+        onPeersChange: peers => peersLog.push(peers),
         ...overrides,
     } as YjsCollaborationOptions);
-    return { controller, handle, states, errors, peersLog };
+
+    return {
+        controller, handle, states, errors, peersLog,
+    };
 }
 
 /** The transport intent JSON TypeScript last handed to the native module. */
 export function configuredTransport(callIndex = -1): unknown {
     const calls = runtime.module.editorV2CollaborationConfigureTransport.mock.calls;
     const call = calls.at(callIndex);
-    if (call == null) throw new Error('no transport configuration was issued');
+
+    if (call == null) {
+        throw new Error('no transport configuration was issued');
+    }
+
     return JSON.parse(call[1] as string);
 }
 
@@ -187,17 +180,23 @@ export function latestStatus(setup: ControllerSetup): string {
 export function awarenessPayload(callIndex = -1): unknown {
     const calls = runtime.module.editorV2CollaborationSetAwareness.mock.calls;
     const call = calls.at(callIndex);
-    if (call == null) throw new Error('no awareness intent was published');
+
+    if (call == null) {
+        throw new Error('no awareness intent was published');
+    }
+
     return JSON.parse(call[1] as string);
 }
 
 beforeEach(() => {
     _resetNativeModuleCache();
     runtime = createFakeNativeEditorV2Runtime();
+
     for (const key of Object.keys(mockNativeModule)) {
         delete mockNativeModule[key];
     }
-    for (const [key, impl] of Object.entries(runtime.module)) {
+
+    for (const [ key, impl ] of Object.entries(runtime.module)) {
         mockNativeModule[key] = impl;
     }
 });

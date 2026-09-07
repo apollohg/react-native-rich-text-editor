@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import { Keyboard } from 'react-native';
-import { useEditorToolbarState } from './useEditorToolbarState';
-import { useEditorToolbarItems } from './useEditorToolbarItems';
+import { type useEditorToolbarState } from './useEditorToolbarState';
+import { type useEditorToolbarItems } from './useEditorToolbarItems';
 import {
     unregisterEditorToolbarFrame,
     registerEditorToolbarFrame,
@@ -80,10 +80,12 @@ export function useEditorToolbarInteractions(
     const publishToolbarFrame = useCallback(() => {
         const registrationId = registrationIdRef.current;
         const toolbar = rootRef.current;
+
         if (!publishesFocusFrames || registrationId == null || !toolbar) {
             if (registrationId != null) {
                 unregisterEditorToolbarFrame(registrationId);
             }
+
             return;
         }
 
@@ -92,6 +94,7 @@ export function useEditorToolbarInteractions(
         }
 
         const measuredFrameOwnerId = frameOwnerId;
+
         toolbar.measureInWindow((x, y, width, height) => {
             if (
                 !framePublisherMountedRef.current ||
@@ -100,21 +103,30 @@ export function useEditorToolbarInteractions(
             ) {
                 return;
             }
+
             registerEditorToolbarFrame(
                 registrationId,
                 { x, y, width, height },
                 measuredFrameOwnerId
             );
         });
-    }, [frameOwnerId, publishesFocusFrames]);
+    }, [ frameOwnerId,
+        frameOwnerIdRef,
+        framePublisherMountedRef,
+        publishesFocusFrames,
+        publishesFocusFramesRef,
+        registrationIdRef,
+        rootRef ]);
 
     const publishMenuFrame = useCallback(() => {
         const registrationId = menuRegistrationIdRef.current;
         const menuCard = menuCardRef.current;
+
         if (!publishesFocusFrames || menuState == null || registrationId == null || !menuCard) {
             if (registrationId != null) {
                 unregisterEditorToolbarFrame(registrationId);
             }
+
             return;
         }
 
@@ -124,6 +136,7 @@ export function useEditorToolbarInteractions(
 
         const measuredFrameOwnerId = frameOwnerId;
         const measuredMenuState = menuState;
+
         menuCard.measureInWindow((x, y, width, height) => {
             if (
                 !framePublisherMountedRef.current ||
@@ -133,25 +146,34 @@ export function useEditorToolbarInteractions(
             ) {
                 return;
             }
+
             registerEditorToolbarFrame(
                 registrationId,
                 { x, y, width, height },
                 measuredFrameOwnerId
             );
         });
-    }, [frameOwnerId, menuState, publishesFocusFrames]);
+    }, [ frameOwnerId,
+        frameOwnerIdRef,
+        framePublisherMountedRef,
+        menuCardRef,
+        menuRegistrationIdRef,
+        menuState,
+        menuStateRef,
+        publishesFocusFrames,
+        publishesFocusFramesRef ]);
 
     const publishToolbarFrames = useCallback(() => {
         publishToolbarFrame();
         publishMenuFrame();
-    }, [publishMenuFrame, publishToolbarFrame]);
+    }, [ publishMenuFrame, publishToolbarFrame ]);
 
     const cancelScheduledFramePublishes = useCallback(() => {
-        framePublishAnimationFramesRef.current.forEach((frame) => cancelAnimationFrame(frame));
+        framePublishAnimationFramesRef.current.forEach(frame => cancelAnimationFrame(frame));
         framePublishAnimationFramesRef.current = [];
-        framePublishTimeoutsRef.current.forEach((timeout) => clearTimeout(timeout));
+        framePublishTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
         framePublishTimeoutsRef.current = [];
-    }, []);
+    }, [ framePublishAnimationFramesRef, framePublishTimeoutsRef ]);
 
     const scheduleToolbarFramePublish = useCallback(() => {
         if (!publishesFocusFrames) {
@@ -162,32 +184,39 @@ export function useEditorToolbarInteractions(
         publishToolbarFrames();
 
         framePublishAnimationFramesRef.current.push(requestAnimationFrame(publishToolbarFrames));
-        KEYBOARD_FRAME_REMEASURE_DELAYS_MS.forEach((delay) => {
+
+        KEYBOARD_FRAME_REMEASURE_DELAYS_MS.forEach(delay => {
             framePublishTimeoutsRef.current.push(setTimeout(publishToolbarFrames, delay));
         });
-    }, [cancelScheduledFramePublishes, publishesFocusFrames, publishToolbarFrames]);
+    }, [ publishesFocusFrames,
+        cancelScheduledFramePublishes,
+        publishToolbarFrames,
+        framePublishAnimationFramesRef,
+        framePublishTimeoutsRef ]);
 
     const handleToolbarLayout = useCallback(() => {
         requestAnimationFrame(publishToolbarFrame);
-    }, [publishToolbarFrame]);
+    }, [ publishToolbarFrame ]);
 
     const handleMenuLayout = useCallback(() => {
         requestAnimationFrame(publishMenuFrame);
-    }, [publishMenuFrame]);
+    }, [ publishMenuFrame ]);
 
     useEffect(() => {
         if (!publishesFocusFrames) {
             const registrationId = registrationIdRef.current;
+
             if (registrationId != null) {
                 unregisterEditorToolbarFrame(registrationId);
             }
+
             return;
         }
 
         const frame = requestAnimationFrame(publishToolbarFrame);
+
         return () => cancelAnimationFrame(frame);
-    }, [
-        expandedGroupKey,
+    }, [ expandedGroupKey,
         menuState?.groupKey,
         publishesFocusFrames,
         publishToolbarFrame,
@@ -196,42 +225,55 @@ export function useEditorToolbarInteractions(
         endItems.length,
         windowHeight,
         windowWidth,
-    ]);
+        registrationIdRef ]);
 
     useEffect(() => {
         if (!publishesFocusFrames || menuState == null) {
             const registrationId = menuRegistrationIdRef.current;
+
             if (registrationId != null) {
                 unregisterEditorToolbarFrame(registrationId);
             }
+
             return;
         }
 
         const frame = requestAnimationFrame(publishMenuFrame);
+
         return () => cancelAnimationFrame(frame);
-    }, [menuState, publishesFocusFrames, publishMenuFrame, windowHeight, windowWidth]);
+    }, [ menuState,
+        publishesFocusFrames,
+        publishMenuFrame,
+        windowHeight,
+        windowWidth,
+        menuRegistrationIdRef ]);
 
     useEffect(() => {
         const registrationId = registrationIdRef.current;
         const menuRegistrationId = menuRegistrationIdRef.current;
+
         return () => {
             cancelScheduledFramePublishes();
+
             if (toolbarInteractionActiveRef.current) {
                 toolbarInteractionActiveRef.current = false;
                 endEditorToolbarInteraction();
             }
+
             if (registrationId != null) {
                 unregisterEditorToolbarFrame(registrationId);
             }
+
             if (menuRegistrationId != null) {
                 unregisterEditorToolbarFrame(menuRegistrationId);
             }
         };
-    }, [cancelScheduledFramePublishes]);
+    }, [ cancelScheduledFramePublishes, menuRegistrationIdRef, registrationIdRef, toolbarInteractionActiveRef ]);
 
     useEffect(() => {
         if (!publishesFocusFrames) {
             cancelScheduledFramePublishes();
+
             return;
         }
 
@@ -242,81 +284,88 @@ export function useEditorToolbarInteractions(
         ];
 
         return () => {
-            subscriptions.forEach((subscription) => subscription.remove());
+            subscriptions.forEach(subscription => subscription.remove());
             cancelScheduledFramePublishes();
         };
-    }, [cancelScheduledFramePublishes, publishesFocusFrames, scheduleToolbarFramePublish]);
+    }, [ cancelScheduledFramePublishes, publishesFocusFrames, scheduleToolbarFramePublish ]);
 
     useEffect(() => {
         if (expandedGroupKey != null && !groupsByKey.has(expandedGroupKey)) {
             setExpandedGroupKey(null);
         }
-    }, [expandedGroupKey, groupsByKey]);
+    }, [ expandedGroupKey, groupsByKey, setExpandedGroupKey ]);
 
     useEffect(() => {
         if (menuState != null && !groupsByKey.has(menuState.groupKey)) {
             setMenuState(null);
         }
-    }, [groupsByKey, menuState]);
+    }, [ groupsByKey, menuState, setMenuState ]);
 
     useEffect(() => {
         if (shouldRenderMentionSuggestions) {
             setExpandedGroupKey(null);
             setMenuState(null);
         }
-    }, [shouldRenderMentionSuggestions]);
+    }, [ setExpandedGroupKey, setMenuState, shouldRenderMentionSuggestions ]);
 
     const handleButtonPress = useCallback((button: ToolbarButton) => {
         button.action();
+
         if (button.groupKey) {
-            setExpandedGroupKey((current) => (current === button.groupKey ? null : current));
+            setExpandedGroupKey(current => (current === button.groupKey ? null : current));
         }
+
         setMenuState(null);
-    }, []);
+    }, [ setExpandedGroupKey, setMenuState ]);
 
     const handleToolbarPressIn = useCallback(() => {
         if (preserveEditorFocus && !toolbarInteractionActiveRef.current) {
             toolbarInteractionActiveRef.current = true;
             beginEditorToolbarInteraction();
         }
-    }, [preserveEditorFocus]);
+    }, [ preserveEditorFocus, toolbarInteractionActiveRef ]);
 
     const handleToolbarPressOut = useCallback(() => {
         if (preserveEditorFocus && toolbarInteractionActiveRef.current) {
             toolbarInteractionActiveRef.current = false;
             endEditorToolbarInteraction();
         }
-    }, [preserveEditorFocus]);
+    }, [ preserveEditorFocus, toolbarInteractionActiveRef ]);
 
     const handleGroupPress = useCallback((group: ToolbarGroupButton) => {
         if (group.isDisabled) {
             return;
         }
+
         if (group.presentation === 'expand') {
             setMenuState(null);
-            setExpandedGroupKey((current) => (current === group.key ? null : group.key));
+            setExpandedGroupKey(current => (current === group.key ? null : group.key));
+
             return;
         }
 
         const anchor = groupButtonRefs.current.get(group.key);
+
         if (!anchor) {
             return;
         }
+
         anchor.measureInWindow((x, y, width, height) => {
             setExpandedGroupKey(null);
-            setMenuState((current) =>
+
+            setMenuState(current =>
                 current?.groupKey === group.key
                     ? null
                     : {
-                          groupKey: group.key,
-                          x,
-                          y,
-                          width,
-                          height,
-                      }
-            );
+                        groupKey: group.key,
+                        x,
+                        y,
+                        width,
+                        height,
+                    });
         });
-    }, []);
+    }, [ groupButtonRefs, setExpandedGroupKey, setMenuState ]);
+
     return {
         handleToolbarPressIn,
         handleToolbarPressOut,

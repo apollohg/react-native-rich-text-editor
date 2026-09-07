@@ -82,29 +82,31 @@ export function areToolbarFrameListsEqual(
     if (left.length !== right.length) {
         return false;
     }
+
     return left.every((frame, index) => areToolbarFramesEqual(frame, right[index]));
 }
 
 export function notifyEditorToolbarFrameListeners() {
-    editorToolbarFrameListeners.forEach((listener) => listener());
+    editorToolbarFrameListeners.forEach(listener => listener());
 }
 
 export function notifyEditorToolbarMentionStateListeners() {
-    editorToolbarMentionStateListeners.forEach((listener) => listener());
+    editorToolbarMentionStateListeners.forEach(listener => listener());
 }
 
 export function getEditorToolbarFramesSnapshot(ownerId: number): EditorToolbarFrame[] {
     return Array.from(editorToolbarFrames.values())
         .filter(
-            (registration) =>
+            registration =>
                 registration.ownerId === ownerId ||
                 (registration.ownerId == null && activeEditorToolbarFrameOwnerId === ownerId)
         )
-        .map((registration) => registration.frame);
+        .map(registration => registration.frame);
 }
 
 export function subscribeEditorToolbarMentionState(listener: EditorToolbarFrameListener) {
     editorToolbarMentionStateListeners.add(listener);
+
     return () => {
         editorToolbarMentionStateListeners.delete(listener);
     };
@@ -131,10 +133,12 @@ export function registerEditorToolbarFrame(
         if (editorToolbarFrames.delete(id)) {
             notifyEditorToolbarFrameListeners();
         }
+
         return;
     }
 
     const currentRegistration = editorToolbarFrames.get(id);
+
     if (
         currentRegistration?.ownerId === ownerId &&
         areToolbarFramesEqual(currentRegistration.frame, frame)
@@ -174,33 +178,36 @@ export function setActiveEditorToolbarFrameOwnerForEditor(ownerId: number, isAct
     const nextOwnerId = isActive
         ? ownerId
         : activeEditorToolbarFrameOwnerId === ownerId
-          ? null
-          : activeEditorToolbarFrameOwnerId;
+            ? null
+            : activeEditorToolbarFrameOwnerId;
+
     if (activeEditorToolbarFrameOwnerId === nextOwnerId) {
         return;
     }
+
     activeEditorToolbarFrameOwnerId = nextOwnerId;
     notifyEditorToolbarFrameListeners();
 }
 
 export function useEditorToolbarFrames(ownerId: number): readonly EditorToolbarFrame[] {
-    const [frames, setFrames] = useState<EditorToolbarFrame[]>(() =>
-        getEditorToolbarFramesSnapshot(ownerId)
-    );
+    const [ frames, setFrames ] = useState<EditorToolbarFrame[]>(() =>
+        getEditorToolbarFramesSnapshot(ownerId));
 
     useEffect(() => {
         const listener = () => {
             const nextFrames = getEditorToolbarFramesSnapshot(ownerId);
-            setFrames((currentFrames) =>
-                areToolbarFrameListsEqual(currentFrames, nextFrames) ? currentFrames : nextFrames
-            );
+
+            setFrames(currentFrames =>
+                areToolbarFrameListsEqual(currentFrames, nextFrames) ? currentFrames : nextFrames);
         };
+
         editorToolbarFrameListeners.add(listener);
         listener();
+
         return () => {
             editorToolbarFrameListeners.delete(listener);
         };
-    }, [ownerId]);
+    }, [ ownerId ]);
 
     return frames;
 }
@@ -213,8 +220,10 @@ export function setEditorToolbarMentionState(
         if (editorToolbarMentionState?.ownerId !== ownerId) {
             return;
         }
+
         editorToolbarMentionState = null;
         notifyEditorToolbarMentionStateListeners();
+
         return;
     }
 
@@ -222,6 +231,7 @@ export function setEditorToolbarMentionState(
         ownerId,
         ...state,
     };
+
     notifyEditorToolbarMentionStateListeners();
 }
 

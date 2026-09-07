@@ -118,7 +118,7 @@ describe('EditorToolbar', () => {
                     nodes: {},
                     commands: {},
                     allowedMarks: [],
-                    insertableNodes: ['hard_break'],
+                    insertableNodes: [ 'hard_break' ],
                 },
             });
 
@@ -129,6 +129,7 @@ describe('EditorToolbar', () => {
 
         it('image button fires onRequestImage when image insertion is allowed', () => {
             const onRequestImage = jest.fn();
+
             const { getByLabelText } = renderToolbar({
                 toolbarItems: [
                     {
@@ -138,7 +139,7 @@ describe('EditorToolbar', () => {
                     },
                 ],
                 activeState: {
-                    insertableNodes: ['image'],
+                    insertableNodes: [ 'image' ],
                 },
                 onRequestImage,
             });
@@ -151,6 +152,7 @@ describe('EditorToolbar', () => {
         it('custom mark and node buttons use the generic handlers', () => {
             const onToggleMark = jest.fn();
             const onInsertNodeType = jest.fn();
+
             const { getByLabelText } = renderToolbar({
                 toolbarItems: [
                     {
@@ -175,8 +177,8 @@ describe('EditorToolbar', () => {
                     marks: {},
                     nodes: {},
                     commands: {},
-                    allowedMarks: ['highlight'],
-                    insertableNodes: ['mention'],
+                    allowedMarks: [ 'highlight' ],
+                    insertableNodes: [ 'mention' ],
                 },
                 onToggleMark,
                 onInsertNodeType,
@@ -191,6 +193,7 @@ describe('EditorToolbar', () => {
 
         it('custom action buttons use onToolbarAction', () => {
             const onToolbarAction = jest.fn();
+
             const { getByLabelText } = renderToolbar({
                 toolbarItems: [
                     {

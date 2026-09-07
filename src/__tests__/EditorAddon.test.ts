@@ -12,17 +12,24 @@ describe('addon descriptors', () => {
     it('accepts readonly conditional arrays and preserves live mention callbacks', () => {
         const onQueryChange = jest.fn();
         const mentions = createMentionsAddon({ onQueryChange });
-        const addons: EditorAddons = [false, mentions, null, highlighting, undefined] as const;
+
+        const addons: EditorAddons = [ false,
+            mentions,
+            null,
+            highlighting,
+            undefined ] as const;
+
         expect(normalizeEditorAddons(addons)).toEqual({
             mentions: { onQueryChange },
             codeHighlighting: highlighting.options,
         });
+
         expect(normalizeEditorAddons([])).toEqual({});
         expect(normalizeEditorAddons()).toEqual({});
     });
 
     it('copies and freezes configuration without freezing caller data', () => {
-        const options = { suggestions: [{ key: 'alice', title: 'Alice', attrs: { id: '1' } }] };
+        const options = { suggestions: [ { key: 'alice', title: 'Alice', attrs: { id: '1' } } ] };
         const descriptor = createMentionsAddon(options);
         options.suggestions[0].attrs.id = '2';
         expect(descriptor.options.suggestions?.[0].attrs?.id).toBe('1');
@@ -32,14 +39,14 @@ describe('addon descriptors', () => {
     });
 
     it.each([
-        [[highlighting, highlighting], 'duplicate'],
-        [[{ ...highlighting, version: 2 }], 'version'],
-        [[{ ...highlighting, capability: 'unknown' }], 'capability'],
-        [[{ ...highlighting, id: 'other' }], 'id'],
-        [[{ ...highlighting, options: { provider: '', theme: 'dark' } }], 'provider'],
-        [[{ ...highlighting, options: { provider: 'syntect', theme: '' } }], 'theme'],
-        [[[highlighting]], 'descriptor'],
-        [{ mentions: {} }, 'array'],
+        [ [ highlighting, highlighting ], 'duplicate' ],
+        [ [ { ...highlighting, version: 2 } ], 'version' ],
+        [ [ { ...highlighting, capability: 'unknown' } ], 'capability' ],
+        [ [ { ...highlighting, id: 'other' } ], 'id' ],
+        [ [ { ...highlighting, options: { provider: '', theme: 'dark' } } ], 'provider' ],
+        [ [ { ...highlighting, options: { provider: 'syntect', theme: '' } } ], 'theme' ],
+        [ [ [ highlighting ] ], 'descriptor' ],
+        [ { mentions: {} }, 'array' ],
     ])('rejects invalid descriptors %#', (addons, message) => {
         expect(() => normalizeEditorAddons(addons as EditorAddons)).toThrow(
             new RegExp(message, 'i')
@@ -52,13 +59,16 @@ describe('addon descriptors', () => {
             onQueryChange: jest.fn(),
             resolveTheme: () => undefined,
         });
-        expect(JSON.parse(serializeEditorAddons([descriptor, highlighting])!)).toEqual({
+
+        expect(JSON.parse(serializeEditorAddons([ descriptor, highlighting ])!)).toEqual({
             mentions: { trigger: '@', suggestions: [], resolveTheme: true },
             codeHighlighting: highlighting.options,
         });
-        expect(serializeEditorAddons([highlighting])).toBe(
+
+        expect(serializeEditorAddons([ highlighting ])).toBe(
             JSON.stringify({ codeHighlighting: highlighting.options })
         );
+
         expect(serializeEditorAddons([])).toBeUndefined();
     });
 });

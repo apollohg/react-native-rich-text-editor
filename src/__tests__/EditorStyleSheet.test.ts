@@ -28,9 +28,11 @@ describe('EditorStyleSheet', () => {
 
     it('supports nested conditional styles without mutating inputs', () => {
         const base = Object.freeze({ padding: 12, marginVertical: 8, color: 'red' });
+
         const theme = EditorStyleSheet.create({
-            paragraph: [base, false, [null, { paddingLeft: 0 }]],
+            paragraph: [ base, false, [ null, { paddingLeft: 0 } ] ],
         });
+
         expect(styles(theme).paragraph).toEqual({
             paddingTop: 12,
             paddingRight: 12,
@@ -40,12 +42,13 @@ describe('EditorStyleSheet', () => {
             marginBottom: 8,
             color: '#ff0000ff',
         });
+
         expect(base).toEqual({ padding: 12, marginVertical: 8, color: 'red' });
     });
 
     it('lets explicit undefined remove a composed override', () => {
         expect(
-            styles({ paragraph: [{ color: 'red', marginBottom: 12 }, { color: undefined }] })
+            styles({ paragraph: [ { color: 'red', marginBottom: 12 }, { color: undefined } ] })
         ).toEqual({ paragraph: { marginBottom: 12 } });
     });
 
@@ -65,11 +68,11 @@ describe('EditorStyleSheet', () => {
     it('normalizes marker and checkbox state styles', () => {
         expect(
             styles({
-                listMarker: { ordered: { schemes: ['decimal', 'lowerRoman'], suffix: ')' } },
+                listMarker: { ordered: { schemes: [ 'decimal', 'lowerRoman' ], suffix: ')' } },
                 taskCheckbox: { borderWidth: 1, checked: { backgroundColor: 'blue' } },
             })
         ).toEqual({
-            listMarker: { ordered: { schemes: ['decimal', 'lowerRoman'], suffix: ')' } },
+            listMarker: { ordered: { schemes: [ 'decimal', 'lowerRoman' ], suffix: ')' } },
             taskCheckbox: {
                 borderTopWidth: 1,
                 borderRightWidth: 1,
@@ -81,27 +84,27 @@ describe('EditorStyleSheet', () => {
     });
 
     it.each([
-        [{ paragraph: { padding: -1 } }, 'paragraph.padding'],
-        [{ image: { resizeMode: 'repeat' } }, 'image.resizeMode'],
-        [{ link: { marginBottom: 4 } }, 'link.marginBottom'],
-        [{ paragraph: { color: 'not-a-color' } }, 'paragraph.color'],
-        [{ paragraph: { fontSize: Infinity } }, 'paragraph.fontSize'],
-        [{ paragraph: { flex: 1 } }, 'paragraph.flex'],
-        [{ paragraphs: {} }, 'paragraphs'],
-        [{ paragraph: { fontWeight: 650 } }, 'paragraph.fontWeight'],
+        [ { paragraph: { padding: -1 } }, 'paragraph.padding' ],
+        [ { image: { resizeMode: 'repeat' } }, 'image.resizeMode' ],
+        [ { link: { marginBottom: 4 } }, 'link.marginBottom' ],
+        [ { paragraph: { color: 'not-a-color' } }, 'paragraph.color' ],
+        [ { paragraph: { fontSize: Infinity } }, 'paragraph.fontSize' ],
+        [ { paragraph: { flex: 1 } }, 'paragraph.flex' ],
+        [ { paragraphs: {} }, 'paragraphs' ],
+        [ { paragraph: { fontWeight: 650 } }, 'paragraph.fontWeight' ],
     ])('rejects invalid styles with their property path', (theme, path) => {
         expect(() => serializeEditorTheme(theme as never)).toThrow(path);
     });
 
     it('rejects invalid entries hidden behind later array overrides', () => {
         expect(() =>
-            serializeEditorTheme({ paragraph: [{ padding: -1 }, { padding: 1 }] })
-        ).toThrow('paragraph.padding');
+            serializeEditorTheme({ paragraph: [ { padding: -1 }, { padding: 1 } ] })).toThrow('paragraph.padding');
     });
 
     it('omits an empty theme and preserves separate toolbar settings', () => {
         expect(serializeEditorTheme(undefined)).toBeUndefined();
-        expect(serializeEditorTheme({ paragraph: [false, undefined] })).toBeUndefined();
+        expect(serializeEditorTheme({ paragraph: [ false, undefined ] })).toBeUndefined();
+
         expect(JSON.parse(serializeEditorTheme({ toolbar: { height: 44 } })!)).toEqual({
             version: 1,
             toolbar: { height: 44 },

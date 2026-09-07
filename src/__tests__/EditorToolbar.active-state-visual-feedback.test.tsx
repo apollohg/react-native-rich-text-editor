@@ -9,12 +9,13 @@ describe('EditorToolbar', () => {
                     marks: { bold: true },
                     nodes: {},
                     commands: {},
-                    allowedMarks: ['bold', 'italic', 'underline', 'strike'],
-                    insertableNodes: ['horizontalRule'],
+                    allowedMarks: [ 'bold', 'italic', 'underline', 'strike' ],
+                    insertableNodes: [ 'horizontalRule' ],
                 },
             });
 
             const boldButton = getByLabelText('Bold');
+
             expect(boldButton.props.accessibilityState).toEqual(
                 expect.objectContaining({ selected: true })
             );
@@ -26,12 +27,13 @@ describe('EditorToolbar', () => {
                     marks: { italic: true },
                     nodes: {},
                     commands: {},
-                    allowedMarks: ['bold', 'italic', 'underline', 'strike'],
-                    insertableNodes: ['horizontalRule'],
+                    allowedMarks: [ 'bold', 'italic', 'underline', 'strike' ],
+                    insertableNodes: [ 'horizontalRule' ],
                 },
             });
 
             const italicButton = getByLabelText('Italic');
+
             expect(italicButton.props.accessibilityState).toEqual(
                 expect.objectContaining({ selected: true })
             );
@@ -43,12 +45,13 @@ describe('EditorToolbar', () => {
                     marks: { underline: true },
                     nodes: {},
                     commands: {},
-                    allowedMarks: ['bold', 'italic', 'underline', 'strike'],
-                    insertableNodes: ['horizontalRule'],
+                    allowedMarks: [ 'bold', 'italic', 'underline', 'strike' ],
+                    insertableNodes: [ 'horizontalRule' ],
                 },
             });
 
             const underlineButton = getByLabelText('Underline');
+
             expect(underlineButton.props.accessibilityState).toEqual(
                 expect.objectContaining({ selected: true })
             );
@@ -60,12 +63,13 @@ describe('EditorToolbar', () => {
                     marks: { strike: true },
                     nodes: {},
                     commands: {},
-                    allowedMarks: ['bold', 'italic', 'underline', 'strike'],
-                    insertableNodes: ['horizontalRule'],
+                    allowedMarks: [ 'bold', 'italic', 'underline', 'strike' ],
+                    insertableNodes: [ 'horizontalRule' ],
                 },
             });
 
             const strikeButton = getByLabelText('Strikethrough');
+
             expect(strikeButton.props.accessibilityState).toEqual(
                 expect.objectContaining({ selected: true })
             );
@@ -77,12 +81,13 @@ describe('EditorToolbar', () => {
                     marks: {},
                     nodes: { bullet_list: true },
                     commands: {},
-                    allowedMarks: ['bold', 'italic', 'underline', 'strike'],
-                    insertableNodes: ['horizontal_rule'],
+                    allowedMarks: [ 'bold', 'italic', 'underline', 'strike' ],
+                    insertableNodes: [ 'horizontal_rule' ],
                 },
             });
 
             const bulletButton = getByLabelText('Bullet List');
+
             expect(bulletButton.props.accessibilityState).toEqual(
                 expect.objectContaining({ selected: true })
             );
@@ -94,12 +99,13 @@ describe('EditorToolbar', () => {
                     marks: {},
                     nodes: { ordered_list: true },
                     commands: {},
-                    allowedMarks: ['bold', 'italic', 'underline', 'strike'],
-                    insertableNodes: ['horizontal_rule'],
+                    allowedMarks: [ 'bold', 'italic', 'underline', 'strike' ],
+                    insertableNodes: [ 'horizontal_rule' ],
                 },
             });
 
             const orderedButton = getByLabelText('Ordered List');
+
             expect(orderedButton.props.accessibilityState).toEqual(
                 expect.objectContaining({ selected: true })
             );
@@ -107,6 +113,7 @@ describe('EditorToolbar', () => {
 
         it('link button gets selected state when link mark is active', () => {
             const onRequestLink = jest.fn();
+
             const { getByLabelText } = renderToolbar({
                 toolbarItems: [
                     { type: 'link', label: 'Link', icon: { type: 'default', id: 'link' } },
@@ -116,13 +123,14 @@ describe('EditorToolbar', () => {
                     markAttrs: { link: { href: 'https://example.com' } },
                     nodes: {},
                     commands: {},
-                    allowedMarks: ['link'],
+                    allowedMarks: [ 'link' ],
                     insertableNodes: [],
                 },
                 onRequestLink,
             });
 
             const linkButton = getByLabelText('Link');
+
             expect(linkButton.props.accessibilityState).toEqual(
                 expect.objectContaining({ selected: true })
             );
@@ -144,17 +152,19 @@ describe('EditorToolbar', () => {
                     marks: { bold: true, italic: true },
                     nodes: {},
                     commands: {},
-                    allowedMarks: ['bold', 'italic', 'underline', 'strike'],
-                    insertableNodes: ['horizontalRule'],
+                    allowedMarks: [ 'bold', 'italic', 'underline', 'strike' ],
+                    insertableNodes: [ 'horizontalRule' ],
                 },
             });
 
             expect(getByLabelText('Bold').props.accessibilityState).toEqual(
                 expect.objectContaining({ selected: true })
             );
+
             expect(getByLabelText('Italic').props.accessibilityState).toEqual(
                 expect.objectContaining({ selected: true })
             );
+
             expect(getByLabelText('Underline').props.accessibilityState.selected).toBeFalsy();
         });
     });

@@ -37,21 +37,31 @@ export type EditorAddonEntry = EditorAddon | false | null | undefined;
 export type EditorAddons = readonly EditorAddonEntry[];
 
 function copyConfiguration<T>(value: T, ancestors = new Set<object>()): T {
-    if (value === null || typeof value !== 'object') return value;
-    if (ancestors.has(value)) throw new Error('Addon configuration must not contain cycles.');
+    if (value === null || typeof value !== 'object') {
+        return value;
+    }
+
+    if (ancestors.has(value)) {
+        throw new Error('Addon configuration must not contain cycles.');
+    }
+
     if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype) {
         throw new Error('Addon configuration must contain only plain objects and arrays.');
     }
+
     ancestors.add(value);
+
     const copy = Array.isArray(value)
-        ? value.map((entry) => copyConfiguration(entry, ancestors))
+        ? value.map((entry: unknown) => copyConfiguration(entry, ancestors))
         : Object.fromEntries(
-              Object.entries(value).map(([key, entry]) => [
-                  key,
-                  copyConfiguration(entry, ancestors),
-              ])
-          );
+            Object.entries(value).map(([ key, entry ]) => [
+                key,
+                copyConfiguration(entry, ancestors),
+            ])
+        );
+
     ancestors.delete(value);
+
     return Object.freeze(copy) as T;
 }
 

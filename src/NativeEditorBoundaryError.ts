@@ -41,12 +41,12 @@ export const NATIVE_EDITOR_ERROR_DOMAINS = [
 /**
  * Which subsystem raised a failure:
  *
- * - `boundary` — the value never reached the engine (bad config, oversized input).
- * - `document` — the document or schema was rejected.
- * - `operation` — a mutation could not be applied (stale revision, invalid position).
- * - `lifecycle` — the session was destroyed or is being destroyed.
- * - `snapshot` — a room snapshot could not be exported or restored.
- * - `transport` — collaboration transport failure.
+ * - `boundary` : the value never reached the engine (bad config, oversized input).
+ * - `document` : the document or schema was rejected.
+ * - `operation` : a mutation could not be applied (stale revision, invalid position).
+ * - `lifecycle` : the session was destroyed or is being destroyed.
+ * - `snapshot` : a room snapshot could not be exported or restored.
+ * - `transport` : collaboration transport failure.
  */
 export type NativeEditorErrorDomain = (typeof NATIVE_EDITOR_ERROR_DOMAINS)[number];
 
@@ -86,7 +86,7 @@ export interface NativeEditorError {
 }
 
 /**
- * A value rejected before it reached the engine — an out-of-range resource
+ * A value rejected before it reached the engine : an out-of-range resource
  * limit, an invalid image policy, an oversized input. Thrown synchronously by
  * the validating helpers in this package.
  */
@@ -111,9 +111,11 @@ export function parseNativeBoundaryError(value: unknown): NativeEditorBoundaryEr
     const envelope = value as { error?: Record<string, unknown> };
     const nativeError = envelope?.error;
     const code = nativeError?.code;
+
     if (typeof code !== 'string' || typeof nativeError?.message !== 'string') {
         return null;
     }
+
     return new NativeEditorBoundaryError(
         code,
         nativeError.message,
@@ -126,7 +128,10 @@ export function parseNativeBoundaryError(value: unknown): NativeEditorBoundaryEr
 }
 
 function nullableCanonicalDecimal(value: unknown): string | null | undefined {
-    if (value == null) return null;
+    if (value == null) {
+        return null;
+    }
+
     return normalizeNativeEditorV2U64(value) ?? undefined;
 }
 
@@ -137,12 +142,21 @@ function parseDetails(
         if (typeof nativeError.details !== 'object' || Array.isArray(nativeError.details)) {
             return undefined;
         }
+
         return nativeError.details as Record<string, unknown>;
     }
-    if (nativeError.detailsJson == null) return null;
-    if (typeof nativeError.detailsJson !== 'string') return undefined;
+
+    if (nativeError.detailsJson == null) {
+        return null;
+    }
+
+    if (typeof nativeError.detailsJson !== 'string') {
+        return undefined;
+    }
+
     try {
         const details: unknown = JSON.parse(nativeError.detailsJson);
+
         return details != null && typeof details === 'object' && !Array.isArray(details)
             ? (details as Record<string, unknown>)
             : undefined;
@@ -183,9 +197,13 @@ function hasValidKnownDetails(code: string, details: Record<string, unknown> | n
 export function normalizeNativeEditorV2Error(value: unknown): NativeEditorError | null {
     const envelope = value as { error?: unknown };
     const nativeError = envelope?.error as Record<string, unknown> | undefined;
-    if (nativeError == null || typeof nativeError !== 'object') return null;
+
+    if (nativeError == null || typeof nativeError !== 'object') {
+        return null;
+    }
 
     const { domain, code, message } = nativeError;
+
     if (
         typeof domain !== 'string' ||
         !NATIVE_EDITOR_ERROR_DOMAINS.includes(domain as NativeEditorErrorDomain) ||
@@ -200,6 +218,7 @@ export function normalizeNativeEditorV2Error(value: unknown): NativeEditorError 
     const limit = nullableCanonicalDecimal(nativeError.limit);
     const actual = nullableCanonicalDecimal(nativeError.actual);
     const details = parseDetails(nativeError);
+
     if (
         requestId === undefined ||
         operationIndex === undefined ||
@@ -242,11 +261,17 @@ export function isNativeEditorV2NonRetryableCode(code: string): boolean {
 /** Base class for every typed error raised from a normalized FFI v2 error record. */
 export class NativeEditorErrorBase extends Error {
     readonly domain: NativeEditorErrorDomain;
+
     readonly code: NativeEditorBoundaryErrorCode;
+
     readonly requestId: string | null;
+
     readonly operationIndex: string | null;
+
     readonly limit: string | null;
+
     readonly actual: string | null;
+
     readonly details: Record<string, unknown> | null;
 
     constructor(
@@ -340,6 +365,8 @@ export function nativeEditorV2ErrorToException(
     if (isNativeEditorV2NonRetryableCode(error.code)) {
         return new NativeEditorNonRetryableError(error);
     }
+
     const ErrorClass = NATIVE_EDITOR_V2_DOMAIN_ERROR_CLASSES[error.domain];
+
     return new ErrorClass(error);
 }

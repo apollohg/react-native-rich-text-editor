@@ -2,6 +2,7 @@ import { requireNativeModule } from 'expo-modules-core';
 import type { CodeHighlightingAddon } from '@apollohg/react-native-rich-text-editor';
 
 const nativeModule = requireNativeModule<{ initialize(): number }>('NativeCodeHighlighting');
+
 if (nativeModule.initialize() !== 1) {
     throw new Error(
         'Code highlighting requires native provider interface version 1. Rebuild the app.'
@@ -32,6 +33,7 @@ export function createCodeHighlightingAddon(
             'Unsupported code-highlighting theme. Use a name from codeHighlightingThemes.'
         );
     }
+
     return Object.freeze({
         id: 'code-highlighting',
         version: 1,

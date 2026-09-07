@@ -13,16 +13,17 @@ describe('mentions addon helpers', () => {
         const once = withMentionsSchema(tiptapCompatibleSchema);
         const twice = withMentionsSchema(once);
 
-        expect(once.nodes.filter((node) => node.name === MENTION_NODE_NAME)).toHaveLength(1);
-        expect(twice.nodes.filter((node) => node.name === MENTION_NODE_NAME)).toHaveLength(1);
-        expect(once.nodes.find((node) => node.name === MENTION_NODE_NAME)).toEqual({
+        expect(once.nodes.filter(node => node.name === MENTION_NODE_NAME)).toHaveLength(1);
+        expect(twice.nodes.filter(node => node.name === MENTION_NODE_NAME)).toHaveLength(1);
+
+        expect(once.nodes.find(node => node.name === MENTION_NODE_NAME)).toEqual({
             name: 'mention',
             content: '',
             group: 'inline',
             role: 'inline',
             isVoid: true,
             // The mention node intentionally round-trips arbitrary app-defined
-            // metadata (id/kind/mentionSuggestionChar/mentionTheme/etc. — see
+            // metadata (id/kind/mentionSuggestionChar/mentionTheme/etc. : see
             // MentionSuggestion.attrs and resolveSelectionAttrs). Rust's
             // set_json ingestion filters attrs to schema-declared keys unless
             // this flag opts the node out of that filter.
@@ -115,7 +116,7 @@ describe('mentions addon helpers', () => {
     it('marks mention configs that require JS-side selection attr resolution', () => {
         const serialized = serializeEditorAddons([
             createMentionsAddon({
-                suggestions: [{ key: 'u1', title: 'Alice' }],
+                suggestions: [ { key: 'u1', title: 'Alice' } ],
                 resolveSelectionAttrs: () => ({ source: 'js' }),
             }),
         ]);
@@ -144,7 +145,7 @@ describe('mentions addon helpers', () => {
     it('marks mention configs that require JS-side theme resolution', () => {
         const serialized = serializeEditorAddons([
             createMentionsAddon({
-                suggestions: [{ key: 'u1', title: 'Alice' }],
+                suggestions: [ { key: 'u1', title: 'Alice' } ],
                 resolveTheme: () => ({ textColor: '#445566' }),
             }),
         ]);
@@ -202,9 +203,10 @@ describe('mentions addon helpers', () => {
                 { type: 'text', text: ' ' },
             ],
         });
+
         expect(buildMentionFragmentJson(attrs, undefined, { trailingSpace: false })).toEqual({
             type: 'doc',
-            content: [{ type: 'mention', attrs }],
+            content: [ { type: 'mention', attrs } ],
         });
     });
 

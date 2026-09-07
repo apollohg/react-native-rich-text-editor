@@ -1,14 +1,8 @@
 import { requireNativeViewManager } from 'expo-modules-core';
-import React from 'react';
-import { StyleSheet } from 'react-native';
-import {
-    type NativeEditorViewProps,
-    type NativeEditorViewHandle,
-} from './RichTextEditorNativeTypes';
 
-export const NativeEditorView = requireNativeViewManager('NativeEditor') as React.ComponentType<
-    NativeEditorViewProps & React.RefAttributes<NativeEditorViewHandle>
->;
+import { StyleSheet } from 'react-native';
+
+export const NativeEditorView = requireNativeViewManager('NativeEditor');
 
 export const styles = StyleSheet.create({
     container: {

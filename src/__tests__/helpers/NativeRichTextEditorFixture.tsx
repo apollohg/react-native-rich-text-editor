@@ -28,6 +28,7 @@ jest.mock('expo-modules-core', () => {
     const MockNativeView = React.forwardRef(
         (props: Record<string, unknown>, ref: React.Ref<unknown>) => {
             mockNativeViewRender();
+
             React.useImperativeHandle(
                 ref,
                 () => ({
@@ -43,9 +44,11 @@ jest.mock('expo-modules-core', () => {
                 }),
                 []
             );
+
             return React.createElement(View, { testID: 'native-editor-view', ...props });
         }
     );
+
     MockNativeView.displayName = 'MockNativeView';
 
     return {
@@ -57,23 +60,18 @@ jest.mock('expo-modules-core', () => {
 jest.mock('../../schemas', () => {
     const actual = jest.requireActual('../../schemas');
     const mockResolveDocumentDescriptor = jest.fn(actual.resolveDocumentDescriptor);
+
     return {
         ...actual,
         resolveDocumentDescriptor: mockResolveDocumentDescriptor,
     };
 });
 
-import React, { createRef, StrictMode } from 'react';
+import React from 'react';
 
-import { Platform, StyleSheet, View } from 'react-native';
+import { View } from 'react-native';
 
-import { render, act, fireEvent } from '@testing-library/react-native';
-
-import {
-    NativeRichTextEditor,
-    type NativeRichTextEditorProps,
-    type NativeRichTextEditorRef,
-} from '../../NativeRichTextEditor';
+import { act } from '@testing-library/react-native';
 
 import {
     createNativeEditorDocumentHandle,
@@ -84,35 +82,15 @@ import {
     type RenderElement,
 } from '../../NativeEditorBridge';
 
-import {
-    NativeEditorEngineBoundaryError,
-    NativeEditorLifecycleError,
-    NativeEditorNonRetryableError,
-    NativeEditorOperationError,
-} from '../../NativeEditorBoundaryError';
-
-import * as EditorUpdateRevision from '../../EditorUpdateRevision';
-
 import { _resetEditorToolbarFrameRegistryForTests } from '../../EditorToolbar';
 
-import { createYjsCollaborationController, useYjsCollaboration } from '../../YjsCollaboration';
+import { createYjsCollaborationController } from '../../YjsCollaboration';
 
-import {
-    createFakeNativeEditorV2Runtime,
-    fakeDocForText,
-    V2_FAKE_STEP1_FRAME,
-    V2_FAKE_STEP2_FRAME,
-    V2_FAKE_UPDATE_FRAME,
-    type FakeNativeEditorV2Runtime,
-} from './nativeEditorV2Fake';
+import { createFakeNativeEditorV2Runtime, fakeDocForText, type FakeNativeEditorV2Runtime } from './nativeEditorV2Fake';
 
-import { withMentionsSchema } from '../../addons';
+import { defineAtomNode, type AtomComponentProps } from '../../atoms';
 
-import { defineAtomNode, withAtomsSchema, type AtomComponentProps } from '../../atoms';
-
-import { AtomUpdateAttrsError, DEFAULT_ATOM_CHIP_HEIGHT } from '../../atomInstances';
-
-import { tiptapCompatibleSchema, type SchemaDefinition } from '../../schemas';
+import { type SchemaDefinition } from '../../schemas';
 
 export const mockResolveDocumentDescriptor = require('../../schemas')
     .resolveDocumentDescriptor as jest.Mock;
@@ -120,10 +98,12 @@ export const mockResolveDocumentDescriptor = require('../../schemas')
 export function deferred<T>() {
     let resolve!: (value: T) => void;
     let reject!: (error: unknown) => void;
+
     const promise = new Promise<T>((resolvePromise, rejectPromise) => {
         resolve = resolvePromise;
         reject = rejectPromise;
     });
+
     return { promise, resolve, reject };
 }
 
@@ -131,7 +111,9 @@ export const HANDLE_OWNED_ARTICLE_SCHEMA: SchemaDefinition = {
     nodes: [
         { name: 'article', content: '(title | image)+', role: 'doc' },
         { name: 'title', content: 'inline*', group: 'block', role: 'textBlock' },
-        { name: 'image', content: '', group: 'block', role: 'block', attrs: { src: {} } },
+        {
+            name: 'image', content: '', group: 'block', role: 'block', attrs: { src: {} },
+        },
         { name: 'text', content: '', group: 'inline', role: 'text' },
     ],
     marks: [],
@@ -160,19 +142,19 @@ export function createV2RoomHandle(options: { withSnapshot?: boolean } = {}) {
             lineageId: 'lineage-1',
             ...(options.withSnapshot
                 ? {
-                      snapshot: {
-                          metadata: {
-                              formatVersion: 1,
-                              documentId: 'doc-1',
-                              lineageId: 'lineage-1',
-                              fragmentName: 'prosemirror',
-                              schemaFingerprint: 'fakefingerprint',
-                          },
-                          encodedState: new TextEncoder().encode(
-                              JSON.stringify({ doc: V2_INITIAL_DOC, revision: 7 })
-                          ),
-                      },
-                  }
+                    snapshot: {
+                        metadata: {
+                            formatVersion: 1,
+                            documentId: 'doc-1',
+                            lineageId: 'lineage-1',
+                            fragmentName: 'prosemirror',
+                            schemaFingerprint: 'fakefingerprint',
+                        },
+                        encodedState: new TextEncoder().encode(
+                            JSON.stringify({ doc: V2_INITIAL_DOC, revision: 7 })
+                        ),
+                    },
+                }
                 : {}),
         },
     });
@@ -195,6 +177,7 @@ export function setupV2Controller(handle: NativeEditorDocumentHandle) {
         handle,
         transport: { url: V2_TRANSPORT_URL, connect: false },
     });
+
     return { controller };
 }
 
@@ -202,28 +185,31 @@ beforeEach(() => {
     jest.useFakeTimers();
     _resetNativeModuleCache();
     v2Runtime = createFakeNativeEditorV2Runtime();
+
     for (const key of Object.keys(mockNativeModule)) {
         delete mockNativeModule[key];
     }
+
     Object.assign(mockNativeModule, v2Runtime.module);
     mockNativeFocus.mockClear();
     mockNativeBlur.mockClear();
     mockNativeGetCaretRect.mockReset();
     mockNativeViewRender.mockClear();
     mockExternalCompositionSupported = true;
+
     mockNativeBeginExternalComposition
         .mockReset()
-        .mockImplementation(async (sessionId: string) =>
-            JSON.stringify({ version: 1, type: 'active', sessionId })
-        );
+        .mockImplementation(async(sessionId: string) =>
+            JSON.stringify({ version: 1, type: 'active', sessionId }));
+
     mockNativeUpdateExternalComposition
         .mockReset()
-        .mockImplementation(async (sessionId: string) =>
-            JSON.stringify({ version: 1, type: 'active', sessionId })
-        );
+        .mockImplementation(async(sessionId: string) =>
+            JSON.stringify({ version: 1, type: 'active', sessionId }));
+
     mockNativeCommitExternalComposition
         .mockReset()
-        .mockImplementation(async (sessionId: string, text: string) =>
+        .mockImplementation(async(sessionId: string, text: string) =>
             JSON.stringify({
                 version: 1,
                 type: 'ended',
@@ -231,11 +217,11 @@ beforeEach(() => {
                 outcome: 'committed',
                 cause: 'consumer',
                 text,
-            })
-        );
+            }));
+
     mockNativeCancelExternalComposition
         .mockReset()
-        .mockImplementation(async (sessionId: string, cause: string) =>
+        .mockImplementation(async(sessionId: string, cause: string) =>
             JSON.stringify({
                 version: 1,
                 type: 'ended',
@@ -243,8 +229,8 @@ beforeEach(() => {
                 outcome: 'cancelled',
                 cause,
                 text: '',
-            })
-        );
+            }));
+
     mockResolveDocumentDescriptor.mockClear();
 });
 
@@ -252,6 +238,7 @@ afterEach(() => {
     act(() => {
         _resetEditorToolbarFrameRegistryForTests();
     });
+
     jest.useRealTimers();
 });
 
@@ -259,13 +246,14 @@ export function renderUpdateValue(editorId: string, anchor?: number, head?: numb
     const raw = v2Runtime.module.editorV2RenderUpdate(editorId, anchor ?? null, head ?? null) as {
         value: string;
     };
+
     return raw.value;
 }
 
 export function counterAtomDefinition() {
     const component = jest.fn((props: AtomComponentProps) =>
-        React.createElement(View, { testID: 'counter-atom', atomProps: props } as never)
-    );
+        React.createElement(View, { testID: 'counter-atom', atomProps: props } as never));
+
     return {
         component,
         definition: defineAtomNode({
@@ -307,12 +295,17 @@ export function installAtomRenderSource(
 ) {
     const renderUpdate = mockNativeModule.editorV2RenderUpdate;
     const original = renderUpdate.getMockImplementation()!;
+
     renderUpdate.mockImplementation((editorId: string, anchor: unknown, head: unknown) => {
         const result = original(editorId, anchor, head) as {
             value: string;
             error: unknown;
         };
-        if (result.error != null) return result;
+
+        if (result.error != null) {
+            return result;
+        }
+
         return {
             value: JSON.stringify({ ...JSON.parse(result.value), ...source() }),
             error: null,

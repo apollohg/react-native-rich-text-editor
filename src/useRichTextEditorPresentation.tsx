@@ -16,10 +16,10 @@ import {
     type EditorToolbarCommand,
     type EditorToolbarListType,
 } from './EditorToolbar';
-import { useRichTextEditorState } from './useRichTextEditorState';
-import { useRichTextEditorMentions } from './useRichTextEditorMentions';
-import { useRichTextEditorCommands } from './useRichTextEditorCommands';
-import { useRichTextEditorEvents } from './useRichTextEditorEvents';
+import { type useRichTextEditorState } from './useRichTextEditorState';
+import { type useRichTextEditorMentions } from './useRichTextEditorMentions';
+import { type useRichTextEditorCommands } from './useRichTextEditorCommands';
+import { type useRichTextEditorEvents } from './useRichTextEditorEvents';
 import {
     useSerializedValue,
     serializeRemoteSelections,
@@ -185,27 +185,24 @@ export function useRichTextEditorPresentation(
 
     const themeJson = useMemo(
         () => serializeEditorTheme(theme, mentionSuggestionTheme),
-        [mentionSuggestionTheme, theme]
+        [ mentionSuggestionTheme, theme ]
     );
 
-    const addonsJson = useSerializedValue(addons, (value) =>
-        serializeNormalizedEditorAddons(value)
-    );
+    const addonsJson = useSerializedValue(addons, value =>
+        serializeNormalizedEditorAddons(value));
 
-    const imageLoadingPolicyJson = useSerializedValue(imageLoadingPolicy, (value) =>
-        serializeEditorImageLoadingPolicy(value)
-    );
+    const imageLoadingPolicyJson = useSerializedValue(imageLoadingPolicy, value =>
+        serializeEditorImageLoadingPolicy(value));
 
-    const androidInputOptionsJson = useSerializedValue(androidInputOptions, (value) =>
-        JSON.stringify(value)
-    );
+    const androidInputOptionsJson = useSerializedValue(androidInputOptions, value =>
+        JSON.stringify(value));
 
-    const remoteSelectionsJson = useSerializedValue(remoteSelections, (selections) =>
-        serializeRemoteSelections(selections)
-    );
+    const remoteSelectionsJson = useSerializedValue(remoteSelections, selections =>
+        serializeRemoteSelections(selections));
 
     const atomsJson = useMemo(() => {
         const supplied = serializeEditorAtoms(atoms);
+
         const serialized =
             supplied == null
                 ? { nodeTypes: [] as string[], estimatedHeights: {} as Record<string, number> }
@@ -213,20 +210,26 @@ export function useRichTextEditorPresentation(
                       nodeTypes: string[];
                       estimatedHeights: Record<string, number>;
                   });
+
         for (const instance of atomState.instances) {
             if (
                 Object.prototype.hasOwnProperty.call(serialized.estimatedHeights, instance.nodeType)
             ) {
                 continue;
             }
+
             serialized.nodeTypes.push(instance.nodeType);
             serialized.estimatedHeights[instance.nodeType] = DEFAULT_ATOM_CHIP_HEIGHT;
         }
+
         return serialized.nodeTypes.length === 0 ? undefined : JSON.stringify(serialized);
-    }, [atomState.instances, atoms]);
+    }, [ atomState.instances, atoms ]);
 
     useEffect(() => {
-        if (!__DEV__) return;
+        if (!__DEV__) {
+            return;
+        }
+
         for (const instance of atomState.instances) {
             if (
                 atomComponents.has(instance.nodeType) ||
@@ -234,12 +237,14 @@ export function useRichTextEditorPresentation(
             ) {
                 continue;
             }
+
             warnedUnknownAtomTypesRef.current.add(instance.nodeType);
+
             console.warn(
                 `NativeRichTextEditor: rendering unknown atom type '${instance.nodeType}' as a chip`
             );
         }
-    }, [atomComponents, atomState.instances]);
+    }, [ atomComponents, atomState.instances, warnedUnknownAtomTypesRef ]);
 
     const runAtomActionRef = useRef(runAtomAction);
 
@@ -261,10 +266,12 @@ export function useRichTextEditorPresentation(
             documentVersion: string | null,
             attrs: AtomAttrsUpdate
         ) => {
-            if (owner !== atomOwnerRef.current)
+            if (owner !== atomOwnerRef.current) {
                 return Promise.reject(
                     new AtomUpdateAttrsError('not-ready', 'The editor has rebound.')
                 );
+            }
+
             return updateAtomAttrsRef.current(
                 instance.key,
                 instance.nodeType,
@@ -274,114 +281,115 @@ export function useRichTextEditorPresentation(
                 attrs
             );
         },
-        []
+        [ atomOwnerRef ]
     );
 
     const atomChildren = useMemo(
         () =>
             atomContentWidth == null
                 ? null
-                : atomState.instances.map((instance) => {
-                      const Component = atomComponents.get(instance.nodeType) ?? DefaultAtomChip;
-                      const position = atomPositions.get(instance.key);
-                      const width = position?.width ?? atomContentWidth;
-                      return (
-                          <View
-                              key={instance.key}
-                              nativeID={`${ATOM_NATIVE_ID_PREFIX}${instance.key}`}
-                              collapsable={false}
-                              style={{
-                                  position: 'absolute',
-                                  top: Platform.OS === 'android' ? (position?.hostY ?? 0) : 0,
-                                  left: Platform.OS === 'android' ? (position?.hostX ?? 0) : 0,
-                                  width,
-                              }}>
-                              <AtomHost
-                                  nativeID={`${ATOM_CONTENT_NATIVE_ID_PREFIX}${instance.key}`}
-                                  component={Component}
-                                  width={width}
-                                  estimatedHeight={
-                                      (atoms ?? []).find((atom) => atom.name === instance.nodeType)
-                                          ?.estimatedHeight ?? DEFAULT_ATOM_CHIP_HEIGHT
-                                  }
-                                  visible={
-                                      !position ||
+                : atomState.instances.map(instance => {
+                    const Component = atomComponents.get(instance.nodeType) ?? DefaultAtomChip;
+                    const position = atomPositions.get(instance.key);
+                    const width = position?.width ?? atomContentWidth;
+
+                    return (
+                        <View
+                            key={instance.key}
+                            nativeID={`${ATOM_NATIVE_ID_PREFIX}${instance.key}`}
+                            collapsable={false}
+                            style={{
+                                position: 'absolute',
+                                top: Platform.OS === 'android' ? (position?.hostY ?? 0) : 0,
+                                left: Platform.OS === 'android' ? (position?.hostX ?? 0) : 0,
+                                width,
+                            }}
+                        >
+                            <AtomHost
+                                nativeID={`${ATOM_CONTENT_NATIVE_ID_PREFIX}${instance.key}`}
+                                component={Component}
+                                width={width}
+                                estimatedHeight={
+                                    (atoms ?? []).find(atom => atom.name === instance.nodeType)
+                                        ?.estimatedHeight ?? DEFAULT_ATOM_CHIP_HEIGHT
+                                }
+                                visible={
+                                    !position ||
                                       atomIsVisible(
                                           position.y,
                                           position.height ??
                                               (atoms ?? []).find(
-                                                  (atom) => atom.name === instance.nodeType
+                                                  atom => atom.name === instance.nodeType
                                               )?.estimatedHeight ??
                                               DEFAULT_ATOM_CHIP_HEIGHT,
                                           atomViewport ??
                                               (virtualizeAtoms ? nativeAtomViewport : undefined)
                                       )
-                                  }
-                                  atomProps={{
-                                      attrs: instance.attrs,
-                                      selected: selectedKeys.has(instance.key),
-                                      readOnly: !editable,
-                                      interactive: atomsInteractive,
-                                      isViewer: false,
-                                      nodeType: instance.nodeType,
-                                      updateAttrs: (attrs) =>
-                                          invokeAtomAttrsUpdate(
-                                              documentHandle,
-                                              instance,
-                                              atomState.documentVersion,
-                                              attrs
-                                          ),
-                                      editor: {
-                                          select: () =>
-                                              invokeAtomAction(
-                                                  documentHandle,
-                                                  instance,
-                                                  atomState.documentVersion,
-                                                  'select'
-                                              ),
-                                          delete: () =>
-                                              invokeAtomAction(
-                                                  documentHandle,
-                                                  instance,
-                                                  atomState.documentVersion,
-                                                  'delete'
-                                              ),
-                                          focusBefore: () =>
-                                              invokeAtomAction(
-                                                  documentHandle,
-                                                  instance,
-                                                  atomState.documentVersion,
-                                                  'before'
-                                              ),
-                                          focusAfter: () =>
-                                              invokeAtomAction(
-                                                  documentHandle,
-                                                  instance,
-                                                  atomState.documentVersion,
-                                                  'after'
-                                              ),
-                                      },
-                                  }}
-                              />
-                          </View>
-                      );
-                  }),
-        [
+                                }
+                                atomProps={{
+                                    attrs: instance.attrs,
+                                    selected: selectedKeys.has(instance.key),
+                                    readOnly: !editable,
+                                    interactive: atomsInteractive,
+                                    isViewer: false,
+                                    nodeType: instance.nodeType,
+                                    updateAttrs: attrs =>
+                                        invokeAtomAttrsUpdate(
+                                            documentHandle,
+                                            instance,
+                                            atomState.documentVersion,
+                                            attrs
+                                        ),
+                                    editor: {
+                                        select: () =>
+                                            invokeAtomAction(
+                                                documentHandle,
+                                                instance,
+                                                atomState.documentVersion,
+                                                'select'
+                                            ),
+                                        delete: () =>
+                                            invokeAtomAction(
+                                                documentHandle,
+                                                instance,
+                                                atomState.documentVersion,
+                                                'delete'
+                                            ),
+                                        focusBefore: () =>
+                                            invokeAtomAction(
+                                                documentHandle,
+                                                instance,
+                                                atomState.documentVersion,
+                                                'before'
+                                            ),
+                                        focusAfter: () =>
+                                            invokeAtomAction(
+                                                documentHandle,
+                                                instance,
+                                                atomState.documentVersion,
+                                                'after'
+                                            ),
+                                    },
+                                }}
+                            />
+                        </View>
+                    );
+                }),
+        [ atomContentWidth,
+            atomState.instances,
+            atomState.documentVersion,
+            atomComponents,
+            atomPositions,
             atoms,
             atomViewport,
-            documentHandle,
-            invokeAtomAction,
             virtualizeAtoms,
             nativeAtomViewport,
-            atomsInteractive,
-            atomComponents,
-            atomContentWidth,
-            atomPositions,
-            atomState.instances,
-            editable,
-            invokeAtomAttrsUpdate,
             selectedKeys,
-        ]
+            editable,
+            atomsInteractive,
+            invokeAtomAttrsUpdate,
+            documentHandle,
+            invokeAtomAction ]
     );
 
     const isLinkActive = activeState.marks.link === true;
@@ -417,7 +425,9 @@ export function useRichTextEditorPresentation(
             onRequestLink,
             onRequestImage
         );
+
         toolbarItemsJson = stringifyCachedJson(mappedItems);
+
         toolbarItemsSerializationCacheRef.current = {
             toolbarItems,
             editable,
@@ -432,7 +442,9 @@ export function useRichTextEditorPresentation(
 
     // A room document awaiting the server renders nothing (loading), never an
     // unshared fallback paragraph.
-    if (!document.isReady) return null;
+    if (!document.isReady) {
+        return null;
+    }
 
     const usesNativeKeyboardToolbar =
         toolbarPlacement === 'keyboard' && (Platform.OS === 'ios' || Platform.OS === 'android');
@@ -462,14 +474,14 @@ export function useRichTextEditorPresentation(
 
     const currentPushedUpdate = pushedUpdate?.editorId === editorId ? pushedUpdate : null;
 
-    const focusPreservingFrames = [...registeredToolbarFrames, ...suppliedFocusPreservingFrames];
+    const focusPreservingFrames = [ ...registeredToolbarFrames, ...suppliedFocusPreservingFrames ];
 
     const toolbarFrameJson = serializeToolbarFrames(
         editable && isFocused ? focusPreservingFrames : undefined
     );
 
     return (
-        <View style={[styles.container, containerStyle]}>
+        <View style={[ styles.container, containerStyle ]}>
             <NativeEditorView
                 ref={nativeViewRef}
                 style={nativeViewStyle}
@@ -507,13 +519,15 @@ export function useRichTextEditorPresentation(
                 onContentHeightChange={handleContentHeightChange}
                 onAtomLayout={handleAtomLayout}
                 onToolbarAction={handleToolbarAction}
-                onAddonEvent={handleAddonEvent}>
+                onAddonEvent={handleAddonEvent}
+            >
                 {atomChildren}
             </NativeEditorView>
             {shouldRenderJsToolbar ? (
                 <View
-                    testID='native-editor-js-toolbar'
-                    style={[styles.inlineToolbar, { marginTop: inlineToolbarMarginTop }]}>
+                    testID={'native-editor-js-toolbar'}
+                    style={[ styles.inlineToolbar, { marginTop: inlineToolbarMarginTop } ]}
+                >
                     <EditorToolbarFrameOwnerProvider ownerId={toolbarFrameOwnerId}>
                         <EditorToolbar
                             activeState={activeState}

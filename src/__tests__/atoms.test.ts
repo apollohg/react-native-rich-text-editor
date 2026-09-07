@@ -58,26 +58,29 @@ test('attrMap auto-derives kebab-cased data attributes when omitted', () => {
     });
 });
 
-test.each(['__opaque', '__opaque_json', '__skip'])('rejects reserved name %s', (name) => {
+test.each([ '__opaque', '__opaque_json', '__skip' ])('rejects reserved name %s', name => {
     expect(() => defineAtomNode({ ...counterConfig, name })).toThrow(/reserved/i);
 });
 
 test('rejects identifiers outside the atom HTML policy', () => {
-    for (const tag of ['script', 'img', 'br', 'DIV', '1x']) {
+    for (const tag of [ 'script',
+        'img',
+        'br',
+        'DIV',
+        '1x' ]) {
         expect(() =>
             defineAtomNode({
                 ...counterConfig,
                 html: { ...counterConfig.html, tag },
-            })
-        ).toThrow(/tag/i);
+            })).toThrow(/tag/i);
     }
-    for (const attr of ['onclick', 'style', 'href', 'ONERROR']) {
+
+    for (const attr of [ 'onclick', 'style', 'href', 'ONERROR' ]) {
         expect(() =>
             defineAtomNode({
                 ...counterConfig,
                 html: { ...counterConfig.html, staticAttrs: { [attr]: 'x' } },
-            })
-        ).toThrow(/attr/i);
+            })).toThrow(/attr/i);
     }
 });
 
@@ -86,8 +89,8 @@ test('rejects incomplete or colliding attr maps', () => {
         defineAtomNode({
             ...counterConfig,
             html: { ...counterConfig.html, attrMap: { title: 'data-title' } },
-        })
-    ).toThrow(/count/);
+        })).toThrow(/count/);
+
     expect(() =>
         defineAtomNode({
             ...counterConfig,
@@ -95,8 +98,8 @@ test('rejects incomplete or colliding attr maps', () => {
                 ...counterConfig.html,
                 attrMap: { title: 'data-x', count: 'data-x' },
             },
-        })
-    ).toThrow(/data-x/);
+        })).toThrow(/data-x/);
+
     expect(() =>
         defineAtomNode({
             ...counterConfig,
@@ -104,8 +107,7 @@ test('rejects incomplete or colliding attr maps', () => {
                 ...counterConfig.html,
                 attrMap: { title: 'data-type', count: 'data-count' },
             },
-        })
-    ).toThrow(/data-type/);
+        })).toThrow(/data-type/);
 });
 
 test('rejects a missing component', () => {
@@ -115,19 +117,18 @@ test('rejects a missing component', () => {
 });
 
 test.each([
-    ['memo', memo(counterConfig.component)],
-    ['forwardRef', forwardRef(() => null)],
-    ['lazy', lazy(async () => ({ default: counterConfig.component }))],
+    [ 'memo', memo(counterConfig.component) ],
+    [ 'forwardRef', forwardRef(() => null) ],
+    [ 'lazy', lazy(async() => ({ default: counterConfig.component })) ],
 ] as const)('accepts a %s atom component', (_, component) => {
     expect(defineAtomNode({ ...counterConfig, component }).component).toBe(component);
 });
 
-test.each([{}, 'div', { type: counterConfig.component }])(
+test.each([ {}, 'div', { type: counterConfig.component } ])(
     'rejects an invalid component %p',
-    (component) => {
+    component => {
         expect(() =>
-            defineAtomNode({ ...counterConfig, component: component as AtomComponent })
-        ).toThrow(/component/i);
+            defineAtomNode({ ...counterConfig, component: component as AtomComponent })).toThrow(/component/i);
     }
 );
 
@@ -136,12 +137,13 @@ test('buildFragmentJson wraps one atom node', () => {
 
     expect(definition.buildFragmentJson({ title: 'Sample item', count: 5 })).toEqual({
         type: 'doc',
-        content: [{ type: 'counterCard', attrs: { title: 'Sample item', count: 5 } }],
+        content: [ { type: 'counterCard', attrs: { title: 'Sample item', count: 5 } } ],
     });
 });
 
 test('withAtomsSchema rejects non-conflicting same-tag rules', () => {
     const definition = defineAtomNode(counterConfig);
+
     const subset = defineAtomNode({
         ...counterConfig,
         name: 'alternateCard',
@@ -155,14 +157,15 @@ test('withAtomsSchema rejects non-conflicting same-tag rules', () => {
         },
     });
 
-    expect(() => withAtomsSchema(defaultSchema, [definition, subset])).toThrow(/ambiguous/i);
+    expect(() => withAtomsSchema(defaultSchema, [ definition, subset ])).toThrow(/ambiguous/i);
 });
 
 test('withAtomsSchema adds nodes once and rejects conflicting redefinitions', () => {
     const definition = defineAtomNode(counterConfig);
-    const schema = withAtomsSchema(defaultSchema, [definition]);
+    const schema = withAtomsSchema(defaultSchema, [ definition ]);
 
-    expect(withAtomsSchema(schema, [definition])).toEqual(schema);
+    expect(withAtomsSchema(schema, [ definition ])).toEqual(schema);
+
     const conflicting = defineAtomNode({
         ...counterConfig,
         html: {
@@ -170,23 +173,25 @@ test('withAtomsSchema adds nodes once and rejects conflicting redefinitions', ()
             staticAttrs: { 'data-type': 'different-card' },
         },
     });
-    expect(() => withAtomsSchema(schema, [conflicting])).toThrow(/counterCard/);
+
+    expect(() => withAtomsSchema(schema, [ conflicting ])).toThrow(/counterCard/);
 });
 
 test('defineSchema accepts an atoms key', () => {
     const definition = defineAtomNode(counterConfig);
-    const schema = defineSchema({ nodes: minimalSchemaNodes, atoms: [definition] });
+    const schema = defineSchema({ nodes: minimalSchemaNodes, atoms: [ definition ] });
 
-    expect(schema.nodes.some((node) => node.name === 'counterCard')).toBe(true);
+    expect(schema.nodes.some(node => node.name === 'counterCard')).toBe(true);
 });
 
 test('serializeEditorAtoms emits node types and estimated heights', () => {
     const definition = defineAtomNode(counterConfig);
 
-    expect(JSON.parse(serializeEditorAtoms([definition])!)).toEqual({
-        nodeTypes: ['counterCard'],
+    expect(JSON.parse(serializeEditorAtoms([ definition ])!)).toEqual({
+        nodeTypes: [ 'counterCard' ],
         estimatedHeights: { counterCard: 120 },
     });
+
     expect(serializeEditorAtoms([])).toBeUndefined();
     expect(serializeEditorAtoms(undefined)).toBeUndefined();
 });
@@ -195,8 +200,9 @@ test('atoms without an estimated height reserve the default chip height', () => 
     const definition = defineAtomNode({ ...counterConfig, estimatedHeight: undefined });
 
     expect(definition.estimatedHeight).toBe(32);
-    expect(JSON.parse(serializeEditorAtoms([definition])!)).toEqual({
-        nodeTypes: ['counterCard'],
+
+    expect(JSON.parse(serializeEditorAtoms([ definition ])!)).toEqual({
+        nodeTypes: [ 'counterCard' ],
         estimatedHeights: { counterCard: 32 },
     });
 });
@@ -207,20 +213,20 @@ test('declarative attrs reject invalid definitions, defaults and fragment values
         html: { tag: 'div', staticAttrs: { 'data-type': 'counter-card' } },
         attrs: { count: { type: 'number', min: 0, max: 5, default: 0 } },
     } as AtomNodeConfig;
+
     const atom = defineAtomNode(config);
     expect(() => atom.buildFragmentJson({ count: -1 })).toThrow(/count/);
     expect(() => atom.buildFragmentJson({ count: '1' })).toThrow(/count/);
     expect(() => atom.buildFragmentJson({ other: 1 })).toThrow(/other/);
+
     expect(() =>
         defineAtomNode({
             ...config,
             attrs: { count: { type: 'number', default: 'bad' } },
-        } as AtomNodeConfig)
-    ).toThrow(/count/);
+        } as AtomNodeConfig)).toThrow(/count/);
 });
 
 test('identifier attributes require a declared string type', () => {
     expect(() =>
-        defineAtomNode({ ...counterConfig, idAttribute: 'missing' } as AtomNodeConfig)
-    ).toThrow(/identifier/);
+        defineAtomNode({ ...counterConfig, idAttribute: 'missing' } as AtomNodeConfig)).toThrow(/identifier/);
 });

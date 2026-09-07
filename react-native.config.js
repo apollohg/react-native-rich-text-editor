@@ -7,7 +7,7 @@ module.exports = {
             // metadata; no nested compatibility podspec exists.
             ios: {},
             android: {
-                componentDescriptors: ['PreparedProseViewerComponentDescriptor'],
+                componentDescriptors: [ 'PreparedProseViewerComponentDescriptor' ],
                 cmakeListsPath: '../android/src/main/jni/CMakeLists.txt',
                 packageImportPath: 'import com.apollohg.editor.viewer.PreparedProseViewerPackage;',
                 packageInstance: 'new PreparedProseViewerPackage()',

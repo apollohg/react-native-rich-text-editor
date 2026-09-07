@@ -18,7 +18,7 @@ export const MENU_MARGIN = 8;
 
 export const MENU_WIDTH = 192;
 
-export const KEYBOARD_FRAME_REMEASURE_DELAYS_MS = [50, 150, 300] as const;
+export const KEYBOARD_FRAME_REMEASURE_DELAYS_MS = [ 50, 150, 300 ] as const;
 
 export const ACTIVE_BG = 'rgba(0, 122, 255, 0.12)';
 
@@ -61,7 +61,7 @@ export const DEFAULT_GLYPH_ICONS: Record<EditorToolbarDefaultIconId, string> = {
     indentList: '→',
     outdentList: '←',
     lineBreak: '↵',
-    horizontalRule: '—',
+    horizontalRule: ':',
     undo: '↩',
     redo: '↪',
 };
@@ -95,6 +95,7 @@ export function resolveMentionSuggestionDisplayLabel(
     trigger: string
 ): string {
     const label = suggestion.label?.trim() || suggestion.title;
+
     return trigger.length > 0 && !label.startsWith(trigger) ? `${trigger}${label}` : label;
 }
 
@@ -108,6 +109,7 @@ export function ToolbarIcon({
     size?: number;
 }) {
     const materialIconName = resolveMaterialIconName(icon);
+
     if (materialIconName) {
         return (
             <View style={styles.iconContainer}>
@@ -117,9 +119,10 @@ export function ToolbarIcon({
     }
 
     const glyph = resolveGlyphText(icon) ?? '?';
+
     return (
         <View style={styles.iconContainer}>
-            <Text style={[styles.iconText, size == null ? null : { fontSize: size }, { color }]}>
+            <Text style={[ styles.iconText, size == null ? null : { fontSize: size }, { color } ]}>
                 {glyph}
             </Text>
         </View>

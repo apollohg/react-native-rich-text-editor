@@ -12,10 +12,10 @@ import { type EditorMentionTheme } from './EditorTheme';
 import { validEditorMentionTheme, type NativeEditorPositionAffinity } from './NativeEditorBridge';
 import { type NativeSyntheticEvent } from 'react-native';
 import { setEditorToolbarMentionState } from './EditorToolbar';
-import { useRichTextEditorState } from './useRichTextEditorState';
-import { useRichTextEditorCommands } from './useRichTextEditorCommands';
-import { useRichTextEditorUpdates } from './useRichTextEditorUpdates';
-import { useRichTextEditorEvents } from './useRichTextEditorEvents';
+import { type useRichTextEditorState } from './useRichTextEditorState';
+import { type useRichTextEditorCommands } from './useRichTextEditorCommands';
+import { type useRichTextEditorUpdates } from './useRichTextEditorUpdates';
+import { type useRichTextEditorEvents } from './useRichTextEditorEvents';
 import {
     isRecord,
     isPositionInvalidError,
@@ -69,6 +69,7 @@ export function useRichTextEditorMentions(
     const resolveMentionSelectionAttrs = useCallback(
         (selectionEvent: MentionSelectionAttrsEvent): Record<string, unknown> => {
             let resolvedAttrs: Record<string, unknown> | null | undefined;
+
             try {
                 resolvedAttrs =
                     addonsRef.current?.mentions?.resolveSelectionAttrs?.(selectionEvent);
@@ -80,16 +81,18 @@ export function useRichTextEditorMentions(
                     );
                 }
             }
+
             return isRecord(resolvedAttrs)
                 ? { ...selectionEvent.attrs, ...resolvedAttrs }
                 : selectionEvent.attrs;
         },
-        []
+        [ addonsRef ]
     );
 
     const resolveMentionTheme = useCallback(
         (selectionEvent: MentionSelectionAttrsEvent): EditorMentionTheme | undefined => {
             let resolvedTheme: unknown;
+
             try {
                 resolvedTheme = addonsRef.current?.mentions?.resolveTheme?.(selectionEvent);
             } catch (error) {
@@ -97,7 +100,11 @@ export function useRichTextEditorMentions(
                     console.error('NativeRichTextEditor: mentions.resolveTheme threw', error);
                 }
             }
-            if (resolvedTheme === undefined || resolvedTheme === null) return undefined;
+
+            if (resolvedTheme === undefined || resolvedTheme === null) {
+                return undefined;
+            }
+
             // A rejected theme is dropped rather than written into the
             // document: every later renderUpdate revalidates it, so one bad
             // value would make the content permanently unrenderable.
@@ -108,22 +115,25 @@ export function useRichTextEditorMentions(
                         resolvedTheme
                     );
                 }
+
                 return undefined;
             }
+
             return resolvedTheme;
         },
-        []
+        [ addonsRef ]
     );
 
     const resolveMentionInsertionAttrs = useCallback(
         (selectionEvent: MentionSelectionAttrsEvent): Record<string, unknown> => {
             const attrs = resolveMentionSelectionAttrs(selectionEvent);
             const resolvedTheme = resolveMentionTheme({ ...selectionEvent, attrs });
+
             return resolvedTheme != null
                 ? { ...attrs, mentionTheme: normalizeEditorMentionTheme(resolvedTheme) }
                 : attrs;
         },
-        [resolveMentionSelectionAttrs, resolveMentionTheme]
+        [ resolveMentionSelectionAttrs, resolveMentionTheme ]
     );
 
     const insertMentionSuggestion = useCallback(
@@ -135,12 +145,16 @@ export function useRichTextEditorMentions(
             documentVersion?: string;
         }) => {
             const mentions = addonsRef.current?.mentions;
-            if (!mentions || !editableRef.current) return;
+
+            if (!mentions || !editableRef.current) {
+                return;
+            }
 
             const snapshot = bridge.renderUpdate({
                 anchor: request.range.anchor,
                 head: request.range.head,
             });
+
             if (
                 snapshot.selection.type !== 'text' ||
                 (request.documentVersion != null &&
@@ -148,12 +162,14 @@ export function useRichTextEditorMentions(
             ) {
                 return;
             }
+
             const markAttrs = Object.fromEntries(
-                Object.entries(snapshot.activeState.markAttrs).map(([mark, attrs]) => [
+                Object.entries(snapshot.activeState.markAttrs).map(([ mark, attrs ]) => [
                     mark,
                     { ...attrs },
                 ])
             );
+
             const callbackEvent: MentionSelectionAttrsEvent = {
                 trigger: request.trigger,
                 suggestion: request.suggestion,
@@ -162,10 +178,12 @@ export function useRichTextEditorMentions(
                 range: request.range,
                 documentVersion: snapshot.documentVersion,
             };
+
             const attrs = resolveMentionInsertionAttrs(callbackEvent);
             // Selection envelopes address scalars, not document positions.
             const anchorScalar = snapshot.selection.anchorScalar;
             const headScalar = snapshot.selection.headScalar;
+
             if (
                 documentHandle.isDestroyed ||
                 currentPushedUpdateEditorIdRef.current !== documentHandle.editorId ||
@@ -179,8 +197,9 @@ export function useRichTextEditorMentions(
             // own cursor resolution: a collapsed caret prefers After with a
             // deterministic Before fallback at text-boundary positions; a
             // range uses Before. The fallback changes only the stickiness
-            // of the SAME position — it is not a guessed-position retry.
+            // of the SAME position : it is not a guessed-position retry.
             const collapsed = anchorScalar === headScalar;
+
             const syncSelection = (affinity: NativeEditorPositionAffinity) =>
                 bridge.setSelection({
                     baseDocumentRevision: snapshot.documentVersion,
@@ -195,9 +214,13 @@ export function useRichTextEditorMentions(
                 try {
                     syncSelection(collapsed ? 'after' : 'before');
                 } catch (error) {
-                    if (!collapsed || !isPositionInvalidError(error)) throw error;
+                    if (!collapsed || !isPositionInvalidError(error)) {
+                        throw error;
+                    }
+
                     syncSelection('before');
                 }
+
                 const outcome = bridge.applyCommand({
                     baseDocumentRevision: snapshot.documentVersion,
                     command: {
@@ -207,17 +230,24 @@ export function useRichTextEditorMentions(
                         }),
                     },
                 });
-                if (outcome.type !== 'transaction' || !outcome.changed) return;
+
+                if (outcome.type !== 'transaction' || !outcome.changed) {
+                    return;
+                }
+
                 latestRevisionRef.current = outcome.documentRevision;
             } catch (error) {
                 if (isRevisionMismatchError(error)) {
                     document.refresh();
+
                     return;
                 }
+
                 throw error;
             }
 
             afterLocalEngineMutation();
+
             mentions.onSelect?.({
                 trigger: request.trigger,
                 suggestion: request.suggestion,
@@ -225,30 +255,45 @@ export function useRichTextEditorMentions(
                 documentVersion: snapshot.documentVersion,
             });
         },
-        [
+        [ addonsRef,
             afterLocalEngineMutation,
             bridge,
+            currentPushedUpdateEditorIdRef,
             document,
             documentDescriptor,
-            documentHandle,
-            resolveMentionInsertionAttrs,
-        ]
+            documentHandle.editorId,
+            documentHandle.isDestroyed,
+            editableRef,
+            latestRevisionRef,
+            resolveMentionInsertionAttrs ]
     );
 
     const handleAddonEvent = useCallback(
         (event: NativeSyntheticEvent<NativeAddonEvent>) => {
-            if (documentHandle.isDestroyed || !isForThisEditor(event.nativeEvent)) return;
+            if (documentHandle.isDestroyed || !isForThisEditor(event.nativeEvent)) {
+                return;
+            }
+
             let parsed: EditorAddonEvent;
+
             try {
                 const value = JSON.parse(event.nativeEvent.eventJson) as unknown;
-                if (!isRecord(value) || typeof value.type !== 'string') return;
-                parsed = value as unknown as EditorAddonEvent;
+
+                if (!isRecord(value) || typeof value.type !== 'string') {
+                    return;
+                }
+
+                parsed = value as EditorAddonEvent;
             } catch {
                 return;
             }
 
             const mentions = addonsRef.current?.mentions;
-            if (!mentions) return;
+
+            if (!mentions) {
+                return;
+            }
+
             const documentVersion =
                 typeof parsed.documentVersion === 'string' ? parsed.documentVersion : undefined;
 
@@ -263,6 +308,7 @@ export function useRichTextEditorMentions(
                 ) {
                     return;
                 }
+
                 const queryEvent: MentionQueryChangeEvent = {
                     query: parsed.query,
                     trigger: parsed.trigger,
@@ -270,8 +316,10 @@ export function useRichTextEditorMentions(
                     isActive: parsed.isActive,
                     ...(documentVersion ? { documentVersion } : {}),
                 };
+
                 mentions.onQueryChange?.(queryEvent);
                 setMentionQuery(parsed.isActive ? queryEvent : null);
+
                 return;
             }
 
@@ -283,16 +331,22 @@ export function useRichTextEditorMentions(
                 ) {
                     return;
                 }
+
                 const suggestion = mentions.suggestions?.find(
-                    (candidate) => candidate.key === parsed.suggestionKey
+                    candidate => candidate.key === parsed.suggestionKey
                 );
-                if (!suggestion) return;
+
+                if (!suggestion) {
+                    return;
+                }
+
                 mentions.onSelect?.({
                     trigger: parsed.trigger,
                     suggestion,
                     attrs: parsed.attrs,
                     ...(documentVersion ? { documentVersion } : {}),
                 });
+
                 return;
             }
 
@@ -311,10 +365,14 @@ export function useRichTextEditorMentions(
             ) {
                 return;
             }
+
             const suggestion = mentions.suggestions?.find(
-                (candidate) => candidate.key === parsed.suggestionKey
+                candidate => candidate.key === parsed.suggestionKey
             );
-            if (!suggestion) return;
+
+            if (!suggestion) {
+                return;
+            }
 
             insertMentionSuggestion({
                 trigger: parsed.trigger,
@@ -324,18 +382,29 @@ export function useRichTextEditorMentions(
                 documentVersion,
             });
         },
-        [documentHandle, insertMentionSuggestion, isForThisEditor]
+        [ addonsRef,
+            documentHandle.isDestroyed,
+            insertMentionSuggestion,
+            isForThisEditor,
+            setMentionQuery ]
     );
 
     const handleMentionSuggestionPress = useCallback(
         (suggestion: MentionSuggestion) => {
-            if (mentionQuery == null) return;
+            if (mentionQuery == null) {
+                return;
+            }
+
             const normalized = normalizeNativeEditorAddons(
                 addonsRef.current
-            )?.mentions?.suggestions.find((candidate) => candidate.key === suggestion.key);
-            if (normalized == null) return;
+            )?.mentions?.suggestions.find(candidate => candidate.key === suggestion.key);
+
+            if (normalized == null) {
+                return;
+            }
 
             setMentionQuery(null);
+
             insertMentionSuggestion({
                 trigger: mentionQuery.trigger,
                 suggestion,
@@ -344,16 +413,17 @@ export function useRichTextEditorMentions(
                 documentVersion: mentionQuery.documentVersion,
             });
         },
-        [insertMentionSuggestion, mentionQuery]
+        [ addonsRef, insertMentionSuggestion, mentionQuery, setMentionQuery ]
     );
 
     const mentionsEnabled = addons.mentions != null;
     const mentionTrigger = addons.mentions?.trigger?.trim() || '@';
+
     useEffect(() => {
         if (!mentionsEnabled || (mentionQuery != null && mentionQuery.trigger !== mentionTrigger)) {
             setMentionQuery(null);
         }
-    }, [mentionsEnabled, mentionQuery, mentionTrigger, setMentionQuery]);
+    }, [ mentionsEnabled, mentionQuery, mentionTrigger, setMentionQuery ]);
 
     const mentionSuggestions = addons?.mentions?.suggestions;
 
@@ -372,14 +442,21 @@ export function useRichTextEditorMentions(
         }
 
         const normalized = normalizeNativeEditorAddons(addons)?.mentions?.suggestions;
-        if (normalized == null) return undefined;
+
+        if (normalized == null) {
+            return undefined;
+        }
 
         const themes: Record<string, EditorMentionTheme> = {};
+
         for (const suggestion of mentionSuggestions) {
             const normalizedSuggestion = normalized.find(
-                (candidate) => candidate.key === suggestion.key
+                candidate => candidate.key === suggestion.key
             );
-            if (normalizedSuggestion == null) continue;
+
+            if (normalizedSuggestion == null) {
+                continue;
+            }
 
             const selectionEvent: MentionSelectionAttrsEvent = {
                 trigger: mentionQuery.trigger,
@@ -391,25 +468,27 @@ export function useRichTextEditorMentions(
                     ? { documentVersion: mentionQuery.documentVersion }
                     : {}),
             };
+
             const attrs = resolveMentionSelectionAttrs(selectionEvent);
+
             const merged = mergeMentionSuggestionTheme(
                 mentionSuggestionTheme,
                 resolveMentionTheme({ ...selectionEvent, attrs })
             );
+
             if (merged != null) {
                 themes[suggestion.key] = merged;
             }
         }
 
         return Object.keys(themes).length > 0 ? themes : undefined;
-    }, [
+    }, [ activeStateRef,
         addons,
         mentionQuery,
         mentionSuggestionTheme,
         mentionSuggestions,
         resolveMentionSelectionAttrs,
-        resolveMentionTheme,
-    ]);
+        resolveMentionTheme ]);
 
     useEffect(() => {
         if (
@@ -418,6 +497,7 @@ export function useRichTextEditorMentions(
             mentionSuggestions == null
         ) {
             setEditorToolbarMentionState(toolbarFrameOwnerId, null);
+
             return;
         }
 
@@ -437,5 +517,6 @@ export function useRichTextEditorMentions(
         shouldPublishMentionSuggestions,
         toolbarFrameOwnerId,
     ]);
+
     return { mentionSuggestionTheme, handleAddonEvent };
 }

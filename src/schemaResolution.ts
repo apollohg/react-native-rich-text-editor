@@ -39,13 +39,18 @@ export function admitSchemaCollections(
 
     for (let nodeIndex = 0; nodeIndex < schema.nodes.length; nodeIndex += 1) {
         const node = schema.nodes[nodeIndex];
-        if (node == null || typeof node !== 'object') return null;
+
+        if (node == null || typeof node !== 'object') {
+            return null;
+        }
+
         const groups: string[] = [];
+
         if (typeof node.group === 'string') {
             if (
                 !forEachGroupToken(
                     node.group,
-                    (group) => groups.push(group),
+                    group => groups.push(group),
                     () => consumeSchemaWork(budget),
                     () => consumeSchemaWork(budget)
                 )
@@ -53,16 +58,26 @@ export function admitSchemaCollections(
                 throw schemaBoundaryError(budget.limit, budget.limit + 1);
             }
         }
+
         const attrs = collectOwnAttrs(node.attrs, budget);
-        if (attrs == null) return null;
+
+        if (attrs == null) {
+            return null;
+        }
+
         const projectionAttrs = collectOwnAttrs(node.json?.attrs, budget);
-        if (projectionAttrs == null) return null;
+
+        if (projectionAttrs == null) {
+            return null;
+        }
+
         if (
             node.json != null &&
             ((typeof node.json.type === 'string' &&
                 !consumeSchemaStringWork(budget, node.json.type)) ||
-                projectionAttrs.some(([name, rawValue]) => {
+                projectionAttrs.some(([ name, rawValue ]) => {
                     const value: unknown = rawValue;
+
                     return (
                         !consumeSchemaStringWork(budget, name) ||
                         (typeof value === 'string'
@@ -73,21 +88,32 @@ export function admitSchemaCollections(
         ) {
             throw schemaBoundaryError(budget.limit, budget.limit + 1);
         }
+
         if (budget.exhausted) {
             throw schemaBoundaryError(budget.limit, budget.limit + 1);
         }
+
         groupsByNode.set(node, groups);
         attrsByNode.set(node, attrs);
     }
 
     for (let markIndex = 0; markIndex < schema.marks.length; markIndex += 1) {
         const mark = schema.marks[markIndex];
+
         if (!consumeSchemaWork(budget)) {
             throw schemaBoundaryError(budget.limit, budget.limit + 1);
         }
-        if (mark == null || typeof mark !== 'object') return null;
+
+        if (mark == null || typeof mark !== 'object') {
+            return null;
+        }
+
         const attrs = collectOwnAttrs(mark.attrs, budget);
-        if (attrs == null) return null;
+
+        if (attrs == null) {
+            return null;
+        }
+
         if (budget.exhausted) {
             throw schemaBoundaryError(budget.limit, budget.limit + 1);
         }
@@ -101,45 +127,70 @@ export function resolveDocumentSchema(
     schema?: SchemaDefinition,
     limits?: DocumentDescriptorLimits
 ): SchemaDefinition {
-    if (schema == null) return defaultSchema;
-    if (!Array.isArray(schema.nodes)) return defaultSchema;
+    if (schema == null) {
+        return defaultSchema;
+    }
+
+    if (!Array.isArray(schema.nodes)) {
+        return defaultSchema;
+    }
+
     if (!Array.isArray(schema.marks)) {
         schema = { ...schema, marks: [] };
     }
 
     const resolvedLimits = resolveDescriptorLimits(limits);
+
     if (schema.nodes.length > resolvedLimits.maxSchemaNodes) {
         throw schemaBoundaryError(resolvedLimits.maxSchemaNodes, schema.nodes.length);
     }
+
     let expressionBytes = 0;
+
     for (let nodeIndex = 0; nodeIndex < schema.nodes.length; nodeIndex += 1) {
         const node = schema.nodes[nodeIndex];
+
         if (node != null && typeof node.content === 'string') {
             expressionBytes += utf8ByteLengthUpTo(
                 node.content,
                 resolvedLimits.maxSchemaExpressionBytes - expressionBytes
             );
+
             if (expressionBytes > resolvedLimits.maxSchemaExpressionBytes) {
                 throw schemaBoundaryError(resolvedLimits.maxSchemaExpressionBytes, expressionBytes);
             }
         }
     }
+
     const schemaBudget = createSchemaWorkBudget(resolvedLimits);
-    if (admitSchemaCollections(schema, schemaBudget) == null) return defaultSchema;
+
+    if (admitSchemaCollections(schema, schemaBudget) == null) {
+        return defaultSchema;
+    }
+
     const normalizedSchema = normalizeSchemaDefinition(schema, schemaBudget);
-    if (normalizedSchema == null) return defaultSchema;
+
+    if (normalizedSchema == null) {
+        return defaultSchema;
+    }
+
     schema = normalizedSchema;
+
     const admittedCollections = admitSchemaCollections(schema, {
         limit: Number.MAX_SAFE_INTEGER,
         work: 0,
         exhausted: false,
     });
-    if (admittedCollections == null) return defaultSchema;
+
+    if (admittedCollections == null) {
+        return defaultSchema;
+    }
 
     const nodeNames = new Set<string>();
     const markNames = new Set<string>();
     let docRoles = 0;
     let textRoles = 0;
+
     for (const node of schema.nodes) {
         if (
             node == null ||
@@ -151,10 +202,18 @@ export function resolveDocumentSchema(
         ) {
             return defaultSchema;
         }
+
         nodeNames.add(node.name);
-        if (node.role === 'doc') docRoles += 1;
-        if (node.role === 'text') textRoles += 1;
+
+        if (node.role === 'doc') {
+            docRoles += 1;
+        }
+
+        if (node.role === 'text') {
+            textRoles += 1;
+        }
     }
+
     for (const mark of schema.marks) {
         if (
             mark == null ||
@@ -164,29 +223,42 @@ export function resolveDocumentSchema(
         ) {
             return defaultSchema;
         }
+
         markNames.add(mark.name);
     }
-    if (docRoles !== 1 || textRoles !== 1) return defaultSchema;
+
+    if (docRoles !== 1 || textRoles !== 1) {
+        return defaultSchema;
+    }
 
     const groups = new Set<string>();
     const nodesBySymbol = new Map<string, NodeSpec[]>();
+
     const addCandidate = (symbol: string, node: NodeSpec): void => {
         const candidates = nodesBySymbol.get(symbol);
-        if (candidates) candidates.push(node);
-        else nodesBySymbol.set(symbol, [node]);
+
+        if (candidates) {
+            candidates.push(node);
+        } else {
+            nodesBySymbol.set(symbol, [ node ]);
+        }
     };
+
     for (const node of schema.nodes) {
         addCandidate(node.name, node);
+
         for (const group of admittedCollections.groupsByNode.get(node) ?? []) {
             groups.add(group);
             addCandidate(group, node);
         }
     }
+
     for (const node of schema.nodes) {
         const symbols = contentExpressionSymbols(node.content);
+
         if (
             symbols == null ||
-            symbols.some((symbol) => !nodeNames.has(symbol) && !groups.has(symbol))
+            symbols.some(symbol => !nodeNames.has(symbol) && !groups.has(symbol))
         ) {
             return defaultSchema;
         }
@@ -194,49 +266,76 @@ export function resolveDocumentSchema(
 
     const generatable = new Set<string>();
     const consumeWork = (): boolean => consumeSchemaWork(schemaBudget);
+
     const contentIsConstructible = (node: NodeSpec): boolean => {
-        if (!consumeWork()) return false;
+        if (!consumeWork()) {
+            return false;
+        }
+
         return (
             minimalContentMatch(
                 node.content,
-                (symbol) => {
+                symbol => {
                     const candidates = nodesBySymbol.get(symbol) ?? [];
+
                     for (const candidate of candidates) {
-                        if (!consumeWork()) return undefined;
-                        if (generatable.has(candidate.name)) return { type: candidate.name };
+                        if (!consumeWork()) {
+                            return undefined;
+                        }
+
+                        if (generatable.has(candidate.name)) {
+                            return { type: candidate.name };
+                        }
                     }
+
                     return undefined;
                 },
                 consumeWork
             ) != null
         );
     };
+
     while (true) {
         const before = generatable.size;
+
         for (const node of schema.nodes) {
             const hasRequiredAttrs = (admittedCollections.attrsByNode.get(node) ?? []).some(
-                ([, attr]) => attr.default === undefined
+                ([ , attr ]) => attr.default === undefined
             );
+
             if (node.role !== 'text' && !hasRequiredAttrs && contentIsConstructible(node)) {
                 generatable.add(node.name);
             }
         }
-        if (generatable.size === before) break;
+
+        if (generatable.size === before) {
+            break;
+        }
     }
+
     if (schemaBudget.exhausted) {
         throw schemaBoundaryError(schemaBudget.limit, schemaBudget.limit + 1);
     }
-    const hasUnconstructibleNode = schema.nodes.some((node) => !contentIsConstructible(node));
+
+    const hasUnconstructibleNode = schema.nodes.some(node => !contentIsConstructible(node));
+
     if (schemaBudget.exhausted) {
         throw schemaBoundaryError(schemaBudget.limit, schemaBudget.limit + 1);
     }
-    if (hasUnconstructibleNode) return defaultSchema;
+
+    if (hasUnconstructibleNode) {
+        return defaultSchema;
+    }
 
     try {
         constructDefaultEmptyDocument(schema, resolvedLimits, admittedCollections);
+
         return schema;
     } catch (error) {
-        if (error instanceof NativeEditorBoundaryError) throw error;
+        if (error instanceof NativeEditorBoundaryError) {
+            throw error;
+        }
+
         return defaultSchema;
     }
 }

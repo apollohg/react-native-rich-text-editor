@@ -8,7 +8,7 @@ import {
 } from './helpers/NativeEditorBridgeV2Fixture';
 import { normalizeNativeEditorV2Result, unwrapNativeEditorV2Result } from '../NativeEditorBridge';
 
-import { NativeEditorErrorBase } from '../NativeEditorBoundaryError';
+import { type NativeEditorErrorBase } from '../NativeEditorBoundaryError';
 
 describe('NativeEditorBridge v2', () => {
     describe('exactly-one result record validation', () => {
@@ -19,6 +19,7 @@ describe('NativeEditorBridge v2', () => {
                 ok: true,
                 value: 'v',
             });
+
             expect(normalizeNativeEditorV2Result({ value: 'v' }, identity)).toEqual({
                 ok: true,
                 value: 'v',
@@ -27,6 +28,7 @@ describe('NativeEditorBridge v2', () => {
 
         it('accepts an error-only record (value null or omitted)', () => {
             const error = mockV2Error();
+
             expect(normalizeNativeEditorV2Result(errRecord(error), identity)).toEqual({
                 ok: false,
                 error: {
@@ -40,6 +42,7 @@ describe('NativeEditorBridge v2', () => {
                     details: null,
                 },
             });
+
             expect(normalizeNativeEditorV2Result({ error }, identity)).not.toBeNull();
         });
 
@@ -51,19 +54,25 @@ describe('NativeEditorBridge v2', () => {
 
         it('rejects a record carrying neither value nor error', () => {
             expect(normalizeNativeEditorV2Result({}, identity)).toBeNull();
+
             expect(
                 normalizeNativeEditorV2Result({ value: null, error: null }, identity)
             ).toBeNull();
         });
 
         it('rejects non-object records', () => {
-            for (const raw of [null, undefined, 42, 'oops', [], true]) {
+            for (const raw of [ null,
+                undefined,
+                42,
+                'oops',
+                [],
+                true ]) {
                 expect(normalizeNativeEditorV2Result(raw, identity)).toBeNull();
             }
         });
 
         it('rejects an error field of the wrong type', () => {
-            for (const error of ['oops', 42, [], null]) {
+            for (const error of [ 'oops', 42, [], null ]) {
                 expect(normalizeNativeEditorV2Result(errRecord(error), identity)).toBeNull();
             }
         });
@@ -74,8 +83,8 @@ describe('NativeEditorBridge v2', () => {
 
         it('throws the non-retryable class for malformed records on the imperative path', () => {
             const error = catchRejectedNativeRecord(() =>
-                unwrapNativeEditorV2Result({ value: 'v', error: mockV2Error() }, (v) => v)
-            );
+                unwrapNativeEditorV2Result({ value: 'v', error: mockV2Error() }, v => v));
+
             expectNonRetryable(error, 'FFI_RESULT_INVALID');
             expect((error as NativeEditorErrorBase).domain).toBe('boundary');
         });

@@ -19,18 +19,20 @@ import { NativeRichTextEditor, type NativeRichTextEditorRef } from '../NativeRic
 import { NativeEditorLifecycleError } from '../NativeEditorBoundaryError';
 
 describe('NativeRichTextEditor (v2 document mode)', () => {
-    it('waits for composition cancellation before a controlled value reset is pushed', async () => {
+    it('waits for composition cancellation before a controlled value reset is pushed', async() => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
         const cancellation = deferred<string>();
+
         const { rerender } = render(
             <NativeRichTextEditor
                 ref={ref}
                 documentHandle={handle}
                 valueJSON={V2_INITIAL_DOC}
-                valueJSONUpdateMode='reset'
+                valueJSONUpdateMode={'reset'}
             />
         );
+
         await ref.current!.beginExternalTextComposition();
         const sessionId = mockNativeBeginExternalComposition.mock.calls.at(-1)![0];
         mockNativeCancelExternalComposition.mockReturnValueOnce(cancellation.promise);
@@ -41,7 +43,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 ref={ref}
                 documentHandle={handle}
                 valueJSON={V2_DOC_B}
-                valueJSONUpdateMode='reset'
+                valueJSONUpdateMode={'reset'}
             />
         );
 
@@ -49,9 +51,10 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             sessionId,
             'documentChange'
         );
+
         expect(mockNativeModule.editorV2ApplyLocalApi).not.toHaveBeenCalled();
 
-        await act(async () => {
+        await act(async() => {
             cancellation.resolve(
                 JSON.stringify({
                     version: 1,
@@ -62,20 +65,24 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                     text: '',
                 })
             );
+
             await cancellation.promise;
         });
 
         expect(mockNativeModule.editorV2ApplyLocalApi).toHaveBeenCalledTimes(1);
+
         expect(mockNativeCancelExternalComposition.mock.invocationCallOrder.at(-1)).toBeLessThan(
             mockNativeModule.editorV2ApplyLocalApi.mock.invocationCallOrder[0]
         );
+
         handle.destroy();
     });
 
-    it('does not reset after cancellation rejection and emits the typed failure', async () => {
+    it('does not reset after cancellation rejection and emits the typed failure', async() => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
         const received: unknown[] = [];
+
         const cancellationError = new NativeEditorLifecycleError({
             domain: 'lifecycle',
             code: 'EXTERNAL_COMPOSITION_CANCEL_FAILED',
@@ -86,15 +93,18 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             actual: null,
             details: null,
         });
-        handle.addErrorListener((error) => received.push(error));
+
+        handle.addErrorListener(error => received.push(error));
+
         const { rerender } = render(
             <NativeRichTextEditor
                 ref={ref}
                 documentHandle={handle}
                 valueJSON={V2_INITIAL_DOC}
-                valueJSONUpdateMode='reset'
+                valueJSONUpdateMode={'reset'}
             />
         );
+
         await ref.current!.beginExternalTextComposition();
         mockNativeCancelExternalComposition.mockRejectedValueOnce(cancellationError);
         mockNativeModule.editorV2ApplyLocalApi.mockClear();
@@ -104,10 +114,11 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 ref={ref}
                 documentHandle={handle}
                 valueJSON={V2_DOC_B}
-                valueJSONUpdateMode='reset'
+                valueJSONUpdateMode={'reset'}
             />
         );
-        await act(async () => Promise.resolve());
+
+        await act(async() => Promise.resolve());
 
         expect(mockNativeModule.editorV2ApplyLocalApi).not.toHaveBeenCalled();
         expect(mockNativeCancelExternalComposition).toHaveBeenCalledTimes(1);
@@ -117,12 +128,13 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         handle.destroy();
     });
 
-    it('keeps provisional composition out of the document and uses the normal commit path once', async () => {
+    it('keeps provisional composition out of the document and uses the normal commit path once', async() => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
         const onContentChange = jest.fn();
         const onContentChangeJSON = jest.fn();
         const onLocalCommit = jest.fn();
+
         const { getByTestId } = render(
             <NativeRichTextEditor
                 ref={ref}
@@ -132,6 +144,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 onLocalCommit={onLocalCommit}
             />
         );
+
         const session = await ref.current!.beginExternalTextComposition();
         mockNativeModule.editorV2ApplyInput.mockClear();
         mockNativeModule.editorV2ApplyCommand.mockClear();
@@ -157,6 +170,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 text: '!',
             })
         );
+
         act(() => {
             getByTestId('native-editor-view').props.onEditorUpdate({
                 nativeEvent: {
@@ -173,6 +187,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
 
         const secondSession = await ref.current!.beginExternalTextComposition();
         const secondSessionId = mockNativeBeginExternalComposition.mock.calls.at(-1)![0];
+
         act(() => {
             getByTestId('native-editor-view').props.onExternalTextCompositionEnd({
                 nativeEvent: {
@@ -188,6 +203,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 },
             });
         });
+
         await expect(secondSession.cancel()).resolves.toBeUndefined();
         expect(onLocalCommit).toHaveBeenCalledTimes(1);
         expect(onContentChange).toHaveBeenCalledTimes(1);
@@ -195,18 +211,23 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         handle.destroy();
     });
 
-    it('parses getCaretRect JSON from the native view', async () => {
+    it('parses getCaretRect JSON from the native view', async() => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
         render(<NativeRichTextEditor ref={ref} documentHandle={handle} />);
 
         mockNativeGetCaretRect.mockReturnValue(
-            JSON.stringify({ x: 1, y: 2, width: 3, height: 4, editorWidth: 100, editorHeight: 50 })
+            JSON.stringify({
+                x: 1, y: 2, width: 3, height: 4, editorWidth: 100, editorHeight: 50,
+            })
         );
+
         let rect: unknown;
-        await act(async () => {
+
+        await act(async() => {
             rect = await ref.current!.getCaretRect();
         });
+
         expect(rect).toEqual({
             x: 1,
             y: 2,
@@ -217,38 +238,46 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         });
 
         mockNativeGetCaretRect.mockReturnValue(null);
-        await act(async () => {
+
+        await act(async() => {
             rect = await ref.current!.getCaretRect();
         });
+
         expect(rect).toBeNull();
 
         mockNativeGetCaretRect.mockReturnValue('{"x":1}');
-        await act(async () => {
+
+        await act(async() => {
             rect = await ref.current!.getCaretRect();
         });
+
         expect(rect).toBeNull();
         handle.destroy();
     });
 
     it('passes placeholder, accessibility props, and theme through to the native view', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
+
         const { getByTestId } = render(
             <NativeRichTextEditor
                 documentHandle={handle}
-                placeholder='Write something…'
-                accessibilityLabel='Body'
-                accessibilityHint='Message body editor'
+                placeholder={'Write something…'}
+                accessibilityLabel={'Body'}
+                accessibilityHint={'Message body editor'}
                 theme={{ paragraph: { fontSize: 17 } }}
             />
         );
+
         const view = getByTestId('native-editor-view');
         expect(view.props.placeholder).toBe('Write something…');
         expect(view.props.accessibilityLabel).toBe('Body');
         expect(view.props.accessibilityHint).toBe('Message body editor');
+
         expect(JSON.parse(view.props.themeJson as string)).toEqual({
             version: 1,
             styles: { paragraph: { fontSize: 17 } },
         });
+
         handle.destroy();
     });
 });

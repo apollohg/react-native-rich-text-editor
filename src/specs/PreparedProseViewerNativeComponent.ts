@@ -18,8 +18,10 @@ export interface NativeProps extends ViewProps {
     mentionInteractionsEnabled?: WithDefault<boolean, false>;
     fontEnvironmentRevision: Int32;
     onPressLink?: DirectEventHandler<{ href: string; text: string }>;
-    // React Native numbers are IEEE-754 doubles, which exactly represent every
-    // UInt32 document position. Int32 would corrupt positions above 2^31 - 1.
+    /**
+     * React Native numbers are IEEE-754 doubles, which exactly represent every
+     * UInt32 document position. Int32 would corrupt positions above 2^31 - 1.
+     */
     onPressMention?: DirectEventHandler<{ docPos: Double; label: string; attrsJson: string }>;
     onAtomLayout?: DirectEventHandler<{
         generation: string;

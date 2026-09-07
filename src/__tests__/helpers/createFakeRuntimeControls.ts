@@ -1,7 +1,7 @@
-import { createFakeLifecycleModule } from './createFakeLifecycleModule';
-import { createFakeEditingModule } from './createFakeEditingModule';
-import { createFakeCollaborationModule } from './createFakeCollaborationModule';
-import { createFakeRuntimeState } from './createFakeRuntimeState';
+import { type createFakeLifecycleModule } from './createFakeLifecycleModule';
+import { type createFakeEditingModule } from './createFakeEditingModule';
+import { type createFakeCollaborationModule } from './createFakeCollaborationModule';
+import { type createFakeRuntimeState } from './createFakeRuntimeState';
 import { type FakeNativeEditorV2Runtime } from './nativeEditorV2FakeTypes';
 import {
     V2_FAKE_STEP1_FRAME,
@@ -49,21 +49,27 @@ export function createFakeRuntimeControls(
 
     return {
         module,
-        sessions: () => [...sessions.values()],
+        sessions: () => [ ...sessions.values() ],
         session: (editorId: string) => {
             const session = getSession(editorId);
-            if (!session) throw new Error(`unknown fake session ${editorId}`);
+
+            if (!session) {
+                throw new Error(`unknown fake session ${editorId}`);
+            }
+
             return session;
         },
-        liveEditorIds: () => [...liveIds],
-        transportConfig: (editorId) => getSession(editorId)?.transportConfig ?? null,
-        transportOpen: (editorId) => {
+        liveEditorIds: () => [ ...liveIds ],
+        transportConfig: editorId => getSession(editorId)?.transportConfig ?? null,
+        transportOpen: editorId => {
             const session = requireSession(editorId);
+
             if (session.transportState !== 'Connecting') {
                 throw new Error(
                     `socket open requires Connecting (found ${session.transportState})`
                 );
             }
+
             session.transportState = 'Handshaking';
             // The native side answers an opened socket with Sync Step 1.
             session.protocolQueue.push(new Uint8Array(V2_FAKE_STEP1_FRAME));
@@ -81,6 +87,7 @@ export function createFakeRuntimeControls(
         },
         emitTransportError: (editorId, error) => {
             const session = requireSession(editorId);
+
             emitTransportEvent({
                 editorId: session.editorId,
                 generation: session.liveGeneration === null ? null : String(session.liveGeneration),
@@ -90,6 +97,7 @@ export function createFakeRuntimeControls(
         },
         emitProtocolAdapterEvent: (editorId, event) => {
             const session = requireSession(editorId);
+
             emitTransportEvent({
                 editorId: session.editorId,
                 generation:
@@ -100,7 +108,7 @@ export function createFakeRuntimeControls(
                 ...event,
             });
         },
-        protocolAdapterResolutions: () => [...protocolAdapterResolutions],
+        protocolAdapterResolutions: () => [ ...protocolAdapterResolutions ],
         pushRemoteDoc: (editorId, doc) => {
             pendingFor(editorId).docs.push(cloneDoc(doc));
         },
@@ -109,23 +117,40 @@ export function createFakeRuntimeControls(
         },
         seedLastIssuedGeneration: (editorId, generation) => {
             const canonicalGeneration = canonicalV2U64(generation);
+
             if (canonicalGeneration == null) {
                 throw new Error('generation must be canonical decimal u64 text');
             }
+
             const session = getSession(editorId);
-            if (!session) throw new Error(`unknown fake session ${editorId}`);
+
+            if (!session) {
+                throw new Error(`unknown fake session ${editorId}`);
+            }
+
             session.lastIssuedGeneration = BigInt(canonicalGeneration);
         },
         seedLocalAwarenessClock: (editorId, clock) => {
             const exactClock = exactV2U32(clock);
-            if (exactClock == null) throw new Error('clock must be an exact u32');
+
+            if (exactClock == null) {
+                throw new Error('clock must be an exact u32');
+            }
+
             const session = getSession(editorId);
-            if (!session) throw new Error(`unknown fake session ${editorId}`);
+
+            if (!session) {
+                throw new Error(`unknown fake session ${editorId}`);
+            }
+
             session.localClock = exactClock;
         },
-        retireLiveGeneration: (editorId) => {
+        retireLiveGeneration: editorId => {
             const session = getSession(editorId);
-            if (session) session.liveGeneration = null;
+
+            if (session) {
+                session.liveGeneration = null;
+            }
         },
         injectNextApplyLocalApiError: (editorId, error) => {
             pendingFor(editorId).applyLocalApiErrors.push(error);
@@ -141,9 +166,11 @@ export function createFakeRuntimeControls(
                     ? 'maxPendingOutboxMessages exceeded while enqueueing an awareness broadcast'
                     : 'awareness broadcast capacity could not be reserved'
             );
+
             if (code === 'TRANSPORT_REPLY_LIMIT_EXCEEDED') {
                 error.limit = '1';
                 error.actual = '2';
+
                 error.details = {
                     action: 'awareness',
                     field: 'maxPendingOutboxMessages',
@@ -151,12 +178,17 @@ export function createFakeRuntimeControls(
                     actual: 2,
                 };
             }
+
             pendingFor(editorId).awarenessBroadcastErrors.push(error);
         },
-        queuedFrames: (editorId) => {
+        queuedFrames: editorId => {
             const session = getSession(editorId);
-            if (!session) return [];
-            return [...session.protocolQueue, ...session.documentQueue];
+
+            if (!session) {
+                return [];
+            }
+
+            return [ ...session.protocolQueue, ...session.documentQueue ];
         },
     };
 }

@@ -12,8 +12,10 @@ const ABI_MANIFEST_PATH = path.join(REPO_ROOT, 'scripts', 'package-abi-manifest.
 interface PackageAbiManifest {
     version: { name: string; checksum: number };
     functions: { name: string; checksum: number }[];
-    // The prepared-prose viewer ABI is a separate manifest section, but its
-    // functions are exported from the same library and must be allowed here.
+    /**
+     * The prepared-prose viewer ABI is a separate manifest section, but its
+     * functions are exported from the same library and must be allowed here.
+     */
     viewer: { functions: { name: string; checksum: number }[] };
 }
 
@@ -21,24 +23,28 @@ const ABI_MANIFEST = JSON.parse(
     fs.readFileSync(ABI_MANIFEST_PATH, 'utf8')
 ) as PackageAbiManifest;
 
-const V2_EXPORTS = ABI_MANIFEST.functions.map((entry) => entry.name);
-const VIEWER_EXPORTS = ABI_MANIFEST.viewer.functions.map((entry) => entry.name);
-const ALL_EXPORTS = [...V2_EXPORTS, ...VIEWER_EXPORTS, ABI_MANIFEST.version.name];
+const V2_EXPORTS = ABI_MANIFEST.functions.map(entry => entry.name);
+const VIEWER_EXPORTS = ABI_MANIFEST.viewer.functions.map(entry => entry.name);
+const ALL_EXPORTS = [ ...V2_EXPORTS, ...VIEWER_EXPORTS, ABI_MANIFEST.version.name ];
 const ALLOWED_FN_SYMBOLS = new Set(ALL_EXPORTS);
 
 const SWIFT_HEADERS = [
     'rust/bindings/swift/editor_coreFFI.h',
     'ios/editor_coreFFI/editor_coreFFI.h',
 ];
+
 const SWIFT_SOURCES = [
     'rust/bindings/swift/editor_core.swift',
     'ios/Generated_editor_core.swift',
 ];
-const KOTLIN_SOURCES = ['rust/bindings/kotlin/uniffi/editor_core/editor_core.kt'];
+
+const KOTLIN_SOURCES = [ 'rust/bindings/kotlin/uniffi/editor_core/editor_core.kt' ];
+
 const MODULEMAPS = [
     'rust/bindings/swift/editor_coreFFI.modulemap',
     'ios/editor_coreFFI/module.modulemap',
 ];
+
 const ALL_ARTIFACTS = [
     ...SWIFT_HEADERS,
     ...SWIFT_SOURCES,
@@ -53,6 +59,7 @@ function camelCase(symbol: string): string {
 function readArtifact(relativePath: string): string {
     const absolute = path.join(REPO_ROOT, relativePath);
     expect(fs.existsSync(absolute)).toBe(true);
+
     return fs.readFileSync(absolute, 'utf8');
 }
 
@@ -60,6 +67,7 @@ function readArtifact(relativePath: string): string {
 function expectNoLegacySymbols(contents: string): void {
     expect(contents).not.toMatch(/collaboration_session|collaborationSession/);
     const fnReferences = contents.match(/uniffi_editor_core_fn_func_[a-z0-9_]+/g) ?? [];
+
     for (const reference of new Set(fnReferences)) {
         const symbol = reference.slice('uniffi_editor_core_fn_func_'.length);
         expect(ALLOWED_FN_SYMBOLS.has(symbol)).toBe(true);
@@ -68,24 +76,28 @@ function expectNoLegacySymbols(contents: string): void {
 
 describe('ffi v2 production bindings', () => {
     it('declares exactly the ABI manifest function set in the C headers, and nothing more', () => {
-        const expected = [...ALL_EXPORTS].sort();
+        const expected = [ ...ALL_EXPORTS ].sort();
+
         for (const header of SWIFT_HEADERS) {
             const declared = new Set(
                 (readArtifact(header).match(/uniffi_editor_core_fn_func_[a-z0-9_]+/g) ?? []).map(
-                    (reference) => reference.slice('uniffi_editor_core_fn_func_'.length)
+                    reference => reference.slice('uniffi_editor_core_fn_func_'.length)
                 )
             );
-            expect([...declared].sort()).toEqual(expected);
+
+            expect([ ...declared ].sort()).toEqual(expected);
         }
     });
 
     it('ships every ABI manifest function plus editor_core_version in the C headers (fn + checksum)', () => {
         for (const header of SWIFT_HEADERS) {
             const contents = readArtifact(header);
+
             for (const symbol of ALL_EXPORTS) {
                 expect(contents).toContain(`uniffi_editor_core_fn_func_${symbol}`);
                 expect(contents).toContain(`uniffi_editor_core_checksum_func_${symbol}`);
             }
+
             expectNoLegacySymbols(contents);
         }
     });
@@ -93,9 +105,11 @@ describe('ffi v2 production bindings', () => {
     it('exposes every ABI manifest function plus editorCoreVersion in the Swift bindings', () => {
         for (const swift of SWIFT_SOURCES) {
             const contents = readArtifact(swift);
+
             for (const symbol of ALL_EXPORTS) {
                 expect(contents).toContain(`${camelCase(symbol)}(`);
             }
+
             expectNoLegacySymbols(contents);
         }
     });
@@ -103,9 +117,11 @@ describe('ffi v2 production bindings', () => {
     it('exposes every ABI manifest function plus editorCoreVersion in the Kotlin bindings', () => {
         for (const kotlin of KOTLIN_SOURCES) {
             const contents = readArtifact(kotlin);
+
             for (const symbol of ALL_EXPORTS) {
                 expect(contents).toContain(camelCase(symbol));
             }
+
             expectNoLegacySymbols(contents);
         }
     });
@@ -128,9 +144,11 @@ describe('ffi v2 production bindings', () => {
         expect(readArtifact('ios/Generated_editor_core.swift')).toBe(
             readArtifact('rust/bindings/swift/editor_core.swift')
         );
+
         expect(readArtifact('ios/editor_coreFFI/editor_coreFFI.h')).toBe(
             readArtifact('rust/bindings/swift/editor_coreFFI.h')
         );
+
         expect(readArtifact('ios/editor_coreFFI/module.modulemap')).toBe(
             readArtifact('rust/bindings/swift/editor_coreFFI.modulemap')
         );
@@ -138,22 +156,27 @@ describe('ffi v2 production bindings', () => {
 
     // Opt-in only: inspects an already-built dylib, never builds one.
     const checkDylib = process.env.FFI_V2_BINDINGS_CHECK_DYLIB === '1' ? it : it.skip;
+
     checkDylib('exports exactly the ABI manifest v2 symbols from an existing release dylib', () => {
         const dylib = path.join(
             process.env.CARGO_TARGET_DIR ?? path.join(REPO_ROOT, 'rust', 'editor-core', 'target'),
             'release',
             'libeditor_core.dylib'
         );
-        const nmOutput = execFileSync('nm', ['-gU', dylib], {
+
+        const nmOutput = execFileSync('nm', [ '-gU', dylib ], {
             encoding: 'utf8',
             maxBuffer: 64 * 1024 * 1024,
         });
+
         for (const symbol of ALL_EXPORTS) {
             expect(nmOutput).toContain(`uniffi_editor_core_fn_func_${symbol}`);
         }
+
         const v2Symbols = nmOutput
             .split('\n')
-            .filter((line) => line.includes('uniffi_editor_core_fn_func_editor_v2_'));
+            .filter(line => line.includes('uniffi_editor_core_fn_func_editor_v2_'));
+
         expect(v2Symbols).toHaveLength(V2_EXPORTS.length);
         expectNoLegacySymbols(nmOutput);
     });

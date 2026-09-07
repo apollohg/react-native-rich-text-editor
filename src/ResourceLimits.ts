@@ -8,7 +8,7 @@ import { NativeEditorBoundaryError } from './NativeEditorBoundaryError';
  * Every field is optional; an omitted one uses
  * {@link DEFAULT_EDITOR_RESOURCE_LIMITS}. Each value must be a positive
  * integer no greater than the matching {@link HARD_EDITOR_RESOURCE_LIMITS}
- * ceiling — anything else throws `NativeEditorBoundaryError`
+ * ceiling : anything else throws `NativeEditorBoundaryError`
  * (`INVALID_RESOURCE_LIMIT`). Exceeding a limit at runtime raises
  * `INPUT_LIMIT_EXCEEDED`, `DOCUMENT_LIMIT_EXCEEDED`, or `SCHEMA_INVALID`.
  */
@@ -25,7 +25,7 @@ export interface EditorResourceLimits {
     maxSchemaExpressionBytes?: number;
     /** Byte ceiling for one inbound collaboration message. */
     maxCollaborationMessageBytes?: number;
-    /** Byte ceiling for an encoded Yjs state — imported room snapshots and exported ones. */
+    /** Byte ceiling for an encoded Yjs state : imported room snapshots and exported ones. */
     maxEncodedStateBytes?: number;
 }
 
@@ -142,6 +142,7 @@ function validateLimit(name: string, value: number, ceiling: number): void {
 function resolveLimit(name: keyof ResolvedEditorResourceLimits, value?: number): number {
     const resolved = value ?? DEFAULT_EDITOR_RESOURCE_LIMITS[name];
     validateLimit(name, resolved, HARD_EDITOR_RESOURCE_LIMITS[name]);
+
     return resolved;
 }
 
@@ -149,9 +150,13 @@ function validateOverrides<T extends object>(
     limits: T | undefined,
     ceilings: Readonly<Required<T>>
 ): void {
-    if (limits === undefined) return;
+    if (limits === undefined) {
+        return;
+    }
+
     for (const name of Object.keys(ceilings) as Array<keyof T>) {
         const value = limits[name];
+
         if (value !== undefined) {
             validateLimit(String(name), value as number, ceilings[name] as number);
         }
@@ -179,9 +184,11 @@ export function validateEditorCreateLimits(limits?: {
 export function resolveEditorResourceLimits(
     limits: EditorResourceLimits = {}
 ): ResolvedEditorResourceLimits {
-    return Object.fromEntries(
-        (Object.keys(DEFAULT_EDITOR_RESOURCE_LIMITS) as Array<
-            keyof ResolvedEditorResourceLimits
-        >).map((name) => [name, resolveLimit(name, limits[name])])
-    ) as unknown as ResolvedEditorResourceLimits;
+    const resolved = { ...DEFAULT_EDITOR_RESOURCE_LIMITS };
+
+    for (const name of Object.keys(resolved) as Array<keyof ResolvedEditorResourceLimits>) {
+        resolved[name] = resolveLimit(name, limits[name]);
+    }
+
+    return resolved;
 }

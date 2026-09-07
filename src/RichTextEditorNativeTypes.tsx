@@ -1,5 +1,5 @@
 import {
-    ExternalTextCompositionManager,
+    type ExternalTextCompositionManager,
     type NativeExternalTextCompositionHandle,
 } from './ExternalTextComposition';
 import { type ReactNode } from 'react';

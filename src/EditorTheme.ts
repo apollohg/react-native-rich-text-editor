@@ -150,16 +150,18 @@ export interface EditorContentInsets {
 
 function stripUndefined(value: unknown): unknown {
     if (Array.isArray(value)) {
-        return value.map((item) => stripUndefined(item)).filter((item) => item !== undefined);
+        return value.map(item => stripUndefined(item)).filter(item => item !== undefined);
     }
 
     if (value != null && typeof value === 'object') {
         const entries = Object.entries(value as Record<string, unknown>)
-            .map(([key, entryValue]) => [key, stripUndefined(entryValue)] as const)
-            .filter(([, entryValue]) => entryValue !== undefined);
+            .map(([ key, entryValue ]) => [ key, stripUndefined(entryValue) ] as const)
+            .filter(([ , entryValue ]) => entryValue !== undefined);
+
         if (entries.length === 0) {
             return undefined;
         }
+
         return Object.fromEntries(entries);
     }
 
@@ -170,21 +172,26 @@ function stripUndefined(value: unknown): unknown {
     return value;
 }
 
-// Mentions are configured on the mentions addon, not on EditorTheme; native
-// still reads them from the theme payload.
+/**
+ * Mentions are configured on the mentions addon, not on EditorTheme; native
+ * still reads them from the theme payload.
+ */
 export function serializeEditorTheme(
     theme?: EditorTheme,
     mentionTheme?: EditorMentionTheme
 ): string | undefined {
     const normalized = theme === undefined ? undefined : normalizeEditorTheme(theme);
+
     const cleanedTheme =
         normalized && (normalized.styles || normalized.toolbar)
             ? stripUndefined(normalized)
             : undefined;
+
     const base =
         cleanedTheme && typeof cleanedTheme === 'object'
             ? (cleanedTheme as Record<string, unknown>)
             : undefined;
+
     const cleanedMentions = mentionTheme
         ? stripUndefined(normalizeEditorMentionTheme(mentionTheme))
         : undefined;
@@ -192,5 +199,6 @@ export function serializeEditorTheme(
     if (cleanedMentions == null) {
         return base ? JSON.stringify(base) : undefined;
     }
+
     return JSON.stringify({ version: 1, ...(base ?? {}), mentions: cleanedMentions });
 }

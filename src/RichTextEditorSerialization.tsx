@@ -10,12 +10,7 @@ import {
     type Selection,
 } from './NativeEditorBridge';
 import { atomSelected, type AtomInstance } from './atomInstances';
-import {
-    type EditorToolbarFrame,
-    type EditorToolbarGroupChildItem,
-    type EditorToolbarIcon,
-    type EditorToolbarItem,
-} from './EditorToolbar';
+import { type EditorToolbarFrame, type EditorToolbarGroupChildItem, type EditorToolbarItem } from './EditorToolbar';
 import { IMAGE_NODE_NAME } from './schemas';
 import { useRef } from 'react';
 import {
@@ -38,8 +33,13 @@ export function mergeMentionSuggestionTheme(
     baseTheme: EditorMentionTheme | undefined,
     resolvedTheme: EditorMentionTheme | undefined
 ): EditorMentionTheme | undefined {
-    if (baseTheme == null) return resolvedTheme;
-    if (resolvedTheme == null) return baseTheme;
+    if (baseTheme == null) {
+        return resolvedTheme;
+    }
+
+    if (resolvedTheme == null) {
+        return baseTheme;
+    }
 
     return {
         node: { ...baseTheme.node, ...resolvedTheme.node },
@@ -54,6 +54,7 @@ export function mergeMentionSuggestionTheme(
 export function allocateToolbarFrameOwnerId(): number {
     const ownerId = nextNativeEditorToolbarFrameOwnerId;
     nextNativeEditorToolbarFrameOwnerId += 1;
+
     return ownerId;
 }
 
@@ -82,13 +83,13 @@ export function selectedAtomKeys(
 ): Set<string> {
     return new Set(
         instances
-            .filter((instance) => atomSelected(selection, instance.docPos))
+            .filter(instance => atomSelected(selection, instance.docPos))
             .map(({ key }) => key)
     );
 }
 
 export function equalStringSets(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
-    return left.size === right.size && [...left].every((value) => right.has(value));
+    return left.size === right.size && [ ...left ].every(value => right.has(value));
 }
 
 export function equalAtomInstances(
@@ -112,11 +113,18 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function parseSelectionFromUpdate(value: unknown): Selection | null {
-    if (!isRecord(value)) return null;
-    if (value.type === 'all') return { type: 'all' };
+    if (!isRecord(value)) {
+        return null;
+    }
+
+    if (value.type === 'all') {
+        return { type: 'all' };
+    }
+
     if (value.type === 'node' && typeof value.pos === 'number') {
         return { type: 'node', pos: value.pos };
     }
+
     if (
         value.type === 'text' &&
         typeof value.anchor === 'number' &&
@@ -124,6 +132,7 @@ export function parseSelectionFromUpdate(value: unknown): Selection | null {
     ) {
         return { type: 'text', anchor: value.anchor, head: value.head };
     }
+
     return null;
 }
 
@@ -134,16 +143,26 @@ export function stringArray(value: unknown): string[] {
 }
 
 export function booleanMap(value: unknown): Record<string, boolean> {
-    if (!isRecord(value)) return {};
-    const result: Record<string, boolean> = {};
-    for (const key of Object.keys(value)) {
-        if (typeof value[key] === 'boolean') result[key] = value[key] as boolean;
+    if (!isRecord(value)) {
+        return {};
     }
+
+    const result: Record<string, boolean> = {};
+
+    for (const key of Object.keys(value)) {
+        if (typeof value[key] === 'boolean') {
+            result[key] = value[key];
+        }
+    }
+
     return result;
 }
 
 export function parseActiveStateFromUpdate(value: unknown): ActiveState | null {
-    if (!isRecord(value)) return null;
+    if (!isRecord(value)) {
+        return null;
+    }
+
     return {
         marks: booleanMap(value.marks),
         markAttrs: isRecord(value.markAttrs)
@@ -188,6 +207,7 @@ export function acceptNativeCommitPayload(
     const canonicalBoundEditorId = normalizeNativeEditorV2DecimalId(boundEditorId);
     const canonicalEditorId = normalizeNativeEditorV2DecimalId(payload.editorId);
     const canonicalRevision = normalizeNativeEditorV2DecimalId(payload.documentRevision);
+
     if (
         canonicalBoundEditorId == null ||
         canonicalBoundEditorId !== boundEditorId ||
@@ -199,11 +219,17 @@ export function acceptNativeCommitPayload(
     ) {
         return null;
     }
+
     const snapshot = normalizeNativeEditorV2RenderUpdateValue(payload.updateJson);
-    if (snapshot == null || snapshot.documentVersion !== canonicalRevision) return null;
+
+    if (snapshot == null || snapshot.documentVersion !== canonicalRevision) {
+        return null;
+    }
+
     if (lastAcceptedRevision != null && BigInt(canonicalRevision) <= BigInt(lastAcceptedRevision)) {
         return null;
     }
+
     return { documentRevision: canonicalRevision, snapshot };
 }
 
@@ -219,19 +245,20 @@ export function mapToolbarChildForNative(
             type: 'action',
             key: LINK_TOOLBAR_ACTION_KEY,
             label: item.label,
-            icon: item.icon as EditorToolbarIcon,
+            icon: item.icon,
             buttonStyle: item.buttonStyle,
             placement: item.placement,
             isActive: activeState.marks.link === true,
             isDisabled: !editable || !onRequestLink || !activeState.allowedMarks.includes('link'),
         };
     }
+
     if (item.type === 'image') {
         return {
             type: 'action',
             key: IMAGE_TOOLBAR_ACTION_KEY,
             label: item.label,
-            icon: item.icon as EditorToolbarIcon,
+            icon: item.icon,
             buttonStyle: item.buttonStyle,
             placement: item.placement,
             isActive: false,
@@ -241,6 +268,7 @@ export function mapToolbarChildForNative(
                 !activeState.insertableNodes.includes(IMAGE_NODE_NAME),
         };
     }
+
     return item;
 }
 
@@ -251,24 +279,25 @@ export function mapToolbarItemsForNative(
     onRequestLink?: RichTextEditorProps['onRequestLink'],
     onRequestImage?: RichTextEditorProps['onRequestImage']
 ): EditorToolbarItem[] {
-    return items.map((item) => {
+    return items.map(item => {
         if (item.type === 'group') {
             return {
                 ...item,
-                items: item.items.map((child) =>
+                items: item.items.map(child =>
                     mapToolbarChildForNative(
                         child,
                         activeState,
                         editable,
                         onRequestLink,
                         onRequestImage
-                    )
-                ),
+                    )),
             };
         }
+
         if (item.type === 'separator') {
             return item;
         }
+
         return mapToolbarChildForNative(item, activeState, editable, onRequestLink, onRequestImage);
     });
 }
@@ -279,11 +308,14 @@ export function serializeRemoteSelections(
     if (!remoteSelections || remoteSelections.length === 0) {
         return undefined;
     }
-    const normalized = remoteSelections.map((selection) => {
+
+    const normalized = remoteSelections.map(selection => {
         const clientId = normalizeNativeEditorV2DecimalId(selection.clientId);
+
         if (clientId == null) {
             throw new Error('NativeRichTextEditor: remote clientId must be canonical decimal u64');
         }
+
         return {
             ...selection,
             clientId,
@@ -291,6 +323,7 @@ export function serializeRemoteSelections(
             head: requireNativeEditorV2U32(selection.head, 'remote selection head'),
         };
     });
+
     return stringifyCachedJson(normalized);
 }
 
@@ -300,6 +333,7 @@ export function serializeToolbarFrames(
     if (!frames || frames.length === 0) {
         return undefined;
     }
+
     return JSON.stringify(frames.length === 1 ? frames[0] : { frames });
 }
 
@@ -316,6 +350,7 @@ export function parseCaretRectJson(raw: string | null | undefined): RichTextEdit
         const height = typeof parsed.height === 'number' ? parsed.height : null;
         const editorWidth = typeof parsed.editorWidth === 'number' ? parsed.editorWidth : null;
         const editorHeight = typeof parsed.editorHeight === 'number' ? parsed.editorHeight : null;
+
         if (
             x == null ||
             y == null ||
@@ -326,7 +361,10 @@ export function parseCaretRectJson(raw: string | null | undefined): RichTextEdit
         ) {
             return null;
         }
-        return { x, y, width, height, editorWidth, editorHeight };
+
+        return {
+            x, y, width, height, editorWidth, editorHeight,
+        };
     } catch {
         return null;
     }
@@ -337,13 +375,17 @@ export const serializedJsonCache = new WeakMap<object, string>();
 export function stringifyCachedJson(value: unknown): string {
     if (value != null && typeof value === 'object') {
         const cached = serializedJsonCache.get(value);
+
         if (cached != null) {
             return cached;
         }
+
         const serialized = JSON.stringify(value);
         serializedJsonCache.set(value, serialized);
+
         return serialized;
     }
+
     return JSON.stringify(value);
 }
 
@@ -358,6 +400,7 @@ export function useSerializedValue<T>(
         hasRevision: boolean;
         serialized: string | undefined;
     } | null>(null);
+
     const hasRevision = revision !== undefined;
     const cached = cacheRef.current;
 
@@ -365,17 +408,20 @@ export function useSerializedValue<T>(
         if (hasRevision && cached.hasRevision && Object.is(cached.revision, revision)) {
             return cached.serialized;
         }
+
         if (Object.is(cached.value, value) && cached.hasRevision === hasRevision) {
             return cached.serialized;
         }
     }
 
     const serialized = value == null ? undefined : serialize(value);
+
     cacheRef.current = {
         value,
         revision,
         hasRevision,
         serialized,
     };
+
     return serialized;
 }

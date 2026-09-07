@@ -73,10 +73,12 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 initialJSON: V2_INITIAL_DOC,
             },
         ];
+
         expect(removedComponentProps).toHaveLength(9);
 
         mockNativeModule.editorV2Create.mockClear();
         mockResolveDocumentDescriptor.mockClear();
+
         const { getByTestId } = render(
             <NativeRichTextEditor documentHandle={handle} editable={false} />
         );
@@ -92,31 +94,36 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             schema: HANDLE_OWNED_ARTICLE_SCHEMA,
             initialization: { type: 'localEmpty' },
         });
+
         const ref = createRef<NativeRichTextEditorRef>();
         render(<NativeRichTextEditor ref={ref} documentHandle={handle} />);
 
         act(() => ref.current!.clearContent());
+
         const clearRequest = JSON.parse(
             mockNativeModule.editorV2ReplaceDocument.mock.calls[
                 mockNativeModule.editorV2ReplaceDocument.mock.calls.length - 1
             ][1] as string
         ) as Record<string, unknown>;
+
         expect(clearRequest.setJson).toEqual({
             type: 'article',
-            content: [{ type: 'title' }],
+            content: [ { type: 'title' } ],
         });
 
         act(() => ref.current!.insertImage('https://example.test/image.png'));
+
         const imageRequest = JSON.parse(
             mockNativeModule.editorV2ApplyCommand.mock.calls[
                 mockNativeModule.editorV2ApplyCommand.mock.calls.length - 1
             ][1] as string
         ) as { command: Record<string, unknown> };
+
         expect(imageRequest.command).toEqual({
             type: 'insertContentJson',
             json: {
                 type: 'article',
-                content: [{ type: 'image', attrs: { src: 'https://example.test/image.png' } }],
+                content: [ { type: 'image', attrs: { src: 'https://example.test/image.png' } } ],
             },
         });
 
@@ -128,6 +135,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             schema: HANDLE_OWNED_ARTICLE_SCHEMA,
             initialization: { type: 'localEmpty' },
         });
+
         const { rerender } = render(<NativeRichTextEditor documentHandle={handle} />);
         mockNativeModule.editorV2ApplyLocalApi.mockClear();
 
@@ -139,12 +147,14 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         );
 
         expect(mockNativeModule.editorV2ApplyLocalApi).toHaveBeenCalledTimes(1);
+
         const request = JSON.parse(
             mockNativeModule.editorV2ApplyLocalApi.mock.calls[0][1] as string
         ) as Record<string, unknown>;
+
         expect(request.setJson).toEqual({
             type: 'article',
-            content: [{ type: 'title' }],
+            content: [ { type: 'title' } ],
         });
 
         handle.destroy();
@@ -153,8 +163,9 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
     it('retains immutable custom-root defaults after the caller mutates its schema', () => {
         const mutableCardDefault = {
             appearance: { tone: 'blue' },
-            labels: ['initial'],
+            labels: [ 'initial' ],
         };
+
         const schema: SchemaDefinition = {
             nodes: [
                 { name: 'article', content: 'card', role: 'doc' },
@@ -169,10 +180,12 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             ],
             marks: [],
         };
+
         const handle = createNativeEditorDocumentHandle({
             schema,
             initialization: { type: 'localEmpty' },
         });
+
         mutableCardDefault.appearance.tone = 'mutated';
         mutableCardDefault.labels.push('later');
 
@@ -194,22 +207,26 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 {
                     type: 'card',
                     attrs: {
-                        config: { appearance: { tone: 'blue' }, labels: ['initial'] },
+                        config: { appearance: { tone: 'blue' }, labels: [ 'initial' ] },
                     },
                 },
             ],
         };
+
         const controlledRequest = JSON.parse(
             mockNativeModule.editorV2ApplyLocalApi.mock.calls[0][1] as string
         ) as Record<string, unknown>;
+
         expect(controlledRequest.setJson).toEqual(expectedEmptyArticle);
 
         act(() => ref.current!.clearContent());
+
         const clearRequest = JSON.parse(
             mockNativeModule.editorV2ReplaceDocument.mock.calls[
                 mockNativeModule.editorV2ReplaceDocument.mock.calls.length - 1
             ][1] as string
         ) as Record<string, unknown>;
+
         expect(clearRequest.setJson).toEqual(expectedEmptyArticle);
 
         handle.destroy();
@@ -220,6 +237,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const ref = createRef<NativeRichTextEditorRef>();
         const onContentChange = jest.fn();
         const onContentChangeJSON = jest.fn();
+
         const { getByTestId } = render(
             <NativeRichTextEditor
                 ref={ref}
@@ -239,10 +257,13 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         act(() => {
             ref.current!.setContent('<p>world</p>');
         });
+
         expect(mockNativeModule.editorV2ReplaceDocument).toHaveBeenCalledTimes(1);
+
         const replaceRequest = JSON.parse(
             mockNativeModule.editorV2ReplaceDocument.mock.calls[0][1] as string
         ) as Record<string, unknown>;
+
         expect(replaceRequest.setHtml).toBe('<p>world</p>');
         expect(replaceRequest.history).toBe('undoableBoundary');
         expect(ref.current!.getContent()).toBe('<p>world</p>');
@@ -251,31 +272,38 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
 
         // Undo state is the engine's, not a TypeScript copy.
         expect(ref.current!.canUndo()).toBe(true);
+
         act(() => {
             ref.current!.undo();
         });
+
         expect(ref.current!.getContentJson()).toEqual(V2_INITIAL_DOC);
         expect(ref.current!.canUndo()).toBe(false);
 
         act(() => {
             ref.current!.setContentJson(V2_DOC_B);
         });
+
         expect(ref.current!.getContentJson()).toEqual(V2_DOC_B);
 
         act(() => {
             ref.current!.clearContent();
         });
+
         expect(ref.current!.getIsEmpty()).toBe(true);
+
         const clearRequest = JSON.parse(
             mockNativeModule.editorV2ReplaceDocument.mock.calls[
                 mockNativeModule.editorV2ReplaceDocument.mock.calls.length - 1
             ][1] as string
         ) as Record<string, unknown>;
+
         expect(clearRequest.history).toBe('resetAndClear');
         expect(ref.current!.canUndo()).toBe(false);
+
         expect(ref.current!.getContentJson()).toEqual({
             type: 'doc',
-            content: [{ type: 'paragraph' }],
+            content: [ { type: 'paragraph' } ],
         });
 
         handle.destroy();
@@ -284,14 +312,16 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
     it('maps controlled valueJSONUpdateMode="replace" to an undoable engine boundary', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
+
         const { rerender } = render(
             <NativeRichTextEditor
                 ref={ref}
                 documentHandle={handle}
                 valueJSON={V2_INITIAL_DOC}
-                valueJSONUpdateMode='replace'
+                valueJSONUpdateMode={'replace'}
             />
         );
+
         mockNativeModule.editorV2ApplyLocalApi.mockClear();
 
         rerender(
@@ -299,50 +329,58 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 ref={ref}
                 documentHandle={handle}
                 valueJSON={V2_DOC_B}
-                valueJSONUpdateMode='replace'
+                valueJSONUpdateMode={'replace'}
             />
         );
 
         expect(mockNativeModule.editorV2ApplyLocalApi).toHaveBeenCalledTimes(1);
+
         const request = JSON.parse(
             mockNativeModule.editorV2ApplyLocalApi.mock.calls[0][1] as string
         ) as Record<string, unknown>;
+
         expect(request.history).toBe('undoableBoundary');
         expect(request.setJson).toEqual(V2_DOC_B);
         expect(request.baseDocumentRevision).toBe('1');
         // Verified through engine undo state, not document content.
         expect(ref.current!.canUndo()).toBe(true);
-        // Release the controlled prop first — a controlled value always
+
+        // Release the controlled prop first : a controlled value always
         // re-drives the document, so undo is observable uncontrolled.
         rerender(
-            <NativeRichTextEditor ref={ref} documentHandle={handle} valueJSONUpdateMode='replace' />
+            <NativeRichTextEditor ref={ref} documentHandle={handle} valueJSONUpdateMode={'replace'} />
         );
+
         act(() => {
             ref.current!.undo();
         });
+
         expect(ref.current!.getContentJson()).toEqual(V2_INITIAL_DOC);
         handle.destroy();
     });
 
-    it('maps controlled valueJSONUpdateMode="reset" to a non-undoable history clear', async () => {
+    it('maps controlled valueJSONUpdateMode="reset" to a non-undoable history clear', async() => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
+
         const { rerender } = render(
             <NativeRichTextEditor
                 ref={ref}
                 documentHandle={handle}
                 valueJSON={V2_INITIAL_DOC}
-                valueJSONUpdateMode='replace'
+                valueJSONUpdateMode={'replace'}
             />
         );
+
         rerender(
             <NativeRichTextEditor
                 ref={ref}
                 documentHandle={handle}
                 valueJSON={V2_DOC_B}
-                valueJSONUpdateMode='replace'
+                valueJSONUpdateMode={'replace'}
             />
         );
+
         expect(ref.current!.canUndo()).toBe(true);
         mockNativeModule.editorV2ApplyLocalApi.mockClear();
 
@@ -351,15 +389,18 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 ref={ref}
                 documentHandle={handle}
                 valueJSON={V2_DOC_C}
-                valueJSONUpdateMode='reset'
+                valueJSONUpdateMode={'reset'}
             />
         );
-        await act(async () => Promise.resolve());
+
+        await act(async() => Promise.resolve());
 
         expect(mockNativeModule.editorV2ApplyLocalApi).toHaveBeenCalledTimes(1);
+
         const request = JSON.parse(
             mockNativeModule.editorV2ApplyLocalApi.mock.calls[0][1] as string
         ) as Record<string, unknown>;
+
         expect(request.history).toBe('resetAndClear');
         expect(request.setJson).toEqual(V2_DOC_C);
         // The reset cleared the engine undo stack that the replace filled.
@@ -371,14 +412,16 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
     it('refreshes from the engine after REVISION_MISMATCH and re-applies against the fresh revision', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
+
         const { rerender } = render(
             <NativeRichTextEditor
                 ref={ref}
                 documentHandle={handle}
                 valueJSON={V2_INITIAL_DOC}
-                valueJSONUpdateMode='replace'
+                valueJSONUpdateMode={'replace'}
             />
         );
+
         mockNativeModule.editorV2ApplyLocalApi.mockClear();
 
         // The engine advances behind the component's back (rev 1 -> 2).
@@ -389,7 +432,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 ref={ref}
                 documentHandle={handle}
                 valueJSON={V2_DOC_C}
-                valueJSONUpdateMode='replace'
+                valueJSONUpdateMode={'replace'}
             />
         );
 
@@ -397,12 +440,15 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         // rejected; the component refreshed and re-applied against the
         // engine's actual revision.
         expect(mockNativeModule.editorV2ApplyLocalApi).toHaveBeenCalledTimes(2);
+
         const staleRequest = JSON.parse(
             mockNativeModule.editorV2ApplyLocalApi.mock.calls[0][1] as string
         ) as Record<string, unknown>;
+
         const freshRequest = JSON.parse(
             mockNativeModule.editorV2ApplyLocalApi.mock.calls[1][1] as string
         ) as Record<string, unknown>;
+
         expect(String(staleRequest.baseDocumentRevision)).toBe('1');
         expect(String(freshRequest.baseDocumentRevision)).toBe('2');
         expect(freshRequest.setJson).toEqual(V2_DOC_C);

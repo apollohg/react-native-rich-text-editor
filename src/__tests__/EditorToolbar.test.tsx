@@ -66,7 +66,7 @@ describe('EditorToolbar', () => {
                     },
                 ],
                 activeState: {
-                    insertableNodes: ['image'],
+                    insertableNodes: [ 'image' ],
                 },
                 onRequestImage: jest.fn(),
             });
@@ -183,6 +183,7 @@ describe('EditorToolbar', () => {
             });
 
             const groupButton = getByLabelText('Headings');
+
             expect(groupButton.props.accessibilityState).toEqual(
                 expect.objectContaining({ expanded: false })
             );
@@ -220,11 +221,11 @@ describe('EditorToolbar', () => {
 
             fireEvent.press(getByLabelText('Headings'));
 
-            const scrollButtonLabels = UNSAFE_getAllByType(ScrollView).flatMap((scrollView) =>
+            const scrollButtonLabels = UNSAFE_getAllByType(ScrollView).flatMap(scrollView =>
                 scrollView
                     .findAllByProps({ accessibilityRole: 'button' })
-                    .map((button) => button.props.accessibilityLabel)
-            );
+                    .map(button => button.props.accessibilityLabel));
+
             expect(scrollButtonLabels).toContain('Headings');
             expect(scrollButtonLabels).not.toContain('Pinned Heading');
             expect(getByLabelText('Pinned Heading')).toBeTruthy();
@@ -252,16 +253,18 @@ describe('EditorToolbar', () => {
             });
 
             const fixedSections = UNSAFE_getAllByType(View).filter(
-                (view) => StyleSheet.flatten(view.props.style)?.flexShrink === 0
+                view => StyleSheet.flatten(view.props.style)?.flexShrink === 0
             );
+
             const sectionContaining = (label: string) =>
                 fixedSections.find(
-                    (section) => section.findAllByProps({ accessibilityLabel: label }).length > 0
+                    section => section.findAllByProps({ accessibilityLabel: label }).length > 0
                 );
 
             expect(StyleSheet.flatten(sectionContaining('Start')?.props.style)).toEqual(
                 expect.objectContaining({ paddingStart: 12 })
             );
+
             expect(StyleSheet.flatten(sectionContaining('End')?.props.style)).toEqual(
                 expect.objectContaining({ paddingEnd: 12 })
             );
@@ -270,6 +273,7 @@ describe('EditorToolbar', () => {
         it('renders only the configured toolbar items and preserves order', () => {
             const onToggleMark = jest.fn();
             const onInsertNodeType = jest.fn();
+
             const { getAllByRole, queryByLabelText } = renderToolbar({
                 toolbarItems: [
                     {
@@ -301,8 +305,8 @@ describe('EditorToolbar', () => {
                     marks: { highlight: true },
                     nodes: {},
                     commands: {},
-                    allowedMarks: ['bold', 'highlight'],
-                    insertableNodes: ['mention'],
+                    allowedMarks: [ 'bold', 'highlight' ],
+                    insertableNodes: [ 'mention' ],
                 },
                 onToggleMark,
                 onInsertNodeType,
@@ -312,11 +316,13 @@ describe('EditorToolbar', () => {
             expect(queryByLabelText('Undo')).toBeNull();
 
             const buttons = getAllByRole('button');
-            expect(buttons.map((button) => button.props.accessibilityLabel)).toEqual([
+
+            expect(buttons.map(button => button.props.accessibilityLabel)).toEqual([
                 'Bold',
                 'Highlight',
                 'Mention',
             ]);
+
             expect(queryByLabelText('Highlight')?.props.accessibilityState).toEqual(
                 expect.objectContaining({ selected: true })
             );
@@ -406,6 +412,7 @@ describe('EditorToolbar', () => {
                     borderWidth: 2,
                 },
             });
+
             const tree = toJSON();
             const style = StyleSheet.flatten(tree?.props.style);
 
@@ -421,6 +428,7 @@ describe('EditorToolbar', () => {
                     showTopBorder: false,
                 },
             });
+
             const tree = toJSON();
             const style = StyleSheet.flatten(tree?.props.style);
 

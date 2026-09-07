@@ -14,6 +14,7 @@ describe('NativeEditorBridge v2', () => {
         it('creates a frozen local-awareness selection and serializes its tagged wire intent', () => {
             const handle = createHandle();
             const selection = createNativeEditorLocalAwarenessSelection(2, 5);
+
             const intent: NativeEditorLocalAwarenessIntent = {
                 state: { user: { name: 'Alice' } },
                 focused: true,
@@ -27,11 +28,13 @@ describe('NativeEditorBridge v2', () => {
             handle.bridge.setLocalAwareness(intent);
             handle.bridge.setLocalAwareness(null);
             const calls = mockNativeModule.editorV2CollaborationSetAwareness.mock.calls;
+
             expect(JSON.parse(calls[0][1])).toEqual({
                 selection: { type: 'text', anchor: 2, head: 5 },
                 state: { user: { name: 'Alice' } },
                 focused: true,
             });
+
             expect(intent.selection).toEqual({ anchor: 2, head: 5 });
             expect(calls[1][1]).toBe('null');
         });
@@ -41,19 +44,23 @@ describe('NativeEditorBridge v2', () => {
             const factorySelection = createNativeEditorLocalAwarenessSelection(2, 5);
             let accessorRead = false;
             const transparentProxy = new Proxy(factorySelection, {});
+
             const accessorProxy = new Proxy(factorySelection, {
                 get: () => {
                     accessorRead = true;
                     throw new Error('selection accessor must not be read');
                 },
             });
+
             const accessorSelection: Record<string, unknown> = { type: 'text', head: 5 };
+
             Object.defineProperty(accessorSelection, 'anchor', {
                 enumerable: true,
                 get: () => {
                     throw new Error('selection accessor must not be read');
                 },
             });
+
             const invalidSelections: unknown[] = [
                 { anchor: 2, head: 5 },
                 { ...factorySelection },
@@ -80,9 +87,9 @@ describe('NativeEditorBridge v2', () => {
                         state: { user: { name: 'Alice' } },
                         focused: true,
                         selection,
-                    } as unknown as NativeEditorLocalAwarenessIntent)
-                ).toThrow('invalid local awareness intent');
+                    } as unknown as NativeEditorLocalAwarenessIntent)).toThrow('invalid local awareness intent');
             }
+
             expect(accessorRead).toBe(false);
             expect(mockNativeModule.editorV2CollaborationSetAwareness).not.toHaveBeenCalled();
         });
@@ -100,20 +107,23 @@ describe('NativeEditorBridge v2', () => {
                 expect(() => createNativeEditorLocalAwarenessSelection(coordinate, 1)).toThrow(
                     'invalid local awareness intent'
                 );
+
                 expect(() => createNativeEditorLocalAwarenessSelection(1, coordinate)).toThrow(
                     'invalid local awareness intent'
                 );
             }
+
             expect(mockNativeModule.editorV2CollaborationSetAwareness).not.toHaveBeenCalled();
         });
 
         it('rejects raw and recursively cursor-authored awareness before invoking native code', () => {
             const handle = createHandle();
             const rawState = { user: { name: 'Alice' } };
+
             const cursorIntent = {
                 state: {
                     user: { name: 'Alice' },
-                    metadata: [{ cursor: { sticky: 'caller-authored' } }],
+                    metadata: [ { cursor: { sticky: 'caller-authored' } } ],
                 },
                 focused: false,
             };
@@ -121,18 +131,19 @@ describe('NativeEditorBridge v2', () => {
             expect(() =>
                 handle.bridge.setLocalAwareness(
                     rawState as unknown as NativeEditorLocalAwarenessIntent
-                )
-            ).toThrow('invalid local awareness intent');
+                )).toThrow('invalid local awareness intent');
+
             expect(() =>
-                handle.bridge.setLocalAwareness(cursorIntent as NativeEditorLocalAwarenessIntent)
-            ).toThrow('reserved cursor key');
+                handle.bridge.setLocalAwareness(cursorIntent as NativeEditorLocalAwarenessIntent)).toThrow('reserved cursor key');
+
             expect(cursorIntent).toEqual({
                 state: {
                     user: { name: 'Alice' },
-                    metadata: [{ cursor: { sticky: 'caller-authored' } }],
+                    metadata: [ { cursor: { sticky: 'caller-authored' } } ],
                 },
                 focused: false,
             });
+
             expect(mockNativeModule.editorV2CollaborationSetAwareness).not.toHaveBeenCalled();
         });
 

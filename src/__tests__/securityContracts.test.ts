@@ -13,9 +13,10 @@ import { resolveDocumentDescriptor, type SchemaDefinition } from '../schemas';
 const fixturePath =
     process.env.SECURITY_FIXTURE_PATH ??
     path.resolve(__dirname, '../../scripts/tests/security-contract-fixtures.json');
+
 const fixtures = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
 
-const V2_U64_ERROR_FIELDS = ['operationIndex', 'limit', 'actual'] as const;
+const V2_U64_ERROR_FIELDS = [ 'operationIndex', 'limit', 'actual' ] as const;
 
 /**
  * Shared security fixtures use JSON numbers for logical counters. The frozen
@@ -23,7 +24,7 @@ const V2_U64_ERROR_FIELDS = ['operationIndex', 'limit', 'actual'] as const;
  */
 function toV2WireError(error: Record<string, unknown>): Record<string, unknown> {
     return Object.fromEntries(
-        Object.entries(error).map(([field, value]) => [
+        Object.entries(error).map(([ field, value ]) => [
             field,
             (V2_U64_ERROR_FIELDS as readonly string[]).includes(field) && typeof value === 'number'
                 ? String(value)
@@ -35,6 +36,7 @@ function toV2WireError(error: Record<string, unknown>): Record<string, unknown> 
 describe('shared hostile security fixtures', () => {
     it('executes oversized schema admission against the TypeScript boundary', () => {
         const nodeCount = fixtures.oversizedSchema.nodeCount as number;
+
         const schema: SchemaDefinition = {
             nodes: Array.from({ length: nodeCount }, (_, index) => ({
                 name: `n${index}`,
@@ -49,6 +51,7 @@ describe('shared hostile security fixtures', () => {
             throw new Error('oversized fixture was accepted');
         } catch (error) {
             expect(error).toBeInstanceOf(NativeEditorBoundaryError);
+
             expect((error as NativeEditorBoundaryError).code).toBe(
                 fixtures.oversizedSchema.expectedErrorCode
             );
@@ -84,19 +87,22 @@ describe('shared hostile security fixtures', () => {
             },
             { name: 'text', content: '', role: 'text', isVoid: false },
         ]);
-        expect(descriptor.schema.marks).toEqual([{ name: 'highlight', htmlTag: 'mark' }]);
+
+        expect(descriptor.schema.marks).toEqual([ { name: 'highlight', htmlTag: 'mark' } ]);
     });
 
-    it.each(['invalidNodeTag', 'invalidAttribute'])(
+    it.each([ 'invalidNodeTag', 'invalidAttribute' ])(
         'falls back for the shared %s schema fixture',
-        (fixtureName) => {
+        fixtureName => {
             const fixture = fixtures.schemaNormalizationParity;
             const schema = structuredClone(fixture.missingFields) as SchemaDefinition;
+
             if (fixtureName === 'invalidNodeTag') {
                 schema.nodes[1].htmlTag = fixture.invalidNodeTag;
             } else {
                 schema.marks[0].attrs = { [fixture.invalidAttribute]: {} };
             }
+
             expect(resolveDocumentDescriptor(schema).schema.nodes[0].name).toBe('doc');
         }
     );
@@ -108,14 +114,15 @@ describe('FFI v2 error contract', () => {
     it('freezes all domains, operation codes, and representative domain codes', () => {
         expect(NATIVE_EDITOR_ERROR_DOMAINS).toEqual(contract.domains);
         expect(NATIVE_EDITOR_OPERATION_ERROR_CODES).toEqual(contract.operationCodes);
+
         expect(contract.representativeCodes).toEqual({
             lifecycle: [
                 'ENGINE_DESTROYING',
                 'ENGINE_DESTROYED',
                 'WHOLE_DOCUMENT_REPLACEMENT_CONNECTED',
             ],
-            snapshot: ['SNAPSHOT_RESTORE_CONNECTED'],
-            transport: ['TRANSPORT_PROTOCOL_INVALID'],
+            snapshot: [ 'SNAPSHOT_RESTORE_CONNECTED' ],
+            transport: [ 'TRANSPORT_PROTOCOL_INVALID' ],
         });
     });
 
@@ -133,6 +140,7 @@ describe('FFI v2 error contract', () => {
             const error = contract.goldenErrors.find(
                 (candidate: Record<string, unknown>) => candidate.code === code
             );
+
             expect(error).toBeDefined();
             expect(error.domain).toBe(contract.operationCodeDomains[code]);
             expect(error.requestId).toMatch(/^(0|[1-9]\d*)$/);
@@ -145,6 +153,7 @@ describe('FFI v2 error contract', () => {
         const legacyError = contract.goldenErrors.find(
             (error: Record<string, unknown>) => typeof error.operationIndex === 'number'
         );
+
         expect(legacyError).toBeDefined();
         expect(normalizeNativeEditorV2Error({ ok: false, error: legacyError })).toBeNull();
     });
@@ -182,7 +191,9 @@ describe('FFI v2 error contract', () => {
         const legacy = parseNativeBoundaryError({
             error: { code: 'CONFIG_INVALID', message: 'invalid config' },
         });
+
         expect(legacy).toBeInstanceOf(NativeEditorBoundaryError);
+
         expect(legacy).toMatchObject({
             code: 'CONFIG_INVALID',
             message: 'invalid config',

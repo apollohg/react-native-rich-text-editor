@@ -24,7 +24,7 @@ export interface ImageNodeAttributes {
 export interface ResolvedDocumentSchema {
     /** The schema itself, defaulted to {@link defaultSchema} when none was supplied. */
     schema: SchemaDefinition;
-    /** Name of the node with `role: 'doc'` — the `type` of a document's root. */
+    /** Name of the node with `role: 'doc'` : the `type` of a document's root. */
     documentNodeName: string;
     /** The smallest document this schema admits. Used by `clearContent()`. */
     emptyDocument: DocumentJSON;
@@ -38,7 +38,12 @@ export type DocumentDescriptorLimits = Pick<
 /** Node name the built-in image node is stored under. */
 export const IMAGE_NODE_NAME = 'image';
 
-export const HEADING_LEVELS = [1, 2, 3, 4, 5, 6] as const;
+export const HEADING_LEVELS = [ 1,
+    2,
+    3,
+    4,
+    5,
+    6 ] as const;
 
 /**
  * The built-in image node spec: a void block node carrying
@@ -57,15 +62,15 @@ export function imageSchemaNodeSpec(): SchemaNodeSpec {
             height: { default: null },
         },
         role: 'block',
-        parseDOM: [{ tag: 'img' }],
-        toDOM: ['img'],
+        parseDOM: [ { tag: 'img' } ],
+        toDOM: [ 'img' ],
         isVoid: true,
         deletableOnBackspace: false,
     };
 }
 
 export function imageNodeSpec(name: string = IMAGE_NODE_NAME): NodeSpec {
-    return defineSchema({ nodes: { [name]: imageSchemaNodeSpec() } }).nodes[0]!;
+    return defineSchema({ nodes: { [name]: imageSchemaNodeSpec() } }).nodes[0];
 }
 
 /**
@@ -73,14 +78,15 @@ export function imageNodeSpec(name: string = IMAGE_NODE_NAME): NodeSpec {
  * already declares one. {@link tiptapCompatibleSchema} already includes it.
  */
 export function withImagesSchema(schema: SchemaDefinition): SchemaDefinition {
-    const hasImageNode = schema.nodes.some((node) => node.name === IMAGE_NODE_NAME);
+    const hasImageNode = schema.nodes.some(node => node.name === IMAGE_NODE_NAME);
+
     if (hasImageNode) {
         return schema;
     }
 
     return {
         ...schema,
-        nodes: [...schema.nodes, imageNodeSpec()],
+        nodes: [ ...schema.nodes, imageNodeSpec() ],
     };
 }
 
@@ -130,22 +136,22 @@ export const tiptapCompatibleSchemaSpec: SchemaSpec = {
             content: 'inline*',
             group: 'block',
             role: 'textBlock',
-            parseDOM: [{ tag: 'p' }],
-            toDOM: ['p', 0],
+            parseDOM: [ { tag: 'p' } ],
+            toDOM: [ 'p', 0 ],
         },
         heading: {
             content: 'inline*',
             group: 'block',
             role: 'heading',
             attrs: { level: { default: 1 } },
-            parseDOM: HEADING_LEVELS.map((level) => ({
+            parseDOM: HEADING_LEVELS.map(level => ({
                 tag: `h${level}`,
                 attrs: { level },
             })),
             toDOM: {
                 switchOn: 'level',
                 cases: Object.fromEntries(
-                    HEADING_LEVELS.map((level) => [level, [`h${level}`, 0] as const])
+                    HEADING_LEVELS.map(level => [ level, [ `h${level}`, 0 ] as const ])
                 ),
             },
         },
@@ -153,62 +159,62 @@ export const tiptapCompatibleSchemaSpec: SchemaSpec = {
             content: 'block+',
             group: 'block',
             role: 'block',
-            parseDOM: [{ tag: 'blockquote' }],
-            toDOM: ['blockquote', 0],
+            parseDOM: [ { tag: 'blockquote' } ],
+            toDOM: [ 'blockquote', 0 ],
         },
         codeBlock: {
             attrs: { language: { default: null } },
             content: 'text*',
             group: 'block',
             role: 'textBlock',
-            parseDOM: [{ tag: 'pre' }],
-            toDOM: ['pre', 0],
+            parseDOM: [ { tag: 'pre' } ],
+            toDOM: [ 'pre', 0 ],
         },
         bulletList: {
             content: 'listItem+',
             group: 'block',
             role: 'list',
-            parseDOM: [{ tag: 'ul' }],
-            toDOM: ['ul', 0],
+            parseDOM: [ { tag: 'ul' } ],
+            toDOM: [ 'ul', 0 ],
         },
         orderedList: {
             content: 'listItem+',
             group: 'block',
             attrs: { start: { default: 1 } },
             role: 'list',
-            parseDOM: [{ tag: 'ol' }],
-            toDOM: ['ol', 0],
+            parseDOM: [ { tag: 'ol' } ],
+            toDOM: [ 'ol', 0 ],
         },
         listItem: {
             content: 'paragraph block*',
             role: 'listItem',
-            parseDOM: [{ tag: 'li' }],
-            toDOM: ['li', 0],
+            parseDOM: [ { tag: 'li' } ],
+            toDOM: [ 'li', 0 ],
         },
         hardBreak: {
             group: 'inline',
             role: 'hardBreak',
-            parseDOM: [{ tag: 'br' }],
-            toDOM: ['br'],
+            parseDOM: [ { tag: 'br' } ],
+            toDOM: [ 'br' ],
             isVoid: true,
         },
         horizontalRule: {
             group: 'block',
             role: 'block',
-            parseDOM: [{ tag: 'hr' }],
-            toDOM: ['hr'],
+            parseDOM: [ { tag: 'hr' } ],
+            toDOM: [ 'hr' ],
             isVoid: true,
         },
         [IMAGE_NODE_NAME]: imageSchemaNodeSpec(),
         text: { group: 'inline', role: 'text' },
     },
     marks: {
-        bold: { parseDOM: [{ tag: 'strong' }], toDOM: ['strong', 0] },
-        italic: { parseDOM: [{ tag: 'em' }], toDOM: ['em', 0] },
-        underline: { parseDOM: [{ tag: 'u' }], toDOM: ['u', 0] },
-        strike: { parseDOM: [{ tag: 's' }], toDOM: ['s', 0] },
-        code: { parseDOM: [{ tag: 'code' }], toDOM: ['code', 0] },
-        link: { attrs: { href: {} }, parseDOM: [{ tag: 'a' }], toDOM: ['a', 0] },
+        bold: { parseDOM: [ { tag: 'strong' } ], toDOM: [ 'strong', 0 ] },
+        italic: { parseDOM: [ { tag: 'em' } ], toDOM: [ 'em', 0 ] },
+        underline: { parseDOM: [ { tag: 'u' } ], toDOM: [ 'u', 0 ] },
+        strike: { parseDOM: [ { tag: 's' } ], toDOM: [ 's', 0 ] },
+        code: { parseDOM: [ { tag: 'code' } ], toDOM: [ 'code', 0 ] },
+        link: { attrs: { href: {} }, parseDOM: [ { tag: 'a' } ], toDOM: [ 'a', 0 ] },
     },
 };
 

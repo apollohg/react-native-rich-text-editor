@@ -23,6 +23,7 @@ const shippedSchemas: readonly SchemaDefinition[] = [
     prosemirrorSchema,
     tiptapCompatibleSchema,
 ];
+
 void shippedSchemas;
 
 // Compile-only public API contract. `npm run typecheck` must fail if a
@@ -80,9 +81,7 @@ void removedComponentProps;
 declare const readonlyActiveState: ReadonlyActiveState;
 void readonlyActiveState;
 
-const readonlyActiveStateCallback: NonNullable<NativeRichTextEditorProps['onActiveStateChange']> = (
-    state
-) => {
+const readonlyActiveStateCallback: NonNullable<NativeRichTextEditorProps['onActiveStateChange']> = state => {
     // @ts-expect-error render snapshots must remain recursively immutable for consumers
     state.marks.bold = false;
 };
@@ -93,7 +92,7 @@ declare const focusPreservingRef: NativeRichTextEditorFocusPreservingRef;
 
 const focusPreservingProps: readonly NativeRichTextEditorProps[] = [
     { documentHandle, focusPreservingRefs: focusPreservingRef },
-    { documentHandle, focusPreservingRefs: [focusPreservingRef] as const },
+    { documentHandle, focusPreservingRefs: [ focusPreservingRef ] as const },
 ];
 
 void focusPreservingProps;
@@ -101,12 +100,16 @@ void focusPreservingProps;
 declare const editorRef: NativeRichTextEditorRef;
 
 async function driveExternalComposition(): Promise<void> {
-    if (!editorRef.supportsExternalTextComposition()) return;
+    if (!editorRef.supportsExternalTextComposition()) {
+        return;
+    }
+
     const session = await editorRef.beginExternalTextComposition({
         onEnd(event: ExternalTextCompositionEndEvent) {
             void event.outcome;
         },
     });
+
     await session.update('on arrival');
     await session.commit('O/A');
     await session.cancel();

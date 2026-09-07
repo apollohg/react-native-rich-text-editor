@@ -12,14 +12,19 @@ describe('EditorImageLoadingPolicy', () => {
 
     it('accepts decoded image budgets through 256 MiB', () => {
         expect(HARD_EDITOR_IMAGE_LOADING_POLICY.maxDecodedBytes).toBe(256 * 1024 * 1024);
+
         expect(
             resolveEditorImageLoadingPolicy({ maxDecodedBytes: 256 * 1024 * 1024 }).maxDecodedBytes
         ).toBe(256 * 1024 * 1024);
     });
 
-    it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER, Number.POSITIVE_INFINITY])(
+    it.each([ 0,
+        -1,
+        1.5,
+        Number.MAX_SAFE_INTEGER,
+        Number.POSITIVE_INFINITY ])(
         'rejects invalid decoded image budget %p',
-        (maxDecodedBytes) => {
+        maxDecodedBytes => {
             expect(() => resolveEditorImageLoadingPolicy({ maxDecodedBytes })).toThrow(
                 /maxDecodedBytes/
             );

@@ -19,6 +19,7 @@ function methodBody(source: string, signature: string): string {
     const start = source.indexOf(signature);
     expect(start).toBeGreaterThanOrEqual(0);
     const nextMethod = source.indexOf('\n- (void)', start + signature.length);
+
     return source.slice(start, nextMethod === -1 ? source.length : nextMethod);
 }
 
@@ -28,34 +29,48 @@ function visitCorpusNode(
     markTypes: Set<string>,
     state: { nestedList: boolean; imageAttrs: Set<string>; orderedStart: boolean; checkedItem: boolean }
 ): void {
-    if (node == null || typeof node !== 'object' || Array.isArray(node)) return;
+    if (node == null || typeof node !== 'object' || Array.isArray(node)) {
+        return;
+    }
+
     const value = node as { type?: unknown; attrs?: unknown; marks?: unknown; content?: unknown };
-    if (typeof value.type === 'string') nodeTypes.add(value.type);
+
+    if (typeof value.type === 'string') {
+        nodeTypes.add(value.type);
+    }
+
     if (value.type === 'orderedList' && value.attrs != null && typeof value.attrs === 'object') {
         state.orderedStart = Object.prototype.hasOwnProperty.call(value.attrs, 'start');
     }
+
     if (value.type === 'listItem' && value.attrs != null && typeof value.attrs === 'object') {
         state.checkedItem ||= Object.prototype.hasOwnProperty.call(value.attrs, 'checked');
     }
+
     if (value.type === 'image' && value.attrs != null && typeof value.attrs === 'object') {
-        Object.keys(value.attrs as Record<string, unknown>).forEach((name) => state.imageAttrs.add(name));
+        Object.keys(value.attrs as Record<string, unknown>).forEach(name => state.imageAttrs.add(name));
     }
+
     if (Array.isArray(value.marks)) {
-        value.marks.forEach((mark) => {
+        value.marks.forEach(mark => {
             if (mark != null && typeof mark === 'object' && typeof (mark as { type?: unknown }).type === 'string') {
                 markTypes.add((mark as { type: string }).type);
             }
         });
     }
+
     if (Array.isArray(value.content)) {
         const children = value.content as unknown[];
+
         if (value.type === 'listItem') {
-            state.nestedList ||= children.some((child) => {
+            state.nestedList ||= children.some(child => {
                 const type = child != null && typeof child === 'object' ? (child as { type?: unknown }).type : undefined;
+
                 return type === 'orderedList' || type === 'bulletList' || type === 'taskList';
             });
         }
-        children.forEach((child) => visitCorpusNode(child, nodeTypes, markTypes, state));
+
+        children.forEach(child => visitCorpusNode(child, nodeTypes, markTypes, state));
     }
 }
 
@@ -64,9 +79,11 @@ describe('prepared prose native lifecycle contracts', () => {
         const shadowHeader = readSource(
             'common/cpp/react/renderer/components/PreparedProseViewer/PreparedProseViewerShadowNode.h'
         );
+
         const shadow = readSource(
             'common/cpp/react/renderer/components/PreparedProseViewer/PreparedProseViewerShadowNode.cpp'
         );
+
         const manager = readSource('android/src/main/java/com/apollohg/editor/viewer/PreparedProseViewerManager.kt');
         const drawing = readSource('android/src/main/java/com/apollohg/editor/viewer/PreparedProseDrawingView.kt');
         const mount = manager.slice(manager.indexOf('private fun installCachedLayout('), manager.indexOf('private fun dispatchError('));
@@ -88,9 +105,11 @@ describe('prepared prose native lifecycle contracts', () => {
         const header = readSource(
             'common/cpp/react/renderer/components/PreparedProseViewer/PreparedProseMeasurementsManager.h'
         );
+
         const android = readSource(
             'android/src/main/jni/PreparedProseViewerMeasurementsManager.cpp'
         );
+
         const ios = readSource('ios/Viewer/Fabric/PreparedProseMeasurementsManager.mm');
         const definition = 'void PreparedProseMeasurementsManager::prepareFinalLayout(';
 
@@ -108,11 +127,11 @@ describe('prepared prose native lifecycle contracts', () => {
         expect(androidBuild).toContain('canBeResolved = true');
         expect(androidBuild).toContain('transitive = false');
         expect(androidBuild).toContain('hostTestJna "net.java.dev.jna:jna:5.18.1@jar"');
-        expect(androidBuild).toContain("name.endsWith('UnitTestRuntimeClasspath')");
-        expect(androidBuild).toContain("exclude group: 'net.java.dev.jna', module: 'jna'");
+        expect(androidBuild).toContain('name.endsWith(\'UnitTestRuntimeClasspath\')');
+        expect(androidBuild).toContain('exclude group: \'net.java.dev.jna\', module: \'jna\'');
         expect(androidBuild).toContain('def hostTestJnaClasspath = files(configurations.hostTestJna)');
         expect(androidBuild).toContain('tasks.withType(Test).configureEach {');
-        expect(androidBuild).toContain("inputs.files(hostTestJnaClasspath).withPropertyName('hostTestJnaClasspath')");
+        expect(androidBuild).toContain('inputs.files(hostTestJnaClasspath).withPropertyName(\'hostTestJnaClasspath\')');
         expect(androidBuild).toContain('classpath = hostTestJnaClasspath.plus(classpath)');
         expect(androidBuild).not.toContain('testRuntimeOnly files(configurations.hostTestJna)');
         expect(androidBuild).not.toContain('testRuntimeOnly "net.java.dev.jna:jna:5.18.1"');
@@ -120,15 +139,17 @@ describe('prepared prose native lifecycle contracts', () => {
 
     it('keeps the hard cutover validator manifest-driven across exports and native project membership', () => {
         const validator = readSource('scripts/tests/validate-prepared-prose-viewer-cutover.mjs');
+
         const manifest = JSON.parse(readSource('scripts/package-abi-manifest.json')) as {
             preparedProseViewer: { removedPaths: string[] };
         };
 
-        expect(validator).toContain("const exists = (path) => existsSync(resolve(root, path));");
+        expect(validator).toContain('const exists = (path) => existsSync(resolve(root, path));');
         expect(validator).toContain('for (const path of manifest.removedPaths)');
-        expect(validator).toContain("'src/index.ts'");
-        expect(validator).toContain("'ios-tests/project.yml'");
-        expect(validator).toContain("'ios-tests/NativeEditorTests.xcodeproj/project.pbxproj'");
+        expect(validator).toContain('\'src/index.ts\'');
+        expect(validator).toContain('\'ios-tests/project.yml\'');
+        expect(validator).toContain('\'ios-tests/NativeEditorTests.xcodeproj/project.pbxproj\'');
+
         expect(manifest.preparedProseViewer.removedPaths).toEqual([
             'android/src/main/java/com/apollohg/editor/NativeProseViewerExpoView.kt',
             'android/src/test/java/com/apollohg/editor/NativeProseViewerExpoViewTest.kt',
@@ -147,10 +168,13 @@ describe('prepared prose native lifecycle contracts', () => {
 
         expect(generationComparator).not.toContain('enableLinkTaps');
         expect(updateProps).toContain('const BOOL generationChanged =');
+
         expect(updateProps).toContain(
             'if (generationChanged) {\n    [self beginNewGenerationTerminatingCurrentLease:NO];\n  }'
         );
+
         expect(updateProps).toContain('_drawingView.linkInteractionsEnabled = nextProps->enableLinkTaps;');
+
         expect(updateProps).toContain(
             'if (generationChanged && _hasReceivedUsableLayoutMetrics) {\n    [self installMeasuredArtifactIfAttached];\n  }'
         );
@@ -158,6 +182,7 @@ describe('prepared prose native lifecycle contracts', () => {
 
     it('publishes exactly one iOS accessibility invalidation for a permission change', () => {
         const source = readSource('ios/Viewer/PreparedProseDrawingView.swift');
+
         const setter = source.slice(
             source.indexOf('var linkInteractionsEnabled = true'),
             source.indexOf('private var accessibilityElementsByIndex')
@@ -173,14 +198,17 @@ describe('prepared prose native lifecycle contracts', () => {
         const iosProps = methodBody(ios, '- (void)updateProps:');
         const iosState = methodBody(ios, '- (void)updateState:');
         const androidUpdate = android.slice(android.indexOf('private fun update('), android.indexOf('private fun installCachedLayout('));
+
         const androidTransaction = android.slice(
             android.indexOf('override fun onAfterUpdateTransaction('),
             android.indexOf('override fun measure('),
         );
+
         const androidBeginImages = android.slice(
             android.indexOf('fun beginImages('),
             android.indexOf('/** Phase one of Fabric image setup: no artifact is required yet. */'),
         );
+
         const androidMeasure = android.slice(android.indexOf('override fun measure('), android.indexOf('private fun update('));
 
         expect(iosProps.indexOf('_viewerProps = nextProps;')).toBeLessThan(iosProps.indexOf('[self beginSemanticImageGenerationIfPossible];'));
@@ -189,19 +217,25 @@ describe('prepared prose native lifecycle contracts', () => {
         expect(androidUpdate).toContain('state.mutation()');
         expect(androidUpdate).not.toContain('state.beginSemanticImageGeneration(view)');
         expect(androidUpdate).not.toContain('reconcile(view, state)');
+
         expect(androidTransaction.indexOf('state.beginSemanticImageGeneration(view)')).toBeLessThan(
             androidTransaction.indexOf('reconcile(view, state)'),
         );
+
         expect(androidMeasure).toContain('val leaseHandle = FabricLeaseHandleBridge.currentHandle()');
+
         const androidDeclinesWithoutLease = androidMeasure.slice(
             androidMeasure.indexOf('if (surface != null && leaseHandle <= 0L) {'),
             androidMeasure.indexOf('val request = requestFrom(props, state, leaseHandle)'),
         );
+
         expect(androidDeclinesWithoutLease).toContain('return YogaMeasureOutput.make(0f, 0f)');
         expect(androidMeasure).toContain('val request = requestFrom(props, state, leaseHandle)');
+
         expect(androidMeasure.indexOf('val request = requestFrom(props, state, leaseHandle)')).toBeLessThan(
             androidMeasure.indexOf('PreparedProseLayoutRegistry.shared.measure(')
         );
+
         expect(androidMeasure).toMatch(/fabricSurface\s*=\s*surface,\s*fabricLeaseHandle\s*=\s*leaseHandle/);
         expect(androidBeginImages).toContain('attachmentRevisions.admit(artifact.imageAttachments.size)');
         expect(androidBeginImages).toContain('fontEnvironment.activate()');
@@ -270,6 +304,7 @@ describe('prepared prose native lifecycle contracts', () => {
             warmTraversal: string[];
             warmWindows: Array<{ id: string; primeIds: string[]; warmIds: string[] }>;
         };
+
         expect(corpus.documents).toHaveLength(1_000);
         expect(new Set(corpus.documents.map(({ id }) => id)).size).toBe(1_000);
         expect(corpus.documents.filter(({ category }) => category === 'short')).toHaveLength(900);
@@ -278,20 +313,23 @@ describe('prepared prose native lifecycle contracts', () => {
         const longEntries = corpus.documents.filter(({ category }) => category === 'very-long-all-elements-marks');
         expect(longEntries).toHaveLength(5);
         expect(corpus.coldTraversal).toEqual(corpus.documents.map(({ id }) => id));
-        expect(corpus.warmTraversal).toEqual([...corpus.coldTraversal].reverse());
+        expect(corpus.warmTraversal).toEqual([ ...corpus.coldTraversal ].reverse());
         expect(corpus.warmWindows).toHaveLength(27);
         expect(new Set(corpus.warmWindows.map(({ id }) => id)).size).toBe(27);
+
         expect(corpus.warmWindows.flatMap(({ primeIds }) => primeIds).sort())
             .toEqual(corpus.documents.map(({ id }) => id).sort());
+
         for (const window of corpus.warmWindows) {
             expect(window.warmIds).toEqual(window.primeIds);
         }
+
         expect(corpus.warmWindows.filter(({ id }) => id.startsWith('very-long-'))).toEqual([
-            { id: 'very-long-01', primeIds: ['very-long-0001'], warmIds: ['very-long-0001'] },
-            { id: 'very-long-02', primeIds: ['very-long-0002'], warmIds: ['very-long-0002'] },
-            { id: 'very-long-03', primeIds: ['very-long-0003'], warmIds: ['very-long-0003'] },
-            { id: 'very-long-04', primeIds: ['very-long-0004'], warmIds: ['very-long-0004'] },
-            { id: 'very-long-05', primeIds: ['very-long-0005'], warmIds: ['very-long-0005'] },
+            { id: 'very-long-01', primeIds: [ 'very-long-0001' ], warmIds: [ 'very-long-0001' ] },
+            { id: 'very-long-02', primeIds: [ 'very-long-0002' ], warmIds: [ 'very-long-0002' ] },
+            { id: 'very-long-03', primeIds: [ 'very-long-0003' ], warmIds: [ 'very-long-0003' ] },
+            { id: 'very-long-04', primeIds: [ 'very-long-0004' ], warmIds: [ 'very-long-0004' ] },
+            { id: 'very-long-05', primeIds: [ 'very-long-0005' ], warmIds: [ 'very-long-0005' ] },
         ]);
 
         for (const entry of longEntries) {
@@ -299,17 +337,49 @@ describe('prepared prose native lifecycle contracts', () => {
             const markTypes = new Set<string>();
             const state = { nestedList: false, imageAttrs: new Set<string>(), orderedStart: false, checkedItem: false };
             visitCorpusNode(entry.contentJSON, nodeTypes, markTypes, state);
+
             [
-                'paragraph', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'codeBlock',
-                'orderedList', 'bulletList', 'taskList', 'listItem', 'hardBreak', 'image', 'mention', 'opaque', 'opaqueBlock',
-            ].forEach((type) => expect(nodeTypes.has(type)).toBe(true));
+                'paragraph',
+                'h1',
+                'h2',
+                'h3',
+                'h4',
+                'h5',
+                'h6',
+                'blockquote',
+                'codeBlock',
+                'orderedList',
+                'bulletList',
+                'taskList',
+                'listItem',
+                'hardBreak',
+                'image',
+                'mention',
+                'opaque',
+                'opaqueBlock',
+            ].forEach(type => expect(nodeTypes.has(type)).toBe(true));
+
             [
-                'bold', 'italic', 'underline', 'strike', 'code', 'link', 'textColor', 'highlight', 'textStyle',
-            ].forEach((type) => expect(markTypes.has(type)).toBe(true));
+                'bold',
+                'italic',
+                'underline',
+                'strike',
+                'code',
+                'link',
+                'textColor',
+                'highlight',
+                'textStyle',
+            ].forEach(type => expect(markTypes.has(type)).toBe(true));
+
             expect(state.nestedList).toBe(true);
             expect(state.orderedStart).toBe(true);
             expect(state.checkedItem).toBe(true);
-            ['src', 'alt', 'title', 'width', 'height'].forEach((name) => expect(state.imageAttrs.has(name)).toBe(true));
+
+            [ 'src',
+                'alt',
+                'title',
+                'width',
+                'height' ].forEach(name => expect(state.imageAttrs.has(name)).toBe(true));
         }
     });
 
@@ -320,29 +390,33 @@ describe('prepared prose native lifecycle contracts', () => {
         const androidDevice = readSource('android/src/androidTest/java/com/apollohg/editor/NativeDevicePerformanceTest.kt');
         const androidHarness = readSource('android/src/sharedTest/java/com/apollohg/editor/NativePerformanceSupport.kt');
 
-        [iosInstrumentation, androidInstrumentation].forEach((source) => {
+        [ iosInstrumentation, androidInstrumentation ].forEach(source => {
             expect(source).toContain('TraversalPhase');
             expect(source).toContain('combined');
             expect(source).toContain('drawCount');
             expect(source).toContain('phaseSamples');
         });
-        [iosHarness, androidHarness].forEach((source) => {
+
+        [ iosHarness, androidHarness ].forEach(source => {
             expect(source).toContain('requireNonEmpty');
             expect(source).toContain('drawCount');
         });
-        [iosInstrumentation, androidInstrumentation].forEach((source) => {
+
+        [ iosInstrumentation, androidInstrumentation ].forEach(source => {
             expect(source).toContain('rawFrameDeltasNanos');
             expect(source).toContain('viewerCausedDelayedIntervals');
             expect(source).toContain('imageRequestCount');
             expect(source).toContain('imageMetadataCount');
             expect(source).toContain('imageDecodeCount');
         });
-        [iosHarness, androidHarness].forEach((source) => {
+
+        [ iosHarness, androidHarness ].forEach(source => {
             expect(source).toContain('rawFrameDeltasNanos');
             expect(source).toContain('viewerCausedDelayedIntervals');
             expect(source).toContain('preResetSnapshot');
             expect(source).toContain('postResetSnapshot');
         });
+
         expect(androidDevice).toContain('import org.json.JSONObject');
         expect(androidDevice).toContain('activity.setContentView');
         expect(androidDevice).toContain('instrumentation.waitForIdleSync()');
@@ -362,18 +436,22 @@ describe('prepared prose native lifecycle contracts', () => {
         const androidView = readSource('android/src/main/java/com/apollohg/editor/ProseViewerView.kt');
         const iosCache = readSource('ios/Viewer/PreparedProseLayoutCache.swift');
         const androidCache = readSource('android/src/main/java/com/apollohg/editor/viewer/PreparedProseLayoutCache.kt');
+
         const androidMeasure = androidView.slice(
             androidView.indexOf('override fun onMeasure('),
             androidView.indexOf('override fun onLayout('),
         );
+
         const androidDirectOwnership = androidView.slice(
             androidView.indexOf('private fun registerDirectMountedArtifactIfAttached('),
             androidView.indexOf('private fun releaseDirectMountedArtifact()'),
         );
+
         const androidAttach = androidView.slice(
             androidView.indexOf('override fun onAttachedToWindow()'),
             androidView.indexOf('override fun onConfigurationChanged('),
         );
+
         const androidReset = androidCache.slice(
             androidCache.indexOf('fun removeAllUnmounted()'),
             androidCache.indexOf('internal val completedCountForTesting'),
@@ -411,6 +489,7 @@ describe('prepared prose native lifecycle contracts', () => {
         const drawing = readSource('android/src/main/java/com/apollohg/editor/viewer/PreparedProseDrawingView.kt');
         const debugTiming = readSource('android/src/debug/java/com/apollohg/editor/viewer/PreparedProseDrawInstrumentation.kt');
         const releaseTiming = readSource('android/src/release/java/com/apollohg/editor/viewer/PreparedProseDrawInstrumentation.kt');
+
         const onDraw = drawing.slice(
             drawing.indexOf('override fun onDraw(canvas: Canvas)'),
             drawing.indexOf('private fun drawBackground'),
@@ -429,13 +508,16 @@ describe('prepared prose native lifecycle contracts', () => {
     it('ships iOS instrumentation through one file reference and one NativeEditorTests sources membership', () => {
         const projectYml = readSource('ios-tests/project.yml');
         const pbxproj = readSource('ios-tests/NativeEditorTests.xcodeproj/project.pbxproj');
+
         const fileReferenceMatches = [
             ...pbxproj.matchAll(
                 /([A-F0-9]{24}) \/\* PreparedProseInstrumentation\.swift \*\/ = \{isa = PBXFileReference;[^\n]*path = PreparedProseInstrumentation\.swift;/g
             ),
         ];
+
         expect(fileReferenceMatches).toHaveLength(1);
         const fileReferenceId = fileReferenceMatches[0]![1]!;
+
         const buildFileMatches = [
             ...pbxproj.matchAll(
                 new RegExp(
@@ -444,23 +526,30 @@ describe('prepared prose native lifecycle contracts', () => {
                 )
             ),
         ];
+
         expect(buildFileMatches).toHaveLength(1);
         const buildFileId = buildFileMatches[0]![1]!;
         const nativeTargetSectionStart = pbxproj.indexOf('/* Begin PBXNativeTarget section */');
+
         const nativeTestsTargetStart = pbxproj.indexOf(
             ' /* NativeEditorTests */ = {',
             nativeTargetSectionStart
         );
+
         expect(nativeTestsTargetStart).toBeGreaterThan(-1);
+
         const nativeTestsTarget = pbxproj.slice(
             nativeTestsTargetStart,
             pbxproj.indexOf('\n\t\t};', nativeTestsTargetStart)
         );
+
         const sourcesBuildPhaseMatches = [
             ...nativeTestsTarget.matchAll(/([A-F0-9]{24}) \/\* Sources \*\//g),
         ];
+
         expect(sourcesBuildPhaseMatches).toHaveLength(1);
         const sourcesBuildPhaseId = sourcesBuildPhaseMatches[0]![1]!;
+
         const sourcesBuildPhase = pbxproj.slice(
             pbxproj.indexOf(`${sourcesBuildPhaseId} /* Sources */ = {`),
             pbxproj.indexOf('/* End PBXSourcesBuildPhase section */'),
@@ -475,6 +564,7 @@ describe('prepared prose native lifecycle contracts', () => {
         const runner = readSource('scripts/run-ios-tests.sh');
         const projectYml = readSource('ios-tests/project.yml');
         const ordinaryScheme = readSource('ios-tests/NativeEditorTests.xcodeproj/xcshareddata/xcschemes/NativeEditorTests.xcscheme');
+
         const preparedSchemePath = path.join(
             REPO_ROOT,
             'ios-tests/NativeEditorTests.xcodeproj/xcshareddata/xcschemes/NativeEditorPreparedProsePerformance.xcscheme'
@@ -482,10 +572,12 @@ describe('prepared prose native lifecycle contracts', () => {
 
         expect(fs.existsSync(preparedSchemePath)).toBe(true);
         const preparedScheme = fs.readFileSync(preparedSchemePath, 'utf8');
+
         const preparedTestAction = preparedScheme.slice(
             preparedScheme.indexOf('<TestAction'),
             preparedScheme.indexOf('</TestAction>') + '</TestAction>'.length
         );
+
         const preparedLaunchAction = preparedScheme.slice(
             preparedScheme.indexOf('<LaunchAction'),
             preparedScheme.indexOf('</LaunchAction>') + '</LaunchAction>'.length
@@ -494,9 +586,11 @@ describe('prepared prose native lifecycle contracts', () => {
         expect(packageJson.scripts['test:ios:device:performance']).toBe(
             'NATIVE_EDITOR_IOS_TEST_SCHEME=NativeEditorPreparedProsePerformance bash ./scripts/run-ios-on-device.sh -only-testing:NativeEditorTests/NativePerformanceTests/testPerformance_preparedProseCorpusGates_iPhone13'
         );
+
         expect(packageJson.scripts['test:ios:performance']).toBe(
             'bash ./scripts/run-ios-tests.sh -only-testing:NativeEditorTests/NativePerformanceTests'
         );
+
         expect(packageJson.scripts['test:ios']).toBe('bash ./scripts/run-ios-tests.sh');
         expect(runner).toContain('scheme="${NATIVE_EDITOR_IOS_TEST_SCHEME:-NativeEditorTests}"');
         expect(runner).toContain('-scheme "$scheme"');
@@ -532,26 +626,61 @@ describe('prepared prose native lifecycle contracts', () => {
             configuration: { initialization: { type: string }; schema: { nodes: Array<{ name: string; attrs?: Record<string, unknown> }>; marks: Array<{ name: string; attrs?: Record<string, unknown> }> } };
             imageLoadingPolicy: Record<string, number>;
         };
+
         const nodeNames = new Set(configuration.configuration.schema.nodes.map(({ name }) => name));
         const markNames = new Set(configuration.configuration.schema.marks.map(({ name }) => name));
         expect(configuration.configuration.initialization).toEqual({ type: 'localEmpty' });
+
         [
-            'doc', 'paragraph', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'codeBlock',
-            'orderedList', 'bulletList', 'taskList', 'listItem', 'image', 'hardBreak', 'mention', 'opaque', 'opaqueBlock',
-        ].forEach((name) => expect(nodeNames.has(name)).toBe(true));
-        ['bold', 'italic', 'underline', 'strike', 'code', 'link', 'textColor', 'highlight', 'textStyle']
-            .forEach((name) => expect(markNames.has(name)).toBe(true));
+            'doc',
+            'paragraph',
+            'h1',
+            'h2',
+            'h3',
+            'h4',
+            'h5',
+            'h6',
+            'blockquote',
+            'codeBlock',
+            'orderedList',
+            'bulletList',
+            'taskList',
+            'listItem',
+            'image',
+            'hardBreak',
+            'mention',
+            'opaque',
+            'opaqueBlock',
+        ].forEach(name => expect(nodeNames.has(name)).toBe(true));
+
+        [ 'bold',
+            'italic',
+            'underline',
+            'strike',
+            'code',
+            'link',
+            'textColor',
+            'highlight',
+            'textStyle' ]
+            .forEach(name => expect(markNames.has(name)).toBe(true));
+
         expect(configuration.configuration.schema.nodes.find(({ name }) => name === 'image')?.attrs)
-            .toMatchObject({ src: {}, alt: { default: null }, title: { default: null }, width: { default: null }, height: { default: null } });
+            .toMatchObject({
+                src: {}, alt: { default: null }, title: { default: null }, width: { default: null }, height: { default: null },
+            });
+
         expect(configuration.configuration.schema.marks.find(({ name }) => name === 'textStyle')?.attrs)
             .toMatchObject({ fontFamily: {}, fontSize: {} });
+
         expect(configuration.imageLoadingPolicy).toMatchObject({ maxConcurrentRequests: 2, maxPendingRequests: 64 });
 
         const iosHarness = readIOSPerformanceHarness();
         const androidHarness = readSource('android/src/sharedTest/java/com/apollohg/editor/NativePerformanceSupport.kt');
-        [iosHarness, androidHarness].forEach((source) => {
+
+        [ iosHarness, androidHarness ].forEach(source => {
             expect(source).toContain('prepared-prose-benchmark-config');
         });
+
         expect(iosHarness).not.toContain('configuration: .init(imagesEnabled:');
         expect(androidHarness).not.toContain('ProseViewerConfiguration(configJson = "{}"');
     });
@@ -561,11 +690,13 @@ describe('prepared prose native lifecycle contracts', () => {
         const androidInstrumentation = readSource('android/src/main/java/com/apollohg/editor/viewer/PreparedProseInstrumentation.kt');
         const iosHarness = readIOSPerformanceHarness();
         const androidHarness = readSource('android/src/sharedTest/java/com/apollohg/editor/NativePerformanceSupport.kt');
+
         const fixtures = JSON.parse(readSource('scripts/tests/prepared-prose-harness-static-fixtures.json')) as {
             preparation: { requirement: string };
             differingHeights: { requirement: string };
             drawEvidence: { requirement: string };
         };
+
         const iosCollectionSource = readSource('ios/Tests/NativePerformanceTests+CollectionHarness.swift');
         const iosCollectionHarnessStart = iosCollectionSource.lastIndexOf('final class PreparedProseCollectionHarness');
         const iosPerformanceGatesStart = iosCollectionSource.lastIndexOf('enum PreparedProsePerformanceGates');
@@ -573,25 +704,29 @@ describe('prepared prose native lifecycle contracts', () => {
         expect(iosPerformanceGatesStart).toBeGreaterThan(iosCollectionHarnessStart);
         const iosCollectionHarness = iosCollectionSource.slice(iosCollectionHarnessStart, iosPerformanceGatesStart);
 
-        [iosInstrumentation, androidInstrumentation].forEach((source) => {
+        [ iosInstrumentation, androidInstrumentation ].forEach(source => {
             expect(source).toContain('beginPhase');
             expect(source).toContain('endPhase');
             expect(source).toContain('completedPhases');
         });
+
         expect(iosCollectionHarness).toContain('func traverseWindows(');
         expect(iosCollectionHarness).toContain('override func preferredLayoutAttributesFitting(_ attributes: UICollectionViewLayoutAttributes)');
         expect(iosCollectionHarness).toContain('let width = max(1, attributes.size.width)');
         expect(iosCollectionHarness).toContain('viewer.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))');
-        ['measurementView', 'prepareAndMeasure', 'RunLoop.main.run', 'scrollToItem(at:'].forEach((removedPath) =>
-            expect(iosCollectionHarness).not.toContain(removedPath)
-        );
+
+        [ 'measurementView', 'prepareAndMeasure', 'RunLoop.main.run', 'scrollToItem(at:' ].forEach(removedPath =>
+            expect(iosCollectionHarness).not.toContain(removedPath));
+
         expect(iosHarness).toContain('testPreparedProseHarnessStaticFixtures');
         expect(iosHarness).toContain('PREPARED_PROSE_STATIC_HARNESS_FIXTURES');
         expect(iosHarness).toContain('XCTAssertGreaterThan(longHeight, shortHeight)');
         expect(iosHarness).not.toContain('height: 180');
+
         expect(androidHarness).toMatch(
             /val evidencePhase\s*=\s*if\s*\(\s*active\.direction == Direction\.WARM\s*&&\s*active\.phase == PreparedProseInstrumentation\.TraversalPhase\.COLD\s*\)\s*\{\s*PreparedProseInstrumentation\.TraversalPhase\.WARM\s*\}\s*else\s*\{\s*active\.phase\s*\}/
         );
+
         expect(androidHarness).toContain('PreparedProseInstrumentation.beginPhase(evidencePhase)');
         expect(androidHarness).toContain('PreparedProseInstrumentation.endPhase()');
         expect(fixtures.preparation.requirement).toContain('prepare once');

@@ -2,7 +2,7 @@ import { EditorStyleSheet } from '../EditorStyleSheet';
 import type { EditorTheme } from '../EditorTheme';
 
 const styles = EditorStyleSheet.create({
-    paragraph: [{ fontWeight: 600, padding: 12 }, false, [undefined, { marginBottom: 0 }]],
+    paragraph: [ { fontWeight: 600, padding: 12 }, false, [ undefined, { marginBottom: 0 } ] ],
     image: { resizeMode: 'contain', borderTopLeftRadius: 8 },
     link: { color: 'rebeccapurple', textDecorationLine: 'underline' },
 });
@@ -17,7 +17,7 @@ EditorStyleSheet.create({ link: { color: 'red', marginBottom: 12 } });
 // @ts-expect-error Unsupported image fit.
 EditorStyleSheet.create({ image: { resizeMode: 'repeat' } });
 // @ts-expect-error Unsupported layout property, even alongside valid properties.
-EditorStyleSheet.create({ paragraph: [{ fontSize: 16, flex: 1 }] });
+EditorStyleSheet.create({ paragraph: [ { fontSize: 16, flex: 1 } ] });
 // @ts-expect-error Legacy link spelling.
 EditorStyleSheet.create({ links: { color: 'red' } });
 // @ts-expect-error Unsupported nested checkbox property.

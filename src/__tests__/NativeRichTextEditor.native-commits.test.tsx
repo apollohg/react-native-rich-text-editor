@@ -22,17 +22,20 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
     it('does not roll back a newer native commit when a prior controlled echo renders late', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const onContentChange = jest.fn();
+
         const { getByTestId, rerender } = render(
             <NativeRichTextEditor
                 documentHandle={handle}
-                value='<p>hello</p>'
+                value={'<p>hello</p>'}
                 onContentChange={onContentChange}
             />
         );
+
         mockNativeModule.editorV2ApplyLocalApi.mockClear();
 
         const commit = (html: string) => {
             handle.bridge.replaceDocument({ setHtml: html, history: 'undoableBoundary' });
+
             getByTestId('native-editor-view').props.onEditorUpdate({
                 nativeEvent: {
                     editorId: handle.editorId,
@@ -51,7 +54,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         rerender(
             <NativeRichTextEditor
                 documentHandle={handle}
-                value='<p>hello!</p>'
+                value={'<p>hello!</p>'}
                 onContentChange={onContentChange}
             />
         );
@@ -63,19 +66,21 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         rerender(
             <NativeRichTextEditor
                 documentHandle={handle}
-                value='<p>hello! </p>'
+                value={'<p>hello! </p>'}
                 onContentChange={onContentChange}
             />
         );
+
         expect(mockNativeModule.editorV2ApplyLocalApi).not.toHaveBeenCalled();
 
         rerender(
             <NativeRichTextEditor
                 documentHandle={handle}
-                value='<p>hello!</p>'
+                value={'<p>hello!</p>'}
                 onContentChange={onContentChange}
             />
         );
+
         expect(mockNativeModule.editorV2ApplyLocalApi).toHaveBeenCalledTimes(1);
         expect(handle.bridge.getContentSnapshot().html).toBe('<p>hello!</p>');
         handle.destroy();
@@ -84,6 +89,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
     it('does not roll back a newer native commit when a prior controlled JSON echo renders late', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const onContentChangeJSON = jest.fn();
+
         const { getByTestId, rerender } = render(
             <NativeRichTextEditor
                 documentHandle={handle}
@@ -91,10 +97,12 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 onContentChangeJSON={onContentChangeJSON}
             />
         );
+
         mockNativeModule.editorV2ApplyLocalApi.mockClear();
 
         const commit = (json: DocumentJSON) => {
             handle.bridge.replaceDocument({ setJson: json, history: 'undoableBoundary' });
+
             getByTestId('native-editor-view').props.onEditorUpdate({
                 nativeEvent: {
                     editorId: handle.editorId,
@@ -114,6 +122,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 onContentChangeJSON={onContentChangeJSON}
             />
         );
+
         expect(mockNativeModule.editorV2ApplyLocalApi).not.toHaveBeenCalled();
         expect(handle.bridge.getContentSnapshot().json).toEqual(V2_DOC_C);
 
@@ -124,6 +133,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 onContentChangeJSON={onContentChangeJSON}
             />
         );
+
         rerender(
             <NativeRichTextEditor
                 documentHandle={handle}
@@ -131,6 +141,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 onContentChangeJSON={onContentChangeJSON}
             />
         );
+
         expect(mockNativeModule.editorV2ApplyLocalApi).toHaveBeenCalledTimes(1);
         expect(handle.bridge.getContentSnapshot().json).toEqual(V2_DOC_B);
         handle.destroy();
@@ -139,10 +150,13 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
     it('emits content changes for incremental native commit snapshots', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const onContentChange = jest.fn();
+
         const { getByTestId } = render(
             <NativeRichTextEditor documentHandle={handle} onContentChange={onContentChange} />
         );
+
         const baseDocumentVersion = handle.bridge.getState().documentRevision;
+
         v2Runtime.module.editorV2ApplyInput(
             handle.editorId,
             JSON.stringify({
@@ -152,12 +166,15 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 text: '!',
             })
         );
+
         const atomicUpdate = JSON.parse(renderUpdateValue(handle.editorId)) as Record<
             string,
             unknown
         >;
+
         const renderBlocks = atomicUpdate.renderBlocks as unknown[];
         atomicUpdate.renderBlocks = null;
+
         atomicUpdate.renderPatch = {
             baseDocumentVersion,
             startIndex: 0,
@@ -179,15 +196,18 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         handle.destroy();
     });
 
-    it.each(['iOS', 'Android'])(
+    it.each([ 'iOS', 'Android' ])(
         'accepts only an authentic canonical %s native commit payload and suppresses its exact echo',
-        (platform) => {
+        platform => {
             const handle = createV2LocalHandle(V2_INITIAL_DOC);
             const onContentChange = jest.fn();
+
             const { getByTestId, rerender } = render(
                 <NativeRichTextEditor documentHandle={handle} onContentChange={onContentChange} />
             );
+
             const view = getByTestId('native-editor-view');
+
             const commit = (text: string) => {
                 v2Runtime.module.editorV2ApplyInput(
                     handle.editorId,
@@ -198,14 +218,18 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                         text,
                     })
                 );
+
                 const documentRevision = handle.bridge.getState().documentRevision;
+
                 return {
                     editorId: handle.editorId,
                     documentRevision,
                     updateJson: renderUpdateValue(handle.editorId),
                 };
             };
+
             const first = commit('!');
+
             const emit = (payload: Record<string, unknown>) =>
                 view.props.onEditorUpdate({
                     // Keep both native property orderings covered: iOS emits
@@ -214,14 +238,15 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                         platform === 'iOS'
                             ? payload
                             : {
-                                  updateJson: payload.updateJson,
-                                  documentRevision: payload.documentRevision,
-                                  editorId: payload.editorId,
-                              },
+                                updateJson: payload.updateJson,
+                                documentRevision: payload.documentRevision,
+                                editorId: payload.editorId,
+                            },
                 });
 
             const mismatchedSnapshot = JSON.parse(first.updateJson) as Record<string, unknown>;
             mismatchedSnapshot.documentVersion = '0';
+
             const rejectedPayloads: Record<string, unknown>[] = [
                 { ...first, editorId: '999' },
                 { ...first, documentRevision: '01' },
@@ -229,9 +254,11 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 { ...first, updateJson: '{}' },
                 { ...first, updateJson: JSON.stringify(mismatchedSnapshot) },
             ];
+
             for (const rejected of rejectedPayloads) {
                 act(() => emit(rejected));
             }
+
             expect(onContentChange).not.toHaveBeenCalled();
 
             act(() => emit(first));
@@ -250,12 +277,14 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                     onContentChange={onContentChange}
                 />
             );
+
             expect(getByTestId('native-editor-view').props.editorUpdateJson).toBeUndefined();
 
             // A different/newer external revision clears that token and is
             // pushed, rather than being hidden behind native revision N.
             handle.bridge.replaceDocument({ setJson: V2_DOC_B, history: 'undoableBoundary' });
             const externalRevision = handle.bridge.getState().documentRevision;
+
             rerender(
                 <NativeRichTextEditor
                     documentHandle={handle}
@@ -263,6 +292,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                     onContentChange={onContentChange}
                 />
             );
+
             expect(
                 JSON.parse(getByTestId('native-editor-view').props.editorUpdateJson as string)
                     .documentVersion
@@ -282,6 +312,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const onSelectionChange = jest.fn();
         const onFocus = jest.fn();
         const onBlur = jest.fn();
+
         const { getByTestId } = render(
             <NativeRichTextEditor
                 documentHandle={handle}
@@ -301,6 +332,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 },
             });
         });
+
         expect(onSelectionChange).toHaveBeenCalledTimes(1);
         // The native mirror offsets are scalar coordinates; the render
         // payload resolves them to the engine's document coordinates.
@@ -312,6 +344,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 nativeEvent: { anchor: 2, head: 4, editorId: handle.editorId },
             });
         });
+
         expect(onSelectionChange).toHaveBeenLastCalledWith({ type: 'text', anchor: 2, head: 4 });
 
         act(() => {
@@ -319,27 +352,33 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 nativeEvent: { isFocused: true, editorId: handle.editorId },
             });
         });
+
         expect(onFocus).toHaveBeenCalledTimes(1);
         expect(onBlur).not.toHaveBeenCalled();
+
         act(() => {
             getByTestId('native-editor-view').props.onFocusChange({
                 nativeEvent: { isFocused: true, editorId: handle.editorId },
             });
         });
+
         expect(onFocus).toHaveBeenCalledTimes(1);
+
         act(() => {
             getByTestId('native-editor-view').props.onFocusChange({
                 nativeEvent: { isFocused: false, editorId: handle.editorId },
             });
         });
+
         expect(onBlur).toHaveBeenCalledTimes(1);
         handle.destroy();
     });
 
     it('discards a stale auto-grow height before returning from fixed mode', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
+
         const { getByTestId, rerender } = render(
-            <NativeRichTextEditor documentHandle={handle} heightBehavior='autoGrow' />
+            <NativeRichTextEditor documentHandle={handle} heightBehavior={'autoGrow'} />
         );
 
         act(() => {
@@ -347,16 +386,18 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 nativeEvent: { contentHeight: 420, editorId: handle.editorId },
             });
         });
+
         expect(getByTestId('native-editor-view').props.style).toEqual(
             expect.objectContaining({ height: 420 })
         );
 
-        rerender(<NativeRichTextEditor documentHandle={handle} heightBehavior='fixed' />);
-        rerender(<NativeRichTextEditor documentHandle={handle} heightBehavior='autoGrow' />);
+        rerender(<NativeRichTextEditor documentHandle={handle} heightBehavior={'fixed'} />);
+        rerender(<NativeRichTextEditor documentHandle={handle} heightBehavior={'autoGrow'} />);
 
         expect(getByTestId('native-editor-view').props.style).not.toEqual(
             expect.objectContaining({ height: 420 })
         );
+
         handle.destroy();
     });
 
@@ -367,10 +408,11 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const onFocus = jest.fn();
         const onBlur = jest.fn();
         const onToolbarAction = jest.fn();
+
         const { getByTestId, rerender } = render(
             <NativeRichTextEditor
                 documentHandle={handleA}
-                heightBehavior='autoGrow'
+                heightBehavior={'autoGrow'}
                 onSelectionChange={onSelectionChange}
                 onFocus={onFocus}
                 onBlur={onBlur}
@@ -381,13 +423,14 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         rerender(
             <NativeRichTextEditor
                 documentHandle={handleB}
-                heightBehavior='autoGrow'
+                heightBehavior={'autoGrow'}
                 onSelectionChange={onSelectionChange}
                 onFocus={onFocus}
                 onBlur={onBlur}
                 onToolbarAction={onToolbarAction}
             />
         );
+
         const view = getByTestId('native-editor-view');
 
         act(() => {
@@ -395,18 +438,23 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             view.props.onFocusChange({ nativeEvent: { isFocused: true } });
             view.props.onContentHeightChange({ nativeEvent: { contentHeight: 240 } });
             view.props.onToolbarAction({ nativeEvent: { key: 'late-action' } });
+
             view.props.onSelectionChange({
                 nativeEvent: { anchor: 9, head: 9, editorId: handleA.editorId },
             });
+
             view.props.onFocusChange({
                 nativeEvent: { isFocused: true, editorId: handleA.editorId },
             });
+
             view.props.onFocusChange({
                 nativeEvent: { isFocused: false, editorId: handleA.editorId },
             });
+
             view.props.onContentHeightChange({
                 nativeEvent: { contentHeight: 240, editorId: handleA.editorId },
             });
+
             view.props.onToolbarAction({
                 nativeEvent: { key: 'late-action', editorId: handleA.editorId },
             });
@@ -422,12 +470,15 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             view.props.onSelectionChange({
                 nativeEvent: { anchor: 2, head: 2, editorId: handleB.editorId },
             });
+
             view.props.onFocusChange({
                 nativeEvent: { isFocused: true, editorId: handleB.editorId },
             });
+
             view.props.onContentHeightChange({
                 nativeEvent: { contentHeight: 240, editorId: handleB.editorId },
             });
+
             view.props.onToolbarAction({
                 nativeEvent: { key: 'B-action', editorId: handleB.editorId },
             });
@@ -436,20 +487,24 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         expect(onSelectionChange).toHaveBeenCalledWith({ type: 'text', anchor: 2, head: 2 });
         expect(onFocus).toHaveBeenCalledTimes(1);
         expect(onToolbarAction).toHaveBeenCalledWith('B-action');
+
         expect(getByTestId('native-editor-view').props.style).toEqual(
             expect.objectContaining({ height: 240 })
         );
+
         handleA.destroy();
         handleB.destroy();
     });
 
     it('keeps editor-bound awareness hooks inert after localAwareness is removed', () => {
         const handle = createV2RoomHandle({ withSnapshot: true });
+
         let localAwareness: { userId: string; name: string; color: string } | undefined = {
             userId: '1',
             name: 'Alice',
             color: '#f00',
         };
+
         let collaboration: ReturnType<typeof useYjsCollaboration> | null = null;
 
         function CollaborationBoundEditor() {
@@ -459,24 +514,30 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 localAwareness,
                 transport: { url: V2_TRANSPORT_URL, connect: true },
             });
+
             return <NativeRichTextEditor {...collaboration.editorBindings} />;
         }
 
         const { getByTestId, rerender } = render(<CollaborationBoundEditor />);
+
         act(() => {
             v2Runtime.transportOpen(handle.editorId);
             v2Runtime.transportReceive(handle.editorId, V2_FAKE_STEP2_FRAME);
         });
+
         localAwareness = undefined;
         rerender(<CollaborationBoundEditor />);
 
         expect(v2Runtime.session(handle.editorId).desiredAwareness).toBeNull();
+
         const awarenessCallsAfterClear =
             mockNativeModule.editorV2CollaborationSetAwareness.mock.calls.length;
+
         act(() => {
             getByTestId('native-editor-view').props.onSelectionChange({
                 nativeEvent: { anchor: 1, head: 3, editorId: handle.editorId },
             });
+
             getByTestId('native-editor-view').props.onFocusChange({
                 nativeEvent: { isFocused: true, editorId: handle.editorId },
             });
@@ -485,6 +546,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         expect(mockNativeModule.editorV2CollaborationSetAwareness).toHaveBeenCalledTimes(
             awarenessCallsAfterClear
         );
+
         expect(v2Runtime.session(handle.editorId).desiredAwareness).toBeNull();
         expect(collaboration).not.toBeNull();
         handle.destroy();

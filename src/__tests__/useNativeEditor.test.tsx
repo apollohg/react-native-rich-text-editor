@@ -20,9 +20,11 @@ describe('useNativeEditorDocument', () => {
     beforeEach(() => {
         _resetNativeModuleCache();
         const runtime = createFakeNativeEditorV2Runtime();
+
         for (const key of Object.keys(mockNativeModule)) {
             delete mockNativeModule[key];
         }
+
         Object.assign(mockNativeModule, runtime.module);
     });
 
@@ -30,15 +32,19 @@ describe('useNativeEditorDocument', () => {
         const handleA = createNativeEditorDocumentHandle({
             initialization: { type: 'localJson', json: fakeDocForText('alpha') },
         });
+
         const handleB = createNativeEditorDocumentHandle({
             initialization: { type: 'localJson', json: fakeDocForText('beta') },
         });
+
         handleA.bridge.replaceDocument({
             setJson: fakeDocForText('alpha changed'),
             history: 'undoableBoundary',
         });
+
         const historyChanges = jest.fn();
         const contentChanges = jest.fn();
+
         const renders: Array<{
             editorId: string;
             isReady: boolean;
@@ -47,6 +53,7 @@ describe('useNativeEditorDocument', () => {
             canUndo: boolean;
             content: string;
         }> = [];
+
         let currentDocument: ReturnType<typeof useNativeEditorDocument> | null = null;
         let refreshA: (() => void) | null = null;
 
@@ -56,10 +63,13 @@ describe('useNativeEditorDocument', () => {
                 onContentChange: contentChanges,
                 onHistoryStateChange: historyChanges,
             });
+
             currentDocument = document;
+
             if (handle === handleA) {
                 refreshA = document.refresh;
             }
+
             renders.push({
                 editorId: handle.editorId,
                 isReady: document.isReady,
@@ -68,6 +78,7 @@ describe('useNativeEditorDocument', () => {
                 canUndo: document.canUndo(),
                 content: document.getContent(),
             });
+
             return null;
         }
 
@@ -77,7 +88,8 @@ describe('useNativeEditorDocument', () => {
         expect(currentDocument!.historyState).toEqual({ canUndo: true, canRedo: false });
 
         observer.rerender(<SnapshotObserver handle={handleB} />);
-        const firstBRender = renders.find((rendered) => rendered.editorId === handleB.editorId);
+        const firstBRender = renders.find(rendered => rendered.editorId === handleB.editorId);
+
         expect(firstBRender).toEqual({
             editorId: handleB.editorId,
             isReady: true,
@@ -91,15 +103,18 @@ describe('useNativeEditorDocument', () => {
             setJson: fakeDocForText('alpha late'),
             history: 'undoableBoundary',
         });
+
         act(() => refreshA!());
 
         expect(contentChanges).not.toHaveBeenCalled();
         expect(historyChanges).not.toHaveBeenLastCalledWith({ canUndo: true, canRedo: false });
+
         expect(currentDocument).toMatchObject({
             isReady: true,
             documentRevision: handleB.bridge.getState().documentRevision,
             historyState: { canUndo: false, canRedo: false },
         });
+
         expect(currentDocument!.getContent()).toBe('<p>beta</p>');
         handleA.destroy();
         handleB.destroy();

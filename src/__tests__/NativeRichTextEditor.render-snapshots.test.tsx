@@ -22,6 +22,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         act(() => ref.current!.clearContent());
         const resetJson = getByTestId('native-editor-view').props.editorUpdateResetJson;
         expect(typeof resetJson).toBe('string');
+
         expect(JSON.parse(resetJson)).toEqual({
             setJson: handle.bridge.getDocumentJson(),
             history: 'resetAndClear',
@@ -32,24 +33,28 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         expect(getByTestId('native-editor-view').props.editorUpdateResetJson).toBeUndefined();
     });
 
-    it('carries reset intent for controlled replacements using reset history', async () => {
+    it('carries reset intent for controlled replacements using reset history', async() => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
-        const empty = { type: 'doc', content: [{ type: 'paragraph' }] };
+        const empty = { type: 'doc', content: [ { type: 'paragraph' } ] };
+
         const { getByTestId, rerender } = render(
             <NativeRichTextEditor
                 documentHandle={handle}
                 valueJSON={V2_INITIAL_DOC}
-                valueJSONUpdateMode='reset'
+                valueJSONUpdateMode={'reset'}
             />
         );
+
         rerender(
             <NativeRichTextEditor
                 documentHandle={handle}
                 valueJSON={empty}
-                valueJSONUpdateMode='reset'
+                valueJSONUpdateMode={'reset'}
             />
         );
-        await act(async () => Promise.resolve());
+
+        await act(async() => Promise.resolve());
+
         expect(
             JSON.parse(getByTestId('native-editor-view').props.editorUpdateResetJson)
         ).toMatchObject({
@@ -75,11 +80,13 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const ref = createRef<NativeRichTextEditorRef>();
         const { getByTestId } = render(<NativeRichTextEditor ref={ref} documentHandle={handle} />);
         let resetRevision: string;
+
         act(() => {
             ref.current!.clearContent();
             resetRevision = handle.bridge.getState().documentRevision;
             handle.bridge.applyInput({ text: 'raced', baseDocumentRevision: resetRevision });
         });
+
         const props = getByTestId('native-editor-view').props;
         expect(JSON.parse(props.editorUpdateResetJson).documentRevision).toBe(resetRevision!);
         expect(JSON.parse(props.editorUpdateJson).documentVersion).not.toBe(resetRevision!);
@@ -89,6 +96,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
         const onActiveStateChange = jest.fn();
+
         const snapshot = Object.freeze({
             renderBlocks: Object.freeze([]),
             renderPatch: null,
@@ -107,9 +115,11 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             scalarLength: 5,
             documentIsEmpty: false,
         }) as ReturnType<typeof handle.bridge.renderUpdate>;
+
         const snapshotJson = JSON.stringify(snapshot);
         const renderUpdate = jest.spyOn(handle.bridge, 'renderUpdate').mockReturnValue(snapshot);
         const parse = jest.spyOn(JSON, 'parse');
+
         const { getByTestId } = render(
             <NativeRichTextEditor
                 ref={ref}
@@ -140,18 +150,18 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                         {
                             type: 'text',
                             text: 'A😀',
-                            marks: [{ type: 'bold' }],
+                            marks: [ { type: 'bold' } ],
                         },
                     ],
                 },
                 {
                     type: 'paragraph',
-                    content: [{ type: 'text', text: 'I', marks: [{ type: 'italic' }] }],
+                    content: [ { type: 'text', text: 'I', marks: [ { type: 'italic' } ] } ],
                 },
                 { type: 'image', attrs: { src: 'https://example.test/image.png' } },
                 {
                     type: 'paragraph',
-                    content: [{ type: 'text', text: 'Z' }],
+                    content: [ { type: 'text', text: 'Z' } ],
                 },
             ],
         });
@@ -164,8 +174,10 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 head: { offset: 3, kind: 'scalar' },
             },
         });
+
         const authoritative = handle.bridge.renderUpdate();
         expect(authoritative.scalarLength).toBe(8);
+
         expect(authoritative.selection).toEqual({
             type: 'text',
             anchor: 5,
@@ -173,24 +185,53 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             anchorScalar: 3,
             headScalar: 3,
         });
+
         expect(authoritative.activeState.marks).toEqual({ italic: true });
 
-        const selections = [0, 2, 3, 4, 5, 6, 7, 8, 99].map(
-            (scalar) => handle.bridge.renderUpdate({ anchor: scalar, head: scalar }).selection
+        const selections = [ 0,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            99 ].map(
+            scalar => handle.bridge.renderUpdate({ anchor: scalar, head: scalar }).selection
         );
+
         expect(selections).toEqual([
-            { type: 'text', anchor: 1, head: 1, anchorScalar: 0, headScalar: 0 },
-            { type: 'text', anchor: 3, head: 3, anchorScalar: 2, headScalar: 2 },
-            { type: 'text', anchor: 5, head: 5, anchorScalar: 3, headScalar: 3 },
-            { type: 'text', anchor: 6, head: 6, anchorScalar: 4, headScalar: 4 },
-            { type: 'text', anchor: 7, head: 7, anchorScalar: 5, headScalar: 5 },
-            { type: 'text', anchor: 8, head: 8, anchorScalar: 6, headScalar: 6 },
-            { type: 'text', anchor: 9, head: 9, anchorScalar: 7, headScalar: 7 },
-            { type: 'text', anchor: 10, head: 10, anchorScalar: 8, headScalar: 8 },
-            { type: 'text', anchor: 10, head: 10, anchorScalar: 8, headScalar: 8 },
+            {
+                type: 'text', anchor: 1, head: 1, anchorScalar: 0, headScalar: 0,
+            },
+            {
+                type: 'text', anchor: 3, head: 3, anchorScalar: 2, headScalar: 2,
+            },
+            {
+                type: 'text', anchor: 5, head: 5, anchorScalar: 3, headScalar: 3,
+            },
+            {
+                type: 'text', anchor: 6, head: 6, anchorScalar: 4, headScalar: 4,
+            },
+            {
+                type: 'text', anchor: 7, head: 7, anchorScalar: 5, headScalar: 5,
+            },
+            {
+                type: 'text', anchor: 8, head: 8, anchorScalar: 6, headScalar: 6,
+            },
+            {
+                type: 'text', anchor: 9, head: 9, anchorScalar: 7, headScalar: 7,
+            },
+            {
+                type: 'text', anchor: 10, head: 10, anchorScalar: 8, headScalar: 8,
+            },
+            {
+                type: 'text', anchor: 10, head: 10, anchorScalar: 8, headScalar: 8,
+            },
         ]);
 
         const astral = handle.bridge.renderUpdate({ anchor: 1, head: 1 });
+
         expect(astral.selection).toEqual({
             type: 'text',
             anchor: 2,
@@ -198,9 +239,11 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             anchorScalar: 1,
             headScalar: 1,
         });
+
         expect(astral.activeState.marks).toEqual({ bold: true });
 
         const atom = handle.bridge.renderUpdate({ anchor: 5, head: 5 });
+
         expect(atom.selection).toEqual({
             type: 'text',
             anchor: 7,
@@ -208,6 +251,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             anchorScalar: 5,
             headScalar: 5,
         });
+
         expect(atom.activeState.marks).toEqual({});
         handle.destroy();
     });
@@ -233,22 +277,53 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         });
 
         expect(handle.bridge.renderUpdate().scalarLength).toBe(11);
+
         expect(
-            [0, 1, 2, 3, 6, 7, 8, 9, 11, 99].map(
-                (scalar) => handle.bridge.renderUpdate({ anchor: scalar, head: scalar }).selection
+            [ 0,
+                1,
+                2,
+                3,
+                6,
+                7,
+                8,
+                9,
+                11,
+                99 ].map(
+                scalar => handle.bridge.renderUpdate({ anchor: scalar, head: scalar }).selection
             )
         ).toEqual([
-            { type: 'text', anchor: 1, head: 1, anchorScalar: 1, headScalar: 1 },
-            { type: 'text', anchor: 1, head: 1, anchorScalar: 1, headScalar: 1 },
-            { type: 'text', anchor: 3, head: 3, anchorScalar: 2, headScalar: 2 },
-            { type: 'text', anchor: 4, head: 4, anchorScalar: 3, headScalar: 3 },
-            { type: 'text', anchor: 4, head: 4, anchorScalar: 3, headScalar: 3 },
-            { type: 'text', anchor: 5, head: 5, anchorScalar: 7, headScalar: 7 },
-            { type: 'text', anchor: 6, head: 6, anchorScalar: 8, headScalar: 8 },
-            { type: 'text', anchor: 6, head: 6, anchorScalar: 8, headScalar: 8 },
-            { type: 'text', anchor: 7, head: 7, anchorScalar: 11, headScalar: 11 },
-            { type: 'text', anchor: 7, head: 7, anchorScalar: 11, headScalar: 11 },
+            {
+                type: 'text', anchor: 1, head: 1, anchorScalar: 1, headScalar: 1,
+            },
+            {
+                type: 'text', anchor: 1, head: 1, anchorScalar: 1, headScalar: 1,
+            },
+            {
+                type: 'text', anchor: 3, head: 3, anchorScalar: 2, headScalar: 2,
+            },
+            {
+                type: 'text', anchor: 4, head: 4, anchorScalar: 3, headScalar: 3,
+            },
+            {
+                type: 'text', anchor: 4, head: 4, anchorScalar: 3, headScalar: 3,
+            },
+            {
+                type: 'text', anchor: 5, head: 5, anchorScalar: 7, headScalar: 7,
+            },
+            {
+                type: 'text', anchor: 6, head: 6, anchorScalar: 8, headScalar: 8,
+            },
+            {
+                type: 'text', anchor: 6, head: 6, anchorScalar: 8, headScalar: 8,
+            },
+            {
+                type: 'text', anchor: 7, head: 7, anchorScalar: 11, headScalar: 11,
+            },
+            {
+                type: 'text', anchor: 7, head: 7, anchorScalar: 11, headScalar: 11,
+            },
         ]);
+
         handle.destroy();
     });
 
@@ -257,17 +332,20 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const ref = createRef<NativeRichTextEditorRef>();
         const onActiveStateChange = jest.fn();
         const errors: unknown[] = [];
+
         const originalAllocateEditorUpdateRevision =
             EditorUpdateRevision.allocateEditorUpdateRevision;
+
         const allocateEditorUpdateRevision = jest
             .spyOn(EditorUpdateRevision, 'allocateEditorUpdateRevision')
-            .mockImplementation((currentRevision) =>
+            .mockImplementation(currentRevision =>
                 currentRevision === 0
                     ? { revision: 0xffff_ffff }
-                    : originalAllocateEditorUpdateRevision(currentRevision)
-            );
+                    : originalAllocateEditorUpdateRevision(currentRevision));
+
         const renderUpdate = jest.spyOn(handle.bridge, 'renderUpdate');
-        handle.addErrorListener((error) => errors.push(error));
+        handle.addErrorListener(error => errors.push(error));
+
         const { getByTestId } = render(
             <NativeRichTextEditor
                 ref={ref}
@@ -279,6 +357,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         act(() => {
             ref.current!.toggleMark('bold');
         });
+
         const view = getByTestId('native-editor-view');
         const pushedUpdateJson = view.props.editorUpdateJson;
         const pushedUpdateRevision = view.props.editorUpdateRevision;
@@ -286,15 +365,18 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
 
         renderUpdate.mockClear();
         onActiveStateChange.mockClear();
+
         act(() => {
             ref.current!.toggleMark('bold');
         });
 
         expect(renderUpdate).not.toHaveBeenCalled();
         expect(getByTestId('native-editor-view').props.editorUpdateJson).toBe(pushedUpdateJson);
+
         expect(getByTestId('native-editor-view').props.editorUpdateRevision).toBe(
             pushedUpdateRevision
         );
+
         expect(onActiveStateChange).not.toHaveBeenCalled();
         expect(errors.at(-1)).toBeInstanceOf(NativeEditorEngineBoundaryError);
         expect((errors.at(-1) as NativeEditorEngineBoundaryError).code).toBe('CONFIG_INVALID');
@@ -304,11 +386,13 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
 
     it('renders the inline JS toolbar only in inline placement', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
+
         const { queryByTestId, rerender } = render(
-            <NativeRichTextEditor documentHandle={handle} toolbarPlacement='keyboard' />
+            <NativeRichTextEditor documentHandle={handle} toolbarPlacement={'keyboard'} />
         );
+
         expect(queryByTestId('native-editor-js-toolbar')).toBeNull();
-        rerender(<NativeRichTextEditor documentHandle={handle} toolbarPlacement='inline' />);
+        rerender(<NativeRichTextEditor documentHandle={handle} toolbarPlacement={'inline'} />);
         expect(queryByTestId('native-editor-js-toolbar')).not.toBeNull();
         handle.destroy();
     });
@@ -317,6 +401,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const onBlur = jest.fn();
         const sendRef = createRef<View>();
+
         const viewPrototype = (
             View as unknown as {
                 prototype: {
@@ -326,13 +411,16 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 };
             }
         ).prototype;
+
         const measureInWindow = jest
             .spyOn(viewPrototype, 'measureInWindow')
-            .mockImplementation(function (callback) {
+            .mockImplementation(function(callback) {
                 const testID = (this as unknown as { props?: { testID?: string } }).props?.testID;
+
                 if (testID === 'editor-toolbar-root') {
                     callback(12, 24, 320, 48);
                 }
+
                 if (testID === 'send') {
                     callback(300, 700, 44, 44);
                 }
@@ -343,19 +431,21 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 <>
                     <NativeRichTextEditor
                         documentHandle={handle}
-                        toolbarPlacement='inline'
+                        toolbarPlacement={'inline'}
                         focusPreservingRefs={sendRef}
                         onBlur={onBlur}
                     />
-                    <View ref={sendRef} testID='send' />
+                    <View ref={sendRef} testID={'send'} />
                 </>
             );
+
             const nativeView = getByTestId('native-editor-view');
 
             act(() => {
                 nativeView.props.onFocusChange({
                     nativeEvent: { isFocused: true, editorId: handle.editorId },
                 });
+
                 jest.runOnlyPendingTimers();
             });
 
@@ -365,6 +455,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                     { x: 300, y: 700, width: 44, height: 44 },
                 ],
             });
+
             expect(mockNativeFocus).not.toHaveBeenCalled();
 
             act(() => {
@@ -386,6 +477,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const sendRef = createRef<View>();
         const attachmentRef = createRef<View>();
+
         const viewPrototype = (
             View as unknown as {
                 prototype: {
@@ -395,13 +487,16 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 };
             }
         ).prototype;
+
         const measureInWindow = jest
             .spyOn(viewPrototype, 'measureInWindow')
-            .mockImplementation(function (callback) {
+            .mockImplementation(function(callback) {
                 const testID = (this as unknown as { props?: { testID?: string } }).props?.testID;
+
                 if (testID === 'send') {
                     callback(300, 700, 44, 44);
                 }
+
                 if (testID === 'attachment') {
                     callback(244, 700, 44, 44);
                 }
@@ -411,8 +506,8 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             const { getByTestId, rerender } = render(
                 <>
                     <NativeRichTextEditor documentHandle={handle} focusPreservingRefs={sendRef} />
-                    <View ref={sendRef} testID='send' />
-                    <View ref={attachmentRef} testID='attachment' />
+                    <View ref={sendRef} testID={'send'} />
+                    <View ref={attachmentRef} testID={'attachment'} />
                 </>
             );
 
@@ -428,6 +523,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 width: 44,
                 height: 44,
             });
+
             expect(mockNativeFocus).not.toHaveBeenCalled();
             expect(mockNativeBlur).not.toHaveBeenCalled();
 
@@ -435,10 +531,10 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 <>
                     <NativeRichTextEditor
                         documentHandle={handle}
-                        focusPreservingRefs={[sendRef, attachmentRef]}
+                        focusPreservingRefs={[ sendRef, attachmentRef ]}
                     />
-                    <View ref={sendRef} testID='send' />
-                    <View ref={attachmentRef} testID='attachment' />
+                    <View ref={sendRef} testID={'send'} />
+                    <View ref={attachmentRef} testID={'attachment'} />
                 </>
             );
 

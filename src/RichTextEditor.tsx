@@ -8,17 +8,19 @@ import { useRichTextEditorMentions } from './useRichTextEditorMentions';
 import { useRichTextEditorPresentation } from './useRichTextEditorPresentation';
 
 export const RichTextEditor = forwardRef<RichTextEditorRef, RichTextEditorProps>(
-    function RichTextEditor(props, ref) {
+    (props, ref) => {
         const state = useRichTextEditorState(props, ref);
         const updates = useRichTextEditorUpdates(state);
         const commands = useRichTextEditorCommands({ ...state, ...updates });
         const events = useRichTextEditorEvents({ ...state, ...updates, ...commands });
+
         const mentions = useRichTextEditorMentions({
             ...state,
             ...commands,
             ...updates,
             ...events,
         });
+
         return useRichTextEditorPresentation({ ...state, ...mentions, ...commands, ...events });
     }
 );

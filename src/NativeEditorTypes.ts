@@ -43,7 +43,8 @@ export class NativeEditorLocalAwarenessSelectionValue {
     constructor(
         readonly anchor: number,
         readonly head: number
-    ) {}
+    ) {
+    }
 }
 
 export type NativeEditorLocalAwarenessSelection = NativeEditorLocalAwarenessSelectionValue;
@@ -61,11 +62,11 @@ export interface NativeEditorLocalAwarenessIntent {
      * How this intent treats the local cursor. Rust owns it as a sticky
      * index, so the three cases are deliberately distinct:
      *
-     * - **omitted** — retain the cursor already published. Use this for
+     * - **omitted** : retain the cursor already published. Use this for
      *   focus-only or state-only updates: restating a document position
      *   that the document has since invalidated would be refused.
-     * - **`null`** — publish presence with no cursor at all.
-     * - **a factory selection** — set the cursor to these positions, which
+     * - **`null`** : publish presence with no cursor at all.
+     * - **a factory selection** : set the cursor to these positions, which
      *   must resolve against the current document.
      */
     selection?: NativeEditorLocalAwarenessSelection | null;
@@ -79,7 +80,7 @@ export interface ListContext {
     index: number;
     /** Number of sibling items in the enclosing list. */
     total: number;
-    /** The list's `start` attribute — the number the first item takes. */
+    /** The list's `start` attribute : the number the first item takes. */
     start: number;
     isFirst: boolean;
     isLast: boolean;
@@ -133,7 +134,7 @@ export interface RenderBlocksPatch {
     renderBlocks: RenderElement[][];
 }
 
-/** What the current selection can do — the state a toolbar renders from. */
+/** What the current selection can do : the state a toolbar renders from. */
 export interface ActiveState {
     /** Marks active at the selection, keyed by mark name. */
     marks: Record<string, boolean>;
@@ -260,12 +261,12 @@ export interface NativeEditorRoomSnapshot {
 }
 
 /**
- * How a document handle's content starts out. Fixed at creation — there is no
+ * How a document handle's content starts out. Fixed at creation : there is no
  * prop equivalent.
  *
- * - `localEmpty` — the schema's empty document.
- * - `localJson` / `localHtml` — seeded from the given content.
- * - `room` — a collaborative document. It renders nothing until the server's
+ * - `localEmpty` : the schema's empty document.
+ * - `localJson` / `localHtml` : seeded from the given content.
+ * - `room` : a collaborative document. It renders nothing until the server's
  *   document arrives, unless a `snapshot` seeds it offline.
  */
 export type NativeEditorInitialization =
@@ -336,7 +337,7 @@ export type NativeEditorPositionAffinity = 'before' | 'after';
 
 /**
  * Mirrors the Rust `PositionEnvelope`. `offset` is measured in the currency
- * named by `kind` — scalar offsets are Unicode scalars, not document positions.
+ * named by `kind` : scalar offsets are Unicode scalars, not document positions.
  */
 export interface NativeEditorPositionEnvelope {
     offset: number;

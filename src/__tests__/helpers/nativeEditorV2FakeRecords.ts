@@ -1,19 +1,19 @@
 import type { DocumentJSON } from '../../NativeEditorBridge';
 import { normalizeNativeEditorV2U64 } from '../../NativeEditorV2Decimal';
 
-export const V2_FAKE_STEP1_FRAME = new Uint8Array([0, 0, 1]);
+export const V2_FAKE_STEP1_FRAME = new Uint8Array([ 0, 0, 1 ]);
 
-export const V2_FAKE_STEP2_FRAME = new Uint8Array([0, 0, 2]);
+export const V2_FAKE_STEP2_FRAME = new Uint8Array([ 0, 0, 2 ]);
 
-export const V2_FAKE_STEP2_INVALID_FRAGMENT_FRAME = new Uint8Array([0, 0, 5]);
+export const V2_FAKE_STEP2_INVALID_FRAGMENT_FRAME = new Uint8Array([ 0, 0, 5 ]);
 
-export const V2_FAKE_UPDATE_FRAME = new Uint8Array([0, 1, 1]);
+export const V2_FAKE_UPDATE_FRAME = new Uint8Array([ 0, 1, 1 ]);
 
-export const V2_FAKE_AWARENESS_FRAME = new Uint8Array([0, 2, 1]);
+export const V2_FAKE_AWARENESS_FRAME = new Uint8Array([ 0, 2, 1 ]);
 
-export const V2_FAKE_MALFORMED_FRAME = new Uint8Array([0xff]);
+export const V2_FAKE_MALFORMED_FRAME = new Uint8Array([ 0xff ]);
 
-export const V2_FAKE_INCOMPATIBLE_FRAME = new Uint8Array([0xfe]);
+export const V2_FAKE_INCOMPATIBLE_FRAME = new Uint8Array([ 0xfe ]);
 
 export const V2_FAKE_U64_MAX = 18_446_744_073_709_551_615n;
 
@@ -33,23 +33,41 @@ export const V2_FAKE_TRANSPORT_EVENT_NAME = 'onCollaborationTransportEvent';
 export const V2_FAKE_MALFORMED_AWARENESS_MESSAGE =
     'awareness update cannot decode: fake entry requires canonical u64 clientId and exact u32 clock';
 
-export const EMPTY_DOC: DocumentJSON = { type: 'doc', content: [{ type: 'paragraph' }] };
+export const EMPTY_DOC: DocumentJSON = { type: 'doc', content: [ { type: 'paragraph' } ] };
 
 /**
  * Mirrors the core's `document_is_empty`: a lone, contentless block of the
- * schema's preferred text block. The fake has to agree with the core here —
+ * schema's preferred text block. The fake has to agree with the core here :
  * a fake that omits a field the core emits is a fake that cannot catch the
  * frozen render-update shape drifting.
  */
 export function fakeDocumentIsEmpty(doc: DocumentJSON): boolean {
     const content = doc.content;
-    if (content == null || content.length === 0) return true;
-    if (content.length > 1) return false;
+
+    if (content == null || content.length === 0) {
+        return true;
+    }
+
+    if (content.length > 1) {
+        return false;
+    }
+
     const block = content[0];
-    if (block == null) return true;
+
+    if (block == null) {
+        return true;
+    }
+
     const blockContent = block.content;
-    if (blockContent != null && blockContent.length > 0) return false;
-    if (typeof block.text === 'string' && block.text.length > 0) return false;
+
+    if (blockContent != null && blockContent.length > 0) {
+        return false;
+    }
+
+    if (typeof block.text === 'string' && block.text.length > 0) {
+        return false;
+    }
+
     return block.type === 'paragraph';
 }
 
@@ -121,6 +139,7 @@ export function transportError(
 ): Record<string, unknown> {
     const error = errorRecord('transport', code, message);
     error.details = details;
+
     return errRecord(error);
 }
 
@@ -135,6 +154,7 @@ export function operationError(
 ): Record<string, unknown> {
     const error = errorRecord('operation', code, message);
     error.details = details;
+
     return errRecord(error);
 }
 
@@ -155,9 +175,11 @@ export function awarenessPeerBytesLimitError(
         'INPUT_LIMIT_EXCEEDED',
         `input exceeds limit ${limit}: ${actual}`
     );
+
     error.limit = String(limit);
     error.actual = String(actual);
     error.details = { field: 'maxAwarenessPeerBytes' };
+
     return errRecord(error);
 }
 
@@ -182,6 +204,7 @@ export function parseV2RequestEnvelope(
     requiresBaseRevision: boolean
 ): Record<string, unknown> | Record<string, unknown> {
     let request: unknown;
+
     try {
         request = JSON.parse(requestJson);
     } catch {
@@ -189,6 +212,7 @@ export function parseV2RequestEnvelope(
             __v2RequestError: boundaryError('CONFIG_INVALID', 'malformed v2 request envelope'),
         };
     }
+
     if (
         request == null ||
         typeof request !== 'object' ||
@@ -200,6 +224,7 @@ export function parseV2RequestEnvelope(
     ) {
         return { __v2RequestError: boundaryError('CONFIG_INVALID', 'invalid v2 request envelope') };
     }
+
     return request as Record<string, unknown>;
 }
 
@@ -207,6 +232,7 @@ export function requestEnvelopeError(
     parsed: Record<string, unknown>
 ): Record<string, unknown> | null {
     const error = parsed.__v2RequestError;
+
     return error != null && typeof error === 'object' ? (error as Record<string, unknown>) : null;
 }
 
@@ -215,9 +241,16 @@ export function requestEnvelopeError(
  * currency. Bare integers are rejected exactly as serde rejects them.
  */
 export function fakePositionEnvelopeScalar(value: unknown): number | null {
-    if (value == null || typeof value !== 'object' || Array.isArray(value)) return null;
+    if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+        return null;
+    }
+
     const envelope = value as Record<string, unknown>;
-    if (envelope.kind !== 'scalar') return null;
+
+    if (envelope.kind !== 'scalar') {
+        return null;
+    }
+
     if (
         envelope.affinity !== undefined &&
         envelope.affinity !== 'before' &&
@@ -225,5 +258,6 @@ export function fakePositionEnvelopeScalar(value: unknown): number | null {
     ) {
         return null;
     }
+
     return exactV2U32(envelope.offset);
 }

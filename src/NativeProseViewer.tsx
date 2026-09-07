@@ -135,12 +135,14 @@ const serializedJsonCache = new WeakMap<object, string>();
 
 function stringifyCachedJson(value: DocumentJSON): string {
     const cached = serializedJsonCache.get(value);
+
     if (cached != null) {
         return cached;
     }
 
     const serialized = JSON.stringify(value);
     serializedJsonCache.set(value, serialized);
+
     return serialized;
 }
 
@@ -160,11 +162,11 @@ function resolveViewerConfiguration(
         ...(resourceLimits ? { limits: { resource: resourceLimits } } : {}),
         ...(mentions?.trigger || mentions?.prefix
             ? {
-                  mentions: {
-                      ...(mentions.trigger ? { trigger: mentions.trigger } : {}),
-                      ...(mentions.prefix ? { prefix: mentions.prefix } : {}),
-                  },
-              }
+                mentions: {
+                    ...(mentions.trigger ? { trigger: mentions.trigger } : {}),
+                    ...(mentions.prefix ? { prefix: mentions.prefix } : {}),
+                },
+            }
             : {}),
     };
 }
@@ -209,11 +211,14 @@ export function RichTextViewer(props: RichTextViewerProps) {
         onError,
         ...viewProps
     } = props;
-    const { mentions, codeHighlighting } = useMemo(() => normalizeEditorAddons(addons), [addons]);
+
+    const { mentions, codeHighlighting } = useMemo(() => normalizeEditorAddons(addons), [ addons ]);
+
     const resolvedResourceLimits = useMemo(
         () => (resourceLimits ? resolveEditorResourceLimits(resourceLimits) : undefined),
-        [resourceLimits]
+        [ resourceLimits ]
     );
+
     const configJson = useMemo(
         () =>
             serializePreparedProseViewerConfiguration(
@@ -226,25 +231,38 @@ export function RichTextViewer(props: RichTextViewerProps) {
                     codeHighlighting
                 )
             ),
-        [allowBase64Images, mentions, resolvedResourceLimits, schema, atoms, codeHighlighting]
+        [ allowBase64Images,
+            mentions,
+            resolvedResourceLimits,
+            schema,
+            atoms,
+            codeHighlighting ]
     );
+
     const themeJson = useMemo(
         () => serializeEditorTheme(theme, mentions?.theme),
-        [mentions?.theme, theme]
+        [ mentions?.theme, theme ]
     );
+
     const imagePolicyJson = useMemo(
         () => serializeEditorImageLoadingPolicy(imageLoadingPolicy),
-        [imageLoadingPolicy]
+        [ imageLoadingPolicy ]
     );
+
     const sourceKind = contentJSON === undefined ? 'html' : 'json';
+
     const source = useMemo(() => {
         if (contentJSON === undefined) {
             return contentHTML ?? '';
         }
+
         return typeof contentJSON === 'string' ? contentJSON : stringifyCachedJson(contentJSON);
-    }, [contentHTML, contentJSON]);
+    }, [ contentHTML, contentJSON ]);
+
     const atomIdentity = useMemo(
-        () => ({}),
+        () => ({
+            sourceKind, source, configJson, themeJson, imagePolicyJson, renderImages, collapseTrailingEmptyParagraphs, fontEnvironmentRevision,
+        }),
         [
             sourceKind,
             source,
@@ -256,6 +274,7 @@ export function RichTextViewer(props: RichTextViewerProps) {
             fontEnvironmentRevision,
         ]
     );
+
     const viewerAtoms = useViewerAtoms({
         atoms,
         identity: atomIdentity,
@@ -266,21 +285,25 @@ export function RichTextViewer(props: RichTextViewerProps) {
         onUpdateAtomAttrs,
         onError,
     });
+
     const handlePressLink = useCallback(
         (event: NativeSyntheticEvent<RichTextViewerLinkPressNativeEvent>) => {
             onPressLink?.(event.nativeEvent);
         },
-        [onPressLink]
+        [ onPressLink ]
     );
+
     const handlePressMention = useCallback(
         (event: NativeSyntheticEvent<RichTextViewerMentionPressNativeEvent>) => {
             const { docPos, label, attrsJson } = event.nativeEvent;
             let attrs: unknown;
+
             try {
                 attrs = JSON.parse(attrsJson);
             } catch {
                 attrs = null;
             }
+
             if (attrs === null || typeof attrs !== 'object' || Array.isArray(attrs)) {
                 onError?.({
                     domain: 'viewer',
@@ -288,17 +311,20 @@ export function RichTextViewer(props: RichTextViewerProps) {
                     message: 'The prepared mention attributes are not a JSON object.',
                     fatal: false,
                 });
+
                 return;
             }
+
             mentions?.onPress?.({ docPos, label, attrs: attrs as Record<string, unknown> });
         },
-        [mentions, onError]
+        [ mentions, onError ]
     );
+
     const handleError = useCallback(
         (event: NativeSyntheticEvent<RichTextViewerErrorEvent>) => {
             onError?.(event.nativeEvent);
         },
-        [onError]
+        [ onError ]
     );
 
     const nativeViewer = (
@@ -320,7 +346,11 @@ export function RichTextViewer(props: RichTextViewerProps) {
             onError={onError ? handleError : undefined}
         />
     );
-    if (!viewerAtoms.enabled) return nativeViewer;
+
+    if (!viewerAtoms.enabled) {
+        return nativeViewer;
+    }
+
     return (
         <View {...viewProps}>
             <View style={{ alignSelf: 'stretch' }} onLayout={viewerAtoms.onContainerLayout}>

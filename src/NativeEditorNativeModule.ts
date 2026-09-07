@@ -7,6 +7,7 @@ export function getNativeModule(): NativeEditorModule {
     if (!_nativeModule) {
         _nativeModule = requireNativeModule<NativeEditorModule>('NativeEditor');
     }
+
     return _nativeModule;
 }
 
@@ -15,12 +16,13 @@ export function _resetNativeModuleCache(): void {
     _nativeModule = null;
 }
 
-// The only construction path. Consumes the frozen v2 result records
-// ({ value, error }, exactly one side set), normalizes them at the JS boundary
-// (decimal-string u64s, direct binaries, unsafe-integer rejection), and raises
-// typed per-domain errors with a non-retryable class for
-// ENGINE_INVARIANT_FAILED and destroyed lifecycles.
-
+/**
+ * The only construction path. Consumes the frozen v2 result records
+ * ({ value, error }, exactly one side set), normalizes them at the JS boundary
+ * (decimal-string u64s, direct binaries, unsafe-integer rejection), and raises
+ * typed per-domain errors with a non-retryable class for
+ * ENGINE_INVARIANT_FAILED and destroyed lifecycles.
+ */
 export const ERR_V2_NATIVE_RESPONSE =
     'NativeEditorBridge: invalid v2 result record from native module';
 
@@ -29,7 +31,7 @@ export const ERR_V2_DESTROYED = 'NativeEditorBridge: v2 editor handle has been d
 export const V2_ENVELOPE_VERSION = 1;
 
 /**
- * The v2 surface of the NativeEditor native module — the complete
+ * The v2 surface of the NativeEditor native module : the complete
  * production ABI. Every call resolves the method lazily and fails clearly
  * when the v2 surface is absent. Decimal-string identifiers keep full u64
  * fidelity across the JavaScript boundary, and binaries travel as direct
@@ -81,13 +83,15 @@ export function invokeNativeEditorV2<K extends keyof NativeEditorModule>(
     name: K,
     ...args: Parameters<NativeEditorModule[K]>
 ): unknown {
-    const nativeModule = getNativeModule() as unknown as Record<string, unknown>;
-    const method = nativeModule[name as string];
+    const nativeModule = getNativeModule();
+    const method = nativeModule[name];
+
     if (typeof method !== 'function') {
         throw new Error(
             `NativeEditorBridge: native module does not expose the v2 entry ${String(name)}`
         );
     }
+
     return (method as (...fnArgs: unknown[]) => unknown).apply(nativeModule, args);
 }
 

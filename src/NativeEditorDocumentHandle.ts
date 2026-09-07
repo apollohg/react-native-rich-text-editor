@@ -1,5 +1,5 @@
 import { type ResolvedDocumentSchema } from './schemas';
-import { NativeEditorErrorBase } from './NativeEditorBoundaryError';
+import { type NativeEditorErrorBase } from './NativeEditorBoundaryError';
 import { NativeEditorDocumentBridge } from './NativeEditorDocumentBridge';
 import {
     type NativeCollaborationTransportConfig,
@@ -34,8 +34,8 @@ export const NATIVE_EDITOR_DOCUMENT_HANDLE_DESCRIPTORS = new WeakMap<
  * One native document session, shared by everything that touches the
  * document: the editor view, the headless `useNativeEditorDocument` binding,
  * and the collaboration controller. Obtain one from
- * {@link createNativeEditorDocumentHandle} — it cannot be constructed
- * directly — and `destroy()` it when its owner unmounts.
+ * {@link createNativeEditorDocumentHandle} : it cannot be constructed
+ * directly : and `destroy()` it when its owner unmounts.
  */
 export interface NativeEditorDocumentHandle {
     readonly [NATIVE_EDITOR_DOCUMENT_HANDLE_BRAND]: true;
@@ -72,6 +72,7 @@ export class NativeEditorDocumentHandleImpl implements NativeEditorDocumentHandl
                 'NativeEditorBridge: NativeEditorDocumentHandle cannot be constructed directly'
             );
         }
+
         AUTHENTIC_NATIVE_EDITOR_DOCUMENT_HANDLES.add(this);
         NATIVE_EDITOR_DOCUMENT_HANDLE_DESCRIPTORS.set(this, documentDescriptor);
     }
@@ -109,11 +110,13 @@ export function _getNativeEditorDocumentHandleDescriptor(
 ): ResolvedDocumentSchema {
     _assertNativeEditorDocumentHandle(handle);
     const documentDescriptor = NATIVE_EDITOR_DOCUMENT_HANDLE_DESCRIPTORS.get(handle);
+
     if (documentDescriptor === undefined) {
         throw invalidV2RequestError(
             'NativeEditorBridge: authentic NativeEditorDocumentHandle has no document descriptor'
         );
     }
+
     return documentDescriptor;
 }
 
@@ -134,7 +137,7 @@ export function _assertNativeEditorDocumentHandle(
 
 /**
  * Create the native document session every other API binds to. Create it once
- * per document — `useMemo`, not on each render — and destroy it when its
+ * per document : `useMemo`, not on each render : and destroy it when its
  * owner unmounts.
  *
  * @throws NativeEditorErrorBase when the config is rejected: a malformed
@@ -155,10 +158,12 @@ export function createNativeEditorDocumentHandle(
     config: NativeEditorCreateConfig
 ): NativeEditorDocumentHandle {
     const { configJson, snapshotState, documentDescriptor } = buildV2CreateRequest(config);
+
     const value = unwrapNativeEditorV2Result(
         invokeNativeEditorV2('editorV2Create', configJson, snapshotState),
         normalizeNativeEditorV2CreateValue
     );
+
     return new NativeEditorDocumentHandleImpl(
         NATIVE_EDITOR_DOCUMENT_HANDLE_TOKEN,
         value.editorId,

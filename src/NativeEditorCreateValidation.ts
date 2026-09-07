@@ -20,7 +20,7 @@ export const V2_CREATE_POLICY_KEYS = new Set([
     'allowBase64Images',
 ]);
 
-export const V2_CREATE_LIMIT_KEYS = new Set(['resource', 'editing', 'collaboration']);
+export const V2_CREATE_LIMIT_KEYS = new Set([ 'resource', 'editing', 'collaboration' ]);
 
 export const V2_CREATE_RESOURCE_LIMIT_KEYS = new Set([
     'maxInputBytes',
@@ -53,13 +53,13 @@ export const V2_CREATE_COLLABORATION_LIMIT_KEYS = new Set([
 ]);
 
 export const V2_CREATE_INITIALIZATION_KEYS: Readonly<Record<string, ReadonlySet<string>>> = {
-    localEmpty: new Set(['type']),
-    localJson: new Set(['type', 'json']),
-    localHtml: new Set(['type', 'html']),
-    room: new Set(['type', 'documentId', 'lineageId', 'snapshot']),
+    localEmpty: new Set([ 'type' ]),
+    localJson: new Set([ 'type', 'json' ]),
+    localHtml: new Set([ 'type', 'html' ]),
+    room: new Set([ 'type', 'documentId', 'lineageId', 'snapshot' ]),
 };
 
-export const V2_CREATE_ROOM_SNAPSHOT_KEYS = new Set(['metadata', 'encodedState']);
+export const V2_CREATE_ROOM_SNAPSHOT_KEYS = new Set([ 'metadata', 'encodedState' ]);
 
 export const V2_CREATE_SNAPSHOT_METADATA_KEYS = new Set([
     'formatVersion',
@@ -107,7 +107,10 @@ export function validateV2CreateLimits(limits: NativeEditorCreateConfig['limits'
     try {
         validateEditorCreateLimits(limits);
     } catch (error) {
-        if (!(error instanceof NativeEditorBoundaryError)) throw error;
+        if (!(error instanceof NativeEditorBoundaryError)) {
+            throw error;
+        }
+
         throw new NativeEditorEngineBoundaryError({
             domain: 'boundary',
             code: error.code,
@@ -126,8 +129,12 @@ export function emptyV2CreateRecord(): Record<string, unknown> {
 }
 
 export function isV2CreateRecord(value: unknown): value is Record<string, unknown> {
-    if (value == null || typeof value !== 'object' || Array.isArray(value)) return false;
+    if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+        return false;
+    }
+
     const prototype = Object.getPrototypeOf(value);
+
     return prototype === Object.prototype || prototype === null;
 }
 
@@ -137,12 +144,17 @@ export function hasOwnV2CreateKey(value: Record<string, unknown>, key: string): 
 
 export function ownV2CreateValue(value: Record<string, unknown>, key: string): unknown {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (descriptor === undefined) return undefined;
+
+    if (descriptor === undefined) {
+        return undefined;
+    }
+
     if (!('value' in descriptor)) {
         throw invalidV2CreateRequestError(
             `NativeEditorBridge: accessor ${key} is not allowed for v2 create`
         );
     }
+
     return descriptor.value;
 }
 
@@ -153,7 +165,7 @@ export function requireKnownV2CreateKeys(
 ): asserts value is Record<string, unknown> {
     if (
         !isV2CreateRecord(value) ||
-        Reflect.ownKeys(value).some((key) => typeof key !== 'string' || !allowed.has(key))
+        Reflect.ownKeys(value).some(key => typeof key !== 'string' || !allowed.has(key))
     ) {
         throw invalidV2CreateRequestError(`NativeEditorBridge: invalid ${label} for v2 create`);
     }
@@ -166,13 +178,22 @@ export function normalizeV2CreateRecord(
 ): Record<string, unknown> {
     requireKnownV2CreateKeys(value, allowed, label);
     const normalized = emptyV2CreateRecord();
+
     for (const key of allowed) {
-        if (!hasOwnV2CreateKey(value, key)) continue;
+        if (!hasOwnV2CreateKey(value, key)) {
+            continue;
+        }
+
         const fieldValue = ownV2CreateValue(value, key);
+
         if (fieldValue === null) {
             throw invalidV2CreateRequestError(`NativeEditorBridge: invalid ${label} for v2 create`);
         }
-        if (fieldValue !== undefined) normalized[key] = fieldValue;
+
+        if (fieldValue !== undefined) {
+            normalized[key] = fieldValue;
+        }
     }
+
     return normalized;
 }

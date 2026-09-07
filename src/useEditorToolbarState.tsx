@@ -1,5 +1,5 @@
-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { View, useWindowDimensions } from 'react-native';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { type View, useWindowDimensions } from 'react-native';
 import { DEFAULT_EDITOR_TOOLBAR_ITEMS } from './EditorToolbarItems';
 import { type EditorToolbarProps, type ToolbarMenuState } from './EditorToolbarTypes';
 import {
@@ -37,7 +37,7 @@ export function useEditorToolbarState({
     showTopBorder,
     preserveEditorFocus = true,
 }: EditorToolbarProps) {
-    const marks = activeState.marks ?? {};
+    const marks = useMemo(() => activeState.marks ?? {}, [ activeState.marks ]);
 
     const nodes = activeState.nodes ?? {};
 
@@ -59,9 +59,9 @@ export function useEditorToolbarState({
 
     const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 
-    const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null);
+    const [ expandedGroupKey, setExpandedGroupKey ] = useState<string | null>(null);
 
-    const [menuState, setMenuState] = useState<ToolbarMenuState | null>(null);
+    const [ menuState, setMenuState ] = useState<ToolbarMenuState | null>(null);
 
     const frameOwnerIdRef = useRef(frameOwnerId);
 
@@ -99,12 +99,13 @@ export function useEditorToolbarState({
 
     useEffect(() => {
         framePublisherMountedRef.current = true;
+
         return () => {
             framePublisherMountedRef.current = false;
         };
     }, []);
 
-    const isMarkActive = useCallback((mark: string) => !!marks[mark], [marks]);
+    const isMarkActive = useCallback((mark: string) => !!marks[mark], [ marks ]);
 
     const canIndentList = !!commands['indentList'];
 
@@ -112,6 +113,7 @@ export function useEditorToolbarState({
 
     const shouldRenderMentionSuggestions =
         publishesFocusFrames && mentionState != null && mentionState.suggestions.length > 0;
+
     return {
         onToggleMark,
         onToggleBold,

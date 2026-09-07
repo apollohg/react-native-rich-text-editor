@@ -56,8 +56,10 @@ export function collectAtomInstanceBlocks(
     const instanceBlocks: AtomInstance[][] = [];
     const instances: AtomInstance[] = [];
     let hasOnlyStableKeys = true;
+
     for (const block of renderBlocks) {
         const blockInstances: AtomInstance[] = [];
+
         for (const element of block) {
             if (
                 element.type !== 'voidBlock' ||
@@ -66,28 +68,35 @@ export function collectAtomInstanceBlocks(
             ) {
                 continue;
             }
+
             const occurrence = occurrences.get(element.nodeType) ?? 0;
             occurrences.set(element.nodeType, occurrence + 1);
+
             if (
                 !registeredTypes.has(element.nodeType) &&
                 NATIVE_VOID_BLOCK_TYPES.has(element.nodeType)
             ) {
                 continue;
             }
+
             const hasStableKey = typeof element.atomId === 'string';
+
             const instance = {
-                key: hasStableKey ? element.atomId! : `${element.nodeType}:${occurrence}`,
+                key: hasStableKey ? element.atomId : `${element.nodeType}:${occurrence}`,
                 hasStableKey,
                 nodeType: element.nodeType,
                 attrs: element.attrs ?? EMPTY_ATOM_ATTRS,
                 docPos: element.docPos,
             };
+
             hasOnlyStableKeys &&= hasStableKey;
             blockInstances.push(instance);
             instances.push(instance);
         }
+
         instanceBlocks.push(blockInstances);
     }
+
     return { instanceBlocks, instances, hasOnlyStableKeys };
 }
 
@@ -114,10 +123,21 @@ export function applyRenderPatch<Element>(
 }
 
 export function atomSelected(selection: Selection, docPos: number): boolean {
-    if (selection.type === 'all') return true;
-    if (selection.type === 'node') return selection.pos === docPos;
+    if (selection.type === 'all') {
+        return true;
+    }
+
+    if (selection.type === 'node') {
+        return selection.pos === docPos;
+    }
+
     const { anchor, head } = selection;
-    if (anchor == null || head == null) return false;
-    const [from, to] = anchor <= head ? [anchor, head] : [head, anchor];
+
+    if (anchor == null || head == null) {
+        return false;
+    }
+
+    const [ from, to ] = anchor <= head ? [ anchor, head ] : [ head, anchor ];
+
     return from <= docPos && docPos + 1 <= to;
 }

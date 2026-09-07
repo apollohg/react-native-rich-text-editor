@@ -10,5 +10,6 @@ export function createFakeNativeEditorV2Runtime(): FakeNativeEditorV2Runtime {
     const lifecycle = createFakeLifecycleModule(state);
     const editing = createFakeEditingModule(state);
     const collaboration = createFakeCollaborationModule(state);
+
     return createFakeRuntimeControls({ ...lifecycle, ...editing, ...collaboration, ...state });
 }

@@ -71,7 +71,7 @@ export interface NodeSpec {
      * `insert_content_json`) admits attrs on this node that are not declared
      * in `attrs`, instead of filtering them out. Default `false`. Intended
      * for node types with an intentional pass-through-metadata contract
-     * (e.g. the mention node — see `mentionNodeSpec()` in addons.ts).
+     * (e.g. the mention node : see `mentionNodeSpec()` in addons.ts).
      */
     allowUndeclaredAttrs?: boolean;
     /** Public JSON representation when it differs from the native node name. */
@@ -165,18 +165,35 @@ export function outputTag(spec: DOMOutputSpec): string {
 
 export function appendGroup(group: string | undefined, name: string): string {
     const groups = group?.split(/\s+/).filter(Boolean) ?? [];
-    if (!groups.includes(name)) groups.push(name);
+
+    if (!groups.includes(name)) {
+        groups.push(name);
+    }
+
     return groups.join(' ');
 }
 
 export function schemaNodeRole(name: string, node: SchemaNodeSpec): string {
-    if (node.role != null) return node.role === 'heading' ? 'textBlock' : node.role;
-    if (name === 'doc') return 'doc';
-    if (name === 'text') return 'text';
+    if (node.role != null) {
+        return node.role === 'heading' ? 'textBlock' : node.role;
+    }
+
+    if (name === 'doc') {
+        return 'doc';
+    }
+
+    if (name === 'text') {
+        return 'text';
+    }
+
     if (node.content === 'inline*' && node.group?.split(/\s+/).includes('block')) {
         return 'textBlock';
     }
-    if (node.group?.split(/\s+/).includes('inline')) return 'inline';
+
+    if (node.group?.split(/\s+/).includes('inline')) {
+        return 'inline';
+    }
+
     return 'block';
 }
 
@@ -188,16 +205,24 @@ export function caseAttributeValue(
     defaultValue: unknown
 ): unknown {
     const rule = parseDOM?.find(
-        (candidate) =>
+        candidate =>
             candidate.tag === tag &&
             candidate.attrs != null &&
             String(candidate.attrs[attribute]) === key
     );
+
     if (rule?.attrs && Object.prototype.hasOwnProperty.call(rule.attrs, attribute)) {
         return rule.attrs[attribute];
     }
-    if (typeof defaultValue === 'number') return Number(key);
-    if (typeof defaultValue === 'boolean') return key === 'true';
+
+    if (typeof defaultValue === 'number') {
+        return Number(key);
+    }
+
+    if (typeof defaultValue === 'boolean') {
+        return key === 'true';
+    }
+
     return key;
 }
 
@@ -208,62 +233,75 @@ export function validateAttributeDOMRules(
     defaultValue: unknown
 ): void {
     const cases = Object.entries(switched.cases);
+
     let discriminatorType =
         typeof defaultValue === 'string' ||
         typeof defaultValue === 'number' ||
         typeof defaultValue === 'boolean'
             ? typeof defaultValue
             : undefined;
+
     if (discriminatorType == null && parseDOM != null) {
-        const parsedTypes = parseDOM.map((rule) => {
+        const parsedTypes = parseDOM.map(rule => {
             const value = rule.attrs?.[switched.switchOn];
+
             return typeof value === 'string' ||
                 typeof value === 'number' ||
                 typeof value === 'boolean'
                 ? typeof value
                 : undefined;
         });
+
         const firstType = parsedTypes[0];
-        if (firstType != null && parsedTypes.every((type) => type === firstType)) {
+
+        if (firstType != null && parsedTypes.every(type => type === firstType)) {
             discriminatorType = firstType;
         }
     }
+
     if (discriminatorType == null) {
         throw new Error(
             `node '${name}' DOM discriminator '${switched.switchOn}' must have a scalar type`
         );
     }
+
     if (parseDOM == null) {
-        const validCases = cases.every(([caseKey]) => {
+        const validCases = cases.every(([ caseKey ]) => {
             if (discriminatorType === 'number') {
                 return /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(caseKey);
             }
+
             return discriminatorType !== 'boolean' || caseKey === 'true' || caseKey === 'false';
         });
+
         if (!validCases) {
             throw new Error(
                 `node '${name}' DOM discriminator '${switched.switchOn}' must use ${discriminatorType} values`
             );
         }
+
         return;
     }
-    const matchesCase = ([caseKey, output]: [string, DOMOutputSpec]) =>
+
+    const matchesCase = ([ caseKey, output ]: [string, DOMOutputSpec]) =>
         parseDOM.filter(
-            (rule) =>
+            rule =>
                 rule.tag === outputTag(output) &&
                 rule.attrs != null &&
                 Object.prototype.hasOwnProperty.call(rule.attrs, switched.switchOn) &&
                 String(rule.attrs[switched.switchOn]) === caseKey
         ).length === 1;
+
     if (parseDOM.length !== cases.length || !cases.every(matchesCase)) {
         throw new Error(
             `node '${name}' DOM parse rules must map one-to-one with '${switched.switchOn}' output cases`
         );
     }
+
     if (
         discriminatorType != null &&
         parseDOM.some(
-            (rule) =>
+            rule =>
                 rule.attrs != null && typeof rule.attrs[switched.switchOn] !== discriminatorType
         )
     ) {
@@ -282,11 +320,14 @@ export function staticDOMTag(
     if ((parseDOM?.length ?? 0) > 1) {
         throw new Error(`${kind} '${name}' has multiple static DOM parse rules`);
     }
+
     const parsed = parseDOM?.[0]?.tag;
     const serialized = toDOM == null ? undefined : outputTag(toDOM);
+
     if (parsed != null && serialized != null && parsed !== serialized) {
         throw new Error(`${kind} '${name}' parses '${parsed}' but serializes '${serialized}'`);
     }
+
     return serialized ?? parsed;
 }
 
@@ -294,7 +335,8 @@ export function staticDOMTag(
 export function defineSchema(spec: SchemaSpec): SchemaDefinition {
     const nodes: NodeSpec[] = [];
     const names = new Set<string>();
-    for (const [name, node] of Object.entries(spec.nodes)) {
+
+    for (const [ name, node ] of Object.entries(spec.nodes)) {
         const common = {
             content: node.content ?? '',
             ...(node.group == null ? {} : { group: node.group }),
@@ -309,11 +351,14 @@ export function defineSchema(spec: SchemaSpec): SchemaDefinition {
                 ? {}
                 : { allowUndeclaredAttrs: node.allowUndeclaredAttrs }),
         };
+
         if (node.toDOM != null && !Array.isArray(node.toDOM)) {
             const switched = node.toDOM as AttributeDOMOutputSpec;
+
             if (RESERVED_WIRE_NODE_TYPES.has(name)) {
                 throw new Error(`node '${name}' uses a reserved wire projection type`);
             }
+
             if (
                 node.attrs == null ||
                 !Object.prototype.hasOwnProperty.call(node.attrs, switched.switchOn)
@@ -322,18 +367,25 @@ export function defineSchema(spec: SchemaSpec): SchemaDefinition {
                     `node '${name}' switches on undeclared attribute '${switched.switchOn}'`
                 );
             }
+
             if (Object.keys(switched.cases).length === 0) {
                 throw new Error(`node '${name}' has no DOM output cases`);
             }
+
             const discriminatorDefault = node.attrs[switched.switchOn]?.default;
             validateAttributeDOMRules(name, switched, node.parseDOM, discriminatorDefault);
             const { attrs: _attrs, ...variantCommon } = common;
-            for (const [caseKey, output] of Object.entries(switched.cases)) {
+
+            for (const [ caseKey, output ] of Object.entries(switched.cases)) {
                 const tag = outputTag(output);
-                if (names.has(tag))
+
+                if (names.has(tag)) {
                     throw new Error(`schema produces duplicate native node '${tag}'`);
+                }
+
                 names.add(tag);
                 const { [switched.switchOn]: _discriminator, ...variantAttrs } = node.attrs ?? {};
+
                 nodes.push({
                     name: tag,
                     ...variantCommon,
@@ -354,17 +406,23 @@ export function defineSchema(spec: SchemaSpec): SchemaDefinition {
                     },
                 });
             }
+
             continue;
         }
 
-        if (names.has(name)) throw new Error(`schema produces duplicate native node '${name}'`);
+        if (names.has(name)) {
+            throw new Error(`schema produces duplicate native node '${name}'`);
+        }
+
         names.add(name);
+
         const tag = staticDOMTag(
             'node',
             name,
             node.parseDOM,
             node.toDOM as DOMOutputSpec | undefined
         );
+
         nodes.push({
             name,
             ...common,
@@ -372,12 +430,14 @@ export function defineSchema(spec: SchemaSpec): SchemaDefinition {
         });
     }
 
-    const marks: MarkSpec[] = Object.entries(spec.marks ?? {}).map(([name, mark]) => {
+    const marks: MarkSpec[] = Object.entries(spec.marks ?? {}).map(([ name, mark ]) => {
         const tag = staticDOMTag('mark', name, mark.parseDOM, mark.toDOM);
         const normalizedTag = tag?.toLowerCase();
+
         if (normalizedTag != null && !ALLOWED_MARK_HTML_TAGS.has(normalizedTag)) {
             throw new Error(`mark '${name}' has disallowed HTML tag '${tag}'`);
         }
+
         return {
             name,
             ...(mark.attrs == null ? {} : { attrs: mark.attrs }),
@@ -388,7 +448,9 @@ export function defineSchema(spec: SchemaSpec): SchemaDefinition {
                 : { allowUndeclaredAttrs: mark.allowUndeclaredAttrs }),
         };
     });
+
     const schema = { nodes, marks };
+
     return spec.atoms == null || spec.atoms.length === 0
         ? schema
         : withAtomsSchema(schema, spec.atoms);

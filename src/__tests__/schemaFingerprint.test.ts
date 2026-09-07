@@ -12,6 +12,7 @@ describe('resolved schema fingerprint parity', () => {
         const fixture = fixtures.fingerprints.find(
             ({ name }) => name === 'Tiptap-compatible camelCase schema'
         )!;
+
         expect(testSchemaFingerprint(tiptapCompatibleSchema)).toBe(fixture.expectedFingerprint);
     });
 
@@ -19,17 +20,18 @@ describe('resolved schema fingerprint parity', () => {
         const fixture = fixtures.fingerprints.find(
             ({ name }) => name === 'default ProseMirror schema'
         )!;
+
         expect(testSchemaFingerprint(prosemirrorSchema)).toBe(fixture.expectedFingerprint);
         expect(defaultSchema).toBe(prosemirrorSchema);
     });
 
-    it.each(fixtures.fingerprints)('$name matches the checked-in Rust fingerprint', (fixture) => {
+    it.each(fixtures.fingerprints)('$name matches the checked-in Rust fingerprint', fixture => {
         expect(testSchemaFingerprint(fixture.schema as SchemaDefinition)).toBe(
             fixture.expectedFingerprint
         );
     });
 
-    it.each(fixtures.equivalentSchemas)('$name ignores object key insertion order', (fixture) => {
+    it.each(fixtures.equivalentSchemas)('$name ignores object key insertion order', fixture => {
         for (const schema of fixture.schemas) {
             expect(testSchemaFingerprint(schema as SchemaDefinition)).toBe(
                 fixture.expectedFingerprint

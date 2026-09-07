@@ -11,8 +11,8 @@ import {
     type ExternalTextCompositionOptions,
     type ExternalTextCompositionSession,
 } from './ExternalTextComposition';
-import { useRichTextEditorState } from './useRichTextEditorState';
-import { useRichTextEditorUpdates } from './useRichTextEditorUpdates';
+import { type useRichTextEditorState } from './useRichTextEditorState';
+import { type useRichTextEditorUpdates } from './useRichTextEditorUpdates';
 import { isRevisionMismatchError, parseCaretRectJson } from './RichTextEditorSerialization';
 import { type RichTextEditorRef, type RichTextEditorCaretRect } from './RichTextEditorTypes';
 
@@ -68,24 +68,28 @@ export function useRichTextEditorCommands(
     atomOwnerRef.current = documentHandle;
 
     const updateAtomAttrs = useCallback(
-        async (
+        async(
             atomKey: string,
             nodeType: string,
             expectedDocPos: number,
             expectedDocumentVersion: string | null,
             hasStableKey: boolean,
             update: AtomAttrsUpdate
-        ): Promise<void> => {
+        ): Promise<void> => { // eslint-disable-line @typescript-eslint/require-await -- Preserve promise rejection for validation errors.
             const baseDocumentRevision = latestRevisionRef.current;
+
             if (documentHandle.isDestroyed || baseDocumentRevision == null) {
                 throw new AtomUpdateAttrsError('not-ready', 'The editor is not ready');
             }
+
             if (!editableRef.current) {
                 throw new AtomUpdateAttrsError('not-applicable', 'The editor is not editable');
             }
+
             const instance = atomStateRef.current.instances.find(
-                (candidate) => candidate.key === atomKey && candidate.nodeType === nodeType
+                candidate => candidate.key === atomKey && candidate.nodeType === nodeType
             );
+
             if (
                 instance == null ||
                 (!hasStableKey &&
@@ -97,8 +101,10 @@ export function useRichTextEditorCommands(
                     'The atom no longer exists in the document'
                 );
             }
+
             const attrs = resolveAtomAttrsUpdate(instance.attrs, update);
             let outcome;
+
             try {
                 outcome = bridge.applyCommand({
                     baseDocumentRevision,
@@ -113,6 +119,7 @@ export function useRichTextEditorCommands(
                         'The atom changed before its attributes were updated'
                     );
                 }
+
                 if (
                     error instanceof NativeEditorErrorBase &&
                     (error.code === 'ENGINE_NOT_READY' ||
@@ -121,11 +128,13 @@ export function useRichTextEditorCommands(
                 ) {
                     throw new AtomUpdateAttrsError('not-ready', 'The editor is not ready');
                 }
+
                 throw new AtomUpdateAttrsError(
                     'engine-error',
                     error instanceof Error ? error.message : 'The atom update failed'
                 );
             }
+
             if (outcome.type === 'notApplicable') {
                 refreshAtomsFromUpdate(bridge.renderUpdate());
                 document.refresh();
@@ -134,42 +143,58 @@ export function useRichTextEditorCommands(
                     'The atom no longer exists at this document position'
                 );
             }
+
             if (outcome.type !== 'transaction') {
                 throw new AtomUpdateAttrsError('engine-error', 'Unexpected atom update outcome');
             }
+
             afterLocalEngineMutation();
         },
-        [afterLocalEngineMutation, bridge, document, documentHandle, refreshAtomsFromUpdate]
+        [ afterLocalEngineMutation,
+            atomStateRef,
+            bridge,
+            document,
+            documentHandle.isDestroyed,
+            latestRevisionRef,
+            refreshAtomsFromUpdate ]
     );
 
     const runAtomAction = useCallback(
-        async (
+        async(
             owner: NativeEditorDocumentHandle,
             instance: AtomInstance,
             documentVersion: string | null,
             action: 'select' | 'delete' | 'before' | 'after'
-        ) => {
+        ) => { // eslint-disable-line @typescript-eslint/require-await -- Preserve promise rejection for validation errors.
             if (
                 owner !== atomOwnerRef.current ||
                 documentHandle.isDestroyed ||
                 latestRevisionRef.current == null
-            )
+            ) {
                 throw new AtomUpdateAttrsError('not-ready', 'The editor is not ready.');
-            if (action === 'delete' && !editableRef.current)
+            }
+
+            if (action === 'delete' && !editableRef.current) {
                 throw new AtomUpdateAttrsError('not-applicable', 'The editor is not editable.');
+            }
+
             const current = atomStateRef.current.instances.find(
-                (candidate) =>
+                candidate =>
                     candidate.key === instance.key && candidate.nodeType === instance.nodeType
             );
+
             if (
                 !current ||
                 (!instance.hasStableKey &&
                     (documentVersion !== atomStateRef.current.documentVersion ||
                         current.docPos !== instance.docPos))
-            )
+            ) {
                 throw new AtomUpdateAttrsError('not-applicable', 'The atom no longer exists.');
+            }
+
             try {
                 const baseDocumentRevision = latestRevisionRef.current;
+
                 const selection = bridge.setSelection({
                     baseDocumentRevision,
                     selection: {
@@ -178,29 +203,41 @@ export function useRichTextEditorCommands(
                         edge: action === 'select' || action === 'delete' ? 'node' : action,
                     },
                 });
-                if (selection.type !== 'transaction')
+
+                if (selection.type !== 'transaction') {
                     throw new AtomUpdateAttrsError(
                         'not-applicable',
                         'The atom could not be selected.'
                     );
+                }
+
                 if (action === 'delete') {
                     const outcome = bridge.applyCommand({
                         baseDocumentRevision,
                         command: { type: 'deleteBackward' },
                     });
-                    if (outcome.type !== 'transaction')
+
+                    if (outcome.type !== 'transaction') {
                         throw new AtomUpdateAttrsError(
                             'not-applicable',
                             'The atom could not be deleted.'
                         );
+                    }
+
                     afterLocalEngineMutation();
                 } else {
                     pushEngineUpdateToView();
                     document.refresh();
-                    if (action !== 'select') nativeViewRef.current?.focus?.();
+
+                    if (action !== 'select') {
+                        nativeViewRef.current?.focus?.();
+                    }
                 }
             } catch (error) {
-                if (error instanceof AtomUpdateAttrsError) throw error;
+                if (error instanceof AtomUpdateAttrsError) {
+                    throw error;
+                }
+
                 if (isRevisionMismatchError(error)) {
                     refreshAtomsFromUpdate(bridge.renderUpdate());
                     document.refresh();
@@ -209,20 +246,22 @@ export function useRichTextEditorCommands(
                         'The document changed before the atom action.'
                     );
                 }
+
                 throw new AtomUpdateAttrsError(
                     'engine-error',
                     error instanceof Error ? error.message : String(error)
                 );
             }
         },
-        [
-            afterLocalEngineMutation,
+        [ afterLocalEngineMutation,
+            atomStateRef,
             bridge,
             document,
-            documentHandle,
+            documentHandle.isDestroyed,
+            latestRevisionRef,
+            nativeViewRef,
             pushEngineUpdateToView,
-            refreshAtomsFromUpdate,
-        ]
+            refreshAtomsFromUpdate ]
     );
 
     const runEngineMutation = useCallback(
@@ -239,11 +278,14 @@ export function useRichTextEditorCommands(
                     details: null,
                 });
             }
+
             const baseRevision = latestRevisionRef.current;
+
             if (baseRevision == null) {
                 // Engine not ready (room awaiting the server document).
                 return;
             }
+
             try {
                 invoke(baseRevision);
             } catch (error) {
@@ -251,63 +293,71 @@ export function useRichTextEditorCommands(
                     // Refresh from the engine; NEVER retry against guessed
                     // positions (native adapter parity).
                     document.refresh();
+
                     return;
                 }
+
                 throw error;
             }
+
             afterLocalEngineMutation();
         },
-        [afterLocalEngineMutation, document]
+        [ afterLocalEngineMutation, document, latestRevisionRef ]
     );
 
     const applyEngineCommand = useCallback(
         (command: Record<string, unknown>) => {
-            runEngineMutation((baseDocumentRevision) =>
-                bridge.applyCommand({ command, baseDocumentRevision })
-            );
+            runEngineMutation(baseDocumentRevision =>
+                bridge.applyCommand({ command, baseDocumentRevision }));
         },
-        [bridge, runEngineMutation]
+        [ bridge, runEngineMutation ]
     );
 
     const commandToggleMark = useCallback(
         (markType: string) => applyEngineCommand({ type: 'toggleMark', markType }),
-        [applyEngineCommand]
+        [ applyEngineCommand ]
     );
 
     const commandSetLink = useCallback(
         (href: string) => {
             const trimmedHref = href.trim();
-            if (!trimmedHref) return;
+
+            if (!trimmedHref) {
+                return;
+            }
+
             applyEngineCommand({
                 type: 'setMark',
                 markType: 'link',
                 attrs: { href: trimmedHref },
             });
         },
-        [applyEngineCommand]
+        [ applyEngineCommand ]
     );
 
     const commandUnsetLink = useCallback(
         () => applyEngineCommand({ type: 'unsetMark', markType: 'link' }),
-        [applyEngineCommand]
+        [ applyEngineCommand ]
     );
 
     const commandToggleBlockquote = useCallback(
         () => applyEngineCommand({ type: 'toggleBlockquote' }),
-        [applyEngineCommand]
+        [ applyEngineCommand ]
     );
 
     const commandToggleHeading = useCallback(
         (level: EditorToolbarHeadingLevel) => applyEngineCommand({ type: 'toggleHeading', level }),
-        [applyEngineCommand]
+        [ applyEngineCommand ]
     );
 
     const commandToggleList = useCallback(
         (listType: string) => {
             if (activeStateRef.current.nodes[listType] === true) {
                 applyEngineCommand({ type: 'unwrapFromList' });
+
                 return;
             }
+
             applyEngineCommand({
                 type: 'wrapInList',
                 listType,
@@ -315,26 +365,26 @@ export function useRichTextEditorCommands(
                     listType === 'taskList'
                         ? 'taskItem'
                         : listType === 'bullet_list' || listType === 'ordered_list'
-                          ? 'list_item'
-                          : 'listItem',
+                            ? 'list_item'
+                            : 'listItem',
             });
         },
-        [applyEngineCommand]
+        [ activeStateRef, applyEngineCommand ]
     );
 
     const commandIndentListItem = useCallback(
         () => applyEngineCommand({ type: 'indentListItem' }),
-        [applyEngineCommand]
+        [ applyEngineCommand ]
     );
 
     const commandOutdentListItem = useCallback(
         () => applyEngineCommand({ type: 'outdentListItem' }),
-        [applyEngineCommand]
+        [ applyEngineCommand ]
     );
 
     const commandInsertNode = useCallback(
         (nodeType: string) => applyEngineCommand({ type: 'insertNode', nodeType }),
-        [applyEngineCommand]
+        [ applyEngineCommand ]
     );
 
     const commandInsertImage = useCallback(
@@ -344,31 +394,34 @@ export function useRichTextEditorCommands(
                 json: buildImageFragmentJson({ src, ...attrs }, documentDescriptor),
             });
         },
-        [applyEngineCommand, documentDescriptor]
+        [ applyEngineCommand, documentDescriptor ]
     );
 
     const commandInsertText = useCallback(
         (text: string) => {
-            if (!text) return;
-            runEngineMutation((baseDocumentRevision) =>
-                bridge.applyInput({ text, baseDocumentRevision })
-            );
+            if (!text) {
+                return;
+            }
+
+            runEngineMutation(baseDocumentRevision =>
+                bridge.applyInput({ text, baseDocumentRevision }));
         },
-        [bridge, runEngineMutation]
+        [ bridge, runEngineMutation ]
     );
 
     const commandInsertContentHtml = useCallback(
         (html: string) => applyEngineCommand({ type: 'insertContentHtml', html }),
-        [applyEngineCommand]
+        [ applyEngineCommand ]
     );
 
     const commandInsertContentJson = useCallback(
         (doc: DocumentJSON) => applyEngineCommand({ type: 'insertContentJson', json: doc }),
-        [applyEngineCommand]
+        [ applyEngineCommand ]
     );
 
     const openLinkRequest = useCallback(() => {
         const linkAttrs = activeStateRef.current.markAttrs?.link;
+
         onRequestLinkRef.current?.({
             href: typeof linkAttrs?.href === 'string' ? linkAttrs.href : undefined,
             isActive: activeStateRef.current.marks.link === true,
@@ -376,14 +429,18 @@ export function useRichTextEditorCommands(
             setLink: commandSetLink,
             unsetLink: commandUnsetLink,
         });
-    }, [commandSetLink, commandUnsetLink]);
+    }, [ activeStateRef,
+        commandSetLink,
+        commandUnsetLink,
+        onRequestLinkRef,
+        selectionRef ]);
 
     const openImageRequest = useCallback(() => {
         onRequestImageRef.current?.({
             selection: selectionRef.current,
             insertImage: commandInsertImage,
         });
-    }, [commandInsertImage]);
+    }, [ commandInsertImage, onRequestImageRef, selectionRef ]);
 
     useImperativeHandle(
         ref,
@@ -408,6 +465,7 @@ export function useRichTextEditorCommands(
                         )
                     );
                 }
+
                 return externalCompositionManager.begin(options);
             },
             toggleMark: commandToggleMark,
@@ -432,8 +490,13 @@ export function useRichTextEditorCommands(
             getTextContent: document.getTextContent,
             async getCaretRect(): Promise<RichTextEditorCaretRect | null> {
                 const nativeView = nativeViewRef.current;
-                if (!nativeView?.getCaretRect) return null;
+
+                if (!nativeView?.getCaretRect) {
+                    return null;
+                }
+
                 const raw = await Promise.resolve(nativeView.getCaretRect());
+
                 return parseCaretRectJson(raw);
             },
             undo: document.undo,
@@ -441,9 +504,7 @@ export function useRichTextEditorCommands(
             canUndo: document.canUndo,
             canRedo: document.canRedo,
         }),
-        [
-            document,
-            commandToggleMark,
+        [ commandToggleMark,
             commandSetLink,
             commandUnsetLink,
             commandToggleBlockquote,
@@ -456,10 +517,22 @@ export function useRichTextEditorCommands(
             commandInsertText,
             commandInsertContentHtml,
             commandInsertContentJson,
-            editable,
+            document.setContent,
+            document.setContentJson,
+            document.clearContent,
+            document.getContent,
+            document.getContentJson,
+            document.getIsEmpty,
+            document.getTextContent,
+            document.undo,
+            document.redo,
+            document.canUndo,
+            document.canRedo,
+            nativeViewRef,
             externalCompositionManager,
-        ]
+            editable ]
     );
+
     return {
         openLinkRequest,
         openImageRequest,

@@ -22,5 +22,6 @@ export function allocateEditorUpdateRevision(
             },
         };
     }
+
     return { revision: currentRevision + 1 };
 }

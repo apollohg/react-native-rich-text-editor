@@ -91,6 +91,7 @@ it('normalizes rich mention overrides using the same style rules', () => {
             },
         })!
     );
+
     expect(result.mentions.node.style).toEqual({
         color: '#ff0000ff',
         fontSize: 18,
@@ -108,6 +109,7 @@ it('normalizes legacy mention color aliases consistently', () => {
             node: { textColor: 'rebeccapurple', backgroundColor: 'red' },
         })!
     );
+
     expect(result.mentions.node.style).toMatchObject({
         color: '#663399ff',
         backgroundColor: '#ff0000ff',

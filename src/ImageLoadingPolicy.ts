@@ -8,7 +8,7 @@ import { NativeEditorBoundaryError } from './NativeEditorBoundaryError';
  * Every field is optional; an omitted one uses
  * {@link DEFAULT_EDITOR_IMAGE_LOADING_POLICY}. Each value must be a positive
  * integer no greater than the matching
- * {@link HARD_EDITOR_IMAGE_LOADING_POLICY} ceiling — anything else throws
+ * {@link HARD_EDITOR_IMAGE_LOADING_POLICY} ceiling : anything else throws
  * `NativeEditorBoundaryError` (`IMAGE_POLICY_INVALID`).
  */
 export interface EditorImageLoadingPolicy {
@@ -71,6 +71,7 @@ function resolveImagePolicyValue(
     value: number | undefined
 ): number {
     const resolved = value ?? DEFAULT_EDITOR_IMAGE_LOADING_POLICY[name];
+
     if (
         !Number.isSafeInteger(resolved) ||
         resolved <= 0 ||
@@ -83,6 +84,7 @@ function resolveImagePolicyValue(
             resolved
         );
     }
+
     return resolved;
 }
 

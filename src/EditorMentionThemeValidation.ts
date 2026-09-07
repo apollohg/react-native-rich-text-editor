@@ -5,12 +5,13 @@ import type {
     EditorMentionTheme,
 } from './EditorTheme';
 import { normalizeEditorTheme } from './EditorStyleSheetNormalization';
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function hasOnlyOwnKeys(value: Record<string, unknown>, fields: readonly string[]): boolean {
-    return Reflect.ownKeys(value).every((key) => typeof key === 'string' && fields.includes(key));
+    return Reflect.ownKeys(value).every(key => typeof key === 'string' && fields.includes(key));
 }
 
 export const MENTION_NODE_STRING_FIELDS = [
@@ -51,7 +52,17 @@ export const MENTION_SUGGESTIONS_NUMBER_FIELDS = [
 
 export const EDITOR_MENTION_THEME_FONT_WEIGHTS: ReadonlySet<
     NonNullable<EditorMentionNodeTheme['fontWeight']>
-> = new Set(['normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900']);
+> = new Set([ 'normal',
+    'bold',
+    '100',
+    '200',
+    '300',
+    '400',
+    '500',
+    '600',
+    '700',
+    '800',
+    '900' ]);
 
 export const EDITOR_MENTION_THEME_FIELDS = [
     'node',
@@ -74,14 +85,20 @@ export function validMentionThemeSection(
     numberFields: readonly string[],
     extraFields: readonly string[]
 ): value is Record<string, unknown> {
-    if (!isPlainRecord(value)) return false;
-    if (!hasOnlyOwnKeys(value, [...stringFields, ...numberFields, ...extraFields])) return false;
+    if (!isPlainRecord(value)) {
+        return false;
+    }
+
+    if (!hasOnlyOwnKeys(value, [ ...stringFields, ...numberFields, ...extraFields ])) {
+        return false;
+    }
+
     return (
         stringFields.every(
-            (field) => value[field] === undefined || typeof value[field] === 'string'
+            field => value[field] === undefined || typeof value[field] === 'string'
         ) &&
         numberFields.every(
-            (field) =>
+            field =>
                 value[field] === undefined ||
                 (typeof value[field] === 'number' && Number.isFinite(value[field]))
         )
@@ -94,40 +111,60 @@ export function validEditorMentionTheme(value: unknown): value is EditorMentionT
     }
 
     const { node, suggestions } = value;
+
     if (node !== undefined) {
-        if (!isPlainRecord(node)) return false;
+        if (!isPlainRecord(node)) {
+            return false;
+        }
+
         const { textColor, style, ...appearance } = node;
-        if (textColor !== undefined && typeof textColor !== 'string') return false;
+
+        if (textColor !== undefined && typeof textColor !== 'string') {
+            return false;
+        }
+
         try {
-            normalizeEditorTheme({ mention: [{ color: textColor }, appearance] });
+            normalizeEditorTheme({ mention: [ { color: textColor }, appearance ] });
+
             if (style !== undefined) {
-                if (!isPlainRecord(style)) return false;
+                if (!isPlainRecord(style)) {
+                    return false;
+                }
+
                 normalizeEditorTheme({ mention: style });
             }
         } catch {
             return false;
         }
     }
-    if (suggestions === undefined) return true;
+
+    if (suggestions === undefined) {
+        return true;
+    }
+
     if (
         !validMentionThemeSection(
             suggestions,
             MENTION_SUGGESTIONS_STRING_FIELDS,
             MENTION_SUGGESTIONS_NUMBER_FIELDS,
-            ['option']
+            [ 'option' ]
         )
     ) {
         return false;
     }
 
     const option = suggestions.option;
-    if (option === undefined) return true;
+
+    if (option === undefined) {
+        return true;
+    }
+
     return (
         validMentionThemeSection(
             option,
             MENTION_OPTION_STRING_FIELDS,
             MENTION_OPTION_NUMBER_FIELDS,
-            ['fontWeight']
+            [ 'fontWeight' ]
         ) && validMentionFontWeight(option.fontWeight)
     );
 }

@@ -9,16 +9,12 @@ import {
     emitNativeEditorBridgeDeclaration,
     catchThrown,
 } from './helpers/NativeEditorBridgeV2Fixture';
-import {
-    createNativeEditorDocumentHandle,
-    type NativeEditorDocumentHandle,
-    type NativeEditorCreateConfig,
-} from '../NativeEditorBridge';
+import { createNativeEditorDocumentHandle, type NativeEditorCreateConfig } from '../NativeEditorBridge';
 import * as NativeEditorBridgeExports from '../NativeEditorBridge';
 import {
     NativeEditorBoundaryError,
     NativeEditorEngineBoundaryError,
-    NativeEditorErrorBase,
+    type NativeEditorErrorBase,
 } from '../NativeEditorBoundaryError';
 import { HARD_EDITOR_RESOURCE_LIMITS } from '../ResourceLimits';
 
@@ -86,15 +82,18 @@ describe('NativeEditorBridge v2', () => {
                 // @ts-expect-error the class has no public static create constructor
                 NativeEditorDocumentHandle.create(config);
             `);
+
             expect(diagnostics).toBe('');
         });
 
         it('omits the removed static constructor from declaration output', () => {
             const { declaration, diagnostics } = emitNativeEditorBridgeDeclaration();
             expect(diagnostics).toBe('');
+
             expect(declaration).toContain(
                 'export declare function createNativeEditorDocumentHandle(config: NativeEditorCreateConfig): NativeEditorDocumentHandle;'
             );
+
             expect(declaration).toContain('export interface NativeEditorDocumentHandle');
             expect(declaration).not.toMatch(/static create\s*\(/);
         });
@@ -103,6 +102,7 @@ describe('NativeEditorBridge v2', () => {
             const runtimeConstructor = (
                 NativeEditorBridgeExports as unknown as Record<string, unknown>
             ).NativeEditorDocumentHandle;
+
             expect(runtimeConstructor).toBeUndefined();
         });
 
@@ -155,8 +155,10 @@ describe('NativeEditorBridge v2', () => {
                     },
                 },
             });
+
             expect(mockNativeModule.editorV2Create).toHaveBeenCalledTimes(1);
-            const [configJson, snapshotState] = mockNativeModule.editorV2Create.mock.calls[0];
+            const [ configJson, snapshotState ] = mockNativeModule.editorV2Create.mock.calls[0];
+
             expect(JSON.parse(configJson)).toEqual({
                 schema: { nodes: [], marks: [] },
                 fragmentName: 'prosemirror',
@@ -197,6 +199,7 @@ describe('NativeEditorBridge v2', () => {
                     },
                 },
             });
+
             expect(snapshotState).toBeNull();
         });
 
@@ -222,7 +225,8 @@ describe('NativeEditorBridge v2', () => {
                 },
             });
 
-            const [configJson] = mockNativeModule.editorV2Create.mock.calls[0];
+            const [ configJson ] = mockNativeModule.editorV2Create.mock.calls[0];
+
             expect(JSON.parse(configJson)).toEqual({
                 schema: {
                     nodes: [
@@ -252,7 +256,8 @@ describe('NativeEditorBridge v2', () => {
                 },
             });
 
-            const [configJson] = mockNativeModule.editorV2Create.mock.calls[0];
+            const [ configJson ] = mockNativeModule.editorV2Create.mock.calls[0];
+
             expect(JSON.parse(configJson)).toEqual({
                 initialization: {
                     type: 'localJson',
@@ -269,23 +274,26 @@ describe('NativeEditorBridge v2', () => {
             const maxDepth = HARD_EDITOR_RESOURCE_LIMITS.maxDocumentDepth;
             let deepest: Record<string, unknown> = { type: 'paragraph' };
             let expectedDocumentJson = '{"type":"paragraph"}';
+
             for (let depth = 2; depth < maxDepth; depth += 1) {
-                deepest = { type: 'blockquote', content: [deepest] };
+                deepest = { type: 'blockquote', content: [ deepest ] };
                 expectedDocumentJson = `{"type":"blockquote","content":[${expectedDocumentJson}]}`;
             }
-            const document = { type: 'doc', content: [deepest] };
+
+            const document = { type: 'doc', content: [ deepest ] };
 
             expect(() =>
                 createNativeEditorDocumentHandle({
                     initialization: { type: 'localJson', json: document },
-                })
-            ).not.toThrow();
+                })).not.toThrow();
 
             expect(mockNativeModule.editorV2Create).toHaveBeenCalledTimes(1);
-            const [configJson, snapshotState] = mockNativeModule.editorV2Create.mock.calls[0];
+            const [ configJson, snapshotState ] = mockNativeModule.editorV2Create.mock.calls[0];
+
             expect(configJson).toBe(
                 `{"initialization":{"type":"localJson","json":{"type":"doc","content":[${expectedDocumentJson}]}}}`
             );
+
             expect(configJson.match(/"type":"blockquote"/g)).toHaveLength(maxDepth - 2);
             expect(snapshotState).toBeNull();
         });
@@ -338,10 +346,11 @@ describe('NativeEditorBridge v2', () => {
 
             for (const config of invalidConfigs) {
                 const error = catchThrown(() =>
-                    createNativeEditorDocumentHandle(config as NativeEditorCreateConfig)
-                );
+                    createNativeEditorDocumentHandle(config as NativeEditorCreateConfig));
+
                 expect((error as { code?: string }).code).toBe('CONFIG_INVALID');
             }
+
             expect(mockNativeModule.editorV2Create).not.toHaveBeenCalled();
         });
 
@@ -355,6 +364,7 @@ describe('NativeEditorBridge v2', () => {
             >;
 
             const inheritedPolicy = Object.create({ maxLength: 100 }) as Record<string, unknown>;
+
             const inheritedResource = Object.create({ maxInputBytes: 1024 }) as Record<
                 string,
                 unknown
@@ -372,16 +382,18 @@ describe('NativeEditorBridge v2', () => {
 
             for (const config of invalidConfigs) {
                 const error = catchThrown(() =>
-                    createNativeEditorDocumentHandle(config as NativeEditorCreateConfig)
-                );
+                    createNativeEditorDocumentHandle(config as NativeEditorCreateConfig));
+
                 expect((error as { code?: string }).code).toBe('CONFIG_INVALID');
             }
+
             expect(mockNativeModule.editorV2Create).not.toHaveBeenCalled();
         });
 
         it('rejects accessor-backed contract fields without invoking them', () => {
             let getterCalls = 0;
             const root = {} as Record<string, unknown>;
+
             Object.defineProperty(root, 'initialization', {
                 enumerable: true,
                 get() {
@@ -389,7 +401,9 @@ describe('NativeEditorBridge v2', () => {
                     throw new Error('root getter must not run');
                 },
             });
+
             const policy = {} as Record<string, unknown>;
+
             Object.defineProperty(policy, 'readOnly', {
                 enumerable: true,
                 get() {
@@ -397,7 +411,9 @@ describe('NativeEditorBridge v2', () => {
                     throw new Error('policy getter must not run');
                 },
             });
+
             const document = { type: 'doc' } as Record<string, unknown>;
+
             Object.defineProperty(document, 'content', {
                 enumerable: true,
                 get() {
@@ -412,11 +428,12 @@ describe('NativeEditorBridge v2', () => {
                 { initialization: { type: 'localJson', json: document } },
             ]) {
                 const error = catchThrown(() =>
-                    createNativeEditorDocumentHandle(config as NativeEditorCreateConfig)
-                );
+                    createNativeEditorDocumentHandle(config as NativeEditorCreateConfig));
+
                 expect(error).toBeInstanceOf(NativeEditorEngineBoundaryError);
                 expect((error as NativeEditorErrorBase).code).toBe('CONFIG_INVALID');
             }
+
             expect(getterCalls).toBe(0);
             expect(mockNativeModule.editorV2Create).not.toHaveBeenCalled();
         });
@@ -435,8 +452,8 @@ describe('NativeEditorBridge v2', () => {
             );
 
             const error = catchThrown(() =>
-                createNativeEditorDocumentHandle(config as NativeEditorCreateConfig)
-            );
+                createNativeEditorDocumentHandle(config as NativeEditorCreateConfig));
+
             expect(error).toBeInstanceOf(NativeEditorEngineBoundaryError);
             expect((error as NativeEditorErrorBase).code).toBe('CONFIG_INVALID');
             expect(mockNativeModule.editorV2Create).not.toHaveBeenCalled();
@@ -444,14 +461,17 @@ describe('NativeEditorBridge v2', () => {
 
         it('rejects attacker toJSON hooks without invoking them', () => {
             let toJsonCalls = 0;
+
             const schema = {
                 nodes: [],
                 marks: [],
                 toJSON() {
                     toJsonCalls += 1;
+
                     return { nodes: [], marks: [] };
                 },
             };
+
             const document = {
                 type: 'doc',
                 toJSON() {
@@ -467,11 +487,12 @@ describe('NativeEditorBridge v2', () => {
                 const error = catchThrown(() =>
                     createNativeEditorDocumentHandle(
                         config as unknown as NativeEditorCreateConfig
-                    )
-                );
+                    ));
+
                 expect(error).toBeInstanceOf(NativeEditorEngineBoundaryError);
                 expect((error as NativeEditorErrorBase).code).toBe('CONFIG_INVALID');
             }
+
             expect(toJsonCalls).toBe(0);
             expect(mockNativeModule.editorV2Create).not.toHaveBeenCalled();
         });
@@ -479,6 +500,7 @@ describe('NativeEditorBridge v2', () => {
         it('serializes through containers that cannot inherit an attacker toJSON hook', () => {
             let toJsonCalls = 0;
             const original = Object.getOwnPropertyDescriptor(Object.prototype, 'toJSON');
+
             Object.defineProperty(Object.prototype, 'toJSON', {
                 configurable: true,
                 value() {
@@ -486,6 +508,7 @@ describe('NativeEditorBridge v2', () => {
                     throw new Error('inherited toJSON must not run');
                 },
             });
+
             mockNativeModule.editorV2Create.mockReturnValueOnce(okRecord('{"editorId":"1"}'));
 
             try {
@@ -521,11 +544,12 @@ describe('NativeEditorBridge v2', () => {
                 const error = catchThrown(() =>
                     createNativeEditorDocumentHandle(
                         config as unknown as NativeEditorCreateConfig
-                    )
-                );
+                    ));
+
                 expect(error).toBeInstanceOf(NativeEditorEngineBoundaryError);
                 expect((error as NativeEditorErrorBase).code).toBe('CONFIG_INVALID');
             }
+
             expect(mockNativeModule.editorV2Create).not.toHaveBeenCalled();
         });
 
@@ -533,11 +557,13 @@ describe('NativeEditorBridge v2', () => {
             const captureCode = (config: NativeEditorCreateConfig): string => {
                 try {
                     createNativeEditorDocumentHandle(config);
+
                     return 'accepted';
                 } catch (error) {
                     return (error as { code?: string }).code ?? 'unstructured';
                 }
             };
+
             const maxBytes = HARD_EDITOR_RESOURCE_LIMITS.maxInputBytes;
             const documentOverhead = JSON.stringify({ payload: '' }).length;
             const exactPayload = 'x'.repeat(maxBytes - documentOverhead);
@@ -549,9 +575,11 @@ describe('NativeEditorBridge v2', () => {
             ).toBe('accepted');
 
             let amplification: Record<string, unknown> = { value: 'x' };
+
             for (let depth = 0; depth < 8; depth += 1) {
                 amplification = { left: amplification, right: amplification };
             }
+
             const outcomes = [
                 captureCode({
                     initialization: {
@@ -564,7 +592,7 @@ describe('NativeEditorBridge v2', () => {
                 }),
             ];
 
-            expect(outcomes).toEqual(['CONFIG_INVALID', 'CONFIG_INVALID']);
+            expect(outcomes).toEqual([ 'CONFIG_INVALID', 'CONFIG_INVALID' ]);
             expect(mockNativeModule.editorV2Create).toHaveBeenCalledTimes(1);
         });
 
@@ -583,7 +611,7 @@ describe('NativeEditorBridge v2', () => {
                     initialization: { type: 'localEmpty' },
                     policy: { allowBase64Images: 1 },
                 },
-                ...Object.keys(MOCK_SNAPSHOT_METADATA).map((field) => ({
+                ...Object.keys(MOCK_SNAPSHOT_METADATA).map(field => ({
                     initialization: {
                         type: 'room',
                         documentId: 'doc-1',
@@ -598,11 +626,12 @@ describe('NativeEditorBridge v2', () => {
 
             for (const config of invalidConfigs) {
                 const error = catchThrown(() =>
-                    createNativeEditorDocumentHandle(config as NativeEditorCreateConfig)
-                );
+                    createNativeEditorDocumentHandle(config as NativeEditorCreateConfig));
+
                 expect(error).toBeInstanceOf(NativeEditorEngineBoundaryError);
                 expect((error as NativeEditorErrorBase).code).toBe('CONFIG_INVALID');
             }
+
             expect(mockNativeModule.editorV2Create).not.toHaveBeenCalled();
         });
     });

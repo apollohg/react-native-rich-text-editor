@@ -13,18 +13,22 @@ describe('EditorToolbar', () => {
         it('publishes menu actions as a second owner-scoped native hit-test frame', () => {
             jest.useFakeTimers();
             const ownerId = 17;
+
             const Wrapper = ({ children }: { children: React.ReactNode }) => (
                 <>
                     {children}
                     <ToolbarFrameProbe ownerId={ownerId} />
                 </>
             );
+
             act(() => {
                 setActiveEditorToolbarFrameOwnerForEditor(ownerId, true);
             });
+
             let pendingMenuMeasurement:
                 | ((x: number, y: number, width: number, height: number) => void)
                 | null = null;
+
             const viewPrototype = (
                 View as unknown as {
                     prototype: {
@@ -34,19 +38,25 @@ describe('EditorToolbar', () => {
                     };
                 }
             ).prototype;
+
             const measureInWindow = jest
                 .spyOn(viewPrototype, 'measureInWindow')
-                .mockImplementation(function (callback) {
+                .mockImplementation(function(callback) {
                     const testID = (this as unknown as { props?: { testID?: string } }).props
                         ?.testID;
+
                     if (testID === 'editor-toolbar-root') {
                         callback(12, 24, 320, 48);
+
                         return;
                     }
+
                     if (testID === 'editor-toolbar-menu-card') {
                         pendingMenuMeasurement = callback;
+
                         return;
                     }
+
                     callback(24, 24, 44, 44);
                 });
 
@@ -78,11 +88,13 @@ describe('EditorToolbar', () => {
                 act(() => {
                     jest.runOnlyPendingTimers();
                 });
+
                 expect(JSON.parse(getByTestId('toolbar-frame-probe').props.children)).toEqual([
                     { x: 12, y: 24, width: 320, height: 48 },
                 ]);
 
                 fireEvent.press(getByLabelText('Headings'));
+
                 act(() => {
                     jest.runOnlyPendingTimers();
                     pendingMenuMeasurement?.(180, 96, 192, 88);
@@ -94,6 +106,7 @@ describe('EditorToolbar', () => {
                 ]);
 
                 fireEvent.press(getByLabelText('Heading 1'));
+
                 act(() => {
                     jest.runOnlyPendingTimers();
                 });
@@ -105,6 +118,7 @@ describe('EditorToolbar', () => {
                 act(() => {
                     pendingMenuMeasurement?.(180, 96, 192, 88);
                 });
+
                 expect(JSON.parse(getByTestId('toolbar-frame-probe').props.children)).toEqual([
                     { x: 12, y: 24, width: 320, height: 48 },
                 ]);
@@ -123,10 +137,11 @@ describe('EditorToolbar', () => {
             act(() => {
                 setEditorToolbarMentionState(1, {
                     trigger: '@',
-                    suggestions: [{ key: 'u1', title: 'Alice', label: '@Alice' }],
+                    suggestions: [ { key: 'u1', title: 'Alice', label: '@Alice' } ],
                     onSelectSuggestion: jest.fn(),
                 });
             });
+
             const mentionToolbar = renderToolbar();
 
             expect(
@@ -139,7 +154,7 @@ describe('EditorToolbar', () => {
             act(() => {
                 setEditorToolbarMentionState(1, {
                     trigger: '@',
-                    suggestions: [{ key: 'u1', title: 'Alice Chen', label: 'alice' }],
+                    suggestions: [ { key: 'u1', title: 'Alice Chen', label: 'alice' } ],
                     onSelectSuggestion: jest.fn(),
                 });
             });
@@ -153,19 +168,21 @@ describe('EditorToolbar', () => {
         it('subscribes to keyboard layout changes while preserving editor focus', () => {
             const keyboardListeners = new Map<string, () => void>();
             const removers: jest.Mock[] = [];
+
             const addListenerSpy = jest
                 .spyOn(Keyboard, 'addListener')
                 .mockImplementation((eventName, listener) => {
                     keyboardListeners.set(eventName, listener as () => void);
                     const remove = jest.fn();
                     removers.push(remove);
+
                     return { remove } as ReturnType<typeof Keyboard.addListener>;
                 });
 
             try {
                 const { unmount } = renderToolbar();
 
-                expect([...keyboardListeners.keys()]).toEqual([
+                expect([ ...keyboardListeners.keys() ]).toEqual([
                     'keyboardDidShow',
                     'keyboardDidHide',
                     'keyboardDidChangeFrame',
@@ -173,7 +190,7 @@ describe('EditorToolbar', () => {
 
                 unmount();
                 expect(removers).toHaveLength(3);
-                removers.forEach((remove) => expect(remove).toHaveBeenCalledTimes(1));
+                removers.forEach(remove => expect(remove).toHaveBeenCalledTimes(1));
             } finally {
                 addListenerSpy.mockRestore();
             }

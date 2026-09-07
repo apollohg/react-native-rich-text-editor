@@ -30,6 +30,7 @@ describe('NativeEditorBridge v2', () => {
         it('passes an exact optional mirror while retaining the atomic result shape', () => {
             const handle = createHandle();
             handle.bridge.renderUpdate({ anchor: 2, head: 5 });
+
             expect(mockNativeModule.editorV2RenderUpdate).toHaveBeenLastCalledWith(
                 handle.editorId,
                 2,
@@ -49,14 +50,16 @@ describe('NativeEditorBridge v2', () => {
                                 {
                                     type: 'link',
                                     href: 'https://example.test',
-                                    metadata: { source: 'test', offsets: [0, 11, null] },
+                                    metadata: { source: 'test', offsets: [ 0, 11, null ] },
                                 },
                             ],
                         },
                     ],
                 ],
             };
+
             const handle = createHandle();
+
             mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
                 okRecord(JSON.stringify(expected))
             );
@@ -78,7 +81,9 @@ describe('NativeEditorBridge v2', () => {
                     ],
                 ],
             };
+
             const handle = createHandle();
+
             mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
                 okRecord(JSON.stringify(expected))
             );
@@ -97,7 +102,9 @@ describe('NativeEditorBridge v2', () => {
                     renderBlocks: MOCK_ATOMIC_RENDER_SNAPSHOT.renderBlocks,
                 },
             };
+
             const handle = createHandle();
+
             mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
                 okRecord(JSON.stringify(expected))
             );
@@ -108,11 +115,14 @@ describe('NativeEditorBridge v2', () => {
                 ...expected,
                 renderPatch: { ...expected.renderPatch, baseDocumentVersion: undefined },
             };
+
             delete (missingBase.renderPatch as { baseDocumentVersion?: string })
                 .baseDocumentVersion;
+
             mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
                 okRecord(JSON.stringify(missingBase))
             );
+
             expectNonRetryable(
                 catchRejectedNativeRecord(() => handle.bridge.renderUpdate()),
                 'FFI_RESULT_INVALID'
@@ -123,6 +133,7 @@ describe('NativeEditorBridge v2', () => {
         delete missingStateRevision.stateRevision;
         const missingSelection = { ...MOCK_ATOMIC_RENDER_SNAPSHOT } as Record<string, unknown>;
         delete missingSelection.selection;
+
         // The core emits documentIsEmpty on every render update. A payload
         // without it is a core that disagrees with this boundary, which is
         // exactly the drift that reached the device.
@@ -130,20 +141,22 @@ describe('NativeEditorBridge v2', () => {
             string,
             unknown
         >;
+
         delete missingDocumentIsEmpty.documentIsEmpty;
+
         it.each<[string, Record<string, unknown>]>([
-            ['missing stateRevision', missingStateRevision],
-            ['missing documentIsEmpty', missingDocumentIsEmpty],
+            [ 'missing stateRevision', missingStateRevision ],
+            [ 'missing documentIsEmpty', missingDocumentIsEmpty ],
             [
                 'non-boolean documentIsEmpty',
                 { ...MOCK_ATOMIC_RENDER_SNAPSHOT, documentIsEmpty: 'false' },
             ],
-            ['numeric documentVersion', { ...MOCK_ATOMIC_RENDER_SNAPSHOT, documentVersion: 4 }],
+            [ 'numeric documentVersion', { ...MOCK_ATOMIC_RENDER_SNAPSHOT, documentVersion: 4 } ],
             [
                 'out-of-range scalarLength',
                 { ...MOCK_ATOMIC_RENDER_SNAPSHOT, scalarLength: 0x1_0000_0000 },
             ],
-            ['missing selection', missingSelection],
+            [ 'missing selection', missingSelection ],
             [
                 'malformed historyState',
                 {
@@ -153,7 +166,7 @@ describe('NativeEditorBridge v2', () => {
             ],
             [
                 'malformed renderBlocks',
-                { ...MOCK_ATOMIC_RENDER_SNAPSHOT, renderBlocks: [[{ type: 'surprise' }]] },
+                { ...MOCK_ATOMIC_RENDER_SNAPSHOT, renderBlocks: [ [ { type: 'surprise' } ] ] },
             ],
             [
                 'numeric voidBlock atomId',
@@ -192,7 +205,7 @@ describe('NativeEditorBridge v2', () => {
                 {
                     ...MOCK_ATOMIC_RENDER_SNAPSHOT,
                     renderBlocks: [
-                        [{ type: 'blockStart', nodeType: 'paragraph', depth: 0, extra: true }],
+                        [ { type: 'blockStart', nodeType: 'paragraph', depth: 0, extra: true } ],
                     ],
                 },
             ],
@@ -205,7 +218,7 @@ describe('NativeEditorBridge v2', () => {
                             {
                                 type: 'textRun',
                                 text: 'text',
-                                marks: [{ href: 'https://example.test' }],
+                                marks: [ { href: 'https://example.test' } ],
                             },
                         ],
                     ],
@@ -215,7 +228,7 @@ describe('NativeEditorBridge v2', () => {
                 'nested mark with a non-string type',
                 {
                     ...MOCK_ATOMIC_RENDER_SNAPSHOT,
-                    renderBlocks: [[{ type: 'textRun', text: 'text', marks: [{ type: 1 }] }]],
+                    renderBlocks: [ [ { type: 'textRun', text: 'text', marks: [ { type: 1 } ] } ] ],
                 },
             ],
             [
@@ -303,12 +316,14 @@ describe('NativeEditorBridge v2', () => {
                     ],
                 },
             ],
-            ['unknown top-level field', { ...MOCK_ATOMIC_RENDER_SNAPSHOT, unexpected: true }],
+            [ 'unknown top-level field', { ...MOCK_ATOMIC_RENDER_SNAPSHOT, unexpected: true } ],
         ])('rejects %s', (_name, malformed) => {
             const handle = createHandle();
+
             mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
                 okRecord(JSON.stringify(malformed))
             );
+
             expectNonRetryable(
                 catchRejectedNativeRecord(() => handle.bridge.renderUpdate()),
                 'FFI_RESULT_INVALID'
@@ -317,6 +332,7 @@ describe('NativeEditorBridge v2', () => {
 
         it('accepts an inserted mention atom carrying its node attrs', () => {
             const handle = createHandle();
+
             // Rust emits `attrs` on every void/opaque element, so a document
             // holding a mention must normalize rather than poison every read.
             mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
@@ -354,6 +370,7 @@ describe('NativeEditorBridge v2', () => {
             );
 
             const update = handle.bridge.renderUpdate();
+
             expect(update.renderBlocks?.[0]?.[1]).toEqual(
                 expect.objectContaining({ type: 'opaqueInlineAtom', nodeType: 'mention' })
             );
@@ -361,6 +378,7 @@ describe('NativeEditorBridge v2', () => {
 
         it('accepts an opaque block atom carrying its node attrs', () => {
             const handle = createHandle();
+
             mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
                 okRecord(
                     JSON.stringify({
@@ -391,11 +409,12 @@ describe('NativeEditorBridge v2', () => {
                         {
                             type: 'textRun',
                             text: 'text',
-                            marks: [{ type: 'link', score: 0 }],
+                            marks: [ { type: 'link', score: 0 } ],
                         },
                     ],
                 ],
             }).replace('"score":0', '"score":1e999');
+
             const handle = createHandle();
             mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(okRecord(malformed));
 

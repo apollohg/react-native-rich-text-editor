@@ -8,19 +8,11 @@
 
 import React from 'react';
 
-import { Keyboard, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Text } from 'react-native';
 
-import { render, fireEvent, act } from '@testing-library/react-native';
+import { render, act } from '@testing-library/react-native';
 
-import {
-    DEFAULT_EDITOR_TOOLBAR_ITEMS,
-    EditorToolbar,
-    _resetEditorToolbarFrameRegistryForTests,
-    setActiveEditorToolbarFrameOwnerForEditor,
-    setEditorToolbarMentionState,
-    useEditorToolbarFrames,
-    type EditorToolbarProps,
-} from '../../EditorToolbar';
+import { EditorToolbar, _resetEditorToolbarFrameRegistryForTests, useEditorToolbarFrames, type EditorToolbarProps } from '../../EditorToolbar';
 
 import type { ActiveState, HistoryState } from '../../NativeEditorBridge';
 
@@ -41,8 +33,8 @@ export const ENABLED_BUTTONS_ACTIVE_STATE: ActiveState = {
         wrapBulletList: true,
         wrapOrderedList: true,
     },
-    allowedMarks: ['bold', 'italic', 'underline', 'strike'],
-    insertableNodes: ['hard_break', 'horizontal_rule'],
+    allowedMarks: [ 'bold', 'italic', 'underline', 'strike' ],
+    insertableNodes: [ 'hard_break', 'horizontal_rule' ],
 };
 
 export const EMPTY_HISTORY_STATE: HistoryState = { canUndo: false, canRedo: false };
@@ -98,12 +90,14 @@ export function renderToolbar(
         onRedo: jest.fn(),
         ...overrides,
     };
+
     return { ...render(<EditorToolbar {...defaultProps} />, options), props: defaultProps };
 }
 
 export function ToolbarFrameProbe({ ownerId }: { ownerId: number }) {
     const frames = useEditorToolbarFrames(ownerId);
-    return <Text testID='toolbar-frame-probe'>{JSON.stringify(frames)}</Text>;
+
+    return <Text testID={'toolbar-frame-probe'}>{JSON.stringify(frames)}</Text>;
 }
 
 afterEach(() => {

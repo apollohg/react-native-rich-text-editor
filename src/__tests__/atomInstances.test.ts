@@ -1,7 +1,8 @@
 import { applyRenderPatch, atomSelected, collectAtomInstances } from '../atomInstances';
 import type { RenderElement, Selection } from '../NativeEditorBridge';
 
-const registered = new Set(['counterCard']);
+const registered = new Set([ 'counterCard' ]);
+
 const card = (docPos: number, atomId?: string): RenderElement => ({
     type: 'voidBlock',
     nodeType: 'counterCard',
@@ -9,6 +10,7 @@ const card = (docPos: number, atomId?: string): RenderElement => ({
     attrs: { title: 't' },
     ...(atomId ? { atomId } : {}),
 });
+
 const paragraph: RenderElement[] = [
     { type: 'blockStart', nodeType: 'paragraph', depth: 0 },
     { type: 'textRun', text: 'x', marks: [] },
@@ -17,7 +19,7 @@ const paragraph: RenderElement[] = [
 
 test('collects registered voidBlocks with atomId keys', () => {
     const instances = collectAtomInstances(
-        [[card(1, 'y1-9')], paragraph, [card(5, 'y1-3')]],
+        [ [ card(1, 'y1-9') ], paragraph, [ card(5, 'y1-3') ] ],
         registered
     );
 
@@ -41,6 +43,7 @@ test('collects registered voidBlocks with atomId keys', () => {
 
 test('retains immutable atom attrs instead of cloning them during collection', () => {
     const attrs = Object.freeze({ title: 't' });
+
     const element: RenderElement = {
         type: 'voidBlock',
         nodeType: 'counterCard',
@@ -49,13 +52,13 @@ test('retains immutable atom attrs instead of cloning them during collection', (
         attrs,
     };
 
-    expect(collectAtomInstances([[element]], registered)[0]?.attrs).toBe(attrs);
+    expect(collectAtomInstances([ [ element ] ], registered)[0]?.attrs).toBe(attrs);
 });
 
 test('falls back to per-type occurrence keys without atomId', () => {
-    const instances = collectAtomInstances([[card(1)], [card(5)]], registered);
+    const instances = collectAtomInstances([ [ card(1) ], [ card(5) ] ], registered);
 
-    expect(instances.map((instance) => instance.key)).toEqual(['counterCard:0', 'counterCard:1']);
+    expect(instances.map(instance => instance.key)).toEqual([ 'counterCard:0', 'counterCard:1' ]);
 });
 
 test('collects unregistered non-native voidBlocks as chip instances', () => {
@@ -65,8 +68,10 @@ test('collects unregistered non-native voidBlocks as chip instances', () => {
         docPos: 3,
     };
 
-    expect(collectAtomInstances([[mystery]], registered)).toEqual([
-        { key: 'callout:0', hasStableKey: false, nodeType: 'callout', attrs: {}, docPos: 3 },
+    expect(collectAtomInstances([ [ mystery ] ], registered)).toEqual([
+        {
+            key: 'callout:0', hasStableKey: false, nodeType: 'callout', attrs: {}, docPos: 3,
+        },
     ]);
 });
 
@@ -77,15 +82,16 @@ test('never collects natively-known void blocks', () => {
         docPos: 3,
     };
 
-    expect(collectAtomInstances([[horizontalRule], paragraph], registered)).toEqual([]);
+    expect(collectAtomInstances([ [ horizontalRule ], paragraph ], registered)).toEqual([]);
 });
 
 test('applyRenderPatch splices like the engine contract', () => {
-    const previous: RenderElement[][] = [[card(1, 'a')], paragraph, [card(6, 'b')]];
+    const previous: RenderElement[][] = [ [ card(1, 'a') ], paragraph, [ card(6, 'b') ] ];
+
     const next = applyRenderPatch(previous, {
         startIndex: 1,
         deleteCount: 1,
-        renderBlocks: [paragraph, paragraph],
+        renderBlocks: [ paragraph, paragraph ],
     });
 
     expect(next).toHaveLength(4);
@@ -93,12 +99,12 @@ test('applyRenderPatch splices like the engine contract', () => {
 });
 
 test.each([
-    [{ type: 'node', pos: 4 } as Selection, 4, true],
-    [{ type: 'node', pos: 3 } as Selection, 4, false],
-    [{ type: 'text', anchor: 2, head: 7 } as Selection, 4, true],
-    [{ type: 'text', anchor: 7, head: 2 } as Selection, 4, true],
-    [{ type: 'text', anchor: 4, head: 4 } as Selection, 4, false],
-    [{ type: 'all' } as Selection, 4, true],
+    [ { type: 'node', pos: 4 } as Selection, 4, true ],
+    [ { type: 'node', pos: 3 } as Selection, 4, false ],
+    [ { type: 'text', anchor: 2, head: 7 } as Selection, 4, true ],
+    [ { type: 'text', anchor: 7, head: 2 } as Selection, 4, true ],
+    [ { type: 'text', anchor: 4, head: 4 } as Selection, 4, false ],
+    [ { type: 'all' } as Selection, 4, true ],
 ] as const)('atomSelected(%j, %i) is %s', (selection, docPos, expected) => {
     expect(atomSelected(selection, docPos)).toBe(expected);
 });

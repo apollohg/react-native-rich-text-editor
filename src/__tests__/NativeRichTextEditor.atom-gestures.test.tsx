@@ -15,22 +15,27 @@ import { tiptapCompatibleSchema } from '../schemas';
 test('Android atom presses survive finger movement after native layout and scrolling', () => {
     const platform = jest.replaceProperty(Platform, 'OS', 'android');
     const { definition } = counterAtomDefinition();
+
     const handle = createNativeEditorDocumentHandle({
-        schema: withAtomsSchema(tiptapCompatibleSchema, [definition]),
+        schema: withAtomsSchema(tiptapCompatibleSchema, [ definition ]),
         initialization: {
             type: 'localJson',
-            json: { type: 'doc', content: [{ type: 'counterCard', attrs: { title: 'a' } }] },
+            json: { type: 'doc', content: [ { type: 'counterCard', attrs: { title: 'a' } } ] },
         },
     });
+
     installAtomRenderSource(() => ({
         renderBlocks: atomBlock('counterCard', 1, 'counter'),
         renderPatch: null,
     }));
-    const screen = render(<NativeRichTextEditor documentHandle={handle} atoms={[definition]} />);
+
+    const screen = render(<NativeRichTextEditor documentHandle={handle} atoms={[ definition ]} />);
     const nativeView = screen.getByTestId('native-editor-view');
+
     try {
-        for (const scrollY of [0, 120]) {
+        for (const scrollY of [ 0, 120 ]) {
             const contentInset = 18;
+
             act(() => {
                 nativeView.props.onAtomLayout({
                     nativeEvent: {
@@ -51,9 +56,11 @@ test('Android atom presses survive finger movement after native layout and scrol
                     },
                 });
             });
+
             const style = StyleSheet.flatten(
                 screen.UNSAFE_getByProps({ nativeID: 'prose-atom:counter' }).props.style
             );
+
             let count = 0;
             const onPressIn = jest.fn();
             const pressability = new Pressability({ onPressIn, onPress: () => count++ });
@@ -61,6 +68,7 @@ test('Android atom presses survive finger movement after native layout and scrol
             const rootY = 100;
             const buttonX = 220;
             const buttonY = 28;
+
             const responder = {
                 // Fabric measure uses the React shadow layout, before native reparenting.
                 measure: (callback: (...values: number[]) => void) =>
@@ -73,9 +81,11 @@ test('Android atom presses survive finger movement after native layout and scrol
                         rootY + Number(style.top) + buttonY
                     ),
             };
+
             const event = (movement: number) => ({
                 currentTarget: responder,
-                persist() {},
+                persist() {
+                },
                 nativeEvent: {
                     pageX: 12 + buttonX + 22 + movement,
                     pageY: rootY + 400 + contentInset - scrollY + buttonY + 22 + movement,
@@ -84,6 +94,7 @@ test('Android atom presses survive finger movement after native layout and scrol
                     timestamp: 100 + movement,
                 },
             });
+
             handlers.onResponderGrant(event(0) as never);
             handlers.onResponderMove(event(1) as never);
             handlers.onResponderRelease(event(1) as never);

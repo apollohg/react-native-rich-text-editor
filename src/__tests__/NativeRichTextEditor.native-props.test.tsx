@@ -21,6 +21,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const handle = createV2RoomHandle();
         const { controller } = setupV2Controller(handle);
         const ref = createRef<NativeRichTextEditorRef>();
+
         const { queryByTestId, rerender } = render(
             <NativeRichTextEditor
                 ref={ref}
@@ -35,9 +36,11 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         act(() => {
             controller.connect();
         });
+
         act(() => {
             v2Runtime.transportOpen(handle.editorId);
         });
+
         rerender(
             <NativeRichTextEditor
                 ref={ref}
@@ -45,6 +48,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 documentRevision={controller.state.documentRevision}
             />
         );
+
         // Handshaking is not synchronized: still no client-side document.
         expect(queryByTestId('native-editor-view')).toBeNull();
         expect(controller.state.status).toBe('handshaking');
@@ -53,6 +57,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             v2Runtime.pushRemoteDoc(handle.editorId, V2_SERVER_DOC);
             v2Runtime.transportReceive(handle.editorId, V2_FAKE_STEP2_FRAME);
         });
+
         rerender(
             <NativeRichTextEditor
                 ref={ref}
@@ -79,6 +84,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const { controller } = setupV2Controller(handle);
         const ref = createRef<NativeRichTextEditorRef>();
         const onContentChangeJSON = jest.fn();
+
         const { rerender } = render(
             <NativeRichTextEditor
                 ref={ref}
@@ -87,15 +93,18 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 onContentChangeJSON={onContentChangeJSON}
             />
         );
+
         expect(ref.current!.getContentJson()).toEqual(V2_INITIAL_DOC);
 
         act(() => {
             controller.connect();
         });
+
         act(() => {
             v2Runtime.transportOpen(handle.editorId);
             v2Runtime.transportReceive(handle.editorId, V2_FAKE_STEP2_FRAME);
         });
+
         expect(controller.state.status).toBe('synchronized');
         mockNativeModule.editorV2ApplyLocalApi.mockClear();
         mockNativeModule.editorV2ReplaceDocument.mockClear();
@@ -105,6 +114,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             v2Runtime.pushRemoteDoc(handle.editorId, V2_SERVER_UPDATE_DOC);
             v2Runtime.transportReceive(handle.editorId, V2_FAKE_UPDATE_FRAME);
         });
+
         rerender(
             <NativeRichTextEditor
                 ref={ref}
@@ -128,6 +138,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
 
     it('still serializes remoteSelections for the native view in v2 mode', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
+
         const remoteSelections = [
             {
                 clientId: '42',
@@ -138,17 +149,21 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 isFocused: true,
             },
         ];
+
         const { getByTestId } = render(
             <NativeRichTextEditor documentHandle={handle} remoteSelections={remoteSelections} />
         );
+
         expect(getByTestId('native-editor-view').props.remoteSelectionsJson).toBe(
             JSON.stringify(remoteSelections)
         );
+
         handle.destroy();
     });
 
     it('preserves buttonStyle when link items are mapped to native actions', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
+
         const buttonStyle = {
             iconSize: 22,
             color: '#111111',
@@ -159,6 +174,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             disabledBackgroundColor: '#555555',
             borderRadius: 9,
         };
+
         const { getByTestId } = render(
             <NativeRichTextEditor
                 documentHandle={handle}
@@ -175,17 +191,20 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         );
 
         const items = JSON.parse(getByTestId('native-editor-view').props.toolbarItemsJson);
+
         expect(items[0]).toMatchObject({
             type: 'action',
             key: '__native-editor-link__',
             buttonStyle,
         });
+
         handle.destroy();
     });
 
     it('serializes Android input options for the native view', () => {
         const platformSpy = jest.replaceProperty(Platform, 'OS', 'android');
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
+
         try {
             const { getByTestId, rerender } = render(
                 <NativeRichTextEditor
@@ -204,6 +223,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                     androidInputOptions={{ privateImeOptions: 'com.example.option' }}
                 />
             );
+
             expect(getByTestId('native-editor-view').props.androidInputOptionsJson).toBe(
                 JSON.stringify({ privateImeOptions: 'com.example.option' })
             );
@@ -219,6 +239,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
     it('does not forward Android input options on iOS', () => {
         const platformSpy = jest.replaceProperty(Platform, 'OS', 'ios');
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
+
         try {
             const { getByTestId } = render(
                 <NativeRichTextEditor

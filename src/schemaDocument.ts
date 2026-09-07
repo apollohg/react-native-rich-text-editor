@@ -20,26 +20,33 @@ export function defaultEmptyDocument(
     limits?: DocumentDescriptorLimits
 ): DocumentJSON {
     const resolvedLimits = resolveDescriptorLimits(limits);
+
     if (schema.nodes.length > resolvedLimits.maxSchemaNodes) {
         throw schemaBoundaryError(resolvedLimits.maxSchemaNodes, schema.nodes.length);
     }
+
     let expressionBytes = 0;
+
     for (const node of schema.nodes) {
         if (node != null && typeof node.content === 'string') {
             expressionBytes += utf8ByteLengthUpTo(
                 node.content,
                 resolvedLimits.maxSchemaExpressionBytes - expressionBytes
             );
+
             if (expressionBytes > resolvedLimits.maxSchemaExpressionBytes) {
                 throw schemaBoundaryError(resolvedLimits.maxSchemaExpressionBytes, expressionBytes);
             }
         }
     }
+
     const admissionBudget = createSchemaWorkBudget(resolvedLimits);
     const admittedCollections = admitSchemaCollections(schema, admissionBudget);
+
     if (admittedCollections == null) {
         throw new Error('schema cannot construct a default document: invalid schema collections');
     }
+
     return constructDefaultEmptyDocument(schema, resolvedLimits, admittedCollections);
 }
 
@@ -60,10 +67,12 @@ export function resolveDocumentDescriptor(
 ): ResolvedDocumentSchema {
     const resolvedLimits = resolveDescriptorLimits(limits);
     const resolvedSchema = resolveDocumentSchema(schema, resolvedLimits);
-    const documentNode = resolvedSchema.nodes.find((node) => node.role === 'doc');
+    const documentNode = resolvedSchema.nodes.find(node => node.role === 'doc');
+
     if (!documentNode) {
         throw new NativeEditorBoundaryError('SCHEMA_INVALID', 'schema has no document-role node');
     }
+
     return {
         schema: resolvedSchema,
         documentNodeName: documentNode.name,
@@ -80,13 +89,18 @@ export function normalizeDocumentJson(
         'documentNodeName' in schemaOrDescriptor
             ? schemaOrDescriptor
             : resolveDocumentDescriptor(schemaOrDescriptor, limits);
+
     const root = doc as { type?: unknown; content?: unknown } | null;
+
     if (root?.type !== descriptor.documentNodeName) {
         return doc;
     }
+
     const content = root?.content;
+
     if (Array.isArray(content) && content.length > 0) {
         return doc;
     }
+
     return descriptor.emptyDocument;
 }

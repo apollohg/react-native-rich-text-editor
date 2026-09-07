@@ -6,7 +6,7 @@ export const MOCK_DOCUMENT_JSON = JSON.stringify({
     content: [
         {
             type: 'paragraph',
-            content: [{ type: 'text', text: 'hello world' }],
+            content: [ { type: 'text', text: 'hello world' } ],
         },
     ],
 });
@@ -44,14 +44,16 @@ export const MOCK_ATOMIC_RENDER_SNAPSHOT = {
         ],
     ],
     renderPatch: null,
-    selection: { type: 'text', anchor: 1, head: 1, anchorScalar: 0, headScalar: 0 },
+    selection: {
+        type: 'text', anchor: 1, head: 1, anchorScalar: 0, headScalar: 0,
+    },
     activeState: {
         marks: {},
         markAttrs: {},
         nodes: { paragraph: true },
         commands: { insertText: true },
-        allowedMarks: ['bold'],
-        insertableNodes: ['paragraph'],
+        allowedMarks: [ 'bold' ],
+        insertableNodes: [ 'paragraph' ],
     },
     historyState: { canUndo: true, canRedo: false },
     documentVersion: HUGE_U64_DECIMAL,
@@ -68,9 +70,19 @@ export const MOCK_SNAPSHOT_METADATA = {
     schemaFingerprint: '0123456789abcdef',
 };
 
-export const MOCK_SNAPSHOT_BYTES = new Uint8Array([0, 1, 2, 127, 128, 255, 7]);
+export const MOCK_SNAPSHOT_BYTES = new Uint8Array([ 0,
+    1,
+    2,
+    127,
+    128,
+    255,
+    7 ]);
 
-export const MOCK_PROTOCOL_FRAME = new Uint8Array([0, 3, 9, 200, 17]);
+export const MOCK_PROTOCOL_FRAME = new Uint8Array([ 0,
+    3,
+    9,
+    200,
+    17 ]);
 
 export function mockV2Error(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
@@ -98,59 +110,64 @@ export const mockCollaborationTransportListeners = new Set<(event: unknown) => v
 export function resetMockNativeModule() {
     mockEditorIdCounter = 0;
     mockCollaborationTransportListeners.clear();
+
     for (const key of Object.keys(mockNativeModule)) {
         delete mockNativeModule[key];
     }
+
     mockNativeModule.editorV2Create = jest.fn((_configJson: string, _snapshot: unknown) =>
-        okRecord(JSON.stringify({ editorId: String(++mockEditorIdCounter) }))
-    );
+        okRecord(JSON.stringify({ editorId: String(++mockEditorIdCounter) })));
+
     mockNativeModule.editorV2Destroy = jest.fn(() => okRecord(true));
     mockNativeModule.editorV2GetState = jest.fn(() => okRecord(JSON.stringify(MOCK_V2_STATE)));
     mockNativeModule.editorV2GetDocumentJson = jest.fn(() => okRecord(MOCK_DOCUMENT_JSON));
+
     mockNativeModule.editorV2GetDocumentHtml = jest.fn(() =>
-        okRecord(JSON.stringify({ html: '<p>hello world</p>' }))
-    );
+        okRecord(JSON.stringify({ html: '<p>hello world</p>' })));
+
     mockNativeModule.editorV2GetContentSnapshot = jest.fn(() =>
         okRecord(
             JSON.stringify({
                 html: '<p>hello world</p>',
                 json: JSON.parse(MOCK_DOCUMENT_JSON),
             })
-        )
-    );
+        ));
+
     mockNativeModule.editorV2RenderUpdate = jest.fn(() =>
-        okRecord(JSON.stringify(MOCK_ATOMIC_RENDER_SNAPSHOT))
-    );
+        okRecord(JSON.stringify(MOCK_ATOMIC_RENDER_SNAPSHOT)));
+
     mockNativeModule.editorV2ReplaceDocument = jest.fn(() =>
-        okRecord(JSON.stringify({ changed: true, documentRevision: '6' }))
-    );
+        okRecord(JSON.stringify({ changed: true, documentRevision: '6' })));
+
     mockNativeModule.editorV2ApplyInput = jest.fn(() =>
-        okRecord(JSON.stringify(MOCK_V2_TRANSACTION))
-    );
+        okRecord(JSON.stringify(MOCK_V2_TRANSACTION)));
+
     mockNativeModule.editorV2ApplyCommand = jest.fn(() =>
-        okRecord(JSON.stringify(MOCK_V2_TRANSACTION))
-    );
+        okRecord(JSON.stringify(MOCK_V2_TRANSACTION)));
+
     mockNativeModule.editorV2ApplyLocalApi = jest.fn(() =>
-        okRecord(JSON.stringify({ type: 'replacement', changed: true, documentRevision: '9' }))
-    );
+        okRecord(JSON.stringify({ type: 'replacement', changed: true, documentRevision: '9' })));
+
     mockNativeModule.editorV2SetSelection = jest.fn(() =>
-        okRecord(JSON.stringify({ type: 'notApplicable' }))
-    );
+        okRecord(JSON.stringify({ type: 'notApplicable' })));
+
     mockNativeModule.editorV2Undo = jest.fn(() => okRecord(JSON.stringify({ changed: true })));
     mockNativeModule.editorV2Redo = jest.fn(() => okRecord(JSON.stringify({ changed: false })));
+
     mockNativeModule.editorV2SnapshotExport = jest.fn(() =>
         okRecord({
             metadataJson: JSON.stringify(MOCK_SNAPSHOT_METADATA),
             encodedState: MOCK_SNAPSHOT_BYTES,
-        })
-    );
+        }));
+
     mockNativeModule.editorV2SnapshotRestore = jest.fn(() =>
-        okRecord(JSON.stringify({ changed: true, documentRevision: HUGE_U64_DECIMAL }))
-    );
+        okRecord(JSON.stringify({ changed: true, documentRevision: HUGE_U64_DECIMAL })));
+
     mockNativeModule.editorV2CollaborationBeginConnect = jest.fn(() =>
-        okRecord(JSON.stringify({ generation: '7' }))
-    );
+        okRecord(JSON.stringify({ generation: '7' })));
+
     mockNativeModule.editorV2CollaborationSocketOpen = jest.fn(() => okRecord(MOCK_PROTOCOL_FRAME));
+
     mockNativeModule.editorV2CollaborationReceive = jest.fn(() =>
         okRecord(
             JSON.stringify({
@@ -162,15 +179,16 @@ export function resetMockNativeModule() {
                 transportState: 'Handshaking',
                 close: null,
             })
-        )
-    );
+        ));
+
     mockNativeModule.editorV2CollaborationSocketClose = jest.fn(() =>
-        okRecord(JSON.stringify({ transportState: 'Disconnected' }))
-    );
+        okRecord(JSON.stringify({ transportState: 'Disconnected' })));
+
     mockNativeModule.editorV2CollaborationTakeOutbound = jest.fn(() =>
-        okRecord(MOCK_PROTOCOL_FRAME)
-    );
+        okRecord(MOCK_PROTOCOL_FRAME));
+
     mockNativeModule.editorV2CollaborationSetAwareness = jest.fn(() => okRecord(true));
+
     mockNativeModule.editorV2CollaborationPeers = jest.fn(() =>
         okRecord(
             JSON.stringify({
@@ -182,29 +200,33 @@ export function resetMockNativeModule() {
                         state: { user: { name: 'Alice' } },
                         cursor: { anchor: 2, head: 5 },
                     },
-                    { clientId: '1', clock: 0, isLocal: true, state: null, cursor: null },
+                    {
+                        clientId: '1', clock: 0, isLocal: true, state: null, cursor: null,
+                    },
                 ],
             })
-        )
-    );
+        ));
+
     mockNativeModule.editorV2CollaborationTick = jest.fn(() =>
         okRecord(
             JSON.stringify({
                 nextDeadlineMillis: HUGE_U64_DECIMAL,
                 renewedLocal: true,
-                expiredPeers: ['7', HUGE_U64_DECIMAL],
+                expiredPeers: [ '7', HUGE_U64_DECIMAL ],
                 outboundChanged: true,
                 peersChanged: false,
             })
-        )
-    );
+        ));
+
     mockNativeModule.editorV2CollaborationDetach = jest.fn(() => okRecord(true));
     mockNativeModule.editorV2CollaborationReattach = jest.fn(() => okRecord(true));
     mockNativeModule.editorV2CollaborationConfigureTransport = jest.fn(() => okRecord(true));
     mockNativeModule.editorV2CollaborationResolveProtocolAdapter = jest.fn(() => okRecord(true));
+
     mockNativeModule.addListener = jest.fn(
         (_eventName: string, listener: (event: unknown) => void) => {
             mockCollaborationTransportListeners.add(listener);
+
             return {
                 remove: jest.fn(() => mockCollaborationTransportListeners.delete(listener)),
             };
@@ -218,39 +240,9 @@ jest.mock('expo-modules-core', () => ({
     requireNativeModule: () => mockNativeModule,
 }));
 
-import {
-    createNativeEditorLocalAwarenessSelection,
-    createNativeEditorDocumentHandle,
-    type NativeEditorDocumentHandle,
-    type NativeEditorCreateConfig,
-    type NativeEditorLocalAwarenessIntent,
-    normalizeNativeEditorV2Bytes,
-    normalizeNativeEditorV2DecimalId,
-    normalizeNativeEditorV2Result,
-    normalizeNativeEditorV2Unit,
-    requireNativeEditorV2U32,
-    unwrapNativeEditorV2Result,
-    validEditorMentionTheme,
-    _resetNativeModuleCache,
-} from '../../NativeEditorBridge';
+import { createNativeEditorDocumentHandle, type NativeEditorDocumentHandle, _resetNativeModuleCache } from '../../NativeEditorBridge';
 
-import * as NativeEditorBridgeExports from '../../NativeEditorBridge';
-
-import {
-    NativeEditorBoundaryError,
-    NativeEditorEngineBoundaryError,
-    NativeEditorDocumentError,
-    NativeEditorErrorBase,
-    NativeEditorLifecycleError,
-    NativeEditorNonRetryableError,
-    NativeEditorOperationError,
-    NativeEditorSnapshotError,
-    NativeEditorTransportError,
-    normalizeNativeEditorV2Error,
-    type NativeEditorError,
-} from '../../NativeEditorBoundaryError';
-
-import { HARD_EDITOR_RESOURCE_LIMITS } from '../../ResourceLimits';
+import { NativeEditorErrorBase, NativeEditorNonRetryableError } from '../../NativeEditorBoundaryError';
 
 import { join } from 'path';
 
@@ -265,42 +257,50 @@ export function createHandle(): NativeEditorDocumentHandle {
 export function parsedTypeScriptConfig(): ts.ParsedCommandLine {
     const configPath = join(process.cwd(), 'tsconfig.json');
     const config = ts.readConfigFile(configPath, ts.sys.readFile);
+
     if (config.error) {
         throw new Error(ts.formatDiagnostic(config.error, formatDiagnosticHost));
     }
+
     return ts.parseJsonConfigFileContent(config.config, ts.sys, process.cwd());
 }
 
 export const formatDiagnosticHost: ts.FormatDiagnosticsHost = {
-    getCanonicalFileName: (fileName) => fileName,
+    getCanonicalFileName: fileName => fileName,
     getCurrentDirectory: () => process.cwd(),
     getNewLine: () => '\n',
 };
 
 export function compileTypeScriptContractFixture(sourceText: string): string {
     const parsed = parsedTypeScriptConfig();
+
     const fixturePath = join(
         process.cwd(),
         'src',
         '__tests__',
         '__task_4_create_contract_fixture.ts'
     );
+
     const options: ts.CompilerOptions = {
         ...parsed.options,
         noEmit: true,
         types: [],
     };
+
     const host = ts.createCompilerHost(options);
     const fileExists = host.fileExists.bind(host);
     const readFile = host.readFile.bind(host);
     const getSourceFile = host.getSourceFile.bind(host);
-    host.fileExists = (fileName) => fileName === fixturePath || fileExists(fileName);
-    host.readFile = (fileName) => (fileName === fixturePath ? sourceText : readFile(fileName));
+    host.fileExists = fileName => fileName === fixturePath || fileExists(fileName);
+    host.readFile = fileName => (fileName === fixturePath ? sourceText : readFile(fileName));
+
     host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) =>
         fileName === fixturePath
             ? ts.createSourceFile(fileName, sourceText, languageVersion, true, ts.ScriptKind.TS)
             : getSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile);
-    const program = ts.createProgram([fixturePath], options, host);
+
+    const program = ts.createProgram([ fixturePath ], options, host);
+
     return ts.formatDiagnosticsWithColorAndContext(
         ts.getPreEmitDiagnostics(program),
         formatDiagnosticHost
@@ -310,6 +310,7 @@ export function compileTypeScriptContractFixture(sourceText: string): string {
 export function emitNativeEditorBridgeDeclaration(): { declaration: string; diagnostics: string } {
     const parsed = parsedTypeScriptConfig();
     const sourcePath = join(process.cwd(), 'src', 'NativeEditorBridge.ts');
+
     const options: ts.CompilerOptions = {
         ...parsed.options,
         declaration: true,
@@ -317,16 +318,22 @@ export function emitNativeEditorBridgeDeclaration(): { declaration: string; diag
         emitDeclarationOnly: true,
         noEmit: false,
     };
+
     const host = ts.createCompilerHost(options);
     let declaration = '';
-    const program = ts.createProgram([sourcePath], options, host);
+    const program = ts.createProgram([ sourcePath ], options, host);
+
     const emit = program.emit(undefined, (fileName, output) => {
-        if (/\/NativeEditor(?:Bridge|DocumentHandle)\.d\.ts$/.test(fileName)) declaration += output;
+        if (/\/NativeEditor(?:Bridge|DocumentHandle)\.d\.ts$/.test(fileName)) {
+            declaration += output;
+        }
     });
+
     const diagnostics = ts.formatDiagnosticsWithColorAndContext(
-        [...ts.getPreEmitDiagnostics(program), ...emit.diagnostics],
+        [ ...ts.getPreEmitDiagnostics(program), ...emit.diagnostics ],
         formatDiagnosticHost
     );
+
     return { declaration, diagnostics };
 }
 
@@ -342,18 +349,23 @@ export function catchThrown(fn: () => unknown): unknown {
     } catch (error) {
         return error;
     }
+
     throw new Error('expected the call to throw');
 }
 
 export function catchRejectedNativeRecord(fn: () => unknown): unknown {
-    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {
+    });
+
     try {
         const error = catchThrown(fn);
         expect(consoleError).toHaveBeenCalledTimes(1);
+
         expect(consoleError).toHaveBeenCalledWith(
             'NativeEditorBridge: native module returned a record this boundary rejected',
             expect.any(String)
         );
+
         return error;
     } finally {
         consoleError.mockRestore();
@@ -367,7 +379,7 @@ export function catchRejectedNativeRecord(fn: () => unknown): unknown {
  * it. Yielding to a macrotask does, and stays deterministic.
  */
 export function flushMicrotasks(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
         setImmediate(resolve);
     });
 }

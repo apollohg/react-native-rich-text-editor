@@ -40,7 +40,7 @@ export interface MentionQueryChangeEvent {
         anchor: number;
         head: number;
     };
-    /** False once the query closed — supply an empty suggestion list. */
+    /** False once the query closed : supply an empty suggestion list. */
     isActive: boolean;
     /** Engine document revision the query was computed against. */
     documentVersion?: string;
@@ -64,7 +64,7 @@ export interface MentionSelectEvent {
 export interface MentionSelectionAttrsEvent {
     trigger: string;
     suggestion: MentionSuggestion;
-    /** Attributes resolved so far — the suggestion's own, plus `label` and `mentionSuggestionChar`. */
+    /** Attributes resolved so far : the suggestion's own, plus `label` and `mentionSuggestionChar`. */
     attrs: Record<string, unknown>;
     /** Mark attributes active at the insertion point. */
     markAttrs: ReadonlyActiveState['markAttrs'];
@@ -83,7 +83,7 @@ export type MentionThemeResolveEvent = MentionSelectionAttrsEvent;
 /**
  * Mentions for `RichTextEditor`. The schema belongs to the document
  * handle, so create the handle with {@link withMentionsSchema} applied to
- * your schema — this config alone does not add the `mention` node.
+ * your schema : this config alone does not add the `mention` node.
  * (`RichTextViewer` adds it for you.)
  *
  * The host owns the suggestion list: react to `onQueryChange` by filtering
@@ -218,14 +218,15 @@ export function mentionNodeSpec(): NodeSpec {
  * ```
  */
 export function withMentionsSchema(schema: SchemaDefinition): SchemaDefinition {
-    const hasMentionNode = schema.nodes.some((node) => node.name === MENTION_NODE_NAME);
+    const hasMentionNode = schema.nodes.some(node => node.name === MENTION_NODE_NAME);
+
     if (hasMentionNode) {
         return schema;
     }
 
     return {
         ...schema,
-        nodes: [...schema.nodes, mentionNodeSpec()],
+        nodes: [ ...schema.nodes, mentionNodeSpec() ],
     };
 }
 
@@ -237,8 +238,10 @@ export function normalizeNativeEditorAddons(
     }
 
     const trigger = addons.mentions.trigger?.trim() || DEFAULT_MENTION_TRIGGER;
-    const suggestions = (addons.mentions.suggestions ?? []).map((suggestion) => {
+
+    const suggestions = (addons.mentions.suggestions ?? []).map(suggestion => {
         const label = suggestion.label?.trim() || suggestion.title;
+
         const attrs = {
             label,
             mentionSuggestionChar: trigger,
@@ -276,6 +279,7 @@ export function serializeNormalizedEditorAddons(
     addons?: NormalizedEditorAddons
 ): string | undefined {
     const normalized = normalizeNativeEditorAddons(addons);
+
     return normalized ? JSON.stringify(normalized) : undefined;
 }
 
@@ -288,7 +292,7 @@ export interface MentionFragmentOptions {
 /**
  * Build a document fragment holding one mention node, ready for
  * `insertContentJson`. Use it to insert a mention outside the suggestion
- * flow — from a picker, say.
+ * flow : from a picker, say.
  *
  * @param attrs Attributes for the mention node, e.g. `{ label, id }`.
  * @param descriptor Document node name to wrap the fragment in. Defaults to `doc`.
@@ -304,7 +308,7 @@ export function buildMentionFragmentJson(
                 type: MENTION_NODE_NAME,
                 attrs,
             },
-            ...(options?.trailingSpace ? [{ type: 'text', text: ' ' }] : []),
+            ...(options?.trailingSpace ? [ { type: 'text', text: ' ' } ] : []),
         ],
         descriptor
     );

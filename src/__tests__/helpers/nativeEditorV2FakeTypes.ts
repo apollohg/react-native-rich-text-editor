@@ -8,15 +8,15 @@ import {
 
 /** Outbound document frames carry their revision so tests can assert order. */
 export function documentFrame(revision: number): Uint8Array {
-    return new Uint8Array([0x64, revision & 0xff]);
+    return new Uint8Array([ 0x64, revision & 0xff ]);
 }
 
 export function protocolReplyFrame(sequence: number): Uint8Array {
-    return new Uint8Array([0x70, sequence & 0xff]);
+    return new Uint8Array([ 0x70, sequence & 0xff ]);
 }
 
 export function awarenessFrame(clock: number): Uint8Array {
-    return new Uint8Array([0x61, clock & 0xff]);
+    return new Uint8Array([ 0x61, clock & 0xff ]);
 }
 
 export interface FakeSession {
@@ -70,7 +70,7 @@ export interface FakeSession {
 
 /**
  * The transport intent TypeScript hands to the platform module. The native
- * side — never TypeScript — owns the socket that acts on it.
+ * side : never TypeScript : owns the socket that acts on it.
  */
 export interface FakeTransportWireConfig {
     url: string;

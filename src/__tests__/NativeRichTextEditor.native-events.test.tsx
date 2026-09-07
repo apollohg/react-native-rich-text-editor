@@ -30,9 +30,9 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         handle.destroy();
     });
 
-    it.each(['iOS', 'Android'])(
+    it.each([ 'iOS', 'Android' ])(
         'routes each valid %s autonomous native error once through the bound handle',
-        (platform) => {
+        platform => {
             const handle = createV2LocalHandle(V2_INITIAL_DOC);
             const primaryListener = jest.fn();
             const secondaryListener = jest.fn();
@@ -40,12 +40,14 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             handle.addErrorListener(secondaryListener);
             const { getByTestId } = render(<NativeRichTextEditor documentHandle={handle} />);
             const view = getByTestId('native-editor-view');
+
             const error = {
                 domain: 'operation',
                 code: 'POSITION_INVALID',
                 message: 'native selection is invalid',
                 requestId: '7',
             };
+
             const emit = () =>
                 view.props.onEditorError({
                     // iOS constructs the map identity-first while Android
@@ -62,10 +64,12 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             // Equal native failures are separate emissions, never value-deduped.
             expect(primaryListener).toHaveBeenCalledTimes(2);
             expect(secondaryListener).toHaveBeenCalledTimes(2);
+
             expect(primaryListener).toHaveBeenNthCalledWith(
                 1,
                 expect.objectContaining({ code: 'POSITION_INVALID', requestId: '7' })
             );
+
             handle.destroy();
         }
     );
@@ -73,10 +77,13 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
     it('accepts a queued native commit after the engine advances before event delivery', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const onContentChange = jest.fn();
+
         const { getByTestId } = render(
             <NativeRichTextEditor documentHandle={handle} onContentChange={onContentChange} />
         );
+
         const baseDocumentVersion = handle.bridge.getState().documentRevision;
+
         v2Runtime.module.editorV2ApplyInput(
             handle.editorId,
             JSON.stringify({
@@ -86,6 +93,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 text: '!',
             })
         );
+
         const queuedRevision = handle.bridge.getState().documentRevision;
         const queuedUpdateJson = renderUpdateValue(handle.editorId);
 
@@ -109,6 +117,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
     it('suppresses a native-origin revision even when collaboration reports it before the native event', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const { getByTestId, rerender } = render(<NativeRichTextEditor documentHandle={handle} />);
+
         v2Runtime.module.editorV2ApplyInput(
             handle.editorId,
             JSON.stringify({
@@ -118,6 +127,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 text: '!',
             })
         );
+
         v2Runtime.session(handle.editorId).documentOrigin = 'nativeView';
         const revision = handle.bridge.getState().documentRevision;
 
@@ -131,20 +141,26 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
         const received: unknown[] = [];
-        handle.addErrorListener((error) => received.push(error));
+        handle.addErrorListener(error => received.push(error));
         const { getByTestId } = render(<NativeRichTextEditor ref={ref} documentHandle={handle} />);
         const view = getByTestId('native-editor-view');
+
         const validError = {
             domain: 'operation',
             code: 'POSITION_INVALID',
             message: 'native selection is invalid',
         };
 
-        for (const editorId of [undefined, 1, '01', '18446744073709551616', '999']) {
+        for (const editorId of [ undefined,
+            1,
+            '01',
+            '18446744073709551616',
+            '999' ]) {
             act(() => {
                 view.props.onEditorError({ nativeEvent: { editorId, error: validError } });
             });
         }
+
         expect(received).toHaveLength(0);
 
         act(() => {
@@ -152,6 +168,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 nativeEvent: { editorId: handle.editorId, error: { code: 42 } },
             });
         });
+
         expect(received).toHaveLength(1);
         expect(received[0]).toBeInstanceOf(NativeEditorNonRetryableError);
         expect((received[0] as NativeEditorNonRetryableError).code).toBe('FFI_RESULT_INVALID');
@@ -167,12 +184,15 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const handleB = createV2LocalHandle(V2_DOC_B);
         const receivedA: unknown[] = [];
         const receivedB: unknown[] = [];
-        const unsubscribeA = handleA.addErrorListener((error) => receivedA.push(error));
-        handleB.addErrorListener((error) => receivedB.push(error));
+        const unsubscribeA = handleA.addErrorListener(error => receivedA.push(error));
+        handleB.addErrorListener(error => receivedB.push(error));
+
         const { getByTestId, rerender, unmount } = render(
             <NativeRichTextEditor documentHandle={handleA} />
         );
+
         const firstABinding = getByTestId('native-editor-view').props.onEditorError;
+
         const errorA = {
             nativeEvent: {
                 editorId: handleA.editorId,
@@ -190,17 +210,18 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const bBinding = getByTestId('native-editor-view').props.onEditorError;
         rerender(<NativeRichTextEditor documentHandle={handleA} />);
         const reboundABinding = getByTestId('native-editor-view').props.onEditorError;
-        handleA.addErrorListener((error) => receivedA.push(error));
+        handleA.addErrorListener(error => receivedA.push(error));
 
         act(() => firstABinding(errorA));
+
         act(() =>
             bBinding({
                 nativeEvent: {
                     editorId: handleB.editorId,
                     error: { domain: 'operation', code: 'POSITION_INVALID', message: 'B error' },
                 },
-            })
-        );
+            }));
+
         expect(receivedA).toHaveLength(1);
         expect(receivedB).toHaveLength(0);
 
@@ -219,9 +240,11 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
 
     it('respects editable={false} on the native view', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
+
         const { getByTestId } = render(
             <NativeRichTextEditor documentHandle={handle} editable={false} />
         );
+
         expect(getByTestId('native-editor-view').props.editable).toBe(false);
         handle.destroy();
     });
@@ -230,6 +253,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
         const onContentChange = jest.fn();
+
         const { getByTestId } = render(
             <NativeRichTextEditor
                 ref={ref}
@@ -237,13 +261,14 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 onContentChange={onContentChange}
             />
         );
+
         mockNativeModule.editorV2ApplyInput.mockClear();
         mockNativeModule.editorV2ApplyCommand.mockClear();
         mockNativeModule.editorV2ApplyLocalApi.mockClear();
         mockNativeModule.editorV2ReplaceDocument.mockClear();
 
         // While the IME is composing there is no native event and no engine
-        // traffic at all — transient composing text never crosses JS.
+        // traffic at all : transient composing text never crosses JS.
         expect(mockNativeModule.editorV2ApplyInput).not.toHaveBeenCalled();
 
         // The native adapter commits the final text as ONE typed transaction,
@@ -254,12 +279,15 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             baseDocumentRevision: handle.bridge.getState().documentRevision,
             text: '!',
         });
+
         let commitOutcome: { value: string } | undefined;
+
         act(() => {
             commitOutcome = v2Runtime.module.editorV2ApplyInput(handle.editorId, commitRequest) as {
                 value: string;
             };
         });
+
         expect(JSON.parse(commitOutcome!.value)).toMatchObject({ type: 'transaction' });
 
         act(() => {

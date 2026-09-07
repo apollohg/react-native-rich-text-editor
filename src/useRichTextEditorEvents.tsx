@@ -2,9 +2,9 @@ import { useCallback } from 'react';
 import { PixelRatio, Platform, type NativeSyntheticEvent } from 'react-native';
 import { normalizeNativeEditorV2DecimalId, type Selection } from './NativeEditorBridge';
 import { setActiveEditorToolbarFrameOwnerForEditor } from './EditorToolbar';
-import { useRichTextEditorState } from './useRichTextEditorState';
-import { useRichTextEditorUpdates } from './useRichTextEditorUpdates';
-import { useRichTextEditorCommands } from './useRichTextEditorCommands';
+import { type useRichTextEditorState } from './useRichTextEditorState';
+import { type useRichTextEditorUpdates } from './useRichTextEditorUpdates';
+import { type useRichTextEditorCommands } from './useRichTextEditorCommands';
 import {
     type NativeUpdateEvent,
     type NativeEditorErrorBinding,
@@ -96,18 +96,25 @@ export function useRichTextEditorEvents(
 
     const isForThisEditor = useCallback(
         (payload: { editorId: string }) => payload.editorId === editorId,
-        [editorId]
+        [ editorId ]
     );
 
     const handleEditorUpdate = useCallback(
         (event: NativeSyntheticEvent<NativeUpdateEvent>) => {
-            if (documentHandle.isDestroyed) return;
+            if (documentHandle.isDestroyed) {
+                return;
+            }
+
             const accepted = acceptNativeCommitPayload(
                 event.nativeEvent,
                 documentHandle.editorId,
                 lastAcceptedNativeCommitRevisionRef.current
             );
-            if (accepted == null) return;
+
+            if (accepted == null) {
+                return;
+            }
+
             // Record both native-scoped revisions before any observable
             // state/callback/refresh work. This makes duplicate delivery and
             // the handle's same-revision signal deterministic.
@@ -119,13 +126,24 @@ export function useRichTextEditorEvents(
             document.refresh();
             onLocalCommitRef.current?.();
         },
-        [applyTypedUpdateState, document, documentHandle, refreshAtomsFromUpdate]
+        [ applyTypedUpdateState,
+            document,
+            documentHandle.editorId,
+            documentHandle.isDestroyed,
+            lastAcceptedNativeCommitRevisionRef,
+            lastNativeDrivenRevisionRef,
+            onLocalCommitRef,
+            refreshAtomsFromUpdate ]
     );
 
     const admitNativeBindingEvent = useCallback(
         (payload: unknown): NativeEditorErrorBinding | null => {
-            if (!isRecord(payload)) return null;
+            if (!isRecord(payload)) {
+                return null;
+            }
+
             const currentBinding = nativeErrorBindingRef.current;
+
             if (
                 currentBinding !== nativeErrorBinding ||
                 !currentBinding.mounted ||
@@ -136,7 +154,9 @@ export function useRichTextEditorEvents(
             ) {
                 return null;
             }
+
             const presentedEditorId = payload.editorId;
+
             if (
                 typeof presentedEditorId !== 'string' ||
                 normalizeNativeEditorV2DecimalId(presentedEditorId) !== presentedEditorId ||
@@ -144,106 +164,162 @@ export function useRichTextEditorEvents(
             ) {
                 return null;
             }
+
             return currentBinding;
         },
-        [nativeErrorBinding]
+        [ nativeErrorBinding, nativeErrorBindingRef ]
     );
 
     const handleEditorError = useCallback(
         (event: NativeSyntheticEvent<NativeErrorEvent>) => {
             const payload = event?.nativeEvent;
             const binding = admitNativeBindingEvent(payload);
-            if (binding == null || !isRecord(payload)) return;
+
+            if (binding == null || !isRecord(payload)) {
+                return;
+            }
+
             binding.handle.bridge._emitAutonomousError(payload.error);
         },
-        [admitNativeBindingEvent]
+        [ admitNativeBindingEvent ]
     );
 
     const handleExternalTextCompositionEnd = useCallback(
         (event: NativeSyntheticEvent<NativeExternalTextCompositionEvent>) => {
             const payload = event?.nativeEvent;
             const binding = admitNativeBindingEvent(payload);
-            if (binding == null || !isRecord(payload)) return;
-            if (typeof payload.resultJson !== 'string') return;
+
+            if (binding == null || !isRecord(payload)) {
+                return;
+            }
+
+            if (typeof payload.resultJson !== 'string') {
+                return;
+            }
+
             try {
                 externalCompositionManager.handleNativeEnd(binding.editorId, payload.resultJson);
             } catch (error) {
                 binding.handle.bridge._emitAutonomousError(externalCompositionErrorPayload(error));
             }
         },
-        [admitNativeBindingEvent, externalCompositionManager]
+        [ admitNativeBindingEvent, externalCompositionManager ]
     );
 
     const handleSelectionChange = useCallback(
         (event: NativeSyntheticEvent<NativeSelectionEvent>) => {
-            if (documentHandle.isDestroyed || !isForThisEditor(event.nativeEvent)) return;
+            if (documentHandle.isDestroyed || !isForThisEditor(event.nativeEvent)) {
+                return;
+            }
+
             const { anchor, head, stateJson } = event.nativeEvent;
             scalarSelectionRef.current = { anchor, head };
             let selection: Selection = { type: 'text', anchor, head };
             const parsed = applyUpdateState(stateJson);
             const parsedSelection = parseSelectionFromUpdate(parsed?.selection);
+
             if (parsedSelection) {
                 selection = parsedSelection;
             }
+
             selectionRef.current = selection;
             updateAtomSelection(selection);
             onSelectionChangeRef.current?.(selection);
         },
-        [applyUpdateState, documentHandle, isForThisEditor, updateAtomSelection]
+        [ applyUpdateState,
+            documentHandle.isDestroyed,
+            isForThisEditor,
+            onSelectionChangeRef,
+            scalarSelectionRef,
+            selectionRef,
+            updateAtomSelection ]
     );
 
     const handleFocusChange = useCallback(
         (event: NativeSyntheticEvent<NativeFocusEvent>) => {
-            if (documentHandle.isDestroyed || !isForThisEditor(event.nativeEvent)) return;
+            if (documentHandle.isDestroyed || !isForThisEditor(event.nativeEvent)) {
+                return;
+            }
+
             const focused = event.nativeEvent.isFocused;
             const wasFocused = isFocusedRef.current;
             isFocusedRef.current = focused;
             setActiveEditorToolbarFrameOwnerForEditor(toolbarFrameOwnerId, focused);
             setIsFocused(focused);
+
             if (focused && !wasFocused) {
                 onFocusRef.current?.();
             } else if (!focused && wasFocused) {
                 onBlurRef.current?.();
             }
         },
-        [documentHandle, isForThisEditor, toolbarFrameOwnerId]
+        [ documentHandle.isDestroyed,
+            isFocusedRef,
+            isForThisEditor,
+            onBlurRef,
+            onFocusRef,
+            setIsFocused,
+            toolbarFrameOwnerId ]
     );
 
     const handleContentHeightChange = useCallback(
         (event: NativeSyntheticEvent<NativeContentHeightEvent>) => {
-            if (documentHandle.isDestroyed || !isForThisEditor(event.nativeEvent)) return;
-            if (heightBehavior !== 'autoGrow') return;
+            if (documentHandle.isDestroyed || !isForThisEditor(event.nativeEvent)) {
+                return;
+            }
+
+            if (heightBehavior !== 'autoGrow') {
+                return;
+            }
+
             const density = Platform.OS === 'android' ? PixelRatio.get() : 1;
             const nextHeight = Math.ceil(event.nativeEvent.contentHeight / density);
-            if (!(nextHeight > 0)) return;
-            setAutoGrowHeight((prev) => (prev === nextHeight ? prev : nextHeight));
+
+            if (!(nextHeight > 0)) {
+                return;
+            }
+
+            setAutoGrowHeight(prev => (prev === nextHeight ? prev : nextHeight));
         },
-        [documentHandle, heightBehavior, isForThisEditor]
+        [ documentHandle.isDestroyed, heightBehavior, isForThisEditor, setAutoGrowHeight ]
     );
 
     const handleAtomLayout = useCallback(
         (event: NativeSyntheticEvent<NativeAtomLayoutEvent>) => {
-            if (documentHandle.isDestroyed || !isForThisEditor(event.nativeEvent)) return;
+            if (documentHandle.isDestroyed || !isForThisEditor(event.nativeEvent)) {
+                return;
+            }
+
             const width = event.nativeEvent.width;
-            if (!Number.isFinite(width) || width < 0) return;
-            setAtomContentWidth((current) => (current === width ? current : width));
+
+            if (!Number.isFinite(width) || width < 0) {
+                return;
+            }
+
+            setAtomContentWidth(current => (current === width ? current : width));
             const viewport = event.nativeEvent.viewport;
+
             if (
                 viewport &&
                 Number.isFinite(viewport.y) &&
                 Number.isFinite(viewport.height) &&
                 viewport.height >= 0
             ) {
-                setNativeAtomViewport((previous) =>
+                setNativeAtomViewport(previous =>
                     previous?.y === viewport.y && previous.height === viewport.height
                         ? previous
-                        : viewport
-                );
+                        : viewport);
             }
+
             const positions = event.nativeEvent.positions;
-            if (!Array.isArray(positions)) return;
+
+            if (!Array.isArray(positions)) {
+                return;
+            }
+
             const next = new Map<string, NativeAtomPosition>();
-            for (const position of positions) {
+
+            for (const position of positions as NativeAtomPosition[]) {
                 if (
                     typeof position?.key !== 'string' ||
                     !Number.isFinite(position.x) ||
@@ -255,12 +331,18 @@ export function useRichTextEditorEvents(
                 ) {
                     continue;
                 }
+
                 next.set(position.key, position);
             }
-            setAtomPositions((current) => {
-                if (current.size !== next.size) return next;
-                for (const [key, position] of next) {
+
+            setAtomPositions(current => {
+                if (current.size !== next.size) {
+                    return next;
+                }
+
+                for (const [ key, position ] of next) {
                     const previous = current.get(key);
+
                     if (
                         previous?.x !== position.x ||
                         previous.hostX !== position.hostX ||
@@ -268,19 +350,29 @@ export function useRichTextEditorEvents(
                         previous.y !== position.y ||
                         previous.height !== position.height ||
                         previous.width !== position.width
-                    )
+                    ) {
                         return next;
+                    }
                 }
+
                 return current;
             });
         },
-        [documentHandle, isForThisEditor]
+        [ documentHandle.isDestroyed,
+            isForThisEditor,
+            setAtomContentWidth,
+            setAtomPositions,
+            setNativeAtomViewport ]
     );
 
     const handleToolbarAction = useCallback(
         (event: NativeSyntheticEvent<NativeToolbarActionEvent>) => {
-            if (documentHandle.isDestroyed || !isForThisEditor(event.nativeEvent)) return;
+            if (documentHandle.isDestroyed || !isForThisEditor(event.nativeEvent)) {
+                return;
+            }
+
             const { key, updateJson, stateJson, documentRevision } = event.nativeEvent;
+
             // A toolbar event carrying update data is a native commit. It
             // must satisfy the same atomic admission path as typing; a pure
             // action (link/image/custom key) has no commit to refresh.
@@ -295,6 +387,7 @@ export function useRichTextEditorEvents(
                         documentHandle.editorId,
                         lastAcceptedNativeCommitRevisionRef.current
                     );
+
                     if (accepted != null) {
                         lastAcceptedNativeCommitRevisionRef.current = accepted.documentRevision;
                         lastNativeDrivenRevisionRef.current = accepted.documentRevision;
@@ -307,27 +400,36 @@ export function useRichTextEditorEvents(
             } else if (typeof stateJson === 'string') {
                 applyUpdateState(stateJson);
             }
+
             if (key === LINK_TOOLBAR_ACTION_KEY) {
                 openLinkRequest();
+
                 return;
             }
+
             if (key === IMAGE_TOOLBAR_ACTION_KEY) {
                 openImageRequest();
+
                 return;
             }
+
             onToolbarActionRef.current?.(key);
         },
-        [
-            applyTypedUpdateState,
+        [ applyTypedUpdateState,
             applyUpdateState,
             document,
-            documentHandle,
+            documentHandle.editorId,
+            documentHandle.isDestroyed,
             isForThisEditor,
+            lastAcceptedNativeCommitRevisionRef,
+            lastNativeDrivenRevisionRef,
+            onLocalCommitRef,
+            onToolbarActionRef,
             openImageRequest,
             openLinkRequest,
-            refreshAtomsFromUpdate,
-        ]
+            refreshAtomsFromUpdate ]
     );
+
     return {
         isForThisEditor,
         handleEditorUpdate,

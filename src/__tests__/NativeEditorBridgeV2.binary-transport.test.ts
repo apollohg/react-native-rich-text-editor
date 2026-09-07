@@ -15,12 +15,14 @@ describe('NativeEditorBridge v2', () => {
     describe('binary transport', () => {
         it('returns an empty exported snapshot as empty bytes', () => {
             const handle = createHandle();
+
             mockNativeModule.editorV2SnapshotExport.mockReturnValueOnce(
                 okRecord({
                     metadataJson: JSON.stringify(MOCK_SNAPSHOT_METADATA),
                     encodedState: new Uint8Array(0),
                 })
             );
+
             const exported = handle.bridge.snapshotExport();
             expect(exported.encodedState).toBeInstanceOf(Uint8Array);
             expect(exported.encodedState.length).toBe(0);
@@ -36,8 +38,10 @@ describe('NativeEditorBridge v2', () => {
                 MOCK_SNAPSHOT_METADATA,
                 exported.encodedState
             );
-            const [editorId, metadataJson, encodedState] =
+
+            const [ editorId, metadataJson, encodedState ] =
                 mockNativeModule.editorV2SnapshotRestore.mock.calls[0];
+
             expect(editorId).toBe('1');
             expect(JSON.parse(metadataJson)).toEqual(MOCK_SNAPSHOT_METADATA);
             expect(encodedState).toBe(MOCK_SNAPSHOT_BYTES);
@@ -45,14 +49,16 @@ describe('NativeEditorBridge v2', () => {
         });
 
         it('rejects JSON number arrays as binary values', () => {
-            expect(normalizeNativeEditorV2Bytes([1, 2, 3])).toBeNull();
+            expect(normalizeNativeEditorV2Bytes([ 1, 2, 3 ])).toBeNull();
             const handle = createHandle();
+
             mockNativeModule.editorV2SnapshotExport.mockReturnValueOnce(
                 okRecord({
                     metadataJson: JSON.stringify(MOCK_SNAPSHOT_METADATA),
-                    encodedState: [0, 3, 9],
+                    encodedState: [ 0, 3, 9 ],
                 })
             );
+
             expectNonRetryable(
                 catchRejectedNativeRecord(() => handle.bridge.snapshotExport()),
                 'FFI_RESULT_INVALID'

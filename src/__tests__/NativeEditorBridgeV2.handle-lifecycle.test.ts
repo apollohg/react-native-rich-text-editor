@@ -19,7 +19,7 @@ import {
 
 import {
     NativeEditorEngineBoundaryError,
-    NativeEditorErrorBase,
+    type NativeEditorErrorBase,
     NativeEditorOperationError,
 } from '../NativeEditorBoundaryError';
 
@@ -30,6 +30,7 @@ describe('NativeEditorBridge v2', () => {
             const policy = Object.assign(Object.create(null), { readOnly: true });
             const resource = Object.assign(Object.create(null), { maxInputBytes: 1024 });
             const limits = Object.assign(Object.create(null), { resource });
+
             const config = Object.assign(Object.create(null), {
                 initialization,
                 policy,
@@ -38,7 +39,8 @@ describe('NativeEditorBridge v2', () => {
 
             createNativeEditorDocumentHandle(config);
 
-            const [configJson] = mockNativeModule.editorV2Create.mock.calls[0];
+            const [ configJson ] = mockNativeModule.editorV2Create.mock.calls[0];
+
             expect(JSON.parse(configJson)).toEqual({
                 initialization: { type: 'localEmpty' },
                 policy: { readOnly: true },
@@ -78,7 +80,7 @@ describe('NativeEditorBridge v2', () => {
                         snapshot: null,
                     },
                 },
-                ...Object.keys(MOCK_SNAPSHOT_METADATA).map((field) => ({
+                ...Object.keys(MOCK_SNAPSHOT_METADATA).map(field => ({
                     initialization: {
                         type: 'room',
                         documentId: 'doc-1',
@@ -106,40 +108,43 @@ describe('NativeEditorBridge v2', () => {
                     },
                 },
             ];
-            for (const field of ['maxLength', 'readOnly', 'inputFilter', 'allowBase64Images']) {
+
+            for (const field of [ 'maxLength', 'readOnly', 'inputFilter', 'allowBase64Images' ]) {
                 invalidConfigs.push({
                     initialization: { type: 'localEmpty' },
                     policy: { [field]: null },
                 });
             }
-            for (const group of ['resource', 'editing', 'collaboration']) {
+
+            for (const group of [ 'resource', 'editing', 'collaboration' ]) {
                 invalidConfigs.push({
                     initialization: { type: 'localEmpty' },
                     limits: { [group]: null },
                 });
             }
-            for (const [group, field] of [
-                ['resource', 'maxInputBytes'],
-                ['resource', 'maxDocumentNodes'],
-                ['resource', 'maxDocumentDepth'],
-                ['resource', 'maxSchemaNodes'],
-                ['resource', 'maxSchemaExpressionBytes'],
-                ['resource', 'maxCollaborationMessageBytes'],
-                ['resource', 'maxEncodedStateBytes'],
-                ['editing', 'maxOperationsPerTransaction'],
-                ['editing', 'maxUndoGroups'],
-                ['editing', 'maxUndoRetainedUnits'],
-                ['editing', 'maxDerivedOutputBytes'],
-                ['collaboration', 'maxFramesPerMessage'],
-                ['collaboration', 'maxFrameBytes'],
-                ['collaboration', 'maxAggregateResponseBytes'],
-                ['collaboration', 'maxAwarenessPeers'],
-                ['collaboration', 'maxAwarenessPeerBytes'],
-                ['collaboration', 'maxAwarenessBytes'],
-                ['collaboration', 'maxPendingOutboxMessages'],
-                ['collaboration', 'maxPendingOutboxBytes'],
-                ['collaboration', 'maxPendingDependencyUpdateBytes'],
-                ['collaboration', 'maxPendingDependencyUpdateWork'],
+
+            for (const [ group, field ] of [
+                [ 'resource', 'maxInputBytes' ],
+                [ 'resource', 'maxDocumentNodes' ],
+                [ 'resource', 'maxDocumentDepth' ],
+                [ 'resource', 'maxSchemaNodes' ],
+                [ 'resource', 'maxSchemaExpressionBytes' ],
+                [ 'resource', 'maxCollaborationMessageBytes' ],
+                [ 'resource', 'maxEncodedStateBytes' ],
+                [ 'editing', 'maxOperationsPerTransaction' ],
+                [ 'editing', 'maxUndoGroups' ],
+                [ 'editing', 'maxUndoRetainedUnits' ],
+                [ 'editing', 'maxDerivedOutputBytes' ],
+                [ 'collaboration', 'maxFramesPerMessage' ],
+                [ 'collaboration', 'maxFrameBytes' ],
+                [ 'collaboration', 'maxAggregateResponseBytes' ],
+                [ 'collaboration', 'maxAwarenessPeers' ],
+                [ 'collaboration', 'maxAwarenessPeerBytes' ],
+                [ 'collaboration', 'maxAwarenessBytes' ],
+                [ 'collaboration', 'maxPendingOutboxMessages' ],
+                [ 'collaboration', 'maxPendingOutboxBytes' ],
+                [ 'collaboration', 'maxPendingDependencyUpdateBytes' ],
+                [ 'collaboration', 'maxPendingDependencyUpdateWork' ],
             ]) {
                 invalidConfigs.push({
                     initialization: { type: 'localEmpty' },
@@ -149,48 +154,51 @@ describe('NativeEditorBridge v2', () => {
 
             for (const config of invalidConfigs) {
                 const error = catchThrown(() =>
-                    createNativeEditorDocumentHandle(config as NativeEditorCreateConfig)
-                );
+                    createNativeEditorDocumentHandle(config as NativeEditorCreateConfig));
+
                 expect((error as { code?: string }).code).toBe('CONFIG_INVALID');
             }
+
             expect(mockNativeModule.editorV2Create).not.toHaveBeenCalled();
         });
 
         it('rejects every non-positive, fractional, unsafe, and one-over integer limit', () => {
             const limitCases: Array<[string, string, number]> = [
-                ['resource', 'maxInputBytes', 64 * 1024 * 1024],
-                ['resource', 'maxDocumentNodes', 1_000_000],
-                ['resource', 'maxDocumentDepth', 1_024],
-                ['resource', 'maxSchemaNodes', 10_000],
-                ['resource', 'maxSchemaExpressionBytes', 1024 * 1024],
-                ['resource', 'maxCollaborationMessageBytes', 64 * 1024 * 1024],
-                ['resource', 'maxEncodedStateBytes', 256 * 1024 * 1024],
-                ['editing', 'maxOperationsPerTransaction', 4_096],
-                ['editing', 'maxUndoGroups', 2_000],
-                ['editing', 'maxUndoRetainedUnits', 8_000_000],
-                ['editing', 'maxDerivedOutputBytes', 128 * 1024 * 1024],
-                ['collaboration', 'maxFramesPerMessage', 1_024],
-                ['collaboration', 'maxFrameBytes', 64 * 1024 * 1024],
-                ['collaboration', 'maxAggregateResponseBytes', 64 * 1024 * 1024],
-                ['collaboration', 'maxAwarenessPeers', 10_000],
-                ['collaboration', 'maxAwarenessPeerBytes', 1024 * 1024],
-                ['collaboration', 'maxAwarenessBytes', 64 * 1024 * 1024],
-                ['collaboration', 'maxPendingOutboxMessages', 4_096],
-                ['collaboration', 'maxPendingOutboxBytes', 64 * 1024 * 1024],
-                ['collaboration', 'maxPendingDependencyUpdateBytes', 64 * 1024 * 1024],
-                ['collaboration', 'maxPendingDependencyUpdateWork', 8_000_000],
+                [ 'resource', 'maxInputBytes', 64 * 1024 * 1024 ],
+                [ 'resource', 'maxDocumentNodes', 1_000_000 ],
+                [ 'resource', 'maxDocumentDepth', 1_024 ],
+                [ 'resource', 'maxSchemaNodes', 10_000 ],
+                [ 'resource', 'maxSchemaExpressionBytes', 1024 * 1024 ],
+                [ 'resource', 'maxCollaborationMessageBytes', 64 * 1024 * 1024 ],
+                [ 'resource', 'maxEncodedStateBytes', 256 * 1024 * 1024 ],
+                [ 'editing', 'maxOperationsPerTransaction', 4_096 ],
+                [ 'editing', 'maxUndoGroups', 2_000 ],
+                [ 'editing', 'maxUndoRetainedUnits', 8_000_000 ],
+                [ 'editing', 'maxDerivedOutputBytes', 128 * 1024 * 1024 ],
+                [ 'collaboration', 'maxFramesPerMessage', 1_024 ],
+                [ 'collaboration', 'maxFrameBytes', 64 * 1024 * 1024 ],
+                [ 'collaboration', 'maxAggregateResponseBytes', 64 * 1024 * 1024 ],
+                [ 'collaboration', 'maxAwarenessPeers', 10_000 ],
+                [ 'collaboration', 'maxAwarenessPeerBytes', 1024 * 1024 ],
+                [ 'collaboration', 'maxAwarenessBytes', 64 * 1024 * 1024 ],
+                [ 'collaboration', 'maxPendingOutboxMessages', 4_096 ],
+                [ 'collaboration', 'maxPendingOutboxBytes', 64 * 1024 * 1024 ],
+                [ 'collaboration', 'maxPendingDependencyUpdateBytes', 64 * 1024 * 1024 ],
+                [ 'collaboration', 'maxPendingDependencyUpdateWork', 8_000_000 ],
             ];
 
-            for (const [group, field, ceiling] of limitCases) {
-                for (const value of [0, 1.5, Number.MAX_SAFE_INTEGER + 1, ceiling + 1]) {
+            for (const [ group, field, ceiling ] of limitCases) {
+                for (const value of [ 0, 1.5, Number.MAX_SAFE_INTEGER + 1, ceiling + 1 ]) {
                     const config = {
                         initialization: { type: 'localEmpty' },
                         limits: { [group]: { [field]: value } },
                     } as unknown as NativeEditorCreateConfig;
+
                     const error = catchThrown(() => createNativeEditorDocumentHandle(config));
                     expect((error as { code?: string }).code).toBe('INVALID_RESOURCE_LIMIT');
                 }
             }
+
             expect(mockNativeModule.editorV2Create).not.toHaveBeenCalled();
         });
 
@@ -199,8 +207,8 @@ describe('NativeEditorBridge v2', () => {
                 createNativeEditorDocumentHandle({
                     initialization: { type: 'localEmpty' },
                     limits: { resource: { maxInputBytes: 0 } },
-                })
-            );
+                }));
+
             expect((limitError as NativeEditorErrorBase).code).toBe('INVALID_RESOURCE_LIMIT');
 
             const replayingConfig = new Proxy(
@@ -211,11 +219,11 @@ describe('NativeEditorBridge v2', () => {
                     },
                 }
             );
+
             const replayed = catchThrown(() =>
                 createNativeEditorDocumentHandle(
                     replayingConfig as unknown as NativeEditorCreateConfig
-                )
-            );
+                ));
 
             expect(replayed).not.toBe(limitError);
             expect(replayed).toBeInstanceOf(NativeEditorEngineBoundaryError);
@@ -235,7 +243,9 @@ describe('NativeEditorBridge v2', () => {
                     },
                 },
             });
-            const [configJson, snapshotState] = mockNativeModule.editorV2Create.mock.calls[0];
+
+            const [ configJson, snapshotState ] = mockNativeModule.editorV2Create.mock.calls[0];
+
             expect(JSON.parse(configJson)).toEqual({
                 initialization: {
                     type: 'room',
@@ -244,6 +254,7 @@ describe('NativeEditorBridge v2', () => {
                     snapshot: MOCK_SNAPSHOT_METADATA,
                 },
             });
+
             expect(snapshotState).toBe(MOCK_SNAPSHOT_BYTES);
         });
 
@@ -255,6 +266,7 @@ describe('NativeEditorBridge v2', () => {
                     message: 'snapshot state bytes require a room initialization',
                 })
             );
+
             const error = catchThrown(() => createHandle());
             expect(error).toBeInstanceOf(NativeEditorEngineBoundaryError);
             expect((error as NativeEditorErrorBase).code).toBe('CONFIG_INVALID');
@@ -264,6 +276,7 @@ describe('NativeEditorBridge v2', () => {
             mockNativeModule.editorV2Create.mockReturnValueOnce(
                 okRecord(JSON.stringify({ editorId: '01' }))
             );
+
             expectNonRetryable(
                 catchRejectedNativeRecord(() => createHandle()),
                 'FFI_RESULT_INVALID'
@@ -282,6 +295,7 @@ describe('NativeEditorBridge v2', () => {
 
         it('does not throw when the native session is already gone at destroy', () => {
             const handle = createHandle();
+
             mockNativeModule.editorV2Destroy.mockReturnValueOnce(
                 errRecord({
                     domain: 'lifecycle',
@@ -289,6 +303,7 @@ describe('NativeEditorBridge v2', () => {
                     message: 'editor session is not registered',
                 })
             );
+
             expect(() => handle.destroy()).not.toThrow();
             expect(handle.isDestroyed).toBe(true);
         });
@@ -296,7 +311,8 @@ describe('NativeEditorBridge v2', () => {
         it('retains a live handle and error listeners when destroy fails before a successful retry', () => {
             const handle = createHandle();
             const received: NativeEditorErrorBase[] = [];
-            handle.addErrorListener((error) => received.push(error));
+            handle.addErrorListener(error => received.push(error));
+
             mockNativeModule.editorV2Destroy
                 .mockReturnValueOnce(errRecord(mockV2Error()))
                 .mockReturnValueOnce(okRecord(true));
@@ -320,6 +336,7 @@ describe('NativeEditorBridge v2', () => {
         it('classifies calls after destroy as non-retryable', () => {
             const handle = createHandle();
             handle.destroy();
+
             for (const call of [
                 () => handle.bridge.getState(),
                 () => handle.bridge.getDocumentJson(),
@@ -334,6 +351,7 @@ describe('NativeEditorBridge v2', () => {
 
         it('classifies a native lifecycle error for a live handle as non-retryable', () => {
             const handle = createHandle();
+
             mockNativeModule.editorV2GetState.mockReturnValueOnce(
                 errRecord({
                     domain: 'lifecycle',
@@ -341,6 +359,7 @@ describe('NativeEditorBridge v2', () => {
                     message: 'editor session is not registered',
                 })
             );
+
             expectNonRetryable(
                 catchThrown(() => handle.bridge.getState()),
                 'ENGINE_DESTROYED'
@@ -349,10 +368,13 @@ describe('NativeEditorBridge v2', () => {
 
         it('classifies a result racing a re-entrant destroy as non-retryable', () => {
             const handle = createHandle();
+
             mockNativeModule.editorV2GetState.mockImplementationOnce(() => {
                 handle.destroy();
+
                 return okRecord(JSON.stringify(MOCK_V2_STATE));
             });
+
             expectNonRetryable(
                 catchThrown(() => handle.bridge.getState()),
                 'ENGINE_DESTROYED'

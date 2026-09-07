@@ -5,7 +5,8 @@ import {
     useEditorToolbarFrames,
     type EditorToolbarItem,
 } from './EditorToolbar';
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type React from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
     _assertNativeEditorDocumentHandle,
     _getNativeEditorDocumentHandleDescriptor,
@@ -84,29 +85,33 @@ export function useRichTextEditorState(
     }: RichTextEditorProps,
     ref: React.ForwardedRef<RichTextEditorRef>
 ) {
-    const addons = useMemo(() => normalizeEditorAddons(addonDescriptors), [addonDescriptors]);
+    const addons = useMemo(() => normalizeEditorAddons(addonDescriptors), [ addonDescriptors ]);
     _assertNativeEditorDocumentHandle(documentHandle);
 
     const documentDescriptor = _getNativeEditorDocumentHandleDescriptor(documentHandle);
 
-    const registeredAtomTypeKey = JSON.stringify((atoms ?? []).map((atom) => atom.name));
+    const registeredAtomTypeKey = JSON.stringify((atoms ?? []).map(atom => atom.name));
 
     const registeredAtomTypes = useMemo(
-        () => new Set((atoms ?? []).map((atom) => atom.name)),
-        [registeredAtomTypeKey]
+        () => new Set(JSON.parse(registeredAtomTypeKey) as string[]),
+        [ registeredAtomTypeKey ]
     );
 
     const atomComponents = useMemo(() => {
         const components = new Map<string, AtomComponent>();
+
         for (const atom of atoms ?? []) {
-            if (!components.has(atom.name)) components.set(atom.name, atom.component);
+            if (!components.has(atom.name)) {
+                components.set(atom.name, atom.component);
+            }
         }
+
         return components;
-    }, [atoms]);
+    }, [ atoms ]);
 
     const serializedValueJson = useSerializedValue(
         valueJSON,
-        (doc) => stringifyCachedJson(normalizeDocumentJson(doc, documentDescriptor)),
+        doc => stringifyCachedJson(normalizeDocumentJson(doc, documentDescriptor)),
         valueJSONRevision
     );
 
@@ -115,7 +120,7 @@ export function useRichTextEditorState(
             serializedValueJson == null
                 ? undefined
                 : (JSON.parse(serializedValueJson) as DocumentJSON),
-        [serializedValueJson]
+        [ serializedValueJson ]
     );
 
     const bridge = documentHandle.bridge;
@@ -126,7 +131,7 @@ export function useRichTextEditorState(
 
     const externalCompositionManager = useMemo(
         () => new ExternalTextCompositionManager(editorId, () => nativeViewRef.current),
-        [editorId]
+        [ editorId ]
     );
 
     const managerDisposalsRef = useRef(
@@ -134,33 +139,38 @@ export function useRichTextEditorState(
     );
 
     useEffect(() => {
-        const pendingDisposal = managerDisposalsRef.current.get(externalCompositionManager);
+        const managerDisposals = managerDisposalsRef.current;
+        const pendingDisposal = managerDisposals.get(externalCompositionManager);
+
         if (pendingDisposal != null) {
             pendingDisposal.cancelled = true;
-            managerDisposalsRef.current.delete(externalCompositionManager);
+            managerDisposals.delete(externalCompositionManager);
         }
+
         return () => {
             const token: ExternalCompositionDisposalToken = { cancelled: false };
-            managerDisposalsRef.current.set(externalCompositionManager, token);
+            managerDisposals.set(externalCompositionManager, token);
+
             void Promise.resolve().then(() => {
                 if (
                     token.cancelled ||
-                    managerDisposalsRef.current.get(externalCompositionManager) !== token
+                    managerDisposals.get(externalCompositionManager) !== token
                 ) {
                     return;
                 }
-                managerDisposalsRef.current.delete(externalCompositionManager);
+
+                managerDisposals.delete(externalCompositionManager);
                 externalCompositionManager.dispose();
             });
         };
-    }, [externalCompositionManager]);
+    }, [ externalCompositionManager ]);
 
     const controlledValueKey =
         value != null
             ? `html:${value}`
             : serializedValueJson == null
-              ? null
-              : `json:${serializedValueJson}`;
+                ? null
+                : `json:${serializedValueJson}`;
 
     const currentControlledValue: ControlledValueDelivery = {
         manager: externalCompositionManager,
@@ -201,7 +211,7 @@ export function useRichTextEditorState(
         key: string;
     } | null>(null);
 
-    const [, setControlledResetRevision] = useState(0);
+    const [ , setControlledResetRevision ] = useState(0);
 
     useLayoutEffect(() => {
         if (
@@ -215,13 +225,19 @@ export function useRichTextEditorState(
         ) {
             return;
         }
+
         const pending = { manager: externalCompositionManager };
         pendingResetCancellationRef.current = pending;
+
         void externalCompositionManager.cancelForDocumentChange().then(
             () => {
-                if (pendingResetCancellationRef.current !== pending) return;
+                if (pendingResetCancellationRef.current !== pending) {
+                    return;
+                }
+
                 pendingResetCancellationRef.current = null;
                 const latest = latestControlledValueRef.current;
+
                 if (
                     latest.manager !== externalCompositionManager ||
                     latest.mode !== 'reset' ||
@@ -232,19 +248,26 @@ export function useRichTextEditorState(
                 ) {
                     return;
                 }
+
                 blockedControlledResetRef.current = null;
+
                 deliveredControlledValueRef.current = {
                     manager: latest.manager,
                     key: latest.key,
                     value: latest.value,
                     valueJSON: latest.valueJSON,
                 };
-                setControlledResetRevision((revision) => revision + 1);
+
+                setControlledResetRevision(revision => revision + 1);
             },
             (error: unknown) => {
-                if (pendingResetCancellationRef.current !== pending) return;
+                if (pendingResetCancellationRef.current !== pending) {
+                    return;
+                }
+
                 pendingResetCancellationRef.current = null;
                 const latest = latestControlledValueRef.current;
+
                 if (
                     latest.manager !== externalCompositionManager ||
                     latest.mode !== 'reset' ||
@@ -255,14 +278,16 @@ export function useRichTextEditorState(
                 ) {
                     return;
                 }
+
                 blockedControlledResetRef.current = {
                     manager: externalCompositionManager,
                     key: latest.key,
                 };
+
                 latest.handle.bridge._emitAutonomousError(externalCompositionErrorPayload(error));
             }
         );
-    }, [controlledValueKey, externalCompositionManager, valueJSONUpdateMode]);
+    }, [ controlledValueKey, externalCompositionManager, valueJSONUpdateMode ]);
 
     const deliveredControlledValue = deliveredControlledValueRef.current;
 
@@ -298,6 +323,7 @@ export function useRichTextEditorState(
 
     useEffect(() => {
         const currentBinding = nativeErrorBindingRef.current;
+
         if (
             currentBinding !== nativeErrorBinding &&
             !currentBinding.mounted &&
@@ -307,15 +333,19 @@ export function useRichTextEditorState(
         ) {
             nativeErrorBindingRef.current = nativeErrorBinding;
         }
+
         return () => {
-            if (nativeErrorBindingRef.current !== nativeErrorBinding) return;
+            if (nativeErrorBindingRef.current !== nativeErrorBinding) {
+                return;
+            }
+
             nativeErrorBindingRef.current = {
                 ...nativeErrorBinding,
                 generation: nativeErrorBinding.generation + 1,
                 mounted: false,
             };
         };
-    }, [nativeErrorBinding]);
+    }, [ nativeErrorBinding ]);
 
     const onSelectionChangeRef = useRef(onSelectionChange);
 
@@ -353,22 +383,22 @@ export function useRichTextEditorState(
 
     addonsRef.current = addons;
 
-    const [activeState, setActiveState] = useState<ReadonlyActiveState>(EMPTY_ACTIVE_STATE);
+    const [ activeState, setActiveState ] = useState<ReadonlyActiveState>(EMPTY_ACTIVE_STATE);
 
-    const [pushedUpdate, setPushedUpdate] = useState<{
+    const [ pushedUpdate, setPushedUpdate ] = useState<{
         json: string;
         resetJson?: string;
         revision: number;
         editorId: string;
     } | null>(null);
 
-    const [autoGrowHeight, setAutoGrowHeight] = useState<number | null>(null);
+    const [ autoGrowHeight, setAutoGrowHeight ] = useState<number | null>(null);
 
-    const [isFocused, setIsFocused] = useState(false);
+    const [ isFocused, setIsFocused ] = useState(false);
 
-    const [mentionQuery, setMentionQuery] = useState<MentionQueryChangeEvent | null>(null);
+    const [ mentionQuery, setMentionQuery ] = useState<MentionQueryChangeEvent | null>(null);
 
-    const [atomState, setAtomState] = useState<AtomRenderState>({
+    const [ atomState, setAtomState ] = useState<AtomRenderState>({
         blocks: [],
         instanceBlocks: [],
         instances: [],
@@ -378,15 +408,15 @@ export function useRichTextEditorState(
 
     const atomStateRef = useRef(atomState);
 
-    const [selectedKeys, setSelectedKeys] = useState<ReadonlySet<string>>(new Set());
+    const [ selectedKeys, setSelectedKeys ] = useState<ReadonlySet<string>>(new Set());
 
-    const [atomContentWidth, setAtomContentWidth] = useState<number | null>(null);
+    const [ atomContentWidth, setAtomContentWidth ] = useState<number | null>(null);
 
-    const [atomPositions, setAtomPositions] = useState<ReadonlyMap<string, NativeAtomPosition>>(
+    const [ atomPositions, setAtomPositions ] = useState<ReadonlyMap<string, NativeAtomPosition>>(
         new Map()
     );
 
-    const [nativeAtomViewport, setNativeAtomViewport] = useState<AtomViewport>();
+    const [ nativeAtomViewport, setNativeAtomViewport ] = useState<AtomViewport>();
 
     const warnedUnknownAtomTypesRef = useRef(new Set<string>());
 
@@ -458,6 +488,7 @@ export function useRichTextEditorState(
 
     if (didRebindRevisionScope) {
         pendingFocusedRebindRef.current = null;
+
         if (isFocusedRef.current && document.isReady) {
             pendingFocusedRebindRef.current = {
                 editorId,
@@ -467,6 +498,7 @@ export function useRichTextEditorState(
             isFocusedRef.current = false;
             setIsFocused(false);
         }
+
         pushedUpdateBindingGenerationRef.current += 1;
         revisionScopeEditorIdRef.current = editorId;
         latestRevisionScopeEditorIdRef.current = null;
@@ -478,6 +510,7 @@ export function useRichTextEditorState(
         setActiveState(EMPTY_ACTIVE_STATE);
         setPushedUpdate(null);
         setAutoGrowHeight(null);
+
         const emptyAtomState: AtomRenderState = {
             blocks: [],
             instanceBlocks: [],
@@ -485,6 +518,7 @@ export function useRichTextEditorState(
             documentVersion: null,
             hasOnlyStableAtomKeys: true,
         };
+
         atomStateRef.current = emptyAtomState;
         atomSeedEditorIdRef.current = null;
         setAtomState(emptyAtomState);
@@ -504,7 +538,7 @@ export function useRichTextEditorState(
         if (heightBehavior !== 'autoGrow') {
             setAutoGrowHeight(null);
         }
-    }, [heightBehavior]);
+    }, [ heightBehavior ]);
 
     // A changed handle initially shares the previous hook render. Do not
     // trust that render's revision: establish the new mutation base only by
@@ -513,17 +547,19 @@ export function useRichTextEditorState(
         if (latestRevisionScopeEditorIdRef.current === editorId || documentHandle.isDestroyed) {
             return;
         }
+
         latestRevisionRef.current = documentHandle.bridge.getState().documentRevision;
         latestRevisionScopeEditorIdRef.current = editorId;
-    }, [documentHandle, editorId]);
+    }, [ documentHandle, editorId ]);
 
     useEffect(
         () => () => {
             setActiveEditorToolbarFrameOwnerForEditor(toolbarFrameOwnerId, false);
             setEditorToolbarMentionState(toolbarFrameOwnerId, null);
         },
-        [editorId, toolbarFrameOwnerId]
+        [ editorId, toolbarFrameOwnerId ]
     );
+
     return {
         atomStateRef,
         setSelectedKeys,
@@ -600,8 +636,8 @@ export function useRichTextEditorState(
         toolbarItems,
         toolbarPlacement,
         showToolbar,
-        containerStyle: containerStyle as RichTextEditorProps['containerStyle'],
-        style: style as RichTextEditorProps['style'],
+        containerStyle,
+        style,
         autoGrowHeight,
         pushedUpdate,
         registeredToolbarFrames,

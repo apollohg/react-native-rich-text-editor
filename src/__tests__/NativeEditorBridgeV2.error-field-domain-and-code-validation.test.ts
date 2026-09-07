@@ -25,12 +25,12 @@ describe('NativeEditorBridge v2', () => {
         const identity = (value: unknown): unknown => value;
 
         it.each([
-            ['boundary', NativeEditorEngineBoundaryError],
-            ['document', NativeEditorDocumentError],
-            ['operation', NativeEditorOperationError],
-            ['lifecycle', NativeEditorLifecycleError],
-            ['snapshot', NativeEditorSnapshotError],
-            ['transport', NativeEditorTransportError],
+            [ 'boundary', NativeEditorEngineBoundaryError ],
+            [ 'document', NativeEditorDocumentError ],
+            [ 'operation', NativeEditorOperationError ],
+            [ 'lifecycle', NativeEditorLifecycleError ],
+            [ 'snapshot', NativeEditorSnapshotError ],
+            [ 'transport', NativeEditorTransportError ],
         ])(
             'throws the structured %s error class for recoverable errors',
             (domain, expectedClass) => {
@@ -47,8 +47,8 @@ describe('NativeEditorBridge v2', () => {
                             })
                         ),
                         identity
-                    )
-                );
+                    ));
+
                 expect(error).toBeInstanceOf(expectedClass);
                 expect(error).toBeInstanceOf(NativeEditorErrorBase);
                 expect(error).not.toBeInstanceOf(NativeEditorNonRetryableError);
@@ -80,44 +80,58 @@ describe('NativeEditorBridge v2', () => {
                     identity
                 )
             ).not.toBeNull();
+
             expect(
                 normalizeNativeEditorV2Result(
                     errRecord({ domain: 'operation', message: 'm' }),
                     identity
                 )
             ).toBeNull();
+
             expect(
                 normalizeNativeEditorV2Result(
                     errRecord({ domain: 'operation', code: 'X' }),
                     identity
                 )
             ).toBeNull();
+
             expect(
                 normalizeNativeEditorV2Result(errRecord(mockV2Error({ code: 42 })), identity)
             ).toBeNull();
+
             expect(
                 normalizeNativeEditorV2Result(errRecord(mockV2Error({ message: null })), identity)
             ).toBeNull();
         });
 
-        it.each(['0', '1', '42', HUGE_U64_DECIMAL])(
+        it.each([ '0', '1', '42', HUGE_U64_DECIMAL ])(
             'accepts canonical decimal-string requestId %s of any size',
-            (requestId) => {
+            requestId => {
                 const result = normalizeNativeEditorV2Result(
                     errRecord(mockV2Error({ requestId })),
                     identity
                 );
+
                 expect(result).not.toBeNull();
                 expect(result?.ok).toBe(false);
+
                 if (result && !result.ok) {
                     expect(result.error.requestId).toBe(requestId);
                 }
             }
         );
 
-        it.each(['', '01', '-1', '1.0', '+1', ' 1', '1e3', '1 ', '0x10'])(
+        it.each([ '',
+            '01',
+            '-1',
+            '1.0',
+            '+1',
+            ' 1',
+            '1e3',
+            '1 ',
+            '0x10' ])(
             'rejects non-canonical requestId %p',
-            (requestId) => {
+            requestId => {
                 expect(
                     normalizeNativeEditorV2Result(errRecord(mockV2Error({ requestId })), identity)
                 ).toBeNull();
@@ -130,9 +144,9 @@ describe('NativeEditorBridge v2', () => {
             ).toBeNull();
         });
 
-        it.each(['0', '7', '1024', HUGE_U64_DECIMAL])(
+        it.each([ '0', '7', '1024', HUGE_U64_DECIMAL ])(
             'accepts canonical decimal string %s for u64 error fields',
-            (fieldValue) => {
+            fieldValue => {
                 const result = normalizeNativeEditorV2Result(
                     errRecord(
                         mockV2Error({
@@ -143,25 +157,33 @@ describe('NativeEditorBridge v2', () => {
                     ),
                     identity
                 );
+
                 expect(result).not.toBeNull();
             }
         );
 
-        it.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1, '01', '+1', NaN])(
+        it.each([ -1,
+            1.5,
+            Number.MAX_SAFE_INTEGER + 1,
+            '01',
+            '+1',
+            NaN ])(
             'rejects invalid limit field value %p',
-            (fieldValue) => {
+            fieldValue => {
                 expect(
                     normalizeNativeEditorV2Result(
                         errRecord(mockV2Error({ limit: fieldValue })),
                         identity
                     )
                 ).toBeNull();
+
                 expect(
                     normalizeNativeEditorV2Result(
                         errRecord(mockV2Error({ operationIndex: fieldValue })),
                         identity
                     )
                 ).toBeNull();
+
                 expect(
                     normalizeNativeEditorV2Result(
                         errRecord(mockV2Error({ actual: fieldValue })),
@@ -176,13 +198,16 @@ describe('NativeEditorBridge v2', () => {
                 errRecord(mockV2Error({ details: { field: 'content' } })),
                 identity
             );
+
             expect(withDetails && !withDetails.ok && withDetails.error.details).toEqual({
                 field: 'content',
             });
+
             const withDetailsJson = normalizeNativeEditorV2Result(
                 errRecord(mockV2Error({ detailsJson: '{"field":"content"}' })),
                 identity
             );
+
             expect(withDetailsJson && !withDetailsJson.ok && withDetailsJson.error.details).toEqual(
                 { field: 'content' }
             );
@@ -198,6 +223,7 @@ describe('NativeEditorBridge v2', () => {
                     })
                 )
             );
+
             expect(revisionMismatch?.details).toEqual({
                 expectedRevision: '9007199254740993',
                 actualRevision: HUGE_U64_DECIMAL,
@@ -213,6 +239,7 @@ describe('NativeEditorBridge v2', () => {
                     })
                 )
             );
+
             expect(staleGeneration?.details).toEqual({
                 presentedGeneration: '9007199254740993',
                 liveGeneration: null,
@@ -282,11 +309,12 @@ describe('NativeEditorBridge v2', () => {
         });
 
         it('rejects non-object details payloads', () => {
-            for (const details of [[1, 2], 'oops', 42]) {
+            for (const details of [ [ 1, 2 ], 'oops', 42 ]) {
                 expect(
                     normalizeNativeEditorV2Result(errRecord(mockV2Error({ details })), identity)
                 ).toBeNull();
             }
+
             expect(
                 normalizeNativeEditorV2Result(
                     errRecord(mockV2Error({ detailsJson: '{invalid' })),
@@ -300,21 +328,21 @@ describe('NativeEditorBridge v2', () => {
                 unwrapNativeEditorV2Result(
                     errRecord(mockV2Error({ code: 'ENGINE_INVARIANT_FAILED' })),
                     identity
-                )
-            );
+                ));
+
             expectNonRetryable(error, 'ENGINE_INVARIANT_FAILED');
             expect(error).not.toBeInstanceOf(NativeEditorOperationError);
         });
 
-        it.each(['ENGINE_DESTROYED', 'ENGINE_DESTROYING'])(
+        it.each([ 'ENGINE_DESTROYED', 'ENGINE_DESTROYING' ])(
             'classifies lifecycle %s as non-retryable',
-            (code) => {
+            code => {
                 const error = catchThrown(() =>
                     unwrapNativeEditorV2Result(
                         errRecord(mockV2Error({ domain: 'lifecycle', code })),
                         identity
-                    )
-                );
+                    ));
+
                 expectNonRetryable(error, code);
                 expect((error as NativeEditorErrorBase).domain).toBe('lifecycle');
                 expect(error).not.toBeInstanceOf(NativeEditorLifecycleError);
@@ -331,8 +359,8 @@ describe('NativeEditorBridge v2', () => {
                         })
                     ),
                     identity
-                )
-            );
+                ));
+
             expect(error).toBeInstanceOf(NativeEditorLifecycleError);
             expect(error).not.toBeInstanceOf(NativeEditorNonRetryableError);
         });

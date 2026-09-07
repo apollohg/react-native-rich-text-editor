@@ -29,18 +29,22 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
 
         const lastCommand = (): Record<string, unknown> => {
             const calls = mockNativeModule.editorV2ApplyCommand.mock.calls;
+
             const request = JSON.parse(calls[calls.length - 1][1] as string) as Record<
                 string,
                 unknown
             >;
+
             return request.command as Record<string, unknown>;
         };
+
         const commandCount = () => mockNativeModule.editorV2ApplyCommand.mock.calls.length;
 
         act(() => ref.current!.toggleMark('bold'));
         expect(lastCommand()).toEqual({ type: 'toggleMark', markType: 'bold' });
 
         act(() => ref.current!.setLink('https://example.com'));
+
         expect(lastCommand()).toEqual({
             type: 'setMark',
             markType: 'link',
@@ -57,16 +61,19 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         expect(lastCommand()).toEqual({ type: 'toggleHeading', level: 2 });
 
         act(() => ref.current!.toggleList('bulletList'));
+
         expect(lastCommand()).toEqual({
             type: 'wrapInList',
             listType: 'bulletList',
             itemType: 'listItem',
         });
+
         // The engine now reports the list active: toggling unwraps.
         act(() => ref.current!.toggleList('bulletList'));
         expect(lastCommand()).toEqual({ type: 'unwrapFromList' });
 
         act(() => ref.current!.toggleList('bullet_list'));
+
         expect(lastCommand()).toEqual({
             type: 'wrapInList',
             listType: 'bullet_list',
@@ -83,35 +90,38 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         expect(lastCommand()).toEqual({ type: 'insertNode', nodeType: 'horizontalRule' });
 
         act(() => ref.current!.insertImage('https://example.com/a.png'));
+
         expect(lastCommand()).toEqual({
             type: 'insertContentJson',
             json: {
                 type: 'doc',
-                content: [{ type: 'image', attrs: { src: 'https://example.com/a.png' } }],
+                content: [ { type: 'image', attrs: { src: 'https://example.com/a.png' } } ],
             },
         });
 
         act(() => ref.current!.insertContentHtml('<p>hi</p>'));
         expect(lastCommand()).toEqual({ type: 'insertContentHtml', html: '<p>hi</p>' });
 
-        const fragment = { type: 'doc', content: [{ type: 'paragraph' }] };
+        const fragment = { type: 'doc', content: [ { type: 'paragraph' } ] };
         act(() => ref.current!.insertContentJson(fragment));
         expect(lastCommand()).toEqual({ type: 'insertContentJson', json: fragment });
 
         // Every command carried the rendered engine revision as its base.
-        const bases = mockNativeModule.editorV2ApplyCommand.mock.calls.map((call) =>
-            String((JSON.parse(call[1] as string) as Record<string, unknown>).baseDocumentRevision)
-        );
-        expect(bases.every((base) => base !== 'undefined' && base !== 'null')).toBe(true);
+        const bases = mockNativeModule.editorV2ApplyCommand.mock.calls.map(call =>
+            String((JSON.parse(call[1] as string) as Record<string, unknown>).baseDocumentRevision));
+
+        expect(bases.every(base => base !== 'undefined' && base !== 'null')).toBe(true);
 
         const commandsBefore = commandCount();
         act(() => ref.current!.insertText('abc'));
         expect(commandCount()).toBe(commandsBefore);
         const inputCalls = mockNativeModule.editorV2ApplyInput.mock.calls;
+
         const inputRequest = JSON.parse(inputCalls[inputCalls.length - 1][1] as string) as Record<
             string,
             unknown
         >;
+
         expect(inputRequest.text).toBe('abc');
         handle.destroy();
     });
@@ -120,6 +130,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
         render(<NativeRichTextEditor ref={ref} documentHandle={handle} />);
+
         v2Runtime.injectNextApplyCommandError(handle.editorId, {
             domain: 'operation',
             code: 'POSITION_INVALID',
@@ -130,7 +141,9 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             actual: null,
             details: null,
         });
+
         let thrown: unknown;
+
         act(() => {
             try {
                 ref.current!.toggleMark('bold');
@@ -138,6 +151,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 thrown = error;
             }
         });
+
         expect(thrown).toBeInstanceOf(NativeEditorOperationError);
         expect((thrown as NativeEditorOperationError).code).toBe('POSITION_INVALID');
         handle.destroy();
@@ -155,6 +169,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         act(() => {
             ref.current!.insertText('abc');
         });
+
         // Stale base rejected; the component refreshed and did not retry.
         expect(mockNativeModule.editorV2ApplyInput).toHaveBeenCalledTimes(1);
         expect(ref.current!.getContentJson()).toEqual(V2_DOC_B);
@@ -165,25 +180,30 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const handle = createV2RoomHandle({ withSnapshot: true });
         const { controller } = setupV2Controller(handle);
         const ref = createRef<NativeRichTextEditorRef>();
+
         const { rerender } = render(
             <NativeRichTextEditor
                 ref={ref}
                 documentHandle={handle}
                 documentRevision={controller.state.documentRevision}
                 valueJSON={V2_INITIAL_DOC}
-                valueJSONUpdateMode='replace'
+                valueJSONUpdateMode={'replace'}
             />
         );
+
         act(() => {
             controller.connect();
         });
+
         act(() => {
             v2Runtime.transportOpen(handle.editorId);
             v2Runtime.transportReceive(handle.editorId, V2_FAKE_STEP2_FRAME);
         });
+
         expect(controller.state.status).toBe('synchronized');
 
         let thrown: unknown;
+
         try {
             rerender(
                 <NativeRichTextEditor
@@ -191,55 +211,63 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                     documentHandle={handle}
                     documentRevision={controller.state.documentRevision}
                     valueJSON={V2_DOC_B}
-                    valueJSONUpdateMode='replace'
+                    valueJSONUpdateMode={'replace'}
                 />
             );
         } catch (error) {
             thrown = error;
         }
+
         expect((thrown as { code?: string })?.code).toBe('WHOLE_DOCUMENT_REPLACEMENT_CONNECTED');
         handle.destroy();
     });
 
-    it('rejects controlled valueJSON reset while the collaboration transport is connected', async () => {
+    it('rejects controlled valueJSON reset while the collaboration transport is connected', async() => {
         const handle = createV2RoomHandle({ withSnapshot: true });
         const { controller } = setupV2Controller(handle);
         const ref = createRef<NativeRichTextEditorRef>();
+
         const { rerender } = render(
             <NativeRichTextEditor
                 ref={ref}
                 documentHandle={handle}
                 documentRevision={controller.state.documentRevision}
                 valueJSON={V2_INITIAL_DOC}
-                valueJSONUpdateMode='reset'
+                valueJSONUpdateMode={'reset'}
             />
         );
+
         act(() => {
             controller.connect();
         });
+
         act(() => {
             v2Runtime.transportOpen(handle.editorId);
             v2Runtime.transportReceive(handle.editorId, V2_FAKE_STEP2_FRAME);
         });
+
         expect(controller.state.status).toBe('synchronized');
 
         let thrown: unknown;
+
         try {
-            await act(async () => {
+            await act(async() => {
                 rerender(
                     <NativeRichTextEditor
                         ref={ref}
                         documentHandle={handle}
                         documentRevision={controller.state.documentRevision}
                         valueJSON={V2_DOC_C}
-                        valueJSONUpdateMode='reset'
+                        valueJSONUpdateMode={'reset'}
                     />
                 );
+
                 await Promise.resolve();
             });
         } catch (error) {
             thrown = error;
         }
+
         expect((thrown as { code?: string })?.code).toBe('WHOLE_DOCUMENT_REPLACEMENT_CONNECTED');
         handle.destroy();
     });
@@ -248,6 +276,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
         const onSelectionChange = jest.fn();
+
         const { getByTestId, rerender } = render(
             <NativeRichTextEditor
                 ref={ref}
@@ -272,8 +301,10 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
             () => ref.current!.insertContentHtml('<p>x</p>'),
             () => ref.current!.insertContentJson({ type: 'doc', content: [] }),
         ];
+
         for (const mutation of mutations) {
             let thrown: unknown;
+
             act(() => {
                 try {
                     mutation();
@@ -281,9 +312,11 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                     thrown = error;
                 }
             });
+
             expect(thrown).toBeInstanceOf(NativeEditorOperationError);
             expect((thrown as NativeEditorOperationError).code).toBe('MUTATION_REJECTED');
         }
+
         expect(mockNativeModule.editorV2ApplyCommand).not.toHaveBeenCalled();
         expect(mockNativeModule.editorV2ApplyInput).not.toHaveBeenCalled();
         expect(mockNativeModule.editorV2ApplyLocalApi).not.toHaveBeenCalled();
@@ -295,6 +328,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 nativeEvent: { anchor: 0, head: 2, editorId: handle.editorId },
             });
         });
+
         expect(onSelectionChange).toHaveBeenCalledWith({ type: 'text', anchor: 0, head: 2 });
 
         // Controlled API content still passes under read-only (native parity).
@@ -306,6 +340,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 valueJSON={V2_DOC_B}
             />
         );
+
         expect(mockNativeModule.editorV2ApplyLocalApi).toHaveBeenCalledTimes(1);
         handle.destroy();
     });
@@ -314,6 +349,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const ref = createRef<NativeRichTextEditorRef>();
         const onContentChange = jest.fn();
+
         const { unmount, getByTestId } = render(
             <NativeRichTextEditor
                 ref={ref}
@@ -321,6 +357,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 onContentChange={onContentChange}
             />
         );
+
         const view = getByTestId('native-editor-view');
 
         // Destroying is the consumer's call. While mounted, every surface
@@ -329,21 +366,25 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         expect(mockNativeModule.editorV2Destroy).toHaveBeenCalledTimes(1);
         expect(ref.current!.getContent()).toBe('');
         let thrown: unknown;
+
         try {
             ref.current!.toggleMark('bold');
         } catch (error) {
             thrown = error;
         }
+
         expect(thrown).toBeInstanceOf(NativeEditorNonRetryableError);
         expect((thrown as NativeEditorNonRetryableError).code).toBe('ENGINE_DESTROYED');
 
         // Events arriving for the destroyed session are dropped.
         onContentChange.mockClear();
+
         act(() => {
             view.props.onEditorUpdate({
                 nativeEvent: { editorId: handle.editorId, updateJson: '{}' },
             });
         });
+
         expect(onContentChange).not.toHaveBeenCalled();
 
         // Unmount never destroys the shared handle a second time.
@@ -357,6 +398,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         const onRequestLink = jest.fn();
         const onRequestImage = jest.fn();
         const onToolbarAction = jest.fn();
+
         const { getByTestId } = render(
             <NativeRichTextEditor
                 ref={ref}
@@ -372,17 +414,23 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 nativeEvent: { key: '__native-editor-link__', editorId: handle.editorId },
             });
         });
+
         expect(onRequestLink).toHaveBeenCalledTimes(1);
+
         const linkContext = onRequestLink.mock.calls[0][0] as {
             isActive: boolean;
             setLink: (href: string) => void;
             unsetLink: () => void;
         };
+
         expect(linkContext.isActive).toBe(false);
+
         act(() => {
             linkContext.setLink('https://example.com');
         });
+
         let calls = mockNativeModule.editorV2ApplyCommand.mock.calls;
+
         expect(
             (JSON.parse(calls[calls.length - 1][1] as string) as Record<string, unknown>).command
         ).toEqual({
@@ -396,21 +444,26 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 nativeEvent: { key: '__native-editor-image__', editorId: handle.editorId },
             });
         });
+
         expect(onRequestImage).toHaveBeenCalledTimes(1);
+
         const imageContext = onRequestImage.mock.calls[0][0] as {
             insertImage: (src: string) => void;
         };
+
         act(() => {
             imageContext.insertImage('https://example.com/b.png');
         });
+
         calls = mockNativeModule.editorV2ApplyCommand.mock.calls;
+
         expect(
             (JSON.parse(calls[calls.length - 1][1] as string) as Record<string, unknown>).command
         ).toEqual({
             type: 'insertContentJson',
             json: {
                 type: 'doc',
-                content: [{ type: 'image', attrs: { src: 'https://example.com/b.png' } }],
+                content: [ { type: 'image', attrs: { src: 'https://example.com/b.png' } } ],
             },
         });
 
@@ -424,6 +477,7 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 },
             });
         });
+
         expect(onToolbarAction).toHaveBeenCalledWith('action:custom:0');
         handle.destroy();
     });

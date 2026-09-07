@@ -14,12 +14,13 @@ describe('EditorToolbar', () => {
             const { getByLabelText, toJSON } = renderToolbar({
                 theme: { height: 32 },
             });
+
             const rowStyle = StyleSheet.flatten(toJSON()?.props.style);
             const boldButtonStyle = StyleSheet.flatten(getByLabelText('Bold').props.style);
 
-            // max(H, 1) = 32 — not floored to 40.
+            // max(H, 1) = 32 : not floored to 40.
             expect(rowStyle.minHeight).toBe(32);
-            // max(1, min(40, 32 - 4)) = 28 — matches iOS and Android exactly.
+            // max(1, min(40, 32 - 4)) = 28 : matches iOS and Android exactly.
             expect(boldButtonStyle.height).toBe(28);
         });
 
@@ -27,6 +28,7 @@ describe('EditorToolbar', () => {
             const { getByLabelText, toJSON } = renderToolbar({
                 theme: { height: 60 },
             });
+
             const rowStyle = StyleSheet.flatten(toJSON()?.props.style);
             const boldButtonStyle = StyleSheet.flatten(getByLabelText('Bold').props.style);
 
@@ -112,42 +114,52 @@ describe('EditorToolbar', () => {
                 color: '#101010',
                 fontSize: 18,
             });
+
             expect(StyleSheet.flatten(getByText('I').props.style)).toMatchObject({
                 color: '#111111',
                 fontSize: 24,
             });
+
             expect(StyleSheet.flatten(getByLabelText('Global').props.style)).toMatchObject({
                 backgroundColor: '#050505',
                 borderRadius: 5,
             });
+
             expect(StyleSheet.flatten(getByLabelText('Idle').props.style)).toMatchObject({
                 backgroundColor: '#121212',
             });
+
             expect(StyleSheet.flatten(getByText('T').props.style)).toMatchObject({
                 color: '#202020',
                 fontSize: 18,
             });
+
             expect(StyleSheet.flatten(getByLabelText('Global Active').props.style)).toMatchObject({
                 backgroundColor: '#404040',
                 borderRadius: 5,
             });
+
             expect(StyleSheet.flatten(getByText('A').props.style)).toMatchObject({
                 color: '#222222',
                 fontSize: 18,
             });
+
             expect(StyleSheet.flatten(getByLabelText('Active').props.style)).toMatchObject({
                 backgroundColor: '#333333',
                 borderRadius: 12,
             });
+
             expect(StyleSheet.flatten(getByText('D').props.style)).toMatchObject({
                 color: '#444444',
                 fontSize: 18,
             });
+
             expect(StyleSheet.flatten(getByLabelText('Global Disabled').props.style)).toMatchObject(
                 {
                     backgroundColor: '#505050',
                 }
             );
+
             expect(StyleSheet.flatten(getByLabelText('Disabled').props.style)).toMatchObject({
                 backgroundColor: '#555555',
             });

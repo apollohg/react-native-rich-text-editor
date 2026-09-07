@@ -20,35 +20,55 @@ export function isFakeRecord(value: unknown): value is Record<string, unknown> {
     return value != null && typeof value === 'object' && !Array.isArray(value);
 }
 
-export const FAKE_AWARENESS_INTENT_KEYS = new Set(['state', 'focused', 'selection']);
+export const FAKE_AWARENESS_INTENT_KEYS = new Set([ 'state', 'focused', 'selection' ]);
 
-export const FAKE_AWARENESS_SELECTION_KEYS = new Set(['type', 'anchor', 'head']);
+export const FAKE_AWARENESS_SELECTION_KEYS = new Set([ 'type', 'anchor', 'head' ]);
 
 export function hasFakeReservedCursor(value: unknown): boolean {
-    const pending: unknown[] = [value];
+    const pending: unknown[] = [ value ];
     const seen = new WeakSet<object>();
+
     while (pending.length > 0) {
         const current = pending.pop();
-        if (current == null || typeof current !== 'object') continue;
-        if (seen.has(current)) continue;
+
+        if (current == null || typeof current !== 'object') {
+            continue;
+        }
+
+        if (seen.has(current)) {
+            continue;
+        }
+
         seen.add(current);
+
         for (const key of Reflect.ownKeys(current)) {
-            if (key === 'cursor') return true;
+            if (key === 'cursor') {
+                return true;
+            }
+
             const descriptor = Object.getOwnPropertyDescriptor(current, key);
-            if (descriptor == null || !('value' in descriptor)) return true;
+
+            if (descriptor == null || !('value' in descriptor)) {
+                return true;
+            }
+
             pending.push(descriptor.value);
         }
     }
+
     return false;
 }
 
 export function validFakeAwarenessSelection(
     value: unknown
 ): value is FakeNativeEditorLocalAwarenessWireSelection {
-    if (!isFakeRecord(value)) return false;
+    if (!isFakeRecord(value)) {
+        return false;
+    }
+
     if (
         Reflect.ownKeys(value).some(
-            (key) => typeof key !== 'string' || !FAKE_AWARENESS_SELECTION_KEYS.has(key)
+            key => typeof key !== 'string' || !FAKE_AWARENESS_SELECTION_KEYS.has(key)
         ) ||
         !Object.prototype.hasOwnProperty.call(value, 'type') ||
         !Object.prototype.hasOwnProperty.call(value, 'anchor') ||
@@ -57,6 +77,7 @@ export function validFakeAwarenessSelection(
     ) {
         return false;
     }
+
     return exactV2U32(value.anchor) != null && exactV2U32(value.head) != null;
 }
 
@@ -64,23 +85,28 @@ export function parseFakeAwarenessIntent(
     awarenessJson: string
 ): FakeNativeEditorLocalAwarenessWireIntent | FakeErrorRecord {
     let parsed: unknown;
+
     try {
         parsed = JSON.parse(awarenessJson);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+
         return errorRecord(
             'boundary',
             'AWARENESS_STATE_INVALID',
             `desired awareness state is not valid JSON: ${message}`
         );
     }
+
     if (!isFakeRecord(parsed)) {
         return errorRecord('boundary', 'AWARENESS_STATE_INVALID', 'invalid local awareness intent');
     }
+
     const { state, focused, selection } = parsed;
+
     if (
         Reflect.ownKeys(parsed).some(
-            (key) => typeof key !== 'string' || !FAKE_AWARENESS_INTENT_KEYS.has(key)
+            key => typeof key !== 'string' || !FAKE_AWARENESS_INTENT_KEYS.has(key)
         ) ||
         !isFakeRecord(state) ||
         typeof focused !== 'boolean' ||
@@ -88,6 +114,7 @@ export function parseFakeAwarenessIntent(
     ) {
         return errorRecord('boundary', 'AWARENESS_STATE_INVALID', 'invalid local awareness intent');
     }
+
     if (hasFakeReservedCursor(parsed)) {
         return errorRecord(
             'boundary',
@@ -95,7 +122,11 @@ export function parseFakeAwarenessIntent(
             'reserved cursor key is not allowed in local awareness state'
         );
     }
-    if (selection === undefined) return { state, focused };
+
+    if (selection === undefined) {
+        return { state, focused };
+    }
+
     return {
         state,
         focused,
@@ -112,17 +143,23 @@ export function parseFakeTransportConfig(
     configJson: string
 ): FakeTransportWireConfig | FakeErrorRecord | null {
     let parsed: unknown;
+
     try {
         parsed = JSON.parse(configJson);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+
         return errorRecord(
             'boundary',
             'CONFIG_INVALID',
             `collaboration transport config is not valid JSON: ${message}`
         );
     }
-    if (parsed === null) return null;
+
+    if (parsed === null) {
+        return null;
+    }
+
     if (
         !isFakeRecord(parsed) ||
         typeof parsed.url !== 'string' ||
@@ -135,14 +172,17 @@ export function parseFakeTransportConfig(
             'invalid collaboration transport configuration'
         );
     }
+
     const descriptor = parsed.protocolAdapter;
+
     if (descriptor === undefined) {
         return { url: parsed.url, connect: parsed.connect };
     }
+
     if (
         !isFakeRecord(descriptor) ||
         !Array.isArray(descriptor.protocols) ||
-        descriptor.protocols.some((protocol) => typeof protocol !== 'string')
+        descriptor.protocols.some(protocol => typeof protocol !== 'string')
     ) {
         return errorRecord(
             'boundary',
@@ -150,6 +190,7 @@ export function parseFakeTransportConfig(
             'invalid collaboration protocol adapter descriptor'
         );
     }
+
     return {
         url: parsed.url,
         connect: parsed.connect,
@@ -167,15 +208,21 @@ export function parseFakeTransportConfig(
 
 /**
  * Resolve the cursor one intent publishes. An omitted selection retains the
- * cursor the session already holds — the engine owns it as a sticky index,
+ * cursor the session already holds : the engine owns it as a sticky index,
  * so it needs no restated document position. An explicit null clears it.
  */
 export function fakeCursorForIntent(
     selection: FakeNativeEditorLocalAwarenessWireSelection | null | undefined,
     retained: { anchor: number; head: number } | null
 ): { anchor: number; head: number } | null {
-    if (selection === undefined) return retained;
-    if (selection === null) return null;
+    if (selection === undefined) {
+        return retained;
+    }
+
+    if (selection === null) {
+        return null;
+    }
+
     return { anchor: selection.anchor, head: selection.head };
 }
 
@@ -190,12 +237,14 @@ export function projectFakeLocalAwareness(
         state: intent.state,
         focused: intent.focused,
     };
+
     if (cursor != null) {
         state.cursor = {
             anchor: { type: 'fakeEngineSticky', association: 'after' },
             head: { type: 'fakeEngineSticky', association: 'after' },
         };
     }
+
     return {
         state,
         cursor,
@@ -204,17 +253,24 @@ export function projectFakeLocalAwareness(
 
 export function fakeScalarText(doc: DocumentJSON): string[] {
     const blocks = Array.isArray(doc.content) ? doc.content : [];
+
     return Array.from(
         blocks
-            .map((rawBlock) => {
+            .map(rawBlock => {
                 if (rawBlock == null || typeof rawBlock !== 'object' || Array.isArray(rawBlock)) {
                     return '';
                 }
+
                 const block = rawBlock as FakeDocumentNode;
-                if (isFakeBlockVoidNode(block)) return fakeAtomLabel(block);
+
+                if (isFakeBlockVoidNode(block)) {
+                    return fakeAtomLabel(block);
+                }
+
                 const inline = Array.isArray(block.content) ? block.content : [];
+
                 return inline
-                    .map((rawInline) => {
+                    .map(rawInline => {
                         if (
                             rawInline == null ||
                             typeof rawInline !== 'object' ||
@@ -222,8 +278,13 @@ export function fakeScalarText(doc: DocumentJSON): string[] {
                         ) {
                             return '';
                         }
+
                         const node = rawInline as FakeDocumentNode;
-                        if (typeof node.text === 'string') return node.text;
+
+                        if (typeof node.text === 'string') {
+                            return node.text;
+                        }
+
                         return isFakeVoidNode(node) ? fakeAtomLabel(node) : '';
                     })
                     .join('');
@@ -242,6 +303,7 @@ export function moveFakeStickyPoint(
     const beforeText = fakeScalarText(before);
     const afterText = fakeScalarText(after);
     let prefix = 0;
+
     while (
         prefix < beforeText.length &&
         prefix < afterText.length &&
@@ -249,7 +311,9 @@ export function moveFakeStickyPoint(
     ) {
         prefix += 1;
     }
+
     let suffix = 0;
+
     while (
         suffix < beforeText.length - prefix &&
         suffix < afterText.length - prefix &&
@@ -257,15 +321,18 @@ export function moveFakeStickyPoint(
     ) {
         suffix += 1;
     }
+
     const oldChangedEnd = beforeText.length - suffix;
     const insertedLength = afterText.length - prefix - suffix;
     const scalar = beforeMap.documentToScalar(position);
+
     const movedScalar =
         scalar < prefix
             ? scalar
             : scalar <= oldChangedEnd
-              ? prefix + insertedLength
-              : scalar + afterText.length - beforeText.length;
+                ? prefix + insertedLength
+                : scalar + afterText.length - beforeText.length;
+
     return afterMap.scalarToDocument(movedScalar);
 }
 
@@ -280,17 +347,17 @@ export function moveFakeCursorAcrossEdit(
             head: moveFakeStickyPoint(session.localAwarenessCursor.head, before, after),
         };
     }
-    session.remotePeers = session.remotePeers.map((peer) =>
+
+    session.remotePeers = session.remotePeers.map(peer =>
         peer.cursor == null
             ? peer
             : {
-                  ...peer,
-                  cursor: {
-                      anchor: moveFakeStickyPoint(peer.cursor.anchor, before, after),
-                      head: moveFakeStickyPoint(peer.cursor.head, before, after),
-                  },
-              }
-    );
+                ...peer,
+                cursor: {
+                    anchor: moveFakeStickyPoint(peer.cursor.anchor, before, after),
+                    head: moveFakeStickyPoint(peer.cursor.head, before, after),
+                },
+            });
 }
 
 export function installFakeDocument(session: FakeSession, nextDoc: DocumentJSON): void {

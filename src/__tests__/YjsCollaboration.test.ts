@@ -22,6 +22,7 @@ import { type NativeEditorDocumentHandle } from '../NativeEditorBridge';
 describe('YjsCollaboration (native-transport controller)', () => {
     it('rejects recovered constructors and structural handle forgeries while accepting real handles', () => {
         const handle = createRoomHandle({ withSnapshot: true });
+
         const forgeries: unknown[] = [
             null,
             undefined,
@@ -37,8 +38,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
                     documentId: 'doc-1',
                     handle: forgery as NativeEditorDocumentHandle,
                     transport: { url: TRANSPORT_URL, connect: false },
-                })
-            ).toThrow();
+                })).toThrow();
         }
 
         const controller = createYjsCollaborationController({
@@ -46,6 +46,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
             handle,
             transport: { url: TRANSPORT_URL, connect: false },
         });
+
         expect(controller.documentHandle).toBe(handle);
         controller.destroy();
     });
@@ -65,27 +66,29 @@ describe('YjsCollaboration (native-transport controller)', () => {
 
     it('forwards the static protocol adapter descriptor without its callbacks', () => {
         const handle = createRoomHandle({ withSnapshot: true });
+
         setupController({
             handle,
             transport: {
                 url: TRANSPORT_URL,
                 connect: true,
                 protocolAdapter: {
-                    protocols: ['example-auth-v1'],
+                    protocols: [ 'example-auth-v1' ],
                     timeoutMillis: 5_000,
-                    terminalCloseCodes: [4403],
-                    onOpen: async () => ({ action: 'continue' as const }),
-                    onMessage: async () => ({ action: 'ready' as const }),
+                    terminalCloseCodes: [ 4403 ],
+                    onOpen: async() => ({ action: 'continue' as const }),
+                    onMessage: async() => ({ action: 'ready' as const }),
                 },
             },
         });
+
         expect(configuredTransport()).toEqual({
             url: TRANSPORT_URL,
             connect: true,
             protocolAdapter: {
-                protocols: ['example-auth-v1'],
+                protocols: [ 'example-auth-v1' ],
                 timeoutMillis: 5_000,
-                terminalCloseCodes: [4403],
+                terminalCloseCodes: [ 4403 ],
             },
         });
     });
@@ -109,6 +112,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
             handle: createRoomHandle({ withSnapshot: true }),
             transport: null,
         });
+
         expect(configuredTransport()).toBeNull();
 
         setup.controller.connect();
@@ -119,13 +123,14 @@ describe('YjsCollaboration (native-transport controller)', () => {
 
     it('surfaces a refused transport configuration without leaking the listener', () => {
         const handle = createLocalHandle(SERVER_DOC);
+
         expect(() =>
             createYjsCollaborationController({
                 documentId: 'doc-1',
                 handle,
                 transport: { url: TRANSPORT_URL, connect: true },
-            })
-        ).toThrow();
+            })).toThrow();
+
         // The failed constructor removed the subscription it had added.
         expect(mockNativeModule.addListener.mock.results[0].value.remove).toBeDefined();
     });
@@ -163,9 +168,11 @@ describe('YjsCollaboration (native-transport controller)', () => {
         // A state event that does not change the revision reuses the
         // rendered document instead of crossing the boundary again.
         runtime.transportClose(setup.handle.editorId);
+
         expect(runtime.module.editorV2GetDocumentJson).toHaveBeenCalledTimes(
             documentReadsAfterSync
         );
+
         expect(setup.controller.state.documentJson).toEqual(SNAPSHOT_DOC);
 
         setup.controller.connect();
@@ -185,6 +192,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
         const listener = mockNativeModule.addListener.mock.calls[0][1] as (event: unknown) => void;
         const lastEvent = { ...(runtime.session(setup.handle.editorId) as unknown as object) };
         void lastEvent;
+
         listener({
             editorId: setup.handle.editorId,
             eventSequence: '1',
@@ -202,6 +210,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
                 expiredPeerCount: 0,
             },
         });
+
         expect(setup.states).toHaveLength(statesAfterSync);
         expect(latestStatus(setup)).toBe('synchronized');
     });
@@ -209,6 +218,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
     it('routes native transport errors to onError and the rendered state', () => {
         const setup = setupController({ handle: createRoomHandle({ withSnapshot: true }) });
         setup.controller.connect();
+
         runtime.emitTransportError(setup.handle.editorId, {
             domain: 'transport',
             code: 'TRANSPORT_SOCKET_FAILED',
@@ -228,6 +238,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
     it('clears a retained error once a later state event succeeds', () => {
         const setup = setupController({ handle: createRoomHandle({ withSnapshot: true }) });
         setup.controller.connect();
+
         runtime.emitTransportError(setup.handle.editorId, {
             domain: 'transport',
             code: 'TRANSPORT_SOCKET_FAILED',
@@ -238,6 +249,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
             actual: null,
             details: null,
         });
+
         expect(setup.controller.state.lastError).toBeDefined();
 
         synchronize(setup.handle);
@@ -260,6 +272,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
             actual: null,
             details: null,
         });
+
         expect(setup.errors).toHaveLength(0);
         expect(setup.states).toHaveLength(statesBefore);
         expect(latestStatus(setup)).toBe('connecting');

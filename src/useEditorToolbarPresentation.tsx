@@ -1,7 +1,7 @@
 import { Modal, Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
-import { useEditorToolbarState } from './useEditorToolbarState';
-import { useEditorToolbarItems } from './useEditorToolbarItems';
-import { useEditorToolbarInteractions } from './useEditorToolbarInteractions';
+import { type useEditorToolbarState } from './useEditorToolbarState';
+import { type useEditorToolbarItems } from './useEditorToolbarItems';
+import { type useEditorToolbarInteractions } from './useEditorToolbarInteractions';
 import {
     BUTTON_VISIBLE,
     TOOLBAR_PADDING_V,
@@ -106,50 +106,57 @@ export function useEditorToolbarPresentation(
         menuState == null
             ? 0
             : Math.max(
-                  MENU_MARGIN,
-                  Math.min(
-                      menuState.y + menuState.height + 8,
-                      windowHeight - menuHeight - MENU_MARGIN
-                  )
-              );
+                MENU_MARGIN,
+                Math.min(
+                    menuState.y + menuState.height + 8,
+                    windowHeight - menuHeight - MENU_MARGIN
+                )
+            );
 
     const menuLeft =
         menuState == null
             ? 0
             : Math.max(
-                  MENU_MARGIN,
-                  Math.min(
-                      menuState.x + menuState.width - MENU_WIDTH,
-                      windowWidth - MENU_WIDTH - MENU_MARGIN
-                  )
-              );
+                MENU_MARGIN,
+                Math.min(
+                    menuState.x + menuState.width - MENU_WIDTH,
+                    windowWidth - MENU_WIDTH - MENU_MARGIN
+                )
+            );
 
     const resolveButtonVisuals = (
         button: Pick<ToolbarButton, 'buttonStyle' | 'isActive' | 'isDisabled'>
     ) => {
         const activeColor =
             button.buttonStyle?.activeColor ?? theme?.buttonActiveColor ?? ACTIVE_COLOR;
+
         const defaultColor = button.buttonStyle?.color ?? theme?.buttonColor ?? DEFAULT_COLOR;
+
         const disabledColor =
             button.buttonStyle?.disabledColor ?? theme?.buttonDisabledColor ?? DISABLED_COLOR;
+
         const backgroundColor =
             button.buttonStyle?.backgroundColor ?? theme?.buttonBackgroundColor ?? 'transparent';
+
         const activeBackgroundColor =
             button.buttonStyle?.activeBackgroundColor ??
             theme?.buttonActiveBackgroundColor ??
             ACTIVE_BG;
+
         const disabledBackgroundColor =
             button.buttonStyle?.disabledBackgroundColor ??
             theme?.buttonDisabledBackgroundColor ??
             (button.isActive ? activeBackgroundColor : backgroundColor);
+
         const requestedIconSize = button.buttonStyle?.iconSize ?? theme?.buttonIconSize;
+
         return {
             color: button.isDisabled ? disabledColor : button.isActive ? activeColor : defaultColor,
             backgroundColor: button.isDisabled
                 ? disabledBackgroundColor
                 : button.isActive
-                  ? activeBackgroundColor
-                  : backgroundColor,
+                    ? activeBackgroundColor
+                    : backgroundColor,
             iconSize:
                 requestedIconSize != null &&
                 Number.isFinite(requestedIconSize) &&
@@ -184,16 +191,17 @@ export function useEditorToolbarPresentation(
                 ref={
                     anchorGroupKey == null
                         ? undefined
-                        : (node) => {
-                              if (node) {
-                                  groupButtonRefs.current.set(anchorGroupKey, node);
-                              } else {
-                                  groupButtonRefs.current.delete(anchorGroupKey);
-                              }
-                          }
+                        : node => {
+                            if (node) {
+                                groupButtonRefs.current.set(anchorGroupKey, node);
+                            } else {
+                                groupButtonRefs.current.delete(anchorGroupKey);
+                            }
+                        }
                 }
                 collapsable={false}
-                style={styles.buttonAnchor}>
+                style={styles.buttonAnchor}
+            >
                 <TouchableOpacity
                     onPressIn={handleToolbarPressIn}
                     onPressOut={handleToolbarPressOut}
@@ -208,13 +216,14 @@ export function useEditorToolbarPresentation(
                         },
                     ]}
                     activeOpacity={0.5}
-                    accessibilityRole='button'
+                    accessibilityRole={'button'}
                     accessibilityLabel={button.label}
                     accessibilityState={{
                         selected: button.isActive,
                         disabled: button.isDisabled,
                         expanded: options?.showsDisclosure ? options.expanded : undefined,
-                    }}>
+                    }}
+                >
                     <View>
                         <ToolbarIcon
                             icon={button.icon}
@@ -224,7 +233,7 @@ export function useEditorToolbarPresentation(
                     </View>
                 </TouchableOpacity>
                 {options?.showsDisclosure ? (
-                    <Text style={[styles.groupDisclosure, { color: visuals.color }]}>
+                    <Text style={[ styles.groupDisclosure, { color: visuals.color } ]}>
                         {'\u25BE'}
                     </Text>
                 ) : null}
@@ -244,10 +253,11 @@ export function useEditorToolbarPresentation(
     );
 
     const renderToolbarItems = (items: ToolbarRenderedItem[]) =>
-        items.map((item) => {
+        items.map(item => {
             if (item.type === 'separator') {
                 return renderSeparator(item.key);
             }
+
             if (item.type === 'group') {
                 return renderButton(
                     {
@@ -266,13 +276,14 @@ export function useEditorToolbarPresentation(
                     }
                 );
             }
+
             return renderButton(item.button, () => handleButtonPress(item.button));
         });
 
     return (
         <View
             ref={rootRef}
-            testID='editor-toolbar-root'
+            testID={'editor-toolbar-root'}
             collapsable={false}
             onLayout={handleToolbarLayout}
             style={[
@@ -296,16 +307,17 @@ export function useEditorToolbarPresentation(
                 {
                     borderRadius: theme?.borderRadius ?? TOOLBAR_RADIUS,
                 },
-            ]}>
+            ]}
+        >
             <View style={styles.toolbarRow}>
                 {startItems.length > 0 ? (
-                    <View style={[styles.fixedSection, styles.startFixedSection]}>
+                    <View style={[ styles.fixedSection, styles.startFixedSection ]}>
                         {renderToolbarItems(startItems)}
                     </View>
                 ) : null}
                 {shouldRenderMentionSuggestions && mentionState != null ? (
                     <ScrollView
-                        testID='editor-toolbar-mention-suggestions'
+                        testID={'editor-toolbar-mention-suggestions'}
                         horizontal
                         showsHorizontalScrollIndicator={false}
                         style={[
@@ -322,30 +334,33 @@ export function useEditorToolbarPresentation(
                             },
                             mentionState.theme?.suggestions?.shadowColor != null
                                 ? {
-                                      shadowColor: mentionState.theme.suggestions.shadowColor,
-                                      shadowOpacity: 0.14,
-                                      shadowRadius: 12,
-                                      shadowOffset: { width: 0, height: 4 },
-                                      elevation: 8,
-                                  }
+                                    shadowColor: mentionState.theme.suggestions.shadowColor,
+                                    shadowOpacity: 0.14,
+                                    shadowRadius: 12,
+                                    shadowOffset: { width: 0, height: 4 },
+                                    elevation: 8,
+                                }
                                 : null,
                         ]}
                         contentContainerStyle={styles.mentionSuggestionsContent}
-                        keyboardShouldPersistTaps='always'>
-                        {mentionState.suggestions.map((suggestion) => {
+                        keyboardShouldPersistTaps={'always'}
+                    >
+                        {mentionState.suggestions.map(suggestion => {
                             const label = resolveMentionSuggestionDisplayLabel(
                                 suggestion,
                                 mentionState.trigger
                             );
+
                             const optionTheme = (
                                 mentionState.suggestionThemes?.[suggestion.key] ??
                                 mentionState.theme
                             )?.suggestions?.option;
+
                             return (
                                 <Pressable
                                     key={suggestion.key}
                                     testID={`editor-toolbar-mention-suggestion-${suggestion.key}`}
-                                    accessibilityRole='button'
+                                    accessibilityRole={'button'}
                                     accessibilityLabel={label}
                                     onPressIn={handleToolbarPressIn}
                                     onPressOut={handleToolbarPressOut}
@@ -361,7 +376,8 @@ export function useEditorToolbarPresentation(
                                             borderWidth: optionTheme?.borderWidth ?? 0,
                                             borderRadius: optionTheme?.borderRadius ?? 12,
                                         },
-                                    ]}>
+                                    ]}
+                                >
                                     {({ pressed }) => (
                                         <>
                                             <Text
@@ -377,7 +393,8 @@ export function useEditorToolbarPresentation(
                                                               '#000000')
                                                             : (optionTheme?.textColor ?? '#000000'),
                                                     },
-                                                ]}>
+                                                ]}
+                                            >
                                                 {label}
                                             </Text>
                                             {suggestion.subtitle ? (
@@ -390,7 +407,8 @@ export function useEditorToolbarPresentation(
                                                                 optionTheme?.secondaryTextColor ??
                                                                 '#8E8E93',
                                                         },
-                                                    ]}>
+                                                    ]}
+                                                >
                                                     {suggestion.subtitle}
                                                 </Text>
                                             ) : null}
@@ -406,13 +424,14 @@ export function useEditorToolbarPresentation(
                         showsHorizontalScrollIndicator={false}
                         style={styles.scrollSection}
                         contentContainerStyle={styles.scrollContent}
-                        keyboardShouldPersistTaps='always'
-                        onScrollBeginDrag={() => setMenuState(null)}>
+                        keyboardShouldPersistTaps={'always'}
+                        onScrollBeginDrag={() => setMenuState(null)}
+                    >
                         {renderToolbarItems(scrollItems)}
                     </ScrollView>
                 )}
                 {endItems.length > 0 ? (
-                    <View style={[styles.fixedSection, styles.endFixedSection]}>
+                    <View style={[ styles.fixedSection, styles.endFixedSection ]}>
                         {renderToolbarItems(endItems)}
                     </View>
                 ) : null}
@@ -421,12 +440,13 @@ export function useEditorToolbarPresentation(
                 <Modal
                     transparent
                     visible
-                    animationType='fade'
-                    onRequestClose={() => setMenuState(null)}>
+                    animationType={'fade'}
+                    onRequestClose={() => setMenuState(null)}
+                >
                     <Pressable style={styles.menuBackdrop} onPress={() => setMenuState(null)}>
                         <View
                             ref={menuCardRef}
-                            testID='editor-toolbar-menu-card'
+                            testID={'editor-toolbar-menu-card'}
                             collapsable={false}
                             onLayout={handleMenuLayout}
                             style={[
@@ -437,9 +457,11 @@ export function useEditorToolbarPresentation(
                                     backgroundColor: theme?.backgroundColor ?? TOOLBAR_BG,
                                     borderColor: theme?.borderColor ?? MENU_BORDER,
                                 },
-                            ]}>
-                            {menuGroup.children.map((button) => {
+                            ]}
+                        >
+                            {menuGroup.children.map(button => {
                                 const visuals = resolveButtonVisuals(button);
+
                                 return (
                                     <Pressable
                                         key={button.key}
@@ -454,21 +476,22 @@ export function useEditorToolbarPresentation(
                                             },
                                             pressed &&
                                                 !button.isDisabled && {
-                                                    opacity: 0.75,
-                                                },
+                                                opacity: 0.75,
+                                            },
                                         ]}
-                                        accessibilityRole='button'
+                                        accessibilityRole={'button'}
                                         accessibilityLabel={button.label}
                                         accessibilityState={{
                                             selected: button.isActive,
                                             disabled: button.isDisabled,
-                                        }}>
+                                        }}
+                                    >
                                         <ToolbarIcon
                                             icon={button.icon}
                                             color={visuals.color}
                                             size={visuals.iconSize}
                                         />
-                                        <Text style={[styles.menuLabel, { color: visuals.color }]}>
+                                        <Text style={[ styles.menuLabel, { color: visuals.color } ]}>
                                             {button.label}
                                         </Text>
                                     </Pressable>

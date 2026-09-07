@@ -23,17 +23,19 @@ import { useYjsCollaboration } from '../YjsCollaboration';
 describe('YjsCollaboration (native-transport controller)', () => {
     it('reports peers from the native projection and derives remote selections', () => {
         const handle = createRoomHandle({ withSnapshot: true });
+
         const { result } = renderHook(() =>
             useYjsCollaboration({
                 documentId: 'doc-1',
                 handle,
                 transport: { url: TRANSPORT_URL, connect: true },
                 localAwareness: ALICE,
-            })
-        );
+            }));
+
         act(() => {
             synchronize(handle);
         });
+
         act(() => {
             runtime.pushRemotePeers(handle.editorId, [
                 remotePeer({
@@ -59,6 +61,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
                     },
                 }),
             ]);
+
             runtime.transportReceive(handle.editorId, V2_FAKE_AWARENESS_FRAME);
         });
 
@@ -79,9 +82,11 @@ describe('YjsCollaboration (native-transport controller)', () => {
         const setup = setupController({ handle: createRoomHandle({ withSnapshot: true }) });
         setup.controller.connect();
         synchronize(setup.handle);
+
         runtime.pushRemotePeers(setup.handle.editorId, [
             remotePeer({ state: { state: {}, focused: false } }),
         ]);
+
         runtime.transportReceive(setup.handle.editorId, V2_FAKE_AWARENESS_FRAME);
 
         expect(setup.peersLog.at(-1)).toHaveLength(1);
@@ -93,6 +98,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
             handle: createRoomHandle({ withSnapshot: true }),
             localAwareness: ALICE,
         });
+
         expect(awarenessPayload()).toEqual(localAwarenessIntent());
         // Clocks, tombstones, and renewal deadlines are Rust-owned: the
         // published intent carries none of them.
@@ -118,6 +124,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
         });
 
         expect(setup.errors).toEqual([]);
+
         expect(awarenessPayload()).toEqual(
             localAwarenessIntent({ user: { ...ALICE, extra: { team: 'editor' } } })
         );
@@ -128,9 +135,11 @@ describe('YjsCollaboration (native-transport controller)', () => {
             handle: createRoomHandle({ withSnapshot: true }),
             localAwareness: ALICE,
         });
+
         setup.controller.connect();
         synchronize(setup.handle);
         setup.controller.handleSelectionChange({ type: 'text', anchor: 2, head: 5 });
+
         expect(awarenessPayload()).toMatchObject({
             selection: { type: 'text', anchor: 2, head: 5 },
         });
@@ -150,6 +159,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
             handle: createRoomHandle({ withSnapshot: true }),
             localAwareness: ALICE,
         });
+
         setup.controller.connect();
         synchronize(setup.handle);
         // A caret near the end of "snapshot" is valid when it is observed.
@@ -171,16 +181,18 @@ describe('YjsCollaboration (native-transport controller)', () => {
             handle: createRoomHandle({ withSnapshot: true }),
             localAwareness: ALICE,
         });
+
         setup.controller.connect();
         synchronize(setup.handle);
 
         // An explicitly stated position outside the document is still a
-        // caller contract violation — reported, never silently accepted.
+        // caller contract violation : reported, never silently accepted.
         expect(() =>
-            setup.controller.handleSelectionChange({ type: 'text', anchor: 999, head: 999 })
-        ).not.toThrow();
+            setup.controller.handleSelectionChange({ type: 'text', anchor: 999, head: 999 })).not.toThrow();
+
         expect(setup.errors).toHaveLength(1);
         expect(setup.errors[0].message).toContain('outside the current document');
+
         expect(runtime.session(setup.handle.editorId).desiredAwareness).toEqual(
             localAwarenessIntent()
         );
@@ -191,7 +203,9 @@ describe('YjsCollaboration (native-transport controller)', () => {
             handle: createRoomHandle({ withSnapshot: true }),
             localAwareness: ALICE,
         });
+
         setup.controller.handleSelectionChange({ type: 'text', anchor: 2, head: 5 });
+
         expect(awarenessPayload()).toEqual({
             state: { user: ALICE },
             focused: false,
@@ -202,6 +216,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
         expect(awarenessPayload()).toMatchObject({ focused: true });
 
         setup.controller.updateLocalAwareness({ user: { ...ALICE, name: 'Alice II' } });
+
         expect(awarenessPayload()).toMatchObject({
             state: { user: { ...ALICE, name: 'Alice II' } },
         });
@@ -225,11 +240,13 @@ describe('YjsCollaboration (native-transport controller)', () => {
             handle: createRoomHandle({ withSnapshot: true }),
             localAwareness: ALICE,
         });
+
         setup.controller.handleSelectionChange({ type: 'text', anchor: 2, head: 5 });
 
         // A non-text selection is an explicit "no cursor", not a silent
         // retention of the last text position.
         setup.controller.handleSelectionChange({ type: 'node', pos: 3 });
+
         expect(awarenessPayload()).toEqual({
             state: { user: ALICE },
             focused: false,
@@ -238,6 +255,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
 
         setup.controller.handleSelectionChange({ type: 'text', anchor: 3, head: 4 });
         setup.controller.handleSelectionChange({ type: 'all' });
+
         expect(awarenessPayload()).toEqual({
             state: { user: ALICE },
             focused: false,
@@ -250,6 +268,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
             handle: createRoomHandle({ withSnapshot: true }),
             localAwareness: ALICE,
         });
+
         expect(runtime.module.editorV2CollaborationSetAwareness).toHaveBeenCalledTimes(1);
 
         setup.controller.updateLocalAwareness({ user: { ...ALICE } });
@@ -270,10 +289,12 @@ describe('YjsCollaboration (native-transport controller)', () => {
 
         runtime.module.editorV2CollaborationSetAwareness.mockClear();
         setupController({ handle });
+
         expect(runtime.module.editorV2CollaborationSetAwareness).toHaveBeenLastCalledWith(
             handle.editorId,
             'null'
         );
+
         expect(runtime.session(handle.editorId).desiredAwareness).toBeNull();
     });
 
@@ -281,6 +302,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
         const handle = createRoomHandle({ withSnapshot: true });
         const setup = setupController({ handle, localAwareness: ALICE });
         setup.controller.applyLocalAwarenessOption(undefined);
+
         const publishesAfterWithdrawal =
             runtime.module.editorV2CollaborationSetAwareness.mock.calls.length;
 
@@ -292,10 +314,12 @@ describe('YjsCollaboration (native-transport controller)', () => {
         expect(runtime.module.editorV2CollaborationSetAwareness).toHaveBeenCalledTimes(
             publishesAfterWithdrawal
         );
+
         expect(runtime.session(handle.editorId).desiredAwareness).toBeNull();
 
         // An explicit user restores it.
         setup.controller.updateLocalAwareness({ user: ALICE });
+
         expect(runtime.session(handle.editorId).desiredAwareness).toEqual(
             localAwarenessIntent({ user: ALICE }, false)
         );
@@ -309,6 +333,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
             }),
             localAwareness: ALICE,
         });
+
         const acceptedIntent = runtime.session(setup.handle.editorId).desiredAwareness;
 
         // Presence is ambient UI state: a refusal is reported, never thrown
@@ -316,8 +341,8 @@ describe('YjsCollaboration (native-transport controller)', () => {
         expect(() =>
             setup.controller.updateLocalAwareness({
                 user: { ...ALICE, name: 'A'.repeat(256) },
-            })
-        ).not.toThrow();
+            })).not.toThrow();
+
         expect(setup.errors).toHaveLength(1);
         expect(setup.controller.state.lastError).toBe(setup.errors[0]);
         expect(runtime.session(setup.handle.editorId).desiredAwareness).toEqual(acceptedIntent);
@@ -325,6 +350,7 @@ describe('YjsCollaboration (native-transport controller)', () => {
         // The rejected candidate was discarded, so a later valid change is
         // still published rather than being deduped against it.
         setup.controller.updateLocalAwareness({ user: { ...ALICE, name: 'Alice II' } });
+
         expect(awarenessPayload()).toMatchObject({
             state: { user: { ...ALICE, name: 'Alice II' } },
         });

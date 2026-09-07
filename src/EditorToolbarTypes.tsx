@@ -64,9 +64,9 @@ export interface EditorToolbarMaterialIcon {
 /**
  * A toolbar button's icon:
  *
- * - `default` — one of the package's built-in icons.
- * - `glyph` — arbitrary text or an emoji, drawn as-is.
- * - `platform` — per-platform native icons, with `fallbackText` when the
+ * - `default` : one of the package's built-in icons.
+ * - `glyph` : arbitrary text or an emoji, drawn as-is.
+ * - `platform` : per-platform native icons, with `fallbackText` when the
  *   platform cannot resolve the named icon.
  */
 export type EditorToolbarIcon =
@@ -102,14 +102,14 @@ export interface EditorToolbarButtonStyle {
  * name), an `icon`, an optional `key` (defaults to something derived from the
  * variant), and an optional `placement`.
  *
- * - `mark` — toggles the named mark; active and enabled state come from the engine.
- * - `link` / `image` — calls the editor's `onRequestLink` / `onRequestImage`.
- * - `heading` — toggles the given heading level.
- * - `blockquote` — toggles blockquote wrapping.
- * - `list` — toggles the given list type.
- * - `command` — runs an {@link EditorToolbarCommand}.
- * - `node` — inserts the named node type, e.g. `'horizontalRule'`.
- * - `action` — host-defined; calls `onToolbarAction` with its `key`, and the
+ * - `mark` : toggles the named mark; active and enabled state come from the engine.
+ * - `link` / `image` : calls the editor's `onRequestLink` / `onRequestImage`.
+ * - `heading` : toggles the given heading level.
+ * - `blockquote` : toggles blockquote wrapping.
+ * - `list` : toggles the given list type.
+ * - `command` : runs an {@link EditorToolbarCommand}.
+ * - `node` : inserts the named node type, e.g. `'horizontalRule'`.
+ * - `action` : host-defined; calls `onToolbarAction` with its `key`, and the
  *   host supplies `isActive`/`isDisabled` since the engine knows nothing about it.
  */
 export type EditorToolbarLeafItem = (
@@ -191,7 +191,7 @@ export type EditorToolbarLeafItem = (
 export type EditorToolbarGroupChildItem = EditorToolbarLeafItem;
 
 /**
- * Several buttons collapsed behind one — heading levels, say. The group
+ * Several buttons collapsed behind one : heading levels, say. The group
  * reports active when any child is active, and disabled when every child is.
  */
 export interface EditorToolbarGroupItem {
