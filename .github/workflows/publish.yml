@@ -5,11 +5,31 @@ on:
         types:
             - published
     workflow_dispatch:
+    push:
+        branches: [main, v1]
+        paths:
+            - 'packages/**'
+            - 'src/EditorAddon.ts'
+            - 'ios/NativeCodeHighlighting.swift'
+            - 'android/src/main/java/com/apollohg/editor/CodeHighlighting.kt'
+            - '.github/workflows/publish.yml'
+            - '.github/actions/**'
+            - 'scripts/release-packages.mjs'
+    pull_request:
+        paths:
+            - 'packages/**'
+            - 'src/EditorAddon.ts'
+            - 'ios/NativeCodeHighlighting.swift'
+            - 'android/src/main/java/com/apollohg/editor/CodeHighlighting.kt'
+            - '.github/workflows/publish.yml'
+            - '.github/actions/**'
+            - 'scripts/release-packages.mjs'
 
 permissions:
     contents: read
 
 env:
+    GRADLE_OPTS: -Dorg.gradle.caching=true
     RELEASE_ARTIFACT_NAME: release-package-${{ github.run_id }}
 
 jobs:
@@ -67,6 +87,8 @@ jobs:
                   workspaces: rust/editor-core
                   shared-key: editor-core
                   cache-on-failure: true
+                  cache-workspace-crates: true
+                  key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
 
             - name: Install cargo-ndk
               if: steps.native-build-cache.outputs.cache-hit != 'true'
@@ -135,6 +157,7 @@ jobs:
                   path: |
                       release-artifact/*.tgz
                       scripts/resolve-npm-dist-tag.mjs
+                      scripts/release-packages.mjs
                       dist
                       rust/bindings
                       rust/ios
@@ -142,6 +165,133 @@ jobs:
                       ios/Generated_editor_core.swift
                       ios/editor_coreFFI
                       ios/EditorCore.xcframework
+
+    build-code-highlighting:
+        runs-on: macos-latest
+        timeout-minutes: 45
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v5
+
+            - name: Identify native toolchain
+              id: native-toolchain
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  xcode_hash="$(xcodebuild -version | shasum -a 256 | cut -d ' ' -f 1)"
+                  echo "xcode=$xcode_hash" >> "$GITHUB_OUTPUT"
+
+            - name: Restore native build cache
+              id: native-build-cache
+              uses: actions/cache/restore@v5
+              with:
+                  path: |
+                      packages/code-highlighting/ios/NativeEditorHighlighting.xcframework
+                      packages/code-highlighting/ios/Generated_highlighting.swift
+                      packages/code-highlighting/ios/native_editor_highlightingFFI
+                      packages/code-highlighting/android/src/main/jniLibs
+                      packages/code-highlighting/android/src/main/java/uniffi
+                  key: highlighting-native-v1-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-ndk-4.1.2-android-27.1.12297006-${{ steps.native-toolchain.outputs.xcode }}-${{ hashFiles('packages/code-highlighting/rust/src/**', 'packages/code-highlighting/rust/*.toml', 'packages/code-highlighting/rust/Cargo.lock', 'packages/code-highlighting/rust-toolchain.toml', 'packages/code-highlighting/scripts/build-native.sh') }}
+
+            - name: Setup Node
+              uses: actions/setup-node@v6
+              with:
+                  node-version: 24
+                  cache: npm
+
+            - name: Setup Java
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
+              uses: actions/setup-java@v5
+              with:
+                  distribution: temurin
+                  java-version: 17
+
+            - name: Setup Rust
+              uses: dtolnay/rust-toolchain@1.95.0
+              with:
+                  targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
+
+            - name: Cache Cargo
+              uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: packages/code-highlighting/rust
+                  shared-key: code-highlighting
+                  cache-on-failure: true
+                  cache-workspace-crates: true
+                  key: ${{ github.job }}-${{ hashFiles('packages/code-highlighting/rust/src/**', 'packages/code-highlighting/rust/tests/**') }}
+
+            - name: Install cargo-ndk
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  if ! cargo ndk --version >/dev/null 2>&1; then
+                    cargo install cargo-ndk --version 4.1.2 --locked
+                  fi
+
+            - name: Setup Android SDK
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
+              uses: android-actions/setup-android@v4
+
+            - name: Setup Android NDK
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  sdkmanager --install 'ndk;27.1.12297006'
+                  echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/27.1.12297006" >> "$GITHUB_ENV"
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Build highlighting for all shipping targets
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
+              run: npm --prefix packages/code-highlighting run build:native
+
+            - name: Verify generated bindings are current
+              run: git diff --exit-code -- packages/code-highlighting/ios/Generated_highlighting.swift packages/code-highlighting/ios/native_editor_highlightingFFI packages/code-highlighting/android/src/main/java/uniffi
+
+            - name: Save native build cache
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
+              uses: actions/cache/save@v5
+              with:
+                  path: |
+                      packages/code-highlighting/ios/NativeEditorHighlighting.xcframework
+                      packages/code-highlighting/ios/Generated_highlighting.swift
+                      packages/code-highlighting/ios/native_editor_highlightingFFI
+                      packages/code-highlighting/android/src/main/jniLibs
+                      packages/code-highlighting/android/src/main/java/uniffi
+                  key: ${{ steps.native-build-cache.outputs.cache-primary-key }}
+
+            - name: Build package
+              run: |
+                  npm run build
+                  npm --prefix packages/code-highlighting run build
+                  npm test -- --runTestsByPath src/__tests__/CodeHighlightingAddon.test.ts src/__tests__/EditorAddon.test.ts
+                  npm --prefix packages/code-highlighting run test:rust
+
+            - name: Pack release artifact
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  mkdir -p code-highlighting-artifact
+                  npm pack ./packages/code-highlighting --pack-destination code-highlighting-artifact
+                  test "$(find code-highlighting-artifact -maxdepth 1 -type f -name '*.tgz' | wc -l | tr -d '[:space:]')" = 1
+
+            - name: Upload release artifact
+              uses: actions/upload-artifact@v7
+              with:
+                  name: code-highlighting-${{ github.run_id }}
+                  retention-days: 2
+                  if-no-files-found: error
+                  path: |
+                      code-highlighting-artifact/*.tgz
+                      packages/code-highlighting/dist
+                      packages/code-highlighting/ios/NativeEditorHighlighting.xcframework
+                      packages/code-highlighting/ios/Generated_highlighting.swift
+                      packages/code-highlighting/ios/native_editor_highlightingFFI
+                      packages/code-highlighting/android/src/main/jniLibs
+                      packages/code-highlighting/android/src/main/java/uniffi
 
     package-contracts:
         needs: build-package
@@ -169,6 +319,8 @@ jobs:
                   workspaces: rust/editor-core
                   shared-key: editor-core
                   cache-on-failure: true
+                  cache-workspace-crates: true
+                  key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
 
             - name: Install dependencies
               run: |
@@ -205,6 +357,8 @@ jobs:
                   node scripts/tests/validate-prepared-prose-viewer-cutover.mjs
                   npm run validate:security -- --release
                   node scripts/tests/validate-publish-lifecycle.mjs
+                  node scripts/tests/sync-version.test.mjs
+                  node scripts/tests/release-packages.test.mjs
                   bash ./scripts/tests/validate-generated-bindings.sh
 
             - name: Validate native artifact fixtures
@@ -238,6 +392,8 @@ jobs:
                   workspaces: rust/editor-core
                   shared-key: editor-core
                   cache-on-failure: true
+                  cache-workspace-crates: true
+                  key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
 
             - name: Install dependencies
               run: npm ci
@@ -261,6 +417,9 @@ jobs:
             - name: Checkout
               uses: actions/checkout@v5
 
+            - name: Setup iOS compiler cache
+              uses: ./.github/actions/ios-build-cache
+
             - name: Setup Node
               uses: actions/setup-node@v6
               with:
@@ -283,6 +442,7 @@ jobs:
 
             - name: Install iOS test dependencies
               run: npm run install:ios-test-pods
+
 
             - name: Validate iOS security behavior
               run: npm run validate:security -- --release --behavior
@@ -312,6 +472,17 @@ jobs:
                   distribution: temurin
                   java-version: 17
 
+            - name: Setup Rust
+              uses: dtolnay/rust-toolchain@1.95.0
+
+            - name: Cache Cargo
+              uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: rust/editor-core -> ../../android/build/host-editor-core
+                  shared-key: editor-core-host
+                  cache-workspace-crates: true
+                  key: ${{ hashFiles('rust/editor-core/src/**') }}
+
             - name: Setup Android SDK
               uses: android-actions/setup-android@v4
 
@@ -321,7 +492,7 @@ jobs:
             - name: Setup Gradle
               uses: gradle/actions/setup-gradle@v5
               with:
-                  cache-read-only: false
+                  cache-read-only: ${{ github.event_name == 'pull_request' }}
 
             - name: Install dependencies
               run: |
@@ -343,12 +514,15 @@ jobs:
               run: node scripts/tests/validate-security-contracts-negative.mjs
 
     ios-consumer-positive:
-        needs: build-package
+        needs: [build-package, build-code-highlighting]
         runs-on: macos-latest
         timeout-minutes: 25
         steps:
             - name: Checkout
               uses: actions/checkout@v5
+
+            - name: Setup iOS compiler cache
+              uses: ./.github/actions/ios-build-cache
 
             - name: Setup Node
               uses: actions/setup-node@v6
@@ -370,6 +544,12 @@ jobs:
                   name: ${{ env.RELEASE_ARTIFACT_NAME }}
                   path: .
 
+            - name: Download highlighting artifact
+              uses: actions/download-artifact@v8
+              with:
+                  name: code-highlighting-${{ github.run_id }}
+                  path: .
+
             - name: Resolve release tarball
               shell: bash
               run: |
@@ -384,7 +564,10 @@ jobs:
                   npm run install:example:pods
 
             - name: Validate positive iOS consumer
-              run: npm run validate:package:ios:positive
+              run: |
+                  CODE_HIGHLIGHTING_TARBALL="$(pwd)/$(find code-highlighting-artifact -name '*.tgz')"
+                  export CODE_HIGHLIGHTING_TARBALL
+                  npm run validate:package:ios:positive
 
     ios-consumer-negative:
         needs: build-package
@@ -393,6 +576,9 @@ jobs:
         steps:
             - name: Checkout
               uses: actions/checkout@v5
+
+            - name: Setup iOS compiler cache
+              uses: ./.github/actions/ios-build-cache
 
             - name: Setup Node
               uses: actions/setup-node@v6
@@ -454,7 +640,7 @@ jobs:
             - name: Setup Gradle
               uses: gradle/actions/setup-gradle@v5
               with:
-                  cache-read-only: false
+                  cache-read-only: ${{ github.event_name == 'pull_request' }}
 
             - name: Install dependencies
               run: |
@@ -513,7 +699,7 @@ jobs:
             - name: Setup Gradle
               uses: gradle/actions/setup-gradle@v5
               with:
-                  cache-read-only: false
+                  cache-read-only: ${{ github.event_name == 'pull_request' }}
 
             - name: Install dependencies
               run: |
@@ -533,7 +719,11 @@ jobs:
               run: npm run validate:package:android:negative
 
     android-release-validation:
-        needs: build-package
+        strategy:
+            fail-fast: false
+            matrix:
+                check: [jvm-lint, rn076, api24]
+        needs: [build-package, build-code-highlighting]
         runs-on: ubuntu-latest
         timeout-minutes: 60
         steps:
@@ -561,9 +751,13 @@ jobs:
             - name: Cache Cargo
               uses: Swatinem/rust-cache@v2
               with:
-                  workspaces: rust/editor-core
+                  workspaces: |
+                      rust/editor-core
+                      rust/editor-core -> ../../android/build/host-editor-core
                   shared-key: editor-core
                   cache-on-failure: true
+                  cache-workspace-crates: true
+                  key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
 
             - name: Setup Android SDK
               uses: android-actions/setup-android@v4
@@ -577,7 +771,7 @@ jobs:
             - name: Setup Gradle
               uses: gradle/actions/setup-gradle@v5
               with:
-                  cache-read-only: false
+                  cache-read-only: ${{ github.event_name == 'pull_request' }}
 
             - name: Install dependencies
               run: |
@@ -590,6 +784,12 @@ jobs:
                   name: ${{ env.RELEASE_ARTIFACT_NAME }}
                   path: .
 
+            - name: Download highlighting artifact
+              uses: actions/download-artifact@v8
+              with:
+                  name: code-highlighting-${{ github.run_id }}
+                  path: .
+
             - name: Resolve release tarball
               shell: bash
               run: |
@@ -599,25 +799,31 @@ jobs:
                   echo "RELEASE_TARBALL=$(cd "$(dirname "$tarball")" && pwd -P)/$(basename "$tarball")" >> "$GITHUB_ENV"
 
             - name: Run Android JVM tests
+              if: matrix.check == 'jvm-lint'
               run: npm run test:android
 
             - name: Run Android lint
+              if: matrix.check == 'jvm-lint'
               run: npm run lint:android
 
             - name: Assemble release AAR
-              run: ./gradlew :apollohg_react-native-rich-text-editor:assembleRelease
+              if: matrix.check == 'jvm-lint'
+              run: ./gradlew :apollohg_react-native-rich-text-editor:assembleRelease :apollohg-react-native-rich-text-editor-code-highlighting:assembleRelease
               working-directory: example/android
 
             - name: Validate React Native 0.76 release consumer
+              if: matrix.check == 'rn076'
               run: npm run validate:package:android:rn076
 
             - name: Enable KVM
+              if: matrix.check == 'api24'
               run: |
                   echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
                   sudo udevadm control --reload-rules
                   sudo udevadm trigger --name-match=kvm
 
             - name: Run API 24 instrumentation smoke test
+              if: matrix.check == 'api24'
               uses: reactivecircus/android-emulator-runner@v2.38.0
               with:
                   api-level: 24
@@ -628,6 +834,7 @@ jobs:
     publish:
         needs:
             - build-package
+            - build-code-highlighting
             - package-contracts
             - security-rust-typescript
             - security-ios
@@ -656,6 +863,12 @@ jobs:
                   name: ${{ env.RELEASE_ARTIFACT_NAME }}
                   path: .
 
+            - name: Download highlighting artifact
+              uses: actions/download-artifact@v8
+              with:
+                  name: code-highlighting-${{ github.run_id }}
+                  path: .
+
             - name: Resolve release tarball
               shell: bash
               run: |
@@ -664,26 +877,13 @@ jobs:
                   tarball="$(find release-artifact -maxdepth 1 -type f -name '*.tgz' -print)"
                   echo "RELEASE_TARBALL=$(cd "$(dirname "$tarball")" && pwd -P)/$(basename "$tarball")" >> "$GITHUB_ENV"
 
-            - name: Resolve npm dist-tag
-              id: npm-dist-tag
-              shell: bash
-              run: |
-                  set -euo pipefail
-                  version="$(tar -xOf "$RELEASE_TARBALL" package/package.json | node --input-type=module -e 'let input = ""; process.stdin.on("data", chunk => input += chunk).on("end", () => console.log(JSON.parse(input).version));')"
-                  echo "tag=$(node scripts/resolve-npm-dist-tag.mjs "$version")" >> "$GITHUB_OUTPUT"
+            - name: Collect release packages
+              run: cp code-highlighting-artifact/*.tgz release-artifact/
 
             - name: Publish to npm
               if: github.event_name == 'release' && github.event.action == 'published'
-              shell: bash
-              run: |
-                  set -euo pipefail
-                  tarball="$RELEASE_TARBALL"
-                  npm publish "$tarball" --ignore-scripts --tag "${{ steps.npm-dist-tag.outputs.tag }}"
+              run: node scripts/release-packages.mjs release-artifact
 
             - name: Validate npm artifact locally
-              if: github.event_name == 'workflow_dispatch'
-              shell: bash
-              run: |
-                  set -euo pipefail
-                  tarball="$RELEASE_TARBALL"
-                  npm pack "$tarball" --dry-run --ignore-scripts --offline
+              if: github.event_name != 'release'
+              run: node scripts/release-packages.mjs release-artifact --dry-run

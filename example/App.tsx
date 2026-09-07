@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
-import { createCodeHighlightingAddon } from '@react-native-rich-text-editor/code-highlighting';
+import { createCodeHighlightingAddon } from '@apollohg/react-native-rich-text-editor-code-highlighting';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
     createNativeEditorDocumentHandle,

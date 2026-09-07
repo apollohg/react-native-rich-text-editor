@@ -6,7 +6,7 @@ Include the applicable notices and source links with distributed applications or
 
 ## Package scope
 
-`@apollohg/react-native-rich-text-editor` — core Rust engine, generated UniFFI bindings, native dependencies, and copied Material Icons assets. The optional `@react-native-rich-text-editor/code-highlighting` package has its own notices file.
+`@apollohg/react-native-rich-text-editor` — core Rust engine, generated UniFFI bindings, native dependencies, and copied Material Icons assets. The optional `@apollohg/react-native-rich-text-editor-code-highlighting` package has its own notices file.
 
 ## Rust dependencies
 

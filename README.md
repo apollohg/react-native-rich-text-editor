@@ -147,7 +147,7 @@ Addons are a readonly array. Conditional `false`, `null`, and `undefined` entrie
 
 ```tsx
 import { createMentionsAddon } from '@apollohg/react-native-rich-text-editor';
-import { createCodeHighlightingAddon } from '@react-native-rich-text-editor/code-highlighting';
+import { createCodeHighlightingAddon } from '@apollohg/react-native-rich-text-editor-code-highlighting';
 
 <RichTextEditor
     documentHandle={documentHandle}

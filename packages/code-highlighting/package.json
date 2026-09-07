@@ -1,5 +1,5 @@
 {
-    "name": "@react-native-rich-text-editor/code-highlighting",
+    "name": "@apollohg/react-native-rich-text-editor-code-highlighting",
     "version": "2.0.0",
     "description": "Optional native syntax highlighting for @apollohg/react-native-rich-text-editor",
     "license": "Apache-2.0",
@@ -29,7 +29,7 @@
         "scripts/verify-package.mjs"
     ],
     "peerDependencies": {
-        "@apollohg/react-native-rich-text-editor": ">=2.0.0 <3",
+        "@apollohg/react-native-rich-text-editor": "2.0.0",
         "expo": ">=52.0.0"
     },
     "scripts": {
@@ -37,5 +37,13 @@
         "test:rust": "cargo test --manifest-path rust/Cargo.toml --release --locked",
         "build:native": "bash scripts/build-native.sh",
         "prepack": "node scripts/verify-package.mjs"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/apollohg/react-native-rich-text-editor.git",
+        "directory": "packages/code-highlighting"
     }
 }

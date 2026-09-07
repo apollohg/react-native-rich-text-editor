@@ -6,6 +6,9 @@ on:
       - main
   pull_request:
 
+env:
+  GRADLE_OPTS: -Dorg.gradle.caching=true
+
 jobs:
   js-and-android:
     runs-on: ubuntu-latest
@@ -55,6 +58,8 @@ jobs:
           workspaces: rust/editor-core
           shared-key: editor-core
           cache-on-failure: true
+          cache-workspace-crates: true
+          key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
 
       - name: Run Rust tests
         run: npm run test:rust
@@ -160,6 +165,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Setup iOS compiler cache
+        uses: ./.github/actions/ios-build-cache
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
@@ -180,6 +188,8 @@ jobs:
           workspaces: rust/editor-core
           shared-key: editor-core
           cache-on-failure: true
+          cache-workspace-crates: true
+          key: ${{ github.job }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/tests/**', 'rust/editor-core/benches/**') }}
 
       - name: Install root dependencies
         run: npm ci

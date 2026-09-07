@@ -86,6 +86,9 @@ tasks.register('buildHostEditorCore', Exec) {
 // by a transformed Android artifact.
 def hostTestJnaClasspath = files(configurations.hostTestJna)
 tasks.withType(Test).configureEach {
+    // Security fixtures can be selected through the process environment.
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
     dependsOn tasks.named('buildHostEditorCore')
     inputs.files(hostTestJnaClasspath).withPropertyName('hostTestJnaClasspath')
     systemProperty 'uniffi.component.editor_core.libraryOverride', hostEditorCoreLibrary.absolutePath

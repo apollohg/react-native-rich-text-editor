@@ -447,6 +447,16 @@ PBXPROJ
   }
 }
 JSON
+  if [[ -n "${CODE_HIGHLIGHTING_TARBALL:-}" ]]; then
+    node --input-type=module - "$ios_consumer/package.json" "$CODE_HIGHLIGHTING_TARBALL" <<'NODE'
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+const [manifest, tarball] = process.argv.slice(2);
+const json = JSON.parse(readFileSync(manifest, 'utf8'));
+json.dependencies['@apollohg/react-native-rich-text-editor-code-highlighting'] = `file:${resolve(tarball)}`;
+writeFileSync(manifest, JSON.stringify(json));
+NODE
+  fi
   (
     cd "$ios_consumer"
     npm_config_cache="$pack_cache_dir" npm_config_logs_dir="$pack_cache_dir/logs" \
@@ -490,6 +500,14 @@ func packedEditorCoreLinkProbe() {
   _ = editorV2CollaborationReattach(editorId: "1")
 }
 SWIFT
+  if [[ -n "${CODE_HIGHLIGHTING_TARBALL:-}" ]]; then
+    cat >> "$ios_project/PackedConsumer/Probe.swift" <<'SWIFT'
+internal import NativeEditorCodeHighlighting
+func packedHighlightingLinkProbe() {
+  _ = NativeCodeHighlightingModule.self
+}
+SWIFT
+  fi
   cp "$react_native_dependencies_archive" "$ios_project/react-native-dependencies.tar.gz"
   cp "$react_native_core_archive" "$ios_project/react-native-core.tar.gz"
   cp "$hermes_archive" "$ios_project/hermes-ios-debug.tar.gz"
@@ -596,7 +614,7 @@ RUBY
     fail "CocoaPods did not generate a valid iOS consumer workspace"
   (
     cd "$ios_project"
-    xcodebuild -workspace PackedConsumer.xcworkspace -scheme PackedConsumer -configuration Debug -sdk iphonesimulator -derivedDataPath "$work_dir/ios-derived-data" -jobs 1 CLANG_ENABLE_EXPLICIT_MODULES=NO SWIFT_ENABLE_EXPLICIT_MODULES=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+    xcodebuild -workspace PackedConsumer.xcworkspace -scheme PackedConsumer -configuration Debug -sdk iphonesimulator -derivedDataPath "$work_dir/ios-derived-data" -jobs "${NATIVE_EDITOR_XCODE_JOBS:-2}" CLANG_ENABLE_EXPLICIT_MODULES=NO SWIFT_ENABLE_EXPLICIT_MODULES=NO ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
   ) || fail "iOS consumer xcodebuild failed"
 }
 

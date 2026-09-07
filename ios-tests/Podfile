@@ -21,7 +21,7 @@ target 'NativeEditorTestHost' do
   pod 'SVGgh', '~> 1.12.1'
   use_expo_modules!(
     projectRoot: File.join(__dir__, '..', 'example'),
-    exclude: ['@apollohg/react-native-rich-text-editor', '@react-native-rich-text-editor/code-highlighting'],
+    exclude: ['@apollohg/react-native-rich-text-editor', '@apollohg/react-native-rich-text-editor-code-highlighting'],
   )
   react_native_path = '../example/node_modules/react-native'
 
@@ -38,7 +38,7 @@ target 'NativeEditorTestHost' do
       self,
       @current_target_definition,
       projectRoot: File.join(__dir__, '..', 'example'),
-      exclude: ['@apollohg/react-native-rich-text-editor', '@react-native-rich-text-editor/code-highlighting'],
+      exclude: ['@apollohg/react-native-rich-text-editor', '@apollohg/react-native-rich-text-editor-code-highlighting'],
       testsOnly: true,
     )
   end
@@ -48,7 +48,7 @@ target 'NativeEditorTestHost' do
       installer,
       react_native_path,
       :mac_catalyst_enabled => false,
-      :ccache_enabled => false,
+      :ccache_enabled => ENV['USE_CCACHE'] == '1',
     )
 
     installer.pods_project.targets.each do |target|

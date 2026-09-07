@@ -1,0 +1,29 @@
+name: iOS compiler cache
+description: Reuse C and C++ compiler outputs while running native validations normally.
+runs:
+    using: composite
+    steps:
+        - name: Configure compiler cache
+          id: toolchain
+          shell: bash
+          run: |
+              if ! command -v ccache >/dev/null; then brew install ccache; fi
+              echo "xcode=$(xcodebuild -version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+              echo 'USE_CCACHE=1' >> "$GITHUB_ENV"
+              echo "CCACHE_DIR=$HOME/.cache/native-editor-ccache" >> "$GITHUB_ENV"
+              echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+              echo 'CCACHE_MAXSIZE=1G' >> "$GITHUB_ENV"
+        - name: Cache compiler outputs
+          uses: actions/cache@v5
+          with:
+              path: ~/.cache/native-editor-ccache
+              key: ios-compiler-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.xcode }}-${{ github.job }}-${{ github.sha }}
+              restore-keys: |
+                  ios-compiler-v1-${{ runner.arch }}-${{ steps.toolchain.outputs.xcode }}-${{ github.job }}-
+        - name: Cache CocoaPods downloads
+          uses: actions/cache@v5
+          with:
+              path: ~/Library/Caches/CocoaPods
+              key: pods-downloads-v1-${{ runner.arch }}-${{ hashFiles('example/package-lock.json', 'ios-tests/Podfile', '*.podspec') }}
+              restore-keys: |
+                  pods-downloads-v1-${{ runner.arch }}-

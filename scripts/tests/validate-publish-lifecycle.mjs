@@ -54,7 +54,7 @@ const assertRustCache = (job, jobName) => {
   );
   assert.match(
     job,
-    /workspaces:\s*rust\/editor-core/,
+    /workspaces:\s*(?:\|\s*)?rust\/editor-core/,
     `${jobName} must cache the editor-core workspace`,
   );
   assert.match(
@@ -181,7 +181,7 @@ for (const jobName of [
 const androidReleaseJob = requireJob('android-release-validation');
 const ciAndroidApi24Job = requireCiJob('android-api-24');
 const linuxKvmSetup =
-  /- name: Enable KVM\s+run: \|\s+echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS\+="static_node=kvm"' \| sudo tee \/etc\/udev\/rules\.d\/99-kvm4all\.rules\s+sudo udevadm control --reload-rules\s+sudo udevadm trigger --name-match=kvm/;
+  /- name: Enable KVM\s+(?:if: matrix\.check == 'api24'\s+)?run: \|\s+echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS\+="static_node=kvm"' \| sudo tee \/etc\/udev\/rules\.d\/99-kvm4all\.rules\s+sudo udevadm control --reload-rules\s+sudo udevadm trigger --name-match=kvm/;
 assert.match(androidReleaseJob, /runs-on:\s*ubuntu-latest/);
 assert.match(androidReleaseJob, /timeout-minutes:\s*60/);
 assert.match(androidReleaseJob, /sdkmanager --install ['"]ndk;27\.1\.12297006['"]/);
@@ -226,7 +226,7 @@ for (const jobName of [
   const job = requireJob(jobName);
   assert.match(job, /android-actions\/setup-android@v4/);
   assert.match(job, /sdkmanager --install ['"]ndk;27\.1\.12297006['"]/);
-  assertGradleCache(job, jobName, 'false');
+  assertGradleCache(job, jobName, String.raw`\$\{\{ github\.event_name == 'pull_request' \}\}`);
 }
 
 assertGradleCache(
@@ -239,7 +239,7 @@ assertGradleCache(
   'CI android-api-24',
   "\\$\\{\\{ github\\.event_name == 'pull_request' \\}\\}",
 );
-assertGradleCache(androidReleaseJob, 'android-release-validation', 'false');
+assertGradleCache(androidReleaseJob, 'android-release-validation', String.raw`\$\{\{ github\.event_name == 'pull_request' \}\}`);
 assert.doesNotMatch(
   `${ciWorkflow}\n${publishWorkflow}`,
   /key: gradle-(?:publish|android-release)-/,
@@ -249,6 +249,7 @@ assert.doesNotMatch(
 const publishJob = requireJob('publish');
 for (const dependency of [
   'build-package',
+  'build-code-highlighting',
   'package-contracts',
   'security-rust-typescript',
   'security-ios',
@@ -274,13 +275,13 @@ assert.match(
 );
 assert.match(
   publishJob,
-  /- name: Validate npm artifact locally\s+if: github\.event_name == 'workflow_dispatch'/,
+  /- name: Validate npm artifact locally\s+if: github\.event_name != 'release'/,
   'manual workflow dispatches must validate the npm artifact locally',
 );
-assert.match(publishJob, /npm publish "\$tarball" --ignore-scripts --tag/);
+assert.match(publishJob, /node scripts\/release-packages\.mjs release-artifact/);
 assert.match(
   publishJob,
-  /npm pack "\$tarball" --dry-run --ignore-scripts --offline/,
+  /node scripts\/release-packages\.mjs release-artifact --dry-run/,
   'the manual publish rehearsal must inspect the exact release tarball without publishing it',
 );
 assert.doesNotMatch(
@@ -439,3 +440,15 @@ try {
 }
 
 console.log('npm publish lifecycle validation passed.');
+
+const highlightingJob = requireJob('build-code-highlighting');
+assert.match(highlightingJob, /key: highlighting-native-v1-/);
+assert.match(highlightingJob, /packages\/code-highlighting run test:rust/);
+assert.match(publishWorkflow, /GRADLE_OPTS: -Dorg.gradle.caching=true/);
+assert.match(androidReleaseJob, /check: \[jvm-lint, rn076, api24\]/);
+for (const name of ['security-ios', 'ios-consumer-positive', 'ios-consumer-negative']) {
+  assert.match(requireJob(name), /uses: \.\/\.github\/actions\/ios-build-cache/);
+}
+const androidBuildSource = await readFile(path.join(repoRoot, 'android/build.gradle'), 'utf8');
+assert.match(androidBuildSource, /outputs\.cacheIf\s*\{\s*false\s*\}/, 'Fixture-driven JVM tests must execute instead of restoring cached results');
+assert.match(androidBuildSource, /outputs\.upToDateWhen\s*\{\s*false\s*\}/, 'JVM tests must re-read external security fixtures');

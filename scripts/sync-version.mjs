@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -23,6 +23,16 @@ function replaceText(root, relativePath, updater) {
 }
 
 export function synchronizeVersion(root, version) {
+  const packagesDir = path.join(root, 'packages');
+  const extensions = existsSync(packagesDir) ? readdirSync(packagesDir).filter(
+    name => existsSync(path.join(packagesDir, name, 'package.json')),
+  ) : [];
+  for (const name of extensions) {
+    writeJson(root, `packages/${name}/package.json`, json => {
+      json.version = version;
+      json.peerDependencies['@apollohg/react-native-rich-text-editor'] = version;
+    });
+  }
   writeJson(root, 'package-lock.json', (json) => {
     json.version = version;
     if (json.packages?.['']) {
@@ -38,6 +48,13 @@ export function synchronizeVersion(root, version) {
     json.version = version;
     if (json.packages?.['']) {
       json.packages[''].version = version;
+    }
+    for (const name of extensions) {
+      const entry = json.packages?.[`../packages/${name}`];
+      if (entry) {
+        entry.version = version;
+        entry.peerDependencies['@apollohg/react-native-rich-text-editor'] = version;
+      }
     }
     if (json.packages?.['..']) {
       json.packages['..'].version = version;

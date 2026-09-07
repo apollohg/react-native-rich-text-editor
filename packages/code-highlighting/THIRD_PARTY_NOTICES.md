@@ -6,7 +6,7 @@ Include the applicable notices and source links with distributed applications or
 
 ## Package scope
 
-`@react-native-rich-text-editor/code-highlighting` — syntect 5.3.0, two-face 0.5.1, their dependencies, and bundled grammar/theme assets. The base editor is a peer dependency and supplies its own notices.
+`@apollohg/react-native-rich-text-editor-code-highlighting` — syntect 5.3.0, two-face 0.5.1, their dependencies, and bundled grammar/theme assets. The base editor is a peer dependency and supplies its own notices.
 
 ## Rust dependencies
 

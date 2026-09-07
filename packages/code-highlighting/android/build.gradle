@@ -7,7 +7,7 @@ applyKotlinExpoModulesCorePlugin()
 useCoreDependencies()
 
 group = 'com.apollohg.editor.highlighting'
-version = '2.0.0'
+version = new groovy.json.JsonSlurper().parse(file('../package.json')).version
 
 android {
     namespace = 'com.apollohg.editor.highlighting'
