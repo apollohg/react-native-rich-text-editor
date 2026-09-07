@@ -309,6 +309,10 @@ class EditorInputConnection(
             return true
         }
         val oldText = correctionInfo.oldText?.toString()
+        if (oldText?.isEmpty() == true) {
+            editorView.recordImeTraceForTesting("correctionExplicitNoop", "reason=emptyOldText")
+            return true
+        }
         val imeOffset = correctionInfo.offset
         val mapper = currentMapper()
         val applied = if (oldText != null && mapper != null) {

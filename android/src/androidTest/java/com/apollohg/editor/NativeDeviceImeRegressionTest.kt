@@ -52,6 +52,24 @@ class NativeDeviceImeRegressionTest {
     }
 
     @Test
+    fun emptyOldCorrectionAtPlaceholderDoesNotCrashOrMutate() {
+        runOnMainSyncWithResult {
+            val editText = createEditor("\u200B", selectionStart = 1, selectionEnd = 1)
+            var replacement: Replacement? = null
+            editText.onReplaceTextInRustForTesting = { from, to, text ->
+                replacement = Replacement(from, to, text)
+            }
+
+            assertTrue(createInputConnection(editText).commitCorrection(CorrectionInfo(0, "", "the")))
+
+            assertNull(replacement)
+            assertEquals("\u200B", editText.text.toString())
+            assertEquals(1, editText.selectionStart)
+            assertEquals(1, editText.selectionEnd)
+        }
+    }
+
+    @Test
     fun commitCorrectionCoversOldTextAndInferredTokenBoundaries() {
         val explicit = runCorrectionScenario("teh", offset = 0, oldText = "teh", newText = "the")
         assertEquals(Replacement(0, 3, "the"), explicit.replacement)

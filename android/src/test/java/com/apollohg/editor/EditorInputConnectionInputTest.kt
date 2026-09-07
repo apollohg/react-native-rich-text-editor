@@ -177,6 +177,28 @@ internal class EditorInputConnectionInputTest : EditorInputConnectionTestFixture
     }
 
     @Test
+    fun `empty old correction at a synthetic placeholder is consumed without mutation`() {
+        for ((text, offset) in listOf("\u200B" to 0, "a\u200Bb" to 1, "abc" to 1)) {
+            val editText = EditorEditText(RuntimeEnvironment.getApplication())
+            editText.applyUpdateJSON(renderUpdateJson(text), notifyListener = false)
+            editText.editorId = 1
+            editText.setSelection(editText.text.length)
+            var replacement: Triple<Int, Int, String>? = null
+            editText.onReplaceTextInRustForTesting = { from, to, value ->
+                replacement = Triple(from, to, value)
+            }
+            val inputConnection = requireNotNull(editText.onCreateInputConnection(EditorInfo()))
+
+            assertTrue(inputConnection.commitCorrection(CorrectionInfo(offset, "", "the")))
+
+            assertNull(replacement)
+            assertEquals(text, editText.text.toString())
+            assertEquals(text.length, editText.selectionStart)
+            assertEquals(text.length, editText.selectionEnd)
+        }
+    }
+
+    @Test
     fun `correction offsets map past synthetic placeholders`() {
         val editText = EditorEditText(RuntimeEnvironment.getApplication())
         editText.applyUpdateJSON(renderUpdateJson("\u200Bteh"), notifyListener = false)
