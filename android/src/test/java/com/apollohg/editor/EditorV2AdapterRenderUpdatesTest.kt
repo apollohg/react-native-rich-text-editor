@@ -187,13 +187,18 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
     }
 
     @Test
-    fun `empty document refresh carries blocks and no selection`() {
+    fun `empty document refresh carries blocks and authoritative selection`() {
         val adapter = makeAdapter()
         val update = JSONObject(requireNotNull(adapter.currentStateJson()))
         assertTrue(update.has("renderBlocks"))
         assertTrue(update.has("activeState"))
         assertFalse(update.has("scalarLength"))
-        assertFalse(update.has("selection"))
+        val selection = update.getJSONObject("selection")
+        assertEquals("text", selection.getString("type"))
+        assertEquals(0, selection.getInt("anchorScalar"))
+        assertEquals(0, selection.getInt("headScalar"))
+        assertEquals(1, selection.getInt("anchor"))
+        assertEquals(1, selection.getInt("head"))
         assertEquals(0, update.getInt("documentVersion"))
     }
 

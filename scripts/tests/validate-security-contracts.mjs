@@ -115,7 +115,10 @@ assert.deepEqual(tsResourceCeilings, resourceCeilings);
 assert.deepEqual(tsImageDefaults, imageDefaults);
 assert.deepEqual(tsImageCeilings, imageCeilings);
 
-const rust = read('rust/editor-core/src/boundary.rs');
+const rust = [
+    read('rust/editor-core/src/boundary.rs'),
+    read('rust/editor-core/src/boundary/limits.rs'),
+].join('\n');
 const compactRust = rust.replaceAll(/\s/g, '');
 const rustNames = Object.fromEntries(
     Object.keys(resourceDefaults).map((name) => [
@@ -153,7 +156,7 @@ for (const [name, ceiling] of Object.entries(imageCeilings)) {
     assert.equal(evaluateInteger(match[1]), ceiling, `Android ceiling drift for ${name}`);
 }
 
-const ios = read('ios/SharedNativeImagePipeline.swift');
+const ios = read('ios/SharedNativeImagePipeline+Cache.swift');
 const iosDefaults = objectAssignments(ios, 'static let `default` = ImageLoadingPolicy(', {
     maxSourceBytes: 'maxSourceBytes',
     connectTimeout: 'connectTimeoutMs',
@@ -241,7 +244,7 @@ assert.deepEqual(
     ['OPERATION_LIMIT_EXCEEDED', 'DOCUMENT_LIMIT_EXCEEDED', 'OPERATION_RESOURCE_EXHAUSTED']
 );
 
-const session = read('rust/editor-core/src/session.rs');
+const session = read('rust/editor-core/src/session/config.rs');
 const collaborationNames = Object.fromEntries(
     Object.keys(ffiV2.collaborationLimits.defaults).map((name) => [
         name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`),

@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
+import android.widget.EditText
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -63,35 +64,50 @@ class EditorImageCaretGestureRegressionTest {
     }
 
     @Test
-    fun `handle stays joined to caret at the left edge`() {
+    fun `selection handles use native shapes clamped inside the left edge`() {
         val editor = editor()
         editor.setPadding(0, 0, 0, 0)
         editor.requestFocus()
         editor.setSelection(0, 2)
-        val caret = CaretGeometry.verticalBounds(editor.layout, 0, editor.paint, editor.text)
         val bitmap = Bitmap.createBitmap(editor.width, editor.height, Bitmap.Config.ARGB_8888)
         editor.interaction.drawHandles(Canvas(bitmap))
-        val x = editor.layout.getPrimaryHorizontal(0).toInt()
-        val y = kotlin.math.ceil(caret.bottom.toDouble()).toInt()
-        assertTrue("Handle detached horizontally at ($x, $y)", Color.alpha(bitmap.getPixel(x, y)) > 0)
+        val expected = Bitmap.createBitmap(editor.width, editor.height, Bitmap.Config.ARGB_8888)
+        val native = EditText(editor.context)
+        for ((offset, isStart) in listOf(0 to true, 2 to false)) {
+            val drawable = requireNotNull(if (isStart) native.textSelectHandleLeft else native.textSelectHandleRight).mutate()
+            drawable.setTint(editor.caretColor)
+            val width = drawable.intrinsicWidth
+            val height = drawable.intrinsicHeight
+            val hotspot = if (isStart) width * 3 / 4 else width / 4
+            val left = ((editor.layout.getPrimaryHorizontal(offset) - 0.5f).toInt() - hotspot)
+                .coerceIn(0, editor.width - width)
+            val top = CaretGeometry.verticalBounds(editor.layout, offset, editor.paint, editor.text).bottom.toInt()
+                .coerceIn(0, editor.height - height)
+            drawable.setBounds(left, top, left + width, top + height)
+            drawable.draw(Canvas(expected))
+        }
+        assertTrue("Selection handles must retain native shapes at the edge", expected.sameAs(bitmap))
+        assertTrue((0 until bitmap.height).any { y ->
+            (0 until bitmap.width).any { x -> Color.alpha(bitmap.getPixel(x, y)) > 0 }
+        })
+        expected.recycle()
         bitmap.recycle()
     }
 
     @Test
-    fun `insertion handle stem joins the drawn caret with paragraph line height`() {
+    fun `paragraph caret above image has no insertion handle`() {
         val editor = editor()
         val x = editor.totalPaddingLeft + editor.layout.getPrimaryHorizontal(2)
         val y = editor.totalPaddingTop + editor.layout.getLineBaseline(0) - 3f
         tap(editor, x, y)
         assertEquals(2, editor.selectionEnd)
         val caret = requireNotNull(editor.nativeCursorDrawRect())
+        assertTrue(caret.height() > 0)
         val bitmap = Bitmap.createBitmap(editor.width, editor.height, Bitmap.Config.ARGB_8888)
+        val empty = bitmap.copy(Bitmap.Config.ARGB_8888, false)
         editor.interaction.drawHandles(Canvas(bitmap))
-        val stemX = editor.layout.getPrimaryHorizontal(2).toInt()
-        val bottom = editor.layout.editorTextLineBottom(0)
-        for (pixelY in kotlin.math.ceil(caret.bottom.toDouble()).toInt()..bottom) {
-            assertTrue("Disconnected handle at y=$pixelY, caret=$caret, lineBottom=$bottom", Color.alpha(bitmap.getPixel(stemX, pixelY)) > 0)
-        }
+        assertTrue("A collapsed caret must not draw selection handles", empty.sameAs(bitmap))
+        empty.recycle()
         bitmap.recycle()
     }
 
