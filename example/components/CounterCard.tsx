@@ -88,12 +88,13 @@ export const counterCardAtom = defineAtomNode({
         attrMap: { title: 'data-title', count: 'data-count' },
     },
     component: CounterCard,
-    estimatedHeight: COUNTER_CARD_HEIGHT,
+    estimatedHeight: COUNTER_CARD_HEIGHT + SPACE.md,
 });
 
 const styles = StyleSheet.create({
     card: {
         minHeight: COUNTER_CARD_HEIGHT,
+        marginBottom: SPACE.md,
         flexDirection: 'row',
         alignItems: 'center',
         gap: SPACE.md,

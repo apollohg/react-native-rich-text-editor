@@ -431,6 +431,12 @@ class EditorEditText @JvmOverloads constructor(
             clearExplicitSelectedImageRange()
         }
         if (handleTaskListMarkerTap(event)) {
+            // End the text gesture so its pending long press cannot select the marker.
+            val cancel = MotionEvent.obtain(event)
+            cancel.action = MotionEvent.ACTION_CANCEL
+            super.onTouchEvent(cancel)
+            cancel.recycle()
+            parent?.requestDisallowInterceptTouchEvent(false)
             return true
         }
         if (handleImageTap(event)) {

@@ -1,4 +1,8 @@
 package com.apollohg.editor
+import android.app.Activity
+import android.app.Instrumentation
+import android.os.Looper
+import android.view.InputDevice
 import android.graphics.Color
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -23,9 +27,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import java.time.Duration
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -33,9 +40,14 @@ import java.util.concurrent.TimeUnit
 @Config(sdk = [34])
 internal class RichTextEditorViewTaskMarkersTest : RichTextEditorViewTestFixture() {
     @Test
-    fun `tapping rendered task marker toggles task item`() {
-        val context = RuntimeEnvironment.getApplication()
+    fun `tapping rendered task marker toggles without moving selection`() {
+        val context = Robolectric.buildActivity(Activity::class.java)
+            .setup()
+            .visible()
+            .windowFocusChanged(true)
+            .get()
         val editText = EditorEditText(context)
+        context.setContentView(editText)
         editText.editorId = 1
         editText.applyRenderJSON(singleTaskListRenderJson())
 
@@ -53,15 +65,137 @@ internal class RichTextEditorViewTaskMarkersTest : RichTextEditorViewTestFixture
             toggles += anchor to head
         }
 
+        Instrumentation().setInTouchMode(true)
+        editText.requestFocus()
+        editText.setSelection(editText.text!!.length)
+        val originalSelection = editText.selectionStart
+        val selections = mutableListOf<Pair<Int, Int>>()
+        editText.onSetSelectionScalarInRustForTesting = { anchor, head ->
+            selections += anchor to head
+        }
+
         val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, tapX, tapY, 0)
+        down.source = InputDevice.SOURCE_TOUCHSCREEN
         editText.onTouchEvent(down)
         down.recycle()
+        assertEquals(originalSelection, editText.selectionStart)
+        assertEquals(originalSelection, editText.selectionEnd)
 
         val up = MotionEvent.obtain(0, 16, MotionEvent.ACTION_UP, tapX, tapY, 0)
+        up.source = InputDevice.SOURCE_TOUCHSCREEN
         editText.onTouchEvent(up)
         up.recycle()
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
 
         assertEquals(listOf(0 to 0), toggles)
+        assertEquals(originalSelection, editText.selectionStart)
+        assertEquals(originalSelection, editText.selectionEnd)
+        assertTrue(selections.isEmpty())
+    }
+
+    @Test
+    fun `native checkbox toggle preserves the existing caret`() {
+        assertNativeCheckboxPreservesSelection(selectRange = false)
+    }
+
+    @Test
+    fun `native checkbox toggle preserves the existing selection range`() {
+        assertNativeCheckboxPreservesSelection(selectRange = true)
+    }
+
+    @Test
+    fun `unfocused checkbox tap does not focus or scroll the editor`() {
+        assertNativeCheckboxPreservesSelection(selectRange = false, focused = false)
+    }
+
+    private fun assertNativeCheckboxPreservesSelection(selectRange: Boolean, focused: Boolean = true) {
+        val created = UniffiEditorV2Backend.create(
+            """
+            {
+              "schema": {
+                "nodes": [
+                  {"name":"doc","content":"block+","role":"doc"},
+                  {"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},
+                  {"name":"taskList","content":"taskItem+","group":"block","role":"list"},
+                  {"name":"taskItem","content":"paragraph block*","role":"listItem","attrs":{"checked":{"default":false}}},
+                  {"name":"text","group":"inline","role":"text"}
+                ],
+                "marks": []
+              },
+              "initialization": {"type":"localEmpty"}
+            }
+            """.trimIndent(),
+            null
+        ) as EditorV2CallResult.Ok
+        val editorId = JSONObject(created.value).getString("editorId")
+        val adapter = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend, editorId, roomBound = false))
+        try {
+            val activity = Robolectric.buildActivity(Activity::class.java)
+                .setup().visible().windowFocusChanged(true).get()
+            val root = FrameLayout(activity).apply {
+                isFocusableInTouchMode = true
+                descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS
+            }
+            val scrollView = android.widget.ScrollView(activity)
+            val editText = EditorEditText(activity)
+            scrollView.addView(editText)
+            root.addView(scrollView)
+            activity.setContentView(root)
+            root.requestFocus()
+            editText.editorId = 1
+            editText.v2Driver = adapter
+            adapter.claimNativeBindingIfUnowned(1L)
+            val documentJson = JSONObject(
+                """{"type":"doc","content":[{"type":"taskList","content":[{"type":"taskItem","attrs":{"checked":false},"content":[{"type":"paragraph","content":[{"type":"text","text":"Task item"}]}]}]}]}"""
+            )
+            repeat(30) {
+                documentJson.getJSONArray("content").put(JSONObject(
+                    """{"type":"paragraph","content":[{"type":"text","text":"Filler paragraph"}]}"""
+                ))
+            }
+            val update = adapter.setContentJson(documentJson.toString())
+            editText.applyUpdateJSON(requireNotNull(update), notifyListener = false)
+            root.measure(
+                View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(240, View.MeasureSpec.EXACTLY)
+            )
+            root.layout(0, 0, root.measuredWidth, root.measuredHeight)
+            if (focused) editText.requestFocus()
+            assertEquals(focused, editText.hasFocus())
+            val originalEnd = editText.text!!.length
+            val originalStart = if (selectRange) originalEnd - 4 else originalEnd
+            editText.setSelection(originalStart, originalEnd)
+            assertEquals("selection before tap", originalStart, editText.selectionStart)
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
+            scrollView.scrollTo(0, 0)
+            assertTrue("test requires overflowing content", scrollView.canScrollVertically(1))
+            val originalScrollY = scrollView.scrollY
+            val textLayout = requireNotNull(editText.layout)
+            val x = editText.totalPaddingLeft + 1f
+            val y = editText.totalPaddingTop + textLayout.getLineBottom(0) / 2f
+            assertNotNull("tap must hit a rendered task marker", editText.taskListMarkerScalarHitAt(x, y))
+            for ((action, time) in listOf(MotionEvent.ACTION_DOWN to 0L, MotionEvent.ACTION_UP to 16L)) {
+                val event = MotionEvent.obtain(0, time, action, x, y, 0)
+                event.source = InputDevice.SOURCE_TOUCHSCREEN
+                editText.onTouchEvent(event)
+                event.recycle()
+                assertEquals("focus after action $action", focused, editText.hasFocus())
+                assertEquals("selection after action $action", originalStart, editText.selectionStart)
+            }
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
+            if (!focused) assertEquals(originalScrollY, scrollView.scrollY)
+            assertEquals(originalStart, editText.selectionStart)
+            assertEquals(originalEnd, editText.selectionEnd)
+            val selection = JSONObject(requireNotNull(adapter.currentStateJson())).getJSONObject("selection")
+            val currentText = editText.text.toString()
+            assertEquals(PositionBridge.utf16ToScalar(originalStart, currentText), selection.getInt("anchorScalar"))
+            assertEquals(PositionBridge.utf16ToScalar(originalEnd, currentText), selection.getInt("headScalar"))
+            val document = UniffiEditorV2Backend.getDocumentJson(editorId) as EditorV2CallResult.Ok
+            assertTrue(JSONObject(document.value).getJSONArray("content").getJSONObject(0)
+                .getJSONArray("content").getJSONObject(0).getJSONObject("attrs").getBoolean("checked"))
+        } finally {
+            UniffiEditorV2Backend.destroy(editorId)
+        }
     }
 
     @Test

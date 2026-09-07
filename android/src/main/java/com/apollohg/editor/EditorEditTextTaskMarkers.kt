@@ -32,7 +32,6 @@ internal fun EditorEditText.handleTaskListMarkerTap(event: MotionEvent): Boolean
             if (upScalar != downScalar) return false
             if (!commitExternalTextCompositionBeforeInteractionIfNeeded()) return true
             val authoritativeScalar = taskListMarkerScalarHitAt(event.x, event.y) ?: return true
-            requestFocus()
             toggleTaskItemCheckedAtSelectionScalarInRust(
                 authoritativeScalar,
                 authoritativeScalar
