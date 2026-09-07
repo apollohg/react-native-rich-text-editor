@@ -1,49 +1,49 @@
 {
-    "name": "@apollohg/react-native-rich-text-editor-code-highlighting",
-    "version": "2.0.0",
-    "description": "Optional native syntax highlighting for @apollohg/react-native-rich-text-editor",
-    "license": "Apache-2.0",
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts",
-    "react-native": "src/index.ts",
-    "exports": {
-        ".": {
-            "types": "./dist/index.d.ts",
-            "react-native": "./src/index.ts",
-            "default": "./dist/index.js"
-        },
-        "./package.json": "./package.json"
+  "name": "@apollohg/react-native-rich-text-editor-code-highlighting",
+  "version": "2.0.1",
+  "description": "Optional native syntax highlighting for @apollohg/react-native-rich-text-editor",
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "react-native": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "react-native": "./src/index.ts",
+      "default": "./dist/index.js"
     },
-    "files": [
-        "dist",
-        "src",
-        "ios",
-        "android",
-        "!android/build",
-        "expo-module.config.json",
-        "NativeEditorCodeHighlighting.podspec",
-        "README.md",
-        "LICENSE",
-        "THIRD_PARTY_NOTICES.md",
-        "RUST-STANDARD-LIBRARY-NOTICES.html",
-        "scripts/verify-package.mjs"
-    ],
-    "peerDependencies": {
-        "@apollohg/react-native-rich-text-editor": "2.0.0",
-        "expo": ">=52.0.0"
-    },
-    "scripts": {
-        "build": "tsc -p tsconfig.json",
-        "test:rust": "cargo test --manifest-path rust/Cargo.toml --release --locked",
-        "build:native": "bash scripts/build-native.sh",
-        "prepack": "node scripts/verify-package.mjs"
-    },
-    "publishConfig": {
-        "access": "public"
-    },
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/apollohg/react-native-rich-text-editor.git",
-        "directory": "packages/code-highlighting"
-    }
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "ios",
+    "android",
+    "!android/build",
+    "expo-module.config.json",
+    "NativeEditorCodeHighlighting.podspec",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "RUST-STANDARD-LIBRARY-NOTICES.html",
+    "scripts/verify-package.mjs"
+  ],
+  "peerDependencies": {
+    "@apollohg/react-native-rich-text-editor": "2.0.1",
+    "expo": ">=52.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test:rust": "cargo test --manifest-path rust/Cargo.toml --release --locked",
+    "build:native": "bash scripts/build-native.sh",
+    "prepack": "node scripts/verify-package.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/apollohg/react-native-rich-text-editor.git",
+    "directory": "packages/code-highlighting"
+  }
 }
