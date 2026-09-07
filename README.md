@@ -210,6 +210,19 @@ export function CollaborativeEditor({ documentId }: { documentId: string }) {
 
 See the [Collaboration Guide](https://github.com/apollohg/react-native-rich-text-editor/wiki/Collaboration) for server requirements, persistence, authentication, and recovery.
 
+## Comparison with other React Native editors
+
+Reviewed on 7 September 2026
+
+| Editor | Editing surface | Nested lists | Extensions / customization | Collaborative editing | Atoms / embeds | Document format |
+| --- | --- | --- | --- | --- | --- | --- |
+| **This library** | Native; Fabric via Expo Modules; Rust core | Yes; indent / outdent | Configurable schemas, custom atoms, mentions and highlighting addons | Yjs / Yrs sync and awareness integration | Custom block atoms rendered with React Native components; mentions and images | HTML, ProseMirror JSON |
+| [TenTap (`@10play/tentap-editor`)](https://10play.github.io/10tap-editor/docs/mainConcepts) | WebView; Tiptap / ProseMirror | Yes; lift / sink | Bridge extensions and custom Tiptap extensions | Pro example / custom integration | Images; custom Tiptap nodes and atoms in the WebView | HTML, ProseMirror JSON, text |
+| [Enriched HTML (`react-native-enriched-html`)](https://github.com/software-mansion/react-native-enriched-html) | Native; Fabric | No; single-level lists | Curated HTML tags, styling and mention configuration | Unsupported | Built-in mentions and images; custom atom types unsupported | HTML, text |
+| [Enriched Markdown (`react-native-enriched-markdown`)](https://github.com/software-mansion/enriched-markdown/blob/main/docs/INPUT.md) | Native; Fabric | Yes; bullet / numbered lists | Formatting API, styling and mention configuration | Unsupported | Mentions; custom atom types unsupported | Markdown |
+| [Pell (`react-native-pell-rich-editor`)](https://github.com/wxik/react-native-rich-editor) | WebView; HTML `contenteditable` | Browser indent / outdent | Custom toolbar actions; injected JS, DOM and HTML | Unsupported | Images, video and HTML insertion; typed atom API unsupported | HTML |
+| [Live Markdown (`@expensify/react-native-live-markdown`)](https://github.com/Expensify/react-native-live-markdown) | Native `TextInput` with live syntax styling | Unsupported | Custom parser worklets over supported formatting types | Unsupported | Mention text styling; custom atom API unsupported | Markdown source (ExpensiMark by default) |
+
 ## Development
 
 See the [example app](./example) to try the editor and viewer, and the [Development Workflow](https://github.com/apollohg/react-native-rich-text-editor/wiki/Development-Workflow) for local setup, native builds, and testing.
