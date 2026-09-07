@@ -464,3 +464,5 @@ assert.match(iosSecurityJob, /NATIVE_EDITOR_IOS_TEST_ACTION: build-for-testing/)
 const iosTestStep = iosSecurityJob.split('- name: Validate iOS security behavior')[1];
 assert.match(iosTestStep, /NATIVE_EDITOR_IOS_TEST_ACTION: test-without-building/);
 assert.doesNotMatch(iosTestStep, /\bif:/, 'iOS security tests must run on every cache hit');
+
+assert.match(requireJob('package-contracts'), /node-version: 22/, 'Full Jest suite must use the supported Node 22 runtime');
