@@ -76,7 +76,7 @@ describe('prepared prose native lifecycle contracts', () => {
         expect(shadow).toContain('measurementsManager_->prepareFinalLayout(');
         expect(shadow).toContain('props,\n      *widthPx,');
         expect(shadow).not.toContain('static_cast<Float>(*widthPx) / scale');
-        expect(mount).toContain('generation,\n            request.nativeFontRevision,');
+        expect(mount).toMatch(/generation,\s*request\.nativeFontRevision,?/);
         expect(mount).toContain('prepareForFabricMount(generation)');
         expect(mount).not.toContain('view.width');
         expect(mount).not.toContain('releaseFabricMountMiss');
@@ -202,10 +202,10 @@ describe('prepared prose native lifecycle contracts', () => {
         expect(androidMeasure.indexOf('val request = requestFrom(props, state, leaseHandle)')).toBeLessThan(
             androidMeasure.indexOf('PreparedProseLayoutRegistry.shared.measure(')
         );
-        expect(androidMeasure).toContain('fabricSurface = surface, fabricLeaseHandle = leaseHandle');
+        expect(androidMeasure).toMatch(/fabricSurface\s*=\s*surface,\s*fabricLeaseHandle\s*=\s*leaseHandle/);
         expect(androidBeginImages).toContain('attachmentRevisions.admit(artifact.imageAttachments.size)');
         expect(androidBeginImages).toContain('fontEnvironment.activate()');
-        expect(androidBeginImages).toContain('imagePipeline.begin(request.semanticGenerationIdentity');
+        expect(androidBeginImages).toMatch(/imagePipeline\.begin\(\s*request\.semanticGenerationIdentity/);
         expect(androidBeginImages).not.toContain('attachmentRevisions.beginSemanticGeneration');
         expect(androidBeginImages).not.toContain('imagePipeline.cancel()');
     });
@@ -509,10 +509,11 @@ describe('prepared prose native lifecycle contracts', () => {
 
     it('prints the prepared-prose benchmark export before gating the same local export', () => {
         const performanceTests = readSource('ios/Tests/NativePerformanceTests+PreparedProseMeasurements.swift');
-        const benchmark = performanceTests.slice(
-            performanceTests.indexOf('func testPerformance_preparedProseCorpusGates_iPhone13() throws {'),
-            performanceTests.indexOf('\n    /// Fixture-only device contract')
-        );
+        const benchmarkStart = performanceTests.indexOf('func testPerformance_preparedProseCorpusGates_iPhone13() throws {');
+        const nextTest = performanceTests.indexOf('\n    func ', benchmarkStart + 1);
+        expect(benchmarkStart).toBeGreaterThanOrEqual(0);
+        expect(nextTest).toBeGreaterThan(benchmarkStart);
+        const benchmark = performanceTests.slice(benchmarkStart, nextTest);
         const localExport = 'let benchmarkExport = PreparedProseInstrumentation.exportJSON()';
         const diagnostic = 'print("[PreparedProseBenchmarkExport]\\(benchmarkExport)")';
         const gate = 'exportJSON: benchmarkExport,';
@@ -588,12 +589,8 @@ describe('prepared prose native lifecycle contracts', () => {
         expect(iosHarness).toContain('PREPARED_PROSE_STATIC_HARNESS_FIXTURES');
         expect(iosHarness).toContain('XCTAssertGreaterThan(longHeight, shortHeight)');
         expect(iosHarness).not.toContain('height: 180');
-        expect(androidHarness).toContain(
-            'val evidencePhase = if (active.direction == Direction.WARM && active.phase == PreparedProseInstrumentation.TraversalPhase.COLD) {\n' +
-            '            PreparedProseInstrumentation.TraversalPhase.WARM\n' +
-            '        } else {\n' +
-            '            active.phase\n' +
-            '        }'
+        expect(androidHarness).toMatch(
+            /val evidencePhase\s*=\s*if\s*\(\s*active\.direction == Direction\.WARM\s*&&\s*active\.phase == PreparedProseInstrumentation\.TraversalPhase\.COLD\s*\)\s*\{\s*PreparedProseInstrumentation\.TraversalPhase\.WARM\s*\}\s*else\s*\{\s*active\.phase\s*\}/
         );
         expect(androidHarness).toContain('PreparedProseInstrumentation.beginPhase(evidencePhase)');
         expect(androidHarness).toContain('PreparedProseInstrumentation.endPhase()');
@@ -607,7 +604,7 @@ describe('prepared prose native lifecycle contracts', () => {
 
         expect(androidDevice).toContain('private val testContext: Context = instrumentation.context');
         expect(androidDevice).toContain('private val targetContext: Context = instrumentation.targetContext');
-        expect(androidDevice).toContain('testContext.assets.open("viewer-performance-corpus.json")');
+        expect(androidDevice).toMatch(/testContext\.assets\.open\(\s*"viewer-performance-corpus\.json"\s*\)/);
         expect(androidDevice).toContain('PreparedProseBenchmarkConfiguration.load(testContext)');
         expect(androidDevice).not.toContain('ApplicationProvider.getApplicationContext');
     });
