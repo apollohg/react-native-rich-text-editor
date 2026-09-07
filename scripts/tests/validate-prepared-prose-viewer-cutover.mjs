@@ -263,7 +263,10 @@ assert.match(
     'viewer layout keys must pair physical width with the exact display-scale bit pattern',
 );
 
-const androidViewerLayout = read('android/src/main/java/com/apollohg/editor/viewer/AndroidProseLayoutEngine.kt');
+const androidViewerLayout = [
+    read('android/src/main/java/com/apollohg/editor/viewer/AndroidProseLayoutEngine.kt'),
+    read('android/src/main/java/com/apollohg/editor/viewer/FallbackSelectionGeometry.kt'),
+].join('\n');
 assert.match(
     androidViewerLayout,
     /enum class FallbackLogicalCaretAffinity \{ LEADING_NEXT, TRAILING_PREVIOUS \}/,

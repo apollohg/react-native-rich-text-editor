@@ -102,48 +102,44 @@ const buildJob = requireJob('build-package');
 assert.match(buildJob, /runs-on:\s*macos-[^\s]+/);
 assert.match(buildJob, /cargo install cargo-ndk --version 4\.1\.2 --locked/);
 assert.match(buildJob, /sdkmanager --install ['"]ndk;27\.1\.12297006['"]/);
-assert.match(
-  buildJob,
-  /- name: Restore release build cache\s+id: release-build-cache\s+uses: actions\/cache\/restore@v5/,
-  'release builds must restore exact previously rehearsed outputs',
-);
-assert.match(
-  buildJob,
-  /key: release-build-v1-\$\{\{ runner\.os \}\}-rust-1\.95\.0-ndk-4\.1\.2-android-27\.1\.12297006-\$\{\{ github\.sha \}\}/,
-  'release build caches must be isolated by toolchain and exact commit',
-);
-for (const stepName of [
-  'Setup Node',
-  'Setup Java',
-  'Setup Rust',
-  'Cache Cargo',
-  'Install cargo-ndk',
-  'Setup Android SDK',
-  'Setup Android NDK',
-  'Install dependencies',
-  'Build editor-core for all shipping targets',
-  'Verify generated bindings are current',
-  'Build package',
-  'Pack release artifact',
+const nativeRestore = buildJob.split('- name: Restore native build cache')[1]?.split('\n            - name:')[0];
+assert.ok(nativeRestore, 'release builds must restore reusable native outputs');
+assert.match(nativeRestore, /id: native-build-cache\s+uses: actions\/cache\/restore@v5/);
+assert.match(nativeRestore, /key: native-build-v1-.*runner\.os.*runner\.arch.*rust-1\.95\.0.*ndk-4\.1\.2.*android-27\.1\.12297006.*steps\.native-toolchain\.outputs\.xcode.*hashFiles/);
+assert.doesNotMatch(nativeRestore, /github\.sha|restore-keys:|release-artifact|\bdist\b/,
+  'native cache must neither depend on the commit nor restore stale package outputs');
+for (const input of [
+  'rust/editor-core/src/**', 'rust/editor-core/*.toml', 'rust/editor-core/Cargo.lock',
+  'rust/editor-core/build.rs', 'rust/editor-core/.cargo/**', 'rust/*.sh',
+  '.cargo/**', 'rust/.cargo/**',
 ]) {
-  assert.match(
-    buildJob,
-    new RegExp(
-      `- name: ${stepName}\\s+if: steps\\.release-build-cache\\.outputs\\.cache-hit != 'true'`,
-    ),
-    `${stepName} must be skipped when exact release outputs are restored`,
-  );
+  assert.ok(nativeRestore.includes(`'${input}'`), `native cache must include ${input}`);
 }
-assert.match(
-  buildJob,
-  /- name: Save release build cache\s+if: steps\.release-build-cache\.outputs\.cache-hit != 'true'\s+uses: actions\/cache\/save@v5/,
-  'new release outputs must populate the exact commit cache',
-);
-assert.match(
-  buildJob,
-  /key: \$\{\{ steps\.release-build-cache\.outputs\.cache-primary-key \}\}/,
-  'release output saves must reuse the restore primary key',
-);
+assert.match(buildJob, /xcodebuild -version/, 'native cache must identify the selected Xcode toolchain');
+for (const stepName of [
+  'Setup Java', 'Setup Rust', 'Cache Cargo', 'Install cargo-ndk',
+  'Setup Android SDK', 'Setup Android NDK', 'Build editor-core for all shipping targets',
+]) {
+  assert.match(buildJob, new RegExp(
+    `- name: ${stepName}\\s+if: steps\\.native-build-cache\\.outputs\\.cache-hit != 'true'`,
+  ), `${stepName} must be skipped when matching native outputs are restored`);
+}
+for (const stepName of [
+  'Setup Node', 'Install dependencies', 'Verify generated bindings are current',
+  'Build package', 'Pack release artifact',
+]) {
+  const step = buildJob.split(`- name: ${stepName}`)[1]?.split('\n            - name:')[0];
+  assert.ok(step, `${stepName} must remain in the release build`);
+  assert.doesNotMatch(step, /\bif:/, `${stepName} must run even on a native cache hit`);
+}
+const nativeSave = buildJob.split('- name: Save native build cache')[1]?.split('\n            - name:')[0];
+assert.ok(nativeSave, 'fresh native outputs must be cached');
+assert.match(nativeSave, /if: steps\.native-build-cache\.outputs\.cache-hit != 'true'\s+uses: actions\/cache\/save@v5/);
+assert.match(nativeSave, /key: \$\{\{ steps\.native-build-cache\.outputs\.cache-primary-key \}\}/);
+const cachePaths = (step) => step.match(/path: \|([\s\S]*?)\n\s+key:/)?.[1].trim();
+assert.equal(cachePaths(nativeRestore), cachePaths(nativeSave), 'native restore and save paths must match');
+assert.ok(buildJob.indexOf('- name: Save native build cache') < buildJob.indexOf('- name: Build package'),
+  'native outputs should survive later packaging failures');
 assert.match(
   buildJob,
   /- name: Upload release artifact\s+uses: actions\/upload-artifact@v7/,

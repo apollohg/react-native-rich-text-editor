@@ -34,6 +34,8 @@ mkdir -p \
   "$package_fixture/android/src/debug/java/com/apollohg/editor/viewer" \
   "$package_fixture/android/src/release/java/com/apollohg/editor/viewer"
 cp "$repo_root/package.json" "$package_fixture/package.json"
+cp "$repo_root/LICENSE" "$repo_root/THIRD_PARTY_NOTICES.md" \
+  "$repo_root/RUST-STANDARD-LIBRARY-NOTICES.html" "$package_fixture/"
 cp "$repo_root/expo-module.config.json" "$package_fixture/expo-module.config.json"
 cp "$repo_root/ReactNativeProseEditor.podspec" "$package_fixture/ReactNativeProseEditor.podspec"
 cp \

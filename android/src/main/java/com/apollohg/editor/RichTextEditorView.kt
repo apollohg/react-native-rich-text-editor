@@ -16,8 +16,6 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import kotlin.math.roundToInt
-import com.facebook.react.uimanager.PointerEvents
-import com.facebook.react.uimanager.ReactPointerEventsView
 
 internal data class AtomLayoutPosition(
     val key: String,
@@ -35,10 +33,6 @@ class RichTextEditorView @JvmOverloads constructor(
 ) : LinearLayout(context, attrs, defStyleAttr) {
     val editorViewport: FrameLayout
     val editorContentFrame: FrameLayout
-
-    private class DecorationLayer(context: Context) : FrameLayout(context), ReactPointerEventsView {
-        override val pointerEvents = PointerEvents.NONE
-    }
 
     private inner class EditorScrollView(context: Context) : ScrollView(context) {
         override fun computeScrollDeltaToGetChildRectOnScreen(rect: Rect): Int {
@@ -217,7 +211,7 @@ class RichTextEditorView @JvmOverloads constructor(
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         )
-        val decorationLayer = DecorationLayer(context)
+        val decorationLayer = EditorDecorationLayer(context)
         editorViewport.addView(decorationLayer, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         decorationLayer.addView(

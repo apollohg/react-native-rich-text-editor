@@ -20,43 +20,48 @@ jobs:
             - name: Checkout
               uses: actions/checkout@v5
 
-            - name: Restore release build cache
-              id: release-build-cache
+            - name: Identify native toolchain
+              id: native-toolchain
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  xcode_hash="$(xcodebuild -version | shasum -a 256 | cut -d ' ' -f 1)"
+                  echo "xcode=$xcode_hash" >> "$GITHUB_OUTPUT"
+
+            - name: Restore native build cache
+              id: native-build-cache
               uses: actions/cache/restore@v5
               with:
                   path: |
-                      release-artifact
-                      dist
                       rust/bindings
                       rust/ios
                       rust/android
                       ios/Generated_editor_core.swift
                       ios/editor_coreFFI
                       ios/EditorCore.xcframework
-                  key: release-build-v1-${{ runner.os }}-rust-1.95.0-ndk-4.1.2-android-27.1.12297006-${{ github.sha }}
+                  key: native-build-v1-${{ runner.os }}-${{ runner.arch }}-rust-1.95.0-ndk-4.1.2-android-27.1.12297006-${{ steps.native-toolchain.outputs.xcode }}-${{ hashFiles('rust/editor-core/src/**', 'rust/editor-core/*.toml', 'rust/editor-core/Cargo.lock', 'rust/editor-core/build.rs', 'rust/editor-core/.cargo/**', 'rust/*.sh', '.cargo/**', 'rust/.cargo/**') }}
 
             - name: Setup Node
-              if: steps.release-build-cache.outputs.cache-hit != 'true'
               uses: actions/setup-node@v6
               with:
                   node-version: 24
                   cache: npm
 
             - name: Setup Java
-              if: steps.release-build-cache.outputs.cache-hit != 'true'
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
               uses: actions/setup-java@v5
               with:
                   distribution: temurin
                   java-version: 17
 
             - name: Setup Rust
-              if: steps.release-build-cache.outputs.cache-hit != 'true'
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
               uses: dtolnay/rust-toolchain@1.95.0
               with:
                   targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios, aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
 
             - name: Cache Cargo
-              if: steps.release-build-cache.outputs.cache-hit != 'true'
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
               uses: Swatinem/rust-cache@v2
               with:
                   workspaces: rust/editor-core
@@ -64,7 +69,7 @@ jobs:
                   cache-on-failure: true
 
             - name: Install cargo-ndk
-              if: steps.release-build-cache.outputs.cache-hit != 'true'
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
               shell: bash
               run: |
                   set -euo pipefail
@@ -73,11 +78,11 @@ jobs:
                   fi
 
             - name: Setup Android SDK
-              if: steps.release-build-cache.outputs.cache-hit != 'true'
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
               uses: android-actions/setup-android@v4
 
             - name: Setup Android NDK
-              if: steps.release-build-cache.outputs.cache-hit != 'true'
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
               shell: bash
               run: |
                   set -euo pipefail
@@ -85,44 +90,41 @@ jobs:
                   echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/27.1.12297006" >> "$GITHUB_ENV"
 
             - name: Install dependencies
-              if: steps.release-build-cache.outputs.cache-hit != 'true'
               run: npm ci
 
             - name: Build editor-core for all shipping targets
-              if: steps.release-build-cache.outputs.cache-hit != 'true'
-              run: npm run build:rust
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
+              run: |
+                  bash rust/generate-bindings.sh
+                  bash rust/build-ios.sh
+                  bash rust/build-android.sh
 
             - name: Verify generated bindings are current
-              if: steps.release-build-cache.outputs.cache-hit != 'true'
               run: git diff --exit-code -- rust/bindings ios/Generated_editor_core.swift ios/editor_coreFFI
 
-            - name: Build package
-              if: steps.release-build-cache.outputs.cache-hit != 'true'
-              run: npm run build
-
-            - name: Pack release artifact
-              if: steps.release-build-cache.outputs.cache-hit != 'true'
-              shell: bash
-              run: |
-                  set -euo pipefail
-                  mkdir -p release-artifact
-                  npm pack --ignore-scripts --pack-destination release-artifact
-                  test "$(find release-artifact -maxdepth 1 -type f -name '*.tgz' | wc -l | tr -d '[:space:]')" = 1
-
-            - name: Save release build cache
-              if: steps.release-build-cache.outputs.cache-hit != 'true'
+            - name: Save native build cache
+              if: steps.native-build-cache.outputs.cache-hit != 'true'
               uses: actions/cache/save@v5
               with:
                   path: |
-                      release-artifact
-                      dist
                       rust/bindings
                       rust/ios
                       rust/android
                       ios/Generated_editor_core.swift
                       ios/editor_coreFFI
                       ios/EditorCore.xcframework
-                  key: ${{ steps.release-build-cache.outputs.cache-primary-key }}
+                  key: ${{ steps.native-build-cache.outputs.cache-primary-key }}
+
+            - name: Build package
+              run: npm run build
+
+            - name: Pack release artifact
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  mkdir -p release-artifact
+                  npm pack --ignore-scripts --pack-destination release-artifact
+                  test "$(find release-artifact -maxdepth 1 -type f -name '*.tgz' | wc -l | tr -d '[:space:]')" = 1
 
             - name: Upload release artifact
               uses: actions/upload-artifact@v7
