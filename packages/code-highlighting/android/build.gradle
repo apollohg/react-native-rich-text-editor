@@ -20,6 +20,6 @@ android {
 }
 
 dependencies {
-    implementation project(':react-native-rich-text-editor')
+    implementation project(':apollohg_react-native-rich-text-editor')
     implementation 'net.java.dev.jna:jna:5.18.1@aar'
 }

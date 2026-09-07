@@ -1,4 +1,4 @@
-import type { NodeSpec, SchemaDefinition } from 'react-native-rich-text-editor';
+import type { NodeSpec, SchemaDefinition } from '@apollohg/react-native-rich-text-editor';
 
 /**
  * Node names the editor's list commands, native checklist rendering, and the

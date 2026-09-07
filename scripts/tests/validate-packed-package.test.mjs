@@ -31,12 +31,12 @@ assert.match(
 );
 assert.match(
   validatorSource,
-  /"react-native-rich-text-editor": "file:\$tarball_path"/,
+  /"@apollohg\/react-native-rich-text-editor": "file:\$tarball_path"/,
   "packed iOS consumer package.json must declare the generated tarball as its editor dependency",
 );
 assert.match(
   validatorSource,
-  /require\.resolve\('react-native-rich-text-editor\/package\.json'\)/,
+  /require\.resolve\('@apollohg\/react-native-rich-text-editor\/package\.json'\)/,
   "packed iOS consumer must prove Node resolves the installed editor package",
 );
 assert.match(
@@ -66,7 +66,7 @@ assert.doesNotMatch(
 );
 assert.doesNotMatch(
   validatorSource,
-  /"react-native-rich-text-editor": "file:\.\/node_modules\/react-native-rich-text-editor"/,
+  /"@apollohg\/react-native-rich-text-editor": "file:\.\/node_modules\/@apollohg\/react-native-rich-text-editor"/,
   "packed iOS consumer must not self-reference a manually populated node_modules dependency",
 );
 

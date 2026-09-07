@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { defineAtomNode, type AtomComponentProps } from 'react-native-rich-text-editor';
+import { defineAtomNode, type AtomComponentProps } from '@apollohg/react-native-rich-text-editor';
 
 import { FONT_SIZE, LINE_HEIGHT, MIN_TOUCH_TARGET, PALETTE, RADIUS, SPACE } from '../theme';
 

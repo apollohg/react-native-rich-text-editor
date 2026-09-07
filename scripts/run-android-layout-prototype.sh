@@ -17,8 +17,8 @@ fi
 if [[ ! -f example/android/gradlew ]]; then npm run prebuild:example:android; fi
 (
     cd example/android
-    ./gradlew :react-native-rich-text-editor:assembleDebugAndroidTest
+    ./gradlew :apollohg_react-native-rich-text-editor:assembleDebugAndroidTest
 )
-prototype_apk="$repo_dir/android/build/outputs/apk/androidTest/debug/react-native-rich-text-editor-debug-androidTest.apk"
+prototype_apk="$repo_dir/android/build/outputs/apk/androidTest/debug/apollohg_react-native-rich-text-editor-debug-androidTest.apk"
 "$adb_bin" -s "$device_id" install -r "$prototype_apk"
 "$adb_bin" -s "$device_id" shell am start -n com.apollohg.editor.test/com.apollohg.editor.prototype.PrototypeEditorActivity

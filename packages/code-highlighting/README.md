@@ -1,13 +1,13 @@
 # Native code highlighting
 
-Optional syntax highlighting for `react-native-rich-text-editor`. Requires Expo native modules and a native app rebuild after installation.
+Optional syntax highlighting for `@apollohg/react-native-rich-text-editor`. Requires Expo native modules and a native app rebuild after installation.
 
 ```sh
 npm install @react-native-rich-text-editor/code-highlighting
 ```
 
 ```tsx
-import { RichTextEditor } from 'react-native-rich-text-editor';
+import { RichTextEditor } from '@apollohg/react-native-rich-text-editor';
 import { createCodeHighlightingAddon } from '@react-native-rich-text-editor/code-highlighting';
 
 const highlighting = createCodeHighlightingAddon({ theme: 'base16-ocean.dark' });

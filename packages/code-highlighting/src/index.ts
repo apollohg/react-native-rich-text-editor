@@ -1,5 +1,5 @@
 import { requireNativeModule } from 'expo-modules-core';
-import type { CodeHighlightingAddon } from 'react-native-rich-text-editor';
+import type { CodeHighlightingAddon } from '@apollohg/react-native-rich-text-editor';
 
 const nativeModule = requireNativeModule<{ initialize(): number }>('NativeCodeHighlighting');
 if (nativeModule.initialize() !== 1) {

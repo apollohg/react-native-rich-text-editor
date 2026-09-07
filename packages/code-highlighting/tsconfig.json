@@ -9,7 +9,7 @@
         "rootDir": "src",
         "outDir": "dist",
         "paths": {
-            "react-native-rich-text-editor": ["../../dist"],
+            "@apollohg/react-native-rich-text-editor": ["../../dist"],
             "expo-modules-core": ["../../example/node_modules/expo/node_modules/expo-modules-core"]
         }
     },

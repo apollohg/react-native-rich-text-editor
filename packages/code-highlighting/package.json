@@ -1,7 +1,7 @@
 {
     "name": "@react-native-rich-text-editor/code-highlighting",
     "version": "2.0.0",
-    "description": "Optional native syntax highlighting for react-native-rich-text-editor",
+    "description": "Optional native syntax highlighting for @apollohg/react-native-rich-text-editor",
     "license": "Apache-2.0",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
@@ -29,7 +29,7 @@
         "scripts/verify-package.mjs"
     ],
     "peerDependencies": {
-        "react-native-rich-text-editor": ">=2.0.0 <3",
+        "@apollohg/react-native-rich-text-editor": ">=2.0.0 <3",
         "expo": ">=52.0.0"
     },
     "scripts": {

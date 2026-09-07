@@ -1,6 +1,6 @@
-# React Native Rich Text Editor [![NPM version](https://img.shields.io/npm/v/react-native-rich-text-editor.svg?style=flat)](https://www.npmjs.com/package/react-native-rich-text-editor)
+# React Native Rich Text Editor [![NPM version](https://img.shields.io/npm/v/@apollohg/react-native-rich-text-editor.svg?style=flat)](https://www.npmjs.com/package/@apollohg/react-native-rich-text-editor)
 
-`react-native-rich-text-editor` is a native rich text editor for React Native. It combines a Rust document core with native iOS and Android editing, a React toolbar and theme API, a Fabric prose viewer, and Yjs collaboration.
+`@apollohg/react-native-rich-text-editor` is a native rich text editor for React Native. It combines a Rust document core with native iOS and Android editing, a React toolbar and theme API, a Fabric prose viewer, and Yjs collaboration.
 
 See the [documentation](https://github.com/apollohg/react-native-rich-text-editor/wiki) for guides and API references. The package is under active development; review the [changelog](./CHANGELOG.md) before upgrading between major versions.
 
@@ -29,7 +29,7 @@ Requires Expo 52+, React Native 0.76+, React 18+, and `@expo/vector-icons` 14+. 
 Install the package and its icon peer dependency:
 
 ```sh
-npm install react-native-rich-text-editor
+npm install @apollohg/react-native-rich-text-editor
 npx expo install @expo/vector-icons
 ```
 
@@ -38,7 +38,7 @@ Add the config plugin to an Expo app:
 ```ts
 export default {
     expo: {
-        plugins: ['react-native-rich-text-editor'],
+        plugins: ['@apollohg/react-native-rich-text-editor'],
     },
 };
 ```
@@ -61,7 +61,7 @@ import React, { useEffect, useMemo } from 'react';
 import {
     createNativeEditorDocumentHandle,
     RichTextEditor,
-} from 'react-native-rich-text-editor';
+} from '@apollohg/react-native-rich-text-editor';
 
 export function EditorScreen() {
     const documentHandle = useMemo(
@@ -100,7 +100,7 @@ See [Custom Atom Nodes](https://github.com/apollohg/react-native-rich-text-edito
 `RichTextViewer` displays HTML or ProseMirror JSON without creating an editor session. Place it in a container with a finite width:
 
 ```tsx
-import { RichTextViewer } from 'react-native-rich-text-editor';
+import { RichTextViewer } from '@apollohg/react-native-rich-text-editor';
 
 <RichTextViewer contentHTML='<p>Read-only content</p>' />;
 ```
@@ -112,7 +112,7 @@ See the [Viewer Guide](https://github.com/apollohg/react-native-rich-text-editor
 Version 2 uses a flat, typed stylesheet for both the editor and viewer:
 
 ```tsx
-import { EditorStyleSheet, RichTextEditor } from 'react-native-rich-text-editor';
+import { EditorStyleSheet, RichTextEditor } from '@apollohg/react-native-rich-text-editor';
 
 const theme = EditorStyleSheet.create({
     content: { padding: 16, backgroundColor: '#ffffff' },
@@ -146,7 +146,7 @@ Custom atom components mount inside Android's native scrolling content. Their me
 Addons are a readonly array. Conditional `false`, `null`, and `undefined` entries are allowed; duplicate capabilities are rejected:
 
 ```tsx
-import { createMentionsAddon } from 'react-native-rich-text-editor';
+import { createMentionsAddon } from '@apollohg/react-native-rich-text-editor';
 import { createCodeHighlightingAddon } from '@react-native-rich-text-editor/code-highlighting';
 
 <RichTextEditor
@@ -173,7 +173,7 @@ import {
     createNativeEditorDocumentHandle,
     RichTextEditor,
     useYjsCollaboration,
-} from 'react-native-rich-text-editor';
+} from '@apollohg/react-native-rich-text-editor';
 
 export function CollaborativeEditor({ documentId }: { documentId: string }) {
     const documentHandle = useMemo(

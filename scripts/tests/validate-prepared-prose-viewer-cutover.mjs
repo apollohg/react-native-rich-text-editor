@@ -147,7 +147,7 @@ assert.deepEqual(
 );
 assert.match(
     read('android/expo/build.gradle'),
-    /api project\(':react-native-rich-text-editor'\)/,
+    /api project\(':apollohg_react-native-rich-text-editor'\)/,
     'the Expo facade must depend on the React Native Android project',
 );
 assert.ok(
@@ -274,7 +274,7 @@ assert.match(
 );
 assert.match(
     androidViewerLayout,
-    /val logicalRuns: List<FallbackLogicalBidiRun>,\s*val outerLineBoundary: \(FallbackVisualEdge\) -> Float,\s*val primaryHorizontal: \(Int\) -> Float,\s*val secondaryHorizontal: \(Int\) -> Float,/s,
+    /val logicalRuns: List<FallbackLogicalBidiRun>,\s*val outerLineBoundary: \(FallbackVisualEdge\) -> Float,\s*val primaryHorizontal: \(Int\) -> Float,\s*val secondaryHorizontal: \(Int\) -> Float,?/s,
     'Android fallback geometry must retain full logical runs and both public caret providers',
 );
 assert.match(

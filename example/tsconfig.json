@@ -4,7 +4,7 @@
         "strict": true,
         "typeRoots": ["./node_modules/@types"],
         "paths": {
-            "react-native-rich-text-editor": ["../src/index.ts"],
+            "@apollohg/react-native-rich-text-editor": ["../src/index.ts"],
             "@expo/vector-icons": ["./node_modules/@expo/vector-icons"],
             "expo-modules-core": ["./node_modules/expo-modules-core"],
             "react-native": ["./node_modules/react-native"]

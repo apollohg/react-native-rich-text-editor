@@ -23,7 +23,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
-    "react-native-rich-text-editor": "file:..",
+    "@apollohg/react-native-rich-text-editor": "file:..",
     "react-native-safe-area-context": "~5.7.0"
   },
   "devDependencies": {

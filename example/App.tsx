@@ -22,7 +22,7 @@ import {
     type MentionSuggestion,
     type ReadonlyActiveState,
     type RichTextEditorRef,
-} from 'react-native-rich-text-editor';
+} from '@apollohg/react-native-rich-text-editor';
 
 import { counterCardAtom } from './components/CounterCard';
 import { LinkEditorModal } from './components/LinkEditorModal';

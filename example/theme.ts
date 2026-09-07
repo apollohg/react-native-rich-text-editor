@@ -1,9 +1,9 @@
-import { EditorStyleSheet } from 'react-native-rich-text-editor';
+import { EditorStyleSheet } from '@apollohg/react-native-rich-text-editor';
 import type {
     EditorMentionTheme,
     EditorTextStyle,
     EditorToolbarTheme,
-} from 'react-native-rich-text-editor';
+} from '@apollohg/react-native-rich-text-editor';
 
 /**
  * The one palette the app uses. Spruce is the ground the paper sheet sits on

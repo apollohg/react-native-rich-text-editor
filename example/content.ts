@@ -2,7 +2,7 @@ import type {
     DocumentJSON,
     EditorToolbarItem,
     MentionSuggestion,
-} from 'react-native-rich-text-editor';
+} from '@apollohg/react-native-rich-text-editor';
 
 import { TASK_ITEM_NODE_NAME, TASK_LIST_NODE_NAME } from './taskList';
 
