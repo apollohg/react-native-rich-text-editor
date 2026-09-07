@@ -2,6 +2,50 @@ import UIKit
 import os
 
 extension EditorTextView {
+    @objc func handleKeyboardFrameChange(_ notification: Notification) {
+        guard isFirstResponder || keyboardFrameInScreen != nil else { return }
+        if notification.name == UIResponder.keyboardWillHideNotification {
+            keyboardFrameInScreen = nil
+        } else {
+            keyboardFrameInScreen = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+        }
+        let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0
+        let curve = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
+        UIView.animate(
+            withDuration: duration,
+            delay: 0,
+            options: [UIView.AnimationOptions(rawValue: curve << 16), .beginFromCurrentState]
+        ) {
+            self.updateKeyboardInset()
+        }
+    }
+
+    func updateKeyboardInset() {
+        var overlap: CGFloat = 0
+        if isScrollEnabled, let window, let keyboardFrameInScreen {
+            let frameInWindow = window.convert(keyboardFrameInScreen, from: window.screen.coordinateSpace)
+            let keyboardFrame = convert(frameInWindow, from: window)
+            let intersection = bounds.intersection(keyboardFrame)
+            if !intersection.isNull, intersection.maxY >= bounds.maxY - 1 {
+                overlap = intersection.height
+            }
+        }
+        let baseBottomInset = contentInset.bottom - keyboardBottomInset
+        let automaticBottomInset = adjustedContentInset.bottom - contentInset.bottom
+        let nextInset = max(0, overlap - automaticBottomInset - baseBottomInset)
+        guard abs(nextInset - keyboardBottomInset) > 0.5 else { return }
+        let delta = nextInset - keyboardBottomInset
+        keyboardBottomInset = nextInset
+        contentInset.bottom += delta
+        verticalScrollIndicatorInsets.bottom += delta
+        if overlap > 0, isFirstResponder, let selection = selectedTextRange {
+            let caret = caretRect(for: selection.end)
+            if !caret.isEmpty {
+                scrollRectToVisible(caret.insetBy(dx: 0, dy: -8), animated: false)
+            }
+        }
+    }
+
     /// Whether the document holds nothing the user authored.
     ///
     /// Taken verbatim from the core. Deriving it cannot work: an empty list

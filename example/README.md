@@ -78,4 +78,4 @@ npm run android
 - The example app depends on the local package via `file:..` and resolves its types from `dist/`, so run the package build after changing `src/`.
 - If you change native code or Rust bindings, rebuild the app after updating the package binaries.
 - If the native build fails after pulling new changes, try running prebuild again.
-- The editor uses `heightBehavior="fixed"` and scrolls internally. On iOS the sheet keeps its full height and the keyboard height is added to the editor's bottom content inset, so content scrolls behind the keyboard; on Android the activity's resize behavior shrinks the window instead.
+- The editor uses `heightBehavior="fixed"` and scrolls internally. On iOS the sheet keeps its full height and the native editor adjusts its bottom scroll inset for keyboard overlap and reveals the selection; on Android the activity's resize behavior shrinks the window instead.

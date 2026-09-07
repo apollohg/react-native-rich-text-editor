@@ -5,9 +5,7 @@
   "main": "expo/AppEntry",
   "scripts": {
     "start": "expo start",
-    "preandroid": "npm run prebuild:android",
     "android": "expo run:android --device",
-    "preios": "npm run prebuild:ios",
     "ios": "expo run:ios --device",
     "prebuild": "expo prebuild --clean --no-install",
     "prebuild:android": "expo prebuild --clean --platform android --no-install",

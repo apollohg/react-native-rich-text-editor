@@ -2,6 +2,60 @@ import XCTest
 import ExpoModulesCore
 
 extension RichTextEditorViewTests {
+    func testCaretAfterInvalidatingEarlierLayoutKeepsItsPosition() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let textView = EditorTextView(frame: CGRect(x: 0, y: 0, width: 440, height: 600))
+        textView.theme = EditorTheme(dictionary: ["version": 1, "styles": [
+            "content": ["paddingTop": 28, "paddingLeft": 20, "paddingRight": 20, "paddingBottom": 36],
+            "text": ["fontSize": 17],
+            "paragraph": ["lineHeight": 27, "marginBottom": 12],
+            "orderedList": ["indent": 20, "baseIndentMultiplier": 1, "marginBottom": 12],
+            "listItem": ["marginBottom": 4],
+            "codeBlock": ["paddingTop": 12, "paddingBottom": 12, "marginTop": 12, "marginBottom": 12],
+        ]])
+        textView.bindEditor(id: editorId, initialHTML: "<h1>Field notes</h1>" +
+            String(repeating: "<p>A native editor with a Rust core. Everything below is editable: headings, emphasis, underline, strikethrough, and links.</p>", count: 5) +
+            "<pre><code>const greet = (name) =&gt; {\n    return name;\n};</code></pre>" +
+            "<img src='test://image' width='400' height='267'><p>Counters</p><img src='test://counter' width='400' height='120'>" +
+            "<ol><li><p>Insert another with the + button</p></li><li><p>Tap a counter to select it, then delete it like any block</p></li></ol><hr><p></p>")
+        textView.layoutIfNeeded()
+        let range = (textView.textStorage.string as NSString).range(of: "block")
+        setCollapsedSelection(in: textView, utf16Offset: NSMaxRange(range))
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
+        for edit in 0..<4 {
+            if edit == 1 || edit == 2 { textView.insertText("\n") }
+            if edit == 3 { textView.deleteBackward() }
+            for offset in [0, 10, 100, range.location - 20] {
+                textView.layoutManager.invalidateLayout(
+                    forCharacterRange: NSRange(location: offset, length: 1),
+                    actualCharacterRange: nil
+                )
+                let position = try XCTUnwrap(textView.selectedTextRange?.start)
+                let first = textView.caretRect(for: position)
+                textView.layoutManager.ensureLayout(for: textView.textContainer)
+                let settled = textView.caretRect(for: position)
+                XCTAssertEqual(first.minY, settled.minY, accuracy: 1, "edit \(edit), offset \(offset)")
+                XCTAssertEqual(first.minX, settled.minX, accuracy: 1, "edit \(edit), offset \(offset)")
+            }
+        }
+    }
+
+    func testCaretNearDocumentStartLeavesDistantLayoutLazy() throws {
+        let textView = EditorTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        textView.attributedText = NSAttributedString(
+            string: String(repeating: "Paragraph with enough text to wrap onto another line.\n", count: 2_000),
+            attributes: [.font: UIFont.systemFont(ofSize: 17)]
+        )
+        textView.layoutManager.invalidateLayout(
+            forCharacterRange: NSRange(location: 0, length: textView.textStorage.length),
+            actualCharacterRange: nil
+        )
+        let position = try XCTUnwrap(textView.position(from: textView.beginningOfDocument, offset: 4))
+        XCTAssertGreaterThan(textView.caretRect(for: position).height, 0)
+        XCTAssertLessThan(textView.layoutManager.firstUnlaidCharacterIndex(), textView.textStorage.length / 2)
+    }
+
     func testCaretRectInTallLineHeightListItemUsesResolvedGlyphBaseline() {
         let theme = EditorTheme(dictionary: [
             "paragraph": [

@@ -16,6 +16,56 @@ final class AutoGrowStyleTrackingNativeEditorView: NativeEditorExpoView {
 
 extension RichTextEditorViewTests {
 
+    func testKeyboardAppearanceRevealsSelection() {
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let window = hostEditorView(view)
+        defer { window.isHidden = true }
+        let textView = view.textView
+        textView.text = Array(repeating: "A line of text", count: 24).joined(separator: "\n")
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
+        XCTAssertTrue(textView.becomeFirstResponder())
+        textView.selectedRange = NSRange(location: textView.textStorage.length, length: 0)
+        textView.scrollRangeToVisible(textView.selectedRange)
+        flushMainQueue()
+        textView.layoutIfNeeded()
+
+        let keyboardTop = textView.convert(CGPoint(x: 0, y: textView.bounds.maxY - 220), to: window)
+        let keyboardFrame = window.convert(
+            CGRect(x: 0, y: keyboardTop.y, width: 320, height: 220),
+            to: window.screen.coordinateSpace
+        )
+        NotificationCenter.default.post(
+            name: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil,
+            userInfo: [
+                UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: keyboardFrame),
+                UIResponder.keyboardAnimationDurationUserInfoKey: 0,
+            ]
+        )
+        textView.layoutIfNeeded()
+        let caret = textView.caretRect(for: textView.selectedTextRange!.end)
+        XCTAssertLessThanOrEqual(textView.convert(caret, to: window).maxY, keyboardTop.y)
+        XCTAssertGreaterThan(textView.contentInset.bottom, 0)
+        let bottomInset = textView.contentInset.bottom
+        NotificationCenter.default.post(
+            name: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil,
+            userInfo: [UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: keyboardFrame)]
+        )
+        XCTAssertEqual(textView.contentInset.bottom, bottomInset)
+
+        view.frame.size.height = keyboardTop.y
+        view.layoutIfNeeded()
+        XCTAssertEqual(textView.contentInset.bottom, 0, accuracy: 0.5)
+
+        view.frame.size.height = 480
+        view.layoutIfNeeded()
+        XCTAssertGreaterThan(textView.contentInset.bottom, 0)
+        NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil)
+        XCTAssertEqual(textView.contentInset.bottom, 0, accuracy: 0.5)
+        textView.resignFirstResponder()
+    }
+
     //
     // taskListMarkerParagraphStart (EditorLayoutManager) used to enumerate
     // listMarkerContext over the WHOLE document, with per-item TextKit

@@ -1,7 +1,64 @@
 import UIKit
 import os
 
+class CaretPlacementTapRecognizer: UITapGestureRecognizer {
+    private weak var trackedTouch: UITouch?
+
+    // UIKit can publish selection after recognition, before tap actions run.
+    var pendingCaretPoint: CGPoint? {
+        guard state == .possible || state == .ended,
+              let touch = trackedTouch,
+              touch.tapCount == 1,
+              touch.phase != .moved,
+              touch.phase != .cancelled
+        else { return nil }
+        return touch.location(in: view)
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        trackedTouch = touches.count == 1 ? touches.first : nil
+        super.touchesBegan(touches, with: event)
+    }
+
+    override func reset() {
+        trackedTouch = nil
+        super.reset()
+    }
+}
+
 extension EditorTextView {
+    @objc
+    func handleCaretPlacementTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        // UIKit single taps otherwise snap to word boundaries.
+        _ = placeCaret(at: recognizer.location(in: self))
+    }
+
+    func canPlaceCaret(at point: CGPoint) -> Bool {
+        isEditable && isSelectable
+            && editorId != 0
+            && !hasImageAttachment(at: point)
+            && !hasTaskListMarker(at: point)
+            && atomAttachmentRange(at: point) == nil
+    }
+
+    @discardableResult
+    func placeCaret(at point: CGPoint) -> Bool {
+        guard canPlaceCaret(at: point),
+              finishExternalTextCompositionBeforeInteractionIfNeeded(),
+              prepareForExternalEditorUpdate(),
+              let position = closestPosition(to: point)
+        else { return false }
+        let offset = self.offset(from: beginningOfDocument, to: position)
+        guard !isAtomBoundaryCaretOffset(offset) else { return false }
+        _ = becomeFirstResponder()
+        logicalSelectionScalarRange = nil
+        logicalSelectionUtf16Range = nil
+        selectedRange = NSRange(location: offset, length: 0)
+        textViewDidChangeSelection(self)
+        return true
+    }
+
     func selectedUtf16Range() -> NSRange? {
         guard let range = selectedTextRange else { return nil }
         let location = offset(from: beginningOfDocument, to: range.start)
@@ -91,6 +148,20 @@ extension EditorTextView {
     func textViewDidChangeSelection(_ textView: UITextView) {
         guard textView === self else { return }
         ensureInternalTextViewDelegate()
+        if !isApplyingRustState,
+           !isComposing,
+           externalTextComposition == nil,
+           !nativeTextMutationCommitScheduled,
+           pendingNativeTextMutation == nil,
+           selectedRange.length == 0,
+           let point = caretPlacementTapRecognizer.pendingCaretPoint,
+           let position = closestPosition(to: point) {
+            let offset = self.offset(from: beginningOfDocument, to: position)
+            if selectedRange.location != offset, !isAtomBoundaryCaretOffset(offset) {
+                // Correct UIKit's word snap before publishing or drawing the selection.
+                selectedRange = NSRange(location: offset, length: 0)
+            }
+        }
         noteSelectionDidChange()
         if externalTextComposition != nil {
             guard !isApplyingRustState else { return }

@@ -197,6 +197,14 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     /// Tracks whether we're in a composition session (CJK / IME input).
     var isComposing = false
     var hasPendingCompositionForExternalRefresh: Bool { isComposing }
+    lazy var caretPlacementTapRecognizer: CaretPlacementTapRecognizer = {
+        let recognizer = CaretPlacementTapRecognizer(target: self, action: #selector(handleCaretPlacementTap(_:)))
+        recognizer.cancelsTouchesInView = false
+        recognizer.delaysTouchesBegan = false
+        recognizer.delaysTouchesEnded = false
+        recognizer.delegate = self
+        return recognizer
+    }()
     lazy var imageSelectionTapRecognizer: UITapGestureRecognizer = {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleImageSelectionTap(_:)))
         recognizer.cancelsTouchesInView = true
@@ -304,6 +312,15 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             object: nil
         )
 
+        for name in [UIResponder.keyboardWillChangeFrameNotification, UIResponder.keyboardWillHideNotification] {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleKeyboardFrameChange(_:)),
+                name: name,
+                object: nil
+            )
+        }
+
         // Configure the text view as a Rust-controlled editor surface.
         // UIKit smart-edit features mutate text storage outside our transaction
         // pipeline and can race with stored-mark typing after toolbar actions.
@@ -333,6 +350,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         ensureInternalTextViewDelegate()
         textDragDelegate = self
         textDropDelegate = self
+        addGestureRecognizer(caretPlacementTapRecognizer)
         addGestureRecognizer(imageSelectionTapRecognizer)
         installImageSelectionTapDependencies()
 
@@ -343,8 +361,13 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window == nil { codeHighlightingSession.cancel() }
-        else { scheduleCodeHighlighting() }
+        if window == nil {
+            codeHighlightingSession.cancel()
+            keyboardFrameInScreen = nil
+            updateKeyboardInset()
+        } else {
+            scheduleCodeHighlighting()
+        }
         installImageSelectionTapDependencies()
     }
 
@@ -364,6 +387,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        updateKeyboardInset()
         styleContentView.frame = CGRect(x: 0, y: 0, width: bounds.width, height: max(bounds.height, contentSize.height))
         let placeholderX = textContainerInset.left + textContainer.lineFragmentPadding
         let placeholderY = textContainerInset.top
@@ -412,6 +436,9 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         codeHighlightingSession.cancel()
         NotificationCenter.default.removeObserver(self)
     }
+
+    var keyboardFrameInScreen: CGRect?
+    var keyboardBottomInset: CGFloat = 0
 
     override var contentOffset: CGPoint {
         didSet {
@@ -473,6 +500,9 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         if isAtomBoundaryCaretOffset(utf16Offset) {
             return .zero
         }
+        // Noncontiguous layout can report estimated positions until the preceding text is laid out.
+        let layoutEnd = min(textStorage.length, max(0, utf16Offset) + 2)
+        layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: layoutEnd))
         let rect = resolvedCaretReferenceRect(for: position)
         guard rect.height > 0 else { return rect }
 

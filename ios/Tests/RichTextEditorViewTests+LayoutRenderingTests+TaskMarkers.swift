@@ -2,6 +2,69 @@ import XCTest
 import ExpoModulesCore
 
 extension RichTextEditorViewTests {
+    func testTaskMarkerTap_togglesCheckedStateAfterScrolling() throws {
+        try assertTaskMarkerToggles(afterScrolling: true)
+    }
+
+    func testTaskMarkerTap_togglesCheckedStateWithoutScrolling() throws {
+        try assertTaskMarkerToggles(afterScrolling: false)
+    }
+
+    func testTaskMarkerTap_preservesExistingFocus() throws {
+        try assertTaskMarkerToggles(afterScrolling: false, initiallyFocused: true)
+    }
+
+    private func assertTaskMarkerToggles(afterScrolling: Bool, initiallyFocused: Bool = false) throws {
+        let editorId = makeV2Editor(configJson: #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"taskList","content":"listItem+","group":"block","role":"list"},{"name":"listItem","content":"paragraph block*","role":"listItem","attrs":{"checked":{"default":false}}},{"name":"text","group":"inline","role":"text"}],"marks":[]},"initialization":{"type":"localEmpty"}}"#)
+        defer { destroyV2Editor(id: editorId) }
+        let paragraphs = Array(repeating: #"{"type":"paragraph","content":[{"type":"text","text":"Before"}]}"#, count: afterScrolling ? 12 : 0)
+        let task = #"{"type":"taskList","content":[{"type":"listItem","attrs":{"checked":false},"content":[{"type":"paragraph","content":[{"type":"text","text":"Buy milk"}]}]}]}"#
+        let update = EditorV2Shadow.setJson(id: editorId, json: "{\"type\":\"doc\",\"content\":[" + (paragraphs + [task]).joined(separator: ",") + "]}")
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.bindEditor(id: editorId, initialUpdateJSON: update)
+        let window = hostEditorView(view)
+        defer { window.isHidden = true }
+        let textView = view.textView
+        if initiallyFocused {
+            XCTAssertTrue(textView.becomeFirstResponder())
+        }
+        XCTAssertEqual(textView.isFirstResponder, initiallyFocused)
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
+        let start = (textView.textStorage.string as NSString).range(of: "Buy milk").location
+        XCTAssertNotEqual(start, NSNotFound)
+        guard start != NSNotFound else { return }
+        flushMainQueue()
+        textView.layoutIfNeeded()
+        if afterScrolling {
+            let marker = taskMarkerTightRect(forCharacterIndex: start, in: textView)
+            textView.setContentOffset(CGPoint(x: 0, y: marker.midY - 100), animated: false)
+            XCTAssertGreaterThan(textView.contentOffset.y, 0)
+        }
+        for checked in [true, false] {
+            let marker = taskMarkerTightRect(forCharacterIndex: start, in: textView)
+            let point = textView.convert(
+                CGPoint(x: marker.midX + textView.contentOffset.x,
+                        y: marker.midY + textView.contentOffset.y),
+                to: view
+            )
+            XCTAssertTrue(view.bounds.contains(point))
+            XCTAssertFalse(textView.canPlaceCaret(at: view.convert(point, to: textView)))
+            XCTAssertTrue(view.taskListMarkerTapOverlayInterceptsPointForTesting(point))
+            XCTAssertTrue(view.tapTaskListMarkerOverlayForTesting(at: point))
+            XCTAssertEqual(textView.isFirstResponder, initiallyFocused)
+            let data = try XCTUnwrap(EditorV2Shadow.getJson(id: editorId).data(using: .utf8))
+            let document = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let content = try XCTUnwrap(document["content"] as? [[String: Any]])
+            let taskList = try XCTUnwrap(content.first(where: { $0["type"] as? String == "taskList" }))
+            let items = try XCTUnwrap(taskList["content"] as? [[String: Any]])
+            let item = try XCTUnwrap(items.first)
+            let attrs = item["attrs"] as? [String: Any]
+            XCTAssertEqual(attrs?["checked"] as? Bool ?? false, checked)
+            flushMainQueue()
+            XCTAssertEqual(textView.isFirstResponder, initiallyFocused)
+        }
+    }
+
     func testTaskMarkerHitTest_hitsCheckboxCenterOfSingleTaskItem() {
         let attributed = RenderBridge.renderElements(
             fromJSON: taskListJSON(items: [(text: "Buy milk", checked: false)]),

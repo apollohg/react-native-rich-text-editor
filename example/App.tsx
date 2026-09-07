@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Platform, StyleSheet, Text, View, type KeyboardEvent } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
@@ -64,7 +64,6 @@ export default function App() {
 
 function EditorScreen() {
     const insets = useSafeAreaInsets();
-    const keyboardHeight = useKeyboardHeight();
     const editorRef = useRef<RichTextEditorRef>(null);
     const [mentionSuggestions, setMentionSuggestions] =
         useState<readonly MentionSuggestion[]>(NO_MENTION_SUGGESTIONS);
@@ -135,15 +134,13 @@ function EditorScreen() {
 
     const closeLinkRequest = useCallback(() => setLinkRequest(null), []);
 
-    /** The sheet runs to the screen edge, so the keyboard becomes a content inset instead of a layout cut. */
     const theme = useMemo<EditorTheme>(() => {
         const content = editorTheme.content;
-        const bottomEdge = keyboardHeight > 0 ? keyboardHeight : insets.bottom;
         return {
             ...editorTheme,
-            content: { ...content, paddingBottom: content.paddingBottom + bottomEdge },
+            content: { ...content, paddingBottom: content.paddingBottom + insets.bottom },
         };
-    }, [insets.bottom, keyboardHeight]);
+    }, [insets.bottom]);
 
     return (
         <View style={styles.screen}>
@@ -181,30 +178,6 @@ function EditorScreen() {
             <LinkEditorModal request={linkRequest} onClose={closeLinkRequest} />
         </View>
     );
-}
-
-/**
- * Keyboard height on iOS, where the window keeps its size and the editor
- * scrolls behind the keyboard. Android resizes the window itself, so 0.
- */
-function useKeyboardHeight(): number {
-    const [height, setHeight] = useState(0);
-
-    useEffect(() => {
-        if (Platform.OS !== 'ios') {
-            return;
-        }
-        const show = Keyboard.addListener('keyboardWillShow', (event: KeyboardEvent) =>
-            setHeight(event.endCoordinates.height)
-        );
-        const hide = Keyboard.addListener('keyboardWillHide', () => setHeight(0));
-        return () => {
-            show.remove();
-            hide.remove();
-        };
-    }, []);
-
-    return height;
 }
 
 function filterMentionSuggestions(query: string | null): readonly MentionSuggestion[] {

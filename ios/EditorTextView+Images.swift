@@ -69,7 +69,6 @@ extension EditorTextView {
             return false
         }
 
-        _ = becomeFirstResponder()
         let scalar = PositionBridge.utf16OffsetToScalar(paragraphStart, in: self)
         performInterceptedInput {
             toggleTaskItemCheckedAtSelectionScalarInRust(anchor: scalar, head: scalar)
@@ -202,9 +201,10 @@ extension EditorTextView {
 
     func taskListMarkerParagraphStart(at location: CGPoint) -> Int? {
         guard let layoutManager = layoutManager as? EditorLayoutManager else { return nil }
+        // Incoming points already include the scroll view's bounds origin.
         let origin = CGPoint(
-            x: textContainerInset.left - contentOffset.x,
-            y: textContainerInset.top - contentOffset.y
+            x: textContainerInset.left,
+            y: textContainerInset.top
         )
         return layoutManager.taskListMarkerParagraphStart(
             at: location,
@@ -214,6 +214,9 @@ extension EditorTextView {
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer === caretPlacementTapRecognizer {
+            return touch.tapCount == 1 && canPlaceCaret(at: touch.location(in: self))
+        }
         guard gestureRecognizer === imageSelectionTapRecognizer,
               touch.tapCount == 1
         else {
@@ -227,7 +230,9 @@ extension EditorTextView {
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-        false
+        (gestureRecognizer === caretPlacementTapRecognizer || otherGestureRecognizer === caretPlacementTapRecognizer)
+            && gestureRecognizer !== imageSelectionTapRecognizer
+            && otherGestureRecognizer !== imageSelectionTapRecognizer
     }
 
     func gestureRecognizer(
