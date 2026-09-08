@@ -140,6 +140,10 @@ internal fun NativeEditorExpoView.setEditableImpl(editable: Boolean) {
     updateKeyboardToolbarVisibility()
 }
 
+internal fun NativeEditorExpoView.setPasteModeImpl(rawPasteMode: String?) {
+    richTextView.editorEditText.pasteMode = EditorPasteMode.fromRaw(rawPasteMode)
+}
+
 internal fun NativeEditorExpoView.setAccessibilityLabelImpl(label: String?) {
     richTextView.editorEditText.contentDescription = label
 }

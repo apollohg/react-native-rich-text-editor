@@ -17,6 +17,19 @@ import { NativeRichTextEditor, type NativeRichTextEditorRef } from '../NativeRic
 import { V2_FAKE_STEP2_FRAME, V2_FAKE_UPDATE_FRAME } from './helpers/nativeEditorV2Fake';
 
 describe('NativeRichTextEditor (v2 document mode)', () => {
+    it('defaults to rich paste and forwards live paste mode changes', () => {
+        const handle = createV2LocalHandle();
+        const { getByTestId, rerender } = render(
+            <NativeRichTextEditor documentHandle={handle} />
+        );
+        expect(getByTestId('native-editor-view').props.pasteMode).toBe('rich');
+        for (const pasteMode of ['plainText', 'disabled', 'rich'] as const) {
+            rerender(<NativeRichTextEditor documentHandle={handle} pasteMode={pasteMode} />);
+            expect(getByTestId('native-editor-view').props.pasteMode).toBe(pasteMode);
+        }
+        handle.destroy();
+    });
+
     it('renders nothing for a room editor without snapshot until an accepted server Step 2, and emits no client state', () => {
         const handle = createV2RoomHandle();
         const { controller } = setupV2Controller(handle);

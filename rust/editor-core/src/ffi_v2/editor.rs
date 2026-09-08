@@ -442,6 +442,23 @@ pub fn editor_v2_get_document_json(editor_id: String) -> FfiJsonResult {
 }
 
 #[uniffi::export]
+pub fn editor_v2_get_clipboard(editor_id: String) -> FfiJsonResult {
+    json_result(with_editor(&editor_id, |session| {
+        session
+            .engine
+            .clipboard()
+            .map(|value| value.to_string())
+            .ok_or_else(|| {
+                SessionError::new(
+                    ErrorDomain::Lifecycle,
+                    "ENGINE_NOT_READY",
+                    "editor document is not ready",
+                )
+            })
+    }))
+}
+
+#[uniffi::export]
 pub fn editor_v2_get_document_html(editor_id: String) -> FfiJsonResult {
     json_result(with_editor(&editor_id, |session| {
         session

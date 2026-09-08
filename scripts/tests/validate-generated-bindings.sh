@@ -41,12 +41,12 @@ expected_viewer_method_checksums="$(grep -Eo 'uniffi_editor_core_checksum_method
   "$repo_root/rust/bindings/swift/editor_coreFFI.h" | sort -u)"
 expected_viewer_lifecycle_symbols="$(grep -Eo 'uniffi_editor_core_fn_(clone|free)_viewercompileddocument' \
   "$repo_root/rust/bindings/swift/editor_coreFFI.h" | sort -u)"
-[[ "$(printf '%s\n' "$expected_function_symbols" | sed '/^$/d' | wc -l | tr -d ' ')" == "35" ]] || {
-  echo "ERROR: generated FFI header must expose exactly 35 editor_v2 functions" >&2
+[[ "$(printf '%s\n' "$expected_function_symbols" | sed '/^$/d' | wc -l | tr -d ' ')" == "36" ]] || {
+  echo "ERROR: generated FFI header must expose exactly 36 editor_v2 functions" >&2
   exit 1
 }
-[[ "$(printf '%s\n' "$expected_checksum_symbols" | sed '/^$/d' | wc -l | tr -d ' ')" == "35" ]] || {
-  echo "ERROR: generated FFI header must expose exactly 35 editor_v2 checksums" >&2
+[[ "$(printf '%s\n' "$expected_checksum_symbols" | sed '/^$/d' | wc -l | tr -d ' ')" == "36" ]] || {
+  echo "ERROR: generated FFI header must expose exactly 36 editor_v2 checksums" >&2
   exit 1
 }
 [[ "$expected_viewer_function_symbols" == "uniffi_editor_core_fn_func_viewer_compile" ]] || {
@@ -139,4 +139,4 @@ if grep -En '[[:blank:]]+$' \
   exit 1
 fi
 
-echo "Generated binding normalization, 35 editor-v2 symbol, viewer ABI, checksum, and copy validation passed."
+echo "Generated binding normalization, 36 editor-v2 symbol, viewer ABI, checksum, and copy validation passed."

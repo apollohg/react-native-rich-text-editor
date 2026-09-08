@@ -47,6 +47,7 @@ internal class FakeEditorV2Backend : EditorV2Backend {
     var nextPinPositionEpochResult: EditorV2CallResult<String>? = null
     var nextApplyNativeIntentResult: EditorV2CallResult<String>? = null
     var nextRenderUpdateResult: EditorV2CallResult<String>? = null
+    var nextClipboardJson: String? = null
     var onApplyNativeIntent: (() -> Unit)? = null
     var nextCollaborationDetachError: EditorV2Error? = null
     var nextCollaborationReattachError: EditorV2Error? = null
@@ -376,6 +377,8 @@ internal class FakeEditorV2Backend : EditorV2Backend {
                 session.revision += 1u
             }
 
+            "paste" -> insertAtSelection(session, command.optString("text", ""))
+
             else -> {
                 // Structural commands (marks, blocks, lists, nodes, resize):
                 // recorded above; the fake just bumps the revision.
@@ -649,6 +652,25 @@ internal class FakeEditorV2Backend : EditorV2Backend {
         val html = session.text.split('\n').joinToString("") { "<p>$it</p>" }
         return EditorV2CallResult.Ok(
             JSONObject().put("html", html).put("json", JSONObject(docJson)).toString()
+        )
+    }
+
+    override fun getClipboard(editorId: String): EditorV2CallResult<String> {
+        calls.add("getClipboard")
+        val session = liveSession(editorId) ?: return EditorV2CallResult.Err(destroyedError())
+        nextClipboardJson?.let {
+            nextClipboardJson = null
+            return EditorV2CallResult.Ok(it)
+        }
+        val (from, to) = orderedSelection(session)
+        if (from == to) return EditorV2CallResult.Ok(JSONObject().put("empty", true).toString())
+        val selected = session.text.substring(from, to)
+        return EditorV2CallResult.Ok(
+            JSONObject()
+                .put("fragment", JSONObject().put("version", 1).put("text", selected).toString())
+                .put("html", selected)
+                .put("text", selected)
+                .toString()
         )
     }
 

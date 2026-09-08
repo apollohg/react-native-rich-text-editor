@@ -133,6 +133,8 @@ class EditorEditText @JvmOverloads constructor(
             }
         }
 
+    internal var pasteMode: EditorPasteMode = EditorPasteMode.RICH
+
     /**
      * Guard flag to prevent re-entrant input interception while we're
      * applying state from Rust (calling [setText] or modifying text storage).
@@ -245,6 +247,7 @@ class EditorEditText @JvmOverloads constructor(
     internal var currentRenderBlocksNeedFullApply = false
     internal var authorizedVisibleTextNeedsRebuild = false
     internal var logicalSelectionSnapshot: LogicalSelectionSnapshot? = null
+    internal var authoritativeNodeSelectionRange: ImageSelectionRange? = null
     internal var lastAllowedAtomCaretSelection: Pair<Int, Int>? = null
     private var localTextDrag: LocalTextDrag? = null
     internal var lastAppliedDocumentVersion: String? = null
@@ -275,6 +278,7 @@ class EditorEditText @JvmOverloads constructor(
     internal var onSetSelectionScalarInRustForTesting: ((Int, Int) -> Unit)? = null
     internal var onDeleteAndSplitScalarInRustForTesting: ((Int, Int) -> Unit)? = null
     internal var onInsertContentHtmlInRustForTesting: ((String) -> Unit)? = null
+    internal var onSetPrimaryClipForTesting: ((android.content.ClipData) -> Unit)? = null
     internal var onResizeImageAtDocPosForTesting: ((Int, Int, Int) -> Unit)? = null
     internal var onMoveSelectionScalarForTesting: ((Int, Int, Int) -> Unit)? = null
     internal var onBeforeRenderRefresh: (() -> Unit)? = null
@@ -788,14 +792,18 @@ class EditorEditText @JvmOverloads constructor(
 
     fun performToolbarRedo() = performToolbarRedoImpl()
 
-    /**
-     * Intercept paste operations to route content through Rust.
-     *
-     * Attempts to extract HTML from the clipboard first (for rich text paste),
-     * falling back to plain text.
-     */
+    /** Routes native clipboard actions through the authoritative Rust selection. */
     override fun onTextContextMenuItem(id: Int): Boolean {
+        if (id == android.R.id.copy) {
+            handleCopy()
+            return true
+        }
         if (!isEditable && isMutatingContextMenuItem(id)) return true
+        if (pasteMode == EditorPasteMode.DISABLED &&
+            (id == android.R.id.paste || id == android.R.id.pasteAsPlainText)
+        ) {
+            return true
+        }
         if (id == android.R.id.cut) {
             handleCut()
             return true
@@ -812,6 +820,11 @@ class EditorEditText @JvmOverloads constructor(
      * Selection and copy actions remain available.
      */
     override fun performAccessibilityAction(action: Int, arguments: android.os.Bundle?): Boolean {
+        if (pasteMode == EditorPasteMode.DISABLED &&
+            action == android.view.accessibility.AccessibilityNodeInfo.ACTION_PASTE
+        ) {
+            return false
+        }
         if (!isEditable && (
                 action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT ||
                     action == android.view.accessibility.AccessibilityNodeInfo.ACTION_PASTE ||
@@ -842,6 +855,7 @@ class EditorEditText @JvmOverloads constructor(
         }
         ensureSelectionVisible()
         if (isApplyingRustState) return
+        authoritativeNodeSelectionRange = null
         val wasExternallyComposing = externalTextComposition != null
         if (!commitExternalTextCompositionBeforeInteractionIfNeeded()) return
         if (wasExternallyComposing) {

@@ -100,6 +100,10 @@ internal fun EditorEditText.canonicalListCaretOffset(selStart: Int, selEnd: Int)
 
 internal fun EditorEditText.syncCurrentSelectionToRust() {
     if (!hasLiveEditor()) return
+    authoritativeNodeSelectionRange?.let { range ->
+        if (selectionStart == range.start && selectionEnd == range.end) return
+        authoritativeNodeSelectionRange = null
+    }
 
     val currentText = text?.toString() ?: ""
     if (currentText != lastAuthorizedText) return
@@ -296,6 +300,7 @@ internal fun EditorEditText.applySelectionFromJSON(
         val currentText = text?.toString() ?: ""
         when (type) {
             "text" -> {
+                authoritativeNodeSelectionRange = null
                 val docAnchor = exactV2ScalarInt(selection.opt("anchor") as? Number) ?: return
                 val docHead = exactV2ScalarInt(selection.opt("head") as? Number) ?: return
                 // The frozen v2 update includes exact scalar positions alongside its
@@ -339,10 +344,12 @@ internal fun EditorEditText.applySelectionFromJSON(
                 val clamped = startUtf16.coerceIn(0, len)
                 val endClamped = (clamped + 1).coerceAtMost(len)
                 setSelection(clamped, endClamped)
+                authoritativeNodeSelectionRange = ImageSelectionRange(clamped, endClamped)
             }
 
             "all" -> {
                 logicalSelectionSnapshot = null
+                authoritativeNodeSelectionRange = null
                 selectAll()
             }
         }

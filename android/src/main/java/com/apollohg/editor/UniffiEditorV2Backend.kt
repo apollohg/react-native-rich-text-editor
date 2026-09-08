@@ -20,6 +20,7 @@ import uniffi.editor_core.editorV2CollaborationSocketOpen
 import uniffi.editor_core.editorV2Create
 import uniffi.editor_core.editorV2Destroy
 import uniffi.editor_core.editorV2DocToScalar
+import uniffi.editor_core.editorV2GetClipboard
 import uniffi.editor_core.editorV2GetContentSnapshot
 import uniffi.editor_core.editorV2GetDocumentHtml
 import uniffi.editor_core.editorV2GetDocumentJson
@@ -76,6 +77,9 @@ internal object UniffiEditorV2Backend : EditorV2Backend {
 
     override fun getContentSnapshot(editorId: String): EditorV2CallResult<String> =
         normalize(editorV2GetContentSnapshot(editorId))
+
+    override fun getClipboard(editorId: String): EditorV2CallResult<String> =
+        normalize(editorV2GetClipboard(editorId))
 
     override fun applyInput(editorId: String, requestJson: String): EditorV2CallResult<String> =
         normalize(editorV2ApplyInput(editorId, requestJson))

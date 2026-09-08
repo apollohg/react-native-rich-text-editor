@@ -451,8 +451,8 @@ extension RichTextEditorViewTests {
         )
         view.textView.paste(nil)
 
-        XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), "<p>the </p><p><strong>now</strong></p>")
-        XCTAssertEqual(view.textView.textStorage.string, "the \nnow")
+        XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), "<p>the <strong>now</strong></p>")
+        XCTAssertEqual(view.textView.textStorage.string, "the now")
         XCTAssertEqual(view.textView.reconciliationCount, 0)
     }
 
@@ -495,9 +495,381 @@ extension RichTextEditorViewTests {
         let html = EditorV2Shadow.getHtml(id: editorId)
         XCTAssertTrue(html.contains("the"), "RTF paste should preserve native correction, got: \(html)")
         XCTAssertTrue(html.contains("now"), "RTF paste should insert converted rich text, got: \(html)")
+        XCTAssertTrue(
+            html.contains("<strong>now</strong>"),
+            "RTF paste should preserve bold text, got: \(html)"
+        )
         XCTAssertTrue(view.textView.textStorage.string.contains("the"))
         XCTAssertTrue(view.textView.textStorage.string.contains("now"))
         XCTAssertEqual(view.textView.reconciliationCount, 0)
+    }
+
+    func testRTFConversionPreservesSupportedSemanticMarks() throws {
+        let name = UIPasteboard.Name("native-editor-tests-\(UUID().uuidString)")
+        let pasteboard = try XCTUnwrap(UIPasteboard(name: name, create: true))
+        defer { UIPasteboard.remove(withName: name) }
+        let attributed = NSMutableAttributedString(string: "bold italic link underline strike")
+        attributed.addAttribute(
+            .font,
+            value: UIFont.boldSystemFont(ofSize: 14),
+            range: (attributed.string as NSString).range(of: "bold")
+        )
+        attributed.addAttribute(
+            .font,
+            value: UIFont.italicSystemFont(ofSize: 14),
+            range: (attributed.string as NSString).range(of: "italic")
+        )
+        attributed.addAttribute(
+            .link,
+            value: try XCTUnwrap(URL(string: "https://example.com")),
+            range: (attributed.string as NSString).range(of: "link")
+        )
+        attributed.addAttribute(
+            .underlineStyle,
+            value: NSUnderlineStyle.single.rawValue,
+            range: (attributed.string as NSString).range(of: "underline")
+        )
+        attributed.addAttribute(
+            .strikethroughStyle,
+            value: NSUnderlineStyle.single.rawValue,
+            range: (attributed.string as NSString).range(of: "strike")
+        )
+        let data = try attributed.data(
+            from: NSRange(location: 0, length: attributed.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+        )
+        pasteboard.setData(data, forPasteboardType: "public.rtf")
+
+        let command = try XCTUnwrap(EditorClipboardPaste.command(from: pasteboard, mode: .rich))
+        let html = try XCTUnwrap(command["html"] as? String)
+
+        XCTAssertTrue(html.contains("<strong>bold</strong>"), html)
+        XCTAssertTrue(html.contains("<em>italic</em>"), html)
+        XCTAssertTrue(html.contains("<a href=\"https://example.com\">link</a>"), html)
+        XCTAssertTrue(html.contains("<u>underline</u>"), html)
+        XCTAssertTrue(html.contains("<s>strike</s>"), html)
+    }
+
+    func testRTFConversionPreservesParagraphsAndLists() throws {
+        let name = UIPasteboard.Name("native-editor-tests-\(UUID().uuidString)")
+        let pasteboard = try XCTUnwrap(UIPasteboard(name: name, create: true))
+        defer { UIPasteboard.remove(withName: name) }
+        let attributed = NSMutableAttributedString(string: "intro\none\ntwo")
+        let listStyle = NSMutableParagraphStyle()
+        listStyle.textLists = [NSTextList(markerFormat: .disc, options: 0)]
+        attributed.addAttribute(
+            .paragraphStyle,
+            value: listStyle,
+            range: NSRange(location: 6, length: attributed.length - 6)
+        )
+        let data = try attributed.data(
+            from: NSRange(location: 0, length: attributed.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+        )
+        pasteboard.setData(data, forPasteboardType: "public.rtf")
+
+        let command = try XCTUnwrap(EditorClipboardPaste.command(from: pasteboard, mode: .rich))
+        let html = try XCTUnwrap(command["html"] as? String)
+
+        XCTAssertEqual(
+            html,
+            """
+            <p><span style="white-space:pre-wrap">intro</span></p><ul><li><span style="white-space:pre-wrap">one</span></li><li><span style="white-space:pre-wrap">two</span></li></ul>
+            """
+        )
+    }
+
+    func testRTFSizeLimitFallsBackWithoutNativeDecode() throws {
+        let name = UIPasteboard.Name("native-editor-tests-\(UUID().uuidString)")
+        let pasteboard = try XCTUnwrap(UIPasteboard(name: name, create: true))
+        defer { UIPasteboard.remove(withName: name) }
+        let attributed = NSAttributedString(
+            string: "formatted",
+            attributes: [.font: UIFont.boldSystemFont(ofSize: 14)]
+        )
+        let data = try attributed.data(
+            from: NSRange(location: 0, length: attributed.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+        )
+        pasteboard.items = [[
+            "public.rtf": data,
+            "public.utf8-plain-text": "fallback"
+        ]]
+
+        let command = try XCTUnwrap(EditorClipboardPaste.command(
+            from: pasteboard,
+            mode: .rich,
+            maximumRTFBytes: data.count - 1
+        ))
+
+        XCTAssertNil(command["html"])
+        XCTAssertEqual(command["text"] as? String, "fallback")
+    }
+
+    func testRTFWhitespaceSurvivesEndToEndPaste() throws {
+        defer { UIPasteboard.general.items = [] }
+        let cases = [
+            (source: "a\n\nb", rendered: "a\n\u{200B}\nb"),
+            (source: "a  b", rendered: "a  b"),
+            (source: "a\n", rendered: "a\n\u{200B}")
+        ]
+
+        for testCase in cases {
+            let editorId = makeV2Editor()
+            defer { destroyV2Editor(id: editorId) }
+            let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 120))
+            view.editorId = editorId
+            view.setContent(html: "<p></p>")
+            setCollapsedSelection(in: view.textView, utf16Offset: 0)
+            let attributed = NSAttributedString(string: testCase.source)
+            let data = try attributed.data(
+                from: NSRange(location: 0, length: attributed.length),
+                documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf]
+            )
+            let decoded = try NSAttributedString(
+                data: data,
+                options: [.documentType: NSAttributedString.DocumentType.rtf],
+                documentAttributes: nil
+            )
+            XCTAssertEqual(decoded.string, testCase.source)
+            UIPasteboard.general.items = [["public.rtf": data]]
+
+            view.textView.paste(nil)
+
+            XCTAssertEqual(view.textView.textStorage.string, testCase.rendered)
+        }
+    }
+
+    func testPasteModeDefaultsToRichAndUpdatesAtRuntime() {
+        let view = NativeEditorExpoView()
+
+        XCTAssertEqual(view.richTextView.textView.pasteMode, .rich)
+
+        view.setPasteMode("plainText")
+        XCTAssertEqual(view.richTextView.textView.pasteMode, .plainText)
+
+        view.setPasteMode("disabled")
+        XCTAssertEqual(view.richTextView.textView.pasteMode, .disabled)
+
+        view.setPasteMode("unexpected")
+        XCTAssertEqual(view.richTextView.textView.pasteMode, .rich)
+    }
+
+    func testClipboardPayloadPublishesAllRepresentations() throws {
+        let name = UIPasteboard.Name("native-editor-tests-\(UUID().uuidString)")
+        let pasteboard = try XCTUnwrap(UIPasteboard(name: name, create: true))
+        defer { UIPasteboard.remove(withName: name) }
+        let payload = EditorClipboardPayload(
+            fragment: #"{"version":1,"content":[]}"#,
+            html: "<p><strong>hello</strong></p>",
+            text: "hello"
+        )
+
+        XCTAssertTrue(payload.write(to: pasteboard))
+        XCTAssertEqual(
+            String(
+                data: try XCTUnwrap(pasteboard.data(forPasteboardType: EditorClipboardPayload.fragmentType)),
+                encoding: .utf8
+            ),
+            payload.fragment
+        )
+        XCTAssertEqual(
+            String(
+                data: try XCTUnwrap(pasteboard.data(forPasteboardType: "public.html")),
+                encoding: .utf8
+            ),
+            payload.html
+        )
+        XCTAssertEqual(pasteboard.string, payload.text)
+    }
+
+    func testRichPasteCommandIncludesStructuredHtmlAndTextFallbacks() throws {
+        let name = UIPasteboard.Name("native-editor-tests-\(UUID().uuidString)")
+        let pasteboard = try XCTUnwrap(UIPasteboard(name: name, create: true))
+        defer { UIPasteboard.remove(withName: name) }
+        let fragment = #"{"version":1,"content":[]}"#
+        pasteboard.items = [[
+            EditorClipboardPayload.fragmentType: Data(fragment.utf8),
+            "public.html": Data("<p><strong>hello</strong></p>".utf8),
+            "public.utf8-plain-text": "hello"
+        ]]
+
+        let command = try XCTUnwrap(EditorClipboardPaste.command(from: pasteboard, mode: .rich))
+
+        XCTAssertEqual(command["type"] as? String, "paste")
+        XCTAssertEqual(command["fragment"] as? String, fragment)
+        XCTAssertEqual(command["html"] as? String, "<p><strong>hello</strong></p>")
+        XCTAssertEqual(command["text"] as? String, "hello")
+        XCTAssertNil(command["plainText"])
+    }
+
+    func testPlainTextPasteCommandRequestsPlainConversionWithRichFallbacks() throws {
+        let name = UIPasteboard.Name("native-editor-tests-\(UUID().uuidString)")
+        let pasteboard = try XCTUnwrap(UIPasteboard(name: name, create: true))
+        defer { UIPasteboard.remove(withName: name) }
+        pasteboard.setData(Data("<p><strong>hello</strong></p>".utf8), forPasteboardType: "public.html")
+
+        let command = try XCTUnwrap(EditorClipboardPaste.command(from: pasteboard, mode: .plainText))
+
+        XCTAssertEqual(command["type"] as? String, "paste")
+        XCTAssertEqual(command["html"] as? String, "<p><strong>hello</strong></p>")
+        XCTAssertEqual(command["plainText"] as? Bool, true)
+    }
+
+    func testEmptyPlainTextClipboardDoesNotCreateDeleteCommand() throws {
+        let name = UIPasteboard.Name("native-editor-tests-\(UUID().uuidString)")
+        let pasteboard = try XCTUnwrap(UIPasteboard(name: name, create: true))
+        defer { UIPasteboard.remove(withName: name) }
+        pasteboard.string = ""
+
+        XCTAssertNil(EditorClipboardPaste.command(from: pasteboard, mode: .rich))
+        XCTAssertNil(EditorClipboardPaste.command(from: pasteboard, mode: .plainText))
+    }
+
+    func testCopyAndCutUseAuthoritativeClipboardExport() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 120))
+        let window = hostEditorView(view)
+        defer {
+            UIPasteboard.general.items = []
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        view.editorId = editorId
+        view.setContent(html: "<p>one <strong>two</strong> three</p>")
+        let selected = (view.textView.textStorage.string as NSString).range(of: "two")
+        setSelection(in: view.textView, utf16Range: selected)
+
+        view.textView.copy(nil)
+
+        XCTAssertEqual(UIPasteboard.general.string, "two")
+        XCTAssertNotNil(UIPasteboard.general.data(forPasteboardType: EditorClipboardPayload.fragmentType))
+        XCTAssertTrue(
+            String(
+                data: try XCTUnwrap(UIPasteboard.general.data(forPasteboardType: "public.html")),
+                encoding: .utf8
+            )?.contains("strong") ?? false
+        )
+        XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), "<p>one <strong>two</strong> three</p>")
+
+        let targetEditorId = makeV2Editor()
+        defer { destroyV2Editor(id: targetEditorId) }
+        let target = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 120))
+        target.editorId = targetEditorId
+        target.setContent(html: "<p></p>")
+        setCollapsedSelection(in: target.textView, utf16Offset: 0)
+        target.textView.paste(nil)
+        XCTAssertTrue(EditorV2Shadow.getHtml(id: targetEditorId).contains("<strong>two</strong>"))
+
+        view.textView.cut(nil)
+
+        XCTAssertEqual(UIPasteboard.general.string, "two")
+        XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), "<p>one  three</p>")
+    }
+
+    func testPasteModesAndReadOnlyGateMutations() {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 120))
+        let window = hostEditorView(view)
+        defer {
+            UIPasteboard.general.items = []
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        view.editorId = editorId
+        view.setContent(html: "<p>before</p>")
+        setCollapsedSelection(in: view.textView, utf16Offset: view.textView.textStorage.length)
+        UIPasteboard.general.items = [[
+            "public.html": Data("<strong> rich</strong>".utf8),
+            "public.utf8-plain-text": " rich"
+        ]]
+
+        view.textView.pasteMode = .disabled
+        XCTAssertFalse(view.textView.canPerformAction(
+            #selector(EditorTextView.paste(_:)),
+            withSender: nil
+        ))
+        view.textView.paste(nil)
+        XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), "<p>before</p>")
+
+        view.textView.pasteMode = .plainText
+        XCTAssertTrue(view.textView.canPerformAction(
+            #selector(EditorTextView.paste(_:)),
+            withSender: nil
+        ))
+        XCTAssertTrue(view.textView.canPerformAction(
+            #selector(EditorTextView.pasteAndMatchStyle(_:)),
+            withSender: nil
+        ))
+        view.textView.paste(nil)
+        XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), "<p>before rich</p>")
+
+        view.setContent(html: "<p>before</p>")
+        setCollapsedSelection(in: view.textView, utf16Offset: view.textView.textStorage.length)
+        view.textView.pasteMode = .rich
+        view.textView.pasteAndMatchStyle(nil)
+        XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), "<p>before rich</p>")
+
+        view.setContent(html: "<p>before</p>")
+        setCollapsedSelection(in: view.textView, utf16Offset: view.textView.textStorage.length)
+        view.textView.isEditable = false
+        view.textView.pasteMode = .rich
+        XCTAssertFalse(view.textView.canPerformAction(
+            #selector(EditorTextView.paste(_:)),
+            withSender: nil
+        ))
+        view.textView.paste(nil)
+        XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), "<p>before</p>")
+    }
+
+    func testImageNodeSelectionCopiesAndCutsAsOneAtom() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let window = hostEditorView(view)
+        defer {
+            UIPasteboard.general.items = []
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        view.editorId = editorId
+        view.setContent(html: """
+        <p>Hello</p><img src="https://example.com/cat.png" alt="Cat"><p></p>
+        """)
+        let imageRange = try XCTUnwrap(firstImageRange(in: view.textView))
+        XCTAssertTrue(view.textView.becomeFirstResponder())
+        setSelection(in: view.textView, utf16Range: imageRange)
+
+        view.textView.copy(nil)
+
+        let copiedHTML = String(
+            data: try XCTUnwrap(UIPasteboard.general.data(forPasteboardType: "public.html")),
+            encoding: .utf8
+        )
+        XCTAssertTrue(copiedHTML?.contains("<img") ?? false)
+        XCTAssertNotNil(UIPasteboard.general.data(forPasteboardType: EditorClipboardPayload.fragmentType))
+
+        view.textView.cut(nil)
+
+        XCTAssertFalse(EditorV2Shadow.getHtml(id: editorId).contains("<img"))
+    }
+
+    func testPasteCommitsMarkedTextBeforeApplyingClipboardCommand() {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let textView = EditorTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 120))
+        defer { UIPasteboard.general.items = [] }
+        textView.bindEditor(id: editorId, initialHTML: "<p>Hello world</p>")
+        setCollapsedSelection(in: textView, utf16Offset: 6)
+        textView.setMarkedText("brave ", selectedRange: NSRange(location: 6, length: 0))
+        UIPasteboard.general.string = "bold "
+
+        textView.paste(nil)
+
+        XCTAssertEqual(EditorV2Shadow.getHtml(id: editorId), "<p>Hello brave bold world</p>")
+        XCTAssertEqual(textView.reconciliationCount, 0)
     }
 
 }

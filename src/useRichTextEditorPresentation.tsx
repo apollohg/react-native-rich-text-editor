@@ -73,6 +73,7 @@ export function useRichTextEditorPresentation(
         | 'accessibilityHint'
         | 'placeholder'
         | 'autoFocus'
+        | 'pasteMode'
         | 'autoCapitalize'
         | 'autoCorrect'
         | 'keyboardType'
@@ -157,6 +158,7 @@ export function useRichTextEditorPresentation(
         accessibilityHint,
         placeholder,
         autoFocus,
+        pasteMode,
         autoCapitalize,
         autoCorrect,
         keyboardType,
@@ -492,6 +494,7 @@ export function useRichTextEditorPresentation(
                 placeholder={placeholder}
                 editable={editable}
                 autoFocus={autoFocus}
+                pasteMode={pasteMode}
                 autoCapitalize={autoCapitalize}
                 autoCorrect={autoCorrect}
                 keyboardType={keyboardType}

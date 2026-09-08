@@ -796,6 +796,42 @@ internal class EditorV2Adapter private constructor(
         )
     }
 
+    override fun clipboardJson(): String? {
+        if (destroyed) return null
+        return when (val result = backend.getClipboard(editorId)) {
+            is EditorV2CallResult.Ok -> result.value
+
+            is EditorV2CallResult.Err -> {
+                emit(result.error)
+                null
+            }
+        }
+    }
+
+    override fun pasteAtSelection(
+        fragment: String?,
+        html: String?,
+        text: String?,
+        plainText: Boolean,
+        anchor: Int,
+        head: Int,
+        preserveEngineSelection: Boolean
+    ): String? {
+        val command = JSONObject().put("type", "paste")
+        fragment?.let { command.put("fragment", it) }
+        html?.let { command.put("html", it) }
+        text?.let { command.put("text", it) }
+        if (plainText) command.put("plainText", true)
+        return performMutation(
+            preSelection = if (preserveEngineSelection) null else intArrayOf(anchor, head),
+            adoptEngineSelection = true
+        ) {
+            callWithEnvelope(JSONObject().put("command", command)) { requestJson ->
+                backend.applyCommand(editorId, requestJson)
+            }
+        }
+    }
+
     override fun toggleMark(markName: String, anchor: Int, head: Int): String? = commandAtSelection(
         JSONObject().put("type", "toggleMark").put("markType", markName),
         anchor,

@@ -6,6 +6,7 @@ import { type ReactNode } from 'react';
 import { type NativeSyntheticEvent, type StyleProp, type ViewStyle } from 'react-native';
 import { type DocumentJSON, type NativeEditorDocumentHandle } from './NativeEditorBridge';
 import {
+    type RichTextEditorPasteMode,
     type RichTextEditorAutoCapitalize,
     type RichTextEditorKeyboardType,
     type RichTextEditorToolbarPlacement,
@@ -32,6 +33,7 @@ export interface NativeEditorViewProps {
     editorId: string;
     placeholder?: string;
     editable: boolean;
+    pasteMode: RichTextEditorPasteMode;
     autoFocus: boolean;
     autoCapitalize?: RichTextEditorAutoCapitalize;
     autoCorrect?: boolean;

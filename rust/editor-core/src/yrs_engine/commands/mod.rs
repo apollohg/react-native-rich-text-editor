@@ -1,5 +1,6 @@
 //! Serialization-ready editor commands and pure typed-transaction planning.
 
+mod clipboard;
 mod format;
 mod structure;
 mod text;
@@ -27,6 +28,14 @@ pub enum TypedCommand {
     DeleteBackward,
     ReplaceSelectionText {
         text: String,
+    },
+    Paste {
+        fragment: Option<String>,
+        html: Option<String>,
+        text: Option<String>,
+        plain_text: bool,
+        allow_base64_images: bool,
+        input_filter: Option<String>,
     },
     SplitBlock,
     DeleteAndSplit,
@@ -138,6 +147,7 @@ pub(crate) fn plan(
         | TypedCommand::DeleteRange { .. }
         | TypedCommand::DeleteBackward
         | TypedCommand::ReplaceSelectionText { .. }
+        | TypedCommand::Paste { .. }
         | TypedCommand::SplitBlock
         | TypedCommand::DeleteAndSplit
         | TypedCommand::InsertContentJson { .. }

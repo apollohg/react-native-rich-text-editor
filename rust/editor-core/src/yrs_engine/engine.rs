@@ -320,6 +320,15 @@ impl YrsDocumentEngine {
         Some(serde_json::json!({ "anchor": anchor, "head": head }))
     }
 
+    pub(crate) fn clipboard(&self) -> Option<serde_json::Value> {
+        let document = self.document()?;
+        let selection = super::derived_state::resolved_to_legacy(self.resolved_selection()?);
+        Some(
+            crate::clipboard::export(document, &selection, &self.schema)
+                .unwrap_or_else(|| serde_json::json!({"empty": true})),
+        )
+    }
+
     pub fn document(&self) -> Option<&Document> {
         self.debug_assert_derived_revision_keys();
         let state = self.derived_state.as_ref()?;

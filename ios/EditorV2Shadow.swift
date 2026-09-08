@@ -71,6 +71,11 @@ enum EditorV2Shadow {
         adapter(for: id)?.contentSnapshotJSON() ?? "{\"html\":\"\",\"json\":{}}"
     }
 
+    static func clipboardPayload(id: UInt64) -> EditorClipboardPayload? {
+        guard let json = adapter(for: id)?.clipboardPayloadJSON() else { return nil }
+        return EditorClipboardPayload(json: json)
+    }
+
     // MARK: - State / selection reads
 
     static func getCurrentState(id: UInt64) -> String {
@@ -293,6 +298,13 @@ enum EditorV2Shadow {
 
     static func insertContentHtml(id: UInt64, html: String) -> String {
         adapter(for: id)?.insertContentHtmlAtEngineSelection(html) ?? "{}"
+    }
+
+    static func applyClipboardCommand(
+        id: UInt64,
+        command: [String: Any]
+    ) -> String {
+        adapter(for: id)?.applyClipboardCommand(command) ?? "{}"
     }
 
     static func insertContentJson(id: UInt64, json: String) -> String {

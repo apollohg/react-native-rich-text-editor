@@ -753,6 +753,9 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
             Prop("editable") { (view: NativeEditorExpoView, editable: Bool) in
                 view.setEditable(editable)
             }
+            Prop("pasteMode") { (view: NativeEditorExpoView, pasteMode: String) in
+                view.setPasteMode(pasteMode)
+            }
             Prop("accessibilityLabel") { (view: NativeEditorExpoView, label: String?) in
                 view.setAccessibilityLabel(label)
             }

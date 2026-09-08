@@ -137,6 +137,10 @@ include!("session/content.rs");
 include!("session/collaboration.rs");
 
 impl SessionPolicy {
+    pub(crate) fn clipboard_options(&self) -> (bool, Option<String>) {
+        (self.allow_base64_images, self.input_filter.clone())
+    }
+
     pub(crate) fn from_config(config: &EditorSessionConfig) -> Self {
         Self {
             read_only: config.read_only,

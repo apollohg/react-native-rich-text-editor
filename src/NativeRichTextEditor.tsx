@@ -2,6 +2,7 @@ export {
     type RichTextEditorHeightBehavior,
     type RichTextEditorToolbarPlacement,
     type RichTextEditorValueJSONUpdateMode,
+    type RichTextEditorPasteMode,
     type RichTextEditorAutoCapitalize,
     type RichTextEditorKeyboardType,
     type RichTextEditorAndroidInputOptions,

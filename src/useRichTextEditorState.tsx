@@ -1,3 +1,4 @@
+import type { StyleProp, ViewStyle } from 'react-native';
 import {
     DEFAULT_EDITOR_TOOLBAR_ITEMS,
     setActiveEditorToolbarFrameOwnerForEditor,
@@ -48,6 +49,7 @@ export function useRichTextEditorState(
         valueJSONUpdateMode = 'replace',
         placeholder,
         editable = true,
+        pasteMode = 'rich',
         autoFocus = false,
         autoCapitalize,
         autoCorrect,
@@ -636,8 +638,8 @@ export function useRichTextEditorState(
         toolbarItems,
         toolbarPlacement,
         showToolbar,
-        containerStyle,
-        style,
+        containerStyle: containerStyle as StyleProp<ViewStyle>,
+        style: style as StyleProp<ViewStyle>,
         autoGrowHeight,
         pushedUpdate,
         registeredToolbarFrames,
@@ -647,6 +649,7 @@ export function useRichTextEditorState(
         accessibilityHint,
         placeholder,
         autoFocus,
+        pasteMode,
         autoCapitalize,
         autoCorrect,
         keyboardType,

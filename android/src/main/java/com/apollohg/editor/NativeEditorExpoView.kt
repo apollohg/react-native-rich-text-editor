@@ -388,6 +388,8 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
 
     fun setEditable(editable: Boolean) = setEditableImpl(editable)
 
+    fun setPasteMode(rawPasteMode: String?) = setPasteModeImpl(rawPasteMode)
+
     fun beginExternalTextComposition(sessionId: String): String =
         beginExternalTextCompositionImpl(sessionId)
 

@@ -35,6 +35,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     var hidesNativeSelectionChrome = false
     var isPreviewingImageResize = false
     var allowImageResizing = true
+    var pasteMode: EditorPasteMode = .rich
 
     override var isEditable: Bool {
         didSet {
@@ -622,6 +623,11 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
                 input: "\t",
                 modifierFlags: [.shift],
                 action: #selector(handleOutdentKeyCommand)
+            ),
+            UIKeyCommand(
+                input: "v",
+                modifierFlags: [.command, .shift],
+                action: #selector(pasteAndMatchStyle(_:))
             )
         ]
     }
@@ -875,61 +881,75 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         }
     }
 
-    // MARK: - Paste Handling
+    // MARK: - Clipboard
 
-    /// Intercept paste operations to route content through Rust.
-    ///
-    /// Attempts to extract HTML from the pasteboard first (for rich text paste),
-    /// falling back to plain text.
-    override func paste(_ sender: Any?) {
-        ensureInternalTextViewDelegate()
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         guard editorId != 0 else {
-            super.paste(sender)
+            return super.canPerformAction(action, withSender: sender)
+        }
+        switch action {
+        case #selector(copy(_:)):
+            return selectedTextRange?.isEmpty == false
+        case #selector(cut(_:)):
+            return isEditable && selectedTextRange?.isEmpty == false
+        case #selector(paste(_:)), #selector(pasteAndMatchStyle(_:)):
+            return isEditable
+                && pasteMode != .disabled
+                && EditorClipboardPaste.hasSupportedContent(in: .general)
+        default:
+            return super.canPerformAction(action, withSender: sender)
+        }
+    }
+
+    override func copy(_ sender: Any?) {
+        guard editorId != 0 else {
+            super.copy(sender)
             return
         }
+        _ = exportSelectionToPasteboard()
+    }
+
+    override func cut(_ sender: Any?) {
+        guard editorId != 0 else {
+            super.cut(sender)
+            return
+        }
+        guard isEditable, exportSelectionToPasteboard() else { return }
+        performInterceptedInput {
+            applyClipboardCommand(["type": "paste", "text": "", "plainText": true])
+        }
+    }
+
+    override func paste(_ sender: Any?) {
+        pasteFromPasteboard(forcePlainText: false, sender: sender)
+    }
+
+    override func pasteAndMatchStyle(_ sender: Any?) {
+        pasteFromPasteboard(forcePlainText: true, sender: sender)
+    }
+
+    private func pasteFromPasteboard(forcePlainText: Bool, sender: Any?) {
+        ensureInternalTextViewDelegate()
+        guard editorId != 0 else {
+            if forcePlainText {
+                super.pasteAndMatchStyle(sender)
+            } else {
+                super.paste(sender)
+            }
+            return
+        }
+        guard isEditable, pasteMode != .disabled else { return }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         guard prepareForExternalEditorUpdate() else { return }
+        guard syncClipboardSelectionToRust() != nil else { return }
+        let mode: EditorPasteMode = forcePlainText ? .plainText : pasteMode
+        guard let command = EditorClipboardPaste.command(from: .general, mode: mode) else { return }
 
         Self.inputLog.debug(
             "[paste] selection=\(self.selectionSummary(), privacy: .public) textState=\(self.textSnapshotSummary(), privacy: .public)"
         )
-
-        let pasteboard = UIPasteboard.general
-
-        if let htmlData = pasteboard.data(forPasteboardType: "public.html"),
-           let html = String(data: htmlData, encoding: .utf8) {
-            performInterceptedInput {
-                pasteHTML(html)
-            }
-            return
-        }
-
-        if let rtfData = pasteboard.data(forPasteboardType: "public.rtf") {
-            if let attrStr = try? NSAttributedString(
-                data: rtfData,
-                options: [.documentType: NSAttributedString.DocumentType.rtf],
-                documentAttributes: nil
-            ) {
-                if let htmlData = try? attrStr.data(
-                    from: NSRange(location: 0, length: attrStr.length),
-                    documentAttributes: [.documentType: NSAttributedString.DocumentType.html]
-                ), let html = String(data: htmlData, encoding: .utf8) {
-                    performInterceptedInput {
-                        if !pasteHTML(html, detectContentChange: true),
-                           !attrStr.string.isEmpty {
-                            pastePlainText(attrStr.string)
-                        }
-                    }
-                    return
-                }
-            }
-        }
-
-        if let text = pasteboard.string {
-            performInterceptedInput {
-                pastePlainText(text)
-            }
-            return
+        performInterceptedInput {
+            applyClipboardCommand(command)
         }
     }
 

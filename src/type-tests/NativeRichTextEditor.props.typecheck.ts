@@ -129,3 +129,12 @@ const headingSchemaSpec: SchemaSpec = {
 };
 
 void defineSchema(headingSchemaSpec);
+
+const clipboardModes: readonly NativeRichTextEditorProps[] = [
+    { documentHandle, pasteMode: 'rich' },
+    { documentHandle, pasteMode: 'plainText' },
+    { documentHandle, pasteMode: 'disabled' },
+    // @ts-expect-error pasteMode is a closed public contract
+    { documentHandle, pasteMode: 'html' },
+];
+void clipboardModes;

@@ -87,6 +87,18 @@ export function EditorScreen() {
 
 See [Getting Started](https://github.com/apollohg/react-native-rich-text-editor/wiki/Getting-Started) and the [RichTextEditor reference](https://github.com/apollohg/react-native-rich-text-editor/wiki/RichTextEditor-Reference) for the complete API.
 
+## Copy and paste
+
+Copy and cut publish an editor fragment, HTML, and plain text. Pasting between compatible editor schemas preserves selected marks, nodes, and atom attributes. External rich text imports supported HTML formatting and structure, with RTF conversion on iOS.
+
+Use `pasteMode` to control native clipboard paste:
+
+```tsx
+<RichTextEditor documentHandle={documentHandle} pasteMode="plainText" />
+```
+
+The default is `"rich"`. `"plainText"` removes source formatting and atoms, while retaining the destination's ordinary typing marks. `"disabled"` blocks paste without disabling copy or typing. Changes apply immediately. These settings govern clipboard actions; programmatic insertion and drag/drop retain their own behaviour. Unsupported external formatting is reduced to supported content, and clipboard images do not trigger uploads.
+
 ## Custom atom nodes
 
 Render interactive cards, embeds, and other custom blocks with your own React components.

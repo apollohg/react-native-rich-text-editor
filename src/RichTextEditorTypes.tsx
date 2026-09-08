@@ -37,6 +37,9 @@ export type RichTextEditorToolbarPlacement = 'keyboard' | 'inline';
  */
 export type RichTextEditorValueJSONUpdateMode = 'replace' | 'reset';
 
+/** Controls native clipboard paste. Plain text keeps destination typing marks. */
+export type RichTextEditorPasteMode = 'rich' | 'plainText' | 'disabled';
+
 /** Native keyboard auto-capitalization behavior. */
 export type RichTextEditorAutoCapitalize = 'none' | 'sentences' | 'words' | 'characters';
 
@@ -137,6 +140,8 @@ export interface RichTextEditorProps {
     placeholder?: string;
     /** Whether the editor is editable. Defaults to true. When false, every mutation ref method rejects with MUTATION_REJECTED; selection and controlled content still flow. */
     editable?: boolean;
+    /** Clipboard paste policy. Defaults to rich; updates apply immediately. */
+    pasteMode?: RichTextEditorPasteMode;
     /** Whether to auto-focus on mount. */
     autoFocus?: boolean;
     /** Controls native keyboard auto-capitalization. Defaults to sentences. */

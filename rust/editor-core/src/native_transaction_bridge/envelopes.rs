@@ -132,6 +132,13 @@ enum CommandEnvelope {
     ReplaceSelectionText {
         text: String,
     },
+    Paste {
+        fragment: Option<String>,
+        html: Option<String>,
+        text: Option<String>,
+        #[serde(default, rename = "plainText")]
+        plain_text: bool,
+    },
     SplitBlock,
     DeleteAndSplit,
     InsertContentJson {
@@ -276,6 +283,19 @@ impl From<CommandEnvelope> for TypedCommand {
             },
             CommandEnvelope::DeleteBackward => Self::DeleteBackward,
             CommandEnvelope::ReplaceSelectionText { text } => Self::ReplaceSelectionText { text },
+            CommandEnvelope::Paste {
+                fragment,
+                html,
+                text,
+                plain_text,
+            } => Self::Paste {
+                fragment,
+                html,
+                text,
+                plain_text,
+                allow_base64_images: false,
+                input_filter: None,
+            },
             CommandEnvelope::SplitBlock => Self::SplitBlock,
             CommandEnvelope::DeleteAndSplit => Self::DeleteAndSplit,
             CommandEnvelope::InsertContentJson { json } => Self::InsertContentJson { json },

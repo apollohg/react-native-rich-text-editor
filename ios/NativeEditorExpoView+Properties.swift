@@ -104,6 +104,10 @@ extension NativeEditorExpoView {
         updateAccessoryToolbarVisibility()
     }
 
+    func setPasteMode(_ pasteMode: String) {
+        richTextView.textView.pasteMode = EditorPasteMode(rawValue: pasteMode) ?? .rich
+    }
+
     func setAccessibilityLabel(_ label: String?) {
         richTextView.textView.accessibilityLabel = label
     }

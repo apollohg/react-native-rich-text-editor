@@ -15,6 +15,7 @@ V2_SYMBOLS=(
     editor_v2_get_state
     editor_v2_get_document_json
     editor_v2_get_document_html
+    editor_v2_get_clipboard
     editor_v2_get_content_snapshot
     editor_v2_replace_document
     editor_v2_apply_input

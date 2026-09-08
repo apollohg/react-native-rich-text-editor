@@ -1,3 +1,6 @@
+mod clipboard;
+pub use clipboard::from_clipboard_html_with_limits;
+
 use std::collections::HashMap;
 use std::fmt;
 

@@ -540,3 +540,5 @@ include!("history_and_commit/commit_atomicity.rs");
 include!("history_and_commit/state_only.rs");
 
 include!("history_and_commit/plain_text_replacement.rs");
+
+include!("history_and_commit/clipboard.rs");

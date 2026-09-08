@@ -37,6 +37,7 @@ internal interface EditorV2Backend {
     fun getDocumentJson(editorId: String): EditorV2CallResult<String>
     fun getDocumentHtml(editorId: String): EditorV2CallResult<String>
     fun getContentSnapshot(editorId: String): EditorV2CallResult<String>
+    fun getClipboard(editorId: String): EditorV2CallResult<String>
     fun applyInput(editorId: String, requestJson: String): EditorV2CallResult<String>
     fun applyCommand(editorId: String, requestJson: String): EditorV2CallResult<String>
     fun applyLocalApi(editorId: String, requestJson: String): EditorV2CallResult<String>

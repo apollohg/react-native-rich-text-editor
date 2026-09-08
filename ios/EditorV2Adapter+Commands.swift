@@ -1,6 +1,28 @@
 import Foundation
 
 extension EditorV2Adapter {
+    func clipboardPayloadJSON() -> String? {
+        guard beginRuntimeOperation() else { return nil }
+        defer { endRuntimeOperation() }
+        switch Self.normalizeJsonResult(editorV2GetClipboard(editorId: editorId)) {
+        case .failure(let error):
+            emit(error)
+            return nil
+        case .success(let json):
+            return json
+        }
+    }
+
+    func applyClipboardCommand(_ command: [String: Any]) -> String? {
+        guard beginRuntimeOperation() else { return nil }
+        defer { endRuntimeOperation() }
+        return performMutation(adoptEngineSelection: true) {
+            self.callWithEnvelope(["command": command]) { requestJson in
+                editorV2ApplyCommand(editorId: self.editorId, requestJson: requestJson)
+            }
+        }
+    }
+
     func toggleMark(_ markType: String, anchor: UInt32, head: UInt32) -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }

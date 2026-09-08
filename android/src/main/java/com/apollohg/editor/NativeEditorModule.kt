@@ -520,6 +520,9 @@ class NativeEditorModule : Module() {
             Prop("editable") { view: NativeEditorExpoView, editable: Boolean ->
                 view.setEditable(editable)
             }
+            Prop("pasteMode") { view: NativeEditorExpoView, pasteMode: String? ->
+                view.setPasteMode(pasteMode)
+            }
             Prop("accessibilityLabel") { view: NativeEditorExpoView, label: String? ->
                 view.setAccessibilityLabel(label)
             }

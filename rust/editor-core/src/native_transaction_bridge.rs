@@ -172,13 +172,22 @@ impl<'session> NativeTransactionBridge<'session> {
                         typed_outcome(request_id, result)?
                     }
                     Some(intent) => {
-                        let command = lower_native_intent(
+                        let mut command = lower_native_intent(
                             intent,
                             resolved.anchor,
                             resolved.head,
                             request_id,
                             &self.session.engine,
                         )?;
+                        if let TypedCommand::Paste {
+                            allow_base64_images,
+                            input_filter,
+                            ..
+                        } = &mut command
+                        {
+                            (*allow_base64_images, *input_filter) =
+                                self.session.policy.clipboard_options();
+                        }
                         let (engine, outbox) = self.session.engine_and_outbox();
                         let mut outbox = outbox;
                         let applied = engine.apply_command_at_selection_with_outbox(
@@ -276,9 +285,18 @@ impl<'session> NativeTransactionBridge<'session> {
         let request_id = envelope.request_id;
         self.admit_writable(request_id)?;
         self.admit_base_revision(request_id, envelope.base_document_revision)?;
+        let mut command: TypedCommand = envelope.command.into();
+        if let TypedCommand::Paste {
+            allow_base64_images,
+            input_filter,
+            ..
+        } = &mut command
+        {
+            (*allow_base64_images, *input_filter) = self.session.policy.clipboard_options();
+        }
         let (engine, outbox) = self.session.engine_and_outbox();
         let result = engine
-            .apply_command_with_outbox(request_id, envelope.command.into(), outbox)
+            .apply_command_with_outbox(request_id, command, outbox)
             .map_err(operation_error)?;
         match result {
             Some(result) => Ok(NativeBridgeOutcome::Transaction(Box::new(result))),

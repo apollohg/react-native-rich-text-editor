@@ -10,6 +10,7 @@
 //! retained anywhere in the workspace.
 
 pub(crate) mod boundary;
+pub(crate) mod clipboard;
 pub(crate) mod collaboration_runtime;
 pub(crate) mod command_planner;
 pub(crate) mod document_api;

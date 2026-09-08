@@ -467,3 +467,96 @@ fn test_from_html_strict_mode_rejects_unknown_tag() {
         );
     }
 }
+
+#[test]
+fn clipboard_html_imports_css_marks_and_discards_source_wrappers() {
+    let doc = crate::serialize::html_in::from_clipboard_html_with_limits(
+        r#"<meta charset="utf-8"><style>p { color:red }</style><div><p><span style="font-weight:700;font-style:italic;text-decoration:underline line-through">Rich</span> text</p></div>"#,
+        &schema(), &default_opts(), &ResourceLimits::default(),
+    ).unwrap();
+    let paragraph = doc.root().child(0).unwrap();
+    assert_eq!(paragraph.node_type(), "paragraph");
+    let text = paragraph.child(0).unwrap();
+    assert_eq!(text.text_str(), Some("Rich"));
+    let marks = text.marks().iter().map(|mark| mark.mark_type()).collect::<Vec<_>>();
+    assert_eq!(marks, vec!["bold", "italic", "underline", "strike"]);
+    assert!(!to_html(&doc, &schema()).contains("opaque"));
+}
+
+#[test]
+fn clipboard_html_css_resets_inherited_marks_and_keeps_lists() {
+    let doc = crate::serialize::html_in::from_clipboard_html_with_limits(
+        r#"<ul><li><p><b>bold<span style="font-weight:normal"> normal</span></b></p></li></ul><script>bad()</script>"#,
+        &schema(), &default_opts(), &ResourceLimits::default(),
+    ).unwrap();
+    let paragraph = doc.root().child(0).unwrap().child(0).unwrap().child(0).unwrap();
+    assert_eq!(paragraph.child(0).unwrap().marks()[0].mark_type(), "bold");
+    assert!(paragraph.child(1).unwrap().marks().is_empty());
+    assert!(!to_html(&doc, &schema()).contains("bad"));
+}
+
+#[test]
+fn clipboard_html_preserves_inline_spacing_and_preformatted_text() {
+    let doc = crate::serialize::html_in::from_clipboard_html_with_limits(
+        "<b>one</b> <i>two</i><pre>  a\n b</pre>",
+        &schema(), &default_opts(), &ResourceLimits::default(),
+    ).unwrap();
+    assert_eq!(doc.root().child(0).unwrap().text_content(), "one two");
+    assert_eq!(doc.root().child(1).unwrap().text_content(), "  a\n b");
+}
+
+#[test]
+fn clipboard_html_keeps_mention_attributes_and_bounds_input() {
+    let schema = mention_schema();
+    let input = r#"<div><span data-native-editor-mention="true" data-native-editor-mention-attrs="{&quot;id&quot;:&quot;u1&quot;,&quot;label&quot;:&quot;Alice&quot;}">Alice</span></div>"#;
+    let doc = crate::serialize::html_in::from_clipboard_html_with_limits(input, &schema, &default_opts(), &ResourceLimits::default()).unwrap();
+    assert_eq!(doc.root().child(0).unwrap().child(0).unwrap().attrs().get("id"), Some(&serde_json::json!("u1")));
+    let limits = ResourceLimits { max_input_bytes: input.len() - 1, ..ResourceLimits::default() };
+    assert!(crate::serialize::html_in::from_clipboard_html_with_limits(input, &schema, &default_opts(), &limits).is_err());
+}
+
+#[test]
+fn clipboard_html_unsupported_table_keeps_cell_separators() {
+    let doc = crate::serialize::html_in::from_clipboard_html_with_limits(
+        "<table><tr><td>one</td><td>two</td></tr></table>",
+        &schema(), &default_opts(), &ResourceLimits::default(),
+    ).unwrap();
+    assert_eq!(doc.root().child_count(), 2);
+    assert_eq!(doc.root().child(0).unwrap().text_content(), "one");
+    assert_eq!(doc.root().child(1).unwrap().text_content(), "two");
+}
+
+#[test]
+fn clipboard_html_uses_schema_mark_tags_with_custom_names() {
+    let schema = Schema::from_json(&serde_json::json!({
+        "nodes": [
+            {"name":"doc","role":"doc","content":"block+"},
+            {"name":"paragraph","role":"textBlock","group":"block","content":"inline*","htmlTag":"p"},
+            {"name":"text","role":"text","group":"inline"}
+        ],
+        "marks": [{"name":"emphasis","htmlTag":"strong","attrs":{"data-code":{"default":""}}}]
+    })).unwrap();
+    let doc = crate::serialize::html_in::from_clipboard_html_with_limits(
+        "<p><strong data-code=\"review\">one</strong><span style=\"font-weight:bold\">two</span></p>",
+        &schema, &default_opts(), &ResourceLimits::default(),
+    ).unwrap();
+    assert_eq!(doc.root().child(0).unwrap().child(0).unwrap().marks()[0].mark_type(), "emphasis");
+    assert_eq!(doc.root().child(0).unwrap().child(1).unwrap().marks()[0].mark_type(), "emphasis");
+}
+
+#[test]
+fn clipboard_html_keeps_semantic_mark_attributes() {
+    let schema = Schema::from_json(&serde_json::json!({
+        "nodes": [
+            {"name":"doc","role":"doc","content":"block+"},
+            {"name":"paragraph","role":"textBlock","group":"block","content":"inline*","htmlTag":"p"},
+            {"name":"text","role":"text","group":"inline"}
+        ],
+        "marks": [{"name":"bold","htmlTag":"strong","attrs":{"data-code":{"default":""}}}]
+    })).unwrap();
+    let doc = crate::serialize::html_in::from_clipboard_html_with_limits(
+        "<p><strong data-code=\"review\">marked</strong></p>",
+        &schema, &default_opts(), &ResourceLimits::default(),
+    ).unwrap();
+    assert_eq!(doc.root().child(0).unwrap().child(0).unwrap().marks()[0].attrs()["data-code"], serde_json::json!("review"));
+}

@@ -706,6 +706,24 @@ pub(super) fn plan(
     command: TypedCommand,
 ) -> OperationResult<CommandPlan> {
     let command = match command {
+        TypedCommand::Paste {
+            fragment,
+            html,
+            text,
+            plain_text,
+            allow_base64_images,
+            input_filter,
+        } => {
+            return super::clipboard::plan(
+                context,
+                fragment,
+                html,
+                text,
+                plain_text,
+                allow_base64_images,
+                input_filter,
+            );
+        }
         TypedCommand::DeleteRange { range: requested } => {
             let rendered = crate::render::rendered_text(context.document, context.schema);
             let resolve = |position: RevisionedPosition, field| {

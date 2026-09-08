@@ -45,6 +45,7 @@
     { "name": "editor_v2_create", "checksum": 9333 },
     { "name": "editor_v2_destroy", "checksum": 8349 },
     { "name": "editor_v2_doc_to_scalar", "checksum": 62503 },
+    { "name": "editor_v2_get_clipboard", "checksum": 3214 },
     { "name": "editor_v2_get_content_snapshot", "checksum": 21323 },
     { "name": "editor_v2_get_document_html", "checksum": 60959 },
     { "name": "editor_v2_get_document_json", "checksum": 25683 },

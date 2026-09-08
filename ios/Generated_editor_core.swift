@@ -2077,6 +2077,13 @@ public func editorV2DocToScalar(editorId: String, docPos: UInt32) -> FfiJsonResu
     )
 })
 }
+public func editorV2GetClipboard(editorId: String) -> FfiJsonResult  {
+    return try!  FfiConverterTypeFfiJsonResult_lift(try! rustCall() {
+    uniffi_editor_core_fn_func_editor_v2_get_clipboard(
+        FfiConverterString.lower(editorId),$0
+    )
+})
+}
 public func editorV2GetContentSnapshot(editorId: String) -> FfiJsonResult  {
     return try!  FfiConverterTypeFfiJsonResult_lift(try! rustCall() {
     uniffi_editor_core_fn_func_editor_v2_get_content_snapshot(
@@ -2287,6 +2294,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_editor_core_checksum_func_editor_v2_doc_to_scalar() != 62503) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_editor_core_checksum_func_editor_v2_get_clipboard() != 3214) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_editor_core_checksum_func_editor_v2_get_content_snapshot() != 21323) {

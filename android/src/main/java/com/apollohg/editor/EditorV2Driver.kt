@@ -50,6 +50,16 @@ internal interface EditorV2Driver {
     fun insertNode(nodeType: String, anchor: Int, head: Int): String?
     fun insertContentHtmlAtSelection(html: String, anchor: Int, head: Int): String?
     fun insertContentJsonAtSelection(json: String, anchor: Int, head: Int): String?
+    fun clipboardJson(): String?
+    fun pasteAtSelection(
+        fragment: String?,
+        html: String?,
+        text: String?,
+        plainText: Boolean,
+        anchor: Int,
+        head: Int,
+        preserveEngineSelection: Boolean = false
+    ): String?
     fun toggleMark(markName: String, anchor: Int, head: Int): String?
     fun setMark(markName: String, attrsJson: String, anchor: Int, head: Int): String?
     fun unsetMark(markName: String, anchor: Int, head: Int): String?

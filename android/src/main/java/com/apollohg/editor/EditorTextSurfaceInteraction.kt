@@ -391,21 +391,30 @@ internal class EditorTextSurfaceInteraction(
                         0,
                         android.R.string.copy
                     ).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-                    if ((view as? EditorEditText)?.isEditable != false) {
+                    val editor = view as? EditorEditText
+                    if (editor?.isEditable != false) {
                         menu.add(
                             0,
                             android.R.id.cut,
                             1,
                             android.R.string.cut
                         ).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-                        menu.add(
-                            0,
-                            android.R.id.paste,
-                            2,
-                            android.R.string.paste
-                        ).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+                        if (editor?.pasteMode != EditorPasteMode.DISABLED) {
+                            menu.add(
+                                0,
+                                android.R.id.paste,
+                                2,
+                                android.R.string.paste
+                            ).setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+                            menu.add(
+                                0,
+                                android.R.id.pasteAsPlainText,
+                                3,
+                                android.R.string.paste_as_plain_text
+                            )
+                        }
                     }
-                    menu.add(0, android.R.id.selectAll, 3, android.R.string.selectAll)
+                    menu.add(0, android.R.id.selectAll, 4, android.R.string.selectAll)
                     return true
                 }
                 override fun onPrepareActionMode(mode: ActionMode, menu: Menu) = false
@@ -457,12 +466,20 @@ internal class EditorTextSurfaceInteraction(
     }
 
     fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if (event.isCtrlPressed) {
+        if (event.isCtrlPressed || event.isMetaPressed) {
             val action = when (keyCode) {
                 KeyEvent.KEYCODE_A -> android.R.id.selectAll
+
                 KeyEvent.KEYCODE_C -> android.R.id.copy
+
                 KeyEvent.KEYCODE_X -> android.R.id.cut
-                KeyEvent.KEYCODE_V -> android.R.id.paste
+
+                KeyEvent.KEYCODE_V -> if (event.isShiftPressed) {
+                    android.R.id.pasteAsPlainText
+                } else {
+                    android.R.id.paste
+                }
+
                 else -> 0
             }
             if (action != 0) return view.onTextContextMenuItem(action)
@@ -559,10 +576,13 @@ internal class EditorTextSurfaceInteraction(
         info.addAction(AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY)
         info.addAction(AccessibilityNodeInfo.ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY)
         info.addAction(AccessibilityNodeInfo.ACTION_COPY)
+        val editor = view as? EditorEditText
         if (info.isEditable) {
             info.addAction(AccessibilityNodeInfo.ACTION_SET_TEXT)
             info.addAction(AccessibilityNodeInfo.ACTION_CUT)
-            info.addAction(AccessibilityNodeInfo.ACTION_PASTE)
+            if (editor?.pasteMode != EditorPasteMode.DISABLED) {
+                info.addAction(AccessibilityNodeInfo.ACTION_PASTE)
+            }
         }
     }
 
