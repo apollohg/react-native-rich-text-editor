@@ -1,5 +1,48 @@
 # Changelog
 
+## [2.0.1] - 2026-09-08
+
+Cumulative v2 changes since 1.0.3.
+
+### Breaking changes
+
+- Renamed the package from `@apollohg/react-native-prose-editor` to `@apollohg/react-native-rich-text-editor`. Update dependencies, imports, and the Expo config-plugin entry, then regenerate and rebuild the native app.
+- Replaced nested theme configuration with flat, typed element entries through `EditorStyleSheet.create`. Migrate `links` to `link`, heading maps to `h1`–`h6`, `spacingAfter` to `marginBottom`, and `contentInsets` to `content.padding*`. Flatten blockquote and code-block typography into their element entries, and split list styling across container, item, marker, and checkbox entries. The `toolbar` configuration remains supported.
+- Changed `addons` to a readonly array of addon definitions. Replace mention configuration objects with `[createMentionsAddon(options)]`. Conditional `false`, `null`, and `undefined` entries are accepted; duplicate capabilities are rejected. Mention-enabled document handles still require a mention-enabled schema.
+- Removed `V2` from public document, snapshot, state, and error API names. For example, use `NativeEditorCreateConfig`, `NativeEditorState`, `NativeEditorAtomicRenderSnapshot`, and `NATIVE_EDITOR_NON_RETRYABLE_CODES`. `NativeEditorV2BoundaryError` is now `NativeEditorEngineBoundaryError`; the existing `NativeEditorBoundaryError` keeps its name.
+
+### Added
+
+- Added `RichTextEditor` and `RichTextViewer` as the preferred component names, with matching public types. `NativeRichTextEditor`, `NativeProseViewer`, and their associated types remain available as deprecated aliases.
+- Added per-element typography, backgrounds, margins, padding, borders, and corner radii for the editor and viewer. Styles support nested conditional arrays, property overrides, and separate list-marker and task-checkbox appearance. Exported `serializeEditorTheme` for consumers needing the native theme representation.
+- Added optional native syntax highlighting through `@apollohg/react-native-rich-text-editor-code-highlighting` and `createCodeHighlightingAddon`. Set code-block `attrs.language` to select a language; missing or unsupported languages retain ordinary code styling. The extension requires a separate install and native rebuild, and keeps syntect and its grammars out of the base package.
+- Added custom React atom components to `RichTextViewer`, including measured native slots, stable mounting across layout refreshes, and controlled attribute updates.
+- Added inferred atom attribute types, declarative attribute validation, and `updateAttrs` support for partial objects, updater functions, and batches. Atom components expose interaction and pending/error state, plus editor actions for selection, deletion, and focus before or after the atom.
+- Added native SVG image rendering on iOS and Android and improved handling of imported image content.
+
+### Changed
+
+- Replaced Android's stock editing layout with an owned per-block text surface supporting physical margins, borders, padding, and RTL content. Block justification is available on API 26+; API 24/25 use normal alignment.
+- Mounted Android custom atoms inside native scrolling content so measured heights participate in document layout and embedded React controls receive normal touch events.
+- Split large TypeScript, Rust, Swift, and Kotlin implementations and test suites into focused modules. Updated release validation to coordinate the editor and optional extension releases and reuse native builds.
+
+### Fixed
+
+- Made explicit document resets authoritative over pending native input so queued edits cannot restore content from before the reset.
+- Fixed caret placement, selection handles, gesture handling, and input reconciliation on Android, including empty IME corrections at hidden placeholders. Task-checkbox taps preserve selection and do not focus or scroll an unfocused editor.
+- Stabilized iOS caret placement and keyboard overlap handling, corrected scrolled checkbox hit testing, and preserved image scrolling and node selection.
+- Fixed Backspace behavior around nested lists and paragraphs following lists, along with task-checkbox editing and wrapped list text alignment.
+- Collapsed adjacent block margins and removed excess blockquote spacing. Preserved loaded images across render refreshes and improved custom-atom sizing, interaction while scrolled, and rendering resilience.
+- Bounded retained awareness identities, including removed peers, to twice `maxAwarenessPeers`. Exhaustion triggers a retryable reconnect that clears retained metadata; the existing live-peer limit is unchanged.
+- Preserved remote awareness removal clocks across undo/redo so stale updates cannot resurrect removed peers.
+- Matched awareness JSON admission to snapshot parsing limits, rejecting unsupported nesting atomically instead of silently omitting accepted peers from snapshots.
+- Fixed create-config whitespace handling so valid pretty-printed JSON and HTML initialization payloads receive the same payload-size exemption as compact configs.
+
+### Tests
+
+- Expanded TypeScript and native regression coverage for styles, addons, SVG images, custom atoms, document resets, caret behavior, list editing, and checkbox interactions.
+- Added Rust regressions for bounded peer churn, reconnect recovery, removal-clock preservation through undo/redo, awareness JSON admission, and formatted create configs.
+
 ## [1.0.3] - 2026-09-04
 
 ### Fixed

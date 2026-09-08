@@ -1,9 +1,15 @@
+# Breaking changes
+
+For **1.0.3 → 2.x**, use the [Migration Guide](https://github.com/apollohg/react-native-rich-text-editor/wiki/Migration-Guide) and [v2 changelog](./CHANGELOG.md#201---2026-09-08).
+
+The guide below is historical: it covers upgrading from 0.5.x to 1.0.0, and its package names and theme/addon examples describe the 1.0 API.
+
 # Breaking changes in 1.0.0
 
 Version 1.0.0 is a hard cutover from 0.5.25. It replaces component-owned
 documents, JavaScript-owned collaboration transport, and the legacy prose
 viewer boundary; compatibility adapters are not included. See the
-[changelog](./CHANGELOG.md#100---2026-08-01) for the release summary.
+[changelog](./CHANGELOG.md#100---2026-08-28) for the release summary.
 
 ## Upgrade checklist
 
@@ -367,6 +373,6 @@ receive the required native binaries. Repository contributors should run
 from the pinned Rust source and toolchain.
 
 For current examples and operational guidance, see
-[Editor usage](./README.md#editor-usage), [Prose viewer](./README.md#prose-viewer),
-[Collaboration](./README.md#collaboration), [Security](./README.md#security),
+[Editor usage](./README.md#editor-usage), [Rich text viewer](./README.md#rich-text-viewer),
+[Collaboration](./README.md#collaboration), [Production limits and errors](https://github.com/apollohg/react-native-rich-text-editor/wiki/Production-Limits-and-Errors),
 and [Development](./README.md#development).
