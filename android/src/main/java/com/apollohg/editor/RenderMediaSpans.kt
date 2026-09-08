@@ -228,9 +228,6 @@ internal class BlockImageSpan(
         paint.color = Color.argb(24, 0, 0, 0)
         paint.style = Paint.Style.FILL
         canvas.drawRoundRect(rect, 16f * density, 16f * density, paint)
-        paint.color = Color.argb(120, 0, 0, 0)
-        val iconRadius = minOf(rect.width(), rect.height()) * 0.12f
-        canvas.drawCircle(rect.centerX(), rect.centerY(), iconRadius, paint)
         paint.color = previousColor
         paint.style = previousStyle
     }

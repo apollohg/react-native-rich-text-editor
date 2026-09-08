@@ -192,7 +192,6 @@ extension RenderBridge {
             }
             let attachment = BlockImageAttachment(
                 source: source,
-                placeholderTint: textColor,
                 preferredWidth: jsonCGFloat(elementAttrs["width"]),
                 preferredHeight: jsonCGFloat(elementAttrs["height"])
             )

@@ -101,7 +101,6 @@ final class AtomBlockAttachment: NSTextAttachment {
 final class BlockImageAttachment: NSTextAttachment {
     var styleBox: EditorStyleBox?
     let source: String
-    let placeholderTint: UIColor
     private weak var loadOwner: RenderImageLoadOwner?
     private var loadReceipt: RenderImageLoadOwner.ImageLoadReceipt?
     var preferredWidth: CGFloat?
@@ -110,12 +109,10 @@ final class BlockImageAttachment: NSTextAttachment {
 
     init(
         source: String,
-        placeholderTint: UIColor,
         preferredWidth: CGFloat?,
         preferredHeight: CGFloat?
     ) {
         self.source = source
-        self.placeholderTint = placeholderTint
         self.preferredWidth = preferredWidth
         self.preferredHeight = preferredHeight
         self.loadOwner = RenderImageLoadOwner.current
@@ -193,9 +190,6 @@ final class BlockImageAttachment: NSTextAttachment {
                 renderer.cgContext.clip(to: imageBounds.inset(by: styleBox.inset))
                 if let loadedImage {
                     loadedImage.draw(in: styleBox.imageRect(loadedImage.size, in: imageBounds))
-                } else {
-                    let iconBounds = imageBounds.insetBy(dx: imageBounds.width * 0.35, dy: imageBounds.height * 0.35)
-                    UIImage(systemName: "photo")?.withTintColor(placeholderTint, renderingMode: .alwaysOriginal).draw(in: iconBounds)
                 }
             }
         }
@@ -206,20 +200,6 @@ final class BlockImageAttachment: NSTextAttachment {
             let path = UIBezierPath(roundedRect: imageBounds, cornerRadius: 12)
             UIColor.secondarySystemFill.setFill()
             path.fill()
-
-            let iconSize = min(imageBounds.width, imageBounds.height) * 0.28
-            let iconOrigin = CGPoint(
-                x: imageBounds.midX - (iconSize / 2),
-                y: imageBounds.midY - (iconSize / 2)
-            )
-            let iconRect = CGRect(origin: iconOrigin, size: CGSize(width: iconSize, height: iconSize))
-
-            if #available(iOS 13.0, *) {
-                let config = UIImage.SymbolConfiguration(pointSize: iconSize, weight: .medium)
-                let icon = UIImage(systemName: "photo", withConfiguration: config)?
-                    .withTintColor(placeholderTint.withAlphaComponent(0.7), renderingMode: .alwaysOriginal)
-                icon?.draw(in: iconRect)
-            }
         }
     }
 
