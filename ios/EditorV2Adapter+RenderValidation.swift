@@ -150,7 +150,7 @@ extension EditorV2Adapter {
     private static func isValidMentionStyle(_ value: Any) -> Bool {
         guard let style = value as? [String: Any] else { return false }
         let colors: Set<String> = ["color", "backgroundColor", "textDecorationColor", "borderColor", "borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor"]
-        let dimensions: Set<String> = ["fontSize", "lineHeight", "letterSpacing", "borderWidth", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "borderRadius", "borderTopLeftRadius", "borderTopRightRadius", "borderBottomLeftRadius", "borderBottomRightRadius"]
+        let dimensions: Set<String> = ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "fontSize", "lineHeight", "letterSpacing", "borderWidth", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "borderRadius", "borderTopLeftRadius", "borderTopRightRadius", "borderBottomLeftRadius", "borderBottomRightRadius"]
         let strings: Set<String> = ["fontFamily", "fontWeight", "fontStyle", "textDecorationLine", "textDecorationStyle", "borderStyle"]
         guard hasOnlyKeys(style, colors.union(dimensions).union(strings)) else { return false }
         for key in colors where style[key] != nil {
@@ -159,7 +159,7 @@ extension EditorV2Adapter {
         for key in dimensions where style[key] != nil {
             guard let number = finiteNumber(style[key])?.doubleValue else { return false }
             if ["fontSize", "lineHeight"].contains(key), number <= 0 { return false }
-            if key.hasPrefix("border"), number < 0 { return false }
+            if key.hasPrefix("border") || key.hasPrefix("padding"), number < 0 { return false }
         }
         for key in strings where style[key] != nil {
             guard let value = style[key] as? String else { return false }

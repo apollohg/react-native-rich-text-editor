@@ -5,10 +5,24 @@ const styles = EditorStyleSheet.create({
     paragraph: [ { fontWeight: 600, padding: 12 }, false, [ undefined, { marginBottom: 0 } ] ],
     image: { resizeMode: 'contain', borderTopLeftRadius: 8 },
     link: { color: 'rebeccapurple', textDecorationLine: 'underline' },
+    mention: {
+        padding: 8,
+        paddingHorizontal: 6,
+        paddingVertical: 4,
+        paddingTop: 0,
+        paddingRight: 1,
+        paddingBottom: 2,
+        paddingLeft: 3,
+    },
 });
 
 const theme: EditorTheme = styles;
 void theme;
+
+// @ts-expect-error Mention padding is numeric.
+EditorStyleSheet.create({ mention: { padding: true } });
+// @ts-expect-error Mention margins are unsupported.
+EditorStyleSheet.create({ mention: { margin: 4 } });
 
 // @ts-expect-error Unknown element.
 EditorStyleSheet.create({ paragraphs: { color: 'red' } });

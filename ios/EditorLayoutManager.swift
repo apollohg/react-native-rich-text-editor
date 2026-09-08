@@ -54,7 +54,16 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         storage.enumerateAttribute(editorInlineLineHeightAttribute, in: characters) { value, _, _ in
             height = max(height, EditorTheme.cgFloat(value) ?? 0)
         }
+        var ascent = baselineOffset.pointee + (height - lineFragmentUsedRect.pointee.height) / 2
+        var descent = height - ascent
+        storage.enumerateAttribute(editorMentionBoxAttribute, in: characters) { value, _, _ in
+            guard let chip = value as? EditorMentionRenderedBox else { return }
+            ascent = max(ascent, chip.baselineOffset)
+            descent = max(descent, chip.size.height - chip.baselineOffset)
+        }
+        height = ascent + descent
         let extra = height - lineFragmentUsedRect.pointee.height
+        let baselineAdjustment = ascent - baselineOffset.pointee
         var leading: CGFloat = 0
         var overlap: CGFloat = 0
         if characters.location < storage.length,
@@ -76,7 +85,7 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         lineFragmentRect.pointee.size.height += extra + leading
         lineFragmentUsedRect.pointee.size.height = height
         lineFragmentUsedRect.pointee.origin.y += leading + overlap
-        baselineOffset.pointee += extra / 2 + leading
+        baselineOffset.pointee += baselineAdjustment + leading
         return true
     }
 
@@ -226,10 +235,11 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         storage.enumerateAttribute(editorMentionBoxAttribute, in: visible) { value, range, _ in
             guard let box = value as? EditorMentionRenderedBox else { return }
             let glyph = self.glyphIndexForCharacter(at: range.location)
-            let line = self.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
             let location = self.location(forGlyphAt: glyph)
             let fragment = self.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
-            let rect = CGRect(x: fragment.minX + location.x + origin.x, y: line.midY - box.size.height / 2 + origin.y, width: box.size.width, height: box.size.height)
+            let rect = CGRect(x: fragment.minX + location.x + origin.x,
+                y: fragment.minY + location.y + origin.y - box.baselineOffset,
+                width: box.size.width, height: box.size.height)
             box.box.draw(in: rect, context: context)
             let labelHeight = box.label?.size().height ?? 0
             box.label?.draw(at: CGPoint(x: rect.minX + box.padding.left,

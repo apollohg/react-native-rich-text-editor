@@ -3,6 +3,8 @@ import type { RichTextEditorProps } from '../RichTextEditorTypes';
 import type { RichTextViewerProps } from '../NativeProseViewer';
 
 const mentions = createMentionsAddon({
+    theme: { node: { paddingHorizontal: 6, paddingVertical: 2 } },
+    resolveTheme: () => ({ node: { padding: 4, paddingLeft: 0 } }),
     suggestions: [ { key: 'alice', title: 'Alice' } ],
     onQueryChange: event => void event.query,
     onPress: event => void event.docPos,

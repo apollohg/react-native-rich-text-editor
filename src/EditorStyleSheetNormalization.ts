@@ -70,7 +70,7 @@ const fields: Record<keyof EditorStyleMap, readonly string[]> = {
     italic: inline,
     underline: inline,
     strike: inline,
-    mention: [ ...inline, ...border ],
+    mention: [ ...inline, ...border, ...spacing('padding') ],
     placeholder: typography,
 };
 

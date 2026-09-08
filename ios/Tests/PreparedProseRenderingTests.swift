@@ -13,6 +13,42 @@ final class PreparedProseRenderingTests: XCTestCase {
         }
     }
 
+    func testVersionedMentionPaddingOverridesDefaultsInViewer() throws {
+        let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"mention","attrs":{"label":"Jay"}}]}]}"#
+        try withCompiledDocument(source: .json(source), configJSON: Fixture.customConfig) { document in
+            for (style, expected) in [
+                (#"{"paddingLeft":0,"paddingTop":10,"borderRightWidth":2}"#, UIEdgeInsets(top: 10, left: 0, bottom: 4, right: 8)),
+                (#"{"paddingTop":0,"paddingRight":0,"paddingBottom":0,"paddingLeft":0}"#, .zero)
+            ] {
+                let layout = try prepare(document, themeJSON: "{\"version\":1,\"styles\":{\"mention\":\(style)}}")
+                let atom = try XCTUnwrap(layout.blocks.flatMap(\.fragments).first { $0.kind == .atom })
+                XCTAssertEqual(atom.padding, expected)
+            }
+        }
+    }
+
+    func testShortMentionWidthUsesOnlyLabelAndPaddingInViewer() throws {
+        let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"mention","attrs":{"label":"i"}},{"type":"opaque","attrs":{"label":"i"}}]}]}"#
+        try withCompiledDocument(source: .json(source), configJSON: Fixture.customConfig, mentionPrefix: nil) { document in
+            for rightPadding in [0, 2] {
+                let themeJSON = "{\"version\":1,\"styles\":{\"mention\":{\"paddingTop\":0,\"paddingRight\":\(rightPadding),\"paddingBottom\":0,\"paddingLeft\":0}}}"
+                let layout = try prepare(document, themeJSON: themeJSON)
+                let atoms = layout.blocks.flatMap(\.fragments).filter { $0.kind == .atom }
+                XCTAssertEqual(atoms.count, 2)
+                let mention = try XCTUnwrap(atoms.first)
+                let labelWidth = CGFloat(CTLineGetTypographicBounds(try XCTUnwrap(mention.line), nil, nil, nil))
+                let minimumAtomWidth = PreparedProseTheme.resolve(themeJSON: themeJSON).text.font.lineHeight
+                XCTAssertEqual(mention.label, "i")
+                XCTAssertLessThan(labelWidth + CGFloat(rightPadding), minimumAtomWidth)
+                XCTAssertEqual(mention.bounds.width, labelWidth + CGFloat(rightPadding), accuracy: 0.001)
+                XCTAssertEqual(mention.origin.x, mention.bounds.minX, accuracy: 0.001)
+
+                let opaque = try XCTUnwrap(atoms.last)
+                XCTAssertGreaterThanOrEqual(opaque.bounds.width, minimumAtomWidth)
+            }
+        }
+    }
+
     func testVersionedBulletScaleMatchesEditorMarkerDiameter() throws {
         for scale: CGFloat in [1, 2] {
             let theme = PreparedProseTheme.resolve(themeJSON: "{\"version\":1,\"styles\":{\"listMarker\":{\"scale\":\(scale)}}}")
@@ -702,6 +738,7 @@ final class PreparedProseRenderingTests: XCTestCase {
     private func withCompiledDocument<T>(
         source: FixtureSource,
         configJSON: String,
+        mentionPrefix: String? = "@",
         body: (ViewerDocument) throws -> T
     ) throws -> T {
         var result = viewerCompile(
@@ -710,7 +747,7 @@ final class PreparedProseRenderingTests: XCTestCase {
                 source: source.value,
                 configJson: configJSON,
                 imagesEnabled: true,
-                mentionPrefix: "@"
+                mentionPrefix: mentionPrefix
             )
         )
         if let error = result.error {

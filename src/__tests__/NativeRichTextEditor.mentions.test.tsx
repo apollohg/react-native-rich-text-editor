@@ -124,7 +124,9 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         });
 
         const resolveSelectionAttrs = jest.fn(() => ({ kind: 'user' }));
-        const resolveTheme = jest.fn(() => ({ node: { textColor: '#445566' } }));
+        const resolveTheme = jest.fn(() => ({
+            node: { textColor: '#445566', paddingHorizontal: 6, paddingVertical: 2, paddingLeft: 0 },
+        }));
         const onSelect = jest.fn();
 
         const { getByTestId } = render(
@@ -217,7 +219,17 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                             label: 'Alice',
                             mentionSuggestionChar: '@',
                             kind: 'user',
-                            mentionTheme: { node: { style: { color: '#445566ff' } } },
+                            mentionTheme: {
+                                node: {
+                                    style: {
+                                        color: '#445566ff',
+                                        paddingTop: 2,
+                                        paddingRight: 6,
+                                        paddingBottom: 2,
+                                        paddingLeft: 0,
+                                    },
+                                },
+                            },
                         },
                     },
                     { type: 'text', text: ' ' },
@@ -230,7 +242,17 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
                 attrs: expect.objectContaining({
                     id: 'user-alice',
                     kind: 'user',
-                    mentionTheme: { node: { style: { color: '#445566ff' } } },
+                    mentionTheme: {
+                        node: {
+                            style: {
+                                color: '#445566ff',
+                                paddingTop: 2,
+                                paddingRight: 6,
+                                paddingBottom: 2,
+                                paddingLeft: 0,
+                            },
+                        },
+                    },
                 }),
             })
         );

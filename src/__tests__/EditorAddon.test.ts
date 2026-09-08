@@ -9,6 +9,15 @@ const highlighting = {
 } as const;
 
 describe('addon descriptors', () => {
+    it('serializes mention node padding into per-side styles', () => {
+        const descriptor = createMentionsAddon({
+            theme: { node: { padding: 8, paddingVertical: 3, paddingLeft: 0 } },
+        });
+        expect(JSON.parse(serializeEditorAddons([ descriptor ])!).mentions.theme).toEqual({
+            node: { style: { paddingTop: 3, paddingRight: 8, paddingBottom: 3, paddingLeft: 0 } },
+        });
+    });
+
     it('accepts readonly conditional arrays and preserves live mention callbacks', () => {
         const onQueryChange = jest.fn();
         const mentions = createMentionsAddon({ onQueryChange });

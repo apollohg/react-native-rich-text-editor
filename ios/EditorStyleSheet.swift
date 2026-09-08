@@ -150,6 +150,14 @@ struct EditorStyleBox {
     }
     var inset: UIEdgeInsets { padding.adding(borders) }
     var outerInsets: UIEdgeInsets { inset.adding(margin) }
+    var mentionInsets: UIEdgeInsets {
+        UIEdgeInsets(
+            top: number("paddingTop", fallback: number("padding", fallback: 4)),
+            left: number("paddingLeft", fallback: number("padding", fallback: 6)),
+            bottom: number("paddingBottom", fallback: number("padding", fallback: 4)),
+            right: number("paddingRight", fallback: number("padding", fallback: 6))
+        ).adding(borders)
+    }
     private func insets(_ key: String) -> UIEdgeInsets {
         UIEdgeInsets(top: number(key + "Top", fallback: number(key)), left: number(key + "Left", fallback: number(key)), bottom: number(key + "Bottom", fallback: number(key)), right: number(key + "Right", fallback: number(key)))
     }
@@ -410,15 +418,18 @@ final class EditorMentionRenderedBox: NSObject {
     let label: NSAttributedString?
     let size: CGSize
     let padding: UIEdgeInsets
+    let baselineOffset: CGFloat
 
     init(box: EditorStyleBox, label: NSAttributedString? = nil) {
         self.box = box
         self.label = label
-        padding = UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 6).adding(box.inset)
+        padding = box.mentionInsets
         let measured = label?.size() ?? .zero
         let lineHeight = box.number("lineHeight", fallback: measured.height)
         size = CGSize(width: ceil(measured.width) + padding.left + padding.right,
             height: ceil(max(measured.height, lineHeight)) + padding.top + padding.bottom)
+        let font = label.flatMap { $0.length > 0 ? $0.attribute(.font, at: 0, effectiveRange: nil) as? UIFont : nil }
+        baselineOffset = padding.top + (size.height - padding.top - padding.bottom - measured.height) / 2 + (font?.ascender ?? 0)
     }
 }
 

@@ -79,8 +79,9 @@ extension CoreTextProseLayoutEngine {
                 let labelWidth = CGFloat(CTLineGetTypographicBounds(labelLine, &labelAscent, &labelDescent, &labelLeading))
                 let requestedHeight = EditorTheme.cgFloat(appearance.attributes[editorInlineLineHeightAttribute]) ?? 0
                 let extra = max(0, requestedHeight - labelAscent - max(labelDescent, 2)) / 2
+                let paddedWidth = labelWidth + appearance.padding.left + appearance.padding.right
                 let metrics = PreparedAtomMetrics(
-                    width: max(paint.font.lineHeight, labelWidth + appearance.padding.left + appearance.padding.right),
+                    width: nodeType == "mention" ? paddedWidth : max(paint.font.lineHeight, paddedWidth),
                     ascent: labelAscent + extra + appearance.padding.top,
                     descent: max(labelDescent, 2) + extra + appearance.padding.bottom
                 )
@@ -388,7 +389,7 @@ extension CoreTextProseLayoutEngine {
                 var boxValues = values
                 boxValues["backgroundColor"] = values["backgroundColor"] ?? "#007aff1f"
                 let box = EditorStyleBox(boxValues)
-                return PreparedAtomAppearance(styleBox: box, attributes: coreTextAttributes(styled), background: box.color("backgroundColor") ?? .clear, borderColor: nil, borderWidth: 0, radius: 0, padding: UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 6).adding(box.inset))
+                return PreparedAtomAppearance(styleBox: box, attributes: coreTextAttributes(styled), background: box.color("backgroundColor") ?? .clear, borderColor: nil, borderWidth: 0, radius: 0, padding: box.mentionInsets)
             }
             return PreparedAtomAppearance(
                 attributes: attributes,

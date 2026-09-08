@@ -6,6 +6,50 @@ function styles(theme: Parameters<typeof serializeEditorTheme>[0]) {
 }
 
 describe('EditorStyleSheet', () => {
+    it('normalizes mention padding with side and axis precedence', () => {
+        expect(
+            styles({
+                mention: [
+                    { padding: 8, paddingHorizontal: 6, paddingVertical: 4 },
+                    { paddingTop: 0, paddingRight: 2, paddingBottom: 3, paddingLeft: 1 },
+                ],
+            }).mention
+        ).toEqual({
+            paddingTop: 0,
+            paddingRight: 2,
+            paddingBottom: 3,
+            paddingLeft: 1,
+        });
+        expect(styles({ mention: { padding: 8, paddingHorizontal: 6 } }).mention).toEqual({
+            paddingTop: 8,
+            paddingRight: 6,
+            paddingBottom: 8,
+            paddingLeft: 6,
+        });
+        expect(styles({ mention: { paddingVertical: 0 } }).mention).toEqual({
+            paddingTop: 0,
+            paddingBottom: 0,
+        });
+    });
+
+    it('leaves omitted mention padding for native defaults', () => {
+        expect(styles({ mention: { color: 'red' } }).mention).toEqual({ color: '#ff0000ff' });
+    });
+
+    it.each([ -1, Infinity, -Infinity, NaN, true ])('rejects invalid mention padding %s', value => {
+        for (const key of [ 'padding',
+            'paddingHorizontal',
+            'paddingVertical',
+            'paddingTop',
+            'paddingRight',
+            'paddingBottom',
+            'paddingLeft' ]) {
+            expect(() => serializeEditorTheme({ mention: { [key]: value } } as never)).toThrow(
+                `mention.${key}: expected a ${value === -1 ? 'nonnegative' : 'finite'} number`
+            );
+        }
+    });
+
     it('resolves side and corner overrides after composing styles', () => {
         expect(
             styles({

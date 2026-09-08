@@ -4,6 +4,20 @@ import { validEditorMentionTheme } from '../NativeEditorBridge';
 
 describe('NativeEditorBridge v2', () => {
     describe('mention theme validation (render read path)', () => {
+        it('accepts raw and normalized mention node padding', () => {
+            expect(validEditorMentionTheme({
+                node: { padding: 8, paddingHorizontal: 4, paddingVertical: 2, paddingLeft: 0 },
+            })).toBe(true);
+            expect(validEditorMentionTheme({
+                node: { style: { paddingTop: 2, paddingRight: 4, paddingBottom: 2, paddingLeft: 0 } },
+            })).toBe(true);
+        });
+
+        it.each([ -1, Infinity, -Infinity, NaN, true ])('rejects invalid node padding %s', value => {
+            expect(validEditorMentionTheme({ node: { padding: value } })).toBe(false);
+            expect(validEditorMentionTheme({ node: { style: { paddingLeft: value } } })).toBe(false);
+        });
+
         it('accepts a surface-grouped theme with both node and option styling', () => {
             expect(
                 validEditorMentionTheme({

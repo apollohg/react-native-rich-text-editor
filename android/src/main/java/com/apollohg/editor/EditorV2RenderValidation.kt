@@ -141,6 +141,7 @@ private fun validMentionNodeStyle(value: Any?): Boolean {
             listOf("Top", "Right", "Bottom", "Left").map { "border${it}Color" }
     val nonnegative =
         listOf("Top", "Right", "Bottom", "Left").map { "border${it}Width" } +
+            listOf("Top", "Right", "Bottom", "Left").map { "padding$it" } +
             listOf("TopLeft", "TopRight", "BottomLeft", "BottomRight").map { "border${it}Radius" }
     val enums = mapOf(
         "fontWeight" to

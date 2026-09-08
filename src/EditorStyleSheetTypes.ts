@@ -113,7 +113,7 @@ export interface EditorHorizontalRuleStyle extends EditorBorderStyle, EditorMarg
     height?: number;
 }
 
-export interface EditorMentionStyle extends EditorInlineStyle, EditorBorderStyle {}
+export interface EditorMentionStyle extends EditorInlineStyle, EditorBorderStyle, EditorPaddingStyle {}
 
 export interface EditorStyleMap {
     content: EditorSurfaceStyle;

@@ -150,6 +150,8 @@ export const mentionTheme: EditorMentionTheme = {
     node: {
         color: PALETTE.spruceDeep,
         backgroundColor: PALETTE.spruceTint,
+        paddingVertical: 2,
+        paddingHorizontal: 4,
         fontWeight: '600',
         borderRadius: SPACE.xs,
     },

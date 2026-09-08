@@ -37,7 +37,7 @@ class EditorStyleSheetCoreAdmissionTest {
                     """t","text":"let x = 1;"}]},{"type":"paragrap""" +
                     """h","content":[{"type":"mention","attrs":{"id":"ad""" +
                     """a","label":"Ada","mentionTheme":{"node":{"style":{"color":"#12345""" +
-                    """6ff","borderLeftWidth":2,"fontWeight":"700"}}}}}]}]}"""
+                    """6ff","borderLeftWidth":2,"fontWeight":"700","paddingTop":0,"paddingRight":8,"paddingBottom":3,"paddingLeft":0}}}}}]}]}"""
             )
             assertNotNull(update)
             val blocks = JSONObject(requireNotNull(update)).getJSONArray("renderBlocks")
@@ -49,6 +49,12 @@ class EditorStyleSheetCoreAdmissionTest {
                     "mentionTheme"
                 ).getJSONObject("node").getJSONObject("style").getString("color")
             )
+            val style = mention.getJSONObject("mentionTheme").getJSONObject("node")
+                .getJSONObject("style")
+            assertEquals(0, style.getInt("paddingTop"))
+            assertEquals(8, style.getInt("paddingRight"))
+            assertEquals(3, style.getInt("paddingBottom"))
+            assertEquals(0, style.getInt("paddingLeft"))
         } finally {
             adapter.destroy()
         }

@@ -771,8 +771,8 @@ extension RenderBridgeTests {
             let data = try JSONSerialization.data(withJSONObject: object)
             return try XCTUnwrap(String(data: data, encoding: .utf8))
         }
-        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(try snapshot(style: ["fontSize": 20, "color": "#123456ff", "borderLeftWidth": 3, "borderTopRightRadius": 8])))
-        for style: Any in [[], ["unknown": 1], ["fontSize": -1], ["borderLeftWidth": true], ["color": "bad-color"], ["fontStyle": "oblique"]] {
+        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(try snapshot(style: ["fontSize": 20, "color": "#123456ff", "borderLeftWidth": 3, "borderTopRightRadius": 8, "paddingLeft": 0, "paddingTop": 8])))
+        for style: Any in [[], ["unknown": 1], ["fontSize": -1], ["borderLeftWidth": true], ["color": "bad-color"], ["fontStyle": "oblique"], ["paddingTop": -1], ["paddingRight": true]] {
             XCTAssertNil(EditorV2Adapter.parseAtomicRenderSnapshot(try snapshot(style: style)))
         }
     }
@@ -853,5 +853,98 @@ extension RenderBridgeTests {
         XCTAssertEqual(pixels[(13 * 100 + 13) * 4 + 1], 0)
         XCTAssertEqual(pixels[(30 * 100 + 30) * 4 + 1], 255)
         XCTAssertEqual(pixels[3], 0)
+    }
+}
+
+extension RenderBridgeTests {
+    func testMentionPaddingOverridesPreserveUnspecifiedDefaults() {
+        let partial = EditorMentionRenderedBox(box: EditorStyleBox([
+            "paddingLeft": 0, "paddingTop": 10, "borderRightWidth": 2
+        ]))
+        XCTAssertEqual(partial.padding, UIEdgeInsets(top: 10, left: 0, bottom: 4, right: 8))
+        let zero = EditorMentionRenderedBox(box: EditorStyleBox([
+            "paddingTop": 0, "paddingRight": 0, "paddingBottom": 0, "paddingLeft": 0
+        ]))
+        XCTAssertEqual(zero.padding, .zero)
+    }
+
+    func testZeroPaddingMentionKeepsOnlyItsLabelWidth() throws {
+        let theme = try XCTUnwrap(EditorTheme.from(json: ##"{"version":1,"styles":{"mention":{"paddingTop":0,"paddingRight":0,"paddingBottom":0,"paddingLeft":0,"backgroundColor":"#00000000"}}}"##))
+        let rendered = RenderBridge.renderElements(fromArray: [
+            ["type": "blockStart", "nodeType": "paragraph", "depth": 0],
+            ["type": "opaqueInlineAtom", "nodeType": "mention", "label": "@alice", "docPos": 1],
+            ["type": "textRun", "text": "!", "marks": []], ["type": "blockEnd"]
+        ], baseFont: baseFont, textColor: textColor, theme: theme)
+        let chip = try XCTUnwrap(rendered.attribute(editorMentionBoxAttribute, at: 0, effectiveRange: nil) as? EditorMentionRenderedBox)
+        XCTAssertEqual(chip.size.width, ceil(try XCTUnwrap(chip.label).size().width))
+        XCTAssertEqual(chip.size.height, ceil(try XCTUnwrap(chip.label).size().height))
+        XCTAssertEqual(rendered.string, "@alice!")
+    }
+}
+extension RenderBridgeTests {
+    func testMentionTextAlignsWithSurroundingTextRegardlessOfPadding() throws {
+        for (top, bottom, surrounded) in [(0, 0, false), (2, 2, false), (4, 4, false), (12, 2, false), (40, 0, false), (0, 40, false), (40, 0, true), (0, 40, true)] {
+            let theme = try XCTUnwrap(EditorTheme.from(json: """
+                {"version":1,"styles":{"text":{"fontSize":17,"lineHeight":26,"color":"#ff0000ff"},"mention":{"color":"#0000ffff","backgroundColor":"#00ff00ff","paddingTop":\(top),"paddingBottom":\(bottom),"paddingLeft":0,"paddingRight":0}}}
+                """))
+            var elements: [[String: Any]] = [
+                ["type": "blockStart", "nodeType": "paragraph", "depth": 0],
+                ["type": "textRun", "text": "alice ", "marks": []],
+                ["type": "opaqueInlineAtom", "nodeType": "mention", "label": "alice", "docPos": 7],
+                ["type": "textRun", "text": " alice", "marks": []],
+                ["type": "blockEnd"]
+            ]
+            if surrounded {
+                elements.insert(contentsOf: [
+                    ["type": "blockStart", "nodeType": "paragraph", "depth": 0],
+                    ["type": "textRun", "text": "before", "marks": []], ["type": "blockEnd"]
+                ], at: 0)
+                elements.append(contentsOf: [
+                    ["type": "blockStart", "nodeType": "paragraph", "depth": 0],
+                    ["type": "textRun", "text": "after", "marks": []], ["type": "blockEnd"]
+                ])
+            }
+            let rendered = RenderBridge.renderElements(fromArray: elements, baseFont: baseFont, textColor: textColor, theme: theme)
+            let storage = NSTextStorage(attributedString: rendered)
+            if surrounded {
+                storage.addAttribute(.foregroundColor, value: UIColor.black, range: NSRange(location: 0, length: 6))
+                storage.addAttribute(.foregroundColor, value: UIColor.black, range: NSRange(location: storage.length - 5, length: 5))
+            }
+            let manager = EditorLayoutManager()
+            let container = NSTextContainer(size: CGSize(width: 300, height: 240))
+            container.lineFragmentPadding = 0
+            manager.addTextContainer(container)
+            storage.addLayoutManager(manager)
+            manager.ensureLayout(for: container)
+            let context = try XCTUnwrap(CGContext(data: nil, width: 600, height: 480, bitsPerComponent: 8, bytesPerRow: 2400, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.translateBy(x: 0, y: 480)
+            context.scaleBy(x: 2, y: -2)
+            UIGraphicsPushContext(context)
+            manager.drawGlyphs(forGlyphRange: manager.glyphRange(for: container), at: CGPoint(x: 0, y: 20))
+            UIGraphicsPopContext()
+            let pixels = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+            var redRows = Set<Int>()
+            var blueRows = Set<Int>()
+            var greenRows = Set<Int>()
+            for y in 0..<480 {
+                for x in 0..<600 {
+                    let offset = y * 2400 + x * 4
+                    if pixels[offset] > 128 && pixels[offset + 2] < 32 { redRows.insert(y) }
+                    if pixels[offset + 1] > 128 && pixels[offset] < 32 && pixels[offset + 2] < 32 { greenRows.insert(y) }
+                    if pixels[offset + 2] > 128 && pixels[offset] < 32 { blueRows.insert(y) }
+                }
+            }
+            let lineGlyph = manager.glyphIndexForCharacter(at: surrounded ? 7 : 0)
+            let line = manager.lineFragmentUsedRect(forGlyphAt: lineGlyph, effectiveRange: nil)
+            if surrounded {
+                let nextGlyph = manager.glyphIndexForCharacter(at: storage.length - 1)
+                let nextLine = manager.lineFragmentUsedRect(forGlyphAt: nextGlyph, effectiveRange: nil)
+                XCTAssertGreaterThanOrEqual(nextLine.minY, line.maxY)
+            }
+            XCTAssertGreaterThanOrEqual(Double(try XCTUnwrap(greenRows.min())), floor((20 + line.minY) * 2) - 1, "top=\(top), bottom=\(bottom)")
+            XCTAssertLessThanOrEqual(Double(try XCTUnwrap(greenRows.max())), ceil((20 + line.maxY) * 2) + 1, "top=\(top), bottom=\(bottom)")
+            XCTAssertEqual(Double(try XCTUnwrap(redRows.min())), Double(try XCTUnwrap(blueRows.min())), accuracy: 1, "top=\(top), bottom=\(bottom)")
+            XCTAssertEqual(Double(try XCTUnwrap(redRows.max())), Double(try XCTUnwrap(blueRows.max())), accuracy: 1, "top=\(top), bottom=\(bottom)")
+        }
     }
 }

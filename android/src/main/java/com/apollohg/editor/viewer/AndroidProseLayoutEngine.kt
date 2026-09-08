@@ -1182,7 +1182,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                 )
                         val width =
                             max(
-                                base.sizePx.toInt(),
+                                if (inline.nodeType == "mention") 0 else base.sizePx.toInt(),
                                 ceil(
                                     labelPaint.measureText(label) + atomInset.left + atomInset.right
                                 ).toInt()
