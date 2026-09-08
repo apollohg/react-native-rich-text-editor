@@ -76,6 +76,31 @@ internal fun EditorEditText.selectedImageGeometryImpl(): SelectedImageGeometry? 
     )
 }
 
+internal fun EditorEditText.selectedImageSpanForResize(): BlockImageSpan? {
+    val spannable = text as? Spanned ?: return null
+    val selection = resolvedSelectedImageRange(spannable) ?: return null
+    return spannable.getSpans(
+        selection.start,
+        selection.end,
+        BlockImageSpan::class.java
+    ).firstOrNull { span ->
+        spannable.getSpanStart(span) == selection.start &&
+            spannable.getSpanEnd(span) == selection.end
+    }
+}
+
+internal fun EditorEditText.relayoutImageResizePreview(span: BlockImageSpan) {
+    val content = text ?: return
+    val start = content.getSpanStart(span)
+    val end = content.getSpanEnd(span)
+    if (start < 0 || end <= start) return
+    val flags = content.getSpanFlags(span)
+    content.setSpan(span, start, end, flags)
+    requestLayout()
+    invalidate()
+    onContentSizeMayChange?.invoke()
+}
+
 internal fun EditorEditText.resizeImageAtDocPosImpl(docPos: Int, widthPx: Float, heightPx: Float) {
     if (!hasLiveEditor()) return
     val density = resources.displayMetrics.density

@@ -684,10 +684,6 @@ final class RichTextEditorView: UIView {
         imageTapOverlayView.handleTapForTesting(convert(point, to: imageTapOverlayView))
     }
 
-    func imageResizePreviewHasImageForTesting() -> Bool {
-        imageResizeOverlayView.previewHasImageForTesting
-    }
-
     func refreshSelectionVisualStateForTesting() {
         textView.refreshSelectionVisualState()
     }
@@ -706,6 +702,10 @@ final class RichTextEditorView: UIView {
 
     func previewResizeSelectedImageForTesting(width: CGFloat, height: CGFloat) {
         imageResizeOverlayView.simulatePreviewResizeForTesting(width: width, height: height)
+    }
+
+    func previewImageResizeDragForTesting(corner: ImageResizeOverlayView.Corner, translation: CGPoint) {
+        imageResizeOverlayView.simulatePreviewDragForTesting(corner: corner, translation: translation)
     }
 
     func commitPreviewResizeForTesting() {
@@ -801,14 +801,6 @@ final class RichTextEditorView: UIView {
 
     func setImageResizePreviewActive(_ active: Bool) {
         textView.setImageResizePreviewActive(active)
-    }
-
-    func imagePreviewForResize(docPos: UInt32) -> UIImage? {
-        textView.imagePreviewForDocPos(docPos)
-    }
-
-    func imageResizePreviewBackgroundColor() -> UIColor {
-        textView.backgroundColor ?? .systemBackground
     }
 
     func maximumImageWidthForResizeGesture() -> CGFloat {

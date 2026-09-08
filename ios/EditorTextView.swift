@@ -415,7 +415,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
                 height: min(maxPlaceholderHeight, ceil(fittedHeight))
             )
         }
-        if heightBehavior == .autoGrow, !isPreviewingImageResize {
+        if heightBehavior == .autoGrow {
             let currentWidth = ceil(bounds.width)
             if abs(currentWidth - lastAutoGrowMeasuredWidth) > 0.5 {
                 autoGrowHeightCheckIsDirty = true

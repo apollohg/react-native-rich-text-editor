@@ -74,6 +74,7 @@ internal class BlockImageSpan(
 
     @Volatile
     private var lastDrawRect: RectF? = null
+    private var temporarySizePx: Pair<Int, Int>? = null
 
     init {
         if (preparedSource != null) {
@@ -244,6 +245,7 @@ internal class BlockImageSpan(
     }
 
     internal fun currentSizePx(): Pair<Int, Int> {
+        temporarySizePx?.let { return it }
         val maxWidth = resolvedMaxWidth()
         val loadedBitmap = bitmapLease.get()?.bitmap
         val fallbackAspectRatio = if (loadedBitmap != null && loadedBitmap.width > 0 &&
@@ -295,6 +297,19 @@ internal class BlockImageSpan(
     }
 
     internal fun currentDrawRect(): RectF? = lastDrawRect?.let(::RectF)
+
+    internal fun setTemporarySizePx(widthPx: Float, heightPx: Float): Boolean {
+        val next = checkedPositiveInt(widthPx) to checkedPositiveInt(heightPx)
+        if (temporarySizePx == next) return false
+        temporarySizePx = next
+        return true
+    }
+
+    internal fun clearTemporarySize(): Boolean {
+        if (temporarySizePx == null) return false
+        temporarySizePx = null
+        return true
+    }
 
     private fun resolvedMaxWidth(): Float {
         val host = hostRef.get()

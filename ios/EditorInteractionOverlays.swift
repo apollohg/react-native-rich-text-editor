@@ -408,37 +408,28 @@ final class ImageResizeOverlayView: UIView {
 
     private struct DragState {
         let corner: Corner
-        let originalRect: CGRect
+        let originalSize: CGSize
         let docPos: UInt32
         let maximumWidth: CGFloat
+        let editorId: UInt64
+        let attachment: BlockImageAttachment
+        let originalWidth: CGFloat?
+        let originalHeight: CGFloat?
+        var previewSize: CGSize
     }
 
     private weak var editorView: RichTextEditorView?
     private let selectionLayer = CAShapeLayer()
-    private let previewBackdropView = UIView()
-    private let previewImageView = UIImageView()
     private var handleViews: [Corner: ImageResizeHandleView] = [:]
     private var currentRect: CGRect?
     private var currentDocPos: UInt32?
     private var dragState: DragState?
     private let handleSize: CGFloat = 20
-    private let minimumImageSize: CGFloat = 48
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
         clipsToBounds = true
-
-        previewBackdropView.isUserInteractionEnabled = false
-        previewBackdropView.isHidden = true
-        previewBackdropView.layer.zPosition = 1
-        addSubview(previewBackdropView)
-
-        previewImageView.isUserInteractionEnabled = false
-        previewImageView.isHidden = true
-        previewImageView.contentMode = .scaleToFill
-        previewImageView.layer.zPosition = 2
-        addSubview(previewImageView)
 
         selectionLayer.strokeColor = UIColor.systemBlue.cgColor
         selectionLayer.fillColor = UIColor.clear.cgColor
@@ -467,8 +458,8 @@ final class ImageResizeOverlayView: UIView {
     }
 
     func refresh() {
-        if dragState != nil {
-            return
+        if let dragState, !isCurrentDrag(dragState) {
+            finishPreviewResize(commit: false)
         }
 
         guard let editorView,
@@ -478,7 +469,6 @@ final class ImageResizeOverlayView: UIView {
             return
         }
 
-        hidePreviewLayers()
         applyGeometry(rect: geometry.rect, docPos: geometry.docPos)
     }
 
@@ -488,15 +478,16 @@ final class ImageResizeOverlayView: UIView {
     }
 
     func simulatePreviewResizeForTesting(width: CGFloat, height: CGFloat) {
-        guard beginPreviewResize(from: .bottomRight) else { return }
-        let nextRect = CGRect(
-            origin: dragState?.originalRect.origin ?? .zero,
-            size: editorView?.clampedImageSize(
-                CGSize(width: width, height: height),
-                maximumWidth: dragState?.maximumWidth
-            ) ?? CGSize(width: width, height: height)
-        )
-        updatePreviewRect(nextRect)
+        if dragState == nil, !beginPreviewResize(from: .bottomRight) { return }
+        let size = editorView?.clampedImageSize(
+            CGSize(width: width, height: height), maximumWidth: dragState?.maximumWidth
+        ) ?? CGSize(width: width, height: height)
+        updatePreviewSize(size)
+    }
+
+    func simulatePreviewDragForTesting(corner: Corner, translation: CGPoint) {
+        if dragState == nil, !beginPreviewResize(from: corner) { return }
+        updatePreview(translation: translation)
     }
 
     func commitPreviewResizeForTesting() {
@@ -509,10 +500,6 @@ final class ImageResizeOverlayView: UIView {
 
     var isOverlayVisible: Bool {
         !isHidden
-    }
-
-    var previewHasImageForTesting: Bool {
-        !previewImageView.isHidden && previewImageView.image != nil
     }
 
     func interceptsPointForTesting(_ location: CGPoint) -> Bool {
@@ -530,8 +517,7 @@ final class ImageResizeOverlayView: UIView {
     }
 
     private func hideOverlay() {
-        hidePreviewLayers()
-        dragState = nil
+        if dragState != nil { finishPreviewResize(commit: false) }
         currentRect = nil
         currentDocPos = nil
         selectionLayer.path = nil
@@ -539,64 +525,94 @@ final class ImageResizeOverlayView: UIView {
     }
 
     private func applyGeometry(rect: CGRect, docPos: UInt32) {
-        let integralRect = rect.integral
-        currentRect = integralRect
+        guard currentRect != rect || currentDocPos != docPos || isHidden else { return }
+        currentRect = rect
         currentDocPos = docPos
-        selectionLayer.path = UIBezierPath(roundedRect: integralRect, cornerRadius: 8).cgPath
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        selectionLayer.path = UIBezierPath(roundedRect: rect, cornerRadius: 8).cgPath
         isHidden = false
-        layoutHandleViews(for: integralRect)
+        layoutHandleViews(for: rect)
+        CATransaction.commit()
     }
 
-    private func hidePreviewLayers() {
-        previewBackdropView.isHidden = true
-        previewImageView.isHidden = true
-        previewImageView.image = nil
-    }
-
-    private func showPreview(docPos: UInt32, originalRect: CGRect) {
-        previewBackdropView.backgroundColor = editorView?.imageResizePreviewBackgroundColor() ?? .systemBackground
-        previewBackdropView.frame = originalRect
-        previewBackdropView.isHidden = false
-
-        previewImageView.image = editorView?.imagePreviewForResize(docPos: docPos)
-        previewImageView.frame = originalRect
-        previewImageView.isHidden = previewImageView.image == nil
+    private func isCurrentDrag(_ state: DragState) -> Bool {
+        guard let editorView, editorView.editorId == state.editorId,
+              editorView.textView.selectedImageSelectionState()?.docPos == state.docPos,
+              editorView.textView.blockImageAttachment(docPos: state.docPos)?.attachment === state.attachment
+        else { return false }
+        return true
     }
 
     @discardableResult
     private func beginPreviewResize(from corner: Corner) -> Bool {
-        guard let currentRect, let currentDocPos else { return false }
-        editorView?.setImageResizePreviewActive(true)
-        let maximumWidth = editorView?.maximumImageWidthForResizeGesture() ?? currentRect.width
+        guard let editorView, let currentRect, let currentDocPos,
+              let image = editorView.textView.blockImageAttachment(docPos: currentDocPos)
+        else { return false }
+        editorView.setImageResizePreviewActive(true)
+        let inset = image.attachment.styleBox?.inset ?? .zero
+        let contentSize = CGSize(
+            width: max(1, currentRect.width - inset.left - inset.right),
+            height: max(1, currentRect.height - inset.top - inset.bottom)
+        )
         dragState = DragState(
             corner: corner,
-            originalRect: currentRect,
+            originalSize: contentSize,
             docPos: currentDocPos,
-            maximumWidth: maximumWidth
+            maximumWidth: max(48, editorView.maximumImageWidthForResizeGesture() - inset.left - inset.right),
+            editorId: editorView.editorId,
+            attachment: image.attachment,
+            originalWidth: image.attachment.preferredWidth,
+            originalHeight: image.attachment.preferredHeight,
+            previewSize: contentSize
         )
-        showPreview(docPos: currentDocPos, originalRect: currentRect)
         return true
     }
 
-    private func updatePreviewRect(_ rect: CGRect) {
-        guard let currentDocPos else { return }
-        applyGeometry(rect: rect, docPos: currentDocPos)
-        previewImageView.frame = currentRect ?? rect.integral
+    private func updatePreviewSize(_ proposedSize: CGSize) {
+        guard var state = dragState, let editorView else { return }
+        guard isCurrentDrag(state) else {
+            finishPreviewResize(commit: false)
+            return
+        }
+        let scale = window?.screen.scale ?? 1
+        let size = proposedSize == state.originalSize ? proposedSize : CGSize(
+            width: (proposedSize.width * scale).rounded() / scale,
+            height: (proposedSize.height * scale).rounded() / scale
+        )
+        guard size != state.previewSize else { return }
+        state.previewSize = size
+        dragState = state
+        UIView.performWithoutAnimation {
+            editorView.textView.previewResizeImageAtDocPos(
+                state.docPos,
+                width: size.width,
+                height: size.height
+            )
+            if let geometry = editorView.selectedImageGeometry() {
+                applyGeometry(rect: geometry.rect, docPos: geometry.docPos)
+            }
+        }
     }
 
     private func finishPreviewResize(commit: Bool) {
-        guard let dragState else { return }
-        let finalSize = currentRect?.size ?? dragState.originalRect.size
-        self.dragState = nil
-        editorView?.setImageResizePreviewActive(false)
-        if commit {
-            editorView?.resizeImage(docPos: dragState.docPos, size: finalSize)
+        guard let state = dragState, let editorView else { return }
+        let shouldCommit = commit && isCurrentDrag(state)
+        dragState = nil
+        if shouldCommit, state.previewSize != state.originalSize {
+            editorView.resizeImage(docPos: state.docPos, size: state.previewSize)
         } else {
-            hidePreviewLayers()
+            editorView.textView.restoreImageResizePreview(
+                state.attachment, width: state.originalWidth, height: state.originalHeight
+            )
         }
-        DispatchQueue.main.async { [weak self] in
-            self?.refresh()
-        }
+        editorView.setImageResizePreviewActive(false)
+        refresh()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil { finishPreviewResize(commit: false) }
     }
 
     private func layoutHandleViews(for rect: CGRect) {
@@ -624,50 +640,30 @@ final class ImageResizeOverlayView: UIView {
         }
     }
 
-    private func anchorPoint(for corner: Corner, in rect: CGRect) -> CGPoint {
-        switch corner {
-        case .topLeft:
-            return CGPoint(x: rect.maxX, y: rect.maxY)
-        case .topRight:
-            return CGPoint(x: rect.minX, y: rect.maxY)
-        case .bottomLeft:
-            return CGPoint(x: rect.maxX, y: rect.minY)
-        case .bottomRight:
-            return CGPoint(x: rect.minX, y: rect.minY)
-        }
+    static func resizedSize(from size: CGSize, corner: Corner, translation: CGPoint) -> CGSize {
+        let dx = (corner == .topRight || corner == .bottomRight) ? translation.x : -translation.x
+        let dy = (corner == .bottomLeft || corner == .bottomRight) ? translation.y : -translation.y
+        let lengthSquared = max(1, size.width * size.width + size.height * size.height)
+        let minimumScale = 48 / max(1, min(size.width, size.height))
+        let scale = max(minimumScale, 1 + (dx * size.width + dy * size.height) / lengthSquared)
+        return CGSize(width: size.width * scale, height: size.height * scale)
     }
 
-    private func resizedRect(
-        from originalRect: CGRect,
-        corner: Corner,
-        translation: CGPoint,
-        maximumWidth: CGFloat?
-    ) -> CGRect {
-        let aspectRatio = max(originalRect.width / max(originalRect.height, 1), 0.1)
-        let signedDx = (corner == .topRight || corner == .bottomRight) ? translation.x : -translation.x
-        let signedDy = (corner == .bottomLeft || corner == .bottomRight) ? translation.y : -translation.y
-        let widthScale = (originalRect.width + signedDx) / max(originalRect.width, 1)
-        let heightScale = (originalRect.height + signedDy) / max(originalRect.height, 1)
-        let scale = max(minimumImageSize / max(originalRect.width, 1), widthScale, heightScale)
-        let unclampedSize = CGSize(
-            width: max(minimumImageSize, originalRect.width * scale),
-            height: max(minimumImageSize / aspectRatio, (max(minimumImageSize, originalRect.width * scale) / aspectRatio))
-        )
-        let clampedSize = editorView?.clampedImageSize(unclampedSize, maximumWidth: maximumWidth) ?? unclampedSize
-        let width = clampedSize.width
-        let height = clampedSize.height
-        let anchor = anchorPoint(for: corner, in: originalRect)
-
-        switch corner {
-        case .topLeft:
-            return CGRect(x: anchor.x - width, y: anchor.y - height, width: width, height: height)
-        case .topRight:
-            return CGRect(x: anchor.x, y: anchor.y - height, width: width, height: height)
-        case .bottomLeft:
-            return CGRect(x: anchor.x - width, y: anchor.y, width: width, height: height)
-        case .bottomRight:
-            return CGRect(x: anchor.x, y: anchor.y, width: width, height: height)
+    private func updatePreview(translation: CGPoint) {
+        guard let dragState else { return }
+        if translation == .zero {
+            updatePreviewSize(dragState.originalSize)
+            return
         }
+        let size = Self.resizedSize(
+            from: dragState.originalSize,
+            corner: dragState.corner,
+            translation: translation
+        )
+        let clampedSize = editorView?.clampedImageSize(
+            size, maximumWidth: dragState.maximumWidth
+        ) ?? size
+        updatePreviewSize(clampedSize)
     }
 
     @objc
@@ -676,22 +672,18 @@ final class ImageResizeOverlayView: UIView {
 
         switch gesture.state {
         case .began:
-            _ = beginPreviewResize(from: handleView.corner)
+            if beginPreviewResize(from: handleView.corner) {
+                updatePreview(translation: gesture.translation(in: window))
+            }
         case .changed:
-            guard let dragState else { return }
-            let nextRect = resizedRect(
-                from: dragState.originalRect,
-                corner: dragState.corner,
-                translation: gesture.translation(in: self),
-                maximumWidth: dragState.maximumWidth
-            )
-            updatePreviewRect(nextRect)
+            updatePreview(translation: gesture.translation(in: window))
         case .ended:
+            updatePreview(translation: gesture.translation(in: window))
             finishPreviewResize(commit: true)
         case .cancelled, .failed:
             finishPreviewResize(commit: false)
         default:
-            finishPreviewResize(commit: false)
+            break
         }
     }
 }

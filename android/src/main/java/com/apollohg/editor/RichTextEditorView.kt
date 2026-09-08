@@ -943,6 +943,20 @@ class RichTextEditorView @JvmOverloads constructor(
         editorEditText.resizeImageAtDocPos(docPos, clampedWidth, clampedHeight)
     }
 
+    internal fun selectedImageSpanForResize(): BlockImageSpan? =
+        editorEditText.selectedImageSpanForResize()
+
+    internal fun previewImageResize(span: BlockImageSpan, widthPx: Float, heightPx: Float): Boolean {
+        if (!span.setTemporarySizePx(widthPx, heightPx)) return false
+        editorEditText.relayoutImageResizePreview(span)
+        return true
+    }
+
+    internal fun restoreImageResizePreview(span: BlockImageSpan) {
+        if (!span.clearTemporarySize()) return
+        editorEditText.relayoutImageResizePreview(span)
+    }
+
     private fun refreshOverlays() {
         layoutAtomHostViews()
         remoteSelectionOverlayView.refreshGeometry()

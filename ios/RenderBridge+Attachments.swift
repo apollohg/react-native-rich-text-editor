@@ -128,15 +128,6 @@ final class BlockImageAttachment: NSTextAttachment {
         loadReceipt?.cancel()
     }
 
-    func setPreferredSize(width: CGFloat, height: CGFloat) {
-        preferredWidth = width
-        preferredHeight = height
-    }
-
-    func previewImage() -> UIImage? {
-        loadedImage ?? image
-    }
-
     override func attachmentBounds(
         for textContainer: NSTextContainer?,
         proposedLineFragment lineFrag: CGRect,

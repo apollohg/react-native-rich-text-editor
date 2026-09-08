@@ -289,7 +289,7 @@ extension EditorTextView {
         return (selectionState.docPos, rect)
     }
 
-    private func blockImageAttachment(docPos: UInt32) -> (range: NSRange, attachment: BlockImageAttachment)? {
+    func blockImageAttachment(docPos: UInt32) -> (range: NSRange, attachment: BlockImageAttachment)? {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         var resolved: (range: NSRange, attachment: BlockImageAttachment)?
         textStorage.enumerateAttribute(
@@ -307,10 +307,6 @@ extension EditorTextView {
             stop.pointee = true
         }
         return resolved
-    }
-
-    func imagePreviewForDocPos(_ docPos: UInt32) -> UIImage? {
-        blockImageAttachment(docPos: docPos)?.attachment.previewImage()
     }
 
     func maximumRenderableImageWidth() -> CGFloat {
@@ -337,14 +333,40 @@ extension EditorTextView {
         }
     }
 
-    func previewResizeImageAtDocPos(_ docPos: UInt32, width: CGFloat, height: CGFloat) {
+    func previewResizeImageAtDocPos(_ docPos: UInt32, width: CGFloat?, height: CGFloat?) {
         guard let attachmentState = blockImageAttachment(docPos: docPos) else { return }
-        attachmentState.attachment.setPreferredSize(width: width, height: height)
-        layoutManager.invalidateLayout(forCharacterRange: attachmentState.range, actualCharacterRange: nil)
-        layoutManager.invalidateDisplay(forCharacterRange: attachmentState.range)
+        updateImageResizePreview(attachmentState.attachment, range: attachmentState.range, width: width, height: height)
+    }
+
+    func restoreImageResizePreview(_ attachment: BlockImageAttachment, width: CGFloat?, height: CGFloat?) {
+        var attachmentRange: NSRange?
+        textStorage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: textStorage.length)) { value, range, stop in
+            if value as? BlockImageAttachment === attachment {
+                attachmentRange = range
+                stop.pointee = true
+            }
+        }
+        guard let attachmentRange else { return }
+        updateImageResizePreview(attachment, range: attachmentRange, width: width, height: height)
+    }
+
+    private func updateImageResizePreview(_ attachment: BlockImageAttachment, range: NSRange, width: CGFloat?, height: CGFloat?) {
+        guard attachment.preferredWidth != width || attachment.preferredHeight != height else { return }
+        let previousOffset = contentOffset
+        attachment.preferredWidth = width
+        attachment.preferredHeight = height
+        layoutManager.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+        layoutManager.invalidateDisplay(forCharacterRange: range)
         textStorage.beginEditing()
-        textStorage.edited(.editedAttributes, range: attachmentState.range, changeInLength: 0)
+        textStorage.edited(.editedAttributes, range: range, changeInLength: 0)
         textStorage.endEditing()
+        invalidateAutoGrowHeightMeasurement()
+        layoutManager.ensureLayout(forCharacterRange: range)
+        setNeedsLayout()
+        layoutIfNeeded()
+        setContentOffset(previousOffset, animated: false)
+        notifyHeightChangeIfNeeded()
+        onViewportMayChange?()
     }
 
     func setImageResizePreviewActive(_ active: Bool) {

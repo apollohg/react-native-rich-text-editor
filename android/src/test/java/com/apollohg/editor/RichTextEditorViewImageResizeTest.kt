@@ -33,6 +33,118 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture() {
     @Test
+    fun `image resize previews span size before committing on release`() {
+        val fixture = imageResizeGestureFixture(imageRenderJson())
+        val text = fixture.view.editorEditText.text as Spanned
+        val span = text.getSpans(0, text.length, BlockImageSpan::class.java).single()
+        val originalSize = span.currentSizePx()
+        val rect = requireNotNull(fixture.view.imageResizeOverlayRectForTesting())
+
+        dispatchResizeGestureEvent(fixture, MotionEvent.ACTION_DOWN, rect.right, rect.bottom)
+        dispatchResizeGestureEvent(
+            fixture,
+            MotionEvent.ACTION_MOVE,
+            rect.right + 28f,
+            rect.bottom + 16f
+        )
+
+        assertTrue(span.currentSizePx().first > originalSize.first)
+        assertTrue(span.currentSizePx().second > originalSize.second)
+        assertTrue(fixture.resizeCommands.isEmpty())
+
+        dispatchResizeGestureEvent(
+            fixture,
+            MotionEvent.ACTION_UP,
+            rect.right + 28f,
+            rect.bottom + 16f
+        )
+        assertEquals(1, fixture.resizeCommands.size)
+    }
+
+    @Test
+    fun `cancelled image resize restores exact original span size`() {
+        val fixture = imageResizeGestureFixture(imageRenderJson())
+        val text = fixture.view.editorEditText.text as Spanned
+        val span = text.getSpans(0, text.length, BlockImageSpan::class.java).single()
+        val originalSize = span.currentSizePx()
+        val rect = requireNotNull(fixture.view.imageResizeOverlayRectForTesting())
+
+        dispatchResizeGestureEvent(fixture, MotionEvent.ACTION_DOWN, rect.right, rect.bottom)
+        dispatchResizeGestureEvent(
+            fixture,
+            MotionEvent.ACTION_MOVE,
+            rect.right + 32f,
+            rect.bottom + 20f
+        )
+        assertTrue(span.currentSizePx().first > originalSize.first)
+
+        dispatchResizeGestureEvent(fixture, MotionEvent.ACTION_CANCEL, rect.right, rect.bottom)
+
+        assertEquals(originalSize, span.currentSizePx())
+        assertTrue(fixture.resizeCommands.isEmpty())
+    }
+
+    @Test
+    fun `resize starts from touch down position and uses signed vector projection`() {
+        val fixture = imageResizeGestureFixture(imageRenderJson())
+        val text = fixture.view.editorEditText.text as Spanned
+        val span = text.getSpans(0, text.length, BlockImageSpan::class.java).single()
+        val originalSize = span.currentSizePx()
+        val rect = requireNotNull(fixture.view.imageResizeOverlayRectForTesting())
+        val downX = rect.right - 12f
+        val downY = rect.bottom - 8f
+
+        dispatchResizeGestureEvent(fixture, MotionEvent.ACTION_DOWN, downX, downY)
+        dispatchResizeGestureEvent(fixture, MotionEvent.ACTION_MOVE, downX, downY)
+        assertEquals(originalSize, span.currentSizePx())
+
+        dispatchResizeGestureEvent(fixture, MotionEvent.ACTION_MOVE, downX + 20f, downY - 20f)
+
+        val expectedScale = 1f + ((20f * originalSize.first) -
+            (20f * originalSize.second)) /
+            ((originalSize.first * originalSize.first) +
+                (originalSize.second * originalSize.second)).toFloat()
+        assertTrue(
+            kotlin.math.abs(
+                (originalSize.first * expectedScale).toInt() - span.currentSizePx().first
+            ) <= 1
+        )
+    }
+
+    @Test
+    fun `resize release without movement does not commit`() {
+        val fixture = imageResizeGestureFixture(imageRenderJson())
+        val rect = requireNotNull(fixture.view.imageResizeOverlayRectForTesting())
+
+        dispatchResizeGestureEvent(fixture, MotionEvent.ACTION_DOWN, rect.right, rect.bottom)
+        dispatchResizeGestureEvent(fixture, MotionEvent.ACTION_UP, rect.right, rect.bottom)
+
+        assertTrue(fixture.resizeCommands.isEmpty())
+    }
+
+    @Test
+    fun `resize release without movement preserves image below resize minimum`() {
+        val fixture = imageResizeGestureFixture(
+            """
+            [
+              {"type":"voidBlock","nodeType":"image","docPos":1,"attrs":{"src":"https://example.com/small.png","width":30,"height":20}}
+            ]
+            """.trimIndent()
+        )
+        val text = fixture.view.editorEditText.text as Spanned
+        val span = text.getSpans(0, text.length, BlockImageSpan::class.java).single()
+        val originalSize = span.currentSizePx()
+        val rect = requireNotNull(fixture.view.imageResizeOverlayRectForTesting())
+
+        dispatchResizeGestureEvent(fixture, MotionEvent.ACTION_DOWN, rect.right, rect.bottom)
+        dispatchResizeGestureEvent(fixture, MotionEvent.ACTION_MOVE, rect.right, rect.bottom)
+        dispatchResizeGestureEvent(fixture, MotionEvent.ACTION_UP, rect.right, rect.bottom)
+
+        assertEquals(originalSize, span.currentSizePx())
+        assertTrue(fixture.resizeCommands.isEmpty())
+    }
+
+    @Test
     fun `selected image shows resize overlay at rendered image bounds`() {
         val context = RuntimeEnvironment.getApplication()
         val view = RichTextEditorView(context)
@@ -264,9 +376,22 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
             down.recycle()
             assertTrue(name, fixture.parent.disallowInterceptRequested)
 
+            val originalSpan = (fixture.view.editorEditText.text as Spanned)
+                .getSpans(0, fixture.view.editorEditText.length(), BlockImageSpan::class.java)
+                .first()
+            val originalSize = originalSpan.currentSizePx()
+            dispatchResizeGestureEvent(
+                fixture,
+                MotionEvent.ACTION_MOVE,
+                rect.right + 24f,
+                rect.bottom + 16f
+            )
+            assertTrue(name, originalSpan.currentSizePx().first > originalSize.first)
+
             transition(fixture)
 
             assertFalse(name, fixture.parent.disallowInterceptRequested)
+            assertEquals(name, originalSize, originalSpan.currentSizePx())
             val up = MotionEvent.obtain(
                 0,
                 16,
@@ -279,6 +404,17 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
             up.recycle()
             assertTrue(name, fixture.resizeCommands.isEmpty())
         }
+    }
+
+    private fun dispatchResizeGestureEvent(
+        fixture: ImageResizeGestureFixture,
+        action: Int,
+        x: Float,
+        y: Float
+    ) {
+        val event = MotionEvent.obtain(0, 16, action, x, y, 0)
+        assertTrue(fixture.view.dispatchImageResizeTouchForTesting(event))
+        event.recycle()
     }
 
     @Test
