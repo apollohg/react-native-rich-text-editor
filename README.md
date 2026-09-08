@@ -16,8 +16,6 @@ See the [documentation](https://github.com/apollohg/react-native-rich-text-edito
 - `RichTextViewer`, an exact-size Fabric renderer for read-only content
 - Shared document handles for local editing and Yjs collaboration
 
-`NativeRichTextEditor` and `NativeProseViewer`, along with their associated types, remain available as deprecated aliases of `RichTextEditor` and `RichTextViewer`.
-
 ## Requirements
 
 The package uses custom native code and Expo Modules. Use a development build or a bare React Native app with Expo Modules configured; it does not run in Expo Go.
@@ -50,7 +48,7 @@ npx expo prebuild
 npx expo run:ios       # or: npx expo run:android
 ```
 
-See the [Installation Guide](https://github.com/apollohg/react-native-rich-text-editor/wiki/Installation) for bare React Native setup and migration from `@apollohg/react-native-prose-editor`.
+See the [Installation Guide](https://github.com/apollohg/react-native-rich-text-editor/wiki/Installation) for bare React Native setup.
 
 ## Editor usage
 
@@ -91,7 +89,7 @@ See [Getting Started](https://github.com/apollohg/react-native-rich-text-editor/
 
 ## Custom atom nodes
 
-Render interactive cards, embeds, and other custom blocks with your own React components. Define an atom with `defineAtomNode`, add it to your document schema, and pass it through the editor or viewer's `atoms` prop.
+Render interactive cards, embeds, and other custom blocks with your own React components.
 
 See [Custom Atom Nodes](https://github.com/apollohg/react-native-rich-text-editor/wiki/Custom-Atom-Nodes) for a complete example and API details.
 
@@ -107,108 +105,13 @@ import { RichTextViewer } from '@apollohg/react-native-rich-text-editor';
 
 See the [Viewer Guide](https://github.com/apollohg/react-native-rich-text-editor/wiki/Viewer) for styling, images, interactions, and custom atoms.
 
-## Element styling and addons
+## Styling and addons
 
-Version 2 uses a flat, typed stylesheet for both the editor and viewer:
-
-```tsx
-import { EditorStyleSheet, RichTextEditor } from '@apollohg/react-native-rich-text-editor';
-
-const theme = EditorStyleSheet.create({
-    content: { padding: 16, backgroundColor: '#ffffff' },
-    text: { fontSize: 16, color: '#202124' },
-    paragraph: { marginBottom: 12 },
-    link: { color: '#285dcc', textDecorationLine: 'underline' },
-    blockquote: {
-        backgroundColor: '#f3f5f8',
-        padding: 12,
-        borderWidth: 1,
-        borderColor: '#dce1e8',
-        borderLeftWidth: 4,
-        borderLeftColor: '#285dcc',
-        borderTopRightRadius: 8,
-    },
-    codeBlock: { backgroundColor: '#eff1f5', padding: 12, borderRadius: 8 },
-    image: { backgroundColor: '#eff1f5', borderRadius: 12, resizeMode: 'cover' },
-});
-
-<RichTextEditor documentHandle={documentHandle} theme={theme} />;
-```
-
-Each entry accepts a style object or nested, conditional style arrays. Later entries override earlier properties; explicit `undefined` removes an earlier property. Side and corner properties override shorthands. Supported fields are checked by TypeScript and validated before native updates. These are editor styles: layout fields such as `flex`, transforms, and positioning are not accepted.
-
-Text styling inherits from `text` and enclosing blocks. Backgrounds, spacing, borders, and corner radii belong to each element. Inline entries support typography and backgrounds; mentions also support borders. List containers, items, markers, and checkboxes have separate entries. `toolbar` retains its existing configuration.
-
-Android editing uses per-block text layout for physical margins, borders, and padding, including RTL content. Per-block justification is supported on Android API 26+; API 24/25 use normal alignment.
-
-Custom atom components mount inside Android's native scrolling content. Their measured height participates in document layout, and their controls receive normal React Native touch events.
-
-Addons are a readonly array. Conditional `false`, `null`, and `undefined` entries are allowed; duplicate capabilities are rejected:
-
-```tsx
-import { createMentionsAddon } from '@apollohg/react-native-rich-text-editor';
-import { createCodeHighlightingAddon } from '@apollohg/react-native-rich-text-editor-code-highlighting';
-
-<RichTextEditor
-    documentHandle={documentHandle}
-    theme={theme}
-    addons={[
-        createMentionsAddon({ trigger: '@', suggestions }),
-        enableHighlighting && createCodeHighlightingAddon({ theme: 'base16-ocean.dark' }),
-    ]}
-/>;
-```
-
-Syntax highlighting requires the separately installed [code-highlighting package](./packages/code-highlighting), followed by a native rebuild. The base editor does not include syntect or its grammars. Set a code block's `attrs.language`, for example `{ type: 'codeBlock', attrs: { language: 'typescript' }, content: [...] }`. Missing or unsupported languages keep ordinary code styling. The code block theme controls the panel; the highlighting addon controls token colors and font traits. Mention-enabled editor handles still require `withMentionsSchema` when creating their schema.
-
-When migrating from version 1, replace `links` with `link`, heading maps with `h1`–`h6`, `spacingAfter` with `marginBottom`, and `contentInsets` with `content.padding*`. Flatten nested quote/code typography into their element entry, and move list appearance into the relevant container/item/marker entries. Addon objects become `[createMentionsAddon(options)]`. The new built-in schema declares code-block language metadata; coordinate schema changes across collaborating clients.
+Customize the editor and viewer with themes, mentions, and syntax highlighting. See [Styling](https://github.com/apollohg/react-native-rich-text-editor/wiki/Styling) and [Addons](https://github.com/apollohg/react-native-rich-text-editor/wiki/Addons).
 
 ## Collaboration
 
-`useYjsCollaboration` connects a room-backed document handle to a Yjs sync and awareness server. The editor and collaboration controller must share the same handle.
-
-```tsx
-import React, { useEffect, useMemo } from 'react';
-import {
-    createNativeEditorDocumentHandle,
-    RichTextEditor,
-    useYjsCollaboration,
-} from '@apollohg/react-native-rich-text-editor';
-
-export function CollaborativeEditor({ documentId }: { documentId: string }) {
-    const documentHandle = useMemo(
-        () =>
-            createNativeEditorDocumentHandle({
-                initialization: {
-                    type: 'room',
-                    documentId,
-                    lineageId: `my-app|${documentId}`,
-                },
-            }),
-        [documentId]
-    );
-
-    const collaboration = useYjsCollaboration({
-        documentId,
-        handle: documentHandle,
-        transport: {
-            url: `wss://example.com/collaboration?documentId=${encodeURIComponent(documentId)}`,
-            connect: true,
-        },
-        localAwareness: {
-            userId: 'user-1',
-            name: 'Ada',
-            color: '#0A84FF',
-        },
-    });
-
-    useEffect(() => () => documentHandle.destroy(), [documentHandle]);
-
-    return <RichTextEditor {...collaboration.editorBindings} />;
-}
-```
-
-See the [Collaboration Guide](https://github.com/apollohg/react-native-rich-text-editor/wiki/Collaboration) for server requirements, persistence, authentication, and recovery.
+Connect shared documents to a Yjs server for collaborative editing and live cursors. See the [Collaboration Guide](https://github.com/apollohg/react-native-rich-text-editor/wiki/Collaboration).
 
 ## Comparison with other React Native editors
 
@@ -240,12 +143,9 @@ See the [example app](./example) to try the editor and viewer, and the [Developm
 - [Mentions](https://github.com/apollohg/react-native-rich-text-editor/wiki/Mentions)
 - [Styling](https://github.com/apollohg/react-native-rich-text-editor/wiki/Styling)
 - [Production limits and errors](https://github.com/apollohg/react-native-rich-text-editor/wiki/Production-Limits-and-Errors)
+- [Migration guide](https://github.com/apollohg/react-native-rich-text-editor/wiki/Migration-Guide)
 - [Changelog](./CHANGELOG.md)
 
 ## License
 
-[Apache-2.0](./LICENSE) for this project's own code. Dependencies retain their respective licenses.
-
-[Third-party notices](./THIRD_PARTY_NOTICES.md) cover the bundled Rust libraries, native dependencies, and copied icon assets; [Rust standard-library notices](./RUST-STANDARD-LIBRARY-NOTICES.html) accompany the prebuilt native libraries. The optional highlighting package ships its own notices for syntect, grammars, themes, and its other dependencies.
-
-When distributing an app, include the applicable notices with the app's open-source acknowledgements or other accompanying materials, including the MPL corresponding-source links. Retain notices for the actual React Native/Expo and native dependency versions resolved by your app as well. An npm package's notices are not automatically copied into the final app by Metro. Refresh notices when dependencies, bundled assets, or the Rust toolchain change.
+[Apache-2.0](./LICENSE). See [third-party notices](./THIRD_PARTY_NOTICES.md) and [Rust standard-library notices](./RUST-STANDARD-LIBRARY-NOTICES.html) for bundled dependencies.
