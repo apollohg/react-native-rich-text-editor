@@ -225,14 +225,6 @@ Reviewed on 7 September 2026
 
 ## Development
 
-Run `npm run lint:kotlin` to check Kotlin style or `npm run format:kotlin` to
-apply automatic fixes. Both commands use ktlint 1.8.0 with Android Studio style
-and four-space indentation. Java 17+ is required (`JAVA_HOME` or `java` on PATH).
-The first run downloads and verifies the CLI into `.tmp/ktlint`; subsequent runs
-use the cached copy. Generated bindings, build output, dependencies, and Expo's
-generated native projects are excluded. Additional ktlint options can be passed
-after `--`, for example `npm run lint:kotlin -- --reporter=plain-summary`.
-
 See the [example app](./example) to try the editor and viewer, and the [Development Workflow](https://github.com/apollohg/react-native-rich-text-editor/wiki/Development-Workflow) for local setup, native builds, and testing.
 
 ## Documentation
