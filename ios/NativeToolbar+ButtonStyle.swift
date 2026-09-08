@@ -108,9 +108,7 @@ extension EditorAccessoryToolbarView {
                 ?? (resolvedAppearance == .native ? self.tintColor : .secondaryLabel)
         }
 
-        button.tintColor = tintColor
-        button.setTitleColor(tintColor, for: .normal)
-        button.setTitleColor(tintColor, for: .disabled)
+        applyButtonForeground(to: button, color: tintColor)
         button.tintAdjustmentMode = enabled ? .automatic : .normal
         button.alpha = enabled || resolvedAppearance == .native ? 1 : 0.7
         let inactiveBackgroundColor = buttonStyle?.backgroundColor
@@ -139,7 +137,20 @@ extension EditorAccessoryToolbarView {
             color: backgroundColor,
             cornerRadius: cornerRadius
         )
-        applyButtonIconStyle(to: button, item: item)
+        applyButtonIconStyle(to: button, item: item, color: tintColor)
+    }
+
+    /// A configured `UIButton` paints disabled content in its own system gray,
+    /// ignoring `tintColor`, so the colour must be forced through the
+    /// configuration's transformers as well.
+    private func applyButtonForeground(to button: UIButton, color: UIColor) {
+        button.tintColor = color
+        button.setTitleColor(color, for: .normal)
+        button.setTitleColor(color, for: .disabled)
+        guard #available(iOS 15.0, *), var configuration = button.configuration else { return }
+        configuration.baseForegroundColor = color
+        configuration.imageColorTransformer = UIConfigurationColorTransformer { _ in color }
+        button.configuration = configuration
     }
 
     /// Own the configured background to avoid stacking it with UIButton state fills.
@@ -175,13 +186,14 @@ extension EditorAccessoryToolbarView {
         return min(requestedSize, resolvedButtonSize)
     }
 
-    private func applyButtonIconStyle(to button: UIButton, item: NativeToolbarItem) {
+    private func applyButtonIconStyle(to button: UIButton, item: NativeToolbarItem, color: UIColor) {
         let iconSize = resolvedButtonIconSize(for: item)
         let font = UIFont.systemFont(ofSize: iconSize, weight: .semibold)
         if #available(iOS 15.0, *), var configuration = button.configuration {
             configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
                 var outgoing = incoming
                 outgoing.font = font
+                outgoing.foregroundColor = color
                 return outgoing
             }
             button.configuration = configuration

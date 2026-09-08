@@ -71,25 +71,25 @@ const TASK_CHECKBOX_BORDER_WIDTH = 1.5;
 const TOOLBAR_HEIGHT = 44;
 const TOOLBAR_ICON_SIZE = 17;
 
-/** The toolbar floats above the keyboard as a rounded bar, clear of its corners. */
+/** The toolbar floats above the keyboard as a solid spruce bar, matching the header. */
 export const toolbarTheme: EditorToolbarTheme = {
     appearance: 'custom',
     height: TOOLBAR_HEIGHT,
-    backgroundColor: PALETTE.wash,
-    borderColor: PALETTE.hairline,
-    borderWidth: 1,
+    backgroundColor: PALETTE.spruceDeep,
+    borderColor: PALETTE.spruceDeep,
+    borderWidth: 0,
     borderRadius: RADIUS.card,
     showTopBorder: false,
     keyboardOffset: SPACE.sm,
     horizontalInset: SPACE.md,
-    separatorColor: PALETTE.hairline,
+    separatorColor: PALETTE.spruce,
     buttonIconSize: TOOLBAR_ICON_SIZE,
-    buttonColor: PALETTE.inkMuted,
-    buttonBackgroundColor: PALETTE.wash,
+    buttonColor: PALETTE.paper,
+    buttonBackgroundColor: PALETTE.spruceDeep,
     buttonActiveColor: PALETTE.spruceDeep,
     buttonActiveBackgroundColor: PALETTE.spruceTint,
-    buttonDisabledColor: PALETTE.inkDisabled,
-    buttonDisabledBackgroundColor: PALETTE.wash,
+    buttonDisabledColor: PALETTE.inkFaint,
+    buttonDisabledBackgroundColor: PALETTE.spruceDeep,
     buttonBorderRadius: RADIUS.control,
 };
 

@@ -201,6 +201,48 @@ extension RichTextEditorViewTests {
         XCTAssertEqual(toolbar.buttonCornerRadiusForTesting(5) ?? -1, 12, accuracy: 0.1)
     }
 
+    /// A configured `UIButton` substitutes its own gray for disabled content
+    /// unless the colour is forced through the configuration, so a themed
+    /// disabled colour must be what the button actually paints.
+    func testDisabledButtonPaintsThemedDisabledColor() {
+        let disabledColor = EditorTheme.color(from: "#9aa1ad")
+        for appearance in ["native", "custom"] {
+            let toolbar = EditorAccessoryToolbarView(frame: .zero)
+            toolbar.setItemsJSONForTesting("""
+            [
+                {
+                    "type": "action",
+                    "key": "glyph",
+                    "label": "Glyph",
+                    "icon": { "type": "glyph", "text": "G" },
+                    "isDisabled": true
+                },
+                {
+                    "type": "action",
+                    "key": "symbol",
+                    "label": "Symbol",
+                    "icon": { "type": "platform", "ios": { "type": "sfSymbol", "name": "bold" } },
+                    "isDisabled": true
+                }
+            ]
+            """)
+            toolbar.apply(theme: EditorToolbarTheme(dictionary: [
+                "appearance": appearance,
+                "buttonColor": "#ffffff",
+                "buttonDisabledColor": "#9aa1ad"
+            ]))
+
+            for index in 0..<2 {
+                XCTAssertEqual(toolbar.buttonIsEnabledForTesting(index), false)
+                XCTAssertEqual(
+                    toolbar.buttonPaintedForegroundColorForTesting(index),
+                    disabledColor,
+                    "disabled \(appearance) button \(index) must paint the themed disabled colour"
+                )
+            }
+        }
+    }
+
     /// A configured `UIButton` resolves its own selected-state background, so
     /// filling `backgroundColor` as well stacks two shapes into a double halo.
     func testActiveButtonPaintsExactlyOneBackground() {

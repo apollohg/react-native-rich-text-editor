@@ -25,6 +25,21 @@ extension EditorAccessoryToolbarView {
         buttonBindings.indices.contains(index) ? buttonBindings[index].button.tintColor : nil
     }
 
+    /// The foreground colour a configured button will actually paint for its
+    /// current state, resolved through the configuration transformers rather
+    /// than `tintColor`, which UIKit ignores for disabled configured buttons.
+    func buttonPaintedForegroundColorForTesting(_ index: Int) -> UIColor? {
+        guard buttonBindings.indices.contains(index) else { return nil }
+        let button = buttonBindings[index].button
+        guard #available(iOS 15.0, *), let configuration = button.configuration else {
+            return button.titleColor(for: button.state)
+        }
+        if button.image(for: .normal) != nil {
+            return configuration.imageColorTransformer?(.black)
+        }
+        return configuration.titleTextAttributesTransformer?(AttributeContainer()).foregroundColor
+    }
+
     func buttonFontSizeForTesting(_ index: Int) -> CGFloat? {
         buttonBindings.indices.contains(index) ? buttonBindings[index].button.titleLabel?.font.pointSize : nil
     }
