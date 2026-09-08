@@ -619,6 +619,7 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.0.1]: https://github.com/apollohg/react-native-rich-text-editor/compare/1.0.3...2.0.1
 [1.0.3]: https://github.com/apollohg/react-native-rich-text-editor/compare/1.0.2...1.0.3
 [1.0.2]: https://github.com/apollohg/react-native-rich-text-editor/compare/1.0.1...1.0.2
 [1.0.1]: https://github.com/apollohg/react-native-rich-text-editor/compare/1.0.0...1.0.1
