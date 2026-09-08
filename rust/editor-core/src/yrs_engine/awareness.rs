@@ -48,7 +48,7 @@ fn next_local_clock(clock: u32) -> Result<u32, AwarenessError> {
 /// session-level `CollaborationLimits`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AwarenessLimits {
-    /// Maximum number of tracked non-local peers with a live state.
+    /// Maximum live remote peers; retained identities are capped at twice this count.
     pub max_awareness_peers: usize,
     /// Maximum byte length of a single client's JSON state payload.
     pub max_awareness_peer_bytes: usize,
@@ -414,7 +414,7 @@ impl AwarenessCodec {
         // clock and byte limit refusal.
         for &(client_id, entry) in &entries {
             if entry.json.as_ref() != AWARENESS_TOMBSTONE_JSON
-                && serde_json::from_str::<serde::de::IgnoredAny>(entry.json.as_ref()).is_err()
+                && serde_json::from_str::<Value>(entry.json.as_ref()).is_err()
             {
                 return Err(awareness_decode_error(format!(
                     "awareness state for client {client_id} is not valid JSON"
@@ -448,9 +448,10 @@ impl AwarenessCodec {
                         *current = incoming;
                     }
                 }
-                None => {
+                None if incoming_alive => {
                     projected.insert(*client_id, incoming);
                 }
+                None => {}
             }
         }
         let alive_peers = projected
@@ -471,6 +472,20 @@ impl AwarenessCodec {
                 limits.max_awareness_bytes,
                 aggregate,
             ));
+        }
+        // Allow a full peer replacement while retaining clocks against stale replays.
+        let retained_limit = limits.max_awareness_peers.saturating_mul(2);
+        let retained_peers = projected
+            .keys()
+            .filter(|client| **client != local_client)
+            .count();
+        if retained_peers > retained_limit {
+            return Err(YrsEngineError::limit(
+                "AWARENESS_RETENTION_LIMIT_EXCEEDED",
+                retained_limit,
+                retained_peers,
+            )
+            .with_details(json!({ "field": "awarenessRetainedPeers" })));
         }
         Ok(())
     }
@@ -579,16 +594,9 @@ impl AwarenessCodec {
 
     /// Rebinds the codec across an internal same-identity store swap
     /// (undo/redo candidate installation): the logical session continues, so
-    /// every live state plus the locally owned tombstone migrates with its
-    /// clock intact. Historical remote tombstones remain transport-scoped.
+    /// every entry migrates with its clock intact, including remote tombstones.
     pub(crate) fn rebind_preserving_peers(&mut self, doc: &Doc) {
-        let local_client = self.awareness.client_id();
-        let known_clients: Vec<_> = self
-            .awareness
-            .iter()
-            .filter(|(client, state)| *client == local_client || state.data.is_some())
-            .map(|(client, _)| client)
-            .collect();
+        let known_clients: Vec<_> = self.awareness.iter().map(|(client, _)| client).collect();
         let migrated = self.awareness.update_with_clients(known_clients);
         let mut next = Awareness::new(doc.clone());
         // `known_clients` comes from the same Awareness and `apply_update`

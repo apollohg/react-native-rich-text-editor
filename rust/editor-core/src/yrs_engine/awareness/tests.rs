@@ -424,3 +424,84 @@ fn fresh_identity_rebind_recovers_from_an_exhausted_tombstone_at_clock_one() {
     assert_eq!(local_clock(&codec), 1);
     assert_eq!(codec.local_state(), Some(&json!({"name": "before"})));
 }
+
+#[test]
+fn audit_regression_peer_churn_is_bounded_and_recovers_after_cleanup() {
+    let mut codec = codec();
+    let limits = AwarenessLimits {
+        max_awareness_peers: 1,
+        ..limits()
+    };
+    codec
+        .apply_remote_update_v1(&remote_update(100, 1, "{}"), &limits)
+        .unwrap();
+    codec
+        .apply_remote_update_v1(&remote_update(100, 2, "null"), &limits)
+        .unwrap();
+    codec
+        .apply_remote_update_v1(&remote_update(101, 1, "{}"), &limits)
+        .unwrap();
+    codec
+        .apply_remote_update_v1(&remote_update(101, 2, "null"), &limits)
+        .unwrap();
+    let error = codec
+        .apply_remote_update_v1(&remote_update(102, 1, "{}"), &limits)
+        .unwrap_err();
+    assert_eq!(error.code, "AWARENESS_RETENTION_LIMIT_EXCEEDED");
+    assert_eq!(error.limit, Some(2));
+    assert_eq!(error.actual, Some(3));
+    assert_eq!(codec.stored_entry_count(), 2);
+    assert!(codec.peer_snapshot().is_empty());
+    codec
+        .apply_remote_update_v1(&remote_update(103, 1, "null"), &limits)
+        .unwrap();
+    assert_eq!(codec.stored_entry_count(), 2);
+    codec
+        .apply_remote_update_v1(&remote_update(100, 3, "{}"), &limits)
+        .unwrap();
+    assert_eq!(codec.peer_snapshot().len(), 1);
+    codec.clear_transport_states().unwrap();
+    codec
+        .apply_remote_update_v1(&remote_update(101, 1, "{}"), &limits)
+        .unwrap();
+    assert_eq!(codec.peer_snapshot().len(), 1);
+}
+
+#[test]
+fn audit_regression_deep_awareness_is_rejected_atomically() {
+    let mut codec = codec();
+    codec
+        .apply_remote_update_v1(&remote_update(100, 1, "{}"), &limits())
+        .unwrap();
+    let json = format!("{}0{}", "[".repeat(150), "]".repeat(150));
+    let error = codec
+        .apply_remote_update_v1(&remote_update(100, 2, &json), &limits())
+        .unwrap_err();
+    assert_eq!(error.code, "COLLABORATION_DECODE_FAILED");
+    let peers = codec.peer_snapshot();
+    assert_eq!(peers.len(), 1);
+    assert_eq!(peers[0].clock, 1);
+    assert_eq!(peers[0].state, json!({}));
+}
+
+#[test]
+fn audit_regression_rebind_preserves_remote_removal_clocks() {
+    let mut codec = codec();
+    codec
+        .apply_remote_update_v1(&remote_update(100, 5, "{}"), &limits())
+        .unwrap();
+    codec
+        .apply_remote_update_v1(&remote_update(100, 6, "null"), &limits())
+        .unwrap();
+    codec.rebind_preserving_peers(&same_identity_doc(&codec));
+    for clock in [5, 6] {
+        codec
+            .apply_remote_update_v1(&remote_update(100, clock, "{}"), &limits())
+            .unwrap();
+        assert!(codec.peer_snapshot().is_empty());
+    }
+    codec
+        .apply_remote_update_v1(&remote_update(100, 7, "{}"), &limits())
+        .unwrap();
+    assert_eq!(codec.peer_snapshot().len(), 1);
+}

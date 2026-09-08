@@ -696,3 +696,32 @@ fn create_rejects_removed_flat_policy_keys() {
         assert_create_rejected(config);
     }
 }
+
+#[test]
+fn audit_regression_create_payload_exemption_ignores_whitespace() {
+    for initialization in [
+        json!({"type": "localJson", "json": {"type": "doc", "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": "x".repeat(70_000)}]}
+        ]}}),
+        json!({"type": "localHtml", "html": format!("<p>{}</p>", "x".repeat(70_000))}),
+    ] {
+        let config = json!({"initialization": initialization});
+        let compact = config.to_string();
+        for wire in [
+            compact.clone(),
+            serde_json::to_string_pretty(&config).unwrap(),
+            compact.replace("\"initialization\":", "\"initialization\": "),
+            compact.replace("\"type\":", "\"type\":\n"),
+        ] {
+            let result = super::editor::editor_v2_create(wire, None);
+            assert!(result.error.is_none(), "{:?}", result.error);
+            let value: serde_json::Value =
+                serde_json::from_str(result.value.as_ref().unwrap()).unwrap();
+            assert_eq!(
+                super::editor::editor_v2_destroy(value["editorId"].as_str().unwrap().to_owned())
+                    .value,
+                Some(true)
+            );
+        }
+    }
+}

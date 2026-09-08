@@ -684,3 +684,42 @@ fn pre_seeded_max_clock_tombstones_cannot_squat_a_victim() {
         "the below-ceiling pre-seed must not suppress the victim either: {peers:?}",
     );
 }
+
+#[test]
+fn audit_regression_undo_redo_preserves_remote_tombstones() {
+    let mut engine = engine(InitializationMode::LocalEmpty);
+    let limits = session_default_limits();
+    engine
+        .apply_command(
+            1,
+            TypedCommand::InsertText {
+                text: "undoable".into(),
+            },
+        )
+        .unwrap();
+    engine
+        .awareness()
+        .apply_remote_update_v1(&peer_update_bytes(100, 5, "{}"), &limits)
+        .unwrap();
+    engine
+        .awareness()
+        .apply_remote_update_v1(&peer_update_bytes(100, 6, "null"), &limits)
+        .unwrap();
+    engine.undo(2).unwrap().expect("undo applies");
+    engine
+        .awareness()
+        .apply_remote_update_v1(&peer_update_bytes(100, 5, "{}"), &limits)
+        .unwrap();
+    assert!(engine.awareness().peer_snapshot().is_empty());
+    engine.redo(3).unwrap().expect("redo applies");
+    engine
+        .awareness()
+        .apply_remote_update_v1(&peer_update_bytes(100, 6, "{}"), &limits)
+        .unwrap();
+    assert!(engine.awareness().peer_snapshot().is_empty());
+    engine
+        .awareness()
+        .apply_remote_update_v1(&peer_update_bytes(100, 7, "{}"), &limits)
+        .unwrap();
+    assert_eq!(engine.awareness().peer_snapshot().len(), 1);
+}

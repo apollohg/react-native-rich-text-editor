@@ -217,3 +217,38 @@ fn outbox_saturation_drains_and_the_transport_reconnects_without_a_wedge() {
 
     destroy_session(id);
 }
+
+#[test]
+fn audit_regression_peer_churn_reconnects_and_clears_retention() {
+    use yrs::sync::awareness::{AwarenessUpdate, AwarenessUpdateEntry};
+    let (id, snapshot) = create_ready_room();
+    let generation = synchronize_ready_room(id, &snapshot);
+    set_collaboration_limit_for_test(id, "maxAwarenessPeers", 1).unwrap();
+    let frame = |client, clock, state: &str| {
+        Message::Awareness(AwarenessUpdate {
+            clients: std::collections::HashMap::from([(
+                yrs::ClientID::new(client),
+                AwarenessUpdateEntry {
+                    clock,
+                    json: state.into(),
+                },
+            )]),
+        })
+        .encode_v1()
+    };
+    for client in [100, 101] {
+        for (clock, state) in [(1, "{}"), (2, "null")] {
+            let outcome =
+                receive_message(id, 401, generation, &frame(client, clock, state)).unwrap();
+            assert!(outcome.close.is_none(), "{outcome:?}");
+        }
+    }
+    let outcome = receive_message(id, 402, generation, &frame(102, 1, "{}")).unwrap();
+    let close = outcome.close.expect("retention overflow must close");
+    assert_eq!(close.disposition, CloseDisposition::Retryable);
+    assert_eq!(close.error.code, "TRANSPORT_AWARENESS_LIMIT_EXCEEDED");
+    let generation = synchronize_ready_room(id, &snapshot);
+    let outcome = receive_message(id, 403, generation, &frame(102, 1, "{}")).unwrap();
+    assert!(outcome.close.is_none(), "{outcome:?}");
+    destroy_session(id);
+}

@@ -163,6 +163,7 @@ impl<'a> CreateJsonScanner<'a> {
             ArrayAfterValue(usize),
         }
 
+        self.skip_whitespace()?;
         let start = self.index;
         let mut actions = vec![Action::Value(depth)];
         while let Some(action) = actions.pop() {

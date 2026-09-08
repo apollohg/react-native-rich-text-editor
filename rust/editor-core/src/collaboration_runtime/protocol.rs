@@ -588,6 +588,10 @@ fn classify_admission_error(
 /// retryably like every other apply failure.
 fn classify_awareness_code(code: &str) -> (SocketCloseDisposition, &'static str) {
     match code {
+        "AWARENESS_RETENTION_LIMIT_EXCEEDED" => (
+            SocketCloseDisposition::Retryable,
+            TRANSPORT_AWARENESS_LIMIT_EXCEEDED,
+        ),
         AWARENESS_CLOCK_EXHAUSTED => (
             SocketCloseDisposition::Incompatible,
             AWARENESS_CLOCK_EXHAUSTED,

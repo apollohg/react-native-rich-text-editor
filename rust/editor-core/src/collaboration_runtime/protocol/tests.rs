@@ -260,3 +260,14 @@ fn admission_classification_covers_every_engine_code_class() {
         );
     }
 }
+
+#[test]
+fn audit_regression_awareness_retention_exhaustion_is_retryable() {
+    assert_eq!(
+        classify_awareness_code("AWARENESS_RETENTION_LIMIT_EXCEEDED"),
+        (
+            SocketCloseDisposition::Retryable,
+            TRANSPORT_AWARENESS_LIMIT_EXCEEDED
+        ),
+    );
+}
