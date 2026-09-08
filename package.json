@@ -1,6 +1,6 @@
 {
     "name": "@apollohg/react-native-rich-text-editor",
-    "version": "2.0.1",
+    "version": "2.0.2",
     "description": "Native rich text editor with Rust core for React Native",
     "license": "Apache-2.0",
     "homepage": "https://github.com/apollohg/react-native-rich-text-editor",

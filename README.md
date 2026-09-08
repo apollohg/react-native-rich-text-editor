@@ -4,7 +4,7 @@
 
 See the [documentation](https://github.com/apollohg/react-native-rich-text-editor/wiki) for guides and API references. The package is under active development; review the [changelog](./CHANGELOG.md) before upgrading between major versions.
 
-<img src="https://github.com/apollohg/react-native-rich-text-editor/wiki/images/github-banner.png" alt="Example editor on iOS" width="100%" />
+<a href="./assets/github-demo-banner.mp4"><img src="./assets/github-demo-banner.gif" alt="Native iOS editor demo with rich text, nested lists, a code block, and image resizing" width="100%" /></a>
 
 ## Highlights
 

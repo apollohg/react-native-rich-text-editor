@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.0.2] - 2026-09-08
+
+### Added
+
+- Added configurable mention padding, including per-side overrides and zero padding, for the editor and viewer.
+
+### Fixed
+
+- Aligned iOS mention text with surrounding text regardless of vertical padding and removed excess width from short mentions in both native viewers.
+- Made content reflow during image resizing on iOS and Android.
+- Fixed iOS toolbar buttons ignoring configured disabled colors.
+
+### Changed
+
+- Removed image placeholder icons.
+
 ## [2.0.1] - 2026-09-08
 
 Cumulative v2 changes since 1.0.3.
@@ -619,6 +635,7 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.0.2]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.1...2.0.2
 [2.0.1]: https://github.com/apollohg/react-native-rich-text-editor/compare/1.0.3...2.0.1
 [1.0.3]: https://github.com/apollohg/react-native-rich-text-editor/compare/1.0.2...1.0.3
 [1.0.2]: https://github.com/apollohg/react-native-rich-text-editor/compare/1.0.1...1.0.2
