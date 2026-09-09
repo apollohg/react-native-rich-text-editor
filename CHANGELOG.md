@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.4] - 2026-09-09
+
+### Fixed
+
+- Fixed a fatal iOS stack overflow when focusing or tapping an empty editor, caused by recursive caret updates between tap handling and autocapitalization.
+- Fixed Android clipboard compilation with Kotlin 1.9.
+
 ## [2.0.3] - 2026-09-09
 
 ### Added
