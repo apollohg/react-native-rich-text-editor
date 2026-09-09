@@ -657,3 +657,97 @@ fn clipboard_copied_heading_keeps_type_in_empty_paragraph() {
         assert_eq!(target.document_json(), after);
     }
 }
+
+#[test]
+fn clipboard_rich_paragraphs_stay_inside_destination_containers() {
+    fn wrap(mut content: serde_json::Value, containers: &[&str]) -> serde_json::Value {
+        for node_type in containers.iter().rev() {
+            content = serde_json::json!([{"type":node_type,"content":content}]);
+        }
+        serde_json::json!({"type":"doc","content":content})
+    }
+    for containers in [
+        vec!["bulletList", "listItem"],
+        vec!["blockquote"],
+        vec!["blockquote", "bulletList", "listItem"],
+    ] {
+        for html_only in [false, true] {
+            for multiple in [false, true] {
+                let mut source = transaction_engine();
+                let mut blocks = vec![
+                    serde_json::json!({"type":"paragraph","content":[{"type":"text","text":"X","marks":[{"type":"bold"}]}]}),
+                ];
+                if multiple {
+                    blocks.push(serde_json::json!({"type":"paragraph","content":[{"type":"text","text":"Y","marks":[{"type":"italic"}]}]}));
+                }
+                source
+                    .import_json(
+                        &serde_json::json!({"type":"doc","content":blocks}).to_string(),
+                        TransactionOrigin::DocumentImport,
+                    )
+                    .unwrap();
+                let copied = crate::clipboard::export(
+                    source.document().unwrap(),
+                    &Selection::text(1, source.document().unwrap().content_size() - 1),
+                    &source.schema,
+                )
+                .unwrap();
+                let mut target = transaction_engine();
+                let initial = wrap(
+                    serde_json::json!([{"type":"paragraph","content":[{"type":"text","text":"ab"}]}]),
+                    &containers,
+                );
+                target
+                    .import_json(&initial.to_string(), TransactionOrigin::DocumentImport)
+                    .unwrap();
+                let cursor = target
+                    .position_map()
+                    .unwrap()
+                    .doc_to_scalar(containers.len() as u32 + 2, target.document().unwrap());
+                select_text(&mut target, 1, cursor, cursor);
+                let before = target.document_json();
+                target
+                    .apply_command(
+                        2,
+                        clipboard_paste(
+                            (!html_only).then(|| copied["fragment"].as_str().unwrap().to_owned()),
+                            html_only.then(|| copied["html"].as_str().unwrap().to_owned()),
+                            None,
+                            false,
+                        ),
+                    )
+                    .unwrap()
+                    .unwrap();
+                blocks[0]["content"]
+                    .as_array_mut()
+                    .unwrap()
+                    .insert(0, serde_json::json!({"type":"text","text":"a"}));
+                blocks.last_mut().unwrap()["content"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!({"type":"text","text":"b"}));
+                let expected = wrap(serde_json::json!(blocks), &containers);
+                assert_eq!(
+                    target.document_json(),
+                    Some(expected),
+                    "containers={containers:?}, html={html_only}, multiple={multiple}"
+                );
+                let after = target.document_json();
+                target
+                    .apply_command(3, TypedCommand::ReplaceSelectionText { text: "!".into() })
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    target.document().unwrap().root().text_content(),
+                    if multiple { "aXY!b" } else { "aX!b" }
+                );
+                target.undo_with_result(4).unwrap().unwrap();
+                assert_eq!(target.document_json(), after);
+                target.undo_with_result(5).unwrap().unwrap();
+                assert_eq!(target.document_json(), before);
+                target.redo_with_result(6).unwrap().unwrap();
+                assert_eq!(target.document_json(), after);
+            }
+        }
+    }
+}

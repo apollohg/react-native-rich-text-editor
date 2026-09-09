@@ -247,6 +247,45 @@ fn join_edges(
     (left, merged + 1)
 }
 
+fn fit_textblocks_to_containers(
+    document: &Document,
+    from: u32,
+    to: u32,
+    content: &[Node],
+    schema: &Schema,
+) -> Option<(Vec<Node>, usize)> {
+    let start = document.resolve(from).ok()?;
+    let end = document.resolve(to).ok()?;
+    let depth = start.node_path.len().checked_sub(1)?;
+    if depth == 0 || start.node_path.len() != end.node_path.len() {
+        return None;
+    }
+    for node in [
+        content.first()?,
+        content.last()?,
+        start.parent(document),
+        end.parent(document),
+    ] {
+        if !matches!(schema.node(node.node_type())?.role, NodeRole::TextBlock) {
+            return None;
+        }
+    }
+    let mut containers = Vec::with_capacity(depth);
+    for level in 1..=depth {
+        let left = document.node_at(&start.node_path[..level])?;
+        let right = document.node_at(&end.node_path[..level])?;
+        if left.node_type() != right.node_type() {
+            return None;
+        }
+        containers.push(left);
+    }
+    let mut fitted = content.to_vec();
+    for container in containers.into_iter().rev() {
+        fitted = vec![copy_element(container, fitted)];
+    }
+    Some((fitted, depth))
+}
+
 pub(crate) fn replacement(
     document: &Document,
     selection: &Selection,
@@ -270,6 +309,16 @@ pub(crate) fn replacement(
         content = content[0].content()?.children().to_vec();
         open_start -= 1;
         open_end -= 1;
+    }
+
+    if open_start == 1 && open_end == 1 {
+        if let Some((fitted, depth)) =
+            fit_textblocks_to_containers(document, from, to, &content, schema)
+        {
+            content = fitted;
+            open_start += depth;
+            open_end += depth;
+        }
     }
 
     let mut left = clipped_children(document.root(), 0, 0, from);

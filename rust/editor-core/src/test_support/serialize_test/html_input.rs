@@ -560,3 +560,55 @@ fn clipboard_html_keeps_semantic_mark_attributes() {
     ).unwrap();
     assert_eq!(doc.root().child(0).unwrap().child(0).unwrap().marks()[0].attrs()["data-code"], serde_json::json!("review"));
 }
+
+#[test]
+fn clipboard_html_preserves_custom_semantic_alias_marks() {
+    for (tag, schema_tag, style, reset) in [
+        ("b", "strong", "font-weight:bold", "font-weight:normal"),
+        ("i", "em", "font-style:italic", "font-style:normal"),
+        (
+            "del",
+            "s",
+            "text-decoration:line-through",
+            "text-decoration:none",
+        ),
+        (
+            "strike",
+            "s",
+            "text-decoration:line-through",
+            "text-decoration:none",
+        ),
+    ] {
+        let schema = Schema::from_json(&serde_json::json!({
+            "nodes": [
+                {"name":"doc","role":"doc","content":"block+"},
+                {"name":"paragraph","role":"textBlock","group":"block","content":"inline*","htmlTag":"p"},
+                {"name":"text","role":"text","group":"inline"}
+            ],
+            "marks": [{"name":"emphasis","htmlTag":schema_tag,"attrs":{"data-code":{"default":""}}}]
+        })).unwrap();
+        let html = format!("<p><{tag} data-code=\"review\">one<span style=\"{reset}\">plain</span></{tag}><span style=\"{style}\">two</span></p>");
+        let doc = crate::serialize::html_in::from_clipboard_html_with_limits(
+            &html,
+            &schema,
+            &default_opts(),
+            &ResourceLimits::default(),
+        )
+        .unwrap();
+        let paragraph = doc.root().child(0).unwrap();
+        assert_eq!(paragraph.child(0).unwrap().marks().len(), 1, "tag={tag}");
+        assert_eq!(
+            paragraph.child(0).unwrap().marks()[0].mark_type(),
+            "emphasis"
+        );
+        assert_eq!(
+            paragraph.child(0).unwrap().marks()[0].attrs()["data-code"],
+            serde_json::json!("review")
+        );
+        assert!(paragraph.child(1).unwrap().marks().is_empty());
+        assert_eq!(
+            paragraph.child(2).unwrap().marks()[0].mark_type(),
+            "emphasis"
+        );
+    }
+}
