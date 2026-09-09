@@ -99,19 +99,21 @@ internal fun EditorEditText.prepareForExternalInteractionMutation(): Boolean =
     commitExternalTextCompositionBeforeInteractionIfNeeded() &&
         prepareForExternalEditorUpdate()
 
-internal fun EditorEditText.publishClipboard(payload: EditorClipboardPayload): Boolean = try {
-    val clip = EditorClipboard.create(payload)
-    val testWriter = onSetPrimaryClipForTesting
-    if (testWriter != null) {
-        testWriter(clip)
-    } else {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            ?: return false
-        clipboard.setPrimaryClip(clip)
+internal fun EditorEditText.publishClipboard(payload: EditorClipboardPayload): Boolean {
+    return try {
+        val clip = EditorClipboard.create(payload)
+        val testWriter = onSetPrimaryClipForTesting
+        if (testWriter != null) {
+            testWriter(clip)
+        } else {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                ?: return false
+            clipboard.setPrimaryClip(clip)
+        }
+        true
+    } catch (_: Exception) {
+        false
     }
-    true
-} catch (_: Exception) {
-    false
 }
 
 internal fun EditorEditText.handleCopy(): Boolean {
