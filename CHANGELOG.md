@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.3] - 2026-09-09
+
+### Added
+
+- Added rich copy, cut, and paste on iOS and Android, preserving selected marks, nodes, custom attributes, and atoms between compatible editors.
+- Added `pasteMode` with `rich` (default), `plainText`, and `disabled` options, including runtime updates and explicit Paste as Plain Text support.
+- Added clipboard HTML normalization for supported semantic and inline CSS formatting, lists, and preformatted text, plus iOS RTF import with supported formatting and whitespace preservation.
+
 ## [2.0.2] - 2026-09-08
 
 ### Added
@@ -635,6 +643,7 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.0.3]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.2...2.0.3
 [2.0.2]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.1...2.0.2
 [2.0.1]: https://github.com/apollohg/react-native-rich-text-editor/compare/1.0.3...2.0.1
 [1.0.3]: https://github.com/apollohg/react-native-rich-text-editor/compare/1.0.2...1.0.3
