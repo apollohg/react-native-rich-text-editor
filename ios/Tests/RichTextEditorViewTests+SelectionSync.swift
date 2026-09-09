@@ -3,11 +3,77 @@ import XCTest
 
 private final class PendingCaretTapRecognizer: CaretPlacementTapRecognizer {
     var point: CGPoint?
+    var pointReadCount = 0
+    var pointReadLimit = Int.max
 
-    override var pendingCaretPoint: CGPoint? { point }
+    override var pendingCaretPoint: CGPoint? {
+        pointReadCount += 1
+        // Bound recursive callbacks so a regression fails without crashing XCTest.
+        return pointReadCount <= pointReadLimit ? point : nil
+    }
 }
 
 extension RichTextEditorViewTests {
+    func testCaretPlacementTap_emptyDocumentPendingTapDoesNotRecurse() throws {
+        try assertEmptyDocumentCaretTap(initiallyFocused: true, placeCaret: false)
+    }
+
+    func testCaretPlacementTap_emptyDocumentFocusDoesNotRecurse() throws {
+        try assertEmptyDocumentCaretTap(initiallyFocused: false, placeCaret: true)
+    }
+
+    func testCaretPlacementTap_emptyDocumentRepeatedTapDoesNotRecurse() throws {
+        try assertEmptyDocumentCaretTap(initiallyFocused: true, placeCaret: true)
+    }
+
+    private func assertEmptyDocumentCaretTap(initiallyFocused: Bool, placeCaret: Bool) throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.editorId = editorId
+        let textView = view.textView
+        let window = hostEditorView(view)
+        defer { window.isHidden = true }
+        if initiallyFocused {
+            XCTAssertTrue(textView.becomeFirstResponder())
+        }
+        flushMainQueue()
+        XCTAssertEqual(textView.text, "\u{200B}")
+        let caret = textView.caretRect(for: textView.endOfDocument)
+        let point = CGPoint(x: caret.maxX + 40, y: caret.midY)
+        let position = try XCTUnwrap(textView.closestPosition(to: point))
+        XCTAssertEqual(textView.offset(from: textView.beginningOfDocument, to: position), 1)
+        let recognizer = PendingCaretTapRecognizer()
+        recognizer.point = point
+        recognizer.pointReadLimit = 16
+        textView.caretPlacementTapRecognizer = recognizer
+        var publishedSelections: [NSRange] = []
+        textView.onSelectionOrContentMayChange = { [weak textView] in
+            if let textView { publishedSelections.append(textView.selectedRange) }
+        }
+
+        for _ in 0..<3 {
+            recognizer.pointReadCount = 0
+            if placeCaret {
+                XCTAssertTrue(textView.placeCaret(at: point))
+                XCTAssertTrue(textView.isFirstResponder)
+            } else {
+                textView.delegate?.textViewDidChangeSelection?(textView)
+            }
+            XCTAssertLessThan(recognizer.pointReadCount, recognizer.pointReadLimit)
+            XCTAssertEqual(textView.selectedRange, NSRange(location: 0, length: 0))
+            flushMainQueue()
+        }
+        XCTAssertFalse(publishedSelections.isEmpty)
+        XCTAssertTrue(publishedSelections.allSatisfy { $0 == NSRange(location: 0, length: 0) })
+        let selection = currentSelection(in: editorId)
+        XCTAssertEqual((selection["anchor"] as? NSNumber)?.uint32Value, 1)
+        XCTAssertEqual((selection["head"] as? NSNumber)?.uint32Value, 1)
+        recognizer.point = nil
+        textView.insertText("A")
+        XCTAssertEqual(textView.text, "A")
+    }
+
     func testCaretPlacementTap_correctsWordSnapBeforePublishingSelection() throws {
         try assertPendingCaretTapSelection(
             nativeSelection: NSRange(location: 15, length: 0),

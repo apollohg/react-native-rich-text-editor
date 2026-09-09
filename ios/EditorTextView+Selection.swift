@@ -49,7 +49,8 @@ extension EditorTextView {
               prepareForExternalEditorUpdate(),
               let position = closestPosition(to: point)
         else { return false }
-        let offset = self.offset(from: beginningOfDocument, to: position)
+        let caretPosition = autocapitalizationFriendlyEmptyBlockPosition(for: position) ?? position
+        let offset = self.offset(from: beginningOfDocument, to: caretPosition)
         guard !isAtomBoundaryCaretOffset(offset) else { return false }
         _ = becomeFirstResponder()
         logicalSelectionScalarRange = nil
@@ -154,7 +155,9 @@ extension EditorTextView {
            selectedRange.length == 0,
            let point = caretPlacementTapRecognizer.pendingCaretPoint,
            let position = closestPosition(to: point) {
-            let offset = self.offset(from: beginningOfDocument, to: position)
+            // Match empty-block normalization so synchronous callbacks cannot alternate offsets.
+            let caretPosition = autocapitalizationFriendlyEmptyBlockPosition(for: position) ?? position
+            let offset = self.offset(from: beginningOfDocument, to: caretPosition)
             if selectedRange.location != offset, !isAtomBoundaryCaretOffset(offset) {
                 // Correct UIKit's word snap before publishing or drawing the selection.
                 selectedRange = NSRange(location: offset, length: 0)
