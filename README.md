@@ -8,13 +8,15 @@ See the [documentation](https://github.com/apollohg/react-native-rich-text-edito
 
 ## Highlights
 
-- Native iOS and Android editing backed by a Rust document engine
-- HTML and ProseMirror JSON input and output
-- Configurable schemas, marks, blockquotes, lists, links, images, and mentions
-- Custom atom nodes rendered with your React components
-- Native toolbar, theming, selection, undo, and redo
-- `RichTextViewer`, an exact-size Fabric renderer for read-only content
-- Shared document handles for local editing and Yjs collaboration
+**⭐ Native editing on iOS and Android**, powered by a shared Rust document engine, with native keyboard, selection, and IME handling.  
+**⭐ Built-in Yjs collaboration** with live cursors, presence, native WebSocket transport, and restorable document snapshots.  
+**⭐ React Native components inside documents**: interactive cards and embeds with typed attributes, undoable updates, and collaboration support.  
+**⭐ Provisional text composition** for app-provided dictation or generated text: revise text in place, then commit as one undoable edit or cancel without changing the document.  
+**⭐ Dedicated Fabric viewer** that sizes itself to its content, works in `FlatList`, and renders interactive React atoms without creating an editor session.  
+**⭐ Configurable document schemas with HTML and ProseMirror JSON import/export**, including custom nodes and attributes.  
+**⭐ Nested bullet and numbered lists** with indent/outdent, alongside headings, blockquotes, links, images, and mentions.  
+**⭐ Optional native code syntax highlighting** in both editor and viewer, with the highlighting engine kept out of the base package.  
+**⭐ Rich copy and paste** that preserves supported formatting and custom atom attributes between compatible editors.  
 
 ## Requirements
 
