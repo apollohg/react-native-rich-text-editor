@@ -69,6 +69,16 @@ extension EditorV2Adapter {
         return commandAtSelection(["type": "toggleBlockquote"], anchor: anchor, head: head)
     }
 
+    func applyListType(_ listType: String, anchor: UInt32, head: UInt32) -> String? {
+        guard beginRuntimeOperation() else { return nil }
+        defer { endRuntimeOperation() }
+        return commandAtSelection(
+            ["type": "applyListType", "listType": listType],
+            anchor: anchor,
+            head: head
+        )
+    }
+
     func wrapInList(listType: String, itemType: String, anchor: UInt32, head: UInt32) -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }

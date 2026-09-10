@@ -63,9 +63,8 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         act(() => ref.current!.toggleList('bulletList'));
 
         expect(lastCommand()).toEqual({
-            type: 'wrapInList',
+            type: 'applyListType',
             listType: 'bulletList',
-            itemType: 'listItem',
         });
 
         // The engine now reports the list active: toggling unwraps.
@@ -75,10 +74,12 @@ describe('NativeRichTextEditor (v2 document mode)', () => {
         act(() => ref.current!.toggleList('bullet_list'));
 
         expect(lastCommand()).toEqual({
-            type: 'wrapInList',
+            type: 'applyListType',
             listType: 'bullet_list',
-            itemType: 'list_item',
         });
+
+        act(() => ref.current!.toggleList('ordered_list'));
+        expect(lastCommand()).toEqual({ type: 'applyListType', listType: 'ordered_list' });
 
         act(() => ref.current!.indentListItem());
         expect(lastCommand()).toEqual({ type: 'indentListItem' });

@@ -870,6 +870,13 @@ internal class EditorV2Adapter private constructor(
     override fun toggleBlockquote(anchor: Int, head: Int): String? =
         commandAtSelection(JSONObject().put("type", "toggleBlockquote"), anchor, head)
 
+    override fun applyListType(listType: String, anchor: Int, head: Int): String? =
+        commandAtSelection(
+            JSONObject().put("type", "applyListType").put("listType", listType),
+            anchor,
+            head
+        )
+
     override fun wrapInList(listType: String, anchor: Int, head: Int): String? {
         val itemType = EditorNodeTypes.listItemType(listType)
         return commandAtSelection(

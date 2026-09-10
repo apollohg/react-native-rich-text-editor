@@ -26,7 +26,7 @@ extension EditorTextView {
                     scalarAnchor: selection.anchor,
                     scalarHead: selection.head
                 )
-                : EditorV2Shadow.wrapInListAtSelectionScalar(
+                : EditorV2Shadow.applyListTypeAtSelectionScalar(
                     id: editorId,
                     scalarAnchor: selection.anchor,
                     scalarHead: selection.head,

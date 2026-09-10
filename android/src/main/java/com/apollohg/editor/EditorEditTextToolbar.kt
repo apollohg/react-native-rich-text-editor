@@ -22,7 +22,7 @@ internal fun EditorEditText.performToolbarToggleListImpl(listType: String, isAct
         val update = if (isActive) {
             driver.unwrapFromList(selection.first, selection.second)
         } else {
-            driver.wrapInList(listType, selection.first, selection.second)
+            driver.applyListType(listType, selection.first, selection.second)
         }
         update?.let { applyUpdateJSON(it) }
     }

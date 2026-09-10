@@ -359,14 +359,8 @@ export function useRichTextEditorCommands(
             }
 
             applyEngineCommand({
-                type: 'wrapInList',
+                type: 'applyListType',
                 listType,
-                itemType:
-                    listType === 'taskList'
-                        ? 'taskItem'
-                        : listType === 'bullet_list' || listType === 'ordered_list'
-                            ? 'list_item'
-                            : 'listItem',
             });
         },
         [ activeStateRef, applyEngineCommand ]

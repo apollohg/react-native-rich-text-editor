@@ -155,6 +155,26 @@ internal class EditorV2AdapterTest : EditorV2AdapterTestFixture() {
     }
 
     @Test
+    fun `inactive native list toggle applies the requested list type`() {
+        val adapter = makeAdapter()
+        adapter.setContentHtml("<p>item</p>")
+        val editText = EditorEditText(RuntimeEnvironment.getApplication()).apply {
+            editorId = 987654L
+            v2Driver = adapter
+            applyUpdateJSON(requireNotNull(adapter.currentStateJson()), notifyListener = false)
+            setSelection(0)
+        }
+        backend.calls.clear()
+        sessionOf(adapter).commands.clear()
+
+        editText.performToolbarToggleList("orderedList", isActive = false)
+
+        val command = sessionOf(adapter).commands.single()
+        assertEquals("applyListType", command.getString("type"))
+        assertEquals("orderedList", command.getString("listType"))
+    }
+
+    @Test
     fun `paste routes typed content commands`() {
         val adapter = makeAdapter()
         adapter.setContentHtml("<p>ab</p>")

@@ -2,6 +2,30 @@ import ExpoModulesCore
 import XCTest
 
 extension RichTextEditorViewTests {
+    func testAlternateListToggleConvertsTheEntireList() {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 120))
+        let window = hostEditorView(view)
+        defer {
+            view.removeFromSuperview()
+            window.isHidden = true
+        }
+        view.editorId = editorId
+        view.setContent(html: "<ul><li><p>First</p></li><li><p>Second</p></li></ul>")
+        let firstRange = (view.textView.textStorage.string as NSString).range(of: "First")
+        setCollapsedSelection(in: view.textView, utf16Offset: firstRange.location)
+        flushMainQueue()
+
+        view.textView.performToolbarToggleList("ordered_list", isActive: false)
+        flushMainQueue()
+
+        XCTAssertEqual(
+            EditorV2Shadow.getHtml(id: editorId),
+            "<ol><li><p>First</p></li><li><p>Second</p></li></ol>"
+        )
+    }
+
     func testBackspaceAtListItemStartAfterNestedListUnwrapsIntoParagraph() {
         for tag in ["ul", "ol"] {
             let editorId = makeV2Editor()

@@ -289,8 +289,20 @@ export function createFakeEditingModule(
                         return stateOnlyOutcome();
                     }
 
+                    case 'applyListType':
                     case 'wrapInList': {
                         const next = storedNodes();
+                        if (command.type === 'applyListType') {
+                            for (const type of [
+                                'bulletList',
+                                'orderedList',
+                                'taskList',
+                                'bullet_list',
+                                'ordered_list',
+                            ]) {
+                                next[type] = false;
+                            }
+                        }
                         next[String(command.listType ?? '')] = true;
                         session.activeNodes = next;
                         session.hasStoredNodes = true;

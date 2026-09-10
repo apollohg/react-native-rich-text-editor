@@ -200,6 +200,10 @@ enum EditorV2Shadow {
         return adapter(for: id)?.wrapInList(listType: listType, itemType: itemType, anchor: scalarAnchor, head: scalarHead) ?? "{}"
     }
 
+    static func applyListTypeAtSelectionScalar(id: UInt64, scalarAnchor: UInt32, scalarHead: UInt32, listType: String) -> String {
+        adapter(for: id)?.applyListType(listType, anchor: scalarAnchor, head: scalarHead) ?? "{}"
+    }
+
     static func unwrapFromListAtSelectionScalar(id: UInt64, scalarAnchor: UInt32, scalarHead: UInt32) -> String {
         adapter(for: id)?.unwrapFromList(anchor: scalarAnchor, head: scalarHead) ?? "{}"
     }

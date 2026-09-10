@@ -303,6 +303,21 @@ extension RenderBridgeTests {
         XCTAssertGreaterThan(rect.height, 0)
     }
 
+    func testUnorderedBulletAtOnePointFiveScaleMatchesAndroidDiameter() {
+        let rect = EditorLayoutManager.unorderedBulletDrawingRect(
+            usedRect: .zero,
+            lineFragmentRect: .zero,
+            markerWidth: 0,
+            baselineY: 0,
+            baseFont: UIFont.systemFont(ofSize: 16),
+            markerScale: 1.5,
+            origin: .zero
+        )
+
+        XCTAssertEqual(rect.width, 7.68, accuracy: 0.01)
+        XCTAssertEqual(rect.height, 7.68, accuracy: 0.01)
+    }
+
     func testUnorderedBulletDrawingRectPreservesTextSideGapAcrossMarkerScales() {
         let usedRect = CGRect(x: 24, y: 14, width: 160, height: 19)
         let lineFragmentRect = CGRect(x: 24, y: 8, width: 160, height: 32)

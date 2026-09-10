@@ -878,9 +878,7 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
         origin: CGPoint,
         markerGap: CGFloat = LayoutConstants.listMarkerTextGap
     ) -> CGRect {
-        let markerFont = baseFont.withSize(baseFont.pointSize * markerScale)
-        let bulletBounds = unorderedBulletGlyphBounds(for: markerFont)
-        let bulletDiameter = max(max(bulletBounds.width, bulletBounds.height), 1)
+        let bulletDiameter = max(baseFont.pointSize * markerScale * 0.32, 4)
         let targetCenterAboveBaseline = (baseFont.xHeight > 0 ? baseFont.xHeight : baseFont.capHeight) / 2.0
         let centerY = baselineY - targetCenterAboveBaseline
         let referenceRect = usedRect.height > 0 ? usedRect : lineFragmentRect

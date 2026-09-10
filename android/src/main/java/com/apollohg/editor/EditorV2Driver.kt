@@ -66,6 +66,7 @@ internal interface EditorV2Driver {
     fun toggleHeading(level: Int, anchor: Int, head: Int): String?
     fun toggleCodeBlock(anchor: Int, head: Int): String?
     fun toggleBlockquote(anchor: Int, head: Int): String?
+    fun applyListType(listType: String, anchor: Int, head: Int): String?
     fun wrapInList(listType: String, anchor: Int, head: Int): String?
     fun unwrapFromList(anchor: Int, head: Int): String?
     fun indentListItem(anchor: Int, head: Int): String?
