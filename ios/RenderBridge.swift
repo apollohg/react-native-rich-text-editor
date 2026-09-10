@@ -239,17 +239,14 @@ final class RenderBridge {
                     baseAttrs = sheet.inlineAttributes(marks, base: base, ancestors: blockStack.map(\.nodeType))
                 }
                 if isCodeBlock {
-                    // blockFont already carries theme.codeBlock.text. Keep an
-                    // explicit code-block family for ordinary marked text;
-                    // otherwise use the shared monospace resolver. In either
-                    // case, the resolver accepts a face only if it satisfies
-                    // the complete bold/italic request.
+                    // Preserve explicit code families through the final monospace fallback.
                     let resolvedFont = baseAttrs[.font] as? UIFont ?? blockFont
                     let markTraits = resolvedFont.fontDescriptor.symbolicTraits
                         .intersection([.traitBold, .traitItalic])
-                    let themedFamily = theme?.codeBlock?.text?.fontFamily != nil
+                    let codeValues = theme?.styleSheet?.resolvedValues("codeBlock", ancestors: blockStack.dropLast().map(\.nodeType))
+                    let themedFamily = (codeValues?["fontFamily"] as? String) ?? theme?.codeBlock?.text?.fontFamily
                     baseAttrs[.font] = ViewerFontEnvironment.shared.resolveFont(
-                        family: themedFamily ? nil : "monospace",
+                        family: themedFamily != nil ? nil : "monospace",
                         size: resolvedFont.pointSize,
                         fallback: resolvedFont,
                         additionalTraits: markTraits,

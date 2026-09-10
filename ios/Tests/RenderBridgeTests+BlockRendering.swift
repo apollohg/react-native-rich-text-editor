@@ -2,6 +2,35 @@ import CoreText
 import XCTest
 
 extension RenderBridgeTests {
+    func testRender_codeBlock_honorsContextualFontFamily() throws {
+        let json = """
+        [
+            {"type":"blockStart","nodeType":"blockquote","depth":0},
+            {"type":"blockStart","nodeType":"codeBlock","depth":1},
+            {"type":"textRun","text":"plain","marks":[]},
+            {"type":"textRun","text":"marked","marks":["bold","italic"]},
+            {"type":"blockEnd"},{"type":"blockEnd"}
+        ]
+        """
+        func render(_ rules: [[String: Any]]) -> NSAttributedString {
+            RenderBridge.renderElements(fromJSON: json, baseFont: baseFont, textColor: textColor,
+                theme: EditorTheme(dictionary: ["version": 1, "styles": [:], "rules": rules]))
+        }
+        let baseline = render([])
+        let contextual = render([["path": ["blockquote", "codeBlock"], "style": ["fontFamily": "Courier New"]]])
+        let unmatched = render([["path": ["listItem", "codeBlock"], "style": ["fontFamily": "Courier New"]]])
+        for offset in [0, 5] {
+            let font = try XCTUnwrap(contextual.attribute(.font, at: offset, effectiveRange: nil) as? UIFont)
+            XCTAssertEqual(font.familyName, "Courier New")
+            let baselineFont = try XCTUnwrap(baseline.attribute(.font, at: offset, effectiveRange: nil) as? UIFont)
+            let unmatchedFont = try XCTUnwrap(unmatched.attribute(.font, at: offset, effectiveRange: nil) as? UIFont)
+            XCTAssertEqual(unmatchedFont, baselineFont)
+            if offset == 5 {
+                XCTAssertTrue(font.fontDescriptor.symbolicTraits.contains([.traitBold, .traitItalic]))
+            }
+        }
+    }
+
     /// Two adjacent code blocks must produce two separate background groups —
     /// the separator newline between blocks carries no codeBlockBackgroundColor.
     func testCodeBlockGrouping_adjacentBlocksAreSeparate() {
