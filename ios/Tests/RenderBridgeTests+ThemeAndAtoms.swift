@@ -52,7 +52,15 @@ extension RenderBridgeTests {
         XCTAssertEqual(text.fontFamily, "Courier")
         XCTAssertEqual(text.fontSize, 21)
         XCTAssertEqual(text.fontWeight, "700")
-        XCTAssertEqual(text.color, EditorTheme.color(from: "#11223380"))
+        XCTAssertEqual(
+            text.color,
+            UIColor(
+                red: 0x11 as CGFloat / 255.0,
+                green: 0x22 as CGFloat / 255.0,
+                blue: 0x33 as CGFloat / 255.0,
+                alpha: 0x80 as CGFloat / 255.0
+            )
+        )
         XCTAssertEqual(text.lineHeight, 28)
         XCTAssertEqual(
             sheet.textValues("paragraph", ancestors: ["blockquote"])["letterSpacing"] as? Int,
