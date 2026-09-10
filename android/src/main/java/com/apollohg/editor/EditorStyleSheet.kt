@@ -131,6 +131,12 @@ class EditorStyleSheet private constructor(
         return result
     }
 
+    internal fun hasMatchingRuleProperty(
+        element: String,
+        ancestors: List<String>,
+        property: String
+    ): Boolean = matchingRules(element, ancestors).any { it.style.has(property) }
+
     private fun matchingRules(element: String, ancestors: List<String>): List<EditorStyleRule> {
         val chain = (ancestors + element).map { canonicalMark(canonicalElement(it)) }
         return rules.filter { rule ->

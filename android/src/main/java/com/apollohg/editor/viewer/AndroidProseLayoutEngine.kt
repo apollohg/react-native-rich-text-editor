@@ -796,17 +796,15 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             }
         }
         if (block.nodeType == "horizontalRule" || block.nodeType == "horizontal_rule") {
-            val ruleStyle = theme.sourceTheme?.styleSheet?.resolveElement(
-                "horizontalRule",
-                block.containers.map {
-                    it.nodeType
-                }
-            )
-            val baseHeight = theme.sourceTheme?.styleSheet?.get("horizontalRule")?.height
-            val thickness = if (ruleStyle?.height == baseHeight) {
-                theme.ruleThicknessPx
-            } else {
+            val sheet = theme.sourceTheme?.styleSheet
+            val ancestors = block.containers.map { it.nodeType }
+            val ruleStyle = sheet?.resolveElement("horizontalRule", ancestors)
+            val thickness = if (
+                sheet?.hasMatchingRuleProperty("horizontalRule", ancestors, "height") == true
+            ) {
                 ruleStyle?.height?.times(theme.density)?.toInt() ?: theme.ruleThicknessPx
+            } else {
+                theme.ruleThicknessPx
             }
             val ruleTop = cursorY + theme.ruleMarginPx
             val ruleLeft = theme.insetLeftPx + listInset + quoteInset

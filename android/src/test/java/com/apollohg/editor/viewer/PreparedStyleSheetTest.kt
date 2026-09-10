@@ -12,7 +12,7 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [34])
 class PreparedStyleSheetTest {
     @Test
-    fun `unchanged rule heights retain the prepared viewer minimum`() {
+    fun `explicit height rules override the prepared viewer minimum`() {
         fun measure(height: Int, rules: String): Int {
             val theme = PreparedProseTheme.resolve(
                 """{"version":1,"styles":{"horizontalRule":{"height":$height}},"rules":$rules}""",
@@ -35,7 +35,12 @@ class PreparedStyleSheetTest {
             1,
             measure(0, """[{"path":["horizontalRule"],"style":{"backgroundColor":"#ff0000ff"}}]""")
         )
+        assertEquals(0, measure(0, """[{"path":["horizontalRule"],"style":{"height":0}}]"""))
         assertEquals(0, measure(2, """[{"path":["horizontalRule"],"style":{"height":0}}]"""))
+        assertEquals(
+            1,
+            measure(0, """[{"path":["blockquote","horizontalRule"],"style":{"height":0}}]""")
+        )
     }
 
     @Test
