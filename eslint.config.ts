@@ -123,12 +123,7 @@ export default defineConfig([
                     disallowTypeAnnotations: false,
                 },
             ],
-            '@typescript-eslint/only-throw-error': [
-                'error',
-                {
-                    allow: [ 'NuxtError' ],
-                },
-            ],
+            '@typescript-eslint/only-throw-error': 'error',
             '@typescript-eslint/no-explicit-any': 'off',
             '@typescript-eslint/no-unused-vars': [
                 'error',
