@@ -144,7 +144,8 @@ extension RenderBridge {
         topLevelChildIndex: Int?,
         theme: EditorTheme?,
         atomKey: String,
-        atomConfiguration: AtomRenderConfiguration?
+        atomConfiguration: AtomRenderConfiguration?,
+        ancestors: [String] = []
     ) -> NSAttributedString {
         var attrs = defaultAttributes(baseFont: baseFont, textColor: textColor)
         attrs[RenderBridgeAttributes.voidNodeType] = nodeType
@@ -171,9 +172,9 @@ extension RenderBridge {
         switch nodeType {
         case "horizontalRule", "horizontal_rule":
             let attachment = HorizontalRuleAttachment()
-            attachment.styleBox = theme?.styleSheet?.box("horizontalRule")
-            attachment.lineColor = theme?.horizontalRule?.color ?? textColor.withAlphaComponent(0.3)
-            attachment.lineHeight = theme?.horizontalRule?.thickness ?? LayoutConstants.horizontalRuleHeight
+            attachment.styleBox = theme?.styleSheet?.box("horizontalRule", ancestors: ancestors)
+            attachment.lineColor = attachment.styleBox?.color("backgroundColor") ?? theme?.horizontalRule?.color ?? textColor.withAlphaComponent(0.3)
+            attachment.lineHeight = attachment.styleBox.map { $0.number("height", fallback: 1) } ?? theme?.horizontalRule?.thickness ?? LayoutConstants.horizontalRuleHeight
             attachment.verticalPadding = resolvedHorizontalRuleVerticalMargin(theme: theme)
             let attrStr = NSMutableAttributedString(
                 attachment: attachment
@@ -195,7 +196,7 @@ extension RenderBridge {
                 preferredWidth: jsonCGFloat(elementAttrs["width"]),
                 preferredHeight: jsonCGFloat(elementAttrs["height"])
             )
-            attachment.styleBox = theme?.styleSheet?.box("image")
+            attachment.styleBox = theme?.styleSheet?.box("image", ancestors: ancestors)
             let attrStr = NSMutableAttributedString(attachment: attachment)
             let range = NSRange(location: 0, length: attrStr.length)
             attrStr.addAttributes(attrs, range: range)
@@ -226,7 +227,15 @@ extension RenderBridge {
         attrs[RenderBridgeAttributes.voidNodeType] = nodeType
         attrs[RenderBridgeAttributes.docPos] = docPos
         if nodeType == "mention" {
-            let resolvedMentionTheme = theme?.mentions?.merged(with: mentionTheme) ?? mentionTheme
+            var globalMentionTheme = theme?.mentions
+            if let sheet = theme?.styleSheet, !sheet.rules.isEmpty {
+                let projection = EditorTheme.legacyProjection(
+                    styles: ["mention": sheet.resolvedValues("mention", ancestors: blockStack.map(\.nodeType))],
+                    root: theme?.styleSheetMentionOverrides.map { ["mentions": $0] } ?? [:]
+                )
+                globalMentionTheme = (projection["mentions"] as? [String: Any]).map(EditorMentionTheme.init(dictionary:))
+            }
+            let resolvedMentionTheme = globalMentionTheme?.merged(with: mentionTheme) ?? mentionTheme
             let node = resolvedMentionTheme?.node
             attrs[.foregroundColor] = node?.textColor ?? blockColor
             attrs[.backgroundColor] =

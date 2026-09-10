@@ -398,6 +398,7 @@ struct EditorContentInsets {
 
 struct EditorTheme {
     var styleSheet: EditorStyleSheet?
+    var styleSheetMentionOverrides: [String: Any]?
     var text: EditorTextStyle?
     var paragraph: EditorTextStyle?
     var blockquote: EditorBlockquoteTheme?
@@ -433,6 +434,7 @@ struct EditorTheme {
             let styles = dictionary["styles"] as? [String: [String: Any]] ?? [:]
             self.init(legacyDictionary: Self.legacyProjection(styles: styles, root: dictionary))
             styleSheet = EditorStyleSheet(styles: styles, rules: EditorStyleSheet.decodeRules(dictionary["rules"]))
+            styleSheetMentionOverrides = dictionary["mentions"] as? [String: Any]
             return
         }
         self.init(legacyDictionary: dictionary)

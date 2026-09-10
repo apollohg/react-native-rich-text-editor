@@ -6,7 +6,12 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.text.style.ReplacementSpan
 
-internal fun resolvedCheckboxStyle(sheet: EditorStyleSheet, checked: Boolean): EditorElementStyle {
+internal fun resolvedCheckboxStyle(
+    sheet: EditorStyleSheet,
+    checked: Boolean,
+    ancestors: List<String> = emptyList()
+): EditorElementStyle {
+    val resolved = sheet.resolveElement("taskCheckbox", ancestors)
     val base = EditorElementStyle(
         EditorTextStyle(),
         EditorBoxStyle(
@@ -16,8 +21,8 @@ internal fun resolvedCheckboxStyle(sheet: EditorStyleSheet, checked: Boolean): E
         size = 18f,
         gap = 6f
     )
-        .mergedWith(sheet["taskCheckbox"])
-    return if (checked) base.mergedWith(sheet["taskCheckbox"]?.checked) else base
+        .mergedWith(resolved)
+    return if (checked) base.mergedWith(resolved?.checked) else base
 }
 
 internal fun drawCheckbox(

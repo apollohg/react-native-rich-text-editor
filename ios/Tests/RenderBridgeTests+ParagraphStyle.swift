@@ -2,6 +2,58 @@ import CoreText
 import XCTest
 
 extension RenderBridgeTests {
+    func testRender_contextualOuterListIndentUsesItsOwnPrefix() {
+        let theme = EditorTheme(dictionary: [
+            "version": 1, "styles": [:],
+            "rules": [["path": ["blockquote", "bulletList"], "style": ["indent": 50]]]
+        ])
+        let stack = [
+            BlockContext(nodeType: "blockquote", depth: 0, listContext: nil),
+            BlockContext(nodeType: "bulletList", depth: 1, listContext: nil),
+            BlockContext(nodeType: "listItem", depth: 1, listContext: ["ordered": false]),
+            BlockContext(nodeType: "orderedList", depth: 2, listContext: nil),
+            BlockContext(nodeType: "listItem", depth: 2, listContext: ["ordered": true, "index": 1]),
+            BlockContext(nodeType: "paragraph", depth: 2, listContext: nil)
+        ]
+        let context = RenderBridge.effectiveBlockContext(stack)!
+        let baseline = RenderBridge.paragraphStyleForBlock(context, blockStack: stack, theme: EditorTheme(dictionary: ["version": 1, "styles": [:]]), baseFont: baseFont)
+        let resolved = RenderBridge.paragraphStyleForBlock(context, blockStack: stack, theme: theme, baseFont: baseFont)
+        XCTAssertEqual(resolved.headIndent - baseline.headIndent, 26)
+    }
+
+    func testRender_contextualBoxesPreserveListContainers() throws {
+        let theme = EditorTheme(dictionary: [
+            "version": 1, "styles": ["paragraph": ["marginBottom": 8]], "rules": [
+                ["path": ["listItem", "paragraph"], "style": ["marginBottom": 0]],
+                ["path": ["blockquote", "bulletList"], "style": ["paddingLeft": 13]],
+                ["path": ["listItem", "listMarker"], "style": ["scale": 1, "gap": 12, "color": "#ff0000ff"]],
+                ["path": ["paragraph", "listMarker"], "style": ["gap": 99]],
+                ["path": ["blockquote", "bulletList", "listItem", "paragraph"], "style": ["paddingLeft": 7]]
+            ]
+        ])
+        let result = RenderBridge.renderElements(fromJSON: """
+        [
+        {"type":"blockStart","nodeType":"blockquote","depth":0},
+        {"type":"blockStart","nodeType":"listItem","depth":1,"listContext":{"ordered":false,"index":1,"isFirst":true,"isLast":true}},
+        {"type":"blockStart","nodeType":"paragraph","depth":1},
+        {"type":"textRun","text":"nested","marks":["bold"]},
+        {"type":"blockEnd"},{"type":"blockEnd"},{"type":"blockEnd"},
+        {"type":"blockStart","nodeType":"paragraph","depth":0},
+        {"type":"textRun","text":"top","marks":[]},{"type":"blockEnd"}
+        ]
+        """, baseFont: baseFont, textColor: textColor, theme: theme)
+        let nested = try XCTUnwrap(result.attribute(editorStyleBoxesAttribute, at: 0, effectiveRange: nil) as? [EditorRenderedBox])
+        let top = try XCTUnwrap(result.attribute(editorStyleBoxesAttribute, at: (result.string as NSString).range(of: "top").location, effectiveRange: nil) as? [EditorRenderedBox])
+        XCTAssertEqual(nested.last?.box.margin.bottom, 0)
+        XCTAssertEqual(top.last?.box.margin.bottom, 8)
+        XCTAssertEqual(nested.last?.box.padding.left, 7)
+        XCTAssertEqual(nested[1].box.padding.left, 13)
+        XCTAssertEqual(nested.last?.leading, 32)
+        XCTAssertEqual(result.attribute(RenderBridgeAttributes.listMarkerGap, at: 0, effectiveRange: nil) as? CGFloat, 12)
+        XCTAssertEqual(result.attribute(RenderBridgeAttributes.listMarkerScale, at: 0, effectiveRange: nil) as? CGFloat, 1)
+        XCTAssertEqual(result.attribute(RenderBridgeAttributes.listMarkerColor, at: 0, effectiveRange: nil) as? UIColor, .red)
+    }
+
     func testRender_invalidJSON() {
         let result = RenderBridge.renderElements(
             fromJSON: "not valid json",

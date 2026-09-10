@@ -16,6 +16,157 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class EditorStyleSheetTest {
     @Test
+    fun `editor content and placeholder rules use empty ancestry`() {
+        val editor = EditorEditText(org.robolectric.RuntimeEnvironment.getApplication())
+        editor.placeholderText = "Write"
+        editor.applyTheme(
+            EditorTheme.fromJson(
+                """{
+            "version":1,"styles":{},"rules":[
+            {"path":["content"],"style":{"paddingLeft":23}},
+            {"path":["placeholder"],"style":{"color":"#ff0000ff"}},
+            {"path":["paragraph","placeholder"],"style":{"color":"#00ff00ff"}}
+            ]
+            }"""
+            )
+        )
+        assertEquals((23 * editor.resources.displayMetrics.density).toInt(), editor.paddingLeft)
+        val layout = editor.buildPlaceholderLayout(200)!!
+        val paint = android.text.TextPaint()
+        (layout.text as android.text.Spanned).getSpans(
+            0,
+            1,
+            EditorResolvedTextSpan::class.java
+        ).single().updateDrawState(paint)
+        assertEquals(Color.RED, paint.color)
+    }
+
+    @Test
+    fun `editor mention rules retain local overrides`() {
+        val theme = EditorTheme.fromJson(
+            """{
+            "version":1,"styles":{"mention":{"paddingLeft":3}},
+            "rules":[{"path":["paragraph","mention"],"style":{"paddingLeft":17}}]
+            }"""
+        )!!
+        val rendered = RenderBridge.buildSpannable(
+            """[
+            {"type":"blockStart","nodeType":"paragraph","depth":0},
+            {"type":"opaqueInlineAtom","nodeType":"mention","docPos":0,"label":"same"},
+            {"type":"opaqueInlineAtom","nodeType":"mention","docPos":1,"label":"same","mentionTheme":{"node":{"style":{"paddingLeft":5}}}},
+            {"type":"blockEnd"}
+            ]""",
+            17f,
+            Color.BLACK,
+            theme,
+            1f
+        )
+        val spans = rendered.getSpans(0, rendered.length, EditorMentionSpan::class.java).sortedBy {
+            rendered.getSpanStart(it)
+        }
+        val paint = android.graphics.Paint()
+        assertEquals(
+            12,
+            spans[0].getSize(paint, rendered, 0, 4, null) -
+                spans[1].getSize(paint, rendered, 4, 8, null)
+        )
+    }
+
+    @Test
+    fun `editor special elements resolve their owning ancestry`() {
+        val theme = EditorTheme.fromJson(
+            """{
+            "version":1,"styles":{"taskCheckbox":{"size":20,"checked":{"size":26}},"image":{"paddingLeft":2}},"rules":[
+            {"path":["taskItem","taskCheckbox"],"style":{"size":30,"checked":{"size":34}}},
+            {"path":["paragraph","bold"],"style":{"color":"#ff0000ff"}},
+            {"path":["blockquote","horizontalRule"],"style":{"marginTop":19,"height":7}},
+            {"path":["blockquote","image"],"style":{"paddingLeft":11,"resizeMode":"contain"}}
+            ]
+            }"""
+        )!!
+        val rendered = RenderBridge.buildSpannable(
+            """[
+            {"type":"blockStart","nodeType":"blockquote","depth":0},
+            {"type":"blockStart","nodeType":"taskItem","depth":1,"listContext":{"kind":"task","checked":true,"isFirst":true,"isLast":true}},
+            {"type":"blockStart","nodeType":"paragraph","depth":1},
+            {"type":"textRun","text":"marked","marks":["bold"]},
+            {"type":"blockEnd"},{"type":"blockEnd"},
+            {"type":"voidBlock","nodeType":"horizontalRule","docPos":20},
+            {"type":"voidBlock","nodeType":"image","docPos":21,"attrs":{"src":"invalid","width":40,"height":20}},
+            {"type":"blockEnd"}
+            ]""",
+            17f,
+            Color.BLACK,
+            theme,
+            1f
+        )
+        val checkbox = rendered.getSpans(
+            0,
+            rendered.length,
+            EditorCheckboxSpan::class.java
+        ).single()
+        assertEquals(34, checkbox.getSize(android.graphics.Paint(), rendered, 0, 1, null))
+        val image = rendered.getSpans(0, rendered.length, BlockImageSpan::class.java).single()
+        assertEquals(11f, image.imageStyle!!.box.padding.left)
+        assertEquals("contain", image.imageStyle!!.resizeMode)
+        val rule = rendered.getSpans(0, rendered.length, EditorBlockBoxSpan::class.java).single {
+            it.nodeType ==
+                "horizontalRule"
+        }
+        assertEquals(19f, rule.box.margin.top)
+        val markStart = rendered.indexOf("marked")
+        val paint = android.text.TextPaint()
+        rendered.getSpans(markStart, markStart + 1, EditorResolvedTextSpan::class.java).forEach {
+            it.updateDrawState(paint)
+        }
+        assertEquals(Color.RED, paint.color)
+    }
+
+    @Test
+    fun `editor boxes use ancestry prefixes and preserve structural list containers`() {
+        val theme = EditorTheme.fromJson(
+            """{
+            "version":1,"styles":{"paragraph":{"marginBottom":8}},"rules":[
+            {"path":["listItem","paragraph"],"style":{"marginBottom":0}},
+            {"path":["blockquote","bulletList"],"style":{"paddingLeft":13,"indent":41}},
+            {"path":["listItem","listMarker"],"style":{"scale":1,"gap":12,"color":"#ff0000ff"}},
+            {"path":["paragraph","listMarker"],"style":{"gap":99}},
+            {"path":["blockquote","bulletList","listItem","paragraph"],"style":{"paddingLeft":7}}
+            ]
+            }"""
+        )!!
+        val rendered = RenderBridge.buildSpannable(
+            """[
+            {"type":"blockStart","nodeType":"blockquote","depth":0},
+            {"type":"blockStart","nodeType":"listItem","depth":1,"listContext":{"ordered":false,"index":1,"isFirst":true,"isLast":true}},
+            {"type":"blockStart","nodeType":"paragraph","depth":1},
+            {"type":"textRun","text":"nested","marks":["bold"]},
+            {"type":"blockEnd"},{"type":"blockEnd"},{"type":"blockEnd"},
+            {"type":"blockStart","nodeType":"paragraph","depth":0},
+            {"type":"textRun","text":"top","marks":[]},{"type":"blockEnd"}
+            ]""",
+            17f,
+            Color.BLACK,
+            theme,
+            1f
+        )
+        val boxes = rendered.getSpans(0, rendered.length, EditorBlockBoxSpan::class.java)
+        val paragraphs = boxes.filter {
+            it.nodeType == "paragraph"
+        }.sortedBy { rendered.getSpanStart(it) }
+        assertEquals(0f, paragraphs[0].box.margin.bottom)
+        assertEquals(8f, paragraphs[1].box.margin.bottom)
+        assertEquals(7f, paragraphs[0].box.padding.left)
+        assertEquals(13f, boxes.single { it.nodeType == "bulletList" }.box.padding.left)
+        assertEquals(
+            theme.styleSheet!!.box("blockquote").outerInset.left + 13f,
+            paragraphs[0].ancestorInset.left
+        )
+        val bullet = rendered.getSpans(0, rendered.length, CenteredBulletSpan::class.java).single()
+        assertEquals(18, bullet.getSize(android.graphics.Paint(), rendered, 0, 1, null))
+    }
+
+    @Test
     fun `contextual box rules preserve sparse base values and explicit zeros`() {
         val sheet = EditorTheme.fromJson(
             """{"version":1,"styles":{"paragraph":{"marginBottom":8,"paddingLeft":3}},""" +

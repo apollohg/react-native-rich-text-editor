@@ -285,9 +285,9 @@ internal fun RenderBridge.calculateIndent(
     density: Float
 ): Float {
     theme?.styleSheet?.let { sheet ->
-        val lists = blockStack.filter { it.listContext != null }
-        return lists.mapIndexed { index, block ->
-            val context = block.listContext!!
+        val lists = blockStack.withIndex().filter { it.value.listContext != null }
+        return lists.mapIndexed { index, entry ->
+            val context = entry.value.listContext!!
             val name = if (context.optString("kind") ==
                 "task"
             ) {
@@ -297,7 +297,20 @@ internal fun RenderBridge.calculateIndent(
             } else {
                 "bulletList"
             }
-            val style = sheet[name]
+            val prefix = blockStack.take(entry.index)
+            val containerIndex = prefix.indexOfLast { canonicalElement(it.nodeType) == name }
+            val style = sheet.resolveElement(
+                name,
+                prefix.take(
+                    if (containerIndex >=
+                        0
+                    ) {
+                        containerIndex
+                    } else {
+                        prefix.size
+                    }
+                ).map { it.nodeType }
+            )
             (style?.indent ?: LayoutConstants.INDENT_PER_DEPTH) *
                 (if (index == 0) style?.baseIndentMultiplier ?: 1f else 1f) *
                 density

@@ -101,14 +101,20 @@ internal fun RenderBridge.appendElements(
                     atomId != null,
                     state.blockStack.isEmpty(),
                     state.reusableImages,
-                    state.blockStack.fold(EditorEdges()) { total, block ->
+                    state.blockStack.foldIndexed(EditorEdges()) { index, total, block ->
                         total +
                             (
-                                theme?.styleSheet?.box(block.nodeType)?.outerInset?.scaled(density)
+                                theme?.styleSheet?.box(
+                                    block.nodeType,
+                                    state.blockStack.take(index).map {
+                                        it.nodeType
+                                    }
+                                )?.outerInset?.scaled(density)
                                     ?: EditorEdges()
                                 )
                     },
-                    state.blockStack.size
+                    state.blockStack.size,
+                    state.blockStack.map { it.nodeType }
                 )
             }
 
@@ -279,6 +285,12 @@ internal fun RenderBridge.appendElements(
                 }
 
                 if (markerListContext != null) {
+                    val ownerIndex = state.blockStack.indexOfLast { it.listContext != null }
+                    val markerAncestors = state.blockStack.take(ownerIndex + 1).map { it.nodeType }
+                    val markerStyle = theme?.styleSheet?.resolveElement(
+                        "listMarker",
+                        markerAncestors
+                    )
                     val ordered = markerListContext.optBoolean("ordered", false)
                     val isTask = markerListContext.optString("kind", "") == "task"
                     val visualListDepth = (
@@ -295,7 +307,7 @@ internal fun RenderBridge.appendElements(
                         OrderedListMarkerFormatter.label(
                             index,
                             visualListDepth,
-                            theme?.list?.orderedMarker
+                            markerStyle?.ordered ?: theme?.list?.orderedMarker
                         )
                     } else {
                         null
@@ -317,7 +329,7 @@ internal fun RenderBridge.appendElements(
                         theme,
                         blockquoteDepth(state.blockStack) > 0
                     )
-                    val markerColor = theme?.list?.markerColor
+                    val markerColor = markerStyle?.text?.color ?: theme?.list?.markerColor
                         ?: markerTextStyle.color
                         ?: textColor
                     appendStyledText(
@@ -351,7 +363,11 @@ internal fun RenderBridge.appendElements(
                     }
                     val checkbox = if (isTask) {
                         theme?.styleSheet?.let {
-                            resolvedCheckboxStyle(it, markerListContext.optBoolean("checked"))
+                            resolvedCheckboxStyle(
+                                it,
+                                markerListContext.optBoolean("checked"),
+                                markerAncestors
+                            )
                         }
                     } else {
                         null
@@ -370,7 +386,7 @@ internal fun RenderBridge.appendElements(
                     }
                     val markerGapPx =
                         (
-                            checkbox?.gap ?: theme?.list?.markerGap
+                            checkbox?.gap ?: markerStyle?.gap ?: theme?.list?.markerGap
                                 ?: LayoutConstants.LIST_MARKER_TEXT_GAP
                             ) *
                             density
@@ -392,7 +408,7 @@ internal fun RenderBridge.appendElements(
                     }
                     if (!ordered && !isTask) {
                         val markerScale =
-                            theme?.list?.markerScale
+                            markerStyle?.scale ?: theme?.list?.markerScale
                                 ?: LayoutConstants.UNORDERED_LIST_MARKER_FONT_SCALE
                         val bulletRadius = ((markerBaseSize * markerScale) * 0.16f).coerceAtLeast(
                             2f * density
@@ -427,6 +443,7 @@ internal fun RenderBridge.appendElements(
 
             "blockEnd" -> {
                 if (state.blockStack.isNotEmpty()) {
+                    val endedAncestors = state.blockStack.dropLast(1).map { it.nodeType }
                     val endedBlock = state.blockStack.removeAt(state.blockStack.lastIndex)
                     appendTrailingHardBreakPlaceholderIfNeeded(
                         builder = state.result,
@@ -441,9 +458,18 @@ internal fun RenderBridge.appendElements(
                     theme?.styleSheet?.let { sheet ->
                         val start = endedBlock.renderStart
                         if (start <= state.result.length) {
-                            val ancestors = state.blockStack.fold(EditorEdges()) { total, block ->
+                            val ancestors = state.blockStack.foldIndexed(EditorEdges()) {
+                                    index,
+                                    total,
+                                    block
+                                ->
                                 total +
-                                    sheet.box(block.nodeType).outerInset.scaled(density)
+                                    sheet.box(
+                                        block.nodeType,
+                                        state.blockStack.take(index).map {
+                                            it.nodeType
+                                        }
+                                    ).outerInset.scaled(density)
                             }
                             val empty = start == state.result.length
                             val flags = if (empty) {
@@ -453,7 +479,7 @@ internal fun RenderBridge.appendElements(
                             }
                             state.result.setSpan(
                                 EditorBlockBoxSpan(
-                                    sheet.box(endedBlock.nodeType).scaled(density),
+                                    sheet.box(endedBlock.nodeType, endedAncestors).scaled(density),
                                     ancestors,
                                     state.blockStack.size,
                                     endedBlock.nodeType

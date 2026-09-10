@@ -317,7 +317,8 @@ internal fun RenderBridge.appendVoidBlock(
     isDirectRootChild: Boolean,
     reusableImages: MutableList<BlockImageSpan> = mutableListOf(),
     ancestorBoxInset: EditorEdges = EditorEdges(),
-    containerDepth: Int = 0
+    containerDepth: Int = 0,
+    ancestors: List<String> = emptyList()
 ) {
     if (docPos != null && atomConfiguration?.registeredNodeTypes?.contains(nodeType) == true) {
         val start = builder.length
@@ -356,18 +357,21 @@ internal fun RenderBridge.appendVoidBlock(
             val start = builder.length
             builder.append(LayoutConstants.OBJECT_REPLACEMENT_CHARACTER)
             val end = builder.length
-            val ruleColor = theme?.horizontalRule?.color ?: Color.argb(
-                (Color.alpha(textColor) * 0.3f).toInt(),
-                Color.red(textColor),
-                Color.green(textColor),
-                Color.blue(textColor)
-            )
+            val ruleStyle = theme?.styleSheet?.resolveElement("horizontalRule", ancestors)
+            val ruleBox = theme?.styleSheet?.box("horizontalRule", ancestors)
+            val ruleColor =
+                ruleStyle?.box?.backgroundColor ?: theme?.horizontalRule?.color ?: Color.argb(
+                    (Color.alpha(textColor) * 0.3f).toInt(),
+                    Color.red(textColor),
+                    Color.green(textColor),
+                    Color.blue(textColor)
+                )
             builder.setSpan(
                 HorizontalRuleSpan(
                     lineColor = ruleColor,
                     lineHeight =
                         (
-                            theme?.horizontalRule?.thickness
+                            ruleStyle?.height ?: theme?.horizontalRule?.thickness
                                 ?: LayoutConstants.HORIZONTAL_RULE_HEIGHT
                             ) *
                             density,
@@ -378,17 +382,17 @@ internal fun RenderBridge.appendVoidBlock(
                             ) *
                             density,
                     boxInset =
-                        theme?.styleSheet?.box("horizontalRule")?.outerInset?.scaled(density)
+                        ruleBox?.outerInset?.scaled(density)
                             ?: EditorEdges()
                 ),
                 start,
                 end,
                 Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
             )
-            theme?.styleSheet?.let {
+            ruleBox?.let { box ->
                 builder.setSpan(
                     EditorBlockBoxSpan(
-                        it.box("horizontalRule").scaled(density),
+                        box.scaled(density),
                         ancestorBoxInset,
                         containerDepth,
                         "horizontalRule"
@@ -417,8 +421,8 @@ internal fun RenderBridge.appendVoidBlock(
             builder.append(LayoutConstants.OBJECT_REPLACEMENT_CHARACTER)
             val end = builder.length
             val imageStyle = theme?.styleSheet?.let {
-                it["image"]
-                    ?: EditorElementStyle(EditorTextStyle(), it.box("image"))
+                it.resolveElement("image", ancestors)
+                    ?: EditorElementStyle(EditorTextStyle(), it.box("image", ancestors))
             }
             val reused = reusableImages.firstOrNull {
                 it.matches(source, preferredWidthDp, preferredHeightDp)
@@ -494,7 +498,17 @@ internal fun RenderBridge.appendOpaqueInlineAtom(
                 )
             )
         builder.setSpan(
-            EditorMentionSpan(resolvedMentionStyle(base, theme, mentionTheme), density),
+            EditorMentionSpan(
+                resolvedMentionStyle(
+                    base,
+                    theme,
+                    mentionTheme,
+                    blockStack.map {
+                        it.nodeType
+                    }
+                ),
+                density
+            ),
             start,
             end,
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE

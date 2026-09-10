@@ -97,12 +97,15 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             placeholderLabel.textColor = theme?.placeholderColor ?? .placeholderText
             if let sheet = theme?.styleSheet {
                 var attributes: [NSAttributedString.Key: Any] = [.font: resolvedDefaultFont(), .foregroundColor: theme?.placeholderColor ?? UIColor.placeholderText]
-                EditorStyleSheet.applyText(sheet["placeholder"], to: &attributes)
+                EditorStyleSheet.applyText(sheet.resolvedValues("placeholder", ancestors: []), to: &attributes)
                 placeholderLabel.attributedText = NSAttributedString(string: placeholder, attributes: attributes)
             } else { placeholderLabel.attributedText = nil; placeholderLabel.text = placeholder }
             styleContentView.box = theme?.styleSheet?.box("content")
             backgroundColor = theme?.backgroundColor ?? baseBackgroundColor
-            if let contentInsets = theme?.contentInsets {
+            if let box = theme?.styleSheet?.box("content", ancestors: []) {
+                textContainerInset = box.inset
+                textContainer.lineFragmentPadding = 0
+            } else if let contentInsets = theme?.contentInsets {
                 textContainerInset = UIEdgeInsets(
                     top: contentInsets.top ?? 0,
                     left: contentInsets.left ?? 0,

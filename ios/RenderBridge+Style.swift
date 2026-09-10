@@ -17,17 +17,37 @@ extension RenderBridge {
         if let sheet = theme?.styleSheet {
             let ancestors = blockStack.dropLast().map(\.nodeType)
             let text = sheet.textStyle(context.nodeType, ancestors: ancestors)
-            let horizontal = blockStack.reduce(UIEdgeInsets.zero) { $0.adding(sheet.box($1.nodeType).outerInsets) }
+            let horizontal = blockStack.enumerated().reduce(UIEdgeInsets.zero) { total, entry in
+                total.adding(sheet.box(entry.element.nodeType, ancestors: blockStack.prefix(entry.offset).map(\.nodeType)).outerInsets)
+            }
             let listName = context.listContext.map { ($0["kind"] as? String) == "task" ? "taskList" : (($0["ordered"] as? NSNumber)?.boolValue == true ? "orderedList" : "bulletList") }
+            let ownerIndex = blockStack.lastIndex { $0.listContext != nil }
+            let markerAncestors = ownerIndex.map { blockStack.prefix($0 + 1).map(\.nodeType) } ?? []
             let list = listName.map { sheet[$0] } ?? [:]
+            var contextualIndent: CGFloat = 0
+            for (listDepth, entry) in blockStack.enumerated().filter({ $0.element.listContext != nil }).enumerated() {
+                let context = entry.element.listContext!
+                let name = (context["kind"] as? String) == "task" ? "taskList" : ((context["ordered"] as? NSNumber)?.boolValue == true ? "orderedList" : "bulletList")
+                let prefix = Array(blockStack.prefix(entry.offset))
+                let containerIndex = prefix.lastIndex { EditorStyleSheet.element($0.nodeType) == name } ?? prefix.count
+                let resolved = sheet.resolvedValues(name, ancestors: prefix.prefix(containerIndex).map(\.nodeType))
+                let base = sheet[name]
+                let resolvedIndent = EditorTheme.cgFloat(resolved["indent"]) ?? LayoutConstants.indentPerDepth
+                let baseIndent = EditorTheme.cgFloat(base["indent"]) ?? LayoutConstants.indentPerDepth
+                let resolvedMultiplier = listDepth == 0 ? EditorTheme.cgFloat(resolved["baseIndentMultiplier"]) ?? 1 : 1
+                let baseMultiplier = listDepth == 0 ? EditorTheme.cgFloat(base["baseIndentMultiplier"]) ?? 1 : 1
+                contextualIndent += resolvedIndent * resolvedMultiplier - baseIndent * baseMultiplier
+            }
             let indent = EditorTheme.cgFloat(list["indent"]) ?? LayoutConstants.indentPerDepth
             let multiplier = EditorTheme.cgFloat(list["baseIndentMultiplier"]) ?? 1
             let listDepth = max(0, blockStack.filter { $0.listContext != nil }.count - 1)
-            let listInset = listName == nil ? 0 : indent * (CGFloat(listDepth) + multiplier) + listMarkerWidth(
+            // Preserve the legacy mixed-list baseline, then add each container's rule adjustment.
+            let listInset = listName == nil ? 0 : indent * (CGFloat(listDepth) + multiplier) + contextualIndent + listMarkerWidth(
                 for: context,
                 theme: theme,
                 baseFont: baseFont,
-                nestingDepth: listDepth
+                nestingDepth: listDepth,
+                ancestors: markerAncestors
             )
             style.headIndent = horizontal.left + listInset
             style.firstLineHeadIndent = style.headIndent
@@ -185,6 +205,10 @@ extension RenderBridge {
             mutableAttrs[RenderBridgeAttributes.listContext] = listContext
         }
         if let markerContext = currentBlock.listMarkerContext {
+            let ownerIndex = blockStack.lastIndex { $0.listContext != nil }
+            let markerAncestors = ownerIndex.map { blockStack.prefix($0 + 1).map(\.nodeType) } ?? []
+            let marker = theme?.styleSheet?.resolvedValues("listMarker", ancestors: markerAncestors)
+            let orderedTheme = (marker?["ordered"] as? [String: Any]).map(EditorOrderedListMarkerTheme.init(dictionary:)) ?? theme?.list?.orderedMarker
             mutableAttrs[RenderBridgeAttributes.listMarkerContext] = markerContext
             let ordered = (markerContext["ordered"] as? NSNumber)?.boolValue == true
             let visualListDepth = max(0, blockStack.filter { $0.listContext != nil }.count - 1)
@@ -196,21 +220,21 @@ extension RenderBridge {
                     OrderedListMarkerFormatter.label(
                         index: index,
                         nestingDepth: visualListDepth,
-                        theme: theme?.list?.orderedMarker
+                        theme: orderedTheme
                     )
             }
-            mutableAttrs[RenderBridgeAttributes.listMarkerColor] = theme?.list?.markerColor
+            mutableAttrs[RenderBridgeAttributes.listMarkerColor] = EditorTheme.color(from: marker?["color"]) ?? theme?.list?.markerColor
             mutableAttrs[RenderBridgeAttributes.listMarkerScale] = theme?.list?.markerScale
             if let sheet = theme?.styleSheet {
                 mutableAttrs[RenderBridgeAttributes.listMarkerScale] = ordered
                     ? 1
-                    : EditorTheme.cgFloat(sheet["listMarker"]["scale"])
+                    : EditorTheme.cgFloat(sheet.resolvedValues("listMarker", ancestors: markerAncestors)["scale"])
                         ?? LayoutConstants.unorderedListMarkerFontScale
             }
-            mutableAttrs[RenderBridgeAttributes.listMarkerGap] = theme?.list?.markerGap
+            mutableAttrs[RenderBridgeAttributes.listMarkerGap] = EditorTheme.cgFloat(marker?["gap"]) ?? theme?.list?.markerGap
             mutableAttrs[RenderBridgeAttributes.listMarkerBaseFont] = paragraphBaseFont
             if let sheet = theme?.styleSheet, (markerContext["kind"] as? String) == "task" {
-                let checkbox = sheet.checkbox(checked: markerContext["checked"] as? Bool == true)
+                let checkbox = sheet.checkbox(checked: markerContext["checked"] as? Bool == true, ancestors: markerAncestors)
                 mutableAttrs[editorTaskCheckboxAttribute] = EditorMentionRenderedBox(box: checkbox)
                 mutableAttrs[RenderBridgeAttributes.listMarkerGap] = checkbox.number("gap", fallback: 8)
             }
@@ -218,7 +242,8 @@ extension RenderBridge {
                 for: currentBlock,
                 theme: theme,
                 baseFont: paragraphBaseFont,
-                nestingDepth: visualListDepth
+                nestingDepth: visualListDepth,
+                ancestors: markerAncestors
             )
         }
         if currentBlock.nodeType == "codeBlock", theme?.styleSheet == nil {
@@ -278,27 +303,28 @@ extension RenderBridge {
         for context: BlockContext,
         theme: EditorTheme?,
         baseFont: UIFont,
-        nestingDepth: Int? = nil
+        nestingDepth: Int? = nil,
+        ancestors: [String] = []
     ) -> CGFloat {
         guard let listContext = context.listContext else { return 0 }
         if let sheet = theme?.styleSheet {
             if (listContext["kind"] as? String) == "task" {
-                let box = sheet.checkbox(checked: listContext["checked"] as? Bool == true)
+                let box = sheet.checkbox(checked: listContext["checked"] as? Bool == true, ancestors: ancestors)
                 return box.number("size", fallback: 24) + box.number("gap", fallback: 8)
             }
             let ordered = (listContext["ordered"] as? NSNumber)?.boolValue == true
             let scale = ordered
                 ? 1
-                : EditorTheme.cgFloat(sheet["listMarker"]["scale"])
+                : EditorTheme.cgFloat(sheet.resolvedValues("listMarker", ancestors: ancestors)["scale"])
                     ?? LayoutConstants.unorderedListMarkerFontScale
-            let gap = EditorTheme.cgFloat(sheet["listMarker"]["gap"]) ?? 8
+            let gap = EditorTheme.cgFloat(sheet.resolvedValues("listMarker", ancestors: ancestors)["gap"]) ?? 8
             if !ordered {
                 return EditorLayoutManager.unorderedBulletDrawingRect(usedRect: .zero, lineFragmentRect: .zero, markerWidth: 0, baselineY: 0, baseFont: baseFont, markerScale: scale, origin: .zero).width + gap
             }
             let label = OrderedListMarkerFormatter.label(
                 index: jsonUInt32(listContext["index"]) ?? 1,
                 nestingDepth: nestingDepth ?? Int(context.depth),
-                theme: theme?.list?.orderedMarker
+                theme: (sheet.resolvedValues("listMarker", ancestors: ancestors)["ordered"] as? [String: Any]).map(EditorOrderedListMarkerTheme.init(dictionary:)) ?? theme?.list?.orderedMarker
             )
             return ceil((label as NSString).size(withAttributes: [.font: baseFont.withSize(baseFont.pointSize * scale)]).width) + gap
         }

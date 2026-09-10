@@ -2,6 +2,98 @@ import CoreText
 import XCTest
 
 extension RenderBridgeTests {
+    func testRender_ruleFreeMentionMatchesLegacyProjection() throws {
+        let styles: [String: [String: Any]] = ["mention": ["paddingLeft": 3, "fontSize": 21, "color": "#ff0000ff"]]
+        let root: [String: Any] = ["mentions": ["node": ["style": ["paddingRight": 9]]]]
+        let versioned = EditorTheme(dictionary: root.merging(["version": 1, "styles": styles]) { _, new in new })
+        let legacy = EditorTheme(dictionary: EditorTheme.legacyProjection(styles: styles, root: root))
+        func render(_ theme: EditorTheme) -> NSAttributedString {
+            RenderBridge.attributedStringForOpaqueInlineAtom(nodeType: "mention", label: "same", docPos: 0, baseFont: baseFont, textColor: textColor, blockStack: [], topLevelChildIndex: nil, theme: theme, mentionTheme: nil)
+        }
+        let current = render(versioned)
+        let previous = render(legacy)
+        let currentBox = try XCTUnwrap(current.attribute(editorMentionBoxAttribute, at: 0, effectiveRange: nil) as? EditorMentionRenderedBox)
+        let previousBox = try XCTUnwrap(previous.attribute(editorMentionBoxAttribute, at: 0, effectiveRange: nil) as? EditorMentionRenderedBox)
+        XCTAssertEqual(currentBox.size, previousBox.size)
+        XCTAssertTrue(NSDictionary(dictionary: currentBox.box.values).isEqual(to: previousBox.box.values))
+        XCTAssertEqual(current.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor, previous.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor)
+    }
+
+    func testRender_contentAndPlaceholderUseEmptyAncestry() {
+        let view = EditorTextView(frame: .zero, textContainer: nil)
+        view.placeholder = "Write"
+        view.theme = EditorTheme(dictionary: [
+            "version": 1, "styles": [:], "rules": [
+                ["path": ["content"], "style": ["paddingLeft": 23]],
+                ["path": ["placeholder"], "style": ["color": "#ff0000ff"]],
+                ["path": ["paragraph", "placeholder"], "style": ["color": "#00ff00ff"]]
+            ]
+        ])
+        XCTAssertEqual(view.textContainerInset.left, 23)
+        XCTAssertEqual(view.placeholderLabel.attributedText?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor, .red)
+    }
+
+    func testRender_contextualMentionPreservesLocalOverrides() throws {
+        let theme = EditorTheme(dictionary: [
+            "version": 1, "styles": ["mention": ["paddingLeft": 3, "color": "#ff0000ff"]],
+            "mentions": ["node": ["style": ["paddingRight": 9]]],
+            "rules": [["path": ["paragraph", "mention"], "style": ["paddingLeft": 17, "paddingRight": 21, "color": "#00ff00ff"]]]
+        ])
+        let result = RenderBridge.renderElements(fromJSON: """
+        [
+            {"type":"blockStart","nodeType":"paragraph","depth":0},
+            {"type":"opaqueInlineAtom","nodeType":"mention","docPos":0,"label":"rule"},
+            {"type":"opaqueInlineAtom","nodeType":"mention","docPos":1,"label":"local","mentionTheme":{"node":{"style":{"paddingLeft":5}}}},
+            {"type":"blockEnd"}
+        ]
+        """, baseFont: baseFont, textColor: textColor, theme: theme)
+        let first = try XCTUnwrap(result.attribute(editorMentionBoxAttribute, at: 0, effectiveRange: nil) as? EditorMentionRenderedBox)
+        let local = try XCTUnwrap(result.attribute(editorMentionBoxAttribute, at: 4, effectiveRange: nil) as? EditorMentionRenderedBox)
+        XCTAssertEqual(first.box.padding.left, 17)
+        XCTAssertEqual(first.box.padding.right, 9)
+        XCTAssertEqual(result.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor, .green)
+        XCTAssertEqual(local.box.padding.left, 5)
+    }
+
+    func testRender_contextualSpecialElements() throws {
+        let theme = EditorTheme(dictionary: [
+            "version": 1,
+            "styles": ["taskCheckbox": ["size": 20, "checked": ["size": 26]], "image": ["paddingLeft": 2]],
+            "rules": [
+                ["path": ["taskItem", "taskCheckbox"], "style": ["size": 30, "checked": ["size": 34]]],
+                ["path": ["paragraph", "bold"], "style": ["color": "#ff0000ff"]],
+                ["path": ["blockquote", "horizontalRule"], "style": ["marginTop": 19, "height": 7]],
+                ["path": ["blockquote", "image"], "style": ["paddingLeft": 11, "resizeMode": "contain"]]
+            ]
+        ])
+        let result = RenderBridge.renderElements(fromJSON: """
+        [
+            {"type":"blockStart","nodeType":"blockquote","depth":0},
+            {"type":"blockStart","nodeType":"taskItem","depth":1,"listContext":{"kind":"task","checked":true,"isFirst":true,"isLast":true}},
+            {"type":"blockStart","nodeType":"paragraph","depth":1},
+            {"type":"textRun","text":"marked","marks":["bold"]},
+            {"type":"blockEnd"},{"type":"blockEnd"},
+            {"type":"voidBlock","nodeType":"horizontalRule","docPos":20},
+            {"type":"voidBlock","nodeType":"image","docPos":21,"attrs":{"src":"invalid","width":40,"height":20}},
+            {"type":"blockEnd"}
+        ]
+        """, baseFont: baseFont, textColor: textColor, theme: theme)
+        let checkbox = try XCTUnwrap(result.attribute(editorTaskCheckboxAttribute, at: 0, effectiveRange: nil) as? EditorMentionRenderedBox)
+        XCTAssertEqual(checkbox.box.number("size"), 34)
+        XCTAssertEqual(result.attribute(RenderBridgeAttributes.listMarkerWidth, at: 0, effectiveRange: nil) as? CGFloat, 42)
+        XCTAssertEqual(result.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor, .red)
+        var rule: HorizontalRuleAttachment?
+        var image: BlockImageAttachment?
+        result.enumerateAttribute(.attachment, in: NSRange(location: 0, length: result.length)) { value, _, _ in
+            if let value = value as? HorizontalRuleAttachment { rule = value }
+            if let value = value as? BlockImageAttachment { image = value }
+        }
+        XCTAssertEqual(rule?.styleBox?.margin.top, 19)
+        XCTAssertEqual(rule?.lineHeight, 7)
+        XCTAssertEqual(image?.styleBox?.padding.left, 11)
+        XCTAssertEqual(image?.styleBox?.values["resizeMode"] as? String, "contain")
+    }
+
     func testStyleSheetContextualBoxRulesPreserveSparseValuesAndZeros() throws {
         let theme = EditorTheme(dictionary: [
             "version": 1,

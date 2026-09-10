@@ -81,7 +81,8 @@ internal fun EditorElementStyle.mergedWith(other: EditorElementStyle?): EditorEl
 internal fun resolvedMentionStyle(
     base: EditorTextStyle,
     theme: EditorTheme?,
-    local: EditorMentionTheme?
+    local: EditorMentionTheme?,
+    ancestors: List<String> = emptyList()
 ): EditorElementStyle {
     var result = EditorElementStyle(
         base,
@@ -91,7 +92,7 @@ internal fun resolvedMentionStyle(
             corners = EditorCorners(6f, 6f, 6f, 6f)
         )
     )
-        .mergedWith(theme?.styleSheet?.get("mention"))
+        .mergedWith(theme?.styleSheet?.resolveElement("mention", ancestors))
     listOf(theme?.mentions?.node, local?.node).forEach { node ->
         if (node != null) {
             result = result.copy(

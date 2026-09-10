@@ -75,7 +75,11 @@ internal fun EditorEditText.applyThemeImpl(theme: EditorTheme?) {
         background =
             EditorBoxDrawable(it.box("content").scaled(resources.displayMetrics.density))
     }
-    applyContentInsets(theme?.contentInsets)
+    val content = theme?.styleSheet?.box("content", emptyList())?.outerInset
+    applyContentInsets(
+        content?.let { EditorContentInsets(it.top, it.right, it.bottom, it.left) }
+            ?: theme?.contentInsets
+    )
     if (hasLiveEditor()) {
         val previousScrollX = scrollX
         val previousScrollY = scrollY

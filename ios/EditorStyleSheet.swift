@@ -382,8 +382,10 @@ extension RenderBridge {
         }
         guard start < result.length else { return }
         let range = NSRange(location: start, length: result.length - start)
-        let outer = ancestors.reduce(UIEdgeInsets.zero) { $0.adding(sheet.box($1.nodeType).outerInsets) }
-        var values = sheet.box(context.nodeType).values
+        let outer = ancestors.enumerated().reduce(UIEdgeInsets.zero) { total, entry in
+            total.adding(sheet.box(entry.element.nodeType, ancestors: ancestors.prefix(entry.offset).map(\.nodeType)).outerInsets)
+        }
+        var values = sheet.box(context.nodeType, ancestors: ancestors.map(\.nodeType)).values
         if omitBottomMargin { values["marginBottom"] = 0 }
         let box = EditorStyleBox(values)
         let descriptor = EditorRenderedBox(box: box, depth: ancestors.count, leading: outer.left + box.margin.left, trailing: outer.right + box.margin.right)
@@ -492,10 +494,11 @@ final class EditorStyleBoxView: UIView {
 let editorTaskCheckboxAttribute = NSAttributedString.Key("com.apollohg.editor.taskCheckbox")
 
 extension EditorStyleSheet {
-    func checkbox(checked: Bool) -> EditorStyleBox {
+    func checkbox(checked: Bool, ancestors: [String] = []) -> EditorStyleBox {
         var values: [String: Any] = ["borderWidth": 1.8, "borderColor": "#8e8e93ff", "borderRadius": 5, "size": 24, "gap": 8, "checkColor": "#007affff"]
-        values.merge(self["taskCheckbox"]) { _, new in new }
-        if checked { values.merge(self["taskCheckbox"]["checked"] as? [String: Any] ?? [:]) { _, new in new } }
+        let resolved = resolvedValues("taskCheckbox", ancestors: ancestors)
+        values.merge(resolved) { _, new in new }
+        if checked { values.merge(resolved["checked"] as? [String: Any] ?? [:]) { _, new in new } }
         return EditorStyleBox(values)
     }
 

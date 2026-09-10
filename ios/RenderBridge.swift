@@ -236,7 +236,7 @@ final class RenderBridge {
                 if let sheet = theme?.styleSheet {
                     var base = defaultAttributes(baseFont: blockFont, textColor: blockColor)
                     EditorStyleSheet.applyText(sheet.textValues(blockStack.last?.nodeType ?? "paragraph", ancestors: blockStack.dropLast().map(\.nodeType)), to: &base)
-                    baseAttrs = sheet.inlineAttributes(marks, base: base)
+                    baseAttrs = sheet.inlineAttributes(marks, base: base, ancestors: blockStack.map(\.nodeType))
                 }
                 if isCodeBlock {
                     // blockFont already carries theme.codeBlock.text. Keep an
@@ -336,21 +336,23 @@ final class RenderBridge {
                     topLevelChildIndex: topLevelChildIndex,
                     theme: theme,
                     atomKey: atomKey,
-                    atomConfiguration: atomConfiguration
+                    atomConfiguration: atomConfiguration,
+                    ancestors: blockStack.map(\.nodeType)
                 )
                 if let sheet = theme?.styleSheet {
                     let styled = NSMutableAttributedString(attributedString: attrStr)
                     styled.addAttribute(editorStyledContentAttribute, value: true, range: NSRange(location: 0, length: styled.length))
                     let context = BlockContext(nodeType: nodeType, depth: blockStack.last?.depth ?? 0, listContext: nil)
                     let style = paragraphStyleForBlock(context, blockStack: blockStack + [context], theme: theme, baseFont: baseFont)
-                    let inset = sheet.box(nodeType).inset
+                    let box = sheet.box(nodeType, ancestors: blockStack.map(\.nodeType))
+                    let inset = box.inset
                     style.headIndent -= inset.left
                     style.firstLineHeadIndent -= inset.left
                     style.tailIndent += inset.right
-                    style.paragraphSpacingBefore = sheet.box(nodeType).margin.top
-                    style.paragraphSpacing = sheet.box(nodeType).margin.bottom
+                    style.paragraphSpacingBefore = box.margin.top
+                    style.paragraphSpacing = box.margin.bottom
                     styled.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: styled.length))
-                    styled.addAttribute(editorBlockSpacingBoxAttribute, value: EditorRenderedBox(box: sheet.box(nodeType), depth: blockStack.count, leading: 0, trailing: 0), range: NSRange(location: 0, length: styled.length))
+                    styled.addAttribute(editorBlockSpacingBoxAttribute, value: EditorRenderedBox(box: box, depth: blockStack.count, leading: 0, trailing: 0), range: NSRange(location: 0, length: styled.length))
                     result.append(styled)
                 } else { result.append(attrStr) }
                 pendingTrailingParagraphSpacing = theme?.effectiveTextStyle(
@@ -512,7 +514,9 @@ final class RenderBridge {
                 }
 
             case "blockEnd":
-                if let endedBlock = blockStack.popLast() {
+                if let endedBlock = blockStack.last {
+                    let endedAncestors = Array(blockStack.dropLast())
+                    blockStack.removeLast()
                     appendTrailingLineBreakPlaceholderIfNeeded(
                         in: result,
                         endedBlock: endedBlock,
@@ -525,15 +529,16 @@ final class RenderBridge {
                         && blockStack.last?.nodeType == "blockquote"
                         && elements.indices.contains(elementIndex + 1)
                         && elements[elementIndex + 1]["type"] as? String == "blockEnd"
-                    closeStyledBlock(endedBlock, ancestors: blockStack, in: result, theme: theme, baseFont: baseFont, textColor: textColor, omitBottomMargin: omitBottomMargin)
+                    closeStyledBlock(endedBlock, ancestors: endedAncestors, in: result, theme: theme, baseFont: baseFont, textColor: textColor, omitBottomMargin: omitBottomMargin)
                     if EditorStyleSheet.element(endedBlock.nodeType) == "codeBlock", endedBlock.styleStart < result.length {
                         result.addAttribute(editorCodeBlockAttribute, value: EditorCodeBlockPresentation(language: endedBlock.language), range: NSRange(location: endedBlock.styleStart, length: result.length - endedBlock.styleStart))
                     }
                     if theme?.styleSheet != nil, endedBlock.listContext?["isLast"] as? Bool == true,
                        let container = blockStack.last,
                        ["bulletList", "orderedList", "taskList"].contains(container.nodeType) {
+                        let containerAncestors = Array(blockStack.dropLast())
                         blockStack.removeLast()
-                        closeStyledBlock(container, ancestors: blockStack, in: result, theme: theme, baseFont: baseFont, textColor: textColor)
+                        closeStyledBlock(container, ancestors: containerAncestors, in: result, theme: theme, baseFont: baseFont, textColor: textColor)
                     }
                     if endedBlock.listContext != nil, theme?.styleSheet == nil {
                         let spacing = (endedBlock.listContext?["isLast"] as? Bool) == true
