@@ -2,6 +2,34 @@ import UIKit
 
 struct EditorStyleSheet {
     let styles: [String: [String: Any]]
+    let rules: [Rule]
+
+    struct Rule {
+        let path: [String]
+        let style: [String: Any]
+    }
+
+    init(styles: [String: [String: Any]], rules: [Rule] = []) {
+        self.styles = styles
+        self.rules = rules
+    }
+
+    static func decodeRules(_ value: Any?) -> [Rule] {
+        let names: Set<String> = [
+            "content", "text", "paragraph", "h1", "h2", "h3", "h4", "h5", "h6",
+            "blockquote", "codeBlock", "bulletList", "orderedList", "taskList", "listItem",
+            "taskItem", "listMarker", "taskCheckbox", "horizontalRule", "image", "link",
+            "inlineCode", "bold", "italic", "underline", "strike", "mention", "placeholder"
+        ]
+        return (value as? [Any] ?? []).compactMap { entry in
+            guard let entry = entry as? [String: Any],
+                  let rawPath = entry["path"] as? [String], !rawPath.isEmpty,
+                  let style = entry["style"] as? [String: Any] else { return nil }
+            let path = rawPath.map(Self.element)
+            guard path.allSatisfy({ names.contains($0) }) else { return nil }
+            return Rule(path: path, style: style)
+        }
+    }
 
     static func collapsedMargin(_ first: CGFloat, _ second: CGFloat) -> CGFloat {
         max(0, first, second) + min(0, first, second)
@@ -26,7 +54,25 @@ struct EditorStyleSheet {
 
     subscript(_ element: String) -> [String: Any] { styles[Self.element(element)] ?? [:] }
 
+    func resolvedValues(_ element: String, ancestors: [String] = []) -> [String: Any] {
+        let chain = (ancestors + [element]).map(Self.element)
+        var values = self[element]
+        for rule in rules where rule.path.count <= chain.count && Array(chain.suffix(rule.path.count)) == rule.path {
+            values.merge(rule.style, uniquingKeysWith: Self.mergeValue)
+        }
+        return values
+    }
+
+    private static func mergeValue(_ current: Any, _ next: Any) -> Any {
+        guard let current = current as? [String: Any], let next = next as? [String: Any] else { return next }
+        return current.merging(next, uniquingKeysWith: Self.mergeValue)
+    }
+
     func box(_ element: String) -> EditorStyleBox {
+        box(element, ancestors: [])
+    }
+
+    func box(_ element: String, ancestors: [String]) -> EditorStyleBox {
         var values: [String: Any] = [:]
         switch Self.element(element) {
         case "codeBlock":
@@ -40,7 +86,7 @@ struct EditorStyleSheet {
         case "horizontalRule": values = ["backgroundColor": UIColor.separator, "marginTop": 12, "marginBottom": 12]
         default: break
         }
-        values.merge(self[element]) { _, new in new }
+        values.merge(resolvedValues(element, ancestors: ancestors)) { _, new in new }
         return EditorStyleBox(values)
     }
 
@@ -53,19 +99,21 @@ struct EditorStyleSheet {
         if name == "codeBlock" { style = style.merged(with: EditorTextStyle(fontFamily: "monospace")) }
         style = style.merged(with: semantic)
         for ancestor in ancestors { style = style.merged(with: EditorTextStyle(dictionary: self[ancestor])) }
-        return style.merged(with: EditorTextStyle(dictionary: self[name]))
+        return style.merged(with: EditorTextStyle(dictionary: resolvedValues(name, ancestors: ancestors)))
     }
 
     func textValues(_ element: String, ancestors: [String] = []) -> [String: Any] {
         let keys = ["letterSpacing", "textAlign", "textDecorationLine", "textDecorationColor", "textDecorationStyle"]
         var result: [String: Any] = [:]
-        for layer in ["text"] + ancestors + [element] {
+        for layer in ["text"] + ancestors {
             for key in keys where self[layer][key] != nil { result[key] = self[layer][key] }
         }
+        let target = resolvedValues(element, ancestors: ancestors)
+        for key in keys where target[key] != nil { result[key] = target[key] }
         return result
     }
 
-    func inlineAttributes(_ marks: [Any], base: [NSAttributedString.Key: Any], scale: CGFloat = 1) -> [NSAttributedString.Key: Any] {
+    func inlineAttributes(_ marks: [Any], base: [NSAttributedString.Key: Any], scale: CGFloat = 1, ancestors: [String] = []) -> [NSAttributedString.Key: Any] {
         var attributes = base
         var byName: [String: [String: Any]] = [:]
         for mark in marks {
@@ -85,7 +133,7 @@ struct EditorStyleSheet {
             case "strike": values = ["textDecorationLine": "line-through"]
             default: break
             }
-            values.merge(self[name]) { _, new in new }
+            values.merge(resolvedValues(name, ancestors: ancestors)) { _, new in new }
             Self.applyText(values, to: &attributes, scale: scale)
             if name == "link", let href = byName[name]?["href"] as? String {
                 attributes[RenderBridgeAttributes.linkHref] = href

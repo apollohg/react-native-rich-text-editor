@@ -2,6 +2,218 @@ import CoreText
 import XCTest
 
 extension RenderBridgeTests {
+    func testStyleSheetContextualBoxRulesPreserveSparseValuesAndZeros() throws {
+        let theme = EditorTheme(dictionary: [
+            "version": 1,
+            "styles": ["paragraph": ["marginBottom": 8, "paddingLeft": 3]],
+            "rules": [["path": ["listItem", "paragraph"], "style": ["marginBottom": 0]]]
+        ])
+        let sheet = try XCTUnwrap(theme.styleSheet)
+        XCTAssertEqual(sheet.box("paragraph").margin.bottom, 8)
+        XCTAssertEqual(sheet.box("paragraph", ancestors: ["list_item"]).margin.bottom, 0)
+        XCTAssertEqual(sheet.box("paragraph", ancestors: ["list_item"]).padding.left, 3)
+        XCTAssertEqual(sheet["paragraph"]["marginBottom"] as? Int, 8)
+    }
+
+    func testStyleSheetRulesMatchOnlyContiguousCanonicalSuffixes() throws {
+        let cases: [(path: [String], ancestors: [String], matches: Bool)] = [
+            (["paragraph"], [], true),
+            (["paragraph"], ["blockquote", "bullet_list", "list_item"], true),
+            (["listItem", "paragraph"], ["blockquote", "bullet_list", "list_item"], true),
+            (["bulletList", "listItem", "paragraph"], ["blockquote", "bullet_list", "list_item"], true),
+            (["blockquote", "listItem", "paragraph"], ["blockquote", "list_item"], true),
+            (["blockquote", "listItem", "paragraph"], ["blockquote", "bullet_list", "list_item"], false),
+            (["blockquote", "bulletList", "listItem", "paragraph"], ["bullet_list", "list_item"], false),
+            (["listItem", "paragraph"], ["blockquote"], false),
+            (["list_item", "paragraph"], ["listItem"], true)
+        ]
+        for (index, test) in cases.enumerated() {
+            let sheet = try XCTUnwrap(EditorTheme(dictionary: [
+                "version": 1,
+                "styles": ["paragraph": ["marginBottom": 8]],
+                "rules": [["path": test.path, "style": ["marginBottom": 17]]]
+            ]).styleSheet)
+            XCTAssertEqual(sheet.box("paragraph", ancestors: test.ancestors).margin.bottom,
+                test.matches ? 17 : 8, "case \(index)")
+        }
+    }
+
+    func testStyleSheetRulesUseDeclarationOrderAndAccumulateSparseValues() throws {
+        let sheet = try XCTUnwrap(EditorTheme(dictionary: [
+            "version": 1,
+            "styles": ["paragraph": ["marginBottom": 8, "paddingLeft": 3]],
+            "rules": [
+                ["path": ["listItem", "paragraph"], "style": ["marginBottom": 2, "paddingLeft": 9]],
+                ["path": ["paragraph"], "style": ["marginBottom": 1]]
+            ]
+        ]).styleSheet)
+        let box = sheet.box("paragraph", ancestors: ["list_item"])
+        XCTAssertEqual(box.margin.bottom, 1)
+        XCTAssertEqual(box.padding.left, 9)
+        XCTAssertEqual(sheet.resolvedValues("paragraph", ancestors: ["list_item"])["paddingLeft"] as? Int, 9)
+        XCTAssertEqual(sheet["paragraph"]["paddingLeft"] as? Int, 3)
+    }
+
+    func testStyleSheetResolvedValuesPreserveSparseSpecialProperties() throws {
+        let sheet = try XCTUnwrap(EditorTheme(dictionary: [
+            "version": 1,
+            "styles": [
+                "bulletList": ["indent": 24, "baseIndentMultiplier": 2],
+                "listMarker": ["scale": 0.8, "gap": 6, "ordered": ["schemes": ["upperAlpha"], "suffix": "."]],
+                "taskCheckbox": ["size": 20, "gap": 4, "checkColor": "#ffffffff",
+                    "checked": ["backgroundColor": "#ff0000ff", "borderRightWidth": 3]],
+                "image": ["resizeMode": "cover", "paddingLeft": 5],
+                "horizontalRule": ["height": 2]
+            ],
+            "rules": [
+                ["path": ["blockquote", "bulletList"], "style": ["indent": 0, "baseIndentMultiplier": 0]],
+                ["path": ["listMarker"], "style": ["scale": 0, "gap": 0, "ordered": ["suffix": ")"]]],
+                ["path": ["taskCheckbox"], "style": ["size": 0, "gap": 0, "checkColor": "#00000000",
+                    "checked": ["backgroundColor": "#00ff00ff", "borderLeftWidth": 0]]],
+                ["path": ["taskCheckbox"], "style": ["checked": ["borderTopWidth": 2]]],
+                ["path": ["image"], "style": ["resizeMode": "stretch"]],
+                ["path": ["horizontalRule"], "style": ["height": 0]]
+            ]
+        ]).styleSheet)
+        let list = sheet.resolvedValues("bullet_list", ancestors: ["blockquote"])
+        XCTAssertEqual(list["indent"] as? Int, 0)
+        XCTAssertEqual(list["baseIndentMultiplier"] as? Int, 0)
+        let marker = sheet.resolvedValues("listMarker")
+        XCTAssertEqual(marker["scale"] as? Int, 0)
+        XCTAssertEqual(marker["gap"] as? Int, 0)
+        let ordered = try XCTUnwrap(marker["ordered"] as? [String: Any])
+        XCTAssertEqual(ordered["suffix"] as? String, ")")
+        XCTAssertEqual(ordered["schemes"] as? [String], ["upperAlpha"])
+        let checkbox = sheet.resolvedValues("taskCheckbox")
+        XCTAssertEqual(checkbox["size"] as? Int, 0)
+        XCTAssertEqual(checkbox["gap"] as? Int, 0)
+        XCTAssertEqual(checkbox["checkColor"] as? String, "#00000000")
+        let checked = try XCTUnwrap(checkbox["checked"] as? [String: Any])
+        XCTAssertEqual(checked["backgroundColor"] as? String, "#00ff00ff")
+        XCTAssertEqual(checked["borderRightWidth"] as? Int, 3)
+        XCTAssertEqual(checked["borderLeftWidth"] as? Int, 0)
+        XCTAssertEqual(checked["borderTopWidth"] as? Int, 2)
+        XCTAssertEqual(sheet.resolvedValues("image")["resizeMode"] as? String, "stretch")
+        XCTAssertEqual(sheet.box("image").padding.left, 5)
+        XCTAssertEqual(sheet.resolvedValues("horizontal_rule")["height"] as? Int, 0)
+        XCTAssertNil(sheet.resolvedValues("horizontal_rule")["paddingLeft"])
+    }
+
+    func testStyleSheetEmptyUnmatchedAndRuleOnlyStyles() throws {
+        let styles: [String: [String: Any]] = ["image": ["resizeMode": "cover", "paddingLeft": 5]]
+        let rules: [[[String: Any]]] = [
+            [],
+            [["path": ["image"], "style": [:]]],
+            [["path": ["blockquote", "image"], "style": ["resizeMode": "stretch"]]]
+        ]
+        for ruleSet in rules {
+            let sheet = try XCTUnwrap(EditorTheme(dictionary: [
+                "version": 1, "styles": styles, "rules": ruleSet
+            ]).styleSheet)
+            XCTAssertTrue(NSDictionary(dictionary: sheet.resolvedValues("image")).isEqual(to: sheet["image"]))
+            XCTAssertTrue(sheet.resolvedValues("paragraph").isEmpty)
+            XCTAssertEqual(sheet.box("paragraph", ancestors: ["list_item"]).margin.bottom, 8)
+            XCTAssertEqual(sheet.box("list_item", ancestors: ["bullet_list"]).margin.bottom, 4)
+        }
+        let ruleOnly = try XCTUnwrap(EditorTheme(dictionary: [
+            "version": 1, "rules": [["path": ["image"], "style": ["resizeMode": "stretch"]]]
+        ]).styleSheet)
+        XCTAssertEqual(ruleOnly.resolvedValues("image")["resizeMode"] as? String, "stretch")
+        XCTAssertTrue(ruleOnly["image"].isEmpty)
+    }
+
+    func testStyleSheetMarkRulesResolveWithinExistingCascadeSlots() throws {
+        let sheet = try XCTUnwrap(EditorTheme(dictionary: [
+            "version": 1,
+            "styles": [
+                "bold": ["color": "#220000ff"],
+                "link": ["color": "#550000ff"]
+            ],
+            "rules": [["path": ["listItem", "paragraph", "strong"], "style": [
+                "color": "#440000ff", "fontWeight": "normal", "fontSize": 20, "letterSpacing": 0
+            ]]]
+        ]).styleSheet)
+        let base: [NSAttributedString.Key: Any] = [.font: baseFont, .foregroundColor: UIColor.black, .kern: 3]
+        let ancestors = ["list_item", "paragraph"]
+        let marked = sheet.inlineAttributes(["strong"], base: base, scale: 1.5, ancestors: ancestors)
+        XCTAssertEqual(marked[.foregroundColor] as? UIColor, EditorTheme.color(from: "#440000ff"))
+        XCTAssertEqual((marked[.font] as? UIFont)?.pointSize, 30)
+        XCTAssertFalse((marked[.font] as? UIFont)?.fontDescriptor.symbolicTraits.contains(.traitBold) ?? true)
+        XCTAssertEqual(marked[.kern] as? CGFloat, 0)
+        let linked = sheet.inlineAttributes([["type": "link", "href": "https://example.com"], "strong"],
+            base: base, ancestors: ancestors)
+        XCTAssertEqual(linked[.foregroundColor] as? UIColor, EditorTheme.color(from: "#550000ff"))
+        XCTAssertEqual(linked[RenderBridgeAttributes.linkHref] as? String, "https://example.com")
+        let unscoped = sheet.inlineAttributes(["strong"], base: base)
+        XCTAssertEqual(unscoped[.foregroundColor] as? UIColor, EditorTheme.color(from: "#220000ff"))
+        XCTAssertTrue((unscoped[.font] as? UIFont)?.fontDescriptor.symbolicTraits.contains(.traitBold) ?? false)
+        XCTAssertEqual(sheet.textStyle("strong", ancestors: ancestors).color, marked[.foregroundColor] as? UIColor)
+    }
+
+    func testStyleSheetTargetRulesFollowElementTextWithoutRecursiveInheritance() throws {
+        let sheet = try XCTUnwrap(EditorTheme(dictionary: [
+            "version": 1,
+            "styles": [
+                "text": ["fontFamily": "Courier", "letterSpacing": 2, "textDecorationStyle": "double"],
+                "blockquote": ["fontSize": 23, "textAlign": "left"],
+                "paragraph": ["color": "#110000ff", "textDecorationLine": "underline"]
+            ],
+            "rules": [
+                ["path": ["listItem", "paragraph"], "style": [
+                    "color": "#330000ff", "lineHeight": 0, "letterSpacing": 0,
+                    "textAlign": "right", "textDecorationLine": "none", "textDecorationColor": "#440000ff"
+                ]],
+                ["path": ["blockquote"], "style": ["fontSize": 40, "textAlign": "center"]]
+            ]
+        ]).styleSheet)
+        let text = sheet.textStyle("paragraph", ancestors: ["blockquote", "list_item"],
+            semantic: EditorTextStyle(fontSize: 18, fontWeight: "600"))
+        XCTAssertEqual(text.fontFamily, "Courier")
+        XCTAssertEqual(text.fontSize, 23)
+        XCTAssertEqual(text.fontWeight, "600")
+        XCTAssertEqual(text.color, EditorTheme.color(from: "#330000ff"))
+        XCTAssertEqual(text.lineHeight, 0)
+        let values = sheet.textValues("paragraph", ancestors: ["blockquote", "list_item"])
+        XCTAssertEqual(values["letterSpacing"] as? Int, 0)
+        XCTAssertEqual(values["textAlign"] as? String, "right")
+        XCTAssertEqual(values["textDecorationLine"] as? String, "none")
+        XCTAssertEqual(values["textDecorationColor"] as? String, "#440000ff")
+        XCTAssertEqual(values["textDecorationStyle"] as? String, "double")
+        XCTAssertNil(values["lineHeight"])
+        XCTAssertEqual(sheet.textValues("paragraph", ancestors: ["blockquote"])["textAlign"] as? String, "left")
+        XCTAssertEqual(sheet.textStyle("blockquote").fontSize, 40)
+    }
+
+    func testStyleSheetMalformedRulesPreserveBaseStylesAndValidSiblings() throws {
+        for field in ["{}", "null", "3", "\"invalid\""] {
+            let theme = try XCTUnwrap(EditorTheme.from(json:
+                "{\"version\":1,\"styles\":{\"paragraph\":{\"marginBottom\":8}},\"rules\":\(field)}"))
+            XCTAssertEqual(theme.styleSheet?.box("paragraph").margin.bottom, 8)
+        }
+        let sheet = try XCTUnwrap(EditorTheme.from(json: """
+        {
+            "version": 1,
+            "styles": {"paragraph": {"marginBottom": 8, "paddingLeft": 3}},
+            "rules": [
+                {"path": ["paragraph"], "style": {"marginBottom": 2}},
+                null,
+                "invalid",
+                {"style": {"marginBottom": 9}},
+                {"path": [], "style": {"marginBottom": 7}},
+                {"path": ["unknown"], "style": {"marginBottom": 6}},
+                {"path": [1, "paragraph"], "style": {"marginBottom": 5}},
+                {"path": ["paragraph"], "style": []},
+                {"path": ["paragraph"]},
+                {"path": ["paragraph"], "style": {"paddingRight": 4}}
+            ]
+        }
+        """)?.styleSheet)
+        XCTAssertEqual(sheet.box("paragraph").margin.bottom, 2)
+        XCTAssertEqual(sheet.box("paragraph").padding.left, 3)
+        XCTAssertEqual(sheet.box("paragraph").padding.right, 4)
+        XCTAssertEqual(sheet.box("unknown").margin.bottom, 0)
+    }
+
     func testStyleSheetCompatibilityDefaultsAndExplicitZeros() {
         let defaults = EditorStyleSheet(styles: [:])
         XCTAssertEqual(defaults.box("paragraph").margin.bottom, 8)

@@ -432,7 +432,7 @@ struct EditorTheme {
            dictionary["styles"] == nil || dictionary["styles"] is [String: [String: Any]] {
             let styles = dictionary["styles"] as? [String: [String: Any]] ?? [:]
             self.init(legacyDictionary: Self.legacyProjection(styles: styles, root: dictionary))
-            styleSheet = EditorStyleSheet(styles: styles)
+            styleSheet = EditorStyleSheet(styles: styles, rules: EditorStyleSheet.decodeRules(dictionary["rules"]))
             return
         }
         self.init(legacyDictionary: dictionary)
