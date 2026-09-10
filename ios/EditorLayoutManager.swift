@@ -503,7 +503,7 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
 
         if ordered {
             let markerFont = attrs[editorStyledContentAttribute] != nil
-                ? baseFont.withSize(baseFont.pointSize * markerScale)
+                ? baseFont
                 : markerFont(for: listContext, baseFont: baseFont, markerScale: markerScale)
             let markerText = attrs[RenderBridgeAttributes.orderedListMarkerLabel] as? String
                 ?? RenderBridge.listMarkerString(listContext: listContext)

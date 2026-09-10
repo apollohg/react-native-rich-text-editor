@@ -317,12 +317,15 @@ internal fun RenderBridge.appendElements(
                         theme,
                         blockquoteDepth(state.blockStack) > 0
                     )
+                    val markerColor = theme?.list?.markerColor
+                        ?: markerTextStyle.color
+                        ?: textColor
                     appendStyledText(
                         state.result,
                         marker,
                         emptyList(),
                         resolvedMarkerBaseSize,
-                        theme?.list?.markerColor ?: textColor,
+                        markerColor,
                         state.blockStack,
                         state.pendingLeadingMargins,
                         null,
@@ -381,7 +384,7 @@ internal fun RenderBridge.appendElements(
                     }
                     if (ordered && !isTask && presentationLabel != null && marker.endsWith(' ')) {
                         state.result.setSpan(
-                            OrderedListMarkerSpan(presentationLabel),
+                            OrderedListMarkerSpan(presentationLabel, markerColor),
                             markerStart,
                             markerEnd - 1,
                             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -391,13 +394,17 @@ internal fun RenderBridge.appendElements(
                         val markerScale =
                             theme?.list?.markerScale
                                 ?: LayoutConstants.UNORDERED_LIST_MARKER_FONT_SCALE
-                        val markerWidth = calculateMarkerWidth(density)
                         val bulletRadius = ((markerBaseSize * markerScale) * 0.16f).coerceAtLeast(
                             2f * density
                         )
+                        val markerWidth = if (theme?.styleSheet != null) {
+                            (bulletRadius * 2f) + markerGapPx
+                        } else {
+                            calculateMarkerWidth(density)
+                        }
                         state.result.setSpan(
                             CenteredBulletSpan(
-                                textColor = theme?.list?.markerColor ?: textColor,
+                                textColor = markerColor,
                                 markerWidthPx = markerWidth,
                                 bulletRadiusPx = bulletRadius,
                                 bodyFontSizePx = resolvedMarkerBaseSize,

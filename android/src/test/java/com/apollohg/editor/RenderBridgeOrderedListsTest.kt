@@ -37,10 +37,48 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 internal class RenderBridgeOrderedListsTest : RenderBridgeTestFixture() {
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `render - stylesheet ordered marker uses configured marker color`() {
+        val json = """
+        [
+            {"type": "blockStart", "nodeType": "listItem", "depth": 0,
+             "listContext": {"ordered": true, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
+            {"type": "textRun", "text": "Item", "marks": []},
+            {"type": "blockEnd"},
+            {"type": "blockEnd"}
+        ]
+        """.trimIndent()
+        val theme = EditorTheme.fromJson(
+            """{"version":1,"styles":{"text":{"fontSize":32,"color":"#00ff00ff"},"orderedList":{"indent":0},"listMarker":{"color":"#ff0000ff","gap":4}}}"""
+        )
+        val rendered = RenderBridge.buildSpannable(json, 32f, Color.GREEN, theme, 1f)
+        val layout = EditorDocumentLayout(rendered, TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 32f
+            color = Color.BLACK
+        }, 200)
+        val bitmap = Bitmap.createBitmap(200, layout.height, Bitmap.Config.ARGB_8888)
+        layout.draw(Canvas(bitmap))
+        val textStartX = layout.getPrimaryHorizontal(rendered.indexOf("Item")).toInt()
+        var redPixels = 0
+        for (y in 0 until bitmap.height) {
+            for (x in 0 until textStartX) {
+                val color = bitmap.getPixel(x, y)
+                if (Color.alpha(color) > 0 && Color.red(color) > Color.green(color) * 2) {
+                    redPixels++
+                }
+            }
+        }
+
+        assertTrue("ordered marker should contain red pixels", redPixels > 0)
+    }
+
     @Test
     fun `render - ordered list item`() {
         val json = """

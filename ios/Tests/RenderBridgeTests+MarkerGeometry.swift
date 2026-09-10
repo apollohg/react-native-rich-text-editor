@@ -2,6 +2,44 @@ import CoreText
 import XCTest
 
 extension RenderBridgeTests {
+    func testStyledOrderedMarkerKeepsListTextSizeWhenBulletScaleIsLarger() throws {
+        let json = """
+        [
+            {"type":"blockStart","nodeType":"listItem","depth":0,"listContext":{"ordered":true,"index":1}},
+            {"type":"blockStart","nodeType":"paragraph","depth":1},
+            {"type":"textRun","text":"Item","marks":[]},
+            {"type":"blockEnd"},{"type":"blockEnd"}
+        ]
+        """
+        let theme = EditorTheme(dictionary: [
+            "version": 1,
+            "styles": [
+                "text": ["fontSize": 17],
+                "orderedList": ["indent": 0],
+                "listMarker": ["scale": 2, "gap": 8]
+            ]
+        ])
+        let rendered = RenderBridge.renderElements(
+            fromJSON: json,
+            baseFont: baseFont,
+            textColor: textColor,
+            theme: theme
+        )
+        let attrs = rendered.attributes(at: 0, effectiveRange: nil)
+        let markerScale = try XCTUnwrap(
+            attrs[RenderBridgeAttributes.listMarkerScale] as? NSNumber
+        )
+        let markerWidth = try XCTUnwrap(
+            attrs[RenderBridgeAttributes.listMarkerWidth] as? NSNumber
+        )
+        let expectedWidth = ceil(("1." as NSString).size(withAttributes: [
+            .font: UIFont.systemFont(ofSize: 17)
+        ]).width) + 8
+
+        XCTAssertEqual(CGFloat(truncating: markerScale), 1, accuracy: 0.01)
+        XCTAssertEqual(CGFloat(truncating: markerWidth), expectedWidth, accuracy: 0.01)
+    }
+
     func testWrappedListTextAlignsWithFirstLine() {
         let json = """
         [

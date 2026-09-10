@@ -610,6 +610,41 @@ internal class RenderBridgeListsTest : RenderBridgeTestFixture() {
     }
 
     @Test
+    fun `render - stylesheet bullet with zero indent has no empty leading gutter`() {
+        val json = """
+        [
+            {"type": "blockStart", "nodeType": "listItem", "depth": 0,
+             "listContext": {"ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true}},
+            {"type": "blockStart", "nodeType": "paragraph", "depth": 1},
+            {"type": "textRun", "text": "Item", "marks": []},
+            {"type": "blockEnd"},
+            {"type": "blockEnd"}
+        ]
+        """.trimIndent()
+        val theme = EditorTheme.fromJson(
+            """
+            {
+              "version": 1,
+              "styles": {
+                "bulletList": { "indent": 0 },
+                "listMarker": { "scale": 1, "gap": 8 }
+              }
+            }
+            """.trimIndent()
+        )
+
+        val result = RenderBridge.buildSpannable(json, 16f, textColor, theme, 1f)
+        val marginSpan = result.getSpans(
+            0,
+            result.length,
+            LeadingMarginSpan.Standard::class.java
+        ).single()
+
+        assertEquals(0, marginSpan.getLeadingMargin(true))
+        assertEquals(14, marginSpan.getLeadingMargin(false))
+    }
+
+    @Test
     fun `render - unordered marker scale does not widen list text gutter`() {
         val json = """
         [

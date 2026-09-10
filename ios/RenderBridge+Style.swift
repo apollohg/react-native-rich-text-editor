@@ -23,7 +23,12 @@ extension RenderBridge {
             let indent = EditorTheme.cgFloat(list["indent"]) ?? LayoutConstants.indentPerDepth
             let multiplier = EditorTheme.cgFloat(list["baseIndentMultiplier"]) ?? 1
             let listDepth = max(0, blockStack.filter { $0.listContext != nil }.count - 1)
-            let listInset = listName == nil ? 0 : indent * (CGFloat(listDepth) + multiplier) + listMarkerWidth(for: context, theme: theme, baseFont: baseFont)
+            let listInset = listName == nil ? 0 : indent * (CGFloat(listDepth) + multiplier) + listMarkerWidth(
+                for: context,
+                theme: theme,
+                baseFont: baseFont,
+                nestingDepth: listDepth
+            )
             style.headIndent = horizontal.left + listInset
             style.firstLineHeadIndent = style.headIndent
             style.tailIndent = -horizontal.right
@@ -181,9 +186,10 @@ extension RenderBridge {
         }
         if let markerContext = currentBlock.listMarkerContext {
             mutableAttrs[RenderBridgeAttributes.listMarkerContext] = markerContext
+            let ordered = (markerContext["ordered"] as? NSNumber)?.boolValue == true
             let visualListDepth = max(0, blockStack.filter { $0.listContext != nil }.count - 1)
             if (markerContext["kind"] as? String) != "task",
-               (markerContext["ordered"] as? NSNumber)?.boolValue == true,
+               ordered,
                let rawIndex = markerContext["index"] as? NSNumber,
                let index = v2ExactUInt32(rawIndex) {
                 mutableAttrs[RenderBridgeAttributes.orderedListMarkerLabel] =
@@ -196,7 +202,10 @@ extension RenderBridge {
             mutableAttrs[RenderBridgeAttributes.listMarkerColor] = theme?.list?.markerColor
             mutableAttrs[RenderBridgeAttributes.listMarkerScale] = theme?.list?.markerScale
             if let sheet = theme?.styleSheet {
-                mutableAttrs[RenderBridgeAttributes.listMarkerScale] = EditorTheme.cgFloat(sheet["listMarker"]["scale"]) ?? ((markerContext["ordered"] as? Bool) == true ? 1 : LayoutConstants.unorderedListMarkerFontScale)
+                mutableAttrs[RenderBridgeAttributes.listMarkerScale] = ordered
+                    ? 1
+                    : EditorTheme.cgFloat(sheet["listMarker"]["scale"])
+                        ?? LayoutConstants.unorderedListMarkerFontScale
             }
             mutableAttrs[RenderBridgeAttributes.listMarkerGap] = theme?.list?.markerGap
             mutableAttrs[RenderBridgeAttributes.listMarkerBaseFont] = paragraphBaseFont
@@ -208,7 +217,8 @@ extension RenderBridge {
             mutableAttrs[RenderBridgeAttributes.listMarkerWidth] = listMarkerWidth(
                 for: currentBlock,
                 theme: theme,
-                baseFont: paragraphBaseFont
+                baseFont: paragraphBaseFont,
+                nestingDepth: visualListDepth
             )
         }
         if currentBlock.nodeType == "codeBlock", theme?.styleSheet == nil {
@@ -267,7 +277,8 @@ extension RenderBridge {
     static func listMarkerWidth(
         for context: BlockContext,
         theme: EditorTheme?,
-        baseFont: UIFont
+        baseFont: UIFont,
+        nestingDepth: Int? = nil
     ) -> CGFloat {
         guard let listContext = context.listContext else { return 0 }
         if let sheet = theme?.styleSheet {
@@ -275,15 +286,20 @@ extension RenderBridge {
                 let box = sheet.checkbox(checked: listContext["checked"] as? Bool == true)
                 return box.number("size", fallback: 24) + box.number("gap", fallback: 8)
             }
-            let ordered = (listContext["ordered"] as? Bool) == true
-            let scale = EditorTheme.cgFloat(sheet["listMarker"]["scale"]) ?? (ordered ? 1 : LayoutConstants.unorderedListMarkerFontScale)
+            let ordered = (listContext["ordered"] as? NSNumber)?.boolValue == true
+            let scale = ordered
+                ? 1
+                : EditorTheme.cgFloat(sheet["listMarker"]["scale"])
+                    ?? LayoutConstants.unorderedListMarkerFontScale
             let gap = EditorTheme.cgFloat(sheet["listMarker"]["gap"]) ?? 8
             if !ordered {
                 return EditorLayoutManager.unorderedBulletDrawingRect(usedRect: .zero, lineFragmentRect: .zero, markerWidth: 0, baselineY: 0, baseFont: baseFont, markerScale: scale, origin: .zero).width + gap
             }
-            let label = ordered
-                ? OrderedListMarkerFormatter.label(index: jsonUInt32(listContext["index"]) ?? 1, nestingDepth: Int(context.depth), theme: theme?.list?.orderedMarker)
-                : "•"
+            let label = OrderedListMarkerFormatter.label(
+                index: jsonUInt32(listContext["index"]) ?? 1,
+                nestingDepth: nestingDepth ?? Int(context.depth),
+                theme: theme?.list?.orderedMarker
+            )
             return ceil((label as NSString).size(withAttributes: [.font: baseFont.withSize(baseFont.pointSize * scale)]).width) + gap
         }
         return LayoutConstants.listMarkerWidth

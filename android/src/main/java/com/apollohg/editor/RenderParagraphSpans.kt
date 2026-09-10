@@ -106,7 +106,10 @@ class MarkerGapSpan(private val widthPx: Float) : ReplacementSpan() {
     ) = Unit
 }
 
-internal class OrderedListMarkerSpan(internal val label: String) : ReplacementSpan() {
+internal class OrderedListMarkerSpan(
+    internal val label: String,
+    private val textColor: Int
+) : ReplacementSpan() {
     override fun getSize(
         paint: Paint,
         text: CharSequence,
@@ -126,7 +129,10 @@ internal class OrderedListMarkerSpan(internal val label: String) : ReplacementSp
         bottom: Int,
         paint: Paint
     ) {
+        val previousColor = paint.color
+        paint.color = textColor
         canvas.drawText(label, x, y.toFloat(), paint)
+        paint.color = previousColor
     }
 }
 

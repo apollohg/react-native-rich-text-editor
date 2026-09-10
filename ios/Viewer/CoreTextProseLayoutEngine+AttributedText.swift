@@ -317,7 +317,10 @@ extension CoreTextProseLayoutEngine {
     ) -> PreparedListMarker {
         let scale: CGFloat
         if let sheet = theme.styleSheet {
-            scale = EditorTheme.cgFloat(sheet["listMarker"]["scale"]) ?? (context.ordered ? 1 : LayoutConstants.unorderedListMarkerFontScale)
+            scale = !context.ordered && context.kind != "task"
+                ? EditorTheme.cgFloat(sheet["listMarker"]["scale"])
+                    ?? LayoutConstants.unorderedListMarkerFontScale
+                : 1
             if !context.ordered, context.kind != "task" {
                 let diameter = EditorLayoutManager.unorderedBulletDrawingRect(usedRect: .zero, lineFragmentRect: .zero, markerWidth: 0, baselineY: 0, baseFont: paint.font, markerScale: scale, origin: .zero).width
                 return PreparedListMarker(line: nil, label: "•", width: diameter, ascent: diameter / 2, descent: diameter / 2, checked: false)

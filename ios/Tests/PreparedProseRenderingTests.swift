@@ -60,6 +60,37 @@ final class PreparedProseRenderingTests: XCTestCase {
         }
     }
 
+    func testVersionedBulletScaleDoesNotResizeOrderedMarker() {
+        let context = ViewerListContext(
+            ordered: true,
+            index: 1,
+            kind: nil,
+            checked: false,
+            isLast: true
+        )
+        let regularTheme = PreparedProseTheme.resolve(
+            themeJSON: "{\"version\":1,\"styles\":{\"listMarker\":{\"scale\":1}}}"
+        )
+        let scaledTheme = PreparedProseTheme.resolve(
+            themeJSON: "{\"version\":1,\"styles\":{\"listMarker\":{\"scale\":2}}}"
+        )
+        let regular = CoreTextProseLayoutEngine().makeListMarker(
+            context,
+            nestingDepth: 0,
+            paint: regularTheme.text,
+            theme: regularTheme
+        )
+        let scaled = CoreTextProseLayoutEngine().makeListMarker(
+            context,
+            nestingDepth: 0,
+            paint: scaledTheme.text,
+            theme: scaledTheme
+        )
+
+        XCTAssertEqual(scaled.width, regular.width, accuracy: 0.01)
+        XCTAssertEqual(scaled.ascent + scaled.descent, regular.ascent + regular.descent, accuracy: 0.01)
+    }
+
     func testVersionedStrikeKeepsDecorationColorAndPattern() throws {
         try withCompiledDocument(source: .json(#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Decorated text","marks":[{"type":"strike"}]}]}]}"#), configJSON: Fixture.customConfig) { document in
             for pattern in ["dashed", "dotted", "double"] {
