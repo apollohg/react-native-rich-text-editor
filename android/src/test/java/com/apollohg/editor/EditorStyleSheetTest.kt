@@ -16,6 +16,32 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class EditorStyleSheetTest {
     @Test
+    fun `editor list markers inherit contextual paragraph typography`() {
+        fun markerAppearance(rules: String): Pair<Int, Int> {
+            val theme = EditorTheme.fromJson(
+                """{"version":1,"styles":{"text":{"fontSize":20},"listItem":{"fontSize":40,"color":"#0000ffff"},"listMarker":{"scale":1,"gap":0}},"rules":$rules}"""
+            )!!
+            val rendered = RenderBridge.buildSpannable(
+                """[
+                {"type":"blockStart","nodeType":"listItem","depth":1,"listContext":{"ordered":false,"index":1,"isFirst":true,"isLast":true}},
+                {"type":"blockStart","nodeType":"paragraph","depth":1},
+                {"type":"textRun","text":"nested","marks":[]},
+                {"type":"blockEnd"},{"type":"blockEnd"}
+                ]""",
+                17f, Color.BLACK, theme, 1f
+            )
+            val width = rendered.getSpans(0, rendered.length, CenteredBulletSpan::class.java)
+                .single().getSize(android.graphics.Paint(), rendered, 0, 1, null)
+            val color = rendered.getSpans(0, 1, android.text.style.ForegroundColorSpan::class.java)
+                .last().foregroundColor
+            return width to color
+        }
+        assertEquals(7 to Color.BLACK, markerAppearance("[]"))
+        assertEquals(16 to Color.RED, markerAppearance("""[{"path":["listItem","paragraph"],"style":{"fontSize":50,"color":"#ff0000ff"}}]"""))
+        assertEquals(7 to Color.BLACK, markerAppearance("""[{"path":["blockquote","paragraph"],"style":{"fontSize":50,"color":"#ff0000ff"}}]"""))
+    }
+
+    @Test
     fun `editor content and placeholder rules use empty ancestry`() {
         val editor = EditorEditText(org.robolectric.RuntimeEnvironment.getApplication())
         editor.placeholderText = "Write"

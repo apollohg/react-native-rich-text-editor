@@ -313,22 +313,29 @@ internal fun RenderBridge.appendElements(
                         null
                     }
                     val marker = listMarkerString(markerListContext)
-                    val markerBaseSize =
-                        resolveTextStyle(
-                            nodeType,
-                            theme,
-                            blockquoteDepth(state.blockStack) > 0
-                        ).fontSize?.times(density) ?: baseFontSize
+                    var markerTextStyle = resolveTextStyle(
+                        nodeType,
+                        theme,
+                        blockquoteDepth(state.blockStack) > 0
+                    )
+                    theme?.styleSheet?.let { sheet ->
+                        val ancestors = state.blockStack.dropLast(1).map { it.nodeType }
+                        val resolved = sheet.resolveText(nodeType, ancestors)
+                        markerTextStyle = markerTextStyle.copy(
+                            fontSize = if (sheet.hasMatchingRuleProperty(nodeType, ancestors, "fontSize")) {
+                                resolved.fontSize
+                            } else markerTextStyle.fontSize,
+                            color = if (sheet.hasMatchingRuleProperty(nodeType, ancestors, "color")) {
+                                resolved.color
+                            } else markerTextStyle.color
+                        )
+                    }
+                    val markerBaseSize = markerTextStyle.fontSize?.times(density) ?: baseFontSize
                     val resolvedMarkerBaseSize = if (isTask) {
                         markerBaseSize * LayoutConstants.TASK_LIST_MARKER_FONT_SCALE
                     } else {
                         markerBaseSize
                     }
-                    val markerTextStyle = resolveTextStyle(
-                        nodeType,
-                        theme,
-                        blockquoteDepth(state.blockStack) > 0
-                    )
                     val markerColor = markerStyle?.text?.color ?: theme?.list?.markerColor
                         ?: markerTextStyle.color
                         ?: textColor
