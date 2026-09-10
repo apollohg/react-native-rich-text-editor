@@ -16,6 +16,73 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class EditorStyleSheetTest {
     @Test
+    fun `version one stylesheet preserves box defaults and explicit zeros`() {
+        val defaults = EditorTheme.fromJson("""{"version":1}""")!!.styleSheet!!
+        assertEquals(0f, defaults.box("paragraph").margin.bottom)
+        assertEquals(4f, defaults.box("listItem").margin.bottom)
+
+        val sheet = EditorTheme.fromJson(
+            """
+            {
+                "version": 1,
+                "styles": {
+                    "paragraph": {
+                        "marginTop": 0,
+                        "marginRight": 7,
+                        "marginBottom": 0,
+                        "marginLeft": 5,
+                        "paddingTop": 3,
+                        "paddingRight": 4,
+                        "paddingBottom": 0,
+                        "paddingLeft": 2,
+                        "borderTopWidth": 1,
+                        "borderRightWidth": 0,
+                        "borderBottomWidth": 6,
+                        "borderLeftWidth": 0
+                    }
+                }
+            }
+            """.trimIndent()
+        )!!.styleSheet!!
+        assertEquals(EditorEdges(0f, 7f, 0f, 5f), sheet.box("paragraph").margin)
+        assertEquals(EditorEdges(3f, 4f, 0f, 2f), sheet.box("paragraph").padding)
+        assertEquals(EditorEdges(1f, 0f, 6f, 0f), sheet.box("paragraph").border)
+    }
+
+    @Test
+    fun `version one stylesheet preserves inherited text cascade`() {
+        val sheet = EditorTheme.fromJson(
+            """
+            {
+                "version": 1,
+                "styles": {
+                    "text": {
+                        "fontFamily": "serif",
+                        "fontSize": 19,
+                        "lineHeight": 28,
+                        "color": "#11223380"
+                    },
+                    "blockquote": {"fontSize": 21},
+                    "paragraph": {"fontWeight": "700", "letterSpacing": 0}
+                }
+            }
+            """.trimIndent()
+        )!!.styleSheet!!
+
+        assertEquals(
+            EditorTextStyle(
+                fontFamily = "serif",
+                fontSize = 21f,
+                fontWeight = "700",
+                color = Color.argb(128, 17, 34, 51),
+                lineHeight = 28f,
+                letterSpacing = 0f
+            ),
+            sheet.resolveText("paragraph", ancestors = listOf("blockquote"))
+        )
+    }
+
+    @Test
     fun `placeholder measures explicit line height and typography`() {
         val editor = EditorEditText(org.robolectric.RuntimeEnvironment.getApplication())
         editor.placeholderText = "Placeholder"

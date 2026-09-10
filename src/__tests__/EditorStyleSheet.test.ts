@@ -6,6 +6,25 @@ function styles(theme: Parameters<typeof serializeEditorTheme>[0]) {
 }
 
 describe('EditorStyleSheet', () => {
+    it('preserves exact version one wire output without rules', () => {
+        expect(serializeEditorTheme({ paragraph: { marginBottom: 8 } })).toBe(
+            '{"version":1,"styles":{"paragraph":{"marginBottom":8}}}'
+        );
+        expect(
+            serializeEditorTheme({
+                text: { lineHeight: 24, color: 'rgba(10, 20, 30, 0.5)' },
+                paragraph: [
+                    { margin: 8, padding: 6, fontSize: 16 },
+                    { marginVertical: 0, paddingLeft: 2 },
+                ],
+                toolbar: { height: 44 },
+            })
+        ).toBe(
+            '{"version":1,"toolbar":{"height":44},"styles":{"text":{"lineHeight":24,"color":"#0a141e80"},"paragraph":{"fontSize":16,"paddingLeft":2,"marginTop":0,"marginRight":8,"marginBottom":0,"marginLeft":8,"paddingTop":6,"paddingRight":6,"paddingBottom":6}}}'
+        );
+        expect(serializeEditorTheme({})).toBeUndefined();
+    });
+
     it('normalizes mention padding with side and axis precedence', () => {
         expect(
             styles({

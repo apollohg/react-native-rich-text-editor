@@ -2,6 +2,64 @@ import CoreText
 import XCTest
 
 extension RenderBridgeTests {
+    func testStyleSheetCompatibilityDefaultsAndExplicitZeros() {
+        let defaults = EditorStyleSheet(styles: [:])
+        XCTAssertEqual(defaults.box("paragraph").margin.bottom, 8)
+        XCTAssertEqual(defaults.box("listItem").margin.bottom, 4)
+
+        let theme = EditorTheme(dictionary: [
+            "version": 1,
+            "styles": [
+                "paragraph": [
+                    "marginTop": 0,
+                    "marginRight": 7,
+                    "marginBottom": 0,
+                    "marginLeft": 5,
+                    "paddingTop": 3,
+                    "paddingRight": 4,
+                    "paddingBottom": 0,
+                    "paddingLeft": 2,
+                    "borderTopWidth": 1,
+                    "borderRightWidth": 0,
+                    "borderBottomWidth": 6,
+                    "borderLeftWidth": 0
+                ]
+            ]
+        ])
+        let box = theme.styleSheet!.box("paragraph")
+        XCTAssertEqual(box.margin, UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 7))
+        XCTAssertEqual(box.padding, UIEdgeInsets(top: 3, left: 2, bottom: 0, right: 4))
+        XCTAssertEqual(box.borders, UIEdgeInsets(top: 1, left: 0, bottom: 6, right: 0))
+    }
+
+    func testStyleSheetCompatibilityPreservesInheritedTextCascade() {
+        let theme = EditorTheme(dictionary: [
+            "version": 1,
+            "styles": [
+                "text": [
+                    "fontFamily": "Courier",
+                    "fontSize": 19,
+                    "lineHeight": 28,
+                    "color": "#11223380"
+                ],
+                "blockquote": ["fontSize": 21],
+                "paragraph": ["fontWeight": "700", "letterSpacing": 0]
+            ]
+        ])
+        let sheet = theme.styleSheet!
+        let text = sheet.textStyle("paragraph", ancestors: ["blockquote"])
+
+        XCTAssertEqual(text.fontFamily, "Courier")
+        XCTAssertEqual(text.fontSize, 21)
+        XCTAssertEqual(text.fontWeight, "700")
+        XCTAssertEqual(text.color, EditorTheme.color(from: "#11223380"))
+        XCTAssertEqual(text.lineHeight, 28)
+        XCTAssertEqual(
+            sheet.textValues("paragraph", ancestors: ["blockquote"])["letterSpacing"] as? Int,
+            0
+        )
+    }
+
     func testRender_opaqueInlineAtom() {
         let json = """
         [
