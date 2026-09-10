@@ -71,8 +71,28 @@ data class EditorElementStyle(
     val declaredProperties: Set<String> = emptySet()
 )
 
-class EditorStyleSheet private constructor(val styles: Map<String, EditorElementStyle>) {
+private data class EditorStyleRule(val path: List<String>, val style: JSONObject)
+
+class EditorStyleSheet private constructor(
+    val styles: Map<String, EditorElementStyle>,
+    private val rules: List<EditorStyleRule> = emptyList()
+) {
     operator fun get(element: String): EditorElementStyle? = styles[canonicalElement(element)]
+
+    fun resolveElement(
+        element: String,
+        ancestors: List<String> = emptyList()
+    ): EditorElementStyle? {
+        val name = canonicalMark(canonicalElement(element))
+        val matches = matchingRules(name, ancestors)
+        val existing = this[name]
+        if (matches.isEmpty()) return existing
+        var result = existing ?: decodeElement(JSONObject(), defaultBox(name))
+        for (rule in matches) {
+            result = result.overlaidWith(decodeElement(rule.style, result.box), rule.style)
+        }
+        return result
+    }
 
     fun resolveText(
         element: String,
@@ -86,17 +106,37 @@ class EditorStyleSheet private constructor(val styles: Map<String, EditorElement
             result = result.mergedWith(this[it]?.text?.copy(backgroundColor = null))
         }
         result = result.mergedWith(this[name]?.text?.copy(backgroundColor = null))
+        matchingRules(name, ancestors).forEach {
+            result = result.mergedWith(EditorTextStyle.fromJson(it.style)?.copy(backgroundColor = null))
+        }
         val active = marks.map(::canonicalMark).toSet()
         listOf("inlineCode", "bold", "italic", "link", "underline", "strike").filter {
             it in active
         }.forEach {
             result = result.mergedWith(semanticText(it)).mergedWith(this[it]?.text)
+            matchingRules(it, ancestors + name).forEach { rule ->
+                result = result.mergedWith(EditorTextStyle.fromJson(rule.style))
+            }
         }
         return result
     }
 
-    fun box(element: String): EditorBoxStyle =
-        this[element]?.box ?: defaultBox(canonicalElement(element))
+    fun box(element: String): EditorBoxStyle = box(element, emptyList())
+
+    fun box(element: String, ancestors: List<String>): EditorBoxStyle {
+        var result = this[element]?.box ?: defaultBox(canonicalElement(element))
+        for (rule in matchingRules(element, ancestors)) {
+            result = decodeElement(rule.style, result).box
+        }
+        return result
+    }
+
+    private fun matchingRules(element: String, ancestors: List<String>): List<EditorStyleRule> {
+        val chain = (ancestors + element).map { canonicalMark(canonicalElement(it)) }
+        return rules.filter { rule ->
+            rule.path.size <= chain.size && chain.takeLast(rule.path.size) == rule.path
+        }
+    }
 
     companion object {
         internal fun decodeTheme(root: JSONObject): EditorTheme? {
@@ -110,7 +150,8 @@ class EditorStyleSheet private constructor(val styles: Map<String, EditorElement
             val sheet = EditorStyleSheet(
                 values.keys().asSequence().associateWith { name ->
                     decodeElement(values.getJSONObject(name), defaultBox(name))
-                }
+                },
+                decodeRules(root)
             )
             val content = sheet.box("content").outerInset
             val marker = sheet["listMarker"]
@@ -158,6 +199,27 @@ class EditorStyleSheet private constructor(val styles: Map<String, EditorElement
                 ),
                 styleSheet = sheet
             )
+        }
+
+        private fun decodeRules(root: JSONObject): List<EditorStyleRule> {
+            val values = root.optJSONArray("rules") ?: return emptyList()
+            return buildList {
+                for (index in 0 until values.length()) {
+                    val entry = values.optJSONObject(index) ?: continue
+                    val pathValues = entry.optJSONArray("path") ?: continue
+                    if (pathValues.length() == 0) continue
+                    val path = mutableListOf<String>()
+                    for (pathIndex in 0 until pathValues.length()) {
+                        val raw = pathValues.opt(pathIndex) as? String ?: break
+                        val name = canonicalMark(canonicalElement(raw))
+                        if (name !in STYLE_NAMES) break
+                        path.add(name)
+                    }
+                    if (path.size != pathValues.length()) continue
+                    val style = entry.optJSONObject("style") ?: continue
+                    add(EditorStyleRule(path.toList(), style))
+                }
+            }
         }
 
         internal fun decodeElement(
@@ -209,6 +271,96 @@ class EditorStyleSheet private constructor(val styles: Map<String, EditorElement
             )
         }
     }
+}
+
+private val STYLE_NAMES = setOf(
+    "content", "text", "paragraph", "h1", "h2", "h3", "h4", "h5", "h6",
+    "blockquote", "codeBlock", "bulletList", "orderedList", "taskList", "listItem",
+    "taskItem", "listMarker", "taskCheckbox", "horizontalRule", "image", "link",
+    "inlineCode", "bold", "italic", "underline", "strike", "mention", "placeholder"
+)
+
+private fun EditorElementStyle.overlaidWith(
+    other: EditorElementStyle,
+    raw: JSONObject? = null
+): EditorElementStyle {
+    val keys = other.declaredProperties
+    fun sides(prefix: String, current: EditorEdges, next: EditorEdges, suffix: String = "") =
+        EditorEdges(
+            if ("${prefix}Top$suffix" in keys) next.top else current.top,
+            if ("${prefix}Right$suffix" in keys) next.right else current.right,
+            if ("${prefix}Bottom$suffix" in keys) next.bottom else current.bottom,
+            if ("${prefix}Left$suffix" in keys) next.left else current.left
+        )
+    val nextChecked = if ("checked" in keys) {
+        other.checked?.let {
+            (checked ?: EditorElementStyle(EditorTextStyle(), box)).overlaidWith(
+                it,
+                raw?.optJSONObject("checked")
+            )
+        }
+    } else {
+        checked
+    }
+    val nextOrdered = if ("ordered" in keys) {
+        other.ordered?.let { next ->
+            val current = ordered ?: EditorOrderedListMarkerTheme()
+            val orderedJson = raw?.optJSONObject("ordered")
+            EditorOrderedListMarkerTheme(
+                schemes = if (orderedJson?.has("schemes") == true) next.schemes else current.schemes,
+                suffix = if (orderedJson?.has("suffix") == true) next.suffix else current.suffix
+            )
+        }
+    } else {
+        ordered
+    }
+    return copy(
+        text = text.mergedWith(other.text),
+        box = box.copy(
+            backgroundColor = if ("backgroundColor" in keys) {
+                other.box.backgroundColor
+            } else {
+                box.backgroundColor
+            },
+            padding = sides("padding", box.padding, other.box.padding),
+            margin = sides("margin", box.margin, other.box.margin),
+            border = sides("border", box.border, other.box.border, "Width"),
+            borderColors = listOf("Top", "Right", "Bottom", "Left").mapIndexed { index, side ->
+                if ("border${side}Color" in keys) other.box.borderColors[index]
+                else box.borderColors[index]
+            },
+            corners = EditorCorners(
+                if ("borderTopLeftRadius" in keys) other.box.corners.topLeft else box.corners.topLeft,
+                if ("borderTopRightRadius" in keys) other.box.corners.topRight else box.corners.topRight,
+                if ("borderBottomRightRadius" in keys) {
+                    other.box.corners.bottomRight
+                } else {
+                    box.corners.bottomRight
+                },
+                if ("borderBottomLeftRadius" in keys) {
+                    other.box.corners.bottomLeft
+                } else {
+                    box.corners.bottomLeft
+                }
+            ),
+            borderStyle = if ("borderStyle" in keys) other.box.borderStyle else box.borderStyle
+        ),
+        indent = if ("indent" in keys) other.indent else indent,
+        baseIndentMultiplier = if ("baseIndentMultiplier" in keys) {
+            other.baseIndentMultiplier
+        } else {
+            baseIndentMultiplier
+        },
+        scale = if ("scale" in keys) other.scale else scale,
+        gap = if ("gap" in keys) other.gap else gap,
+        ordered = nextOrdered,
+        checked = nextChecked,
+        resizeMode = if ("resizeMode" in keys) other.resizeMode else resizeMode,
+        size = if ("size" in keys) other.size else size,
+        checkColor = if ("checkColor" in keys) other.checkColor else checkColor,
+        height = if ("height" in keys) other.height else height,
+        declaredProperties = declaredProperties + keys
+    )
 }
 
 internal fun canonicalElement(name: String): String = when (name) {

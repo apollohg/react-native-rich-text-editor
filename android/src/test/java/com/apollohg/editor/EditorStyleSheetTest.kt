@@ -16,6 +16,183 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class EditorStyleSheetTest {
     @Test
+    fun `contextual box rules preserve sparse base values and explicit zeros`() {
+        val sheet = EditorTheme.fromJson(
+            """{"version":1,"styles":{"paragraph":{"marginBottom":8,"paddingLeft":3}},""" +
+                """"rules":[{"path":["listItem","paragraph"],"style":{"marginBottom":0}}]}"""
+        )!!.styleSheet!!
+
+        assertEquals(8f, sheet.box("paragraph").margin.bottom)
+        assertEquals(0f, sheet.box("paragraph", listOf("list_item")).margin.bottom)
+        assertEquals(3f, sheet.box("paragraph", listOf("list_item")).padding.left)
+    }
+
+    @Test
+    fun `rules match only contiguous canonical ancestry suffixes`() {
+        data class Case(val path: String, val ancestors: List<String>, val matches: Boolean)
+
+        val cases = listOf(
+            Case("\"paragraph\"", emptyList(), true),
+            Case("\"paragraph\"", listOf("blockquote", "bullet_list", "list_item"), true),
+            Case("\"listItem\",\"paragraph\"", listOf("blockquote", "bullet_list", "list_item"), true),
+            Case(
+                "\"bulletList\",\"listItem\",\"paragraph\"",
+                listOf("blockquote", "bullet_list", "list_item"),
+                true
+            ),
+            Case(
+                "\"blockquote\",\"listItem\",\"paragraph\"",
+                listOf("blockquote", "list_item"),
+                true
+            ),
+            Case(
+                "\"blockquote\",\"listItem\",\"paragraph\"",
+                listOf("blockquote", "bullet_list", "list_item"),
+                false
+            ),
+            Case(
+                "\"blockquote\",\"bulletList\",\"listItem\",\"paragraph\"",
+                listOf("bullet_list", "list_item"),
+                false
+            ),
+            Case("\"listItem\",\"paragraph\"", listOf("blockquote"), false)
+        )
+
+        cases.forEachIndexed { index, case ->
+            val sheet = EditorTheme.fromJson(
+                """{"version":1,"styles":{"paragraph":{"marginBottom":8}},"rules":[""" +
+                    """{"path":[${case.path}],"style":{"marginBottom":17}}]}"""
+            )!!.styleSheet!!
+            assertEquals("case $index", if (case.matches) 17f else 8f, sheet.box("paragraph", case.ancestors).margin.bottom)
+        }
+    }
+
+    @Test
+    fun `matching rules apply in declaration order including later shorter paths`() {
+        val sheet = EditorTheme.fromJson(
+            """
+            {
+                "version": 1,
+                "styles": {"paragraph": {"marginBottom": 8, "paddingLeft": 3}},
+                "rules": [
+                    {"path": ["listItem", "paragraph"], "style": {"marginBottom": 2, "paddingLeft": 9}},
+                    {"path": ["paragraph"], "style": {"marginBottom": 1}}
+                ]
+            }
+            """.trimIndent()
+        )!!.styleSheet!!
+
+        val box = sheet.box("paragraph", listOf("list_item"))
+        assertEquals(1f, box.margin.bottom)
+        assertEquals(9f, box.padding.left)
+    }
+
+    @Test
+    fun `element rules overlay special properties without filling sparse fields`() {
+        val sheet = EditorTheme.fromJson(
+            """
+            {
+                "version": 1,
+                "styles": {
+                    "bulletList": {"indent": 24, "baseIndentMultiplier": 2},
+                    "listMarker": {"scale": 0.8, "gap": 6, "ordered": {"schemes": ["upperAlpha"], "suffix": "."}},
+                    "taskCheckbox": {"size": 20, "gap": 4, "checkColor": "#ffffffff", "checked": {"backgroundColor": "#ff0000ff", "borderRightWidth": 3}},
+                    "image": {"resizeMode": "cover", "paddingLeft": 5},
+                    "horizontalRule": {"height": 2}
+                },
+                "rules": [
+                    {"path": ["blockquote", "bulletList"], "style": {"indent": 0, "baseIndentMultiplier": 0}},
+                    {"path": ["listMarker"], "style": {"scale": 0, "gap": 0, "ordered": {"suffix": ")"}}},
+                    {"path": ["taskCheckbox"], "style": {"size": 0, "gap": 0, "checkColor": "#00000000", "checked": {"backgroundColor": "#00ff00ff", "borderLeftWidth": 0}}},
+                    {"path": ["image"], "style": {"resizeMode": "stretch"}},
+                    {"path": ["horizontalRule"], "style": {"height": 0}}
+                ]
+            }
+            """.trimIndent()
+        )!!.styleSheet!!
+
+        val list = sheet.resolveElement("bullet_list", listOf("blockquote"))!!
+        assertEquals(0f, list.indent)
+        assertEquals(0f, list.baseIndentMultiplier)
+
+        val marker = sheet.resolveElement("listMarker")!!
+        assertEquals(0f, marker.scale)
+        assertEquals(0f, marker.gap)
+        assertEquals(listOf(EditorOrderedListNumberingScheme.UPPER_ALPHA), marker.ordered!!.schemes)
+        assertEquals(")", marker.ordered!!.suffix)
+
+        val checkbox = sheet.resolveElement("taskCheckbox")!!
+        assertEquals(0f, checkbox.size)
+        assertEquals(0f, checkbox.gap)
+        assertEquals(Color.TRANSPARENT, checkbox.checkColor)
+        assertEquals(Color.GREEN, checkbox.checked!!.box.backgroundColor)
+        assertEquals(0f, checkbox.checked!!.box.border.left)
+        assertEquals(3f, checkbox.checked!!.box.border.right)
+
+        val image = sheet.resolveElement("image")!!
+        assertEquals("stretch", image.resizeMode)
+        assertEquals(5f, image.box.padding.left)
+        assertEquals(0f, sheet.resolveElement("horizontal_rule")!!.height)
+    }
+
+    @Test
+    fun `text rules follow element styles and precede each mark cascade slot`() {
+        val sheet = EditorTheme.fromJson(
+            """
+            {
+                "version": 1,
+                "styles": {
+                    "paragraph": {"color": "#110000ff"},
+                    "bold": {"color": "#220000ff"},
+                    "link": {"color": "#550000ff"},
+                    "blockquote": {"fontSize": 23}
+                },
+                "rules": [
+                    {"path": ["paragraph"], "style": {"color": "#330000ff"}},
+                    {"path": ["listItem", "paragraph", "bold"], "style": {"color": "#440000ff", "fontWeight": "normal"}},
+                    {"path": ["blockquote"], "style": {"fontSize": 40}}
+                ]
+            }
+            """.trimIndent()
+        )!!.styleSheet!!
+
+        assertEquals(Color.rgb(51, 0, 0), sheet.resolveText("paragraph", listOf("list_item")).color)
+        val marked = sheet.resolveText("paragraph", listOf("list_item"), listOf("strong"))
+        assertEquals(Color.rgb(68, 0, 0), marked.color)
+        assertEquals("normal", marked.fontWeight)
+        assertEquals(
+            Color.rgb(85, 0, 0),
+            sheet.resolveText("paragraph", listOf("list_item"), listOf("strong", "link")).color
+        )
+        assertEquals(23f, sheet.resolveText("paragraph", listOf("blockquote")).fontSize)
+    }
+
+    @Test
+    fun `empty and unmatched rules preserve existing element identity`() {
+        val empty = EditorTheme.fromJson(
+            """{"version":1,"styles":{"image":{"resizeMode":"cover"}},"rules":[]}"""
+        )!!.styleSheet!!
+        val emptyStyle = EditorTheme.fromJson(
+            """{"version":1,"styles":{"image":{"resizeMode":"cover","paddingLeft":5}},""" +
+                """"rules":[{"path":["image"],"style":{}}]}"""
+        )!!.styleSheet!!
+        val unmatched = EditorTheme.fromJson(
+            """{"version":1,"styles":{"image":{"resizeMode":"cover"}},"rules":[""" +
+                """{"path":["blockquote","image"],"style":{"resizeMode":"stretch"}}]}"""
+        )!!.styleSheet!!
+        val ruleOnly = EditorTheme.fromJson(
+            """{"version":1,"rules":[{"path":["image"],"style":{"resizeMode":"stretch"}}]}"""
+        )!!.styleSheet!!
+
+        assertSame(empty["image"], empty.resolveElement("image"))
+        assertEquals("cover", emptyStyle.resolveElement("image")!!.resizeMode)
+        assertEquals(5f, emptyStyle.box("image").padding.left)
+        assertSame(unmatched["image"], unmatched.resolveElement("image"))
+        assertNull(unmatched.resolveElement("paragraph"))
+        assertEquals("stretch", ruleOnly.resolveElement("image")!!.resizeMode)
+    }
+
+    @Test
     fun `version one stylesheet preserves box defaults and explicit zeros`() {
         val defaults = EditorTheme.fromJson("""{"version":1}""")!!.styleSheet!!
         assertEquals(0f, defaults.box("paragraph").margin.bottom)
