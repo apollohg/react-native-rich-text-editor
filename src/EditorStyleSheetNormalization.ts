@@ -319,6 +319,56 @@ export function normalizeEditorTheme(theme: unknown): NormalizedEditorTheme {
     const result: NormalizedEditorTheme = { version: 1 };
 
     for (const [ key, value ] of Object.entries(theme)) {
+        if (key === 'rules') {
+            if (value === undefined) {
+                continue;
+            }
+
+            if (!Array.isArray(value)) {
+                invalid('rules', 'expected an array');
+            }
+
+            result.rules = value.map((entry, index) => {
+                const indexedPath = `rules[${index}]`;
+
+                if (!record(entry)) {
+                    invalid(indexedPath, 'expected a rule object');
+                }
+
+                for (const propertyName of Object.keys(entry)) {
+                    if (propertyName !== 'path' && propertyName !== 'style') {
+                        invalid(`${indexedPath}.${propertyName}`, 'unsupported property');
+                    }
+                }
+
+                if (!Array.isArray(entry.path) || entry.path.length === 0) {
+                    invalid(`${indexedPath}.path`, 'expected a nonempty array');
+                }
+
+                entry.path.forEach((element, pathIndex) => {
+                    if (
+                        typeof element !== 'string' ||
+                        !Object.prototype.hasOwnProperty.call(fields, element)
+                    ) {
+                        invalid(`${indexedPath}.path[${pathIndex}]`, 'unsupported element');
+                    }
+                });
+
+                if (!Object.prototype.hasOwnProperty.call(entry, 'style')) {
+                    invalid(`${indexedPath}.style`, 'expected an own style property');
+                }
+
+                const target = entry.path[entry.path.length - 1] as keyof EditorStyleMap;
+
+                return {
+                    path: [ ...entry.path ],
+                    style: normalizeStyle(entry.style, fields[target], `${indexedPath}.style`),
+                };
+            });
+
+            continue;
+        }
+
         if (key === 'toolbar') {
             if (value !== undefined) {
                 if (!record(value)) {

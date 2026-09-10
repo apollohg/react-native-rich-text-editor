@@ -104,6 +104,7 @@ export { serializeEditorTheme } from './EditorTheme';
 export { EditorStyleSheet } from './EditorStyleSheet';
 export type {
     EditorStyleProp,
+    EditorStyleRule,
     EditorStyleMap,
     EditorTypographyStyle,
     EditorBorderStyle,

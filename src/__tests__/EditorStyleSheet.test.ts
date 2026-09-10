@@ -25,6 +25,119 @@ describe('EditorStyleSheet', () => {
         expect(serializeEditorTheme({})).toBeUndefined();
     });
 
+    it('serializes ordered ancestry rules alongside named styles', () => {
+        expect(
+            JSON.parse(
+                serializeEditorTheme({
+                    paragraph: { marginBottom: 8 },
+                    rules: [
+                        {
+                            path: [ 'listItem', 'paragraph' ],
+                            style: { marginBottom: 0 },
+                        },
+                    ],
+                })!
+            )
+        ).toEqual({
+            version: 1,
+            styles: { paragraph: { marginBottom: 8 } },
+            rules: [ { path: [ 'listItem', 'paragraph' ], style: { marginBottom: 0 } } ],
+        });
+    });
+
+    it('distinguishes omitted rules from an explicit empty rule list', () => {
+        expect(serializeEditorTheme({ rules: undefined })).toBeUndefined();
+        expect(JSON.parse(serializeEditorTheme({ rules: [] })!)).toEqual({
+            version: 1,
+            rules: [],
+        });
+    });
+
+    it('retains the required style field for an explicitly empty rule style', () => {
+        expect(
+            JSON.parse(
+                serializeEditorTheme({ rules: [ { path: [ 'paragraph' ], style: {} } ] })!
+            )
+        ).toEqual({
+            version: 1,
+            rules: [ { path: [ 'paragraph' ], style: {} } ],
+        });
+    });
+
+    it('preserves rule order', () => {
+        expect(
+            JSON.parse(
+                serializeEditorTheme({
+                    rules: [
+                        { path: [ 'blockquote', 'paragraph' ], style: { marginBottom: 1 } },
+                        { path: [ 'listItem', 'paragraph' ], style: { marginBottom: 2 } },
+                    ],
+                })!
+            ).rules
+        ).toEqual([
+            { path: [ 'blockquote', 'paragraph' ], style: { marginBottom: 1 } },
+            { path: [ 'listItem', 'paragraph' ], style: { marginBottom: 2 } },
+        ]);
+    });
+
+    it('normalizes rule colors and spacing shorthands for the path target', () => {
+        expect(
+            JSON.parse(
+                serializeEditorTheme({
+                    rules: [
+                        {
+                            path: [ 'listItem', 'paragraph' ],
+                            style: { color: 'rgba(10, 20, 30, 0.5)', margin: 8, marginLeft: 0 },
+                        },
+                    ],
+                })!
+            ).rules
+        ).toEqual([
+            {
+                path: [ 'listItem', 'paragraph' ],
+                style: {
+                    color: '#0a141e80',
+                    marginTop: 8,
+                    marginRight: 8,
+                    marginBottom: 8,
+                    marginLeft: 0,
+                },
+            },
+        ]);
+    });
+
+    it('does not mutate frozen rule inputs and returns the original create input', () => {
+        const path = Object.freeze([ 'listItem', 'paragraph' ] as const);
+        const style = Object.freeze({ marginBottom: 0 });
+        const rule = Object.freeze({ path, style });
+        const rules = Object.freeze([ rule ]);
+        const theme = Object.freeze({ rules });
+
+        expect(EditorStyleSheet.create(theme)).toBe(theme);
+        expect(JSON.parse(serializeEditorTheme(theme)!)).toEqual({
+            version: 1,
+            rules: [ { path: [ 'listItem', 'paragraph' ], style: { marginBottom: 0 } } ],
+        });
+        expect(path).toEqual([ 'listItem', 'paragraph' ]);
+        expect(style).toEqual({ marginBottom: 0 });
+    });
+
+    it.each([
+        [ { rules: {} }, 'rules' ],
+        [ { rules: [ null ] }, 'rules[0]' ],
+        [ { rules: [ { path: [], style: {} } ] }, 'rules[0].path' ],
+        [ { rules: [ { path: 'paragraph', style: {} } ] }, 'rules[0].path' ],
+        [ { rules: [ { path: [ 'paragraphs' ], style: {} } ] }, 'rules[0].path[0]' ],
+        [ { rules: [ { path: [ 'paragraph' ], style: {}, extra: true } ] }, 'rules[0].extra' ],
+        [ { rules: [ { path: [ 'paragraph' ] } ] }, 'rules[0].style' ],
+        [
+            { rules: [ { path: [ 'link' ], style: { marginBottom: 4 } } ] },
+            'rules[0].style.marginBottom',
+        ],
+    ])('rejects invalid rules with their indexed property path', (theme, path) => {
+        expect(() => serializeEditorTheme(theme as never)).toThrow(path);
+    });
+
     it('normalizes mention padding with side and axis precedence', () => {
         expect(
             styles({

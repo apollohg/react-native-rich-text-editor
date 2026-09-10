@@ -1,5 +1,6 @@
 import { EditorStyleSheet } from '../EditorStyleSheet';
 import type { EditorTheme } from '../EditorTheme';
+import type { EditorStyleRule } from '../index';
 
 const styles = EditorStyleSheet.create({
     paragraph: [ { fontWeight: 600, padding: 12 }, false, [ undefined, { marginBottom: 0 } ] ],
@@ -18,6 +19,38 @@ const styles = EditorStyleSheet.create({
 
 const theme: EditorTheme = styles;
 void theme;
+
+const paragraphRule: EditorStyleRule = {
+    path: [ 'listItem', 'paragraph' ],
+    style: { marginBottom: 0 },
+};
+const linkRule: EditorStyleRule = {
+    path: [ 'link' ],
+    style: { color: 'rebeccapurple' },
+};
+void paragraphRule;
+void linkRule;
+
+const rules = EditorStyleSheet.create({
+    rules: [
+        paragraphRule,
+        {
+            path: [ 'link' ],
+            style: { color: 'rebeccapurple' },
+        },
+        {
+            path: [ 'taskList', 'listItem', 'paragraph' ],
+            style: [ { margin: 8 }, false, [ undefined, { marginBottom: 0 } ] ],
+        },
+    ],
+});
+
+const rulesTheme: EditorTheme = rules;
+void rulesTheme;
+const literalRulePathElement: 'link' = rules.rules[1].path[0];
+void literalRulePathElement;
+
+EditorStyleSheet.create({ rules: undefined });
 
 // @ts-expect-error Mention padding is numeric.
 EditorStyleSheet.create({ mention: { padding: true } });
@@ -40,3 +73,19 @@ EditorStyleSheet.create({ taskCheckbox: { checked: { backgroundColor: 'red', fle
 EditorStyleSheet.create({ listMarker: { ordered: { suffix: '.', extra: true } } });
 // @ts-expect-error Use a supported numeric or string weight.
 EditorStyleSheet.create({ paragraph: { fontWeight: 'semibold' } });
+
+// @ts-expect-error Link rule styles have no box margins.
+EditorStyleSheet.create({ rules: [ { path: [ 'link' ], style: { marginBottom: 12 } } ] });
+EditorStyleSheet.create({
+    rules: [
+        {
+            path: [ 'listItem', 'paragraph' ],
+            // @ts-expect-error Composed rule styles reject unsupported properties.
+            style: [ { marginBottom: 12 }, { color: 'red', flex: 1 } ],
+        },
+    ],
+});
+// @ts-expect-error Rules require an own style property.
+EditorStyleSheet.create({ rules: [ { path: [ 'paragraph' ] } ] });
+// @ts-expect-error Rules accept only path and style properties.
+EditorStyleSheet.create({ rules: [ { path: [ 'paragraph' ], style: {}, extra: true } ] });

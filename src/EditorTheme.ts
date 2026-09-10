@@ -183,7 +183,7 @@ export function serializeEditorTheme(
     const normalized = theme === undefined ? undefined : normalizeEditorTheme(theme);
 
     const cleanedTheme =
-        normalized && (normalized.styles || normalized.toolbar)
+        normalized && (normalized.styles || normalized.rules || normalized.toolbar)
             ? stripUndefined(normalized)
             : undefined;
 
@@ -191,6 +191,10 @@ export function serializeEditorTheme(
         cleanedTheme && typeof cleanedTheme === 'object'
             ? (cleanedTheme as Record<string, unknown>)
             : undefined;
+
+    if (base && normalized?.rules !== undefined) {
+        base.rules = normalized.rules;
+    }
 
     const cleanedMentions = mentionTheme
         ? stripUndefined(normalizeEditorMentionTheme(mentionTheme))

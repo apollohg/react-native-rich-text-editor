@@ -146,9 +146,19 @@ export interface EditorStyleMap {
     placeholder: EditorTypographyStyle;
 }
 
+export type EditorStyleRule = {
+    [K in keyof EditorStyleMap]: {
+        path: readonly [ ...(keyof EditorStyleMap)[], K ];
+        style: EditorStyleProp<EditorStyleMap[K]>;
+    };
+}[keyof EditorStyleMap];
+
 export type EditorTheme = {
     [K in keyof EditorStyleMap]?: EditorStyleProp<EditorStyleMap[K]>;
-} & { toolbar?: EditorToolbarTheme };
+} & {
+    rules?: readonly EditorStyleRule[];
+    toolbar?: EditorToolbarTheme;
+};
 
 export type EditorLinkTheme = EditorInlineStyle;
 export type EditorHeadingTheme = Partial<
@@ -163,6 +173,10 @@ export type NormalizedEditorStyle = Readonly<Record<string, unknown>>;
 export interface NormalizedEditorTheme {
     version: 1;
     styles?: Partial<Record<keyof EditorStyleMap, NormalizedEditorStyle>>;
+    rules?: readonly {
+        path: readonly (keyof EditorStyleMap)[];
+        style: NormalizedEditorStyle;
+    }[];
     toolbar?: EditorToolbarTheme;
 }
 
@@ -180,10 +194,41 @@ type ExactStyle<T, Shape> = T extends false | null | undefined
                 : never;
         };
 
+type ExactRuleStyle<T, Shape> = [ EditorStyleProp<Shape> ] extends [ T ]
+    ? [ T ] extends [ EditorStyleProp<Shape> ]
+        ? T
+        : ExactStyle<T, Shape>
+    : ExactStyle<T, Shape>;
+
+type ExactEditorStyleRule<T> = T extends {
+    readonly path: infer Path extends readonly (keyof EditorStyleMap)[];
+    readonly style: unknown;
+}
+    ? Path extends readonly [ ...(keyof EditorStyleMap)[], infer Target ]
+        ? Target extends keyof EditorStyleMap
+            ? {
+                [K in keyof T]: K extends 'path'
+                    ? Path
+                    : K extends 'style'
+                        ? ExactRuleStyle<T[K], EditorStyleMap[Target]>
+                        : never;
+            }
+            : never
+        : never
+    : never;
+
+type ExactEditorStyleRules<T> = T extends undefined
+    ? T
+    : T extends readonly unknown[]
+        ? { [K in keyof T]: ExactEditorStyleRule<T[K]> }
+        : never;
+
 export type ExactEditorTheme<T> = {
-    [K in keyof T]: K extends keyof EditorStyleMap
-        ? ExactStyle<T[K], EditorStyleMap[K]>
-        : K extends 'toolbar'
-          ? EditorToolbarTheme
-          : never;
+    [K in keyof T]: K extends 'rules'
+        ? ExactEditorStyleRules<T[K]>
+        : K extends keyof EditorStyleMap
+            ? ExactStyle<T[K], EditorStyleMap[K]>
+            : K extends 'toolbar'
+                ? EditorToolbarTheme
+                : never;
 };
