@@ -66,7 +66,8 @@ final class CoreTextProseLayoutEngine {
                 context,
                 nestingDepth: markerNestingDepth,
                 paint: theme.paint(for: block),
-                theme: theme
+                theme: theme,
+                ancestors: block.markerStyleAncestors
             )
         }
         for (index, block) in document.blocks.enumerated() {
@@ -90,14 +91,14 @@ final class CoreTextProseLayoutEngine {
                 let shared = zip(previous.styleAncestors, block.styleAncestors).prefix { $0 == $1 }.count
                 let previousSibling = previous.styleAncestors.dropFirst(shared).first?.nodeType ?? previous.nodeType
                 let nextSibling = block.styleAncestors.dropFirst(shared).first?.nodeType ?? block.nodeType
-                let previousMargin = sheet.box(previousSibling).margin.bottom
-                let nextMargin = sheet.box(nextSibling).margin.top
+                let previousMargin = sheet.box(previousSibling, ancestors: previous.styleAncestors.prefix(shared).map(\.nodeType)).margin.bottom
+                let nextMargin = sheet.box(nextSibling, ancestors: block.styleAncestors.prefix(shared).map(\.nodeType)).margin.top
                 cursorY -= previousMargin + nextMargin - EditorStyleSheet.collapsedMargin(previousMargin, nextMargin)
             }
             let omitBottomMargin = block.nodeType == "paragraph"
                 && block.styleAncestors.last.map { $0.nodeType == "blockquote" && closing.contains($0) } == true
-            let top = opening.reduce(CGFloat.zero) { $0 + (theme.styleSheet?.box($1.nodeType).outerInsets.top ?? 0) }
-            let bottom = closing.reduce(CGFloat.zero) { $0 + (theme.styleSheet?.box($1.nodeType).outerInsets.bottom ?? 0) }
+            let top = opening.reduce(CGFloat.zero) { $0 + (theme.styleSheet?.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets.top ?? 0) }
+            let bottom = closing.reduce(CGFloat.zero) { $0 + (theme.styleSheet?.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets.bottom ?? 0) }
             cursorY += top
             let prepared = prepareBlock(
                 block,
@@ -128,10 +129,10 @@ final class CoreTextProseLayoutEngine {
                 var outerLeft: CGFloat = 0
                 var outerRight: CGFloat = 0
                 for (depth, ancestor) in block.styleAncestors.enumerated() {
-                    let box = sheet.box(ancestor.nodeType)
+                    let box = sheet.box(ancestor.nodeType, ancestors: block.ancestors(before: ancestor))
                     let remaining = block.styleAncestors.dropFirst(depth + 1)
-                    let innerTop = remaining.reduce(CGFloat.zero) { $0 + (opening.contains($1) ? sheet.box($1.nodeType).outerInsets.top : 0) }
-                    let innerBottom = remaining.reduce(CGFloat.zero) { $0 + (closing.contains($1) ? sheet.box($1.nodeType).outerInsets.bottom : 0) }
+                    let innerTop = remaining.reduce(CGFloat.zero) { $0 + (opening.contains($1) ? sheet.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets.top : 0) }
+                    let innerBottom = remaining.reduce(CGFloat.zero) { $0 + (closing.contains($1) ? sheet.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets.bottom : 0) }
                     let y = cursorY - innerTop - (opening.contains(ancestor) ? box.inset.top : 0)
                     let end = prepared.nextY + innerBottom + (closing.contains(ancestor) ? box.inset.bottom : 0)
                     let rect = CGRect(
@@ -211,8 +212,8 @@ final class CoreTextProseLayoutEngine {
         warningSemanticGeneration: String
     ) -> BlockPreparation {
         let sheet = theme.styleSheet
-        let box = sheet?.box(block.nodeType) ?? EditorStyleBox()
-        let ancestors = block.styleAncestors.reduce(UIEdgeInsets.zero) { $0.adding(sheet?.box($1.nodeType).outerInsets ?? .zero) }
+        let box = sheet?.box(block.nodeType, ancestors: block.styleAncestors.map(\.nodeType)) ?? EditorStyleBox()
+        let ancestors = block.styleAncestors.reduce(UIEdgeInsets.zero) { $0.adding(sheet?.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets ?? .zero) }
         let cursorY = cursorY + box.margin.top
         let contentX = theme.contentInsets.left + ancestors.left + box.margin.left
         let contentWidth = max(1, width - theme.contentInsets.left - theme.contentInsets.right - ancestors.left - ancestors.right - box.margin.left - box.margin.right)
@@ -222,7 +223,7 @@ final class CoreTextProseLayoutEngine {
             : (block.listItemBoundary.map { Int($0.nestingDepth) } ?? max(0, Int(block.depth) - 1))
         let fallbackMarkerNestingDepth = max(0, block.listItemAncestors.count - 1)
         let measuredListMarker = listMarker ?? block.listContext.map {
-            makeListMarker($0, nestingDepth: fallbackMarkerNestingDepth, paint: paint, theme: theme)
+            makeListMarker($0, nestingDepth: fallbackMarkerNestingDepth, paint: paint, theme: theme, ancestors: block.markerStyleAncestors)
         }
         let marker = block.listItemBoundary.map { $0.isFirstRenderableLeaf ? measuredListMarker : nil } ?? measuredListMarker
         // The marker gutter is an independently measured column. In particular,
@@ -235,10 +236,26 @@ final class CoreTextProseLayoutEngine {
         let baseMultiplier = EditorTheme.cgFloat(listValues["baseIndentMultiplier"]) ?? theme.listBaseIndentMultiplier
         let listBaseIndent = block.listContext == nil ? 0 : max(0, listIndent * baseMultiplier)
         let nestedListIndent = block.listContext == nil ? 0 : max(0, listIndent * CGFloat(listDepth))
-        let checkbox = block.listContext.flatMap { $0.kind == "task" ? sheet?.checkbox(checked: $0.checked) : nil }
-        let markerGap = checkbox?.number("gap", fallback: 8) ?? theme.listMarkerGap
+        // Keep the mixed-list baseline and add each container's contextual change.
+        var contextualListIndent: CGFloat = 0
+        if let sheet, block.listContext != nil {
+            let lists = block.styleAncestors.filter { ["bulletList", "orderedList", "taskList"].contains(EditorStyleSheet.element($0.nodeType)) }
+            for (depth, ancestor) in lists.enumerated() {
+                let base = sheet[ancestor.nodeType]
+                let resolved = sheet.resolvedValues(ancestor.nodeType, ancestors: block.ancestors(before: ancestor))
+                let baseIndent = EditorTheme.cgFloat(base["indent"]) ?? theme.listIndent
+                let resolvedIndent = EditorTheme.cgFloat(resolved["indent"]) ?? theme.listIndent
+                let baseMultiplier = depth == 0 ? EditorTheme.cgFloat(base["baseIndentMultiplier"]) ?? theme.listBaseIndentMultiplier : 1
+                let resolvedMultiplier = depth == 0 ? EditorTheme.cgFloat(resolved["baseIndentMultiplier"]) ?? theme.listBaseIndentMultiplier : 1
+                contextualListIndent += max(0, resolvedIndent * resolvedMultiplier) - max(0, baseIndent * baseMultiplier)
+            }
+        }
+        let markerValues = sheet?.resolvedValues("listMarker", ancestors: block.markerStyleAncestors) ?? [:]
+        let markerColor = EditorTheme.color(from: markerValues["color"]) ?? theme.listMarkerColor
+        let checkbox = block.listContext.flatMap { $0.kind == "task" ? sheet?.checkbox(checked: $0.checked, ancestors: block.markerStyleAncestors) : nil }
+        let markerGap = checkbox?.number("gap", fallback: 8) ?? EditorTheme.cgFloat(markerValues["gap"]) ?? theme.listMarkerGap
         let markerGutter = measuredListMarker.map { max(markerGap, $0.width + markerGap) } ?? 0
-        let listInset = listBaseIndent + nestedListIndent + markerGutter
+        let listInset = listBaseIndent + nestedListIndent + contextualListIndent + markerGutter
         let quoteInset = block.inBlockquote ? theme.quoteBorderWidth + theme.quoteMarkerGap + theme.quoteIndent : 0
         let codeInset = block.nodeType == "codeBlock" ? theme.codePaddingHorizontal : 0
         let textX = contentX + listInset + quoteInset + codeInset + box.inset.left
@@ -294,7 +311,7 @@ final class CoreTextProseLayoutEngine {
                     line: marker.line,
                     origin: CGPoint(x: markerX, y: markerTop + marker.ascent),
                     bounds: markerBounds,
-                    color: theme.listMarkerColor.cgColor,
+                    color: markerColor.cgColor,
                     label: marker.label,
                     checked: marker.checked,
                     styleBox: checkbox
@@ -334,12 +351,13 @@ final class CoreTextProseLayoutEngine {
             return BlockPreparation(block: prepared, interactions: [], accessibilityNodes: [node], attachment: attachment, nextY: bounds.maxY + itemSpacing, retainedBytes: prepared.estimatedRetainedBytes + 192)
         }
         if block.nodeType == "horizontalRule" || block.nodeType == "horizontal_rule" {
+            let thickness = sheet == nil ? theme.ruleThickness : box.number("height", fallback: theme.ruleThickness)
             let ruleX = contentX + listInset + quoteInset + box.inset.left
             let ruleWidth = max(1, contentWidth - listInset - quoteInset - box.inset.left - box.inset.right)
             let y = cursorY + theme.ruleMargin + box.inset.top
-            let rule = CGRect(x: ruleX, y: y, width: ruleWidth, height: theme.ruleThickness)
-            var fragments: [PreparedProseFragment] = [.init(kind: .rule, bounds: rule, color: theme.ruleColor.cgColor, strokeWidth: theme.ruleThickness)]
-            let totalEnd = y + theme.ruleThickness + theme.ruleMargin + box.inset.bottom
+            let rule = CGRect(x: ruleX, y: y, width: ruleWidth, height: thickness)
+            var fragments: [PreparedProseFragment] = [.init(kind: .rule, bounds: rule, color: theme.ruleColor.cgColor, strokeWidth: thickness)]
+            let totalEnd = y + thickness + theme.ruleMargin + box.inset.bottom
             if sheet != nil {
                 fragments = [.init(kind: .background, bounds: CGRect(x: contentX, y: cursorY, width: contentWidth, height: totalEnd - cursorY), styleBox: box)]
             }
@@ -352,7 +370,7 @@ final class CoreTextProseLayoutEngine {
                 let markerTop = cursorY + (totalEnd - cursorY - markerHeight) / 2
                 let markerBaseline = markerTop + marker.ascent
                 let markerBounds = CGRect(x: markerX, y: markerTop, width: marker.width, height: markerHeight)
-                fragments.append(.init(kind: .marker, line: marker.line, origin: CGPoint(x: markerX, y: markerBaseline), bounds: markerBounds, color: theme.listMarkerColor.cgColor, label: marker.label, checked: marker.checked, styleBox: checkbox))
+                fragments.append(.init(kind: .marker, line: marker.line, origin: CGPoint(x: markerX, y: markerBaseline), bounds: markerBounds, color: markerColor.cgColor, label: marker.label, checked: marker.checked, styleBox: checkbox))
             }
             let seedBounds = CGRect(x: contentX, y: cursorY, width: contentWidth, height: totalEnd - cursorY)
             let bounds = fragments.reduce(seedBounds) { $0.union($1.bounds) }
@@ -376,7 +394,7 @@ final class CoreTextProseLayoutEngine {
         }
 
         let availableWidth = max(1, contentWidth - listInset - quoteInset - codeInset * 2 - box.inset.left - box.inset.right)
-        let attributed = makeAttributedString(block.inlines, paint: paint, theme: theme, warningSemanticGeneration: warningSemanticGeneration)
+        let attributed = makeAttributedString(block.inlines, paint: paint, theme: theme, warningSemanticGeneration: warningSemanticGeneration, ancestors: block.styleAncestors.map(\.nodeType) + [block.nodeType])
         let highlighted = NSMutableAttributedString(attributedString: attributed.string)
         NativeCodeHighlightPresentation.apply(highlighting, to: highlighted)
         let typesetter = CTTypesetterCreateWithAttributedString(highlighted)
@@ -510,7 +528,7 @@ final class CoreTextProseLayoutEngine {
                 width: marker.width,
                 height: markerHeight
             )
-            fragments.append(.init(kind: .marker, line: marker.line, origin: CGPoint(x: markerX, y: markerBaseline), bounds: markerBounds, color: theme.listMarkerColor.cgColor, label: marker.label, checked: marker.checked, styleBox: checkbox))
+            fragments.append(.init(kind: .marker, line: marker.line, origin: CGPoint(x: markerX, y: markerBaseline), bounds: markerBounds, color: markerColor.cgColor, label: marker.label, checked: marker.checked, styleBox: checkbox))
         }
         let seedBounds = CGRect(x: contentX, y: cursorY, width: contentWidth, height: max(0, totalEnd - cursorY))
         let bounds = fragments.reduce(seedBounds) { $0.union($1.bounds) }

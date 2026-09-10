@@ -138,6 +138,7 @@ struct PreparedProseTheme {
     let ruleMargin: CGFloat
     let link: EditorLinkTheme?
     let mention: EditorMentionTheme?
+    let mentionOverrides: [String: Any]?
 
     static func resolve(
         themeJSON: String?,
@@ -205,7 +206,7 @@ struct PreparedProseTheme {
             headings: headings,
             blockquote: quote,
             code: paint(codeStyle, fallback: codeFallback),
-            contentInsets: UIEdgeInsets(
+            contentInsets: theme.styleSheet?.box("content").inset ?? UIEdgeInsets(
                 top: theme.contentInsets?.top ?? 0,
                 left: theme.contentInsets?.left ?? 0,
                 bottom: theme.contentInsets?.bottom ?? 0,
@@ -231,7 +232,8 @@ struct PreparedProseTheme {
             ruleThickness: theme.horizontalRule?.thickness ?? 1,
             ruleMargin: theme.horizontalRule?.verticalMargin ?? 12,
             link: theme.links,
-            mention: theme.mentions
+            mention: theme.mentions,
+            mentionOverrides: theme.styleSheetMentionOverrides
         )
     }
 
@@ -317,6 +319,19 @@ struct PreparedListMarker {
     let ascent: CGFloat
     let descent: CGFloat
     let checked: Bool
+}
+
+extension ViewerBlock {
+    func ancestors(before ancestor: ViewerStyleAncestor) -> [String] {
+        styleAncestors.prefix { $0.identity != ancestor.identity }.map(\.nodeType)
+    }
+
+    var markerStyleAncestors: [String] {
+        guard let item = styleAncestors.lastIndex(where: { ["listItem", "taskItem"].contains(EditorStyleSheet.element($0.nodeType)) }) else {
+            return styleAncestors.map(\.nodeType)
+        }
+        return styleAncestors.prefix(item + 1).map(\.nodeType)
+    }
 }
 
 /// Performs the width-dependent, immutable Core Text preparation step.

@@ -90,7 +90,9 @@ private data class PreparedMarker(
     val ascentPx: Int,
     val baselinePx: Int,
     val checked: Boolean,
-    val checkbox: com.apollohg.editor.EditorElementStyle? = null
+    val checkbox: com.apollohg.editor.EditorElementStyle? = null,
+    val color: Int? = null,
+    val gapPx: Int? = null
 )
 
 internal const val PREPARED_LIST_MARKER_GAP_DP = 6f
@@ -251,7 +253,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                         ancestor.context,
                         nestingDepth,
                         theme.paintFor(block),
-                        theme
+                        theme,
+                        markerAncestors(block, nestingDepth)
                     )
                 }
             }
@@ -259,7 +262,9 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         val containerBounds = mutableMapOf<Int, Rect>()
         val sheet = theme.sourceTheme?.styleSheet
         val leafBoxes = visibleBlocks.mapIndexed { index, block ->
-            val box = sheet?.box(block.nodeType)?.scaled(density) ?: EditorBoxStyle()
+            val box =
+                sheet?.box(block.nodeType, block.containers.map { it.nodeType })?.scaled(density)
+                    ?: EditorBoxStyle()
             val parent = block.containers.lastOrNull()
             if (block.nodeType == "paragraph" && parent?.nodeType == "blockquote" &&
                 parent.lastLeaf == index
@@ -288,13 +293,23 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 }
                 val bottom = (
                     previous.getOrNull(common)?.let {
-                        sheet.box(it.nodeType).scaled(density).margin.bottom
+                        sheet.box(
+                            it.nodeType,
+                            previous.take(common).map {
+                                it.nodeType
+                            }
+                        ).scaled(density).margin.bottom
                     }
                         ?: leafBoxes[index - 1].margin.bottom
                     ).toInt()
                 val top = (
                     containers.getOrNull(common)?.let {
-                        sheet.box(it.nodeType).scaled(density).margin.top
+                        sheet.box(
+                            it.nodeType,
+                            containers.take(common).map {
+                                it.nodeType
+                            }
+                        ).scaled(density).margin.top
                     }
                         ?: leafBoxes[index].margin.top
                     ).toInt()
@@ -302,7 +317,13 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             }
             var containerInset = EditorEdges()
             containers.forEach { ancestor ->
-                val box = sheet!!.box(ancestor.nodeType).scaled(density)
+                val box = sheet!!.box(
+                    ancestor.nodeType,
+                    containers.takeWhile {
+                        it.identity !=
+                            ancestor.identity
+                    }.map { it.nodeType }
+                ).scaled(density)
                 if (ancestor.firstLeaf == index) {
                     cursorY += box.margin.top.toInt()
                     containerBounds[ancestor.identity] =
@@ -379,7 +400,13 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             cursorY = prepared.nextY
             containers.asReversed().forEach { ancestor ->
                 if (ancestor.lastLeaf == index) {
-                    val box = sheet!!.box(ancestor.nodeType).scaled(density)
+                    val box = sheet!!.box(
+                        ancestor.nodeType,
+                        containers.takeWhile {
+                            it.identity !=
+                                ancestor.identity
+                        }.map { it.nodeType }
+                    ).scaled(density)
                     cursorY += box.inset.bottom.toInt()
                     containerBounds[ancestor.identity]?.bottom = cursorY
                     cursorY += box.margin.bottom.toInt()
@@ -420,7 +447,13 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     PreparedProseFragment(
                         PreparedProseFragmentKind.BACKGROUND,
                         clip,
-                        box = sheet.box(ancestor.nodeType).scaled(density),
+                        box = sheet.box(
+                            ancestor.nodeType,
+                            visibleBlocks[index].containers.takeWhile {
+                                it.identity !=
+                                    ancestor.identity
+                            }.map { it.nodeType }
+                        ).scaled(density),
                         decorationBounds = bounds
                     )
                 }
@@ -545,17 +578,19 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         val firstMarkers = ancestorMarkers.filter { (ancestor, _) ->
             ancestor.isFirstRenderableLeaf
         }
-        fun listStyle(ancestor: ViewerListItemAncestor) = theme.sourceTheme?.styleSheet?.get(
-            if (ancestor.context.kind ==
-                "task"
-            ) {
-                "taskList"
-            } else if (ancestor.context.ordered) {
-                "orderedList"
-            } else {
-                "bulletList"
-            }
-        )
+        fun listStyle(ancestor: ViewerListItemAncestor) =
+            theme.sourceTheme?.styleSheet?.resolveElement(
+                if (ancestor.context.kind ==
+                    "task"
+                ) {
+                    "taskList"
+                } else if (ancestor.context.ordered) {
+                    "orderedList"
+                } else {
+                    "bulletList"
+                },
+                markerAncestors(block, ancestors.indexOf(ancestor)).dropLast(2)
+            )
         fun listIndent(ancestor: ViewerListItemAncestor) =
             listStyle(ancestor)?.indent?.times(theme.density)?.toInt() ?: theme.listIndentPx
         val baseListInset = if (ancestors.isEmpty()) {
@@ -578,7 +613,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     marker.widthPx +
                         (
                             marker.checkbox?.gap?.times(theme.density)?.toInt()
-                                ?: theme.listMarkerGapPx
+                                ?: marker.gapPx ?: theme.listMarkerGapPx
                             )
                     )
         }
@@ -722,10 +757,16 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                 PreparedProseFragmentKind.IMAGE,
                                 bounds,
                                 color =
-                                    theme.sourceTheme?.styleSheet?.box("image")?.backgroundColor
+                                    theme.sourceTheme?.styleSheet?.box(
+                                        "image",
+                                        block.containers.map {
+                                            it.nodeType
+                                        }
+                                    )?.backgroundColor
                                         ?: 0xFFF2F2F7.toInt(),
                                 box = theme.sourceTheme?.styleSheet?.box(
-                                    "image"
+                                    "image",
+                                    block.containers.map { it.nodeType }
                                 )?.scaled(theme.density)?.let {
                                     it.copy(
                                         border = EditorEdges(),
@@ -736,7 +777,12 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                                     )
                                 },
                                 resizeMode =
-                                    theme.sourceTheme?.styleSheet?.get("image")?.resizeMode
+                                    theme.sourceTheme?.styleSheet?.resolveElement(
+                                        "image",
+                                        block.containers.map {
+                                            it.nodeType
+                                        }
+                                    )?.resizeMode
                                         ?: "contain"
                             )
                         ),
@@ -750,20 +796,34 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             }
         }
         if (block.nodeType == "horizontalRule" || block.nodeType == "horizontal_rule") {
+            val ruleStyle = theme.sourceTheme?.styleSheet?.resolveElement(
+                "horizontalRule",
+                block.containers.map {
+                    it.nodeType
+                }
+            )
+            val baseHeight = theme.sourceTheme?.styleSheet?.get("horizontalRule")?.height
+            val thickness = if (ruleStyle?.height == baseHeight) {
+                theme.ruleThicknessPx
+            } else {
+                ruleStyle?.height?.times(theme.density)?.toInt() ?: theme.ruleThicknessPx
+            }
             val ruleTop = cursorY + theme.ruleMarginPx
             val ruleLeft = theme.insetLeftPx + listInset + quoteInset
             val ruleRight = max(
                 ruleLeft + 1,
                 theme.insetLeftPx + contentWidth - listInset - quoteInset
             )
-            val rule = Rect(ruleLeft, ruleTop, ruleRight, ruleTop + theme.ruleThicknessPx)
+            val rule = Rect(ruleLeft, ruleTop, ruleRight, ruleTop + thickness)
             val fragments =
                 mutableListOf(
                     PreparedProseFragment(
                         PreparedProseFragmentKind.RULE,
                         rule,
-                        color = theme.ruleColor,
-                        strokeWidth = theme.ruleThicknessPx.toFloat()
+                        color =
+                            ruleStyle?.box?.backgroundColor ?: ruleStyle?.text?.color
+                                ?: theme.ruleColor,
+                        strokeWidth = thickness.toFloat()
                     )
                 )
             val end = rule.bottom + theme.ruleMarginPx
@@ -808,7 +868,13 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         }
 
         val availableWidth = max(1, contentWidth - listInset - quoteInset - codeInset * 2)
-        val attributed = attributed(block.inlines, paint, theme, warningSemanticGeneration)
+        val attributed = attributed(
+            block.inlines,
+            paint,
+            theme,
+            warningSemanticGeneration,
+            block.containers.map { it.nodeType } + block.nodeType
+        )
         var highlightedCodeKey: String? = null
         if (block.nodeType == "codeBlock") {
             theme.codeHighlighting?.let { config ->
@@ -1126,7 +1192,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         inlines: List<ViewerInline>,
         base: PreparedTextPaint,
         theme: PreparedProseTheme,
-        warningSemanticGeneration: String
+        warningSemanticGeneration: String,
+        ancestors: List<String>
     ): AttributedBlock {
         val source = StringBuilder()
         val spans = mutableListOf<(SpannableString) -> Unit>()
@@ -1138,7 +1205,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     val start = source.length
                     source.append(inline.text)
                     val end = source.length
-                    val markSpans = markSpans(inline.marks, base, theme, warningSemanticGeneration)
+                    val markSpans =
+                        markSpans(inline.marks, base, theme, warningSemanticGeneration, ancestors)
                     spans +=
                         { value ->
                             markSpans.forEach {
@@ -1169,7 +1237,13 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                         source.append('\n')
                     } else {
                         val appearance =
-                            atomAppearance(inline.nodeType, inline.attrsJson, base, theme)
+                            atomAppearance(
+                                inline.nodeType,
+                                inline.attrsJson,
+                                base,
+                                theme,
+                                ancestors
+                            )
                         val label = inline.label.ifEmpty { " " }
                         val labelPaint = appearance.paint.newTextPaint()
                         val atomInset =
@@ -1292,7 +1366,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         marks: List<uniffi.editor_core.FfiViewerMark>,
         base: PreparedTextPaint,
         theme: PreparedProseTheme,
-        warningSemanticGeneration: String
+        warningSemanticGeneration: String,
+        ancestors: List<String>
     ): List<Any> {
         theme.sourceTheme?.styleSheet?.let { sheet ->
             var resolved = base.resolvedStyle ?: EditorTextStyle()
@@ -1304,7 +1379,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 resolved =
                     resolved.mergedWith(
                         com.apollohg.editor.semanticText(it)
-                    ).mergedWith(sheet[it]?.text)
+                    ).mergedWith(sheet.resolveElement(it, ancestors)?.text)
             }
             marks.forEach { mark ->
                 val attrs = runCatching { org.json.JSONObject(mark.attrsJson) }.getOrNull()
@@ -1491,16 +1566,34 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             .build()
     }
 
+    private fun markerAncestors(block: ViewerBlock, nestingDepth: Int): List<String> {
+        val chain = block.containers.map { it.nodeType }
+        val item = chain.indices.filter {
+            com.apollohg.editor.canonicalElement(chain[it]) in
+                listOf("listItem", "taskItem")
+        }.getOrNull(nestingDepth)
+        return item?.let { chain.take(it + 1) } ?: chain
+    }
+
     private fun markerFor(
         context: ViewerListContext,
         nestingDepth: Int,
         textPaint: PreparedTextPaint,
-        theme: PreparedProseTheme
+        theme: PreparedProseTheme,
+        ancestors: List<String>
     ): PreparedMarker {
+        val style = theme.sourceTheme?.styleSheet?.resolveElement("listMarker", ancestors)
+        val theme = theme.copy(
+            listMarkerColor = style?.text?.color ?: theme.listMarkerColor,
+            listMarkerScale = style?.scale ?: theme.listMarkerScale,
+            orderedListMarker = style?.ordered ?: theme.orderedListMarker
+        )
+        val gap = style?.gap?.times(theme.density)?.toInt()
         if (context.kind == "task" && theme.sourceTheme?.styleSheet != null) {
             val checkbox = com.apollohg.editor.resolvedCheckboxStyle(
                 theme.sourceTheme.styleSheet,
-                context.checked
+                context.checked,
+                ancestors
             )
             val side = ((checkbox.size ?: 18f) * theme.density).toInt()
             return PreparedMarker(
@@ -1511,7 +1604,9 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 side / 2,
                 0,
                 context.checked,
-                checkbox.copy(box = checkbox.box.scaled(theme.density))
+                checkbox.copy(box = checkbox.box.scaled(theme.density)),
+                theme.listMarkerColor,
+                gap
             )
         }
         val label = when {
@@ -1542,7 +1637,11 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 markerPaint.newTextPaint().fontMetricsInt.descent -
                     markerPaint.newTextPaint().fontMetricsInt.ascent
             )
-            return PreparedMarker(null, label, side, side, side / 2, 0, context.checked)
+            return PreparedMarker(
+                null, label, side, side, side / 2, 0, context.checked,
+                color = theme.listMarkerColor,
+                gapPx = gap
+            )
         }
         val text = markerPaint.newTextPaint()
         val layout =
@@ -1561,7 +1660,9 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             ink.heightPx,
             ink.ascentPx,
             layout.getLineBaseline(0),
-            context.checked
+            context.checked,
+            color = theme.listMarkerColor,
+            gapPx = gap
         )
     }
 
@@ -1587,7 +1688,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             marker.layout,
             x,
             layoutY,
-            color = color,
+            color = marker.color ?: color,
             label = marker.label,
             checked = marker.checked,
             box = marker.checkbox?.box,
@@ -1599,7 +1700,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         nodeType: String,
         attrsJson: String,
         base: PreparedTextPaint,
-        theme: PreparedProseTheme
+        theme: PreparedProseTheme,
+        ancestors: List<String>
     ): PreparedAtomAppearance {
         if (nodeType == "mention") {
             val values = runCatching { org.json.JSONObject(attrsJson) }.getOrNull()
@@ -1608,7 +1710,8 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 val element = com.apollohg.editor.resolvedMentionStyle(
                     base.resolvedStyle ?: EditorTextStyle(),
                     theme.sourceTheme,
-                    local
+                    local,
+                    ancestors
                 )
                 val box = element.box.scaled(theme.density)
                 return PreparedAtomAppearance(

@@ -13,7 +13,8 @@ extension CoreTextProseLayoutEngine {
         _ inlines: [ViewerInline],
         paint: PreparedTextPaint,
         theme: PreparedProseTheme,
-        warningSemanticGeneration: String
+        warningSemanticGeneration: String,
+        ancestors: [String] = []
     ) -> PreparedAttributedBlock {
         let result = NSMutableAttributedString()
         var atoms: [PreparedAtomSpec] = []
@@ -39,7 +40,7 @@ extension CoreTextProseLayoutEngine {
             switch inline {
             case let .text(text: text, marks: marks):
                 let start = result.length
-                result.append(NSAttributedString(string: text, attributes: attributes(for: marks, paint: paint, theme: theme, warningSemanticGeneration: warningSemanticGeneration)))
+                result.append(NSAttributedString(string: text, attributes: attributes(for: marks, paint: paint, theme: theme, warningSemanticGeneration: warningSemanticGeneration, ancestors: ancestors)))
                 let range = NSRange(location: start, length: (text as NSString).length)
                 if let href = href(in: marks), !text.isEmpty {
                     let semanticIndex: Int
@@ -67,7 +68,8 @@ extension CoreTextProseLayoutEngine {
                     attrsJSON: attrsJSON,
                     paint: paint,
                     theme: theme,
-                    warningSemanticGeneration: warningSemanticGeneration
+                    warningSemanticGeneration: warningSemanticGeneration,
+                    ancestors: ancestors
                 )
                 let displayLabel = label.isEmpty ? " " : label
                 let labelLine = CTLineCreateWithAttributedString(
@@ -137,7 +139,7 @@ extension CoreTextProseLayoutEngine {
         return nil
     }
 
-    func attributes(for marks: [FfiViewerMark], paint: PreparedTextPaint, theme: PreparedProseTheme, warningSemanticGeneration: String) -> [NSAttributedString.Key: Any] {
+    func attributes(for marks: [FfiViewerMark], paint: PreparedTextPaint, theme: PreparedProseTheme, warningSemanticGeneration: String, ancestors: [String] = []) -> [NSAttributedString.Key: Any] {
         if let sheet = theme.styleSheet {
             var base: [NSAttributedString.Key: Any] = [.font: paint.font, .foregroundColor: paint.color]
             EditorStyleSheet.applyText(paint.textValues, to: &base, scale: theme.fontScale)
@@ -146,7 +148,7 @@ extension CoreTextProseLayoutEngine {
                 values["type"] = mark.markType
                 return values
             }
-            var resolved = sheet.inlineAttributes(markValues, base: base, scale: theme.fontScale)
+            var resolved = sheet.inlineAttributes(markValues, base: base, scale: theme.fontScale, ancestors: ancestors)
             for mark in marks {
                 let values = jsonDictionary(mark.attrsJson)
                 switch mark.markType {
@@ -313,12 +315,16 @@ extension CoreTextProseLayoutEngine {
         _ context: ViewerListContext,
         nestingDepth: Int,
         paint: PreparedTextPaint,
-        theme: PreparedProseTheme
+        theme: PreparedProseTheme,
+        ancestors: [String] = []
     ) -> PreparedListMarker {
+        let marker = theme.styleSheet?.resolvedValues("listMarker", ancestors: ancestors) ?? [:]
+        let ordered = (marker["ordered"] as? [String: Any]).map(EditorOrderedListMarkerTheme.init(dictionary:)) ?? theme.orderedListMarker
+        let color = EditorTheme.color(from: marker["color"]) ?? theme.listMarkerColor
         let scale: CGFloat
-        if let sheet = theme.styleSheet {
+        if theme.styleSheet != nil {
             scale = !context.ordered && context.kind != "task"
-                ? EditorTheme.cgFloat(sheet["listMarker"]["scale"])
+                ? EditorTheme.cgFloat(marker["scale"])
                     ?? LayoutConstants.unorderedListMarkerFontScale
                 : 1
             if !context.ordered, context.kind != "task" {
@@ -336,13 +342,13 @@ extension CoreTextProseLayoutEngine {
             label = OrderedListMarkerFormatter.label(
                 index: UInt32(exactly: context.index) ?? 0,
                 nestingDepth: nestingDepth,
-                theme: theme.orderedListMarker
+                theme: ordered
             )
         } else {
             label = "•"
         }
         guard !label.isEmpty else {
-            let side = theme.styleSheet?.checkbox(checked: context.checked).number("size", fallback: 24) ?? max(font.lineHeight, font.pointSize)
+            let side = theme.styleSheet?.checkbox(checked: context.checked, ancestors: ancestors).number("size", fallback: 24) ?? max(font.lineHeight, font.pointSize)
             return PreparedListMarker(line: nil, label: label, width: side, ascent: side * 0.75, descent: side * 0.25, checked: context.checked)
         }
         let line = CTLineCreateWithAttributedString(
@@ -350,7 +356,7 @@ extension CoreTextProseLayoutEngine {
                 string: label,
                 attributes: [
                     kCTFontAttributeName as NSAttributedString.Key: Self.coreTextFont(from: font),
-                    kCTForegroundColorAttributeName as NSAttributedString.Key: theme.listMarkerColor.cgColor
+                    kCTForegroundColorAttributeName as NSAttributedString.Key: color.cgColor
                 ]
             )
         )
@@ -369,12 +375,21 @@ extension CoreTextProseLayoutEngine {
         attrsJSON: String,
         paint: PreparedTextPaint,
         theme: PreparedProseTheme,
-        warningSemanticGeneration: String
+        warningSemanticGeneration: String,
+        ancestors: [String]
     ) -> PreparedAtomAppearance {
         if nodeType == "mention" {
             let values = jsonDictionary(attrsJSON)
             let localMention = (values["mentionTheme"] as? [String: Any]).map(EditorMentionTheme.init(dictionary:))
-            let mention = (theme.mention?.merged(with: localMention) ?? localMention)?.node
+            var globalMention = theme.mention
+            if let sheet = theme.styleSheet, !sheet.rules.isEmpty {
+                let projection = EditorTheme.legacyProjection(
+                    styles: ["mention": sheet.resolvedValues("mention", ancestors: ancestors)],
+                    root: theme.mentionOverrides.map { ["mentions": $0] } ?? [:]
+                )
+                globalMention = (projection["mentions"] as? [String: Any]).map(EditorMentionTheme.init(dictionary:))
+            }
+            let mention = (globalMention?.merged(with: localMention) ?? localMention)?.node
             var attributes = baseAttributes(paint)
             if let weight = mention?.fontWeight {
                 let font = ViewerFontEnvironment.shared.resolveFont(

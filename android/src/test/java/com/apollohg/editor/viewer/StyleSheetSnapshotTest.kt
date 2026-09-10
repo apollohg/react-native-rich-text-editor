@@ -19,6 +19,64 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class StyleSheetSnapshotTest {
     @Test
+    fun `rule removal restores prepared pixels after nested container decoration changes`() {
+        val document = ViewerDocument(
+            "snapshot-rules",
+            listOf(
+                ViewerBlock(
+                    "paragraph",
+                    1,
+                    true,
+                    null,
+                    null,
+                    listOf(ViewerInline.Text("Nested paint", emptyList())),
+                    containers = listOf("blockquote", "bulletList", "listItem").mapIndexed {
+                            index,
+                            name
+                        ->
+                        ViewerContainerAncestor(index, name, 0, 0)
+                    }
+                )
+            ),
+            false,
+            0
+        )
+        fun draw(rules: String): Bitmap {
+            val theme = PreparedProseTheme.resolve(
+                """{"version":1,"styles":{"content":{"backgroundColor":"#ffffffff"}},"rules":$rules}""",
+                1f
+            )
+            val layout = StaticLayoutAndroidProseLayoutEngine().prepare(
+                document,
+                ProseLayoutKey("snapshot-rules", 300, rules, 0, 0, 0, 0, "snapshot-rules"),
+                theme,
+                300,
+                1f,
+                false
+            )
+            val viewer = PreparedProseDrawingView(RuntimeEnvironment.getApplication()).apply {
+                install(layout)
+                layout(0, 0, 300, layout.heightPx)
+            }
+            return Bitmap.createBitmap(300, layout.heightPx, Bitmap.Config.ARGB_8888).also {
+                viewer.draw(Canvas(it))
+            }
+        }
+        val baseline = draw("[]")
+        val styled =
+            draw(
+                """[{"path":["blockquote","bulletList"],"style":{"paddingLeft":13,"backgroundColor":"#00ff00ff"}}]"""
+            )
+        val restored = draw("[]")
+        org.junit.Assert.assertEquals(Color.GREEN, styled.getPixel(14, 1))
+        assertTrue(baseline.sameAs(restored))
+        assertTrue(!baseline.sameAs(styled))
+        java.io.FileOutputStream("/tmp/android-styles-ancestry-viewer.png").use {
+            styled.compress(Bitmap.CompressFormat.PNG, 100, it)
+        }
+    }
+
+    @Test
     fun `capture matching editor and prepared style fixtures`() {
         val themeJson =
             """{"version":1,"styles":{"content":{"paddingTop":16,""" +

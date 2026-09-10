@@ -4,6 +4,130 @@ import UIKit
 import XCTest
 
 extension PreparedProseLayoutTests {
+    func testMixedViewerListsRetainBaseArithmeticAndResolveContainerAndMarkerPrefixes() throws {
+        let outer = ViewerListContext(ordered: false, index: 1, kind: nil, checked: false, isLast: true)
+        let inner = ViewerListContext(ordered: true, index: 2, kind: nil, checked: false, isLast: true)
+        let block = ViewerBlock(nodeType: "paragraph", depth: 2, inBlockquote: true, listContext: inner,
+            listItemBoundary: ViewerListItemBoundary(identity: 2, nestingDepth: 1, isFirstRenderableLeaf: true, isFinalRenderableLeaf: true),
+            listItemAncestors: [ViewerListItemAncestor(identity: 1, context: outer), ViewerListItemAncestor(identity: 2, context: inner)],
+            inlines: [.text(text: "nested", marks: [])],
+            styleAncestors: ["blockquote", "bulletList", "listItem", "orderedList", "listItem"].enumerated().map { ViewerStyleAncestor(identity: $0.offset, nodeType: $0.element) })
+        let document = ViewerDocument(semanticKey: String(repeating: "c", count: 64), blocks: [block], isEmpty: false, retainedBytes: 0, trailingEmptyTextBlockCount: 0)
+        let registry = PreparedProseLayoutRegistry(compile: { _ in document })
+        func measure(_ rules: String = "[]") -> PreparedProseBlock {
+            let theme = """
+            {"version":1,"styles":{"bulletList":{"indent":20,"baseIndentMultiplier":2},"orderedList":{"indent":40,"baseIndentMultiplier":3},"listMarker":{"gap":6}},"rules":\(rules)}
+            """
+            return registry.measure(request: ProseViewerRequest(source: .json("{}"), configuration: ProseViewerConfiguration(configJSON: "{}", themeJSON: theme)), widthPoints: 600, scale: 2).blocks[0]
+        }
+        func fragment(_ block: PreparedProseBlock, _ kind: PreparedProseFragmentKind) throws -> PreparedProseFragment {
+            try XCTUnwrap(block.fragments.first { $0.kind == kind })
+        }
+        let baseline = measure()
+        XCTAssertEqual(try fragment(baseline, .text).bounds.minX - 19 - fragment(baseline, .marker).bounds.width - 6, 160, accuracy: 0.01)
+        let indented = measure("""
+        [{"path":["blockquote","bulletList"],"style":{"indent":33}}]
+        """)
+        XCTAssertEqual(try fragment(indented, .text).bounds.minX - fragment(baseline, .text).bounds.minX, 26, accuracy: 0.01)
+        let styled = measure("""
+        [{"path":["listItem","listMarker"],"style":{"gap":12,"color":"#00ff00ff","ordered":{"schemes":["upperAlpha"],"suffix":")"}}},{"path":["paragraph","listMarker"],"style":{"gap":99}}]
+        """)
+        let marker = try fragment(styled, .marker)
+        XCTAssertEqual(marker.label, "B)")
+        XCTAssertEqual(marker.color, UIColor.green.cgColor)
+        XCTAssertEqual(try fragment(styled, .text).bounds.minX - fragment(baseline, .text).bounds.minX - marker.bounds.width + fragment(baseline, .marker).bounds.width, 6, accuracy: 0.01)
+    }
+
+    func testNestedViewerRulesUpdateGeometryPaintAndRestoreCachedBaseline() throws {
+        let ancestors = [ViewerStyleAncestor(identity: 1, nodeType: "blockquote"), ViewerStyleAncestor(identity: 2, nodeType: "bulletList"), ViewerStyleAncestor(identity: 3, nodeType: "listItem")]
+        let document = ViewerDocument(semanticKey: String(repeating: "a", count: 64), blocks: (0..<3).map { index in
+            ViewerBlock(nodeType: "paragraph", depth: 0, inBlockquote: index < 2, listContext: nil, listItemBoundary: nil,
+                inlines: [.text(text: "nested", marks: [FfiViewerMark(markType: "bold", attrsJson: "{}")])], styleAncestors: index < 2 ? ancestors : [])
+        }, isEmpty: false, retainedBytes: 0, trailingEmptyTextBlockCount: 0)
+        let styles = """
+        {"text":{"lineHeight":20},"paragraph":{"marginTop":3,"marginBottom":8},"blockquote":{"paddingTop":2,"paddingBottom":4}}
+        """
+        let rules = """
+        [
+        {"path":["content"],"style":{"paddingLeft":5,"paddingTop":3}},
+        {"path":["listItem","paragraph"],"style":{"marginTop":4,"marginBottom":0,"paddingTop":2,"paddingBottom":3,"fontSize":22,"lineHeight":40}},
+        {"path":["blockquote","bulletList"],"style":{"paddingLeft":13,"paddingTop":5,"paddingBottom":6,"marginTop":11,"marginBottom":13}},
+        {"path":["blockquote","bulletList","listItem","paragraph"],"style":{"paddingLeft":7}},
+        {"path":["listItem","paragraph","bold"],"style":{"color":"#ff0000ff"}}
+        ]
+        """
+        let registry = PreparedProseLayoutRegistry(compile: { _ in document })
+        func measure(_ rules: String?) -> PreparedProseLayout {
+            let ruleJSON = rules.map { ",\"rules\":\($0)" } ?? ""
+            let theme = "{\"version\":1,\"styles\":\(styles)\(ruleJSON)}"
+            return registry.measure(request: ProseViewerRequest(source: .json("{}"), configuration: ProseViewerConfiguration(configJSON: "{}", themeJSON: theme)), widthPoints: 300, scale: 2)
+        }
+        func text(_ layout: PreparedProseLayout, _ index: Int) throws -> PreparedProseFragment {
+            try XCTUnwrap(layout.blocks[index].fragments.first { $0.kind == .text })
+        }
+        let baseline = measure(nil)
+        let styled = measure(rules)
+        let restored = measure(nil)
+        XCTAssertTrue(baseline === restored)
+        XCTAssertEqual(registry.layoutPreparationCount, 2)
+        XCTAssertEqual(styled.decorations.first?.styleBox?.padding.left, 5)
+        XCTAssertNotEqual(baseline.key.themeDigest, styled.key.themeDigest)
+        XCTAssertEqual(baseline.size, restored.size)
+        XCTAssertEqual(try text(styled, 0).bounds.minX - text(baseline, 0).bounds.minX, 25, accuracy: 0.01)
+        XCTAssertEqual(try text(styled, 0).bounds.minY - text(baseline, 0).bounds.minY, 22, accuracy: 0.01)
+        XCTAssertEqual(try text(styled, 0).bounds.height, 40)
+        XCTAssertEqual(try text(styled, 1).bounds.minY - text(styled, 0).bounds.maxY, 9, accuracy: 0.01)
+        let paragraph = try XCTUnwrap(styled.blocks[0].fragments.first { $0.kind == .background })
+        XCTAssertEqual(paragraph.styleBox?.margin.bottom, 0)
+        XCTAssertEqual(paragraph.styleBox?.padding.left, 7)
+        let list = try XCTUnwrap(styled.decorations.first { $0.styleBox?.padding.left == 13 })
+        XCTAssertEqual(list.styleBox?.margin.top, 11)
+        XCTAssertEqual(list.styleBox?.margin.bottom, 13)
+        XCTAssertEqual(list.bounds.maxY, try text(styled, 1).bounds.maxY + 3 + 4 + 6, accuracy: 0.01)
+        XCTAssertEqual(styled.blocks[2].fragments.first { $0.kind == .background }?.styleBox?.margin.bottom, 8)
+        let run = try XCTUnwrap((CTLineGetGlyphRuns(try XCTUnwrap(text(styled, 0).line)) as? [CTRun])?.first)
+        let attributes = CTRunGetAttributes(run) as NSDictionary
+        XCTAssertEqual(attributes[kCTForegroundColorAttributeName] as! CGColor, UIColor.red.cgColor)
+    }
+
+    func testViewerSpecialElementsUseOwningAncestry() throws {
+        let theme = """
+        {"version":1,"styles":{"taskCheckbox":{"size":20,"checked":{"size":26}},"mention":{"paddingLeft":3}},"rules":[
+        {"path":["taskItem","taskCheckbox"],"style":{"size":30,"gap":9,"checked":{"size":34}}},
+        {"path":["paragraph","taskCheckbox"],"style":{"checked":{"size":99}}},
+        {"path":["paragraph","bold"],"style":{"color":"#ff0000ff"}},
+        {"path":["paragraph","mention"],"style":{"paddingLeft":17,"color":"#00ff00ff"}},
+        {"path":["blockquote","horizontalRule"],"style":{"marginTop":19,"height":7,"backgroundColor":"#ff0000ff"}},
+        {"path":["blockquote","image"],"style":{"paddingLeft":11,"resizeMode":"cover"}}
+        ]}
+        """
+        let quote = ViewerStyleAncestor(identity: 1, nodeType: "blockquote")
+        let document = ViewerDocument(semanticKey: String(repeating: "b", count: 64), blocks: [
+            ViewerBlock(nodeType: "paragraph", depth: 1, inBlockquote: true,
+                listContext: ViewerListContext(ordered: false, index: 1, kind: "task", checked: true, isLast: true),
+                listItemBoundary: ViewerListItemBoundary(identity: 3, nestingDepth: 0, isFirstRenderableLeaf: true, isFinalRenderableLeaf: true),
+                inlines: [.text(text: "marked", marks: [FfiViewerMark(markType: "bold", attrsJson: "{}")]), .atom(nodeType: "mention", docPos: 1, attrsJSON: "{}", label: "Ada")],
+                styleAncestors: [quote, ViewerStyleAncestor(identity: 2, nodeType: "taskList"), ViewerStyleAncestor(identity: 3, nodeType: "taskItem")]),
+            ViewerBlock(nodeType: "horizontalRule", depth: 1, inBlockquote: true, listContext: nil, listItemBoundary: nil, inlines: [], styleAncestors: [quote]),
+            ViewerBlock(nodeType: "image", depth: 1, inBlockquote: true, listContext: nil, listItemBoundary: nil,
+                inlines: [.atom(nodeType: "image", docPos: 3, attrsJSON: "{\"src\":\"test.png\",\"width\":40,\"height\":20}", label: "")], styleAncestors: [quote])
+        ], isEmpty: false, retainedBytes: 0, trailingEmptyTextBlockCount: 0)
+        let registry = PreparedProseLayoutRegistry(compile: { _ in document })
+        let result = registry.measure(request: ProseViewerRequest(source: .json("{}"), configuration: ProseViewerConfiguration(configJSON: "{}", themeJSON: theme)), widthPoints: 300, scale: 2)
+        let marker = try XCTUnwrap(result.blocks[0].fragments.first { $0.kind == .marker })
+        XCTAssertEqual(marker.bounds.width, 34)
+        let atom = try XCTUnwrap(result.blocks[0].fragments.first { $0.kind == .atom })
+        XCTAssertEqual(atom.styleBox?.padding.left, 17)
+        let atomRun = try XCTUnwrap((CTLineGetGlyphRuns(try XCTUnwrap(atom.line)) as? [CTRun])?.first)
+        XCTAssertEqual((CTRunGetAttributes(atomRun) as NSDictionary)[kCTForegroundColorAttributeName] as! CGColor, UIColor.green.cgColor)
+        let rule = try XCTUnwrap(result.blocks[1].fragments.first { $0.kind == .background })
+        XCTAssertEqual(rule.styleBox?.margin.top, 19)
+        XCTAssertEqual(rule.bounds.height, 7)
+        let image = try XCTUnwrap(result.blocks[2].fragments.first { $0.kind == .image })
+        XCTAssertEqual(image.styleBox?.padding.left, 11)
+        XCTAssertEqual(image.styleBox?.values["resizeMode"] as? String, "cover")
+    }
+
     func testRegisteredBlockAtomReservesMeasuredWidthAndZeroHeight() throws {
         let block = ViewerBlock(
             nodeType: "card",
