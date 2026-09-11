@@ -58,6 +58,7 @@ fn build_schema(convention: NamingConvention) -> Schema {
             is_void: false,
             deletable_on_backspace: None,
             allow_undeclared_attrs: false,
+            table_role: None,
         },
         NodeSpec {
             name: "paragraph".to_string(),
@@ -71,6 +72,7 @@ fn build_schema(convention: NamingConvention) -> Schema {
             is_void: false,
             deletable_on_backspace: None,
             allow_undeclared_attrs: false,
+            table_role: None,
         },
     ];
 
@@ -93,6 +95,7 @@ fn build_schema(convention: NamingConvention) -> Schema {
             is_void: false,
             deletable_on_backspace: None,
             allow_undeclared_attrs: false,
+            table_role: None,
         });
     }
 
@@ -109,6 +112,7 @@ fn build_schema(convention: NamingConvention) -> Schema {
             is_void: false,
             deletable_on_backspace: None,
             allow_undeclared_attrs: false,
+            table_role: None,
         },
         NodeSpec {
             name: "codeBlock".to_string(),
@@ -129,6 +133,7 @@ fn build_schema(convention: NamingConvention) -> Schema {
             is_void: false,
             deletable_on_backspace: None,
             allow_undeclared_attrs: false,
+            table_role: None,
         },
         NodeSpec {
             name: name(&convention, "bulletList", "bullet_list"),
@@ -142,6 +147,7 @@ fn build_schema(convention: NamingConvention) -> Schema {
             is_void: false,
             deletable_on_backspace: None,
             allow_undeclared_attrs: false,
+            table_role: None,
         },
         NodeSpec {
             name: name(&convention, "orderedList", "ordered_list"),
@@ -166,6 +172,7 @@ fn build_schema(convention: NamingConvention) -> Schema {
             is_void: false,
             deletable_on_backspace: None,
             allow_undeclared_attrs: false,
+            table_role: None,
         },
         NodeSpec {
             name: list_item_name,
@@ -179,6 +186,7 @@ fn build_schema(convention: NamingConvention) -> Schema {
             is_void: false,
             deletable_on_backspace: None,
             allow_undeclared_attrs: false,
+            table_role: None,
         },
         NodeSpec {
             name: name(&convention, "hardBreak", "hard_break"),
@@ -192,6 +200,7 @@ fn build_schema(convention: NamingConvention) -> Schema {
             is_void: true,
             deletable_on_backspace: None,
             allow_undeclared_attrs: false,
+            table_role: None,
         },
         NodeSpec {
             name: name(&convention, "horizontalRule", "horizontal_rule"),
@@ -205,6 +214,7 @@ fn build_schema(convention: NamingConvention) -> Schema {
             is_void: true,
             deletable_on_backspace: None,
             allow_undeclared_attrs: false,
+            table_role: None,
         },
         NodeSpec {
             name: "image".to_string(),
@@ -261,6 +271,7 @@ fn build_schema(convention: NamingConvention) -> Schema {
             is_void: true,
             deletable_on_backspace: Some(false),
             allow_undeclared_attrs: false,
+            table_role: None,
         },
         NodeSpec {
             name: "text".to_string(),
@@ -274,6 +285,7 @@ fn build_schema(convention: NamingConvention) -> Schema {
             is_void: false,
             deletable_on_backspace: None,
             allow_undeclared_attrs: false,
+            table_role: None,
         },
     ]);
 

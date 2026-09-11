@@ -28,6 +28,13 @@ export {
     defaultSchemaSpec,
     defaultSchema,
 } from './schemaPresets';
+export { TABLE_NODE_NAMES, withTablesSchema } from './TableSchema';
+export type {
+    TableNamingPreset,
+    TableNodeNames,
+    TableRole,
+    TablesSchemaOptions,
+} from './TableTypes';
 export { resolveDocumentSchema } from './schemaResolution';
 export {
     defaultEmptyDocument,

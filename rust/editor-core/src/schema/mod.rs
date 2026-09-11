@@ -17,6 +17,7 @@ use crate::model::{Document, Fragment, Node};
 use crate::schema::content_rule::{
     ContentRule, ContentRuleError, WorkBudget, DEFAULT_RUNTIME_WORK_LIMIT,
 };
+use crate::tables::{TableRole, TableRoles};
 
 #[cfg(test)]
 std::thread_local! {
@@ -104,6 +105,7 @@ pub struct NodeSpec {
     /// other node type is filtered to its schema-declared attrs, matching the
     /// HTML ingestion path (`extract_node_attrs`).
     pub allow_undeclared_attrs: bool,
+    pub table_role: Option<TableRole>,
 }
 
 #[derive(Debug, Clone)]

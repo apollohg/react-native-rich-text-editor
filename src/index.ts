@@ -185,6 +185,8 @@ export {
     IMAGE_NODE_NAME,
     imageNodeSpec,
     withImagesSchema,
+    TABLE_NODE_NAMES,
+    withTablesSchema,
     buildDocumentFragmentJson,
     buildImageFragmentJson,
     resolveDocumentDescriptor,
@@ -202,6 +204,10 @@ export {
     type DOMOutputSpec,
     type AttributeDOMOutputSpec,
     type ImageNodeAttributes,
+    type TableNamingPreset,
+    type TableNodeNames,
+    type TableRole,
+    type TablesSchemaOptions,
 } from './schemas';
 
 export {
@@ -269,6 +275,8 @@ export {
 export {
     DEFAULT_EDITOR_RESOURCE_LIMITS,
     HARD_EDITOR_RESOURCE_LIMITS,
+    DEFAULT_MAX_TABLE_GRID_SLOTS,
+    HARD_MAX_TABLE_GRID_SLOTS,
     resolveEditorResourceLimits,
     type EditorCollaborationLimits,
     type EditorEditingLimits,

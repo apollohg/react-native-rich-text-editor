@@ -30,6 +30,7 @@ pub(crate) mod session;
 #[cfg(feature = "table-interop")]
 #[doc(hidden)]
 pub mod table_interop;
+pub(crate) mod tables;
 #[cfg(test)]
 mod test_support;
 pub(crate) mod transform;

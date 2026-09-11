@@ -281,6 +281,7 @@ fn mention_schema() -> Schema {
             // Mirrors the real `mentionNodeSpec()` (src/addons.ts), which
             // intentionally round-trips arbitrary app-defined attrs.
             allow_undeclared_attrs: true,
+            table_role: None,
         });
     }
     let marks = base.all_marks().cloned().collect();

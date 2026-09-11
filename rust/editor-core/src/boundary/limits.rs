@@ -8,6 +8,7 @@ pub struct ResourceLimits {
     pub max_schema_expression_bytes: usize,
     pub max_collaboration_message_bytes: usize,
     pub max_encoded_state_bytes: usize,
+    pub max_table_grid_slots: usize,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -27,6 +28,8 @@ pub(crate) struct ResourceLimitOverrides {
     pub(crate) max_collaboration_message_bytes: Option<usize>,
     #[serde(default, deserialize_with = "deserialize_non_null_option")]
     pub(crate) max_encoded_state_bytes: Option<usize>,
+    #[serde(default, deserialize_with = "deserialize_non_null_option")]
+    pub(crate) max_table_grid_slots: Option<usize>,
 }
 
 impl Default for ResourceLimits {
@@ -39,6 +42,7 @@ impl Default for ResourceLimits {
             max_schema_expression_bytes: 64 * 1024,
             max_collaboration_message_bytes: 10 * 1024 * 1024,
             max_encoded_state_bytes: 50 * 1024 * 1024,
+            max_table_grid_slots: DEFAULT_MAX_TABLE_GRID_SLOTS,
         }
     }
 }
@@ -78,6 +82,9 @@ impl ResourceLimits {
             max_encoded_state_bytes: overrides
                 .max_encoded_state_bytes
                 .unwrap_or(defaults.max_encoded_state_bytes),
+            max_table_grid_slots: overrides
+                .max_table_grid_slots
+                .unwrap_or(defaults.max_table_grid_slots),
         };
 
         limits.validate()?;
@@ -108,6 +115,11 @@ impl ResourceLimits {
                 "maxEncodedStateBytes",
                 self.max_encoded_state_bytes,
                 256 * 1024 * 1024,
+            ),
+            (
+                "maxTableGridSlots",
+                self.max_table_grid_slots,
+                HARD_MAX_TABLE_GRID_SLOTS,
             ),
         ] {
             if actual == 0 || actual > ceiling {

@@ -87,6 +87,7 @@ fn rich_position_schema() -> Schema {
         is_void: true,
         deletable_on_backspace: None,
         allow_undeclared_attrs: true,
+        table_role: None,
     });
     Schema::new(nodes, base.all_marks().cloned().collect())
 }
