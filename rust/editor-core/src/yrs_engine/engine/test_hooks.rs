@@ -48,6 +48,12 @@ std::thread_local! {
     pub(super) static COMMIT_SEALED_STATE_REUSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static FAIL_QUARANTINED_UPDATE_RESERVATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     pub(super) static FAIL_OUTBOUND_STAGING_COPY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(super) static PERTURB_REPLAYED_HISTORY_CANDIDATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(super) fn set_replay_candidate_perturbation_for_test(enabled: bool) {
+    PERTURB_REPLAYED_HISTORY_CANDIDATE.set(enabled);
 }
 
 #[cfg(test)]

@@ -36,12 +36,12 @@ use super::{
     seal_candidate_state_vector, set_compiled_commit_stage_failpoint_for_test,
     set_outbound_staging_copy_failure_for_test,
     set_quarantined_update_reservation_failure_for_test,
-    take_compiled_commit_authority_counts_for_test, take_encoded_state_reuse_counts_for_test,
-    take_import_receipt_sha256_counts_for_test, take_import_receipt_state_decodings_for_test,
-    take_import_state_encoding_counts_for_test, take_prepared_candidate_cache_counts_for_test,
-    utf16_doc, CandidateDocument, CompiledCommitPreparationStage, CompiledTransaction,
-    EngineDocumentState, OutboundUpdateSink, ValidatedImportDocument, YrsDocumentCodec,
-    YrsDocumentEngine, YrsEngineConfig,
+    set_replay_candidate_perturbation_for_test, take_compiled_commit_authority_counts_for_test,
+    take_encoded_state_reuse_counts_for_test, take_import_receipt_sha256_counts_for_test,
+    take_import_receipt_state_decodings_for_test, take_import_state_encoding_counts_for_test,
+    take_prepared_candidate_cache_counts_for_test, utf16_doc, CandidateDocument,
+    CompiledCommitPreparationStage, CompiledTransaction, EngineDocumentState, OutboundUpdateSink,
+    ValidatedImportDocument, YrsDocumentCodec, YrsDocumentEngine, YrsEngineConfig,
 };
 
 #[derive(Debug, PartialEq)]

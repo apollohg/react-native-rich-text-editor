@@ -13,6 +13,16 @@ use crate::yrs_engine::{TransactionOrigin, YrsDocumentCodec};
 use std::sync::Arc;
 use yrs::{Doc, OffsetKind, Options, ReadTxn, Transact};
 
+#[cfg(test)]
+fn perturb_replayed_candidate_for_test(doc: &Doc, fragment: &yrs::XmlFragmentRef) {
+    use yrs::types::xml::XmlFragment;
+    if !super::test_hooks::PERTURB_REPLAYED_HISTORY_CANDIDATE.get() {
+        return;
+    }
+    let mut txn = doc.transact_mut();
+    fragment.insert(&mut txn, 0, yrs::XmlTextPrelim::new("replay-divergence"));
+}
+
 struct PreparedHistoryCandidateState {
     state: DerivedStateCache,
     encoded_state: Vec<u8>,
@@ -190,6 +200,9 @@ impl YrsDocumentEngine {
         let mut candidate_history =
             self.history
                 .replay_into(request_id, &candidate_doc, &candidate_fragment)?;
+        #[cfg(test)]
+        perturb_replayed_candidate_for_test(&candidate_doc, &candidate_fragment);
+        self.verify_replayed_candidate_matches_live(request_id, &candidate_doc)?;
         let replayed_stack_matches_live =
             candidate_history.acting_stack_matches(&self.history, action);
         let candidate_pop = match action {
@@ -268,6 +281,25 @@ impl YrsDocumentEngine {
                 result,
             },
         )))
+    }
+
+    fn verify_replayed_candidate_matches_live(
+        &self,
+        request_id: u64,
+        candidate_doc: &Doc,
+    ) -> yrs_engine::OperationResult<()> {
+        let live_state = encode_state_bounded(&self.doc, &self.resource_limits)
+            .map_err(|error| history_operation_error(request_id, error))?;
+        let candidate_state = encode_state_bounded(candidate_doc, &self.resource_limits)
+            .map_err(|error| history_operation_error(request_id, error))?;
+        if live_state != candidate_state {
+            return Err(yrs_engine::OperationError::engine_invariant_failed(
+                request_id,
+                None,
+                "history replay reconstructed a document that disagrees with the live store",
+            ));
+        }
+        Ok(())
     }
 
     fn commit_prepared_history_pop(

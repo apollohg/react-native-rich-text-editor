@@ -529,3 +529,63 @@ fn localized_seed_promotion_is_not_installed_before_any_recoverable_failpoint() 
         assert_eq!(atomic_audit(&engine), before, "{failpoint:?}");
     }
 }
+
+#[test]
+fn replayed_history_candidate_divergence_is_rejected_atomically() {
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"abc"}]}]}"#,
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    engine
+        .apply_command(
+            76_200,
+            crate::yrs_engine::TypedCommand::InsertText { text: "z".into() },
+        )
+        .unwrap()
+        .expect("insert must apply");
+    assert!(engine.can_undo());
+
+    let mut outbox =
+        crate::collaboration_runtime::outbox::CollaborationOutbox::with_ceilings(64, 1 << 20);
+    let before = atomic_audit(&engine);
+    let outbox_before = (
+        outbox.pending_document_update_count(),
+        outbox.pending_document_update_bytes(),
+        outbox.reserved_messages(),
+        outbox.has_pending_document_updates(),
+    );
+
+    set_replay_candidate_perturbation_for_test(true);
+    let error = engine
+        .undo_with_outbox(76_201, Some(&mut outbox))
+        .expect_err("a replayed candidate that disagrees with live must be rejected");
+    set_replay_candidate_perturbation_for_test(false);
+
+    assert_eq!(error.code, "ENGINE_INVARIANT_FAILED");
+    assert!(
+        error.message.contains("disagrees with the live store"),
+        "unexpected message: {}",
+        error.message
+    );
+    assert_eq!(atomic_audit(&engine), before);
+    assert_eq!(
+        (
+            outbox.pending_document_update_count(),
+            outbox.pending_document_update_bytes(),
+            outbox.reserved_messages(),
+            outbox.has_pending_document_updates(),
+        ),
+        outbox_before
+    );
+
+    assert!(
+        engine
+            .undo_with_outbox(76_202, Some(&mut outbox))
+            .unwrap()
+            .is_some(),
+        "the rejected pop leaves the history intact for a later retry"
+    );
+}
