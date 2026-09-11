@@ -4,14 +4,8 @@ use std::fmt;
 pub enum TableError {
     InvalidStructure,
     InvalidAttributes,
-    #[allow(dead_code)]
-    GridLimit {
-        limit: usize,
-        actual: usize,
-    },
-    #[allow(dead_code)]
+    GridLimit { limit: usize, actual: usize },
     WorkLimit,
-    #[allow(dead_code)]
     Allocation,
 }
 

@@ -3,6 +3,9 @@ import { EditorState, Plugin, PluginKey } from 'prosemirror-state';
 import type { Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { schema as prosemirrorBasicSchema } from 'prosemirror-schema-basic';
+import { Schema as ProsemirrorSchema } from 'prosemirror-model';
+import { TableMap, tableNodes } from 'prosemirror-tables';
+import type { Node as ProsemirrorNode } from 'prosemirror-model';
 import {
     ySyncPlugin,
     ySyncPluginKey,
@@ -32,6 +35,22 @@ const PEER_NOT_INITIALIZED = 'PEER_NOT_INITIALIZED';
 const UNSUPPORTED_OPERATION = 'UNSUPPORTED_OPERATION';
 const LIMIT_EXCEEDED = 'LIMIT_EXCEEDED';
 const INTERNAL_ERROR = 'INTERNAL_ERROR';
+const TABLE_GROUP = 'block';
+const TABLE_CELL_CONTENT = 'block+';
+const COLWIDTH_MISMATCH = 'colwidth mismatch';
+const SYNTHETIC_SLOT_POSITION = 0;
+const UNSET_COLUMN_WIDTH = 0;
+
+const tableSchema = new ProsemirrorSchema({
+    nodes: prosemirrorBasicSchema.spec.nodes.append(
+        tableNodes({
+            tableGroup: TABLE_GROUP,
+            cellContent: TABLE_CELL_CONTENT,
+            cellAttributes: {},
+        }),
+    ),
+    marks: prosemirrorBasicSchema.spec.marks,
+});
 
 type WebPeerKind = 'prosemirror' | 'tiptap';
 
@@ -413,6 +432,46 @@ class WebPeerRuntime {
     }
 }
 
+function resolvedColumnWidths(table: ProsemirrorNode, map: TableMap): (number | null)[] {
+    const repaired = new Map<number, number[]>();
+    for (const problem of map.problems ?? []) {
+        if (problem.type === COLWIDTH_MISMATCH) {
+            repaired.set(problem.pos, problem.colwidth);
+        }
+    }
+    const widths: (number | null)[] = new Array<number | null>(map.width).fill(null);
+    const resolved = new Array<boolean>(map.width).fill(false);
+    for (const [index, pos] of map.map.entries()) {
+        const column = index % map.width;
+        if (resolved[column] || pos === SYNTHETIC_SLOT_POSITION) {
+            continue;
+        }
+        const cell = table.nodeAt(pos);
+        if (cell === null) {
+            throw new PeerOperationError(INTERNAL_ERROR, `the table map addressed no cell at ${pos}`);
+        }
+        resolved[column] = true;
+        const attributeWidths: unknown = repaired.get(pos) ?? cell.attrs['colwidth'];
+        const width = Array.isArray(attributeWidths)
+            ? attributeWidths[column - map.colCount(pos)]
+            : UNSET_COLUMN_WIDTH;
+        widths[column] = typeof width === 'number' && width !== UNSET_COLUMN_WIDTH ? width : null;
+    }
+    return widths;
+}
+
+function projectTable(payload: Record<string, unknown>): Record<string, unknown> {
+    const table = tableSchema.nodeFromJSON(requireRecord(payload['table'], 'payload.table'));
+    const map = TableMap.get(table);
+    const structural = (map.problems ?? []).filter((problem) => problem.type !== COLWIDTH_MISMATCH);
+    return {
+        rows: map.height,
+        columns: map.width,
+        widths: resolvedColumnWidths(table, map),
+        irregular: structural.length > 0,
+    };
+}
+
 function readKind(): WebPeerKind {
     const requested = new URLSearchParams(window.location.search).get(KIND_QUERY_PARAMETER);
     if (requested !== 'prosemirror' && requested !== 'tiptap') {
@@ -496,6 +555,8 @@ async function dispatch(
             return requireRuntime().stateVector();
         case 'stateDiff':
             return requireRuntime().stateDiff(payload);
+        case 'projectTable':
+            return projectTable(payload);
         case 'shutdown': {
             requireRuntime().teardown();
             return {};

@@ -2,7 +2,7 @@ export type PeerKind = 'rust' | 'prosemirror' | 'tiptap';
 export type Request = {
     id: string;
     operation: 'initialize' | 'command' | 'undo' | 'redo' | 'applyUpdate'
-        | 'drain' | 'snapshot' | 'stateVector' | 'stateDiff'
+        | 'drain' | 'snapshot' | 'stateVector' | 'stateDiff' | 'projectTable'
         | 'setAwareness' | 'applyAwareness' | 'shutdown';
     payload: Record<string, unknown>;
 };

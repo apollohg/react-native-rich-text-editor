@@ -16,10 +16,13 @@ use crate::native_transaction_bridge::{
     NATIVE_BRIDGE_ENVELOPE_VERSION,
 };
 use crate::schema::presets::{prosemirror_schema, tiptap_schema};
+use crate::schema::Schema;
+use crate::serialize::json_in::{from_prosemirror_json_with_limits, UnknownTypeMode};
 use crate::session::{
     outbound_lease_session_error, CollaborationLimits, EditorInitialization, EditorSession,
     EditorSessionConfig, ErrorDomain, InitialContent, SessionError,
 };
+use crate::tables::projection::{project_table, ProjectedTable, TableGridBudget};
 use crate::yrs_engine::{DocumentScope, EditingLimits};
 
 const MAX_WIRE_LINE_BYTES: usize = 96 * 1024 * 1024;
@@ -28,6 +31,8 @@ const COLLABORATION_FRAGMENT_NAME: &str = "prosemirror";
 const AWAIT_SEED_DOCUMENT_ID: &str = "table-interop-document";
 const AWAIT_SEED_LINEAGE_ID: &str = "table-interop-lineage";
 const LEASE_ACTION: &str = "leaseOutbound";
+const PROJECTED_TABLE_POSITION: u32 = 0;
+const PROJECTED_TABLE_DOCUMENT_ROOT: &str = "doc";
 const ACK_ACTION: &str = "ackOutbound";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +94,13 @@ struct UpdatePayload {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StateVectorPayload {
     state_vector_base64: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProjectTablePayload {
+    schema: serde_json::Value,
+    table: serde_json::Value,
 }
 
 #[derive(serde::Deserialize)]
@@ -258,6 +270,7 @@ impl RustPeer {
             "snapshot" => self.snapshot(payload),
             "stateVector" => self.state_vector(payload),
             "stateDiff" => self.state_diff(payload),
+            "projectTable" => project_table_payload(payload),
             "shutdown" => self.shutdown(payload),
             operation => Err(peer_error(
                 "UNSUPPORTED_OPERATION",
@@ -530,6 +543,44 @@ fn local_mutation_envelope(
 
 fn parse_outcome(serialized: String) -> serde_json::Value {
     serde_json::from_str(&serialized).expect("native outcomes serialize as JSON objects")
+}
+
+fn project_table_payload(payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
+    let payload: ProjectTablePayload = parse_payload(payload)?;
+    let limits = ResourceLimits::default();
+    let schema = Schema::from_json(&payload.schema)
+        .map_err(|error| config_invalid(format!("the projected schema is invalid: {error}")))?;
+    let document = from_prosemirror_json_with_limits(
+        &serde_json::json!({
+            "type": PROJECTED_TABLE_DOCUMENT_ROOT,
+            "content": [payload.table],
+        }),
+        &schema,
+        UnknownTypeMode::Preserve,
+        &limits,
+    )
+    .map_err(|error| config_invalid(format!("the projected table is invalid: {error}")))?;
+    let table = document
+        .root()
+        .child(0)
+        .ok_or_else(|| config_invalid("the projected payload carried no table node"))?;
+    let projected = project_table(
+        table,
+        PROJECTED_TABLE_POSITION,
+        &schema,
+        &mut TableGridBudget::new(limits.max_table_grid_slots),
+    )
+    .map_err(|error| peer_error("TABLE_PROJECTION_FAILED", error.to_string()))?;
+    Ok(projected_table_json(&projected))
+}
+
+fn projected_table_json(projected: &ProjectedTable) -> serde_json::Value {
+    serde_json::json!({
+        "rows": projected.rows,
+        "columns": projected.columns,
+        "widths": projected.widths,
+        "irregular": projected.irregular,
+    })
 }
 
 fn parse_payload<T: serde::de::DeserializeOwned>(
