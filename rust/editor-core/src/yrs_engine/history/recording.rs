@@ -169,65 +169,16 @@ impl YrsHistory {
         let pending_capture = Arc::new(Mutex::new(None::<HistoryMetadata>));
         let pending_pop = Arc::new(Mutex::new(None::<HistoryMetadata>));
         let popped = Arc::new(Mutex::new(None::<(EventKind, HistoryMetadataSlots)>));
-        let mut tracked_origins = HashSet::new();
-        tracked_origins.insert(Origin::from(INPUT_ORIGIN));
-        tracked_origins.insert(Origin::from(COMMAND_ORIGIN));
-        tracked_origins.insert(Origin::from(API_ORIGIN));
-        let mut manager = UndoManager::with_options(UndoOptions {
-            capture_timeout_millis: CAPTURE_TIMEOUT_MILLIS,
-            tracked_origins,
-            capture_transaction: None,
-            timestamp: clock.clone(),
-            init_undo_stack: undo,
-            init_redo_stack: redo,
-        });
-        manager.expand_scope(doc, fragment);
-
-        let added_capture = pending_capture.clone();
-        let added_pop = pending_pop.clone();
-        manager.observe_item_added_with(ADDED_OBSERVER, move |_, event| {
-            if let Some(metadata) = added_capture
-                .lock()
-                .expect("pending history capture lock poisoned")
-                .clone()
-            {
-                *event.meta_mut() = metadata;
-            } else if let Some(metadata) = added_pop
-                .lock()
-                .expect("pending history pop lock poisoned")
-                .clone()
-            {
-                *event.meta_mut() = metadata;
-            }
-        });
-
-        let updated_capture = pending_capture.clone();
-        manager.observe_item_updated_with(UPDATED_OBSERVER, move |_, event| {
-            let pending = updated_capture
-                .lock()
-                .expect("pending history capture lock poisoned")
-                .clone();
-            if let Some(metadata) = pending {
-                metadata.preserve_before_from(event.meta());
-                *event.meta_mut() = metadata;
-            }
-        });
-
-        let popped_target = pending_pop.clone();
-        let popped_result = popped.clone();
-        manager.observe_item_popped_with(POPPED_OBSERVER, move |_, event| {
-            let slots = event.meta().slots();
-            if let Some(target) = popped_target
-                .lock()
-                .expect("pending history pop lock poisoned")
-                .clone()
-            {
-                target.replace_slots(slots.clone());
-            }
-            *popped_result
-                .lock()
-                .expect("popped history metadata lock poisoned") = Some((event.kind(), slots));
-        });
+        let manager = build_undo_manager(
+            doc,
+            fragment,
+            clock.clone(),
+            undo,
+            redo,
+            &pending_capture,
+            &pending_pop,
+            &popped,
+        );
 
         Self {
             manager,
@@ -365,7 +316,7 @@ impl YrsHistory {
                     replayed_events.push(event.clone());
                 }
                 ReplayEvent::Action(action) => {
-                    if candidate.perform(*action).is_none() {
+                    if !candidate.perform(*action, doc, fragment).changed {
                         return Err(OperationError::engine_invariant_failed(
                             request_id,
                             None,
@@ -419,4 +370,78 @@ impl YrsHistory {
             _ => origin.as_tag(),
         })
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_undo_manager(
+    doc: &Doc,
+    fragment: &XmlFragmentRef,
+    clock: Arc<LatchingClock>,
+    undo: Vec<StackItem<HistoryMetadata>>,
+    redo: Vec<StackItem<HistoryMetadata>>,
+    pending_capture: &Arc<Mutex<Option<HistoryMetadata>>>,
+    pending_pop: &Arc<Mutex<Option<HistoryMetadata>>>,
+    popped: &Arc<Mutex<Option<(EventKind, HistoryMetadataSlots)>>>,
+) -> UndoManager<HistoryMetadata> {
+    let mut tracked_origins = HashSet::new();
+    tracked_origins.insert(Origin::from(INPUT_ORIGIN));
+    tracked_origins.insert(Origin::from(COMMAND_ORIGIN));
+    tracked_origins.insert(Origin::from(API_ORIGIN));
+    let mut manager = UndoManager::with_options(UndoOptions {
+        capture_timeout_millis: CAPTURE_TIMEOUT_MILLIS,
+        tracked_origins,
+        capture_transaction: None,
+        timestamp: clock,
+        init_undo_stack: undo,
+        init_redo_stack: redo,
+    });
+    manager.expand_scope(doc, fragment);
+
+    let added_capture = pending_capture.clone();
+    let added_pop = pending_pop.clone();
+    manager.observe_item_added_with(ADDED_OBSERVER, move |_, event| {
+        if let Some(metadata) = added_capture
+            .lock()
+            .expect("pending history capture lock poisoned")
+            .clone()
+        {
+            *event.meta_mut() = metadata;
+        } else if let Some(metadata) = added_pop
+            .lock()
+            .expect("pending history pop lock poisoned")
+            .clone()
+        {
+            *event.meta_mut() = metadata;
+        }
+    });
+
+    let updated_capture = pending_capture.clone();
+    manager.observe_item_updated_with(UPDATED_OBSERVER, move |_, event| {
+        let pending = updated_capture
+            .lock()
+            .expect("pending history capture lock poisoned")
+            .clone();
+        if let Some(metadata) = pending {
+            metadata.preserve_before_from(event.meta());
+            *event.meta_mut() = metadata;
+        }
+    });
+
+    let popped_target = pending_pop.clone();
+    let popped_result = popped.clone();
+    manager.observe_item_popped_with(POPPED_OBSERVER, move |_, event| {
+        let slots = event.meta().slots();
+        if let Some(target) = popped_target
+            .lock()
+            .expect("pending history pop lock poisoned")
+            .clone()
+        {
+            target.replace_slots(slots.clone());
+        }
+        *popped_result
+            .lock()
+            .expect("popped history metadata lock poisoned") = Some((event.kind(), slots));
+    });
+
+    manager
 }

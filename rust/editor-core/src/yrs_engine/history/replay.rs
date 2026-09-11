@@ -256,14 +256,20 @@ impl YrsHistory {
         )
     }
 
-    pub(crate) fn perform(&mut self, action: HistoryAction) -> Option<HistorySnapshotSlot> {
+    pub(crate) fn perform(
+        &mut self,
+        action: HistoryAction,
+        doc: &Doc,
+        fragment: &XmlFragmentRef,
+    ) -> HistoryPop {
         let available = match action {
             HistoryAction::Undo => self.manager.can_undo(),
             HistoryAction::Redo => self.manager.can_redo(),
         };
         if !available {
-            return None;
+            return HistoryPop::unchanged(false);
         }
+        let filtered = self.exclude_protected_containers(doc, fragment, action);
         *self
             .popped
             .lock()
@@ -281,7 +287,7 @@ impl YrsHistory {
             .expect("pending history pop lock poisoned")
             .take();
         if !changed {
-            return None;
+            return HistoryPop::unchanged(filtered);
         }
         let (kind, value) = self
             .popped
@@ -290,26 +296,23 @@ impl YrsHistory {
             .take()
             .expect("changed Yrs history pop supplies metadata");
         self.reset_grouping();
-        match kind {
+        let restored = match kind {
             EventKind::Undo => value.before,
             EventKind::Redo => value.after,
-        }
-    }
-
-    pub(crate) fn undo(&mut self) -> HistoryPop {
-        let restored = self.perform(HistoryAction::Undo);
+        };
         HistoryPop {
             changed: restored.is_some(),
+            filtered,
             restored,
         }
     }
 
-    pub(crate) fn redo(&mut self) -> HistoryPop {
-        let restored = self.perform(HistoryAction::Redo);
-        HistoryPop {
-            changed: restored.is_some(),
-            restored,
-        }
+    pub(crate) fn undo(&mut self, doc: &Doc, fragment: &XmlFragmentRef) -> HistoryPop {
+        self.perform(HistoryAction::Undo, doc, fragment)
+    }
+
+    pub(crate) fn redo(&mut self, doc: &Doc, fragment: &XmlFragmentRef) -> HistoryPop {
+        self.perform(HistoryAction::Redo, doc, fragment)
     }
 
     pub(crate) fn retained_units(&self, request_id: u64) -> OperationResult<u64> {

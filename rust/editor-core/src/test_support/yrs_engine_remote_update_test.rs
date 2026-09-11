@@ -566,4 +566,283 @@ fn remote_insert_before_relative_cursor_preserves_local_stored_marks() {
     assert!(json.contains("\"type\":\"bold\""));
 }
 
+#[test]
+fn undo_preserves_remote_text_inserted_into_a_locally_created_container() {
+    let mut local = engine(InitializationMode::LocalEmpty);
+    let mut remote = engine(InitializationMode::AwaitRemote);
+    remote
+        .apply_remote_update_v1(70, &local.encoded_state().unwrap())
+        .unwrap();
+
+    local
+        .apply_command(71, TypedCommand::InsertText { text: "aaa".into() })
+        .unwrap()
+        .unwrap();
+    remote
+        .apply_remote_update_v1(72, &local.encoded_state().unwrap())
+        .unwrap();
+
+    select_text(&mut remote, 73, 0, 0);
+    remote
+        .apply_command(74, TypedCommand::InsertText { text: "bbb".into() })
+        .unwrap()
+        .unwrap();
+    local
+        .apply_remote_update_v1(75, &remote.encoded_state().unwrap())
+        .unwrap();
+    assert_eq!(local.document().unwrap().root().text_content(), "bbbaaa");
+
+    local.undo(76).unwrap().expect("undo must apply");
+    assert_eq!(
+        local.document().unwrap().root().text_content(),
+        "bbb",
+        "undo must not delete text authored by another peer",
+    );
+}
+
+fn local_split_with_remote_insertion() -> YrsDocumentEngine {
+    let mut local = engine(InitializationMode::LocalEmpty);
+    let mut remote = engine(InitializationMode::AwaitRemote);
+    remote
+        .apply_remote_update_v1(80, &local.encoded_state().unwrap())
+        .unwrap();
+    local
+        .apply_command(81, TypedCommand::InsertText { text: "aaa".into() })
+        .unwrap()
+        .unwrap();
+    local
+        .apply_command(82, TypedCommand::SplitBlock)
+        .unwrap()
+        .unwrap();
+    local
+        .apply_command(83, TypedCommand::InsertText { text: "bbb".into() })
+        .unwrap()
+        .unwrap();
+    remote
+        .apply_remote_update_v1(84, &local.encoded_state().unwrap())
+        .unwrap();
+    select_text(&mut remote, 85, 6, 6);
+    remote
+        .apply_command(86, TypedCommand::InsertText { text: "X".into() })
+        .unwrap()
+        .unwrap();
+    local
+        .apply_remote_update_v1(87, &remote.encoded_state().unwrap())
+        .unwrap();
+    assert_eq!(
+        local.document_json().unwrap(),
+        serde_json::json!({"type":"doc","content":[
+            {"type":"paragraph","content":[{"type":"text","text":"aaa"}]},
+            {"type":"paragraph","content":[{"type":"text","text":"bbXb"}]}]}),
+    );
+    local
+}
+
+#[test]
+fn undo_preserves_a_remotely_populated_paragraph_created_by_a_local_split() {
+    let mut local = local_split_with_remote_insertion();
+
+    local.undo(90).unwrap().expect("undo must apply");
+    assert_eq!(
+        local.document_json().unwrap(),
+        serde_json::json!({"type":"doc","content":[
+            {"type":"paragraph","content":[{"type":"text","text":"aaa"}]},
+            {"type":"paragraph","content":[{"type":"text","text":"X"}]}]}),
+        "the split paragraph must survive because a peer authored text inside it",
+    );
+
+    local.undo(91).unwrap().expect("undo must apply");
+    assert_eq!(
+        local.document_json().unwrap(),
+        serde_json::json!({"type":"doc","content":[
+            {"type":"paragraph"},
+            {"type":"paragraph","content":[{"type":"text","text":"X"}]}]}),
+        "the locally authored text container must still be removed",
+    );
+}
+
+#[test]
+fn redo_after_a_filtered_undo_restores_local_text_around_remote_text() {
+    let mut local = local_split_with_remote_insertion();
+    let merged = local.document_json().unwrap();
+
+    local.undo(92).unwrap().expect("undo must apply");
+    local.redo(93).unwrap().expect("redo must apply");
+    assert_eq!(
+        local.document_json().unwrap(),
+        merged,
+        "redo of a filtered undo must restore the local text in place",
+    );
+
+    local.undo(94).unwrap().expect("undo must apply");
+    local.undo(95).unwrap().expect("undo must apply");
+    local.redo(96).unwrap().expect("redo must apply");
+    local.redo(97).unwrap().expect("redo must apply");
+
+    assert_eq!(
+        local.document_json().unwrap(),
+        merged,
+        "redo must rebuild the merged document without dropping or duplicating peer text",
+    );
+    assert!(!local.can_redo());
+}
+
+#[test]
+fn undo_without_remote_edits_restores_the_pre_action_document() {
+    let mut local = engine(InitializationMode::LocalEmpty);
+    let pristine = local.document_json().unwrap();
+    let pristine_revision = local.revision();
+
+    local
+        .apply_command(96, TypedCommand::InsertText { text: "aaa".into() })
+        .unwrap()
+        .unwrap();
+    local
+        .apply_command(97, TypedCommand::SplitBlock)
+        .unwrap()
+        .unwrap();
+    local
+        .apply_command(98, TypedCommand::InsertText { text: "bbb".into() })
+        .unwrap()
+        .unwrap();
+    let authored = local.document_json().unwrap();
+
+    let mut pops = 0;
+    while local.can_undo() {
+        local.undo(99).unwrap().expect("undo must apply");
+        pops += 1;
+    }
+    assert_eq!(
+        local.document_json().unwrap(),
+        pristine,
+        "undo without remote edits must restore the pre-action document exactly",
+    );
+    assert!(local.revision() > pristine_revision);
+
+    for _ in 0..pops {
+        local.redo(100).unwrap().expect("redo must apply");
+    }
+    assert_eq!(local.document_json().unwrap(), authored);
+}
+
+#[test]
+fn repeated_history_pops_without_new_actions_advance_one_revision_each() {
+    let mut local = local_split_with_remote_insertion();
+
+    for _ in 0..3 {
+        let mut undone = 0;
+        while local.can_undo() {
+            let before = local.revision();
+            local.undo(101).unwrap().expect("undo must apply");
+            assert_eq!(local.revision(), before + 1);
+            undone += 1;
+        }
+        let exhausted = local.revision();
+        assert!(local.undo(102).unwrap().is_none());
+        assert_eq!(local.revision(), exhausted);
+
+        for _ in 0..undone {
+            let before = local.revision();
+            local.redo(103).unwrap().expect("redo must apply");
+            assert_eq!(local.revision(), before + 1);
+        }
+        let replayed = local.revision();
+        assert!(local.redo(104).unwrap().is_none());
+        assert_eq!(local.revision(), replayed);
+    }
+}
+
+#[test]
+fn undo_reverting_only_a_remotely_populated_container_is_a_no_op() {
+    let mut local = engine(InitializationMode::LocalEmpty);
+    let mut remote = engine(InitializationMode::AwaitRemote);
+    remote
+        .apply_remote_update_v1(110, &local.encoded_state().unwrap())
+        .unwrap();
+    local
+        .apply_command(111, TypedCommand::SplitBlock)
+        .unwrap()
+        .unwrap();
+    remote
+        .apply_remote_update_v1(112, &local.encoded_state().unwrap())
+        .unwrap();
+    select_text(&mut remote, 113, 2, 2);
+    remote
+        .apply_command(114, TypedCommand::InsertText { text: "R".into() })
+        .unwrap()
+        .unwrap();
+    local
+        .apply_remote_update_v1(115, &remote.encoded_state().unwrap())
+        .unwrap();
+
+    let merged = local.document_json().unwrap();
+    let merged_revision = local.revision();
+    assert_eq!(
+        merged,
+        serde_json::json!({"type":"doc","content":[
+            {"type":"paragraph"},
+            {"type":"paragraph","content":[{"type":"text","text":"R"}]}]}),
+    );
+
+    assert!(
+        local.undo(116).unwrap().is_none(),
+        "an undo whose only reverted structs are protected must report no change",
+    );
+    assert_eq!(local.document_json().unwrap(), merged);
+    assert_eq!(local.revision(), merged_revision);
+}
+
+#[test]
+fn undo_skips_a_container_a_peer_already_removed() {
+    let mut local = engine(InitializationMode::LocalEmpty);
+    let mut remote = engine(InitializationMode::AwaitRemote);
+    remote
+        .apply_remote_update_v1(300, &local.encoded_state().unwrap())
+        .unwrap();
+    local
+        .apply_command(301, TypedCommand::InsertText { text: "aaa".into() })
+        .unwrap()
+        .unwrap();
+    local
+        .apply_command(302, TypedCommand::SplitBlock)
+        .unwrap()
+        .unwrap();
+    local
+        .apply_command(303, TypedCommand::InsertText { text: "bbb".into() })
+        .unwrap()
+        .unwrap();
+    remote
+        .apply_remote_update_v1(304, &local.encoded_state().unwrap())
+        .unwrap();
+    remote
+        .apply_command(
+            305,
+            TypedCommand::DeleteRange {
+                range: RevisionedRange {
+                    from: point(1),
+                    to: point(6),
+                },
+            },
+        )
+        .unwrap()
+        .expect("range deletion must apply");
+    local
+        .apply_remote_update_v1(306, &remote.encoded_state().unwrap())
+        .unwrap();
+    assert_eq!(
+        local.document_json().unwrap(),
+        serde_json::json!({"type":"doc","content":[
+            {"type":"paragraph","content":[{"type":"text","text":"ab"}]}]}),
+        "the peer merged both paragraphs and removed the locally created one",
+    );
+
+    local.undo(307).unwrap().expect("undo must apply");
+    assert_eq!(
+        local.document_json().unwrap(),
+        serde_json::json!({"type":"doc","content":[{"type":"paragraph"}]}),
+        "reverting insertions whose container a peer already removed must still apply",
+    );
+    assert!(!local.can_undo());
+}
+
 include!("yrs_engine_remote_update_test/staging.rs");

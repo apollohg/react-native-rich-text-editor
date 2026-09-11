@@ -173,10 +173,17 @@ impl YrsDocumentEngine {
             self.history
                 .replay_into(request_id, &candidate_doc, &candidate_fragment)?;
         let candidate_pop = match action {
-            yrs_engine::history::HistoryAction::Undo => candidate_history.undo(),
-            yrs_engine::history::HistoryAction::Redo => candidate_history.redo(),
+            yrs_engine::history::HistoryAction::Undo => {
+                candidate_history.undo(&candidate_doc, &candidate_fragment)
+            }
+            yrs_engine::history::HistoryAction::Redo => {
+                candidate_history.redo(&candidate_doc, &candidate_fragment)
+            }
         };
         if !candidate_pop.changed {
+            if candidate_pop.filtered {
+                return Ok(None);
+            }
             return Err(yrs_engine::OperationError::engine_invariant_failed(
                 request_id,
                 None,

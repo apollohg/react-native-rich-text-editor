@@ -1,13 +1,20 @@
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use yrs::branch::{Branch, BranchID};
+use yrs::encoding::write::Write;
 use yrs::sync::time::Clock;
-use yrs::types::xml::XmlFragmentRef;
+use yrs::types::xml::{XmlFragment, XmlFragmentRef, XmlOut};
+use yrs::types::Text;
 use yrs::undo::{EventKind, Options as UndoOptions, StackItem, UndoManager};
 use yrs::updates::decoder::Decode;
-use yrs::{Doc, IdSet, Origin, ReadTxn, StateVector, Transact, Update};
+use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
+use yrs::{
+    ClientID, Doc, IdSet, OffsetKind, Options, Origin, ReadTxn, StateVector, Transact, Update, ID,
+};
 
 use crate::model::Mark;
 
@@ -314,7 +321,18 @@ pub(crate) enum HistoryAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HistoryPop {
     pub changed: bool,
+    pub filtered: bool,
     pub restored: Option<HistorySnapshotSlot>,
+}
+
+impl HistoryPop {
+    fn unchanged(filtered: bool) -> Self {
+        Self {
+            changed: false,
+            filtered,
+            restored: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -473,6 +491,7 @@ pub(crate) struct YrsHistory {
 include!("history/recording.rs");
 include!("history/capture.rs");
 include!("history/replay.rs");
+include!("history/deletion_filter.rs");
 
 fn stack_units(stack: &[StackItem<HistoryMetadata>], request_id: u64) -> OperationResult<u64> {
     let mut total = 0u64;
