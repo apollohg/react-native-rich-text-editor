@@ -100,6 +100,7 @@ struct RustPeer {
     pending_events: Vec<serde_json::Value>,
     emitted_events: Vec<serde_json::Value>,
     next_request_id: u64,
+    autonomous_repair_writes: u64,
 }
 
 pub fn serve<R: BufRead, W: Write>(
@@ -204,6 +205,7 @@ impl RustPeer {
             pending_events: Vec::new(),
             emitted_events: Vec::new(),
             next_request_id: 1,
+            autonomous_repair_writes: 0,
         }
     }
 
@@ -397,6 +399,7 @@ impl RustPeer {
 
     fn snapshot(&mut self, payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
         let _: EmptyPayload = parse_payload(payload)?;
+        let autonomous_repair_writes = self.autonomous_repair_writes;
         let session = self.session_mut()?;
         Ok(serde_json::json!({
             "json": session.engine.document_json(),
@@ -405,6 +408,7 @@ impl RustPeer {
             "stateRevision": session.engine.state_revision().to_string(),
             "canUndo": session.engine.can_undo(),
             "canRedo": session.engine.can_redo(),
+            "autonomousRepairWrites": autonomous_repair_writes,
         }))
     }
 
@@ -476,6 +480,9 @@ impl RustPeer {
                     Some(lease.lease_id.value()),
                 )
             })?;
+            if kind == "document" && origin == EventOrigin::Remote {
+                self.autonomous_repair_writes = self.autonomous_repair_writes.saturating_add(1);
+            }
             self.pending_events.push(serde_json::json!({
                 "kind": kind,
                 "origin": origin.as_str(),

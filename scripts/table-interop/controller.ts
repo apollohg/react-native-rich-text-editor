@@ -26,7 +26,7 @@ const REQUEST_TIMEOUT_MILLIS = 30_000;
 const EMPTY_STATE_VECTOR_BASE64 = Buffer.from([0]).toString('base64');
 const MAX_EXCHANGE_ROUNDS = 100;
 const MAX_EXCHANGE_UPDATES = 10_000;
-const MUTATING_OPERATIONS = new Set(['command', 'undo', 'redo', 'applyUpdate']);
+const NATIVE_NORMALIZATION_IS_NOT_INSTRUMENTED = 0;
 
 export class PeerError extends Error {
     readonly code: string;
@@ -41,8 +41,6 @@ export class PeerError extends Error {
 type PeerRecord = {
     kind: PeerKind;
     events: UpdateEvent[];
-    autonomousRepairWrites: number;
-    autonomousRepairWritesAfterLastAction: number;
 };
 
 const records = new WeakMap<Peer, PeerRecord>();
@@ -96,19 +94,10 @@ export async function call(
     payload: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
     const record = recordFor(peer);
-    if (MUTATING_OPERATIONS.has(operation)) {
-        record.autonomousRepairWritesAfterLastAction = 0;
-    }
     requestCounter += 1;
     const id = `c${requestCounter}`;
     const reply = await peer.request({ id, operation, payload: wirePayload(operation, payload) });
-    for (const event of reply.events) {
-        record.events.push(event);
-        if (event.origin === 'webRepair') {
-            record.autonomousRepairWrites += 1;
-            record.autonomousRepairWritesAfterLastAction += 1;
-        }
-    }
+    record.events.push(...reply.events);
     assertReply(reply, id);
     if (reply.error !== null) {
         throw new PeerError(operation, reply.error.code, reply.error.message);
@@ -127,21 +116,12 @@ export async function snapshot(peer: Peer): Promise<PeerSnapshot> {
     const displayJson = record.kind === 'rust'
         ? documentJson
         : requireJsonOrNull(value['displayJson'], 'snapshot.displayJson');
-    const counters = record.kind === 'rust'
-        ? {
-            normalizationPassesAfterLastAction: record.autonomousRepairWritesAfterLastAction,
-            autonomousRepairWrites: record.autonomousRepairWrites,
-        }
-        : {
-            normalizationPassesAfterLastAction: requireCount(
-                value['normalizationPassesAfterLastAction'],
-                'snapshot.normalizationPassesAfterLastAction',
-            ),
-            autonomousRepairWrites: requireCount(
-                value['autonomousRepairWrites'],
-                'snapshot.autonomousRepairWrites',
-            ),
-        };
+    const normalizationPassesAfterLastAction = record.kind === 'rust'
+        ? NATIVE_NORMALIZATION_IS_NOT_INSTRUMENTED
+        : requireCount(
+            value['normalizationPassesAfterLastAction'],
+            'snapshot.normalizationPassesAfterLastAction',
+        );
     return {
         documentJson,
         displayJson,
@@ -151,7 +131,11 @@ export async function snapshot(peer: Peer): Promise<PeerSnapshot> {
             'stateVector.stateVectorBase64',
         ),
         projection: null,
-        ...counters,
+        normalizationPassesAfterLastAction,
+        autonomousRepairWrites: requireCount(
+            value['autonomousRepairWrites'],
+            'snapshot.autonomousRepairWrites',
+        ),
     };
 }
 
@@ -286,12 +270,7 @@ export async function withPeers<const Kinds extends readonly PeerKind[]>(
         for (const [index, kind] of kinds.entries()) {
             const peer = await startPeer(kind, config);
             started.push(peer);
-            records.set(peer, {
-                kind,
-                events: [],
-                autonomousRepairWrites: 0,
-                autonomousRepairWritesAfterLastAction: 0,
-            });
+            records.set(peer, { kind, events: [] });
             await call(peer, 'initialize', initializePayload(kind, config, index !== 0));
         }
         assertOnePeerPerKind(started, kinds);

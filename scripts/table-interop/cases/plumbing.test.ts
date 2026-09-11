@@ -63,7 +63,39 @@ test('TBL-21 a web-initialized seed carries the document to the Rust peer', asyn
         assert.equal(webSnapshot.projection, null);
         assert.equal(webSnapshot.normalizationPassesAfterLastAction, 0);
         assert.equal(webSnapshot.autonomousRepairWrites, 0);
+        assert.equal((await snapshot(native)).autonomousRepairWrites, 0);
         assert.ok(webSnapshot.stateVectorBase64.length > 0);
         assert.equal((await snapshot(native)).stateVectorBase64.length > 0, true);
+    });
+});
+
+test('TBL-21 an awaiting web peer defers mounting until the complete seed arrives', async () => {
+    await withPeers(['prosemirror', 'prosemirror'], async ([seeder, awaiting]) => {
+        await call(seeder, 'command', { type: 'insertText', text: 'seed' });
+        const beforeSecondEdit = (await snapshot(seeder)).stateVectorBase64;
+        await call(seeder, 'command', { type: 'insertText', text: 'more' });
+        const dependentUpdate = await call(seeder, 'stateDiff', {
+            stateVectorBase64: beforeSecondEdit,
+        });
+
+        await call(awaiting, 'applyUpdate', {
+            updateBase64: dependentUpdate['updateBase64'],
+        });
+        const unmounted = await snapshot(awaiting);
+        assert.equal(unmounted.displayJson, null);
+        assert.deepEqual(unmounted.documentJson, { type: 'doc', content: [] });
+
+        await seedFrom(seeder, [awaiting]);
+        const mounted = await snapshot(awaiting);
+        assert.notEqual(mounted.displayJson, null);
+        assert.deepEqual(mounted.documentJson, (await snapshot(seeder)).documentJson);
+        assert.equal(JSON.stringify(mounted.documentJson).includes('seedmore'), true);
+        assert.equal(mounted.autonomousRepairWrites, 0);
+
+        await exchangeUntilIdle([seeder, awaiting]);
+        assert.deepEqual(
+            (await snapshot(awaiting)).documentJson,
+            (await snapshot(seeder)).documentJson,
+        );
     });
 });

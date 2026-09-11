@@ -254,19 +254,34 @@ class WebPeerRuntime {
         );
     }
 
-    mount(): void {
+    private createEditor(): void {
+        this.editor = this.kind === 'prosemirror'
+            ? mountProsemirror(
+                this.document.getXmlFragment(this.fragmentName),
+                this.element,
+                this.counter,
+            )
+            : mountTiptap(this.document, this.fragmentName, this.element, this.counter);
+    }
+
+    mountForLocalInitialization(): void {
         this.insideRequestedOperation = true;
         try {
-            this.editor = this.kind === 'prosemirror'
-                ? mountProsemirror(
-                    this.document.getXmlFragment(this.fragmentName),
-                    this.element,
-                    this.counter,
-                )
-                : mountTiptap(this.document, this.fragmentName, this.element, this.counter);
+            this.createEditor();
         } finally {
             this.insideRequestedOperation = false;
         }
+    }
+
+    private mountOverSeed(): void {
+        this.createEditor();
+    }
+
+    private seedHasArrived(): boolean {
+        const store = this.document.store;
+        return store.pendingStructs === null
+            && store.pendingDs === null
+            && this.document.getXmlFragment(this.fragmentName).length > 0;
     }
 
     private requireEditor(): MountedEditor {
@@ -343,8 +358,8 @@ class WebPeerRuntime {
         const before = this.documentRevision;
         Y.applyUpdate(this.document, update, REMOTE_ORIGIN);
         await this.settle();
-        if (this.editor === null) {
-            this.mount();
+        if (this.editor === null && this.seedHasArrived()) {
+            this.mountOverSeed();
             await this.settle();
         }
         return { changed: this.documentRevision !== before };
@@ -442,7 +457,7 @@ function initialize(payload: Record<string, unknown>): Record<string, unknown> {
     const created = new WebPeerRuntime(readKind(), readElement(), fragmentName, maxUpdateBytes);
     runtime = created;
     if (!awaitSeed) {
-        created.mount();
+        created.mountForLocalInitialization();
     }
     return { documentRevision: created.revision() };
 }
