@@ -48,3 +48,6 @@ required-features = ["table-interop"]
 [[bench]]
 name = "perf_suite"
 harness = false
+
+[patch.crates-io]
+yrs = { path = "../vendor/yrs" }

@@ -50,6 +50,7 @@ mod yrs_engine_transaction_property_test;
 mod yrs_engine_transaction_test;
 mod yrs_engine_typing_regression_test;
 mod yrs_engine_upgrade_test;
+mod yrs_undo_determinism_probe;
 
 // Session-registry concurrency guard
 //
