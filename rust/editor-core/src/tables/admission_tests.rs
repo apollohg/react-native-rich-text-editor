@@ -560,8 +560,8 @@ fn integral_float_spans_and_widths_from_yjs_project_like_integers() {
     .expect("the web payload parses");
 
     DocumentValidator::validate(&document, &schema, &limits()).expect("document validates");
-    validate_table_shapes(&document, &schema, &limits()).expect("the web payload projects");
-    let index = validate_table_shapes(&document, &schema, &limits()).expect("the payload projects");
+    let index =
+        validate_table_shapes(&document, &schema, &limits()).expect("the web payload projects");
     let projected = index
         .table_at(EMPTY_TABLE_POSITION)
         .expect("the table is indexed");

@@ -6,6 +6,8 @@ const PARAGRAPH_NODE: &str = "paragraph";
 const IRREGULAR_TABLE_POSITION: u32 = 0;
 const TWO_BY_TWO_SLOTS: usize = 4;
 const ONE_REMOTE_COMMIT: u64 = 1;
+const OUTBOX_MESSAGE_CEILING: usize = 4;
+const OUTBOX_BYTE_CEILING: usize = 64 * 1024;
 
 fn tabled_engine(mode: InitializationMode) -> YrsDocumentEngine {
     engine_with(
@@ -213,10 +215,22 @@ fn table_shape_rejections_leave_encoded_state_revisions_history_and_outbox_intac
         .apply_remote_update_v1(410, &irregular_source().encoded_state().unwrap())
         .unwrap();
     select_text(&mut target, 411, 3, 3);
+    let mut outbox =
+        CollaborationOutbox::with_ceilings(OUTBOX_MESSAGE_CEILING, OUTBOX_BYTE_CEILING);
     target
-        .apply_command(412, TypedCommand::InsertText { text: "y".into() })
+        .apply_command_with_outbox(
+            412,
+            TypedCommand::InsertText { text: "y".into() },
+            Some(&mut outbox),
+        )
         .unwrap()
         .expect("a local edit gives history something to protect");
+    let pending_updates = outbox.pending_document_update_count();
+    let pending_bytes = outbox.pending_document_update_bytes();
+    assert!(
+        pending_updates > 0,
+        "the local edit must leave real outbound data for the rejection to threaten",
+    );
 
     let bad_spans = [
         serde_json::json!(0),
@@ -243,8 +257,6 @@ fn table_shape_rejections_leave_encoded_state_revisions_history_and_outbox_intac
     for document in rejected {
         let source = source_holding(roleless_table_schema(), document.clone());
         let before = audit(&target);
-        let outbox = CollaborationOutbox::with_ceilings(4, 1024);
-        let pending_before = outbox.pending_document_update_count();
 
         let error = target
             .apply_remote_update_v1(request_id, &source.encoded_state().unwrap())
@@ -252,10 +264,31 @@ fn table_shape_rejections_leave_encoded_state_revisions_history_and_outbox_intac
 
         assert_eq!(error.code, "DOCUMENT_INVALID", "{document}");
         assert_eq!(audit(&target), before, "{document}");
-        assert_eq!(outbox.pending_document_update_count(), pending_before);
+        assert_eq!(
+            outbox.pending_document_update_count(),
+            pending_updates,
+            "{document}",
+        );
+        assert_eq!(
+            outbox.pending_document_update_bytes(),
+            pending_bytes,
+            "{document}",
+        );
         assert!(target.can_undo());
         request_id += 1;
     }
+
+    target
+        .undo_with_outbox(request_id, Some(&mut outbox))
+        .unwrap()
+        .expect("history still applies after the rejections");
+
+    assert!(
+        outbox.pending_document_update_count() > pending_updates,
+        "the audited outbox is the live one the engine writes through, so the unchanged \
+         readings above were taken against reachable outbound state",
+    );
+    assert!(outbox.pending_document_update_bytes() > pending_bytes);
 }
 
 #[test]

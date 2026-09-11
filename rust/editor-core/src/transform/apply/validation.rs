@@ -358,7 +358,7 @@ fn validate_node(
         let allowed_transient_empty_table =
             spec.table_role == Some(crate::tables::TableRole::Table) && node.child_count() == 0;
         if !allowed_transient_empty_table {
-            validate_declared_content(node, spec, schema, budget, work_limit)?;
+            validate_declared_content(node, content, spec, schema, budget, work_limit)?;
         }
 
         let child_depth = depth.saturating_add(1);
@@ -369,14 +369,12 @@ fn validate_node(
 
 fn validate_declared_content(
     node: &Node,
+    content: &Fragment,
     spec: &crate::schema::NodeSpec,
     schema: &Schema,
     budget: &WorkBudget,
     work_limit: usize,
 ) -> BoundaryResult<()> {
-    let content = node.content().ok_or_else(|| {
-        BoundaryError::new("DOCUMENT_INVALID", "non-void schema node has no content")
-    })?;
     let children = content.children();
     let matches = spec
         .content

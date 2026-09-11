@@ -51,12 +51,10 @@ mod tabled {
     const CELL_HTML_TAG: &str = "td";
     const HEADER_CELL_HTML_TAG: &str = "th";
 
-    /// Build the ProseMirror-named schema extended with `prosemirror-tables` roles.
     pub(crate) fn prosemirror_table_schema() -> Schema {
         build_tabled_schema(NamingConvention::SnakeCase)
     }
 
-    /// Build the Tiptap-named schema extended with Tiptap's table roles.
     pub(crate) fn tiptap_table_schema() -> Schema {
         build_tabled_schema(NamingConvention::CamelCase)
     }

@@ -2,7 +2,7 @@ use super::candidate_cache::encode_state_bounded;
 use super::history_state::history_operation_error;
 use super::outbound::OutboundUpdateSink;
 use super::transaction_result::cached_transition_render_update;
-use super::{checked_operation_increment, YrsDocumentEngine};
+use super::{checked_operation_increment, merge_operation_details, YrsDocumentEngine};
 use crate::serialize::{
     from_prosemirror_json_with_limits, rehydrate_reserved_html_opaque, UnknownTypeMode,
 };
@@ -11,6 +11,9 @@ use crate::transform::{canonicalize_yrs_document, DocumentValidator};
 use crate::yrs_engine;
 use crate::yrs_engine::derived_state::{history_selection_to_relative, DerivedStateCache};
 use crate::yrs_engine::{TransactionOrigin, YrsDocumentCodec};
+
+const DOCUMENT_LIMIT_EXCEEDED_CODE: &str = "DOCUMENT_LIMIT_EXCEEDED";
+const HISTORY_DOCUMENT_FIELD: &str = "document";
 use std::sync::Arc;
 use yrs::{Doc, OffsetKind, Options, ReadTxn, StateVector, Transact};
 
@@ -593,34 +596,10 @@ impl YrsDocumentEngine {
         })?;
         let document =
             canonicalize_yrs_document(&rehydrate_reserved_html_opaque(&document), &self.schema);
-        DocumentValidator::validate(&document, &self.schema, &self.resource_limits).map_err(
-            |error| {
-                if error.code() == "DOCUMENT_LIMIT_EXCEEDED" {
-                    yrs_engine::OperationError::document_limit_exceeded(
-                        request_id,
-                        None,
-                        "document",
-                        error.limit.unwrap_or(0) as u64,
-                        error.actual.unwrap_or(0) as u64,
-                    )
-                } else {
-                    yrs_engine::OperationError::document_invalid(
-                        request_id,
-                        None,
-                        "document",
-                        error.to_string(),
-                    )
-                }
-            },
-        )?;
-        admit_table_shapes(&document, &self.schema, &self.resource_limits).map_err(|error| {
-            yrs_engine::OperationError::document_invalid(
-                request_id,
-                None,
-                "document",
-                error.to_string(),
-            )
-        })?;
+        DocumentValidator::validate(&document, &self.schema, &self.resource_limits)
+            .map_err(|error| history_document_validation_error(request_id, error))?;
+        admit_table_shapes(&document, &self.schema, &self.resource_limits)
+            .map_err(|error| history_document_validation_error(request_id, error))?;
         if let Some(limit) = self.max_length {
             let actual = document.root().text_content().chars().count() as u64;
             if actual > u64::from(limit) {
@@ -753,4 +732,28 @@ impl YrsDocumentEngine {
         };
         Ok(Some(captured_len))
     }
+}
+
+fn history_document_validation_error(
+    request_id: u64,
+    error: crate::boundary::BoundaryError,
+) -> yrs_engine::OperationError {
+    let mut mapped = if error.code() == DOCUMENT_LIMIT_EXCEEDED_CODE {
+        yrs_engine::OperationError::document_limit_exceeded(
+            request_id,
+            None,
+            HISTORY_DOCUMENT_FIELD,
+            u64::try_from(error.limit.unwrap_or(0)).unwrap_or(u64::MAX),
+            u64::try_from(error.actual.unwrap_or(0)).unwrap_or(u64::MAX),
+        )
+    } else {
+        yrs_engine::OperationError::document_invalid(
+            request_id,
+            None,
+            HISTORY_DOCUMENT_FIELD,
+            error.to_string(),
+        )
+    };
+    merge_operation_details(&mut mapped, error.details);
+    mapped
 }
