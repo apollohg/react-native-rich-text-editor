@@ -262,9 +262,22 @@ async function startPeer(kind: PeerKind, config: Record<string, unknown>): Promi
     return startWebPeer(kind, config);
 }
 
-export async function withPeers(
-    kinds: PeerKind[],
-    body: (peers: Peer[]) => Promise<void>,
+export type PeerTuple<Kinds extends readonly PeerKind[]> = { [Index in keyof Kinds]: Peer };
+
+function assertOnePeerPerKind<Kinds extends readonly PeerKind[]>(
+    peers: Peer[],
+    kinds: Kinds,
+): asserts peers is PeerTuple<Kinds> & Peer[] {
+    if (peers.length !== kinds.length) {
+        throw new Error(
+            `the controller started ${peers.length} peers for ${kinds.length} requested kinds`,
+        );
+    }
+}
+
+export async function withPeers<const Kinds extends readonly PeerKind[]>(
+    kinds: Kinds,
+    body: (peers: PeerTuple<Kinds>) => Promise<void>,
     config: Record<string, unknown> = paragraphFixture('prosemirror'),
 ): Promise<void> {
     const started: Peer[] = [];
@@ -281,6 +294,7 @@ export async function withPeers(
             });
             await call(peer, 'initialize', initializePayload(kind, config, index !== 0));
         }
+        assertOnePeerPerKind(started, kinds);
         await body(started);
     } catch (error) {
         failure = error;

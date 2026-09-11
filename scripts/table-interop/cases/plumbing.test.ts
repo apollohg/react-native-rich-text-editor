@@ -44,6 +44,7 @@ test('TBL-21 Rust and a real Tiptap peer share text and undo', async () => {
 
 test('TBL-21 a web-initialized seed carries the document to the Rust peer', async () => {
     await withPeers(['prosemirror', 'rust'], async ([web, native]) => {
+        assert.equal((await snapshot(native)).documentJson, null);
         await seedFrom(web, [native]);
         assert.equal((await call(native, 'drain', {}))['count'], 0);
         await call(web, 'command', { type: 'insertText', text: 'web' });
