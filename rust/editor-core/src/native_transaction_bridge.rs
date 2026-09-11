@@ -34,7 +34,7 @@ use crate::yrs_engine::{
 };
 
 /// The one supported native bridge envelope version.
-const NATIVE_BRIDGE_ENVELOPE_VERSION: u32 = 1;
+pub(crate) const NATIVE_BRIDGE_ENVELOPE_VERSION: u32 = 1;
 
 /// Affinity used when a data-only position envelope omits it: typing and
 /// selection anchors stick after the addressed position.
@@ -678,7 +678,7 @@ fn config_invalid(request_id: u64, message: impl Into<String>) -> SessionError {
 /// Frozen mapping: the engine emits `OPERATION_RESOURCE_EXHAUSTED` only for
 /// allocation/reservation failures, which preserve their code; everything
 /// else keeps its existing stable code.
-fn operation_error(error: OperationError) -> SessionError {
+pub(crate) fn operation_error(error: OperationError) -> SessionError {
     let failure_class = if error.code == "OPERATION_RESOURCE_EXHAUSTED" {
         OperationFailureClass::AllocationOrReservation
     } else {

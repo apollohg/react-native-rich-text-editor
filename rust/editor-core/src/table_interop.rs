@@ -1,0 +1,525 @@
+#![allow(
+    clippy::result_large_err,
+    reason = "SessionError is the established unboxed six-domain boundary envelope"
+)]
+
+use std::io::{BufRead, Write};
+
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
+
+use crate::boundary::ResourceLimits;
+use crate::collaboration_runtime::outbox::OutboundLeasePayload;
+use crate::document_api::DocumentApiFacade;
+use crate::native_transaction_bridge::{
+    operation_error, serialize_native_outcome, NativeTransactionBridge,
+    NATIVE_BRIDGE_ENVELOPE_VERSION,
+};
+use crate::schema::presets::{prosemirror_schema, tiptap_schema};
+use crate::session::{
+    outbound_lease_session_error, CollaborationLimits, EditorInitialization, EditorSession,
+    EditorSessionConfig, ErrorDomain, InitialContent, SessionError,
+};
+use crate::yrs_engine::EditingLimits;
+
+const MAX_WIRE_LINE_BYTES: usize = 96 * 1024 * 1024;
+const MAX_REQUEST_ID_BYTES: usize = 128;
+const COLLABORATION_FRAGMENT_NAME: &str = "prosemirror";
+const LEASE_ACTION: &str = "leaseOutbound";
+const ACK_ACTION: &str = "ackOutbound";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EventOrigin {
+    Local,
+    History,
+    Remote,
+}
+
+impl EventOrigin {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::History => "history",
+            Self::Remote => "remote",
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireRequest {
+    id: String,
+    operation: String,
+    payload: serde_json::Value,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InitializePayload {
+    #[serde(default)]
+    schema: Option<SchemaPreset>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum SchemaPreset {
+    Tiptap,
+    Prosemirror,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+enum LocalMutation {
+    Input { text: String },
+    Command { command: serde_json::Value },
+    Selection { selection: serde_json::Value },
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UpdatePayload {
+    update_base64: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StateVectorPayload {
+    state_vector_base64: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyPayload {}
+
+struct RustPeer {
+    session: Option<EditorSession>,
+    pending_events: Vec<serde_json::Value>,
+    emitted_events: Vec<serde_json::Value>,
+    next_request_id: u64,
+}
+
+pub fn serve<R: BufRead, W: Write>(
+    mut reader: R,
+    mut writer: W,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut peer = RustPeer::new();
+    loop {
+        let Some(line) = read_bounded_line(&mut reader)? else {
+            return Ok(());
+        };
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (reply, stop) = peer.handle(line);
+        writeln!(writer, "{reply}")?;
+        writer.flush()?;
+        if stop {
+            return Ok(());
+        }
+    }
+}
+
+fn read_bounded_line<R: BufRead>(
+    reader: &mut R,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        let (consumed, terminated) = {
+            let available = reader.fill_buf()?;
+            if available.is_empty() {
+                break;
+            }
+            match memchr::memchr(b'\n', available) {
+                Some(index) => {
+                    admit_line_length(bytes.len() + index)?;
+                    bytes.extend_from_slice(&available[..index]);
+                    (index + 1, true)
+                }
+                None => {
+                    admit_line_length(bytes.len() + available.len())?;
+                    bytes.extend_from_slice(available);
+                    (available.len(), false)
+                }
+            }
+        };
+        reader.consume(consumed);
+        if terminated {
+            return Ok(Some(String::from_utf8(bytes)?));
+        }
+    }
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8(bytes)?))
+}
+
+fn admit_line_length(length: usize) -> Result<(), Box<dyn std::error::Error>> {
+    if length > MAX_WIRE_LINE_BYTES {
+        return Err(format!(
+            "wire line exceeds the {MAX_WIRE_LINE_BYTES} byte ceiling at {length} bytes"
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn peer_error(code: &str, message: impl Into<String>) -> SessionError {
+    SessionError::new(ErrorDomain::Boundary, code, message)
+}
+
+fn config_invalid(message: impl Into<String>) -> SessionError {
+    peer_error("CONFIG_INVALID", message)
+}
+
+fn reply_line(
+    id: &str,
+    outcome: Result<serde_json::Value, SessionError>,
+    events: Vec<serde_json::Value>,
+) -> String {
+    let (value, error) = match outcome {
+        Ok(value) => (value, serde_json::Value::Null),
+        Err(error) => (
+            serde_json::Value::Null,
+            serde_json::json!({ "code": error.code, "message": error.message }),
+        ),
+    };
+    serde_json::json!({
+        "id": id,
+        "value": value,
+        "error": error,
+        "events": events,
+    })
+    .to_string()
+}
+
+impl RustPeer {
+    fn new() -> Self {
+        Self {
+            session: None,
+            pending_events: Vec::new(),
+            emitted_events: Vec::new(),
+            next_request_id: 1,
+        }
+    }
+
+    fn handle(&mut self, line: &str) -> (String, bool) {
+        let request: WireRequest = match serde_json::from_str(line) {
+            Ok(request) => request,
+            Err(error) => {
+                eprintln!("table-interop: unparseable request line: {error}");
+                let id = recover_request_identifier(line);
+                return (
+                    reply_line(
+                        &id,
+                        Err(config_invalid(format!("unparseable request: {error}"))),
+                        Vec::new(),
+                    ),
+                    false,
+                );
+            }
+        };
+        if request.id.is_empty() || request.id.len() > MAX_REQUEST_ID_BYTES {
+            return (
+                reply_line(
+                    "",
+                    Err(config_invalid(format!(
+                        "request identifiers are 1..={MAX_REQUEST_ID_BYTES} bytes"
+                    ))),
+                    Vec::new(),
+                ),
+                false,
+            );
+        }
+        let stop = request.operation == "shutdown";
+        let outcome = self.dispatch(&request.operation, request.payload);
+        let events = std::mem::take(&mut self.emitted_events);
+        (reply_line(&request.id, outcome, events), stop)
+    }
+
+    fn dispatch(
+        &mut self,
+        operation: &str,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, SessionError> {
+        match operation {
+            "initialize" => self.initialize(payload),
+            "command" => self.command(payload),
+            "undo" => self.history(payload, true),
+            "redo" => self.history(payload, false),
+            "applyUpdate" => self.apply_update(payload),
+            "drain" => self.drain(payload),
+            "snapshot" => self.snapshot(payload),
+            "stateVector" => self.state_vector(payload),
+            "stateDiff" => self.state_diff(payload),
+            "shutdown" => self.shutdown(payload),
+            operation => Err(peer_error(
+                "UNSUPPORTED_OPERATION",
+                format!("operation {operation} is not served by the Rust peer"),
+            )),
+        }
+    }
+
+    fn next_request_id(&mut self) -> u64 {
+        let request_id = self.next_request_id;
+        self.next_request_id = self.next_request_id.saturating_add(1);
+        request_id
+    }
+
+    fn session_mut(&mut self) -> Result<&mut EditorSession, SessionError> {
+        self.session.as_mut().ok_or_else(|| {
+            peer_error(
+                "PEER_NOT_INITIALIZED",
+                "the peer has no session; send initialize first",
+            )
+        })
+    }
+
+    fn initialize(
+        &mut self,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, SessionError> {
+        let payload: InitializePayload = parse_payload(payload)?;
+        if self.session.is_some() {
+            return Err(config_invalid("the peer session is already initialized"));
+        }
+        let schema = match payload.schema.unwrap_or(SchemaPreset::Tiptap) {
+            SchemaPreset::Tiptap => tiptap_schema(),
+            SchemaPreset::Prosemirror => prosemirror_schema(),
+        };
+        let config = EditorSessionConfig {
+            schema_json: None,
+            fragment_name: COLLABORATION_FRAGMENT_NAME.into(),
+            initialization: EditorInitialization::Local {
+                initial_content: InitialContent::Empty,
+            },
+            resource_limits: ResourceLimits::default(),
+            editing_limits: EditingLimits::default(),
+            collaboration_limits: CollaborationLimits::default(),
+            max_length: None,
+            read_only: false,
+            input_filter: None,
+            allow_base64_images: false,
+        };
+        let mut session = DocumentApiFacade::admit(config, schema)?;
+        session.attach_collaboration_runtime();
+        let revision = session.engine.revision();
+        self.session = Some(session);
+        Ok(serde_json::json!({ "documentRevision": revision.to_string() }))
+    }
+
+    fn command(&mut self, payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
+        let mutation: LocalMutation = parse_payload(payload)?;
+        let request_id = self.next_request_id();
+        let session = self.session_mut()?;
+        let base_document_revision = session.engine.revision();
+        let envelope = local_mutation_envelope(&mutation, request_id, base_document_revision);
+        let mut bridge = NativeTransactionBridge::new(session);
+        let outcome = match mutation {
+            LocalMutation::Input { .. } => bridge.submit_input(&envelope),
+            LocalMutation::Command { .. } => bridge.submit_command(&envelope),
+            LocalMutation::Selection { .. } => bridge.submit_selection(&envelope),
+        }?;
+        let session = self.session_mut()?;
+        let document_changed = session.engine.revision() != base_document_revision;
+        let value = parse_outcome(serialize_native_outcome(outcome, false, document_changed));
+        self.capture_outbound(EventOrigin::Local, request_id)?;
+        Ok(value)
+    }
+
+    fn history(
+        &mut self,
+        payload: serde_json::Value,
+        undo: bool,
+    ) -> Result<serde_json::Value, SessionError> {
+        let _: EmptyPayload = parse_payload(payload)?;
+        let request_id = self.next_request_id();
+        let session = self.session_mut()?;
+        let mut bridge = NativeTransactionBridge::new(session);
+        let applied = if undo {
+            bridge.undo(request_id)?
+        } else {
+            bridge.redo(request_id)?
+        };
+        let session = self.session_mut()?;
+        let revision = session.engine.revision();
+        self.capture_outbound(EventOrigin::History, request_id)?;
+        Ok(serde_json::json!({
+            "applied": applied,
+            "documentRevision": revision.to_string(),
+        }))
+    }
+
+    fn apply_update(
+        &mut self,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, SessionError> {
+        let payload: UpdatePayload = parse_payload(payload)?;
+        let update = decode_base64(&payload.update_base64, "updateBase64")?;
+        let request_id = self.next_request_id();
+        let session = self.session_mut()?;
+        let prepared = session
+            .engine
+            .prepare_remote_update_v1(request_id, &update)
+            .map_err(operation_error)?;
+        let commit = session
+            .engine
+            .commit_prepared_remote_update(prepared)
+            .map_err(operation_error)?;
+        self.capture_outbound(EventOrigin::Remote, request_id)?;
+        Ok(serde_json::json!({
+            "changed": commit.changed,
+            "documentRevision": commit.revision.to_string(),
+        }))
+    }
+
+    fn drain(&mut self, payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
+        let _: EmptyPayload = parse_payload(payload)?;
+        let count = self.pending_events.len();
+        self.emitted_events = std::mem::take(&mut self.pending_events);
+        Ok(serde_json::json!({ "count": count }))
+    }
+
+    fn snapshot(&mut self, payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
+        let _: EmptyPayload = parse_payload(payload)?;
+        let session = self.session_mut()?;
+        Ok(serde_json::json!({
+            "json": session.engine.document_json(),
+            "html": session.engine.document_html(),
+            "documentRevision": session.engine.revision().to_string(),
+            "stateRevision": session.engine.state_revision().to_string(),
+            "canUndo": session.engine.can_undo(),
+            "canRedo": session.engine.can_redo(),
+        }))
+    }
+
+    fn state_vector(
+        &mut self,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, SessionError> {
+        let _: EmptyPayload = parse_payload(payload)?;
+        let request_id = self.next_request_id();
+        let session = self.session_mut()?;
+        let encoded = session
+            .engine
+            .encode_state_vector_v1(request_id)
+            .map_err(operation_error)?;
+        Ok(serde_json::json!({ "stateVectorBase64": BASE64.encode(encoded) }))
+    }
+
+    fn state_diff(
+        &mut self,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, SessionError> {
+        let payload: StateVectorPayload = parse_payload(payload)?;
+        let state_vector = decode_base64(&payload.state_vector_base64, "stateVectorBase64")?;
+        let request_id = self.next_request_id();
+        let session = self.session_mut()?;
+        let diff = session
+            .engine
+            .encode_diff_v1(request_id, &state_vector)
+            .map_err(operation_error)?;
+        Ok(serde_json::json!({ "updateBase64": BASE64.encode(diff) }))
+    }
+
+    fn shutdown(&mut self, payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
+        let _: EmptyPayload = parse_payload(payload)?;
+        if let Some(session) = self.session.as_mut() {
+            session.teardown();
+        }
+        Ok(serde_json::json!({}))
+    }
+
+    fn capture_outbound(
+        &mut self,
+        origin: EventOrigin,
+        request_id: u64,
+    ) -> Result<(), SessionError> {
+        let Some(session) = self.session.as_mut() else {
+            return Ok(());
+        };
+        let (_, outbox) = session.engine_and_outbox();
+        let Some(outbox) = outbox else {
+            return Ok(());
+        };
+        loop {
+            let lease = outbox.lease_next().map_err(|error| {
+                outbound_lease_session_error(error, request_id, LEASE_ACTION, None)
+            })?;
+            let Some(lease) = lease else {
+                return Ok(());
+            };
+            let (kind, bytes) = match lease.payload {
+                OutboundLeasePayload::DocumentUpdate(update) => ("document", update),
+                OutboundLeasePayload::ProtocolReply(frame) => ("protocol", frame),
+            };
+            outbox.ack_lease(lease.lease_id).map_err(|error| {
+                outbound_lease_session_error(
+                    error,
+                    request_id,
+                    ACK_ACTION,
+                    Some(lease.lease_id.value()),
+                )
+            })?;
+            self.pending_events.push(serde_json::json!({
+                "kind": kind,
+                "origin": origin.as_str(),
+                "bytesBase64": BASE64.encode(bytes),
+            }));
+        }
+    }
+}
+
+fn local_mutation_envelope(
+    mutation: &LocalMutation,
+    request_id: u64,
+    base_document_revision: u64,
+) -> String {
+    let mut envelope = serde_json::json!({
+        "version": NATIVE_BRIDGE_ENVELOPE_VERSION,
+        "requestId": request_id.to_string(),
+        "baseDocumentRevision": base_document_revision.to_string(),
+    });
+    match mutation {
+        LocalMutation::Input { text } => {
+            envelope["text"] = serde_json::Value::String(text.clone());
+        }
+        LocalMutation::Command { command } => {
+            envelope["command"] = command.clone();
+        }
+        LocalMutation::Selection { selection } => {
+            envelope["selection"] = selection.clone();
+        }
+    }
+    envelope.to_string()
+}
+
+fn parse_outcome(serialized: String) -> serde_json::Value {
+    serde_json::from_str(&serialized).expect("native outcomes serialize as JSON objects")
+}
+
+fn parse_payload<T: serde::de::DeserializeOwned>(
+    payload: serde_json::Value,
+) -> Result<T, SessionError> {
+    serde_json::from_value(payload)
+        .map_err(|error| config_invalid(format!("invalid request payload: {error}")))
+}
+
+fn decode_base64(encoded: &str, field: &str) -> Result<Vec<u8>, SessionError> {
+    BASE64
+        .decode(encoded)
+        .map_err(|error| config_invalid(format!("{field} is not valid base64: {error}")))
+}
+
+fn recover_request_identifier(line: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(line)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .filter(|id| !id.is_empty() && id.len() <= MAX_REQUEST_ID_BYTES)
+        .unwrap_or_default()
+}

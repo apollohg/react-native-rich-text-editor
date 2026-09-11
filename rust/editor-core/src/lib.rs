@@ -27,6 +27,9 @@ pub(crate) mod selection;
 pub(crate) mod serialize;
 #[allow(dead_code)]
 pub(crate) mod session;
+#[cfg(feature = "table-interop")]
+#[doc(hidden)]
+pub mod table_interop;
 #[cfg(test)]
 mod test_support;
 pub(crate) mod transform;

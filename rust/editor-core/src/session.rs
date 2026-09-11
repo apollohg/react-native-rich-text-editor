@@ -191,7 +191,7 @@ fn minimum_deadline(left: Option<u64>, right: Option<u64>) -> Option<u64> {
     }
 }
 
-fn outbound_lease_session_error(
+pub(crate) fn outbound_lease_session_error(
     error: crate::collaboration_runtime::outbox::OutboundLeaseError,
     request_id: u64,
     action: &'static str,

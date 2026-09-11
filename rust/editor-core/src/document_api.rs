@@ -88,7 +88,10 @@ impl DocumentApiFacade {
         })
     }
 
-    fn admit(config: EditorSessionConfig, schema: Schema) -> Result<EditorSession, SessionError> {
+    pub(crate) fn admit(
+        config: EditorSessionConfig,
+        schema: Schema,
+    ) -> Result<EditorSession, SessionError> {
         config.collaboration_limits.validate()?;
         let policy = SessionPolicy::from_config(&config);
         let (engine, document_state) = match &config.initialization {
