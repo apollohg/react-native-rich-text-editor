@@ -5,7 +5,13 @@ import type { Peer, PeerKind, Request, UpdateEvent } from './peer-protocol.js';
 import { startRustPeer } from './rust-peer.js';
 import { startWebPeer } from './web-peer.js';
 import { DeliveryScheduler } from './scheduler.js';
-import type { DeliveryRecord, FlushResult, SchedulerAccess, ScheduledMessage } from './scheduler.js';
+import type {
+    DeliveryObserver,
+    DeliveryRecord,
+    FlushResult,
+    SchedulerAccess,
+    ScheduledMessage,
+} from './scheduler.js';
 import {
     beginTrace,
     dependencyManifest,
@@ -258,6 +264,8 @@ function deliveryObserver(): { onDelivery: (record: DeliveryRecord, message: Sch
             recordDelivery({
                 drainId: activeDrainId,
                 id: record.id,
+                attempt: record.attempt,
+                failed: record.failed,
                 sender: record.sender,
                 recipient: record.recipient,
                 sequence: record.sequence,
@@ -272,10 +280,17 @@ function deliveryObserver(): { onDelivery: (record: DeliveryRecord, message: Sch
 export function createScheduler(
     peers: Peer[],
     seed: number = DEFAULT_EXCHANGE_SEED,
+    observer: DeliveryObserver | null = null,
 ): DeliveryScheduler {
+    const tracing = deliveryObserver();
     return new DeliveryScheduler(new ControllerAccess(peers), {
         seed,
-        observer: deliveryObserver(),
+        observer: {
+            onDelivery(record: DeliveryRecord, message: ScheduledMessage): void {
+                tracing.onDelivery(record, message);
+                observer?.onDelivery(record, message);
+            },
+        },
     });
 }
 

@@ -36,6 +36,8 @@ export interface TraceDeliveryRecord {
     step: number;
     drainId: string | null;
     id: string;
+    attempt: number;
+    failed: boolean;
     sender: number;
     recipient: number;
     sequence: number;

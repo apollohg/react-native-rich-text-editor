@@ -160,7 +160,7 @@ async function assertSnapshotsAgree(peers: Peer[], stage: string): Promise<PeerS
     }
     const [first] = snapshots;
     if (first === undefined) {
-        throw new Error('TBL-21 DIVERGED: convergence needs at least one peer');
+        throw new Error('TBL-21 DIVERGED: the compared peer set is empty');
     }
     const expected = comparable(first);
     for (const [index, candidate] of snapshots.entries()) {

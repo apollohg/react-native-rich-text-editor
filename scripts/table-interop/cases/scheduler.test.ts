@@ -101,6 +101,13 @@ class LocalNetwork implements SchedulerAccess {
     }
 }
 
+function digestOf(bytesBase64: string): string {
+    return createHash('sha256')
+        .update(Buffer.from(bytesBase64, 'base64'))
+        .digest('hex')
+        .slice(0, 16);
+}
+
 function deliveryOrder(scheduler: DeliveryScheduler): string[] {
     return scheduler.deliveries().map((record) => `${record.id}:${record.sender}>${record.recipient}`);
 }
@@ -227,25 +234,31 @@ test('TBL-21 the same seed reproduces an identical delivery manifest across real
             await seedFrom(native, [web]);
             await call(native, 'command', { type: 'insertText', text: 'native' });
             await call(web, 'command', { type: 'insertText', text: 'web' });
-            const scheduler = createScheduler([native, web], FIRST_SEED);
+            const observed = new Map<string, string>();
+            const scheduler = createScheduler([native, web], FIRST_SEED, {
+                onDelivery(_record, message) {
+                    observed.set(message.id, message.event.bytesBase64);
+                },
+            });
             await scheduler.collect();
-            const queued = new Map(
+            const queuedBeforeDrain = new Map(
                 scheduler.pending().map((message) => [message.id, message.event.bytesBase64]),
             );
+            assert.equal(queuedBeforeDrain.size > 0, true);
             await scheduler.drain();
             for (const record of scheduler.deliveries()) {
-                manifest.push(`${record.id}:${record.sender}>${record.recipient}:${record.sequence}`);
-                const bytes = queued.get(record.id);
-                if (bytes !== undefined) {
-                    assert.equal(record.byteLength, Buffer.from(bytes, 'base64').length);
-                    assert.equal(
-                        record.digest,
-                        createHash('sha256').update(Buffer.from(bytes, 'base64')).digest('hex')
-                            .slice(0, 16),
-                    );
-                }
+                manifest.push(
+                    `${record.id}#${record.attempt}:${record.sender}>${record.recipient}:${record.sequence}:${record.failed ? 'failed' : 'delivered'}`,
+                );
+                assert.equal(observed.has(record.id), true);
+                const bytes = observed.get(record.id) ?? '';
+                assert.equal(record.byteLength, Buffer.from(bytes, 'base64').length);
+                assert.equal(record.digest, digestOf(bytes));
             }
-            assert.equal(queued.size > 0, true);
+            for (const [id, bytes] of queuedBeforeDrain) {
+                assert.equal(observed.get(id), bytes);
+            }
+            assert.equal(scheduler.deliveries().length >= queuedBeforeDrain.size, true);
             await assertConverged([native, web]);
         });
         return manifest;
@@ -323,8 +336,27 @@ test('TBL-21 a delivery that the peer rejects keeps its bytes in the queue and t
     const recorded = scheduler.deliveries().filter((record) => record.id === message.id);
     assert.equal(recorded.length, 1);
     assert.equal(recorded[0]?.byteLength, Buffer.from(bytes, 'base64').length);
+    assert.equal(recorded[0]?.digest, digestOf(bytes));
+    assert.equal(recorded[0]?.failed, true);
+    assert.equal(recorded[0]?.attempt, 1);
     assert.equal(network.textAt(1), '');
 
     await assert.rejects(scheduler.drain(), /LIMIT_EXCEEDED/);
     assert.equal(scheduler.pending()[0]?.event.bytesBase64, bytes);
+    const retried = scheduler.deliveries().filter((record) => record.id === message.id);
+    assert.equal(retried.length, 2);
+    assert.deepEqual(retried.map((record) => record.attempt), [1, 2]);
+    assert.deepEqual(retried.map((record) => record.failed), [true, true]);
+    assert.match(scheduler.traceSummary(), /"failed":true/);
+});
+
+test('TBL-21 a delivered message is recorded as a single successful attempt', async () => {
+    const network = new LocalNetwork(2);
+    network.type(0, 'delivered');
+    const scheduler = new DeliveryScheduler(network, { seed: FIRST_SEED });
+    await scheduler.drain();
+    assert.equal(scheduler.deliveries().length, 1);
+    assert.equal(scheduler.deliveries()[0]?.failed, false);
+    assert.equal(scheduler.deliveries()[0]?.attempt, 1);
+    assert.equal(network.textAt(1), 'delivered');
 });

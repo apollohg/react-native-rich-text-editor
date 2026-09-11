@@ -12,6 +12,8 @@ export interface ScheduledMessage {
 
 export interface DeliveryRecord {
     id: string;
+    attempt: number;
+    failed: boolean;
     sender: number;
     recipient: number;
     sequence: number;
@@ -180,13 +182,18 @@ export class DeliveryScheduler {
         if (index !== -1) {
             this.queue.splice(index, 1);
         }
-        this.record(message, this.roundRecords.length);
+        const record = this.record(message, this.roundRecords.length);
         try {
             await this.access.deliver(message.recipient, message.event.bytesBase64);
         } catch (error) {
-            this.queue.splice(index === -1 ? this.queue.length : index, 0, message);
+            record.failed = true;
+            if (index !== -1) {
+                this.queue.splice(index, 0, message);
+            }
+            this.observer?.onDelivery(record, message);
             throw error;
         }
+        this.observer?.onDelivery(record, message);
     }
 
     async collect(): Promise<RoundFlush> {
@@ -281,9 +288,11 @@ export class DeliveryScheduler {
         return `${DELIVERY_ID_PREFIX}${this.nextDeliveryNumber}`;
     }
 
-    private record(message: ScheduledMessage, round: number): void {
+    private record(message: ScheduledMessage, round: number): DeliveryRecord {
         const record: DeliveryRecord = {
             id: message.id,
+            attempt: this.deliveryRecords.filter((entry) => entry.id === message.id).length + 1,
+            failed: false,
             sender: message.sender,
             recipient: message.recipient,
             sequence: message.sequence,
@@ -294,7 +303,7 @@ export class DeliveryScheduler {
             deferredRounds: this.deferrals.get(message.id) ?? 0,
         };
         this.deliveryRecords.push(record);
-        this.observer?.onDelivery(record, message);
+        return record;
     }
 
     private orderedAttempts(): ScheduledMessage[] {
