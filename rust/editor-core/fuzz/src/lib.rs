@@ -4,6 +4,8 @@
 
 #[path = "../../src/boundary.rs"]
 pub mod boundary;
+#[path = "../../src/clipboard.rs"]
+pub mod clipboard;
 #[path = "../../src/collaboration_runtime/mod.rs"]
 pub mod collaboration_runtime;
 #[path = "command_planner_shim/command_planner.rs"]

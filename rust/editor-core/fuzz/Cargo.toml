@@ -39,3 +39,6 @@ uniffi = "0.29"
 
 # Prevent this from interfering with workspace if present
 [workspace]
+
+[patch.crates-io]
+yrs = { path = "../../vendor/yrs" }
