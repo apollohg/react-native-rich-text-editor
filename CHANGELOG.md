@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.0.5]
+
+### Added
+
+- Added ancestry-aware style rules: a `rules` array on `EditorTheme` lets a style target an element by its full ancestor path, for example a list marker or paragraph nested inside a blockquote.
+
+### Fixed
+
+- Fixed toggling a list's type (bullet, ordered, or task) so it converts the existing list in place instead of nesting a new list inside it.
+- Aligned iOS unordered bullet sizing with Android's fixed-ratio diameter instead of measuring the glyph's bounding box.
+- Fixed the ordered list marker scale being affected by the unordered marker scale setting, and corrected ordered marker indentation to use the visual nesting depth.
+- Fixed the viewer ignoring an explicitly configured zero height on horizontal rules and falling back to the default thickness. non-contiguous ancestry rules could leak into marker styling.
+
+### Tests
+
+- Added Android and iOS regression coverage for ancestry-based style rule resolution, contextual marker and code-font typography, list marker geometry, and list type conversion.
+
 ## [2.0.4] - 2026-09-09
 
 ### Fixed
@@ -650,6 +667,8 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.0.5]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.4...2.0.5
+[2.0.4]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.3...2.0.4
 [2.0.3]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.2...2.0.3
 [2.0.2]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.1...2.0.2
 [2.0.1]: https://github.com/apollohg/react-native-rich-text-editor/compare/1.0.3...2.0.1
