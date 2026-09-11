@@ -5,8 +5,9 @@ use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::selection::{
-    cell_opening_containing, resolve_cell_rect, snap_cell_selection, CELL_SELECTION_ANCHOR_FIELD,
-    CELL_SELECTION_HEAD_FIELD, CELL_SELECTION_INVALID,
+    admit_cell_opening, admit_cell_pair, snap_cell_selection, CellAdmission,
+    CELL_SELECTION_ANCHOR_FIELD, CELL_SELECTION_HEAD_FIELD, CELL_SELECTION_INVALID,
+    CELL_SELECTION_PROJECTION_UNAVAILABLE,
 };
 use crate::transform::StepMap;
 use crate::yrs_engine;
@@ -134,9 +135,25 @@ fn cell_opening_for_offset(
             format!("{field} is outside the current document"),
         )
     })?;
-    cell_opening_containing(index, document_position).ok_or_else(|| {
-        OperationError::selection_position_invalid(request_id, field, CELL_SELECTION_INVALID)
-    })
+    admit_cell_opening(index, document_position)
+        .map_err(|admission| cell_admission_error(request_id, field, admission))
+}
+
+pub(crate) fn cell_admission_error(
+    request_id: u64,
+    field: &'static str,
+    admission: CellAdmission,
+) -> OperationError {
+    match admission {
+        CellAdmission::ProjectionUnavailable => OperationError::operation_resource_exhausted(
+            request_id,
+            field,
+            CELL_SELECTION_PROJECTION_UNAVAILABLE,
+        ),
+        CellAdmission::Admitted | CellAdmission::NotCells => {
+            OperationError::selection_position_invalid(request_id, field, CELL_SELECTION_INVALID)
+        }
+    }
 }
 
 pub(super) fn position_update_mode(operations: &[TypedOperation]) -> UpdateMode {
@@ -363,15 +380,19 @@ fn admit_cell_candidate(
     };
     let index =
         TableProjectionIndex::derive_or_fallback(preview, context.schema, context.resource_limits);
-    if resolve_cell_rect(&index, anchor, head).is_some() {
+    let admission = admit_cell_pair(&index, anchor, head);
+    if admission == CellAdmission::Admitted {
         return Ok(candidate);
     }
     if explicit_cell {
-        return Err(OperationError::selection_position_invalid(
+        return Err(cell_admission_error(
             request_id,
             CELL_SELECTION_ANCHOR_FIELD,
-            CELL_SELECTION_INVALID,
+            admission,
         ));
+    }
+    if admission == CellAdmission::ProjectionUnavailable {
+        return Ok(candidate);
     }
     match intent {
         SelectionIntent::Preserve => {}

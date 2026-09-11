@@ -6,8 +6,12 @@ use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::serialize::json_in::{from_prosemirror_json, UnknownTypeMode};
 use crate::tables::admission::{validate_table_shapes, TableProjectionIndex};
-use crate::tables::selection::{resolve_cell_rect, snap_cell_selection};
+use crate::tables::selection::{
+    admit_cell_opening, admit_cell_pair, resolve_cell_rect, snap_cell_selection, CellAdmission,
+    CELL_SELECTION_ANCHOR_FIELD,
+};
 use crate::tables::tests::{tabled_schema, PROSEMIRROR_TABLE_NAMES};
+use crate::yrs_engine::cell_admission_error;
 
 const TABLE_NODE: &str = "table";
 const ROW_NODE: &str = "table_row";
@@ -20,6 +24,8 @@ const SECOND_CELL: u32 = 6;
 const THIRD_CELL: u32 = 10;
 const SECOND_ROW_FIRST_CELL: u32 = 16;
 const SECOND_ROW_SECOND_CELL: u32 = 20;
+const STARVED_TABLE_GRID_SLOTS: usize = 1;
+const REQUEST_ID: u64 = 1;
 
 fn schema() -> Schema {
     tabled_schema(PROSEMIRROR_TABLE_NAMES)
@@ -288,6 +294,69 @@ fn a_selection_with_no_surviving_table_has_no_cell_form() {
     assert_eq!(snap_cell_selection(&empty, FIRST_CELL, SECOND_CELL), None);
 }
 
+#[test]
+fn a_starved_projection_is_distinguished_from_a_document_without_cells() {
+    let document = document_of(vec![table(vec![row(vec![plain_cell(), plain_cell()])])]);
+    let starved = ResourceLimits {
+        max_table_grid_slots: STARVED_TABLE_GRID_SLOTS,
+        ..ResourceLimits::default()
+    };
+    let starved_index = TableProjectionIndex::derive_or_fallback(&document, &schema(), &starved);
+    let table_free = index_of(&document_of(vec![paragraph("only text")]));
+
+    assert!(starved_index.projection_failed());
+    assert_eq!(
+        admit_cell_pair(&starved_index, FIRST_CELL, SECOND_CELL),
+        CellAdmission::ProjectionUnavailable
+    );
+    assert_eq!(
+        admit_cell_pair(&table_free, FIRST_CELL, SECOND_CELL),
+        CellAdmission::NotCells
+    );
+    assert_eq!(
+        admit_cell_opening(&starved_index, FIRST_CELL + 2),
+        Err(CellAdmission::ProjectionUnavailable)
+    );
+    assert_eq!(
+        admit_cell_opening(&table_free, FIRST_CELL + 2),
+        Err(CellAdmission::NotCells)
+    );
+}
+
+#[test]
+fn a_starved_projection_refuses_with_a_distinct_code() {
+    let unavailable = cell_admission_error(
+        REQUEST_ID,
+        CELL_SELECTION_ANCHOR_FIELD,
+        CellAdmission::ProjectionUnavailable,
+    );
+    let not_cells = cell_admission_error(
+        REQUEST_ID,
+        CELL_SELECTION_ANCHOR_FIELD,
+        CellAdmission::NotCells,
+    );
+
+    assert_eq!(unavailable.code, "OPERATION_RESOURCE_EXHAUSTED");
+    assert_eq!(not_cells.code, "POSITION_INVALID");
+    assert_ne!(unavailable.message, not_cells.message);
+}
+
+#[test]
+fn a_starved_projection_keeps_a_cell_selection_resolvable() {
+    let document = document_of(vec![table(vec![row(vec![plain_cell(), plain_cell()])])]);
+    let starved = ResourceLimits {
+        max_table_grid_slots: STARVED_TABLE_GRID_SLOTS,
+        ..ResourceLimits::default()
+    };
+    let starved_index = TableProjectionIndex::derive_or_fallback(&document, &schema(), &starved);
+
+    assert_ne!(
+        admit_cell_pair(&starved_index, FIRST_CELL, SECOND_CELL),
+        CellAdmission::NotCells,
+        "a transient projection failure must not read as a deleted table"
+    );
+}
+
 mod engine_round_trip {
     use serde_json::json;
 
@@ -298,7 +367,7 @@ mod engine_round_trip {
     use crate::yrs_engine::{
         Affinity, EditingLimits, EditorOffsetKind, HistoryPolicy, InitializationMode,
         ResolvedSelection, RevisionedPosition, SelectionInput, SelectionIntent,
-        StructuralReplacement, TransactionOrigin, TypedOperation, TypedTransaction,
+        StructuralReplacement, TransactionOrigin, TypedCommand, TypedOperation, TypedTransaction,
         YrsDocumentEngine, YrsEngineConfig,
     };
 
@@ -315,6 +384,9 @@ mod engine_round_trip {
     const BOTTOM_LEFT: usize = 2;
     const BOTTOM_RIGHT: usize = 3;
     const LEADING_PARAGRAPH_TEXT: &str = "before";
+    const PASTED_TEXT: &str = "pasted";
+    const TIPTAP_BULLET_LIST: &str = "bulletList";
+    const TIPTAP_LIST_ITEM: &str = "listItem";
 
     fn engine() -> YrsDocumentEngine {
         YrsDocumentEngine::new(YrsEngineConfig {
@@ -596,8 +668,146 @@ mod engine_round_trip {
         assert!(text_clipboard.get("fragment").is_some());
         assert_eq!(
             engine.clipboard(),
-            Some(json!({ "empty": true })),
-            "a cell rectangle must not export as a scalar text range"
+            Some(json!({ "unsupported": "cellSelection" })),
+            "a cell rectangle must refuse distinguishably, not look like an empty clipboard"
+        );
+    }
+
+    fn legacy_selection(engine: &YrsDocumentEngine) -> crate::selection::Selection {
+        match engine.resolved_selection().expect("the engine is ready") {
+            ResolvedSelection::Text { anchor, head } => {
+                crate::selection::Selection::text(anchor.document, head.document)
+            }
+            ResolvedSelection::Node { at } => crate::selection::Selection::node(at.document),
+            ResolvedSelection::Cell { anchor, head } => {
+                crate::selection::Selection::cell(anchor.document, head.document)
+            }
+            ResolvedSelection::All => crate::selection::Selection::all(),
+        }
+    }
+
+    fn command_map(engine: &YrsDocumentEngine) -> std::collections::HashMap<String, bool> {
+        crate::editor_state::command_applicability(
+            engine.document().expect("the engine is ready"),
+            &tiptap_table_schema(),
+            &legacy_selection(engine),
+            &ResourceLimits::default(),
+        )
+    }
+
+    fn paste_text(text: &str) -> TypedCommand {
+        TypedCommand::Paste {
+            fragment: None,
+            html: None,
+            text: Some(text.into()),
+            plain_text: true,
+            allow_base64_images: false,
+            input_filter: None,
+        }
+    }
+
+    #[test]
+    fn a_paste_over_a_cell_rectangle_does_not_mutate_the_document() {
+        let mut engine = seeded();
+        let anchor = inside_cell(&engine, TOP_LEFT);
+        let head = inside_cell(&engine, BOTTOM_RIGHT);
+        select_cells(&mut engine, 1, anchor, head).expect("the rectangle is admitted");
+        let document_before = engine.document().expect("the engine is ready").clone();
+        let revision_before = engine.revision();
+
+        let outcome = engine.apply_command(2, paste_text(PASTED_TEXT));
+
+        assert!(
+            matches!(outcome, Ok(None)),
+            "a paste over a cell rectangle must not apply: {outcome:?}"
+        );
+        assert_eq!(engine.revision(), revision_before);
+        assert_eq!(
+            engine.document().expect("the engine is ready"),
+            &document_before,
+            "a paste over a cell rectangle must leave the table intact"
+        );
+    }
+
+    #[test]
+    fn a_paste_over_a_text_selection_still_mutates_the_document() {
+        let mut engine = seeded();
+        let openings = cell_openings(&engine);
+        let anchor = inside_cell(&engine, TOP_LEFT);
+        let head = scalar_point(&engine, openings[TOP_LEFT] + CELL_TEXT_OFFSET + 1);
+        apply(
+            &mut engine,
+            1,
+            Vec::new(),
+            SelectionIntent::Set(SelectionInput::Text { anchor, head }),
+        )
+        .expect("the text selection is admitted");
+        let revision_before = engine.revision();
+
+        engine
+            .apply_command(2, paste_text(PASTED_TEXT))
+            .expect("a paste over a text selection applies");
+
+        assert_ne!(engine.revision(), revision_before);
+    }
+
+    #[test]
+    fn no_structural_command_is_offered_for_a_cell_rectangle() {
+        let mut engine = seeded();
+        let anchor = inside_cell(&engine, TOP_LEFT);
+        let head = inside_cell(&engine, BOTTOM_RIGHT);
+        let text_commands = command_map(&engine);
+
+        select_cells(&mut engine, 1, anchor, head).expect("the rectangle is admitted");
+        let cell_commands = command_map(&engine);
+
+        assert!(
+            text_commands.values().any(|applicable| *applicable),
+            "the text baseline must offer at least one structural command"
+        );
+        assert_eq!(
+            cell_commands
+                .keys()
+                .collect::<std::collections::BTreeSet<_>>(),
+            text_commands
+                .keys()
+                .collect::<std::collections::BTreeSet<_>>(),
+            "the command map must keep every key so a host reads a definite answer"
+        );
+        assert!(
+            cell_commands.values().all(|applicable| !*applicable),
+            "no structural command may be offered for a cell rectangle: {cell_commands:?}"
+        );
+    }
+
+    #[test]
+    fn a_structural_command_over_a_cell_rectangle_is_not_applicable() {
+        let mut engine = seeded();
+        let anchor = inside_cell(&engine, TOP_LEFT);
+        let head = inside_cell(&engine, BOTTOM_RIGHT);
+        select_cells(&mut engine, 1, anchor, head).expect("the rectangle is admitted");
+        let revision_before = engine.revision();
+        let document_before = engine.document().expect("the engine is ready").clone();
+
+        for command in [
+            TypedCommand::ToggleBlockquote,
+            TypedCommand::WrapInList {
+                list_type: TIPTAP_BULLET_LIST.into(),
+                item_type: TIPTAP_LIST_ITEM.into(),
+            },
+            TypedCommand::ToggleHeading { level: 1 },
+        ] {
+            let outcome = engine.apply_command(2, command.clone());
+            assert!(
+                matches!(outcome, Ok(None)),
+                "a structural command must refuse a cell rectangle: {command:?} -> {outcome:?}"
+            );
+        }
+
+        assert_eq!(engine.revision(), revision_before);
+        assert_eq!(
+            engine.document().expect("the engine is ready"),
+            &document_before
         );
     }
 

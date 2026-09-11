@@ -217,6 +217,12 @@ impl YrsDocumentEngine {
                                 .as_ref()
                                 .map(|derivations| derivations.rendered_text.as_str())
                                 .unwrap_or(state.rendered_text.as_str()),
+                            &yrs_engine::derived_state::selection_table_index(
+                                &compiled.preview,
+                                &operation_result_legacy,
+                                &self.schema,
+                                &self.resource_limits,
+                            ),
                         )
                         .unwrap_or(yrs_engine::ResolvedSelection::All)
             });
@@ -365,6 +371,12 @@ impl YrsDocumentEngine {
                 &self.schema,
                 &preview_derivations.position_map,
                 &preview_derivations.rendered_text,
+                &yrs_engine::derived_state::selection_table_index(
+                    &compiled.preview,
+                    &legacy,
+                    &self.schema,
+                    &self.resource_limits,
+                ),
             )?
         {
             return None;

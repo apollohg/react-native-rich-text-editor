@@ -122,8 +122,8 @@ fn selected_block_range(
         }
         block_path
     };
-    let from = selection.from(document);
-    let to = selection.to(document);
+    let from = selection.from(document)?;
+    let to = selection.to(document)?;
     let start = block_path(from)?;
     let end = block_path(if to > from { to - 1 } else { from })?;
     let start_parent = &start[..start.len().checked_sub(1)?];
@@ -224,8 +224,8 @@ pub(crate) fn plan_wrap_in_list_admitted(
     } else {
         SemanticCommandPlan {
             operations: vec![SemanticOperation::WrapInList {
-                from: selection.from(document),
-                to: selection.to(document),
+                from: selection.from(document)?,
+                to: selection.to(document)?,
                 list_type: list_type.to_string(),
                 item_type: item_type.to_string(),
                 attrs: list_attrs_for_type(schema, list_type, &Default::default())?,
@@ -248,7 +248,7 @@ pub(crate) fn plan_apply_list_type(
     schema
         .node(list_type)
         .filter(|spec| matches!(spec.role, NodeRole::List { .. }))?;
-    let position = selection.from(document);
+    let position = selection.from(document)?;
     if let Some(path) = containing_role_path(document, schema, position, |role| {
         matches!(role, NodeRole::List { .. })
     }) {
@@ -332,7 +332,7 @@ pub(crate) fn plan_unwrap_from_list(
         schema,
         selection,
         SemanticOperation::UnwrapFromList {
-            pos: selection.from(document),
+            pos: selection.from(document)?,
         },
         limits,
     )
@@ -349,7 +349,7 @@ pub(crate) fn plan_indent_list_item(
         schema,
         selection,
         SemanticOperation::IndentListItem {
-            pos: selection.from(document),
+            pos: selection.from(document)?,
         },
         limits,
     )
@@ -366,7 +366,7 @@ pub(crate) fn plan_outdent_list_item(
         schema,
         selection,
         SemanticOperation::OutdentListItem {
-            pos: selection.from(document),
+            pos: selection.from(document)?,
         },
         limits,
     )?;
@@ -416,7 +416,7 @@ pub(crate) fn plan_toggle_task_item_checked(
     selection: &Selection,
     limits: &ResourceLimits,
 ) -> Option<SemanticCommandPlan> {
-    let path = containing_role_path(document, schema, selection.from(document), |role| {
+    let path = containing_role_path(document, schema, selection.from(document)?, |role| {
         matches!(role, NodeRole::ListItem)
     })?;
     let item = document.node_at(&path)?;
@@ -596,8 +596,8 @@ pub(crate) fn plan_insert_node(
     }
     let attrs = default_attrs(schema, node_type)?;
     let node = Node::void(node_type.to_string(), attrs);
-    let from = selection.from(document);
-    let to = selection.to(document);
+    let from = selection.from(document)?;
+    let to = selection.to(document)?;
     let plan = match spec.role {
         NodeRole::Inline | NodeRole::HardBreak => {
             let resolved = document.resolve(from).ok()?;

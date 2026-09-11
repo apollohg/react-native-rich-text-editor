@@ -87,17 +87,26 @@ impl Selection {
     }
 
     /// The start of the selection range: `min(anchor, head)`.
-    pub fn from(&self, doc: &Document) -> u32 {
-        let a = self.anchor(doc);
-        let h = self.head(doc);
-        a.min(h)
+    pub fn from(&self, doc: &Document) -> Option<u32> {
+        let (anchor, head) = self.text_endpoints(doc)?;
+        Some(anchor.min(head))
     }
 
     /// The end of the selection range: `max(anchor, head)`.
-    pub fn to(&self, doc: &Document) -> u32 {
-        let a = self.anchor(doc);
-        let h = self.head(doc);
-        a.max(h)
+    pub fn to(&self, doc: &Document) -> Option<u32> {
+        let (anchor, head) = self.text_endpoints(doc)?;
+        Some(anchor.max(head))
+    }
+
+    pub fn text_range(&self, doc: &Document) -> Option<(u32, u32)> {
+        Some((self.from(doc)?, self.to(doc)?))
+    }
+
+    fn text_endpoints(&self, doc: &Document) -> Option<(u32, u32)> {
+        match self {
+            Self::Cell { .. } => None,
+            _ => Some((self.anchor(doc), self.head(doc))),
+        }
     }
 
     /// Whether the selection is collapsed (anchor == head).

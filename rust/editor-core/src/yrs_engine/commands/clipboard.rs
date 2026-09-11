@@ -94,7 +94,9 @@ pub(super) fn plan(
         })?;
     let selection = crate::yrs_engine::derived_state::resolved_to_legacy(context.selection);
     if plain_text && text.as_deref() == Some("") && fragment.is_none() && html.is_none() {
-        let (from, to) = clipboard::selection_range(context.document, &selection);
+        let Some((from, to)) = clipboard::selection_range(context.document, &selection) else {
+            return Ok(CommandPlan::NotApplicable);
+        };
         if from == to {
             return Ok(CommandPlan::NotApplicable);
         }

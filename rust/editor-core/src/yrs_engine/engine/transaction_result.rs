@@ -91,6 +91,12 @@ impl YrsDocumentEngine {
                     &self.schema,
                     position_map,
                     rendered_text,
+                    &yrs_engine::derived_state::selection_table_index(
+                        &compiled.preview,
+                        selection,
+                        &self.schema,
+                        &self.resource_limits,
+                    ),
                 )
                 .ok_or_else(|| {
                     yrs_engine::OperationError::engine_invariant_failed(

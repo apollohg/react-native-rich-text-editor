@@ -3,6 +3,8 @@ mod canonical;
 mod codec;
 mod commands;
 mod compiler;
+#[cfg(test)]
+pub(crate) use compiler::cell_admission_error;
 mod derived_state;
 pub(crate) use derived_state::record_active_state_full_assembly;
 mod editing_limits;

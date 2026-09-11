@@ -2,10 +2,44 @@ use crate::selection::Selection;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::projection::{CellRect, ProjectedTable};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CellAdmission {
+    Admitted,
+    NotCells,
+    ProjectionUnavailable,
+}
+
+pub(crate) fn admit_cell_pair(
+    index: &TableProjectionIndex,
+    anchor: u32,
+    head: u32,
+) -> CellAdmission {
+    if resolve_cell_rect(index, anchor, head).is_some() {
+        return CellAdmission::Admitted;
+    }
+    if index.projection_failed() {
+        return CellAdmission::ProjectionUnavailable;
+    }
+    CellAdmission::NotCells
+}
+
+pub(crate) fn admit_cell_opening(
+    index: &TableProjectionIndex,
+    position: u32,
+) -> Result<u32, CellAdmission> {
+    match cell_opening_containing(index, position) {
+        Some(opening) => Ok(opening),
+        None if index.projection_failed() => Err(CellAdmission::ProjectionUnavailable),
+        None => Err(CellAdmission::NotCells),
+    }
+}
+
 pub(crate) const CELL_SELECTION_ANCHOR_FIELD: &str = "selection.anchorCell";
 pub(crate) const CELL_SELECTION_HEAD_FIELD: &str = "selection.headCell";
 pub(crate) const CELL_SELECTION_INVALID: &str =
     "cell selection must target real table cells in one table";
+pub(crate) const CELL_SELECTION_PROJECTION_UNAVAILABLE: &str =
+    "table projection is unavailable, so a cell selection cannot be admitted or preserved";
 
 const FIRST_ROW: u32 = 0;
 const FIRST_COLUMN: u32 = 0;

@@ -58,7 +58,7 @@ use observability::{
 pub(crate) use positions::map_position;
 use preview::LocalizedSemanticCompilation;
 #[allow(unused_imports)]
-pub(crate) use selection::selectable_void_at;
+pub(crate) use selection::{cell_admission_error, selectable_void_at};
 use semantic::compile_transaction_impl;
 use std::sync::Arc;
 use yrs::branch::{Branch, BranchPtr};

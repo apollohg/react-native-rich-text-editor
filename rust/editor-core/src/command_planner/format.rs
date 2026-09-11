@@ -275,7 +275,7 @@ pub(crate) fn plan_toggle_blockquote(
     selection: &Selection,
 ) -> Option<CommandReplacement> {
     let blockquote_type = schema.node_by_html_tag("blockquote")?.name.as_str();
-    let pos = selection.from(document);
+    let pos = selection.from(document)?;
     if let Some((start, quote)) =
         crate::editor_state::containing_node_at(document, schema, pos, |_, name| {
             name == blockquote_type
@@ -292,8 +292,8 @@ pub(crate) fn plan_toggle_blockquote(
     let range = crate::editor_state::selected_block_range(
         document,
         schema,
-        selection.from(document),
-        selection.to(document),
+        selection.from(document)?,
+        selection.to(document)?,
     )?;
     let quote_spec = schema.node(blockquote_type)?;
     let selected = range
@@ -359,7 +359,7 @@ fn shift_selection(selection: &Selection, delta: i32) -> Option<Selection> {
     match selection {
         Selection::Text { anchor, head } => Some(Selection::text(shift(*anchor)?, shift(*head)?)),
         Selection::Node { pos } => Some(Selection::node(shift(*pos)?)),
-        Selection::Cell { anchor, head } => Some(Selection::cell(shift(*anchor)?, shift(*head)?)),
+        Selection::Cell { .. } => None,
         Selection::All => Some(Selection::All),
     }
 }

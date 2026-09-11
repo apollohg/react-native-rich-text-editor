@@ -2,10 +2,11 @@ use super::commit::CompiledCommitAuthority;
 use super::{checked_operation_increment, YrsDocumentEngine};
 use crate::selection::Selection;
 use crate::tables::selection::{
-    cell_opening_containing, resolve_cell_rect, CELL_SELECTION_ANCHOR_FIELD,
-    CELL_SELECTION_HEAD_FIELD, CELL_SELECTION_INVALID,
+    admit_cell_opening, admit_cell_pair, CellAdmission, CELL_SELECTION_ANCHOR_FIELD,
+    CELL_SELECTION_HEAD_FIELD,
 };
 use crate::yrs_engine;
+use crate::yrs_engine::compiler::cell_admission_error;
 use crate::yrs_engine::compiler::{
     selectable_void_at, CompilationContext, CompiledTransaction, RelativeSelectionPlan,
     SelectionPlan, StoredMarksPlan,
@@ -221,28 +222,21 @@ impl YrsDocumentEngine {
             yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::Cell { anchor, head }) => {
                 let opening = |field: &'static str, point| {
                     let document_position = resolve_point(field, point)?;
-                    cell_opening_containing(&current.table_projection_index, document_position)
-                        .ok_or_else(|| {
-                            yrs_engine::OperationError::selection_position_invalid(
-                                request_id,
-                                field,
-                                CELL_SELECTION_INVALID,
-                            )
-                        })
+                    admit_cell_opening(&current.table_projection_index, document_position)
+                        .map_err(|admission| cell_admission_error(request_id, field, admission))
                 };
                 let anchor_document = opening(CELL_SELECTION_ANCHOR_FIELD, *anchor)?;
                 let head_document = opening(CELL_SELECTION_HEAD_FIELD, *head)?;
-                if resolve_cell_rect(
+                let admission = admit_cell_pair(
                     &current.table_projection_index,
                     anchor_document,
                     head_document,
-                )
-                .is_none()
-                {
-                    return Err(yrs_engine::OperationError::selection_position_invalid(
+                );
+                if admission != CellAdmission::Admitted {
+                    return Err(cell_admission_error(
                         request_id,
                         CELL_SELECTION_ANCHOR_FIELD,
-                        CELL_SELECTION_INVALID,
+                        admission,
                     ));
                 }
                 let cell_relative_point =

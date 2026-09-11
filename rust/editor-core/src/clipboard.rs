@@ -14,7 +14,18 @@ pub(crate) struct ClipboardSlice {
     pub open_end: usize,
 }
 
-pub(crate) fn selection_range(document: &Document, selection: &Selection) -> (u32, u32) {
+pub(crate) const CLIPBOARD_EMPTY_KEY: &str = "empty";
+pub(crate) const CLIPBOARD_UNSUPPORTED_KEY: &str = "unsupported";
+pub(crate) const CLIPBOARD_UNSUPPORTED_CELL_SELECTION: &str = "cellSelection";
+
+pub(crate) fn unsupported_selection(selection: &Selection) -> Option<&'static str> {
+    match selection {
+        Selection::Cell { .. } => Some(CLIPBOARD_UNSUPPORTED_CELL_SELECTION),
+        Selection::Text { .. } | Selection::Node { .. } | Selection::All => None,
+    }
+}
+
+pub(crate) fn selection_range(document: &Document, selection: &Selection) -> Option<(u32, u32)> {
     match selection {
         Selection::Node { pos } => {
             let size = document
@@ -34,10 +45,11 @@ pub(crate) fn selection_range(document: &Document, selection: &Selection) -> (u3
                         })
                 })
                 .unwrap_or(1);
-            (*pos, pos.saturating_add(size))
+            Some((*pos, pos.saturating_add(size)))
         }
-        Selection::Text { .. } | Selection::Cell { .. } | Selection::All => {
-            (selection.from(document), selection.to(document))
+        Selection::Cell { .. } => None,
+        Selection::Text { .. } | Selection::All => {
+            Some((selection.from(document)?, selection.to(document)?))
         }
     }
 }
@@ -85,10 +97,7 @@ fn boundary_depth(document: &Document, position: u32) -> usize {
 }
 
 pub(crate) fn export(document: &Document, selection: &Selection, schema: &Schema) -> Option<Value> {
-    if matches!(selection, Selection::Cell { .. }) {
-        return None;
-    }
-    let (from, to) = selection_range(document, selection);
+    let (from, to) = selection_range(document, selection)?;
     if from >= to || to > document.content_size() {
         return None;
     }
@@ -298,7 +307,7 @@ pub(crate) fn replacement(
     schema: &Schema,
     limits: &ResourceLimits,
 ) -> Option<SemanticCommandPlan> {
-    let (from, to) = selection_range(document, selection);
+    let (from, to) = selection_range(document, selection)?;
     if to > document.content_size() {
         return None;
     }

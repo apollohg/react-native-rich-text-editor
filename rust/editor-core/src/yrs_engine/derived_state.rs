@@ -89,7 +89,7 @@ pub(crate) use selection::{
     apply_stored_mark_operation, canonical_marks, exact_point_is_representable,
     history_selection_to_relative, marks_at_position, operation_result_to_relative,
     resolve_selection, resolved_from_legacy, resolved_from_legacy_with_view, resolved_to_legacy,
-    stored_marks_after_selection_change, FinalizedSelectionState,
+    selection_table_index, stored_marks_after_selection_change, FinalizedSelectionState,
 };
 use std::sync::Arc;
 pub(crate) use validation::{

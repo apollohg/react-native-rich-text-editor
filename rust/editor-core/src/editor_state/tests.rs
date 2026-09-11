@@ -24,12 +24,9 @@ fn assert_structural_preflights_match_oracle(
     limits: &ResourceLimits,
 ) {
     let nodes = document_node_count(document.root());
-    let block_range = selected_block_range(
-        document,
-        schema,
-        selection.from(document),
-        selection.to(document),
-    );
+    let block_range = selection
+        .text_range(document)
+        .and_then(|(from, to)| selected_block_range(document, schema, from, to));
     let root_range = root_wrap_range(document, schema, selection);
     assert_eq!(
         can_toggle_blockquote_local(

@@ -372,9 +372,15 @@ impl YrsDocumentEngine {
     pub(crate) fn clipboard(&self) -> Option<serde_json::Value> {
         let document = self.document()?;
         let selection = super::derived_state::resolved_to_legacy(self.resolved_selection()?);
+        if let Some(reason) = crate::clipboard::unsupported_selection(&selection) {
+            return Some(
+                serde_json::json!({ crate::clipboard::CLIPBOARD_UNSUPPORTED_KEY: reason }),
+            );
+        }
         Some(
-            crate::clipboard::export(document, &selection, &self.schema)
-                .unwrap_or_else(|| serde_json::json!({"empty": true})),
+            crate::clipboard::export(document, &selection, &self.schema).unwrap_or_else(
+                || serde_json::json!({ crate::clipboard::CLIPBOARD_EMPTY_KEY: true }),
+            ),
         )
     }
 

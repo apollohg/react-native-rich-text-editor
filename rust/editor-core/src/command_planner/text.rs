@@ -228,7 +228,9 @@ pub(crate) fn plan_delete_backward(
             false,
         );
     }
-    let cursor = selection.from(document);
+    let Some(cursor) = selection.from(document) else {
+        return Ok(None);
+    };
     if let Some(plan) = super::plan_empty_split_action(document, schema, cursor) {
         return Ok(Some(plan));
     }

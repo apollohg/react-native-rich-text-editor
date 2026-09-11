@@ -11,7 +11,7 @@ use crate::position::PositionMap;
 use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::admission::TableProjectionIndex;
-use crate::tables::selection::{resolve_cell_rect, snap_cell_selection};
+use crate::tables::selection::{admit_cell_pair, snap_cell_selection, CellAdmission};
 use crate::yrs_engine::compiler::selectable_void_at;
 use crate::yrs_engine::position::{
     cursor_sticky_index_from_doc_pos, doc_pos_to_relative_point, doc_pos_to_sticky_index,
@@ -170,16 +170,40 @@ pub(crate) fn apply_stored_mark_operation(
     }
 }
 
+pub(crate) fn selection_table_index(
+    document: &Document,
+    selection: &Selection,
+    schema: &Schema,
+    resource_limits: &crate::boundary::ResourceLimits,
+) -> TableProjectionIndex {
+    match selection {
+        Selection::Cell { .. } => {
+            TableProjectionIndex::derive_or_fallback(document, schema, resource_limits)
+        }
+        Selection::Text { .. } | Selection::Node { .. } | Selection::All => {
+            TableProjectionIndex::empty()
+        }
+    }
+}
+
 pub(crate) fn resolved_from_legacy(
     document: &Document,
     selection: &Selection,
     schema: &Schema,
+    table_index: &TableProjectionIndex,
 ) -> Option<ResolvedSelection> {
     record_preview_position_map_derivation();
     let position_map = PositionMap::build(document, schema);
     record_preview_rendered_text_derivation();
     let rendered = crate::render::rendered_text(document, schema);
-    resolved_from_legacy_with_view(document, selection, schema, &position_map, &rendered)
+    resolved_from_legacy_with_view(
+        document,
+        selection,
+        schema,
+        &position_map,
+        &rendered,
+        table_index,
+    )
 }
 
 pub(crate) fn resolved_from_legacy_with_view(
@@ -188,6 +212,7 @@ pub(crate) fn resolved_from_legacy_with_view(
     schema: &Schema,
     position_map: &PositionMap,
     rendered: &str,
+    table_index: &TableProjectionIndex,
 ) -> Option<ResolvedSelection> {
     let point = |document_position| {
         let scalar = position_map.doc_to_scalar(document_position, document);
@@ -206,10 +231,15 @@ pub(crate) fn resolved_from_legacy_with_view(
             Some(ResolvedSelection::Node { at: point(*pos)? })
         }
         Selection::Node { .. } => None,
-        Selection::Cell { anchor, head } => Some(ResolvedSelection::Cell {
-            anchor: point(*anchor)?,
-            head: point(*head)?,
-        }),
+        Selection::Cell { anchor, head } => {
+            if admit_cell_pair(table_index, *anchor, *head) == CellAdmission::NotCells {
+                return None;
+            }
+            Some(ResolvedSelection::Cell {
+                anchor: point(*anchor)?,
+                head: point(*head)?,
+            })
+        }
         Selection::All => Some(ResolvedSelection::All),
     }
 }
@@ -352,7 +382,9 @@ pub(crate) fn resolve_selection<T: ReadTxn>(
         }
         Selection::Node { .. } => None,
         Selection::Cell { anchor, head } => {
-            resolve_cell_rect(table_index, anchor, head)?;
+            if admit_cell_pair(table_index, anchor, head) == CellAdmission::NotCells {
+                return None;
+            }
             Some(ResolvedSelection::Cell {
                 anchor: point(anchor)?,
                 head: point(head)?,

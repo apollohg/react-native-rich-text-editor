@@ -121,6 +121,7 @@ fn localized_text_index_only_proves_strict_inside_same_marked_leaf() {
         &schema,
         &full_position_map,
         &full_rendered,
+        &crate::tables::admission::TableProjectionIndex::empty(),
     )
     .unwrap();
     assert_eq!(full_resolved, proof.operation_result);

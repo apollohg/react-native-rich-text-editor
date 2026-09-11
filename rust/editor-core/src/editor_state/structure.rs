@@ -21,8 +21,8 @@ pub(crate) fn plan_content_insertion(
     if content.size() == 0 {
         return None;
     }
-    let from = selection.from(document);
-    let to = selection.to(document);
+    let from = selection.from(document)?;
+    let to = selection.to(document)?;
     let is_block = content.iter().all(|node| {
         schema.node(node.node_type()).is_some_and(|spec| {
             matches!(
@@ -174,7 +174,9 @@ fn can_toggle_blockquote_local(
     else {
         return false;
     };
-    let pos = selection.from(document);
+    let Some(pos) = selection.from(document) else {
+        return false;
+    };
     if let Some((path, quote)) =
         containing_node_path_at(document, schema, pos, |_, name| name == blockquote_type)
     {
@@ -233,7 +235,9 @@ fn can_apply_list_type_local(
     if schema.node(list_type).is_none() {
         return false;
     }
-    let pos = selection.from(document);
+    let Some(pos) = selection.from(document) else {
+        return false;
+    };
     if let Some((list_path, list)) = containing_node_path_at(document, schema, pos, |role, _| {
         matches!(role, NodeRole::List { .. })
     }) {
@@ -322,8 +326,8 @@ fn root_wrap_range(
     schema: &Schema,
     selection: &Selection,
 ) -> Option<BlockSelectionRange> {
-    let from = selection.from(document);
-    let to = selection.to(document);
+    let from = selection.from(document)?;
+    let to = selection.to(document)?;
     if from > to {
         return None;
     }

@@ -51,7 +51,10 @@ fn active_state_impl(
     commands: HashMap<String, bool>,
     limits: &ResourceLimits,
 ) -> ActiveState {
-    let pos = selection.from(document);
+    let pos = match selection.from(document) {
+        Some(from) => from,
+        None => selection.anchor(document),
+    };
     let marks_at = effective_marks_for_selection(document, selection, stored_marks);
     let nodes_at = nodes_at_position(document, pos);
 
@@ -160,14 +163,11 @@ fn command_applicability_with_known_node_count_impl(
     limits: &ResourceLimits,
     document_node_count: usize,
 ) -> HashMap<String, bool> {
-    let pos = selection.from(document);
-    let list_context = list_item_context_at(document, schema, pos);
-    let block_range = selected_block_range(
-        document,
-        schema,
-        selection.from(document),
-        selection.to(document),
-    );
+    let text_position = selection.from(document);
+    let list_context = text_position.and_then(|pos| list_item_context_at(document, schema, pos));
+    let block_range = selection
+        .text_range(document)
+        .and_then(|(from, to)| selected_block_range(document, schema, from, to));
     let root_wrap_range = root_wrap_range(document, schema, selection);
     let mut commands = HashMap::new();
     commands.insert(
@@ -205,7 +205,7 @@ fn command_applicability_with_known_node_count_impl(
     );
     commands.insert(
         "toggleTaskItem".into(),
-        can_toggle_task_item(document, schema, pos, limits),
+        text_position.is_some_and(|pos| can_toggle_task_item(document, schema, pos, limits)),
     );
     commands.insert(
         "wrapBulletList".into(),
