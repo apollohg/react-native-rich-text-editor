@@ -9,7 +9,7 @@ import {
     snapshot,
     withPeers,
 } from '../controller.js';
-import { assertConverged } from '../assertions.js';
+import { assertConverged, canonicalDocumentShape } from '../assertions.js';
 import type { Peer } from '../peer-protocol.js';
 import type { PeerSnapshot } from '../controller.js';
 
@@ -163,4 +163,102 @@ test('TBL-21 a dropped seed chunk leaves an unmountable peer that fails the drai
         assert.equal(healed.pendingDependencies, false);
         await assertConverged([seeder, awaiting]);
     });
+});
+
+test('TBL-21 a symmetrically stranded pair is rejected by the convergence oracle', async () => {
+    await withPeers(['rust', 'rust', 'rust'], async ([source, first, second]) => {
+        await call(source, 'command', { type: 'insertText', text: 'alpha' });
+        const afterAlpha = (await snapshot(source)).stateVectorBase64;
+        await call(source, 'command', { type: 'insertText', text: 'beta' });
+        const tail = await updateFrom(source, afterAlpha);
+
+        assert.equal(await applyTo(first, tail), false);
+        assert.equal(await applyTo(second, tail), false);
+        const stranded = await snapshot(first);
+        assert.equal(stranded.mounted, false);
+        assert.equal(stranded.pendingDependencies, true);
+        assert.equal(
+            JSON.stringify(stranded.documentJson),
+            JSON.stringify((await snapshot(second)).documentJson),
+        );
+        assert.equal(
+            stranded.stateVectorBase64,
+            (await snapshot(second)).stateVectorBase64,
+        );
+
+        await assert.rejects(
+            assertConverged([first, second]),
+            /TBL-21 DIVERGED: peer 0 is not mounted/,
+        );
+
+        const complete = await updateFrom(source, EMPTY_STATE_VECTOR_BASE64);
+        assert.equal(await applyTo(first, complete), true);
+        assert.equal(await applyTo(second, complete), true);
+        await assertConverged([first, second]);
+    });
+});
+
+test('TBL-21 the convergence oracle refuses a call that compares fewer than two peers', async () => {
+    await withPeers(['rust'], async ([only]) => {
+        await call(only, 'command', { type: 'insertText', text: 'lonely' });
+        await assert.rejects(
+            assertConverged([only]),
+            /TBL-21 DIVERGED: convergence needs at least 2 peers, not 1/,
+        );
+    });
+});
+
+test('the canonical document shape merges only genuinely equal adjacent text runs', () => {
+    const merged = canonicalDocumentShape({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [
+            { type: 'text', text: 'a' },
+            { type: 'text', text: 'b' },
+        ] }],
+    });
+    assert.deepEqual(merged, canonicalDocumentShape({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'ab' }] }],
+    }));
+
+    const withEmptyRun = canonicalDocumentShape({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [
+            { type: 'text', text: 'a' },
+            { type: 'text', text: '' },
+            { type: 'text', text: 'b' },
+        ] }],
+    });
+    assert.notDeepEqual(withEmptyRun, merged);
+
+    const markedApart = canonicalDocumentShape({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [
+            { type: 'text', text: 'a', marks: [{ type: 'em' }] },
+            { type: 'text', text: 'b' },
+        ] }],
+    });
+    assert.notDeepEqual(markedApart, merged);
+
+    assert.throws(
+        () => canonicalDocumentShape({
+            type: 'doc',
+            content: [{ type: 'paragraph', content: [
+                { type: 'text', text: 'a', attrs: { cell: 1 } },
+                { type: 'text', text: 'b' },
+            ] }],
+        }),
+        /TBL-21 DIVERGED: adjacent text runs carry different fields/,
+    );
+
+    assert.throws(
+        () => canonicalDocumentShape({
+            type: 'doc',
+            content: [{ type: 'paragraph', content: [
+                { type: 'text', text: 'a', attrs: { cell: 1 } },
+                { type: 'text', text: 'b', attrs: { cell: 2 } },
+            ] }],
+        }),
+        /TBL-21 DIVERGED: adjacent text runs disagree on attrs/,
+    );
 });

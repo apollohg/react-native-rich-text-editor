@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import * as Y from 'yjs';
 import { DeliveryScheduler, nextRandom } from '../scheduler.js';
@@ -25,7 +26,11 @@ class LocalNetwork implements SchedulerAccess {
     readonly documents: Y.Doc[] = [];
     private readonly emitted: Uint8Array[][] = [];
 
-    constructor(count: number, private readonly repairing: readonly number[] = []) {
+    constructor(
+        count: number,
+        private readonly repairing: readonly number[] = [],
+        private readonly rejecting: readonly number[] = [],
+    ) {
         for (let index = 0; index < count; index += 1) {
             const document = new Y.Doc();
             const outbox: Uint8Array[] = [];
@@ -69,6 +74,9 @@ class LocalNetwork implements SchedulerAccess {
     }
 
     async deliver(recipient: number, updateBase64: string): Promise<void> {
+        if (this.rejecting.includes(recipient)) {
+            throw new Error(`peer rejected applyUpdate with LIMIT_EXCEEDED: peer ${recipient}`);
+        }
         const document = this.documentAt(recipient);
         Y.applyUpdate(document, Buffer.from(updateBase64, 'base64'), REMOTE_ORIGIN);
         if (this.repairing.includes(recipient)) {
@@ -97,12 +105,13 @@ function deliveryOrder(scheduler: DeliveryScheduler): string[] {
     return scheduler.deliveries().map((record) => `${record.id}:${record.sender}>${record.recipient}`);
 }
 
-test('nextRandom is a pure function of its seed and advances the state', () => {
+test('nextRandom reproduces the pinned xorshift32 outputs for known seeds', () => {
+    assert.equal(nextRandom(1), 270369);
+    assert.equal(nextRandom(2), 540738);
+    assert.equal(nextRandom(-1), 253983);
+    assert.equal(nextRandom(FIRST_SEED), 1775657025);
+    assert.equal(nextRandom(SECOND_SEED), 3313334693);
     assert.equal(nextRandom(FIRST_SEED), nextRandom(FIRST_SEED));
-    assert.notEqual(nextRandom(FIRST_SEED), nextRandom(SECOND_SEED));
-    assert.notEqual(nextRandom(FIRST_SEED), FIRST_SEED);
-    assert.equal(Number.isInteger(nextRandom(FIRST_SEED)), true);
-    assert.equal(nextRandom(FIRST_SEED) >= 0, true);
 });
 
 test('assertDrainBound admits both caps and rejects one step past either', () => {
@@ -219,12 +228,24 @@ test('TBL-21 the same seed reproduces an identical delivery manifest across real
             await call(native, 'command', { type: 'insertText', text: 'native' });
             await call(web, 'command', { type: 'insertText', text: 'web' });
             const scheduler = createScheduler([native, web], FIRST_SEED);
+            await scheduler.collect();
+            const queued = new Map(
+                scheduler.pending().map((message) => [message.id, message.event.bytesBase64]),
+            );
             await scheduler.drain();
             for (const record of scheduler.deliveries()) {
-                manifest.push(
-                    `${record.id}:${record.sender}>${record.recipient}:${record.sequence}:${record.byteLength}`,
-                );
+                manifest.push(`${record.id}:${record.sender}>${record.recipient}:${record.sequence}`);
+                const bytes = queued.get(record.id);
+                if (bytes !== undefined) {
+                    assert.equal(record.byteLength, Buffer.from(bytes, 'base64').length);
+                    assert.equal(
+                        record.digest,
+                        createHash('sha256').update(Buffer.from(bytes, 'base64')).digest('hex')
+                            .slice(0, 16),
+                    );
+                }
             }
+            assert.equal(queued.size > 0, true);
             await assertConverged([native, web]);
         });
         return manifest;
@@ -281,4 +302,29 @@ test('TBL-21 a captured failing trace replays and reduces to the same failure cl
     );
     assert.equal(reduced.records.some((record) => record.kind === 'drain'), true);
     assert.equal(reduced.records.some((record) => record.kind === 'output'), false);
+});
+
+test('TBL-21 a delivery that the peer rejects keeps its bytes in the queue and the manifest', async () => {
+    const network = new LocalNetwork(2, [], [1]);
+    network.type(0, 'rejected');
+    const scheduler = new DeliveryScheduler(network, { seed: FIRST_SEED });
+    await scheduler.collect();
+    const [message] = scheduler.pending();
+    assert.notEqual(message, undefined);
+    if (message === undefined) {
+        return;
+    }
+    const bytes = message.event.bytesBase64;
+
+    await assert.rejects(scheduler.deliver(message), /LIMIT_EXCEEDED/);
+    assert.equal(scheduler.pending().length, 1);
+    assert.equal(scheduler.pending()[0]?.id, message.id);
+    assert.equal(scheduler.pending()[0]?.event.bytesBase64, bytes);
+    const recorded = scheduler.deliveries().filter((record) => record.id === message.id);
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0]?.byteLength, Buffer.from(bytes, 'base64').length);
+    assert.equal(network.textAt(1), '');
+
+    await assert.rejects(scheduler.drain(), /LIMIT_EXCEEDED/);
+    assert.equal(scheduler.pending()[0]?.event.bytesBase64, bytes);
 });

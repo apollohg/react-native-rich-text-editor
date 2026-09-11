@@ -31,6 +31,11 @@ export interface RoundRecord {
     dependencyWaits: number[];
 }
 
+export interface RoundFlush {
+    emitted: number;
+    dependencyWaits: number[];
+}
+
 export interface FlushResult {
     events: UpdateEvent[];
     pendingDependencies: boolean;
@@ -175,25 +180,31 @@ export class DeliveryScheduler {
         if (index !== -1) {
             this.queue.splice(index, 1);
         }
-        await this.access.deliver(message.recipient, message.event.bytesBase64);
         this.record(message, this.roundRecords.length);
+        try {
+            await this.access.deliver(message.recipient, message.event.bytesBase64);
+        } catch (error) {
+            this.queue.splice(index === -1 ? this.queue.length : index, 0, message);
+            throw error;
+        }
     }
 
-    async collect(): Promise<boolean> {
-        let pendingDependencies = false;
-        let emitted = 0;
+    async collect(): Promise<RoundFlush> {
+        const flush: RoundFlush = { emitted: 0, dependencyWaits: [] };
         for (let peer = 0; peer < this.access.peerCount(); peer += 1) {
             const flushed = await this.access.flush(peer);
-            pendingDependencies ||= flushed.pendingDependencies;
+            if (flushed.pendingDependencies) {
+                flush.dependencyWaits.push(peer);
+            }
             for (const event of flushed.events) {
                 if (event.kind !== 'document') {
                     continue;
                 }
                 this.enqueue(peer, event);
-                emitted += 1;
+                flush.emitted += 1;
             }
         }
-        return pendingDependencies || emitted > 0;
+        return flush;
     }
 
     async drain(): Promise<void> {
@@ -218,19 +229,9 @@ export class DeliveryScheduler {
                 await this.deliver(message);
                 record.delivered.push(message.id);
             }
-            for (let peer = 0; peer < this.access.peerCount(); peer += 1) {
-                const flushed = await this.access.flush(peer);
-                if (flushed.pendingDependencies) {
-                    record.dependencyWaits.push(peer);
-                }
-                for (const event of flushed.events) {
-                    if (event.kind !== 'document') {
-                        continue;
-                    }
-                    this.enqueue(peer, event);
-                    record.emitted += 1;
-                }
-            }
+            const flush = await this.collect();
+            record.emitted = flush.emitted;
+            record.dependencyWaits.push(...flush.dependencyWaits);
             emittedTotal += record.emitted;
             this.assertBounded(round, emittedTotal);
             if (this.queue.length === 0 && record.emitted === 0) {

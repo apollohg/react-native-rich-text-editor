@@ -4,6 +4,8 @@ import type { PeerSnapshot } from './controller.js';
 import { isRecord } from './peer-protocol.js';
 import type { Peer } from './peer-protocol.js';
 
+const MINIMUM_CONVERGENCE_PEERS = 2;
+
 export function assertDrainBound(rounds: number, newUpdates: number): void {
     if (rounds > 100 || newUpdates > 10_000) {
         throw new Error('TBL-21 NON_QUIESCENT');
@@ -33,30 +35,61 @@ function isTextNode(value: unknown): value is Record<string, unknown> {
     return isRecord(value) && value['type'] === 'text' && typeof value['text'] === 'string';
 }
 
+function fieldsBesidesText(node: Record<string, unknown>): string[] {
+    return Object.keys(node).filter((key) => key !== 'text').sort();
+}
+
+function mergeable(previous: unknown, entry: unknown): boolean {
+    if (!isTextNode(previous) || !isTextNode(entry)) {
+        return false;
+    }
+    if (String(previous['text']).length === 0 || String(entry['text']).length === 0) {
+        return false;
+    }
+    if (
+        JSON.stringify(canonical(previous['marks'] ?? null))
+            !== JSON.stringify(canonical(entry['marks'] ?? null))
+    ) {
+        return false;
+    }
+    const previousFields = fieldsBesidesText(previous);
+    const entryFields = fieldsBesidesText(entry);
+    if (JSON.stringify(previousFields) !== JSON.stringify(entryFields)) {
+        throw new Error(
+            `TBL-21 DIVERGED: adjacent text runs carry different fields ${JSON.stringify(previousFields)} and ${JSON.stringify(entryFields)}`,
+        );
+    }
+    for (const field of previousFields) {
+        if (
+            JSON.stringify(canonical(previous[field])) !== JSON.stringify(canonical(entry[field]))
+        ) {
+            throw new Error(
+                `TBL-21 DIVERGED: adjacent text runs disagree on ${field}: ${JSON.stringify(previous[field])} and ${JSON.stringify(entry[field])}`,
+            );
+        }
+    }
+    return true;
+}
+
 function mergedTextRuns(content: unknown[]): unknown[] {
     const merged: unknown[] = [];
     for (const entry of content) {
         const previous = merged[merged.length - 1];
-        if (
-            isTextNode(entry)
-            && isTextNode(previous)
-            && JSON.stringify(canonical(previous['marks'] ?? null))
-                === JSON.stringify(canonical(entry['marks'] ?? null))
-        ) {
+        if (mergeable(previous, entry) && isRecord(previous) && isRecord(entry)) {
             merged[merged.length - 1] = {
                 ...previous,
                 text: `${String(previous['text'])}${String(entry['text'])}`,
             };
             continue;
         }
-        merged.push(documentShape(entry));
+        merged.push(canonicalDocumentShape(entry));
     }
     return merged;
 }
 
-function documentShape(value: unknown): unknown {
+export function canonicalDocumentShape(value: unknown): unknown {
     if (Array.isArray(value)) {
-        return value.map((entry) => documentShape(entry));
+        return value.map((entry) => canonicalDocumentShape(entry));
     }
     if (!isRecord(value)) {
         return value;
@@ -66,14 +99,15 @@ function documentShape(value: unknown): unknown {
         const child = value[key];
         shaped[key] = key === 'content' && Array.isArray(child)
             ? mergedTextRuns(child)
-            : documentShape(child);
+            : canonicalDocumentShape(child);
     }
     return shaped;
 }
 
 function comparable(value: PeerSnapshot): string {
     return JSON.stringify({
-        documentJson: documentShape(value.documentJson),
+        documentJson: canonicalDocumentShape(value.documentJson),
+        displayJson: canonicalDocumentShape(value.displayJson),
         clocks: clocksOf(value.stateVectorBase64),
         mounted: value.mounted,
         pendingDependencies: value.pendingDependencies,
@@ -95,9 +129,34 @@ function requireString(value: unknown, field: string): string {
 }
 
 async function assertSnapshotsAgree(peers: Peer[], stage: string): Promise<PeerSnapshot[]> {
+    if (peers.length < MINIMUM_CONVERGENCE_PEERS) {
+        throw new Error(
+            `TBL-21 DIVERGED: convergence needs at least ${MINIMUM_CONVERGENCE_PEERS} peers, not ${peers.length}`,
+        );
+    }
     const snapshots: PeerSnapshot[] = [];
     for (const peer of peers) {
         snapshots.push(await snapshot(peer));
+    }
+    for (const [index, candidate] of snapshots.entries()) {
+        if (!candidate.mounted) {
+            throw new Error(
+                `TBL-21 DIVERGED: peer ${index} is not mounted ${stage}`,
+            );
+        }
+        if (candidate.pendingDependencies) {
+            throw new Error(
+                `TBL-21 DIVERGED: peer ${index} still holds quarantined updates ${stage}`,
+            );
+        }
+        if (
+            JSON.stringify(canonicalDocumentShape(candidate.displayJson))
+                !== JSON.stringify(canonicalDocumentShape(candidate.documentJson))
+        ) {
+            throw new Error(
+                `TBL-21 DIVERGED: peer ${index} projects a display document that disagrees with its own CRDT document ${stage}`,
+            );
+        }
     }
     const [first] = snapshots;
     if (first === undefined) {
