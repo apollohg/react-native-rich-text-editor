@@ -226,6 +226,7 @@ fn selection_json(document: &Document, position_map: &PositionMap, selection: &S
             position_map.doc_to_scalar(*head, document),
         ),
         Selection::Node { pos } => Selection::node(position_map.doc_to_scalar(*pos, document)),
+        Selection::Cell { anchor, head } => Selection::cell(*anchor, *head),
         Selection::All => Selection::All,
     };
     selection_to_json(selection, Some(&scalar))
@@ -235,6 +236,7 @@ fn resolved_selection_to_legacy(selection: &ResolvedSelection) -> Selection {
     match selection {
         ResolvedSelection::Text { anchor, head } => Selection::text(anchor.document, head.document),
         ResolvedSelection::Node { at } => Selection::node(at.document),
+        ResolvedSelection::Cell { anchor, head } => Selection::cell(anchor.document, head.document),
         ResolvedSelection::All => Selection::all(),
     }
 }
@@ -252,6 +254,11 @@ fn resolved_selection_json(selection: &ResolvedSelection) -> Value {
             "type": "node",
             "pos": at.document,
             "posScalar": at.scalar,
+        }),
+        ResolvedSelection::Cell { anchor, head } => serde_json::json!({
+            "type": "cell",
+            "anchorCell": anchor.document,
+            "headCell": head.document,
         }),
         ResolvedSelection::All => serde_json::json!({ "type": "all" }),
     }
@@ -733,6 +740,11 @@ fn selection_to_json(
         (crate::selection::Selection::Node { pos }, _) => {
             serde_json::json!({"type": "node", "pos": pos})
         }
+        (crate::selection::Selection::Cell { anchor, head }, _) => serde_json::json!({
+            "type": "cell",
+            "anchorCell": anchor,
+            "headCell": head,
+        }),
         (crate::selection::Selection::All, _) => serde_json::json!({"type": "all"}),
     }
 }

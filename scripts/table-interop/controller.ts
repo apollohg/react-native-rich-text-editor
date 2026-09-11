@@ -36,6 +36,14 @@ export interface PeerSnapshot {
     autonomousRepairWrites: number;
 }
 
+export interface AwarenessPeerProjection {
+    clientId: string;
+    isLocal: boolean;
+    state: Record<string, unknown>;
+    cursor: { anchor: number; head: number } | null;
+    cellRectangle: { anchorCell: number; headCell: number } | null;
+}
+
 export type SchemaPreset = 'prosemirror' | 'tiptap';
 
 const RUST_PEER_EXECUTABLE = process.env['RUST_PEER_EXECUTABLE'] ?? fileURLToPath(
@@ -206,12 +214,12 @@ export async function seedFrom(source: Peer, targets: Peer[]): Promise<void> {
     }
 }
 
-function takeDocumentEvents(peer: Peer): UpdateEvent[] {
+function takeEventsOfKind(peer: Peer, kind: UpdateEvent['kind']): UpdateEvent[] {
     const record = recordFor(peer);
     const taken: UpdateEvent[] = [];
     const retained: UpdateEvent[] = [];
     for (const event of record.events) {
-        if (event.kind === 'document') {
+        if (event.kind === kind) {
             taken.push(event);
         } else {
             retained.push(event);
@@ -220,6 +228,70 @@ function takeDocumentEvents(peer: Peer): UpdateEvent[] {
     record.events.length = 0;
     record.events.push(...retained);
     return taken;
+}
+
+function takeDocumentEvents(peer: Peer): UpdateEvent[] {
+    return takeEventsOfKind(peer, 'document');
+}
+
+function requirePoint(value: unknown, field: string, keys: [string, string]): {
+    first: number;
+    second: number;
+} | null {
+    if (value === null || value === undefined) {
+        return null;
+    }
+    if (!isRecord(value)) {
+        throw new Error(`peer reply field ${field} was ${JSON.stringify(value)}`);
+    }
+    return {
+        first: requireCount(value[keys[0]], `${field}.${keys[0]}`),
+        second: requireCount(value[keys[1]], `${field}.${keys[1]}`),
+    };
+}
+
+export async function setAwareness(
+    peer: Peer,
+    intent: Record<string, unknown> | null,
+): Promise<UpdateEvent[]> {
+    await call(peer, 'setAwareness', { intent });
+    await performRequest(peer, 'drain', {}, 'delivery');
+    return takeEventsOfKind(peer, 'awareness');
+}
+
+export async function applyAwareness(peer: Peer, updateBase64: string): Promise<void> {
+    await call(peer, 'applyAwareness', { updateBase64 });
+    await performRequest(peer, 'drain', {}, 'delivery');
+    takeEventsOfKind(peer, 'awareness');
+}
+
+export async function awarenessPeers(peer: Peer): Promise<AwarenessPeerProjection[]> {
+    const value = await call(peer, 'snapshot', {});
+    const raw = value['awarenessPeers'];
+    if (!Array.isArray(raw)) {
+        throw new Error(`peer reply field snapshot.awarenessPeers was ${JSON.stringify(raw)}`);
+    }
+    return raw.map((entry) => {
+        if (!isRecord(entry)) {
+            throw new Error(`peer reply field snapshot.awarenessPeers carried ${JSON.stringify(entry)}`);
+        }
+        const cursor = requirePoint(entry['cursor'], 'awarenessPeers.cursor', ['anchor', 'head']);
+        const rectangle = requirePoint(
+            entry['cellRectangle'],
+            'awarenessPeers.cellRectangle',
+            ['anchorCell', 'headCell'],
+        );
+        return {
+            clientId: requireString(entry['clientId'], 'awarenessPeers.clientId'),
+            isLocal: requireBoolean(entry['isLocal'], 'awarenessPeers.isLocal'),
+            state: requireJsonOrNull(entry['state'], 'awarenessPeers.state') ?? {},
+            cursor: cursor === null ? null : { anchor: cursor.first, head: cursor.second },
+            cellRectangle:
+                rectangle === null
+                    ? null
+                    : { anchorCell: rectangle.first, headCell: rectangle.second },
+        };
+    });
 }
 
 class ControllerAccess implements SchedulerAccess {

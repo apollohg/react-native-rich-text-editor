@@ -1,4 +1,5 @@
 import * as Y from 'yjs';
+import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from 'y-protocols/awareness';
 import { EditorState, Plugin, PluginKey, TextSelection } from 'prosemirror-state';
 import type { Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
@@ -16,6 +17,8 @@ import {
 import type { Command } from 'prosemirror-state';
 import type { Node as ProsemirrorNode } from 'prosemirror-model';
 import {
+    absolutePositionToRelativePosition,
+    relativePositionToAbsolutePosition,
     ySyncPlugin,
     ySyncPluginKey,
     yUndoPlugin,
@@ -55,6 +58,14 @@ const UNSET_COLUMN_WIDTH = 0;
 const INSERT_TEXT_COMMAND = 'insertText';
 const INSERT_NODE_COMMAND = 'insertNode';
 const TABLE_COMMAND = 'tableCommand';
+const AWARENESS_CURSOR_KEY = 'cursor';
+const AWARENESS_CELL_RECTANGLE_KEY = 'nativeEditorTableSelection';
+const AWARENESS_CELL_RECTANGLE_VERSION = 1;
+const AWARENESS_CELL_RECTANGLE_FIELDS = 3;
+const AWARENESS_MUTATED_DOCUMENT = 'AWARENESS_MUTATED_DOCUMENT';
+const TEXT_SELECTION = 'text';
+const CELL_SELECTION = 'cell';
+const AWARENESS_ORIGIN = 'tableInteropAwareness';
 const TABLE_COMMANDS: Record<string, Command> = {
     addColumnAfter,
     addRowAfter,
@@ -275,6 +286,50 @@ function applyCommand(editor: MountedEditor, command: Record<string, unknown>): 
     );
 }
 
+type ProsemirrorMapping = Map<Y.AbstractType<unknown>, ProsemirrorNode | ProsemirrorNode[]>;
+type RelativeSelectionPoints = { anchor: Y.RelativePosition; head: Y.RelativePosition };
+
+function requireU32(value: unknown, field: string): number {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 0xffff_ffff) {
+        throw new PeerOperationError(CONFIG_INVALID, `${field} must be a u32 document position`);
+    }
+    return value;
+}
+
+function encodeCellRectangle(points: RelativeSelectionPoints): Record<string, unknown> {
+    return {
+        version: AWARENESS_CELL_RECTANGLE_VERSION,
+        anchor: toBase64(Y.encodeRelativePosition(points.anchor)),
+        head: toBase64(Y.encodeRelativePosition(points.head)),
+    };
+}
+
+function decodeCellRectangle(state: unknown): RelativeSelectionPoints | null {
+    if (!isRecord(state)) {
+        return null;
+    }
+    const entry = state[AWARENESS_CELL_RECTANGLE_KEY];
+    if (!isRecord(entry) || Object.keys(entry).length !== AWARENESS_CELL_RECTANGLE_FIELDS) {
+        return null;
+    }
+    if (entry['version'] !== AWARENESS_CELL_RECTANGLE_VERSION) {
+        return null;
+    }
+    const anchor = entry['anchor'];
+    const head = entry['head'];
+    if (typeof anchor !== 'string' || typeof head !== 'string') {
+        return null;
+    }
+    try {
+        return {
+            anchor: Y.decodeRelativePosition(fromBase64(anchor, 'awareness.anchor')),
+            head: Y.decodeRelativePosition(fromBase64(head, 'awareness.head')),
+        };
+    } catch {
+        return null;
+    }
+}
+
 class WebPeerRuntime {
     private readonly kind: WebPeerKind;
     private readonly element: HTMLElement;
@@ -283,6 +338,7 @@ class WebPeerRuntime {
     private readonly tables: boolean;
     private readonly bindingOrigin: unknown;
     private readonly document = new Y.Doc();
+    private readonly awareness: Awareness;
     private readonly counter: NormalizationCounter = { passes: 0 };
     private readonly pendingEvents: UpdateEvent[] = [];
     private editor: MountedEditor | null = null;
@@ -303,6 +359,8 @@ class WebPeerRuntime {
         this.maxUpdateBytes = maxUpdateBytes;
         this.tables = tables;
         this.bindingOrigin = bindingOriginFor(kind);
+        this.awareness = new Awareness(this.document);
+        this.awareness.setLocalState(null);
         this.document.on('update', (update: Uint8Array, origin: unknown) => {
             this.documentRevision += 1;
             const classified = this.classifyOrigin(origin);
@@ -318,6 +376,155 @@ class WebPeerRuntime {
                 bytesBase64: toBase64(update),
             });
         });
+    }
+
+    private syncState(): { type: Y.XmlFragment; mapping: ProsemirrorMapping } {
+        const editor = this.requireEditor();
+        const key = this.kind === 'prosemirror' ? ySyncPluginKey : tiptapSyncPluginKey;
+        const state: unknown = key.getState(editor.view.state);
+        if (!isRecord(state) || state['binding'] === undefined) {
+            throw new PeerOperationError(
+                PEER_NOT_INITIALIZED,
+                'the web peer has no y-sync binding yet',
+            );
+        }
+        return {
+            type: this.document.getXmlFragment(this.fragmentName),
+            mapping: (state['binding'] as { mapping: ProsemirrorMapping }).mapping,
+        };
+    }
+
+    private relativeAt(documentPosition: number): Y.RelativePosition {
+        const { type, mapping } = this.syncState();
+        return absolutePositionToRelativePosition(documentPosition, type, mapping);
+    }
+
+    private absoluteAt(relative: Y.RelativePosition): number | null {
+        const { type, mapping } = this.syncState();
+        return relativePositionToAbsolutePosition(this.document, type, relative, mapping);
+    }
+
+    private selectionPoints(selection: Record<string, unknown>): RelativeSelectionPoints {
+        const type = selection['type'];
+        if (type === TEXT_SELECTION) {
+            return {
+                anchor: this.relativeAt(requireU32(selection['anchor'], 'selection.anchor')),
+                head: this.relativeAt(requireU32(selection['head'], 'selection.head')),
+            };
+        }
+        if (type === CELL_SELECTION) {
+            return {
+                anchor: this.relativeAt(requireU32(selection['anchorCell'], 'selection.anchorCell')),
+                head: this.relativeAt(requireU32(selection['headCell'], 'selection.headCell')),
+            };
+        }
+        throw new PeerOperationError(
+            CONFIG_INVALID,
+            `selection type ${JSON.stringify(type)} is not served by the web peer`,
+        );
+    }
+
+    setAwareness(payload: Record<string, unknown>): Record<string, unknown> {
+        const before = this.documentRevision;
+        const intent = payload['intent'];
+        if (intent === null) {
+            this.awareness.setLocalState(null);
+            return this.awarenessResult(before);
+        }
+        const record = requireRecord(intent, 'payload.intent');
+        const state = requireRecord(record['state'], 'payload.intent.state');
+        const published: Record<string, unknown> = { ...state };
+        const selection = record['selection'];
+        if (selection !== null && selection !== undefined) {
+            const requested = requireRecord(selection, 'payload.intent.selection');
+            const points = this.selectionPoints(requested);
+            published[AWARENESS_CURSOR_KEY] = {
+                anchor: Y.relativePositionToJSON(points.anchor),
+                head: Y.relativePositionToJSON(points.head),
+            };
+            if (requested['type'] === CELL_SELECTION) {
+                published[AWARENESS_CELL_RECTANGLE_KEY] = encodeCellRectangle(points);
+            }
+        }
+        this.awareness.setLocalState(published);
+        return this.awarenessResult(before);
+    }
+
+    applyAwareness(payload: Record<string, unknown>): Record<string, unknown> {
+        const before = this.documentRevision;
+        const update = fromBase64(
+            requireString(payload['updateBase64'], 'payload.updateBase64'),
+            'updateBase64',
+        );
+        if (update.length > this.maxUpdateBytes) {
+            throw new PeerOperationError(
+                LIMIT_EXCEEDED,
+                `an awareness update of ${update.length} bytes exceeds the ${this.maxUpdateBytes} byte ceiling`,
+            );
+        }
+        applyAwarenessUpdate(this.awareness, update, AWARENESS_ORIGIN);
+        return this.awarenessResult(before);
+    }
+
+    private awarenessResult(documentRevisionBefore: number): Record<string, unknown> {
+        if (this.documentRevision !== documentRevisionBefore) {
+            throw new PeerOperationError(
+                AWARENESS_MUTATED_DOCUMENT,
+                'awareness must never change the document',
+            );
+        }
+        this.pendingEvents.push({
+            kind: 'awareness',
+            origin: 'local',
+            bytesBase64: toBase64(
+                encodeAwarenessUpdate(this.awareness, [this.awareness.clientID]),
+            ),
+        });
+        return { documentRevision: this.documentRevision.toString() };
+    }
+
+    awarenessPeers(): Record<string, unknown>[] {
+        const peers: Record<string, unknown>[] = [];
+        for (const [clientId, state] of this.awareness.getStates()) {
+            const record = isRecord(state) ? state : {};
+            peers.push({
+                clientId: clientId.toString(),
+                isLocal: clientId === this.awareness.clientID,
+                state: record,
+                cursor: this.projectedCursor(record),
+                cellRectangle: this.projectedCellRectangle(record),
+            });
+        }
+        peers.sort((left, right) => Number(left['clientId']) - Number(right['clientId']));
+        return peers;
+    }
+
+    private projectedCursor(state: Record<string, unknown>): Record<string, unknown> | null {
+        const cursor = state[AWARENESS_CURSOR_KEY];
+        if (!isRecord(cursor)) {
+            return null;
+        }
+        const anchor = this.absoluteAt(Y.createRelativePositionFromJSON(cursor['anchor']));
+        const head = this.absoluteAt(Y.createRelativePositionFromJSON(cursor['head']));
+        if (anchor === null || head === null) {
+            return null;
+        }
+        return { anchor, head };
+    }
+
+    private projectedCellRectangle(
+        state: Record<string, unknown>,
+    ): Record<string, unknown> | null {
+        const points = decodeCellRectangle(state);
+        if (points === null) {
+            return null;
+        }
+        const anchorCell = this.absoluteAt(points.anchor);
+        const headCell = this.absoluteAt(points.head);
+        if (anchorCell === null || headCell === null) {
+            return null;
+        }
+        return { anchorCell, headCell };
     }
 
     private classifyOrigin(origin: unknown): UpdateEvent['origin'] {
@@ -476,6 +683,7 @@ class WebPeerRuntime {
             : this.editor.documentJson();
         return {
             json: documentJson,
+            awarenessPeers: this.editor === null ? [] : this.awarenessPeers(),
             mounted: this.editor !== null,
             pendingDependencies: this.hasPendingDependencies(),
             displayJson: this.editor === null ? null : this.editor.view.state.doc.toJSON(),
@@ -494,6 +702,7 @@ class WebPeerRuntime {
     }
 
     teardown(): void {
+        this.awareness.destroy();
         if (this.editor !== null) {
             this.editor.destroy();
             this.editor = null;
@@ -632,6 +841,10 @@ async function dispatch(
             return requireRuntime().stateDiff(payload);
         case 'projectTable':
             return projectTable(payload);
+        case 'setAwareness':
+            return requireRuntime().setAwareness(payload);
+        case 'applyAwareness':
+            return requireRuntime().applyAwareness(payload);
         case 'shutdown': {
             requireRuntime().teardown();
             return {};

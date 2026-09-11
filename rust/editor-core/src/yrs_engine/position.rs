@@ -51,6 +51,10 @@ pub enum RelativeSelection {
     Node {
         point: RelativePoint,
     },
+    Cell {
+        anchor: RelativePoint,
+        head: RelativePoint,
+    },
     All,
 }
 
@@ -107,6 +111,10 @@ pub fn relative_selection_to_selection<T: ReadTxn>(
         RelativeSelection::Node { point } => {
             Selection::node(relative_point_to_doc_pos(txn, fragment, point, schema)?)
         }
+        RelativeSelection::Cell { anchor, head } => Selection::cell(
+            relative_point_to_doc_pos(txn, fragment, anchor, schema)?,
+            relative_point_to_doc_pos(txn, fragment, head, schema)?,
+        ),
         RelativeSelection::All => Selection::all(),
     };
     Some(selection.normalized(document, position_map))

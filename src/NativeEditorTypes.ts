@@ -17,7 +17,7 @@ import {
  * measured in Unicode scalars instead of document positions.
  */
 export interface Selection {
-    type: 'text' | 'node' | 'all';
+    type: 'text' | 'node' | 'all' | 'cell';
     /** Fixed end of a text selection. */
     anchor?: number;
     /** Moving end of a text selection. Equals `anchor` for a collapsed caret. */
@@ -30,6 +30,8 @@ export interface Selection {
     headScalar?: number;
     /** `pos` in Unicode scalars. */
     posScalar?: number;
+    anchorCell?: number;
+    headCell?: number;
 }
 
 /**

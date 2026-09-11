@@ -31,7 +31,11 @@ fn raw_storage_work_limit(limits: &crate::boundary::ResourceLimits) -> usize {
 }
 
 #[allow(unused_imports)]
-pub use awareness::{AwarenessApplied, AwarenessCodec, AwarenessLimits, AwarenessPeer};
+pub use awareness::{
+    decode_relative_cell_rectangle, encode_relative_cell_rectangle, AwarenessApplied,
+    AwarenessCodec, AwarenessLimits, AwarenessPeer, RelativeCellRectangle,
+    AWARENESS_CELL_RECTANGLE_KEY,
+};
 pub(crate) use codec::YrsDocumentCodec;
 pub use commands::{CommandPlan, TypedCommand};
 #[allow(unused_imports)]

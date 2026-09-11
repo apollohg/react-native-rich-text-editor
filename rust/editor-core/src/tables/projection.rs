@@ -29,6 +29,7 @@ pub(crate) struct CellRect {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProjectedCell {
     pub source_pos: u32,
+    pub source_end: u32,
     pub rect: CellRect,
 }
 
@@ -220,6 +221,7 @@ impl Placement {
 
         self.cells.push(ProjectedCell {
             source_pos,
+            source_end: advance(source_pos, cell.node_size())?,
             rect: CellRect {
                 row,
                 column,
@@ -348,7 +350,7 @@ fn grid_extent(rows: u32, columns: u32) -> Result<usize, TableError> {
         .ok_or(TableError::Allocation)
 }
 
-fn integral_unsigned(value: &Value) -> Option<u64> {
+pub(crate) fn integral_unsigned(value: &Value) -> Option<u64> {
     value.as_u64().or_else(|| {
         value
             .as_f64()

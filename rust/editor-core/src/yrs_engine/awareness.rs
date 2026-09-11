@@ -11,13 +11,16 @@
 
 use std::collections::HashMap;
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use serde_json::{json, Value};
 use yrs::sync::awareness::{Awareness, AwarenessUpdate};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::Encode;
-use yrs::{ClientID, Doc};
+use yrs::{ClientID, Doc, StickyIndex};
 
 use crate::ffi_v2::types::AWARENESS_CLOCK_EXHAUSTED;
+use crate::tables::projection::integral_unsigned;
 
 use super::{YrsEngineError, YrsEngineResult};
 
@@ -34,6 +37,51 @@ const MAX_ADMITTED_AWARENESS_CLOCK: u32 = u32::MAX - 1;
 /// protocol-safety constant, not a configurable `CollaborationLimits`
 /// field, hence the distinct naming.
 const AWARENESS_CLOCK_FIELD: &str = "awarenessClock";
+
+pub const AWARENESS_CELL_RECTANGLE_KEY: &str = "nativeEditorTableSelection";
+
+const AWARENESS_CELL_RECTANGLE_VERSION: u64 = 1;
+const AWARENESS_CELL_RECTANGLE_VERSION_FIELD: &str = "version";
+const AWARENESS_CELL_RECTANGLE_ANCHOR_FIELD: &str = "anchor";
+const AWARENESS_CELL_RECTANGLE_HEAD_FIELD: &str = "head";
+const AWARENESS_CELL_RECTANGLE_FIELDS: usize = 3;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelativeCellRectangle {
+    pub anchor: StickyIndex,
+    pub head: StickyIndex,
+}
+
+pub fn encode_relative_cell_rectangle(rectangle: &RelativeCellRectangle) -> Value {
+    json!({
+        AWARENESS_CELL_RECTANGLE_VERSION_FIELD: AWARENESS_CELL_RECTANGLE_VERSION,
+        AWARENESS_CELL_RECTANGLE_ANCHOR_FIELD: BASE64.encode(rectangle.anchor.encode_v1()),
+        AWARENESS_CELL_RECTANGLE_HEAD_FIELD: BASE64.encode(rectangle.head.encode_v1()),
+    })
+}
+
+pub fn decode_relative_cell_rectangle(state: &Value) -> Option<RelativeCellRectangle> {
+    let entry = state
+        .as_object()?
+        .get(AWARENESS_CELL_RECTANGLE_KEY)?
+        .as_object()?;
+    if entry.len() != AWARENESS_CELL_RECTANGLE_FIELDS {
+        return None;
+    }
+    let version = integral_unsigned(entry.get(AWARENESS_CELL_RECTANGLE_VERSION_FIELD)?)?;
+    if version != AWARENESS_CELL_RECTANGLE_VERSION {
+        return None;
+    }
+    Some(RelativeCellRectangle {
+        anchor: decode_relative_position(entry.get(AWARENESS_CELL_RECTANGLE_ANCHOR_FIELD)?)?,
+        head: decode_relative_position(entry.get(AWARENESS_CELL_RECTANGLE_HEAD_FIELD)?)?,
+    })
+}
+
+fn decode_relative_position(value: &Value) -> Option<StickyIndex> {
+    let bytes = BASE64.decode(value.as_str()?).ok()?;
+    StickyIndex::decode_v1(&bytes).ok()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AwarenessError {

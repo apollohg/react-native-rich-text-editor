@@ -321,6 +321,54 @@ impl YrsDocumentEngine {
         Some(serde_json::json!({ "anchor": anchor, "head": head }))
     }
 
+    pub(crate) fn awareness_cell_rectangle(
+        &self,
+        anchor: u32,
+        head: u32,
+    ) -> Option<serde_json::Value> {
+        crate::tables::selection::resolve_cell_rect(self.table_projection_index()?, anchor, head)?;
+        let txn = self.doc.transact();
+        let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
+        let sticky = |position| {
+            super::position::doc_pos_to_sticky_index(
+                &txn,
+                &fragment,
+                position,
+                yrs::Assoc::After,
+                &self.schema,
+            )
+        };
+        Some(super::awareness::encode_relative_cell_rectangle(
+            &super::awareness::RelativeCellRectangle {
+                anchor: sticky(anchor)?,
+                head: sticky(head)?,
+            },
+        ))
+    }
+
+    pub fn resolve_awareness_cell_rectangle(
+        &self,
+        state: &serde_json::Value,
+    ) -> Option<(u32, u32)> {
+        let rectangle = super::awareness::decode_relative_cell_rectangle(state)?;
+        let txn = self.doc.transact();
+        let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
+        let anchor = super::position::sticky_index_to_doc_pos(
+            &txn,
+            &fragment,
+            &rectangle.anchor,
+            &self.schema,
+        )?;
+        let head = super::position::sticky_index_to_doc_pos(
+            &txn,
+            &fragment,
+            &rectangle.head,
+            &self.schema,
+        )?;
+        crate::tables::selection::resolve_cell_rect(self.table_projection_index()?, anchor, head)?;
+        Some((anchor, head))
+    }
+
     pub(crate) fn clipboard(&self) -> Option<serde_json::Value> {
         let document = self.document()?;
         let selection = super::derived_state::resolved_to_legacy(self.resolved_selection()?);
@@ -369,7 +417,6 @@ impl YrsDocumentEngine {
         })
     }
 
-    #[allow(dead_code)]
     pub(crate) fn table_projection_index(
         &self,
     ) -> Option<&crate::tables::admission::TableProjectionIndex> {

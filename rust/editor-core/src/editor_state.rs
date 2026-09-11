@@ -84,7 +84,7 @@ fn active_state_impl(
     }
 
     let (allowed_marks, insertable_nodes) = match selection {
-        Selection::All => (Vec::new(), Vec::new()),
+        Selection::All | Selection::Cell { .. } => (Vec::new(), Vec::new()),
         Selection::Node { .. } => (
             Vec::new(),
             insertable_nodes(document, schema, pos, limits).unwrap_or_default(),
@@ -568,7 +568,7 @@ fn effective_marks_for_selection(
     let (anchor, head) = match selection {
         Selection::Text { anchor, head } => (anchor, head),
         Selection::Node { pos } => (pos, pos),
-        Selection::All => return Vec::new(),
+        Selection::Cell { .. } | Selection::All => return Vec::new(),
     };
     if anchor == head {
         return stored_marks

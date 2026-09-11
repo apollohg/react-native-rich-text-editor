@@ -1,6 +1,10 @@
 use super::commit::CompiledCommitAuthority;
 use super::{checked_operation_increment, YrsDocumentEngine};
 use crate::selection::Selection;
+use crate::tables::selection::{
+    cell_opening_containing, resolve_cell_rect, CELL_SELECTION_ANCHOR_FIELD,
+    CELL_SELECTION_HEAD_FIELD, CELL_SELECTION_INVALID,
+};
 use crate::yrs_engine;
 use crate::yrs_engine::compiler::{
     selectable_void_at, CompilationContext, CompiledTransaction, RelativeSelectionPlan,
@@ -65,7 +69,13 @@ impl YrsDocumentEngine {
             yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::Node { at }) => {
                 at.kind == yrs_engine::EditorOffsetKind::Utf16
             }
-            _ => false,
+            yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::Cell { anchor, head }) => {
+                anchor.kind == yrs_engine::EditorOffsetKind::Utf16
+                    || head.kind == yrs_engine::EditorOffsetKind::Utf16
+            }
+            yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::All)
+            | yrs_engine::SelectionIntent::Preserve
+            | yrs_engine::SelectionIntent::UseOperationResult => false,
         };
         let rendered_text = if needs_rendered_text {
             current.rendered_text.as_str()
@@ -206,6 +216,66 @@ impl YrsDocumentEngine {
                 }
                 yrs_engine::RelativeSelection::Node {
                     point: relative_point("selection.at", *at)?,
+                }
+            }
+            yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::Cell { anchor, head }) => {
+                let opening = |field: &'static str, point| {
+                    let document_position = resolve_point(field, point)?;
+                    cell_opening_containing(&current.table_projection_index, document_position)
+                        .ok_or_else(|| {
+                            yrs_engine::OperationError::selection_position_invalid(
+                                request_id,
+                                field,
+                                CELL_SELECTION_INVALID,
+                            )
+                        })
+                };
+                let anchor_document = opening(CELL_SELECTION_ANCHOR_FIELD, *anchor)?;
+                let head_document = opening(CELL_SELECTION_HEAD_FIELD, *head)?;
+                if resolve_cell_rect(
+                    &current.table_projection_index,
+                    anchor_document,
+                    head_document,
+                )
+                .is_none()
+                {
+                    return Err(yrs_engine::OperationError::selection_position_invalid(
+                        request_id,
+                        CELL_SELECTION_ANCHOR_FIELD,
+                        CELL_SELECTION_INVALID,
+                    ));
+                }
+                let cell_relative_point =
+                    |field: &'static str,
+                     document_position,
+                     affinity|
+                     -> yrs_engine::OperationResult<yrs_engine::RelativePoint> {
+                        yrs_engine::position::doc_pos_to_relative_point(
+                            &txn,
+                            &fragment,
+                            document_position,
+                            affinity,
+                            &self.schema,
+                        )
+                        .ok_or_else(|| {
+                            yrs_engine::OperationError::selection_position_invalid(
+                            request_id,
+                            field,
+                            "cell selection cannot be represented with the requested Yrs affinity",
+                        )
+                        })
+                    };
+                yrs_engine::RelativeSelection::Cell {
+                    anchor: cell_relative_point(
+                        CELL_SELECTION_ANCHOR_FIELD,
+                        anchor_document,
+                        anchor.affinity,
+                    )?,
+                    head: cell_relative_point(
+                        CELL_SELECTION_HEAD_FIELD,
+                        head_document,
+                        head.affinity,
+                    )?,
                 }
             }
             yrs_engine::SelectionIntent::Set(yrs_engine::SelectionInput::All) => {

@@ -23,7 +23,9 @@ use serde_json::Value;
 
 use crate::ffi_v2::types::{decimal_u64, AWARENESS_CLOCK_EXHAUSTED};
 use crate::session::{CollaborationLimits, ErrorDomain, SessionError, TransportState};
-use crate::yrs_engine::{AwarenessLimits, YrsDocumentEngine, YrsEngineError};
+use crate::yrs_engine::{
+    AwarenessLimits, YrsDocumentEngine, YrsEngineError, AWARENESS_CELL_RECTANGLE_KEY,
+};
 
 use super::outbox::OutboxReservationError;
 use super::protocol::{
@@ -46,6 +48,9 @@ pub const AWARENESS_TIME_REGRESSION: &str = "AWARENESS_TIME_REGRESSION";
 /// Wire action reported by awareness-shaped refusals.
 const AWARENESS_ACTION: &str = "awareness";
 
+const RESERVED_CURSOR_KEY: &str = "cursor";
+const RESERVED_FOCUSED_KEY: &str = "focused";
+
 /// The only caller-controlled shape accepted by the production awareness
 /// ABI. Its published value is assembled by Rust, so `cursor` can only ever
 /// be the sticky engine representation.
@@ -59,9 +64,15 @@ struct LocalAwarenessIntent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 enum LocalAwarenessSelection {
     Text { anchor: u32, head: u32 },
+    Cell { anchor_cell: u32, head_cell: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,13 +124,72 @@ fn awareness_peer_bytes_limit_error(request_id: u64, limit: usize, actual: usize
     )
 }
 
-fn contains_reserved_cursor(value: &Value) -> bool {
+fn is_reserved_awareness_key(key: &str) -> bool {
+    key == RESERVED_CURSOR_KEY || key == AWARENESS_CELL_RECTANGLE_KEY
+}
+
+fn contains_reserved_awareness_key(value: &Value) -> bool {
     match value {
-        Value::Array(values) => values.iter().any(contains_reserved_cursor),
-        Value::Object(entries) => entries
-            .iter()
-            .any(|(key, value)| key == "cursor" || contains_reserved_cursor(value)),
+        Value::Array(values) => values.iter().any(contains_reserved_awareness_key),
+        Value::Object(entries) => entries.iter().any(|(key, value)| {
+            is_reserved_awareness_key(key) || contains_reserved_awareness_key(value)
+        }),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
+    }
+}
+
+fn published_selection_fields(
+    request_id: u64,
+    selection: LocalAwarenessSelection,
+    engine: &YrsDocumentEngine,
+) -> Result<(Value, Option<Value>), SessionError> {
+    let outside = || {
+        awareness_state_invalid(
+            request_id,
+            "local awareness selection is outside the current document",
+        )
+    };
+    match selection {
+        LocalAwarenessSelection::Text { anchor, head } => Ok((
+            engine
+                .awareness_sticky_cursor(anchor, head)
+                .ok_or_else(outside)?,
+            None,
+        )),
+        LocalAwarenessSelection::Cell {
+            anchor_cell,
+            head_cell,
+        } => Ok((
+            engine
+                .awareness_sticky_cursor(anchor_cell, head_cell)
+                .ok_or_else(outside)?,
+            Some(
+                engine
+                    .awareness_cell_rectangle(anchor_cell, head_cell)
+                    .ok_or_else(|| {
+                        awareness_state_invalid(
+                            request_id,
+                            "local awareness cell selection does not address real table cells",
+                        )
+                    })?,
+            ),
+        )),
+    }
+}
+
+fn apply_selection_fields(
+    published: &mut serde_json::Map<String, Value>,
+    cursor: Value,
+    rectangle: Option<Value>,
+) {
+    published.remove(AWARENESS_CELL_RECTANGLE_KEY);
+    if cursor.is_null() {
+        published.remove(RESERVED_CURSOR_KEY);
+        return;
+    }
+    published.insert(RESERVED_CURSOR_KEY.into(), cursor);
+    if let Some(rectangle) = rectangle {
+        published.insert(AWARENESS_CELL_RECTANGLE_KEY.into(), rectangle);
     }
 }
 
@@ -223,12 +293,19 @@ pub(crate) struct AwarenessPeerProjection {
     pub(crate) is_local: bool,
     pub(crate) state: Value,
     pub(crate) cursor: Option<AwarenessCursorProjection>,
+    pub(crate) cell_rectangle: Option<AwarenessCellRectangleProjection>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AwarenessCursorProjection {
     pub(crate) anchor: u32,
     pub(crate) head: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AwarenessCellRectangleProjection {
+    pub(crate) anchor_cell: u32,
+    pub(crate) head_cell: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,7 +338,7 @@ fn peer_cursor_projection(
     engine: &YrsDocumentEngine,
     state: &Value,
 ) -> Option<AwarenessCursorProjection> {
-    let cursor = state.as_object()?.get("cursor")?.as_object()?;
+    let cursor = state.as_object()?.get(RESERVED_CURSOR_KEY)?.as_object()?;
     let anchor = engine.resolve_awareness_sticky_doc_pos(cursor.get("anchor")?)?;
     let head = engine.resolve_awareness_sticky_doc_pos(cursor.get("head")?)?;
     Some(AwarenessCursorProjection { anchor, head })
@@ -398,48 +475,39 @@ impl CollaborationRuntime {
                 "local awareness intent state must be an object",
             ));
         };
-        if published
-            .iter()
-            .any(|(key, value)| key == "cursor" || contains_reserved_cursor(value))
-        {
+        if published.iter().any(|(key, value)| {
+            is_reserved_awareness_key(key) || contains_reserved_awareness_key(value)
+        }) {
             return Err(awareness_state_invalid(
                 request_id,
-                "local awareness intent must not contain the reserved cursor key",
+                "local awareness intent must not contain a reserved selection key",
             ));
         }
-        if published.contains_key("focused") {
+        if published.contains_key(RESERVED_FOCUSED_KEY) {
             return Err(awareness_state_invalid(
                 request_id,
                 "local awareness intent must not contain the reserved focused key",
             ));
         }
-        let cursor = match intent.selection {
-            LocalAwarenessSelectionWire::Present(LocalAwarenessSelection::Text {
-                anchor,
-                head,
-            }) => engine
-                .awareness_sticky_cursor(anchor, head)
-                .ok_or_else(|| {
-                    awareness_state_invalid(
-                        request_id,
-                        "local awareness selection is outside the current document",
-                    )
-                })?,
-            LocalAwarenessSelectionWire::Clear => Value::Null,
-            // Sticky indices survive every document mutation, so the cursor
-            // already published stays correct without being restated.
-            LocalAwarenessSelectionWire::Retain => self
-                .awareness
+        let retained = |key: &str| {
+            self.awareness
                 .desired_state
                 .as_ref()
-                .and_then(|state| state.get("cursor"))
+                .and_then(|state| state.get(key))
                 .cloned()
-                .unwrap_or(Value::Null),
         };
-        published.insert("focused".into(), Value::Bool(intent.focused));
-        if !cursor.is_null() {
-            published.insert("cursor".into(), cursor);
-        }
+        let (cursor, rectangle) = match intent.selection {
+            LocalAwarenessSelectionWire::Present(selection) => {
+                published_selection_fields(request_id, selection, engine)?
+            }
+            LocalAwarenessSelectionWire::Clear => (Value::Null, None),
+            LocalAwarenessSelectionWire::Retain => (
+                retained(RESERVED_CURSOR_KEY).unwrap_or(Value::Null),
+                retained(AWARENESS_CELL_RECTANGLE_KEY),
+            ),
+        };
+        published.insert(RESERVED_FOCUSED_KEY.into(), Value::Bool(intent.focused));
+        apply_selection_fields(&mut published, cursor, rectangle);
         self.set_desired_awareness_value(
             request_id,
             Value::Object(published),
@@ -472,22 +540,16 @@ impl CollaborationRuntime {
                 outbound_changed: false,
             });
         };
-        let LocalAwarenessSelection::Text { anchor, head } = selection;
-        let cursor = engine
-            .awareness_sticky_cursor(anchor, head)
-            .ok_or_else(|| {
-                awareness_state_invalid(
-                    request_id,
-                    "local awareness selection is outside the current document",
-                )
-            })?;
-        if current.get("cursor") == Some(&cursor) {
+        let (cursor, rectangle) = published_selection_fields(request_id, selection, engine)?;
+        if current.get(RESERVED_CURSOR_KEY) == Some(&cursor)
+            && current.get(AWARENESS_CELL_RECTANGLE_KEY) == rectangle.as_ref()
+        {
             return Ok(AwarenessSelectionOutcome {
                 outbound_changed: false,
             });
         }
         let mut next = current.clone();
-        next.insert("cursor".into(), cursor);
+        apply_selection_fields(&mut next, cursor, rectangle);
         self.set_desired_awareness_value(
             request_id,
             Value::Object(next),
@@ -569,12 +631,19 @@ impl CollaborationRuntime {
             .into_iter()
             .map(|peer| {
                 let cursor = peer_cursor_projection(engine, &peer.state);
+                let cell_rectangle = engine.resolve_awareness_cell_rectangle(&peer.state).map(
+                    |(anchor_cell, head_cell)| AwarenessCellRectangleProjection {
+                        anchor_cell,
+                        head_cell,
+                    },
+                );
                 AwarenessPeerProjection {
                     client_id: peer.client_id,
                     clock: peer.clock,
                     is_local: peer.is_local,
                     state: peer.state,
                     cursor,
+                    cell_rectangle,
                 }
             })
             .collect()

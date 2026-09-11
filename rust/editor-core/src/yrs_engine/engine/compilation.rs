@@ -35,6 +35,10 @@ fn selection_requires_fallback_proof<T: ReadTxn>(
         yrs_engine::RelativeSelection::Node { point } => {
             plan.removes_sticky_branch(txn, fragment, &point.sticky)
         }
+        yrs_engine::RelativeSelection::Cell { anchor, head } => {
+            plan.removes_sticky_branch(txn, fragment, &anchor.sticky)
+                || plan.removes_sticky_branch(txn, fragment, &head.sticky)
+        }
         yrs_engine::RelativeSelection::All => false,
     }
 }
@@ -76,6 +80,13 @@ fn required_fallbacks_are_representable<Current: ReadTxn, Proof: ReadTxn>(
         (Selection::Node { pos }, yrs_engine::RelativeSelection::Node { point }) => {
             point_is_valid(*pos, point)
         }
+        (
+            Selection::Cell { anchor, head },
+            yrs_engine::RelativeSelection::Cell {
+                anchor: relative_anchor,
+                head: relative_head,
+            },
+        ) => point_is_valid(*anchor, relative_anchor) && point_is_valid(*head, relative_head),
         (Selection::All, yrs_engine::RelativeSelection::All) => true,
         _ => false,
     }

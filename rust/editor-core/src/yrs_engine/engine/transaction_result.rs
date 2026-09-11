@@ -345,6 +345,16 @@ pub(super) fn affinity_aware_mapped_selection(
             crate::selection::Selection::Node { pos },
             yrs_engine::RelativeSelection::Node { point },
         ) => crate::selection::Selection::node(map_position(map, *pos, point.affinity)),
+        (
+            crate::selection::Selection::Cell { anchor, head },
+            yrs_engine::RelativeSelection::Cell {
+                anchor: relative_anchor,
+                head: relative_head,
+            },
+        ) => crate::selection::Selection::cell(
+            map_position(map, *anchor, relative_anchor.affinity),
+            map_position(map, *head, relative_head.affinity),
+        ),
         (crate::selection::Selection::All, yrs_engine::RelativeSelection::All) => {
             crate::selection::Selection::all()
         }

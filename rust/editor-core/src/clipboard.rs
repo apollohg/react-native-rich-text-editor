@@ -36,7 +36,9 @@ pub(crate) fn selection_range(document: &Document, selection: &Selection) -> (u3
                 .unwrap_or(1);
             (*pos, pos.saturating_add(size))
         }
-        _ => (selection.from(document), selection.to(document)),
+        Selection::Text { .. } | Selection::Cell { .. } | Selection::All => {
+            (selection.from(document), selection.to(document))
+        }
     }
 }
 
@@ -83,6 +85,9 @@ fn boundary_depth(document: &Document, position: u32) -> usize {
 }
 
 pub(crate) fn export(document: &Document, selection: &Selection, schema: &Schema) -> Option<Value> {
+    if matches!(selection, Selection::Cell { .. }) {
+        return None;
+    }
     let (from, to) = selection_range(document, selection);
     if from >= to || to > document.content_size() {
         return None;

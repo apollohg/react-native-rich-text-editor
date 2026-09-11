@@ -9,6 +9,18 @@ export interface TableNodeNames {
     headerCell: string;
 }
 
+export interface TableCellSelection {
+    type: 'cell';
+    anchorCell: number;
+    headCell: number;
+}
+
+export function assertCellPosition(value: number): void {
+    if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
+        throw new Error('Invalid table cell position');
+    }
+}
+
 export interface TablesSchemaOptions {
     preset?: TableNamingPreset;
     names?: TableNodeNames;

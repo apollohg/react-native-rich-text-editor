@@ -574,6 +574,10 @@ fn direct_selection_input(
             head: encoded(*head)?,
         },
         crate::selection::Selection::Node { pos } => SelectionInput::Node { at: encoded(*pos)? },
+        crate::selection::Selection::Cell { anchor, head } => SelectionInput::Cell {
+            anchor: encoded(*anchor)?,
+            head: encoded(*head)?,
+        },
         crate::selection::Selection::All => SelectionInput::All,
     })
 }

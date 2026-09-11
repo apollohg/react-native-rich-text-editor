@@ -131,6 +131,10 @@ export function atomSelected(selection: Selection, docPos: number): boolean {
         return selection.pos === docPos;
     }
 
+    if (selection.type === 'cell') {
+        return false;
+    }
+
     const { anchor, head } = selection;
 
     if (anchor == null || head == null) {

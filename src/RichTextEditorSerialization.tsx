@@ -133,6 +133,14 @@ export function parseSelectionFromUpdate(value: unknown): Selection | null {
         return { type: 'text', anchor: value.anchor, head: value.head };
     }
 
+    if (
+        value.type === 'cell' &&
+        typeof value.anchorCell === 'number' &&
+        typeof value.headCell === 'number'
+    ) {
+        return { type: 'cell', anchorCell: value.anchorCell, headCell: value.headCell };
+    }
+
     return null;
 }
 

@@ -455,12 +455,30 @@ export function normalizeNativeEditorV2PeersValue(value: unknown): NativeEditorP
             cursor = { anchor, head };
         }
 
+        let cellRectangle: NativeEditorPeerInfo['cellRectangle'] = null;
+
+        if (rawPeer.cellRectangle !== null && rawPeer.cellRectangle !== undefined) {
+            if (!isPlainRecord(rawPeer.cellRectangle)) {
+                return null;
+            }
+
+            const anchorCell = nativeEditorV2U32(rawPeer.cellRectangle.anchorCell);
+            const headCell = nativeEditorV2U32(rawPeer.cellRectangle.headCell);
+
+            if (anchorCell == null || headCell == null) {
+                return null;
+            }
+
+            cellRectangle = { anchorCell, headCell };
+        }
+
         peers.push({
             clientId,
             clock,
             isLocal,
             state: (rawPeer.state) ?? null,
             cursor,
+            cellRectangle,
         });
     }
 

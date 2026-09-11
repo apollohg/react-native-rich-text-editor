@@ -359,6 +359,7 @@ fn shift_selection(selection: &Selection, delta: i32) -> Option<Selection> {
     match selection {
         Selection::Text { anchor, head } => Some(Selection::text(shift(*anchor)?, shift(*head)?)),
         Selection::Node { pos } => Some(Selection::node(shift(*pos)?)),
+        Selection::Cell { anchor, head } => Some(Selection::cell(shift(*anchor)?, shift(*head)?)),
         Selection::All => Some(Selection::All),
     }
 }

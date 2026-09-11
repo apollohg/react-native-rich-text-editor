@@ -211,6 +211,21 @@ export function normalizeRenderSelection(value: unknown): Selection | null {
         };
     }
 
+    if (value.type === 'cell') {
+        if (!hasExactOwnKeys(value, [ 'type', 'anchorCell', 'headCell' ])) {
+            return null;
+        }
+
+        const anchorCell = nativeEditorV2U32(value.anchorCell);
+        const headCell = nativeEditorV2U32(value.headCell);
+
+        if (anchorCell == null || headCell == null) {
+            return null;
+        }
+
+        return { type: 'cell', anchorCell, headCell };
+    }
+
     if (value.type === 'node') {
         if (!hasExactOwnKeys(value, [ 'type', 'pos', 'posScalar' ])) {
             return null;

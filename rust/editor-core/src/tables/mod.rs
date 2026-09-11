@@ -1,6 +1,7 @@
 pub(crate) mod admission;
 pub(crate) mod projection;
 pub(crate) mod roles;
+pub(crate) mod selection;
 pub(crate) mod types;
 pub(crate) mod widths;
 
@@ -8,6 +9,8 @@ pub(crate) mod widths;
 mod admission_tests;
 #[cfg(test)]
 mod projection_tests;
+#[cfg(test)]
+mod selection_tests;
 #[cfg(test)]
 pub(crate) mod tests;
 #[cfg(test)]

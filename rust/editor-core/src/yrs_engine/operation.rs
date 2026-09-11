@@ -53,6 +53,10 @@ pub enum ResolvedSelection {
     Node {
         at: ResolvedPoint,
     },
+    Cell {
+        anchor: ResolvedPoint,
+        head: ResolvedPoint,
+    },
     All,
 }
 
@@ -78,6 +82,10 @@ pub enum SelectionInput {
     },
     Node {
         at: RevisionedPosition,
+    },
+    Cell {
+        anchor: RevisionedPosition,
+        head: RevisionedPosition,
     },
     All,
 }
@@ -288,6 +296,7 @@ fn selection_bytes(selection: &ResolvedSelection) -> usize {
     match selection {
         ResolvedSelection::Text { .. } => 1usize.saturating_add(6 * 4),
         ResolvedSelection::Node { .. } => 1usize.saturating_add(3 * 4),
+        ResolvedSelection::Cell { .. } => 1usize.saturating_add(6 * 4),
         ResolvedSelection::All => 1,
     }
 }

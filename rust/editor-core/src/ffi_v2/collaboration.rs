@@ -284,6 +284,10 @@ pub fn editor_v2_collaboration_peers(editor_id: String) -> FfiJsonResult {
                         "anchor": cursor.anchor,
                         "head": cursor.head,
                     })),
+                    "cellRectangle": peer.cell_rectangle.map(|rectangle| serde_json::json!({
+                        "anchorCell": rectangle.anchor_cell,
+                        "headCell": rectangle.head_cell,
+                    })),
                 })
             })
             .collect::<Vec<_>>();

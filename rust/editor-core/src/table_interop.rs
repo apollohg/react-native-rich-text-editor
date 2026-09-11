@@ -9,6 +9,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 
 use crate::boundary::ResourceLimits;
+use crate::collaboration_runtime::awareness::awareness_limits;
 use crate::collaboration_runtime::outbox::OutboundLeasePayload;
 use crate::document_api::DocumentApiFacade;
 use crate::native_transaction_bridge::{
@@ -36,6 +37,8 @@ const LEASE_ACTION: &str = "leaseOutbound";
 const PROJECTED_TABLE_POSITION: u32 = 0;
 const PROJECTED_TABLE_DOCUMENT_ROOT: &str = "doc";
 const ACK_ACTION: &str = "ackOutbound";
+const AWARENESS_EVENT_KIND: &str = "awareness";
+const AWARENESS_ACTION: &str = "awareness";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EventOrigin {
@@ -86,6 +89,12 @@ enum LocalMutation {
     Input { text: String },
     Command { command: serde_json::Value },
     Selection { selection: serde_json::Value },
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AwarenessIntentPayload {
+    intent: serde_json::Value,
 }
 
 #[derive(serde::Deserialize)]
@@ -275,6 +284,8 @@ impl RustPeer {
             "stateVector" => self.state_vector(payload),
             "stateDiff" => self.state_diff(payload),
             "projectTable" => project_table_payload(payload),
+            "setAwareness" => self.set_awareness(payload),
+            "applyAwareness" => self.apply_awareness(payload),
             "shutdown" => self.shutdown(payload),
             operation => Err(peer_error(
                 "UNSUPPORTED_OPERATION",
@@ -306,7 +317,10 @@ impl RustPeer {
         if self.session.is_some() {
             return Err(config_invalid("the peer session is already initialized"));
         }
-        let schema = match (payload.schema.unwrap_or(SchemaPreset::Tiptap), payload.tables) {
+        let schema = match (
+            payload.schema.unwrap_or(SchemaPreset::Tiptap),
+            payload.tables,
+        ) {
             (SchemaPreset::Tiptap, false) => tiptap_schema(),
             (SchemaPreset::Tiptap, true) => tiptap_table_schema(),
             (SchemaPreset::Prosemirror, false) => prosemirror_schema(),
@@ -409,6 +423,103 @@ impl RustPeer {
         }))
     }
 
+    fn set_awareness(
+        &mut self,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, SessionError> {
+        let payload: AwarenessIntentPayload = parse_payload(payload)?;
+        let request_id = self.next_request_id();
+        let session = self.session_mut()?;
+        let document_revision_before = session.engine.revision();
+        if payload.intent.is_null() {
+            session.clear_desired_awareness(request_id)?;
+        } else {
+            session.set_awareness_intent(request_id, &payload.intent.to_string())?;
+        }
+        let update = session
+            .engine
+            .awareness()
+            .encode_local_update_v1()
+            .map_err(SessionError::from)?;
+        let document_revision = session.engine.revision();
+        if document_revision != document_revision_before {
+            return Err(peer_error(
+                "AWARENESS_MUTATED_DOCUMENT",
+                "publishing awareness must never change the document",
+            ));
+        }
+        self.pending_events.push(serde_json::json!({
+            "kind": AWARENESS_EVENT_KIND,
+            "origin": EventOrigin::Local.as_str(),
+            "bytesBase64": BASE64.encode(update),
+        }));
+        Ok(serde_json::json!({ "documentRevision": document_revision.to_string() }))
+    }
+
+    fn apply_awareness(
+        &mut self,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, SessionError> {
+        let payload: UpdatePayload = parse_payload(payload)?;
+        let update = decode_base64(&payload.update_base64, "updateBase64")?;
+        let session = self.session_mut()?;
+        let document_revision_before = session.engine.revision();
+        let limits = awareness_limits(&CollaborationLimits::default());
+        let applied = session
+            .engine
+            .awareness()
+            .apply_remote_update_v1(&update, &limits)
+            .map_err(SessionError::from)?;
+        let document_revision = session.engine.revision();
+        if document_revision != document_revision_before {
+            return Err(peer_error(
+                "AWARENESS_MUTATED_DOCUMENT",
+                "applying awareness must never change the document",
+            ));
+        }
+        Ok(serde_json::json!({
+            "touchedClients": applied
+                .touched_clients
+                .iter()
+                .map(|client| client.to_string())
+                .collect::<Vec<String>>(),
+            "removedClients": applied
+                .removed_clients
+                .iter()
+                .map(|client| client.to_string())
+                .collect::<Vec<String>>(),
+            "documentRevision": document_revision.to_string(),
+        }))
+    }
+
+    fn awareness_peers(&mut self) -> Result<serde_json::Value, SessionError> {
+        let session = self.session_mut()?;
+        let peers = session
+            .awareness_peers()
+            .map_err(|mut error| {
+                error.details = Some(serde_json::json!({ "action": AWARENESS_ACTION }));
+                error
+            })?
+            .into_iter()
+            .map(|peer| {
+                serde_json::json!({
+                    "clientId": peer.client_id.to_string(),
+                    "isLocal": peer.is_local,
+                    "state": peer.state,
+                    "cursor": peer.cursor.map(|cursor| serde_json::json!({
+                        "anchor": cursor.anchor,
+                        "head": cursor.head,
+                    })),
+                    "cellRectangle": peer.cell_rectangle.map(|rectangle| serde_json::json!({
+                        "anchorCell": rectangle.anchor_cell,
+                        "headCell": rectangle.head_cell,
+                    })),
+                })
+            })
+            .collect::<Vec<serde_json::Value>>();
+        Ok(serde_json::Value::Array(peers))
+    }
+
     fn drain(&mut self, payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
         let _: EmptyPayload = parse_payload(payload)?;
         let count = self.pending_events.len();
@@ -423,8 +534,10 @@ impl RustPeer {
         let _: EmptyPayload = parse_payload(payload)?;
         let autonomous_repair_writes = self.autonomous_repair_writes;
         let pending_dependencies = self.has_pending_dependencies();
+        let awareness_peers = self.awareness_peers()?;
         let session = self.session_mut()?;
         Ok(serde_json::json!({
+            "awarenessPeers": awareness_peers,
             "mounted": session.engine.is_ready(),
             "pendingDependencies": pending_dependencies,
             "json": session.engine.document_json(),

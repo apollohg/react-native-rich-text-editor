@@ -6,6 +6,10 @@ use super::outbound::OutboundUpdateSink;
 use super::YrsDocumentEngine;
 use crate::model::Document;
 use crate::selection::Selection;
+use crate::tables::selection::{
+    cell_opening_containing, resolve_cell_rect, CELL_SELECTION_ANCHOR_FIELD,
+    CELL_SELECTION_HEAD_FIELD, CELL_SELECTION_INVALID,
+};
 use crate::yrs_engine;
 use crate::yrs_engine::compiler::{
     selectable_void_at, CompiledTransaction, PreparedSemanticAdmission, SelectionPlan,
@@ -253,6 +257,32 @@ impl YrsDocumentEngine {
                 }
                 Ok(yrs_engine::ResolvedSelection::Node {
                     at: resolved_point(pos)?,
+                })
+            }
+            yrs_engine::SelectionInput::Cell { anchor, head } => {
+                let opening = |field: &'static str, point| {
+                    let document_position = resolve(field, point)?;
+                    cell_opening_containing(&state.table_projection_index, document_position)
+                        .ok_or_else(|| {
+                            yrs_engine::OperationError::selection_position_invalid(
+                                request_id,
+                                field,
+                                CELL_SELECTION_INVALID,
+                            )
+                        })
+                };
+                let anchor = opening(CELL_SELECTION_ANCHOR_FIELD, *anchor)?;
+                let head = opening(CELL_SELECTION_HEAD_FIELD, *head)?;
+                if resolve_cell_rect(&state.table_projection_index, anchor, head).is_none() {
+                    return Err(yrs_engine::OperationError::selection_position_invalid(
+                        request_id,
+                        CELL_SELECTION_ANCHOR_FIELD,
+                        CELL_SELECTION_INVALID,
+                    ));
+                }
+                Ok(yrs_engine::ResolvedSelection::Cell {
+                    anchor: resolved_point(anchor)?,
+                    head: resolved_point(head)?,
                 })
             }
             yrs_engine::SelectionInput::All => Ok(yrs_engine::ResolvedSelection::All),

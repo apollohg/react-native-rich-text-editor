@@ -472,6 +472,8 @@ impl DerivedStateCache {
                 .unwrap_or_else(Selection::all);
             operation_result_to_relative(txn, fragment, &selection, schema)
         });
+        let table_projection_index =
+            TableProjectionIndex::derive_or_fallback(&document, schema, resource_limits);
         let resolved_selection = resolve_selection(
             txn,
             fragment,
@@ -480,6 +482,7 @@ impl DerivedStateCache {
             &document,
             &position_map,
             &rendered_text,
+            &table_projection_index,
         )?;
         let legacy_selection = resolved_to_legacy(&resolved_selection);
         let mutation_lookup_seed = if admitted_validation.is_some() {
@@ -542,8 +545,6 @@ impl DerivedStateCache {
             resource_limits,
             schema,
         );
-        let table_projection_index =
-            TableProjectionIndex::derive_or_fallback(&document, schema, resource_limits);
         Some(Self {
             document,
             canonical_artifact,
@@ -645,6 +646,8 @@ impl DerivedStateCache {
             return None;
         }
 
+        let table_projection_index =
+            TableProjectionIndex::derive_or_fallback(&document, schema, resource_limits);
         let (relative_selection, resolved_selection, legacy_selection) =
             if let Some(finalized) = finalized_selection {
                 record_prewrite_selection_proof_install();
@@ -661,6 +664,7 @@ impl DerivedStateCache {
                     &document,
                     &position_map,
                     &rendered_text,
+                    &table_projection_index,
                 );
                 if resolved_selection.is_none() {
                     let fallback = preserved_fallback?;
@@ -671,6 +675,7 @@ impl DerivedStateCache {
                         fallback,
                         schema,
                         strict_fallback_affinity,
+                        &table_projection_index,
                     );
                     resolved_selection = resolve_selection(
                         txn,
@@ -680,6 +685,7 @@ impl DerivedStateCache {
                         &document,
                         &position_map,
                         &rendered_text,
+                        &table_projection_index,
                     );
                 }
                 let resolved_selection = resolved_selection?;
@@ -745,9 +751,6 @@ impl DerivedStateCache {
                 );
                 (validation_certificate, localized_text_index)
             };
-        let table_projection_index =
-            TableProjectionIndex::derive_or_fallback(&document, schema, resource_limits);
-
         Some(Self {
             document,
             canonical_artifact,

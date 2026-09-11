@@ -706,6 +706,12 @@ impl DerivedStateCache {
         ) {
             return Ok(None);
         }
+        let table_projection_index =
+            crate::tables::admission::TableProjectionIndex::derive_or_fallback(
+                &snapshot.document,
+                schema,
+                &snapshot.resource_limits,
+            );
         let Some(relative_selection) = history_selection_to_relative(
             txn,
             fragment,
@@ -729,6 +735,7 @@ impl DerivedStateCache {
             &snapshot.document,
             &snapshot.position_map,
             &snapshot.rendered_text,
+            &table_projection_index,
         ) else {
             return Ok(None);
         };
@@ -766,12 +773,7 @@ impl DerivedStateCache {
             render_blocks: Arc::clone(&snapshot.render_blocks),
             mutation_lookup_seed,
             validation_certificate,
-            table_projection_index:
-                crate::tables::admission::TableProjectionIndex::derive_or_fallback(
-                    &snapshot.document,
-                    schema,
-                    &snapshot.resource_limits,
-                ),
+            table_projection_index,
             localized_text_index: None,
             active_state_certificate: None,
         };

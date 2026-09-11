@@ -9,6 +9,9 @@ fn selection(context: &PlanningContext<'_>) -> crate::selection::Selection {
         crate::yrs_engine::ResolvedSelection::Node { at } => {
             crate::selection::Selection::node(at.document)
         }
+        crate::yrs_engine::ResolvedSelection::Cell { anchor, head } => {
+            crate::selection::Selection::cell(anchor.document, head.document)
+        }
         crate::yrs_engine::ResolvedSelection::All => crate::selection::Selection::all(),
     }
 }
