@@ -13,9 +13,11 @@ use crate::schema::Schema;
 use crate::selection::Selection;
 
 use super::{
-    OperationResult, ResolvedSelection, RevisionedPosition, RevisionedRange, SelectionInput,
-    TransactionOrigin, TypedTransaction,
+    OperationError, OperationResult, ResolvedSelection, RevisionedPosition, RevisionedRange,
+    SelectionInput, TransactionOrigin, TypedOperation, TypedTransaction,
 };
+
+const TABLE_ACTION_ORIGIN_FIELD: &str = "origin";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypedCommand {
@@ -168,5 +170,113 @@ pub(crate) fn plan(
         | TypedCommand::UpdateNodeAttrs { .. }
         | TypedCommand::ResizeImage { .. }
         | TypedCommand::MoveSelection { .. }) => structure::plan(context, command),
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn table_action_transaction(
+    context: &PlanningContext<'_>,
+    prepared: crate::tables::command_context::PreparedTableAction,
+) -> OperationResult<CommandPlan> {
+    if context.origin != prepared.origin {
+        return Err(OperationError::transaction_invalid(
+            context.request_id,
+            TABLE_ACTION_ORIGIN_FIELD,
+            "table normalization belongs to a trusted local command only",
+        ));
+    }
+    if context.revision != prepared.base_document_revision {
+        return Err(OperationError::revision_mismatch(
+            context.request_id,
+            prepared.base_document_revision,
+            context.revision,
+        ));
+    }
+    let plan = table_action_lowering(context, prepared)?;
+    let CommandPlan::Transaction(transaction) = &plan else {
+        return Ok(plan);
+    };
+    if transaction
+        .operations
+        .iter()
+        .any(|operation| matches!(operation, TypedOperation::ReplaceStructure(_)))
+    {
+        return Err(OperationError::engine_invariant_failed(
+            context.request_id,
+            None,
+            "a table action cannot be lowered without replacing its whole table",
+        ));
+    }
+    Ok(plan)
+}
+
+#[allow(dead_code)]
+pub(crate) fn table_action_lowering(
+    context: &PlanningContext<'_>,
+    prepared: crate::tables::command_context::PreparedTableAction,
+) -> OperationResult<CommandPlan> {
+    let selection = structure::selection(context);
+    text::admitted_semantic_transaction(context, &selection, prepared.plan)
+}
+
+#[cfg(test)]
+pub(crate) struct TableActionTestRequest<'a> {
+    pub document: &'a Document,
+    pub schema: &'a Schema,
+    pub resource_limits: &'a crate::boundary::ResourceLimits,
+    pub editing_limits: &'a crate::yrs_engine::EditingLimits,
+    pub revision: u64,
+    pub state_revision: u64,
+    pub yrs_state_epoch: u64,
+    pub origin: TransactionOrigin,
+    pub guard_whole_table_lowering: bool,
+}
+
+#[cfg(test)]
+pub(crate) fn table_action_plan_for_test(
+    request: TableActionTestRequest<'_>,
+    prepared: crate::tables::command_context::PreparedTableAction,
+) -> OperationResult<CommandPlan> {
+    let position_map = PositionMap::build(request.document, request.schema);
+    let rendered_text = crate::render::rendered_text(request.document, request.schema);
+    let canonical_schema =
+        crate::yrs_engine::canonical::CanonicalSchemaContext::new(request.schema);
+    let canonical_artifact = canonical_schema
+        .derive(request.document)
+        .expect("the table action fixture is canonical");
+    let point = crate::yrs_engine::ResolvedPoint {
+        document: 0,
+        scalar: 0,
+        utf16: 0,
+    };
+    let selection = ResolvedSelection::Text {
+        anchor: point,
+        head: point,
+    };
+    let context = PlanningContext {
+        request_id: prepared.request_id,
+        revision: request.revision,
+        state_revision: request.state_revision,
+        document: request.document,
+        position_map: &position_map,
+        rendered_text: &rendered_text,
+        selection: &selection,
+        initial_selection: None,
+        origin: request.origin,
+        stored_marks: None,
+        schema: request.schema,
+        resource_limits: request.resource_limits,
+        editing_limits: request.editing_limits,
+        max_length: None,
+        yrs_state_epoch: request.yrs_state_epoch,
+        canonical_schema: &canonical_schema,
+        canonical_artifact: &canonical_artifact,
+        allow_deferred_admission: false,
+        preparation: None,
+    };
+    if request.guard_whole_table_lowering {
+        table_action_transaction(&context, prepared)
+    } else {
+        table_action_lowering(&context, prepared)
     }
 }

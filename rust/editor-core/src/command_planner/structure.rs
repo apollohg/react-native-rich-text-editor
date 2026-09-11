@@ -26,7 +26,7 @@ pub(crate) struct AdmittedSemanticCommandPlan {
     pub simulated: SimulatedCommandPlan,
 }
 
-fn default_attrs(
+pub(crate) fn default_attrs(
     schema: &Schema,
     node_type: &str,
 ) -> Option<std::collections::HashMap<String, serde_json::Value>> {

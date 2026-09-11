@@ -71,3 +71,6 @@ pub use position::{
 };
 
 pub use snapshot::{DocumentScope, DocumentSnapshot, SNAPSHOT_FORMAT_VERSION};
+
+#[cfg(test)]
+pub(crate) use commands::{table_action_plan_for_test, TableActionTestRequest};

@@ -54,7 +54,6 @@ const MAX_UPDATE_BYTES = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT_MILLIS = 30_000;
 export const EMPTY_STATE_VECTOR_BASE64 = Buffer.from([0]).toString('base64');
 export const DEFAULT_EXCHANGE_SEED = 0x7ab1_e21d;
-const NATIVE_NORMALIZATION_IS_NOT_INSTRUMENTED = 0;
 const RECORDED_ACTIONS: readonly Request['operation'][] = ['command', 'undo', 'redo', 'applyUpdate'];
 
 export class PeerError extends Error {
@@ -167,12 +166,10 @@ export async function snapshot(peer: Peer): Promise<PeerSnapshot> {
     const displayJson = record.kind === 'rust'
         ? documentJson
         : requireJsonOrNull(value['displayJson'], 'snapshot.displayJson');
-    const normalizationPassesAfterLastAction = record.kind === 'rust'
-        ? NATIVE_NORMALIZATION_IS_NOT_INSTRUMENTED
-        : requireCount(
-            value['normalizationPassesAfterLastAction'],
-            'snapshot.normalizationPassesAfterLastAction',
-        );
+    const normalizationPassesAfterLastAction = requireCount(
+        value['normalizationPassesAfterLastAction'],
+        'snapshot.normalizationPassesAfterLastAction',
+    );
     const captured: PeerSnapshot = {
         documentJson,
         displayJson,

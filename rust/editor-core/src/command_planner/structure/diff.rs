@@ -188,7 +188,7 @@ pub(crate) fn prove_structural_diff(
     )
 }
 
-fn structural_diff_range(
+pub(crate) fn structural_diff_range(
     document: &Document,
     diff: &StructuralDiff,
     limits: &ResourceLimits,

@@ -1,7 +1,7 @@
 use super::{CommandPlan, PlanningContext, TypedCommand};
 use crate::yrs_engine::{OperationError, OperationResult, RevisionedPosition};
 
-fn selection(context: &PlanningContext<'_>) -> crate::selection::Selection {
+pub(super) fn selection(context: &PlanningContext<'_>) -> crate::selection::Selection {
     match context.selection {
         crate::yrs_engine::ResolvedSelection::Text { anchor, head } => {
             crate::selection::Selection::text(anchor.document, head.document)

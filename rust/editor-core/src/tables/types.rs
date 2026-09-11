@@ -36,3 +36,46 @@ pub(crate) fn try_resize<T: Clone>(
     values.resize(length, filler);
     Ok(())
 }
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TableActionKind {
+    InsertTable,
+    DeleteTable,
+    InsertRow,
+    DeleteRow,
+    InsertColumn,
+    DeleteColumn,
+    Header,
+    Merge,
+    Split,
+    Resize,
+    MatrixPaste,
+}
+
+#[allow(dead_code)]
+impl TableActionKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::InsertTable => "insertTable",
+            Self::DeleteTable => "deleteTable",
+            Self::InsertRow => "insertRow",
+            Self::DeleteRow => "deleteRow",
+            Self::InsertColumn => "insertColumn",
+            Self::DeleteColumn => "deleteColumn",
+            Self::Header => "header",
+            Self::Merge => "merge",
+            Self::Split => "split",
+            Self::Resize => "resize",
+            Self::MatrixPaste => "matrixPaste",
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TableWorkCounters {
+    pub pre_normalization_passes: u32,
+    pub post_normalization_passes: u32,
+    pub normalization_operations: u32,
+}

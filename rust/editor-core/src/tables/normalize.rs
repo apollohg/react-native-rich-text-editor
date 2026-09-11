@@ -1,0 +1,549 @@
+use std::collections::HashMap;
+
+use serde_json::Value;
+
+use crate::boundary::ResourceLimits;
+use crate::command_planner::{
+    apply_operations, default_attrs, prove_structural_diff, structural_diff_bounded,
+    structural_diff_range, SemanticOperation, StructuralDiff,
+};
+use crate::model::{Document, Fragment, Node};
+use crate::schema::Schema;
+use crate::tables::projection::{
+    column_width, project_table, span_attribute, CellRect, ProjectedTable, TableGridBudget,
+};
+use crate::tables::roles::{TableRoles, TABLE_CELL_COLWIDTH_ATTR, TABLE_CELL_ROWSPAN_ATTR};
+use crate::tables::types::TableError;
+use crate::yrs_engine::{OperationError, OperationResult};
+
+pub(crate) const UNCORRELATED_REQUEST_ID: u64 = 0;
+const TABLE_NORMALIZATION_FIELD: &str = "tableNormalization";
+const TABLE_POSITION_FIELD: &str = "tablePos";
+const NODE_OPENING_TOKENS: u32 = 1;
+const NODE_CLOSING_TOKENS: u32 = 1;
+const DOCUMENT_CONTENT_START: u32 = 0;
+const FIRST_ROW: u32 = 0;
+const NO_MISSING_SLOTS: u32 = 0;
+const ADJACENT_ROW_DISTANCE: u32 = 1;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum NormalizationFailure {
+    Shape(TableError),
+    NestedTarget,
+    MissingTarget,
+    Unplannable,
+}
+
+impl NormalizationFailure {
+    pub(crate) fn into_operation_error(self, request_id: u64) -> OperationError {
+        match self {
+            Self::Shape(TableError::GridLimit { limit, actual }) => {
+                OperationError::document_limit_exceeded(
+                    request_id,
+                    None,
+                    TABLE_NORMALIZATION_FIELD,
+                    limit as u64,
+                    actual as u64,
+                )
+            }
+            Self::Shape(error @ (TableError::WorkLimit | TableError::Allocation)) => {
+                OperationError::operation_work_budget_exceeded(
+                    request_id,
+                    TABLE_NORMALIZATION_FIELD,
+                    error.to_string(),
+                )
+            }
+            Self::Shape(error @ (TableError::InvalidStructure | TableError::InvalidAttributes)) => {
+                OperationError::document_invalid(
+                    request_id,
+                    None,
+                    TABLE_NORMALIZATION_FIELD,
+                    error.to_string(),
+                )
+            }
+            Self::NestedTarget => OperationError::document_invalid(
+                request_id,
+                None,
+                TABLE_POSITION_FIELD,
+                "a nested table is never a normalization target",
+            ),
+            Self::MissingTarget => OperationError::document_invalid(
+                request_id,
+                None,
+                TABLE_POSITION_FIELD,
+                "no outer table begins at the requested position",
+            ),
+            Self::Unplannable => OperationError::engine_invariant_failed(
+                request_id,
+                None,
+                "table normalization could not be expressed as a scoped child-window change",
+            ),
+        }
+    }
+}
+
+pub(crate) fn normalize_outer_table(
+    document: &Document,
+    table_pos: u32,
+    schema: &Schema,
+    limits: &ResourceLimits,
+) -> OperationResult<Vec<SemanticOperation>> {
+    plan_normalization(document, table_pos, schema, limits)
+        .map_err(|failure| failure.into_operation_error(UNCORRELATED_REQUEST_ID))
+}
+
+pub(crate) fn outer_table_grid(
+    document: &Document,
+    table_pos: u32,
+    schema: &Schema,
+    limits: &ResourceLimits,
+) -> OperationResult<Option<ProjectedTable>> {
+    locate_outer_table(document, table_pos, schema, limits)
+        .map(|located| located.map(|located| located.projected))
+        .map_err(|failure| failure.into_operation_error(UNCORRELATED_REQUEST_ID))
+}
+
+struct LocatedTable {
+    path: Vec<u32>,
+    projected: ProjectedTable,
+}
+
+fn locate_outer_table(
+    document: &Document,
+    table_pos: u32,
+    schema: &Schema,
+    limits: &ResourceLimits,
+) -> Result<Option<LocatedTable>, NormalizationFailure> {
+    let Some(roles) = TableRoles::resolve(schema).map_err(NormalizationFailure::Shape)? else {
+        return Ok(None);
+    };
+    let Some(path) = outer_table_path(document, table_pos, &roles, limits)? else {
+        return Ok(None);
+    };
+    let table = document
+        .node_at(&path)
+        .ok_or(NormalizationFailure::MissingTarget)?;
+    let projected = project_table(
+        table,
+        table_pos,
+        schema,
+        &mut TableGridBudget::new(limits.max_table_grid_slots),
+    )
+    .map_err(NormalizationFailure::Shape)?;
+    Ok(Some(LocatedTable { path, projected }))
+}
+
+fn outer_table_path(
+    document: &Document,
+    table_pos: u32,
+    roles: &TableRoles,
+    limits: &ResourceLimits,
+) -> Result<Option<Vec<u32>>, NormalizationFailure> {
+    let mut node = document.root();
+    let mut path: Vec<u32> = Vec::new();
+    let mut content_start = DOCUMENT_CONTENT_START;
+    let mut visited = 0usize;
+    loop {
+        let Some(content) = node.content() else {
+            return Ok(None);
+        };
+        let mut position = content_start;
+        let mut descent = None;
+        for (index, child) in content.iter().enumerate() {
+            visited = visited.saturating_add(1);
+            if visited > limits.max_document_nodes {
+                return Err(NormalizationFailure::Shape(TableError::WorkLimit));
+            }
+            let index = u32::try_from(index)
+                .map_err(|_| NormalizationFailure::Shape(TableError::Allocation))?;
+            let end = position
+                .checked_add(child.node_size())
+                .ok_or(NormalizationFailure::Shape(TableError::Allocation))?;
+            if position == table_pos {
+                if child.node_type() != roles.table {
+                    return Ok(None);
+                }
+                path.push(index);
+                return Ok(Some(path));
+            }
+            if position < table_pos && table_pos < end && child.content().is_some() {
+                if child.node_type() == roles.table {
+                    return Err(NormalizationFailure::NestedTarget);
+                }
+                descent = Some((
+                    index,
+                    child,
+                    position
+                        .checked_add(NODE_OPENING_TOKENS)
+                        .ok_or(NormalizationFailure::Shape(TableError::Allocation))?,
+                ));
+                break;
+            }
+            position = end;
+        }
+        let Some((index, child, child_content_start)) = descent else {
+            return Ok(None);
+        };
+        if path.len() >= limits.max_document_depth {
+            return Err(NormalizationFailure::Shape(TableError::WorkLimit));
+        }
+        path.push(index);
+        node = child;
+        content_start = child_content_start;
+    }
+}
+
+fn plan_normalization(
+    document: &Document,
+    table_pos: u32,
+    schema: &Schema,
+    limits: &ResourceLimits,
+) -> Result<Vec<SemanticOperation>, NormalizationFailure> {
+    let located = locate_outer_table(document, table_pos, schema, limits)?
+        .ok_or(NormalizationFailure::MissingTarget)?;
+    let table = document
+        .node_at(&located.path)
+        .ok_or(NormalizationFailure::MissingTarget)?;
+    let mut operations = attribute_fixes(table, table_pos, &located.projected, schema)?;
+    let mut candidate = apply_planned(document, schema, &operations)?;
+    let additions = missing_cells_per_row(&located.projected)?;
+    for (row_index, missing) in additions.iter().copied().enumerate().rev() {
+        if missing == NO_MISSING_SLOTS {
+            continue;
+        }
+        let row_index = u32::try_from(row_index)
+            .map_err(|_| NormalizationFailure::Shape(TableError::Allocation))?;
+        let (operation, next) = insertion_operation(
+            &candidate,
+            &located.path,
+            table_pos,
+            row_index,
+            missing,
+            &additions,
+            schema,
+            limits,
+        )?;
+        operations.push(operation);
+        candidate = next;
+    }
+    Ok(operations)
+}
+
+fn apply_planned(
+    document: &Document,
+    schema: &Schema,
+    operations: &[SemanticOperation],
+) -> Result<Document, NormalizationFailure> {
+    apply_operations(document, schema, operations).map_err(|()| NormalizationFailure::Unplannable)
+}
+
+struct CellSource<'a> {
+    source_pos: u32,
+    node: &'a Node,
+}
+
+fn cell_sources<'a>(
+    table: &'a Node,
+    table_pos: u32,
+    roles: &TableRoles,
+) -> Result<Vec<CellSource<'a>>, NormalizationFailure> {
+    let content = table
+        .content()
+        .ok_or(NormalizationFailure::Shape(TableError::InvalidStructure))?;
+    let mut sources = Vec::new();
+    let mut row_pos = advance(table_pos, NODE_OPENING_TOKENS)?;
+    for row in content.iter() {
+        let mut cell_pos = advance(row_pos, NODE_OPENING_TOKENS)?;
+        if row.node_type() == roles.row {
+            let row_content = row
+                .content()
+                .ok_or(NormalizationFailure::Shape(TableError::InvalidStructure))?;
+            for cell in row_content.iter() {
+                if cell.node_type() == roles.cell || cell.node_type() == roles.header_cell {
+                    sources.push(CellSource {
+                        source_pos: cell_pos,
+                        node: cell,
+                    });
+                }
+                cell_pos = advance(cell_pos, cell.node_size())?;
+            }
+        }
+        row_pos = advance(row_pos, row.node_size())?;
+    }
+    Ok(sources)
+}
+
+fn attribute_fixes(
+    table: &Node,
+    table_pos: u32,
+    projected: &ProjectedTable,
+    schema: &Schema,
+) -> Result<Vec<SemanticOperation>, NormalizationFailure> {
+    let roles = TableRoles::resolve(schema)
+        .map_err(NormalizationFailure::Shape)?
+        .ok_or(NormalizationFailure::MissingTarget)?;
+    let sources = cell_sources(table, table_pos, &roles)?;
+    if sources.len() != projected.cells.len() {
+        return Err(NormalizationFailure::Unplannable);
+    }
+    let mut operations = Vec::new();
+    for (source, projected_cell) in sources.iter().zip(projected.cells.iter()) {
+        if source.source_pos != projected_cell.source_pos {
+            return Err(NormalizationFailure::Unplannable);
+        }
+        let Some(attrs) = fixed_cell_attrs(source.node, &projected_cell.rect, &projected.widths)?
+        else {
+            continue;
+        };
+        operations.push(SemanticOperation::UpdateNodeAttrs {
+            pos: source.source_pos,
+            attrs,
+        });
+    }
+    Ok(operations)
+}
+
+fn fixed_cell_attrs(
+    cell: &Node,
+    rect: &CellRect,
+    widths: &[Option<u32>],
+) -> Result<Option<HashMap<String, Value>>, NormalizationFailure> {
+    let declared_rowspan =
+        span_attribute(cell, TABLE_CELL_ROWSPAN_ATTR).map_err(NormalizationFailure::Shape)?;
+    let resolved_widths = resolved_colwidth(cell, rect, widths)?;
+    if declared_rowspan == rect.rowspan && resolved_widths.is_none() {
+        return Ok(None);
+    }
+    let mut attrs = cell.attrs().clone();
+    if declared_rowspan != rect.rowspan {
+        attrs.insert(
+            TABLE_CELL_ROWSPAN_ATTR.to_string(),
+            Value::from(rect.rowspan),
+        );
+    }
+    if let Some(resolved_widths) = resolved_widths {
+        attrs.insert(
+            TABLE_CELL_COLWIDTH_ATTR.to_string(),
+            Value::Array(resolved_widths),
+        );
+    }
+    Ok(Some(attrs))
+}
+
+fn resolved_colwidth(
+    cell: &Node,
+    rect: &CellRect,
+    widths: &[Option<u32>],
+) -> Result<Option<Vec<Value>>, NormalizationFailure> {
+    let mut updated: Option<Vec<Value>> = None;
+    for offset in 0..rect.colspan {
+        let column = advance(rect.column, offset)? as usize;
+        let Some(resolved) = widths.get(column).copied().flatten() else {
+            continue;
+        };
+        let declared = column_width(cell, offset).map_err(NormalizationFailure::Shape)?;
+        if declared == resolved {
+            continue;
+        }
+        let fresh = match updated {
+            Some(ref mut fresh) => fresh,
+            None => updated.insert(fresh_colwidth(cell, rect.colspan)?),
+        };
+        let slot = fresh
+            .get_mut(offset as usize)
+            .ok_or(NormalizationFailure::Unplannable)?;
+        *slot = Value::from(resolved);
+    }
+    Ok(updated)
+}
+
+fn fresh_colwidth(cell: &Node, colspan: u32) -> Result<Vec<Value>, NormalizationFailure> {
+    let length = colspan as usize;
+    let mut fresh = Vec::new();
+    fresh
+        .try_reserve_exact(length)
+        .map_err(|_| NormalizationFailure::Shape(TableError::Allocation))?;
+    for offset in 0..colspan {
+        let declared = column_width(cell, offset).map_err(NormalizationFailure::Shape)?;
+        fresh.push(Value::from(declared));
+    }
+    Ok(fresh)
+}
+
+fn missing_cells_per_row(projected: &ProjectedTable) -> Result<Vec<u32>, NormalizationFailure> {
+    let mut missing = Vec::new();
+    missing
+        .try_reserve_exact(projected.rows as usize)
+        .map_err(|_| NormalizationFailure::Shape(TableError::Allocation))?;
+    for row in 0..projected.rows {
+        let mut count = NO_MISSING_SLOTS;
+        for column in 0..projected.columns {
+            let index = (row as usize)
+                .checked_mul(projected.columns as usize)
+                .and_then(|offset| offset.checked_add(column as usize))
+                .ok_or(NormalizationFailure::Shape(TableError::Allocation))?;
+            let slot = projected
+                .slots
+                .get(index)
+                .ok_or(NormalizationFailure::Shape(TableError::Allocation))?;
+            if slot.is_none() {
+                count = count.saturating_add(1);
+            }
+        }
+        missing.push(count);
+    }
+    Ok(missing)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insertion_operation(
+    candidate: &Document,
+    path: &[u32],
+    table_pos: u32,
+    row_index: u32,
+    missing: u32,
+    additions: &[u32],
+    schema: &Schema,
+    limits: &ResourceLimits,
+) -> Result<(SemanticOperation, Document), NormalizationFailure> {
+    let table = candidate
+        .node_at(path)
+        .ok_or(NormalizationFailure::MissingTarget)?;
+    let row_start = row_start_position(table, table_pos, row_index)?;
+    let row = table
+        .child(row_index as usize)
+        .ok_or(NormalizationFailure::Shape(TableError::InvalidStructure))?;
+    let position = if inserts_at_row_start(additions, row_index) {
+        advance(row_start, NODE_OPENING_TOKENS)?
+    } else {
+        advance(row_start, row.node_size())?
+            .checked_sub(NODE_CLOSING_TOKENS)
+            .ok_or(NormalizationFailure::Shape(TableError::Allocation))?
+    };
+    let cell = filler_cell(row, schema)?;
+    let mut cells = Vec::new();
+    cells
+        .try_reserve_exact(missing as usize)
+        .map_err(|_| NormalizationFailure::Shape(TableError::Allocation))?;
+    for _ in 0..missing {
+        cells.push(cell.clone());
+    }
+    let operation = SemanticOperation::ReplaceRange {
+        from: position,
+        to: position,
+        content: Fragment::from(cells),
+    };
+    let after = apply_planned(candidate, schema, std::slice::from_ref(&operation))?;
+    prove_scoped_row_insertion(candidate, &after, path, row_index, position, schema, limits)?;
+    Ok((operation, after))
+}
+
+fn inserts_at_row_start(additions: &[u32], row_index: u32) -> bool {
+    let first = additions
+        .iter()
+        .position(|missing| *missing != NO_MISSING_SLOTS);
+    let last = additions
+        .iter()
+        .rposition(|missing| *missing != NO_MISSING_SLOTS);
+    let Some(last) = last.and_then(|last| u32::try_from(last).ok()) else {
+        return false;
+    };
+    let follows_first = first
+        .and_then(|first| u32::try_from(first).ok())
+        .and_then(|first| row_index.checked_sub(first))
+        .is_some_and(|distance| distance == ADJACENT_ROW_DISTANCE);
+    (row_index == FIRST_ROW || follows_first) && last == row_index
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prove_scoped_row_insertion(
+    before: &Document,
+    after: &Document,
+    path: &[u32],
+    row_index: u32,
+    position: u32,
+    schema: &Schema,
+    limits: &ResourceLimits,
+) -> Result<(), NormalizationFailure> {
+    let diff = structural_diff_bounded(before, after, limits)
+        .map_err(|()| NormalizationFailure::Unplannable)?
+        .ok_or(NormalizationFailure::Unplannable)?;
+    let expected_parent: Vec<u32> = path
+        .iter()
+        .copied()
+        .chain(std::iter::once(row_index))
+        .collect();
+    if diff.parent_path != expected_parent || diff.from_child != diff.to_child {
+        return Err(NormalizationFailure::Unplannable);
+    }
+    if replaced_range(before, &diff, limits)? != (position, position) {
+        return Err(NormalizationFailure::Unplannable);
+    }
+    if !prove_structural_diff(before, after, &diff, schema, limits)
+        .map_err(|()| NormalizationFailure::Unplannable)?
+    {
+        return Err(NormalizationFailure::Unplannable);
+    }
+    Ok(())
+}
+
+fn replaced_range(
+    document: &Document,
+    diff: &StructuralDiff,
+    limits: &ResourceLimits,
+) -> Result<(u32, u32), NormalizationFailure> {
+    structural_diff_range(document, diff, limits).map_err(|()| NormalizationFailure::Unplannable)
+}
+
+fn row_start_position(
+    table: &Node,
+    table_pos: u32,
+    row_index: u32,
+) -> Result<u32, NormalizationFailure> {
+    let content = table
+        .content()
+        .ok_or(NormalizationFailure::Shape(TableError::InvalidStructure))?;
+    let mut position = advance(table_pos, NODE_OPENING_TOKENS)?;
+    for row in content.iter().take(row_index as usize) {
+        position = advance(position, row.node_size())?;
+    }
+    Ok(position)
+}
+
+fn filler_cell(row: &Node, schema: &Schema) -> Result<Node, NormalizationFailure> {
+    let roles = TableRoles::resolve(schema)
+        .map_err(NormalizationFailure::Shape)?
+        .ok_or(NormalizationFailure::MissingTarget)?;
+    let cell_type = row
+        .content()
+        .and_then(|content| {
+            content
+                .iter()
+                .find(|child| {
+                    child.node_type() == roles.cell || child.node_type() == roles.header_cell
+                })
+                .map(|child| child.node_type().to_string())
+        })
+        .unwrap_or_else(|| roles.cell.clone());
+    let text_block = schema
+        .preferred_text_block()
+        .ok_or(NormalizationFailure::Shape(TableError::InvalidStructure))?
+        .name
+        .clone();
+    let block = Node::element(
+        text_block.clone(),
+        default_attrs(schema, &text_block).ok_or(NormalizationFailure::Unplannable)?,
+        Fragment::empty(),
+    );
+    Ok(Node::element(
+        cell_type.clone(),
+        default_attrs(schema, &cell_type).ok_or(NormalizationFailure::Unplannable)?,
+        Fragment::from(vec![block]),
+    ))
+}
+
+fn advance(position: u32, amount: u32) -> Result<u32, NormalizationFailure> {
+    position
+        .checked_add(amount)
+        .ok_or(NormalizationFailure::Shape(TableError::Allocation))
+}

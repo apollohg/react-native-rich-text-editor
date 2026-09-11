@@ -364,7 +364,7 @@ pub(crate) fn integral_unsigned(value: &Value) -> Option<u64> {
     })
 }
 
-fn span_attribute(cell: &Node, name: &str) -> Result<u32, TableError> {
+pub(crate) fn span_attribute(cell: &Node, name: &str) -> Result<u32, TableError> {
     match cell.attrs().get(name) {
         None | Some(Value::Null) => Ok(DEFAULT_TABLE_CELL_SPAN),
         Some(value) => {
@@ -377,7 +377,7 @@ fn span_attribute(cell: &Node, name: &str) -> Result<u32, TableError> {
     }
 }
 
-fn column_width(cell: &Node, offset: u32) -> Result<u32, TableError> {
+pub(crate) fn column_width(cell: &Node, offset: u32) -> Result<u32, TableError> {
     let widths = match cell.attrs().get(TABLE_CELL_COLWIDTH_ATTR) {
         None | Some(Value::Null) => return Ok(UNSET_COLUMN_WIDTH),
         Some(Value::Array(widths)) => widths,

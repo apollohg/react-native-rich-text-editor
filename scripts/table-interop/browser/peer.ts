@@ -11,6 +11,7 @@ import {
     addRowAfter,
     deleteColumn,
     deleteRow,
+    fixTables,
     tableEditing,
     tableNodes,
 } from 'prosemirror-tables';
@@ -756,6 +757,21 @@ function projectTable(payload: Record<string, unknown>): Record<string, unknown>
     };
 }
 
+const DOC_NODE = 'doc';
+const FIRST_TABLE_INDEX = 0;
+
+function fixTable(payload: Record<string, unknown>): Record<string, unknown> {
+    const table = requireRecord(payload['table'], 'payload.table');
+    const doc = tableSchema.nodeFromJSON({ type: DOC_NODE, content: [table] });
+    const state = EditorState.create({ schema: tableSchema, doc });
+    const transaction = fixTables(state);
+    if (transaction === undefined) {
+        return { table, changed: false };
+    }
+    const fixed = state.apply(transaction).doc.maybeChild(FIRST_TABLE_INDEX);
+    return { table: fixed === null || fixed === undefined ? null : fixed.toJSON(), changed: true };
+}
+
 function readKind(): WebPeerKind {
     const requested = new URLSearchParams(window.location.search).get(KIND_QUERY_PARAMETER);
     if (requested !== 'prosemirror' && requested !== 'tiptap') {
@@ -841,6 +857,8 @@ async function dispatch(
             return requireRuntime().stateDiff(payload);
         case 'projectTable':
             return projectTable(payload);
+        case 'normalizeTable':
+            return fixTable(payload);
         case 'setAwareness':
             return requireRuntime().setAwareness(payload);
         case 'applyAwareness':
