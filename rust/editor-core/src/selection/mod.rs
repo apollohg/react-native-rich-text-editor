@@ -105,7 +105,9 @@ impl Selection {
     fn text_endpoints(&self, doc: &Document) -> Option<(u32, u32)> {
         match self {
             Self::Cell { .. } => None,
-            _ => Some((self.anchor(doc), self.head(doc))),
+            Self::Text { .. } | Self::Node { .. } | Self::All => {
+                Some((self.anchor(doc), self.head(doc)))
+            }
         }
     }
 

@@ -3,11 +3,12 @@ use crate::position::update::UpdateMode;
 use crate::position::PositionMap;
 use crate::schema::Schema;
 use crate::selection::Selection;
+use crate::tables::admission::ProjectionFailure;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::selection::{
     admit_cell_opening, admit_cell_pair, snap_cell_selection, CellAdmission,
     CELL_SELECTION_ANCHOR_FIELD, CELL_SELECTION_HEAD_FIELD, CELL_SELECTION_INVALID,
-    CELL_SELECTION_PROJECTION_UNAVAILABLE,
+    CELL_SELECTION_PROJECTION_EXHAUSTED, CELL_SELECTION_PROJECTION_INVALID,
 };
 use crate::transform::StepMap;
 use crate::yrs_engine;
@@ -145,11 +146,21 @@ pub(crate) fn cell_admission_error(
     admission: CellAdmission,
 ) -> OperationError {
     match admission {
-        CellAdmission::ProjectionUnavailable => OperationError::operation_resource_exhausted(
-            request_id,
-            field,
-            CELL_SELECTION_PROJECTION_UNAVAILABLE,
-        ),
+        CellAdmission::ProjectionUnavailable(ProjectionFailure::ResourceExhausted) => {
+            OperationError::operation_resource_exhausted(
+                request_id,
+                field,
+                CELL_SELECTION_PROJECTION_EXHAUSTED,
+            )
+        }
+        CellAdmission::ProjectionUnavailable(ProjectionFailure::Structural) => {
+            OperationError::document_invalid(
+                request_id,
+                None,
+                field,
+                CELL_SELECTION_PROJECTION_INVALID,
+            )
+        }
         CellAdmission::Admitted | CellAdmission::NotCells => {
             OperationError::selection_position_invalid(request_id, field, CELL_SELECTION_INVALID)
         }
@@ -391,7 +402,7 @@ fn admit_cell_candidate(
             admission,
         ));
     }
-    if admission == CellAdmission::ProjectionUnavailable {
+    if matches!(admission, CellAdmission::ProjectionUnavailable(_)) {
         return Ok(candidate);
     }
     match intent {

@@ -326,7 +326,13 @@ impl YrsDocumentEngine {
         anchor: u32,
         head: u32,
     ) -> Option<serde_json::Value> {
-        crate::tables::selection::resolve_cell_rect(self.table_projection_index()?, anchor, head)?;
+        crate::tables::selection::cell_pair_is_usable(
+            self.table_projection_index()?,
+            anchor,
+            head,
+            crate::tables::selection::CellSelectionOrigin::Minted,
+        )
+        .then_some(())?;
         let txn = self.doc.transact();
         let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
         let sticky = |position| {
@@ -365,8 +371,13 @@ impl YrsDocumentEngine {
             &rectangle.head,
             &self.schema,
         )?;
-        crate::tables::selection::resolve_cell_rect(self.table_projection_index()?, anchor, head)?;
-        Some((anchor, head))
+        crate::tables::selection::cell_pair_is_usable(
+            self.table_projection_index()?,
+            anchor,
+            head,
+            crate::tables::selection::CellSelectionOrigin::Minted,
+        )
+        .then_some((anchor, head))
     }
 
     pub(crate) fn clipboard(&self) -> Option<serde_json::Value> {

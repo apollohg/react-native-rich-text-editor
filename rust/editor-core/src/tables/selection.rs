@@ -1,12 +1,18 @@
 use crate::selection::Selection;
-use crate::tables::admission::TableProjectionIndex;
+use crate::tables::admission::{ProjectionFailure, TableProjectionIndex};
 use crate::tables::projection::{CellRect, ProjectedTable};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CellAdmission {
     Admitted,
     NotCells,
-    ProjectionUnavailable,
+    ProjectionUnavailable(ProjectionFailure),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CellSelectionOrigin {
+    Minted,
+    Preserved,
 }
 
 pub(crate) fn admit_cell_pair(
@@ -17,10 +23,24 @@ pub(crate) fn admit_cell_pair(
     if resolve_cell_rect(index, anchor, head).is_some() {
         return CellAdmission::Admitted;
     }
-    if index.projection_failed() {
-        return CellAdmission::ProjectionUnavailable;
+    match index.projection_failure() {
+        Some(failure) => CellAdmission::ProjectionUnavailable(failure),
+        None => CellAdmission::NotCells,
     }
-    CellAdmission::NotCells
+}
+
+pub(crate) fn cell_pair_is_usable(
+    index: &TableProjectionIndex,
+    anchor: u32,
+    head: u32,
+    origin: CellSelectionOrigin,
+) -> bool {
+    match (admit_cell_pair(index, anchor, head), origin) {
+        (CellAdmission::Admitted, _) => true,
+        (CellAdmission::ProjectionUnavailable(_), CellSelectionOrigin::Preserved) => true,
+        (CellAdmission::ProjectionUnavailable(_), CellSelectionOrigin::Minted)
+        | (CellAdmission::NotCells, _) => false,
+    }
 }
 
 pub(crate) fn admit_cell_opening(
@@ -29,8 +49,10 @@ pub(crate) fn admit_cell_opening(
 ) -> Result<u32, CellAdmission> {
     match cell_opening_containing(index, position) {
         Some(opening) => Ok(opening),
-        None if index.projection_failed() => Err(CellAdmission::ProjectionUnavailable),
-        None => Err(CellAdmission::NotCells),
+        None => Err(match index.projection_failure() {
+            Some(failure) => CellAdmission::ProjectionUnavailable(failure),
+            None => CellAdmission::NotCells,
+        }),
     }
 }
 
@@ -38,8 +60,10 @@ pub(crate) const CELL_SELECTION_ANCHOR_FIELD: &str = "selection.anchorCell";
 pub(crate) const CELL_SELECTION_HEAD_FIELD: &str = "selection.headCell";
 pub(crate) const CELL_SELECTION_INVALID: &str =
     "cell selection must target real table cells in one table";
-pub(crate) const CELL_SELECTION_PROJECTION_UNAVAILABLE: &str =
-    "table projection is unavailable, so a cell selection cannot be admitted or preserved";
+pub(crate) const CELL_SELECTION_PROJECTION_EXHAUSTED: &str =
+    "table projection exceeded its resource budget, so a cell selection cannot be admitted";
+pub(crate) const CELL_SELECTION_PROJECTION_INVALID: &str =
+    "table structure is invalid, so a cell selection cannot be admitted";
 
 const FIRST_ROW: u32 = 0;
 const FIRST_COLUMN: u32 = 0;

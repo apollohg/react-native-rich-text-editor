@@ -14,24 +14,41 @@ const DOCUMENT_LIMIT_EXCEEDED: &str = "DOCUMENT_LIMIT_EXCEEDED";
 const TABLE_GRID_PHASE: &str = "tableGrid";
 const TABLE_SHAPE_PHASE: &str = "tableShape";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProjectionFailure {
+    ResourceExhausted,
+    Structural,
+}
+
+impl ProjectionFailure {
+    fn of(error: &TableError) -> Self {
+        match error {
+            TableError::GridLimit { .. } | TableError::WorkLimit | TableError::Allocation => {
+                Self::ResourceExhausted
+            }
+            TableError::InvalidStructure | TableError::InvalidAttributes => Self::Structural,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TableProjectionIndex {
     tables: BTreeMap<u32, ProjectedTable>,
-    projection_failed: bool,
+    projection_failure: Option<ProjectionFailure>,
 }
 
 impl TableProjectionIndex {
     pub(crate) fn empty() -> Self {
         Self {
             tables: BTreeMap::new(),
-            projection_failed: false,
+            projection_failure: None,
         }
     }
 
-    fn fallback() -> Self {
+    fn fallback(failure: ProjectionFailure) -> Self {
         Self {
             tables: BTreeMap::new(),
-            projection_failed: true,
+            projection_failure: Some(failure),
         }
     }
 
@@ -40,7 +57,8 @@ impl TableProjectionIndex {
         schema: &Schema,
         limits: &ResourceLimits,
     ) -> Self {
-        validate_table_shapes(document, schema, limits).unwrap_or_else(|_| Self::fallback())
+        validate_table_shapes(document, schema, limits)
+            .unwrap_or_else(|error| Self::fallback(ProjectionFailure::of(&error)))
     }
 }
 
@@ -59,7 +77,11 @@ impl TableProjectionIndex {
     }
 
     pub(crate) fn projection_failed(&self) -> bool {
-        self.projection_failed
+        self.projection_failure.is_some()
+    }
+
+    pub(crate) fn projection_failure(&self) -> Option<ProjectionFailure> {
+        self.projection_failure
     }
 
     pub(crate) fn irregular_positions(&self) -> impl Iterator<Item = u32> + '_ {

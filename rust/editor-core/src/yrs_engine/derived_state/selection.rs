@@ -11,7 +11,7 @@ use crate::position::PositionMap;
 use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::admission::TableProjectionIndex;
-use crate::tables::selection::{admit_cell_pair, snap_cell_selection, CellAdmission};
+use crate::tables::selection::{cell_pair_is_usable, snap_cell_selection, CellSelectionOrigin};
 use crate::yrs_engine::compiler::selectable_void_at;
 use crate::yrs_engine::position::{
     cursor_sticky_index_from_doc_pos, doc_pos_to_relative_point, doc_pos_to_sticky_index,
@@ -232,7 +232,7 @@ pub(crate) fn resolved_from_legacy_with_view(
         }
         Selection::Node { .. } => None,
         Selection::Cell { anchor, head } => {
-            if admit_cell_pair(table_index, *anchor, *head) == CellAdmission::NotCells {
+            if !cell_pair_is_usable(table_index, *anchor, *head, CellSelectionOrigin::Preserved) {
                 return None;
             }
             Some(ResolvedSelection::Cell {
@@ -382,7 +382,7 @@ pub(crate) fn resolve_selection<T: ReadTxn>(
         }
         Selection::Node { .. } => None,
         Selection::Cell { anchor, head } => {
-            if admit_cell_pair(table_index, anchor, head) == CellAdmission::NotCells {
+            if !cell_pair_is_usable(table_index, anchor, head, CellSelectionOrigin::Preserved) {
                 return None;
             }
             Some(ResolvedSelection::Cell {

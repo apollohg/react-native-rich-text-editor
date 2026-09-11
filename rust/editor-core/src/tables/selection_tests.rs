@@ -5,10 +5,10 @@ use crate::model::Document;
 use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::serialize::json_in::{from_prosemirror_json, UnknownTypeMode};
-use crate::tables::admission::{validate_table_shapes, TableProjectionIndex};
+use crate::tables::admission::{validate_table_shapes, ProjectionFailure, TableProjectionIndex};
 use crate::tables::selection::{
-    admit_cell_opening, admit_cell_pair, resolve_cell_rect, snap_cell_selection, CellAdmission,
-    CELL_SELECTION_ANCHOR_FIELD,
+    admit_cell_opening, admit_cell_pair, cell_pair_is_usable, resolve_cell_rect,
+    snap_cell_selection, CellAdmission, CellSelectionOrigin, CELL_SELECTION_ANCHOR_FIELD,
 };
 use crate::tables::tests::{tabled_schema, PROSEMIRROR_TABLE_NAMES};
 use crate::yrs_engine::cell_admission_error;
@@ -48,6 +48,14 @@ fn cell(colspan: u32, rowspan: u32, text: Option<&str>) -> Value {
 
 fn plain_cell() -> Value {
     cell(SINGLE_SPAN, SINGLE_SPAN, None)
+}
+
+fn cell_with_attrs(attrs: Value) -> Value {
+    json!({
+        "type": CELL_NODE,
+        "attrs": attrs,
+        "content": [{ "type": PARAGRAPH_NODE, "content": [] }],
+    })
 }
 
 fn row(cells: Vec<Value>) -> Value {
@@ -307,7 +315,7 @@ fn a_starved_projection_is_distinguished_from_a_document_without_cells() {
     assert!(starved_index.projection_failed());
     assert_eq!(
         admit_cell_pair(&starved_index, FIRST_CELL, SECOND_CELL),
-        CellAdmission::ProjectionUnavailable
+        CellAdmission::ProjectionUnavailable(ProjectionFailure::ResourceExhausted)
     );
     assert_eq!(
         admit_cell_pair(&table_free, FIRST_CELL, SECOND_CELL),
@@ -315,7 +323,9 @@ fn a_starved_projection_is_distinguished_from_a_document_without_cells() {
     );
     assert_eq!(
         admit_cell_opening(&starved_index, FIRST_CELL + 2),
-        Err(CellAdmission::ProjectionUnavailable)
+        Err(CellAdmission::ProjectionUnavailable(
+            ProjectionFailure::ResourceExhausted
+        ))
     );
     assert_eq!(
         admit_cell_opening(&table_free, FIRST_CELL + 2),
@@ -324,11 +334,112 @@ fn a_starved_projection_is_distinguished_from_a_document_without_cells() {
 }
 
 #[test]
+fn only_a_cell_selection_withholds_a_text_range() {
+    let document = document_of(vec![table(vec![row(vec![plain_cell(), plain_cell()])])]);
+    let content_size = document.content_size();
+
+    for selection in [
+        Selection::text(1, 3),
+        Selection::cursor(1),
+        Selection::node(FIRST_CELL),
+        Selection::all(),
+    ] {
+        assert!(
+            selection.text_range(&document).is_some(),
+            "{selection:?} must keep its text range"
+        );
+        assert!(selection.from(&document).is_some());
+        assert!(selection.to(&document).is_some());
+    }
+
+    let rectangle = Selection::cell(FIRST_CELL, SECOND_CELL);
+    assert_eq!(rectangle.text_range(&document), None);
+    assert_eq!(rectangle.from(&document), None);
+    assert_eq!(rectangle.to(&document), None);
+    assert_eq!(rectangle.anchor(&document), FIRST_CELL);
+    assert_eq!(rectangle.head(&document), SECOND_CELL);
+    assert_ne!(content_size, 0);
+}
+
+#[test]
+fn an_invalid_table_is_reported_as_structural_not_as_starvation() {
+    let invalid = document_of(vec![table(vec![row(vec![cell_with_attrs(json!({
+        "colspan": 0,
+        "rowspan": 1,
+        "colwidth": null,
+    }))])])]);
+    let index =
+        TableProjectionIndex::derive_or_fallback(&invalid, &schema(), &ResourceLimits::default());
+
+    assert_eq!(
+        index.projection_failure(),
+        Some(ProjectionFailure::Structural)
+    );
+    assert_eq!(
+        admit_cell_pair(&index, FIRST_CELL, FIRST_CELL),
+        CellAdmission::ProjectionUnavailable(ProjectionFailure::Structural)
+    );
+    assert_eq!(
+        cell_admission_error(
+            REQUEST_ID,
+            CELL_SELECTION_ANCHOR_FIELD,
+            admit_cell_pair(&index, FIRST_CELL, FIRST_CELL),
+        )
+        .code,
+        "DOCUMENT_INVALID"
+    );
+}
+
+#[test]
+fn a_minted_rectangle_needs_positive_admission_and_a_preserved_one_survives() {
+    let document = document_of(vec![table(vec![row(vec![plain_cell(), plain_cell()])])]);
+    let starved = ResourceLimits {
+        max_table_grid_slots: STARVED_TABLE_GRID_SLOTS,
+        ..ResourceLimits::default()
+    };
+    let starved_index = TableProjectionIndex::derive_or_fallback(&document, &schema(), &starved);
+    let healthy = index_of(&document);
+    let table_free = index_of(&document_of(vec![paragraph("only text")]));
+
+    assert!(!cell_pair_is_usable(
+        &starved_index,
+        FIRST_CELL,
+        SECOND_CELL,
+        CellSelectionOrigin::Minted
+    ));
+    assert!(cell_pair_is_usable(
+        &starved_index,
+        FIRST_CELL,
+        SECOND_CELL,
+        CellSelectionOrigin::Preserved
+    ));
+    for origin in [CellSelectionOrigin::Minted, CellSelectionOrigin::Preserved] {
+        assert!(cell_pair_is_usable(
+            &healthy,
+            FIRST_CELL,
+            SECOND_CELL,
+            origin
+        ));
+        assert!(!cell_pair_is_usable(
+            &table_free,
+            FIRST_CELL,
+            SECOND_CELL,
+            origin
+        ));
+    }
+}
+
+#[test]
 fn a_starved_projection_refuses_with_a_distinct_code() {
     let unavailable = cell_admission_error(
         REQUEST_ID,
         CELL_SELECTION_ANCHOR_FIELD,
-        CellAdmission::ProjectionUnavailable,
+        CellAdmission::ProjectionUnavailable(ProjectionFailure::ResourceExhausted),
+    );
+    let structural = cell_admission_error(
+        REQUEST_ID,
+        CELL_SELECTION_ANCHOR_FIELD,
+        CellAdmission::ProjectionUnavailable(ProjectionFailure::Structural),
     );
     let not_cells = cell_admission_error(
         REQUEST_ID,
@@ -337,7 +448,9 @@ fn a_starved_projection_refuses_with_a_distinct_code() {
     );
 
     assert_eq!(unavailable.code, "OPERATION_RESOURCE_EXHAUSTED");
+    assert_eq!(structural.code, "DOCUMENT_INVALID");
     assert_eq!(not_cells.code, "POSITION_INVALID");
+    assert_ne!(unavailable.message, structural.message);
     assert_ne!(unavailable.message, not_cells.message);
 }
 
