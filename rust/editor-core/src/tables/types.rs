@@ -24,3 +24,15 @@ impl fmt::Display for TableError {
 }
 
 impl std::error::Error for TableError {}
+
+pub(crate) fn try_resize<T: Clone>(
+    values: &mut Vec<T>,
+    length: usize,
+    filler: T,
+) -> Result<(), TableError> {
+    values
+        .try_reserve_exact(length.saturating_sub(values.len()))
+        .map_err(|_| TableError::Allocation)?;
+    values.resize(length, filler);
+    Ok(())
+}

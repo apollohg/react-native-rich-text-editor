@@ -39,6 +39,8 @@ const TABLE_GROUP = 'block';
 const TABLE_CELL_CONTENT = 'block+';
 const COLWIDTH_MISMATCH = 'colwidth mismatch';
 const SYNTHETIC_SLOT_POSITION = 0;
+const TABLE_CONTENT_OFFSET = 1;
+const CELL_COLLISION = 'collision';
 const UNSET_COLUMN_WIDTH = 0;
 
 const tableSchema = new ProsemirrorSchema({
@@ -463,12 +465,17 @@ function resolvedColumnWidths(table: ProsemirrorNode, map: TableMap): (number | 
 function projectTable(payload: Record<string, unknown>): Record<string, unknown> {
     const table = tableSchema.nodeFromJSON(requireRecord(payload['table'], 'payload.table'));
     const map = TableMap.get(table);
-    const structural = (map.problems ?? []).filter((problem) => problem.type !== COLWIDTH_MISMATCH);
+    const problems = map.problems ?? [];
+    const structural = problems.filter((problem) => problem.type !== COLWIDTH_MISMATCH);
     return {
         rows: map.height,
         columns: map.width,
         widths: resolvedColumnWidths(table, map),
         irregular: structural.length > 0,
+        slots: map.map.map((pos) =>
+            pos === SYNTHETIC_SLOT_POSITION ? null : pos + TABLE_CONTENT_OFFSET,
+        ),
+        collisions: problems.filter((problem) => problem.type === CELL_COLLISION).length,
     };
 }
 

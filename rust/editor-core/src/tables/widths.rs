@@ -1,4 +1,6 @@
-#[derive(Debug, Default)]
+use crate::tables::types::{try_resize, TableError};
+
+#[derive(Debug)]
 pub(crate) struct ColumnWidthResolver {
     candidates: Vec<Option<(u32, usize)>>,
 }
@@ -10,21 +12,23 @@ impl ColumnWidthResolver {
         }
     }
 
-    pub(crate) fn contribute_at(&mut self, column: usize, width: u32) {
+    pub(crate) fn contribute_at(&mut self, column: usize, width: u32) -> Result<(), TableError> {
         if self.candidates.len() <= column {
-            self.candidates.resize(column.saturating_add(1), None);
+            try_resize(&mut self.candidates, column.saturating_add(1), None)?;
         }
         if let Some(candidate) = self.candidates.get_mut(column) {
             contribute(candidate, width);
         }
+        Ok(())
     }
 
-    pub(crate) fn finish(mut self, columns: usize) -> Vec<Option<u32>> {
-        self.candidates.resize(columns, None);
-        self.candidates
+    pub(crate) fn finish(mut self, columns: usize) -> Result<Vec<Option<u32>>, TableError> {
+        try_resize(&mut self.candidates, columns, None)?;
+        Ok(self
+            .candidates
             .into_iter()
             .map(|candidate| candidate.map(|(value, _)| value))
-            .collect()
+            .collect())
     }
 }
 

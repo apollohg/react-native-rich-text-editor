@@ -575,11 +575,20 @@ fn project_table_payload(payload: serde_json::Value) -> Result<serde_json::Value
 }
 
 fn projected_table_json(projected: &ProjectedTable) -> serde_json::Value {
+    let anchors: Vec<Option<u32>> = projected
+        .slots
+        .iter()
+        .map(|slot| {
+            slot.and_then(|index| projected.cells.get(index))
+                .map(|cell| cell.source_pos)
+        })
+        .collect();
     serde_json::json!({
         "rows": projected.rows,
         "columns": projected.columns,
         "widths": projected.widths,
         "irregular": projected.irregular,
+        "slots": anchors,
     })
 }
 

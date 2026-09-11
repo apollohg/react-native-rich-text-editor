@@ -241,6 +241,48 @@ fn a_rectangle_that_straddles_an_owned_column_shifts_right_and_flags_the_grid() 
         ],
         "a free anchor column is abandoned only when the rest of the rectangle collides"
     );
+    assert_eq!(
+        projected.columns, 4,
+        "shifting the rectangle right grows the grid past the raw extent"
+    );
+    assert_eq!(
+        projected.slots,
+        vec![
+            Some(0),
+            Some(1),
+            None,
+            None,
+            None,
+            Some(1),
+            Some(2),
+            Some(2),
+        ]
+    );
+}
+
+#[test]
+fn growth_from_a_collision_is_checked_against_the_budget() {
+    let fixture = || {
+        table(vec![
+            row(vec![plain_cell(), spanning_cell(1, 2)]),
+            row(vec![spanning_cell(2, 1)]),
+        ])
+    };
+
+    assert_eq!(
+        project_with_limit(fixture(), 7),
+        Err(TableError::GridLimit {
+            limit: 7,
+            actual: 8,
+        }),
+        "the grown extent, not the raw extent, is what the budget must admit"
+    );
+    assert_eq!(
+        project_with_limit(fixture(), 8)
+            .expect("the grown extent fits an eight slot budget")
+            .columns,
+        4
+    );
 }
 
 #[test]
@@ -316,6 +358,25 @@ fn an_empty_table_is_a_finite_empty_frame() {
     assert!(projected.slots.is_empty());
     assert!(projected.widths.is_empty());
     assert!(projected.irregular);
+}
+
+#[test]
+fn an_empty_frame_still_costs_one_grid_slot() {
+    let schema = schema();
+    let mut budget = TableGridBudget::new(1);
+
+    project_table(&empty_table_node(), TABLE_POSITION, &schema, &mut budget)
+        .expect("the first empty frame fits a single slot budget");
+    let second = project_table(&empty_table_node(), TABLE_POSITION, &schema, &mut budget);
+
+    assert_eq!(
+        second,
+        Err(TableError::GridLimit {
+            limit: 1,
+            actual: 2,
+        }),
+        "a caller iterating empty frames must stay bounded in the number of frames"
+    );
 }
 
 #[test]

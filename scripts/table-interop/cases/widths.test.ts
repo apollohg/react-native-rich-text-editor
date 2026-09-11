@@ -8,6 +8,7 @@ const ROW_NODE = 'table_row';
 const CELL_NODE = 'table_cell';
 const HEADER_CELL_NODE = 'table_header';
 const PARAGRAPH_NODE = 'paragraph';
+const NO_COLLISIONS = 0;
 const CELL_ATTRIBUTES = {
     colspan: { type: 'number', default: 1, min: 1 },
     rowspan: { type: 'number', default: 1, min: 1 },
@@ -146,17 +147,21 @@ const FIXTURES: Fixture[] = [
     },
 ];
 
-async function projectionOf(
-    peer: Peer,
-    payload: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-    const projection = await call(peer, 'projectTable', payload);
+function geometryOf(projection: Record<string, unknown>): Record<string, unknown> {
     return {
         rows: projection['rows'],
         columns: projection['columns'],
         widths: projection['widths'],
         irregular: projection['irregular'],
+        slots: projection['slots'],
     };
+}
+
+async function projectionOf(
+    peer: Peer,
+    payload: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+    return call(peer, 'projectTable', payload);
 }
 
 test('the engine resolves column widths exactly like prosemirror-tables 1.8.5', async (context) => {
@@ -171,9 +176,18 @@ test('the engine resolves column widths exactly like prosemirror-tables 1.8.5', 
                     });
                     const oracle = await projectionOf(web, { table: fixture.table });
 
+                    assert.ok(
+                        Array.isArray(oracle['slots']) && oracle['slots'].length > 0,
+                        'the oracle must report a slot anchor for every grid position',
+                    );
+                    assert.equal(
+                        oracle['collisions'],
+                        NO_COLLISIONS,
+                        'placement is only comparable where the reference reports no collision',
+                    );
                     assert.deepEqual(
-                        projected,
-                        oracle,
+                        geometryOf(projected),
+                        geometryOf(oracle),
                         `the engine and prosemirror-tables disagree about ${fixture.name}`,
                     );
                     if (fixture.pinnedWidths !== undefined) {

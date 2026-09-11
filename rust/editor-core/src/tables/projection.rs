@@ -6,7 +6,7 @@ use crate::tables::roles::{
     TableRoles, MIN_TABLE_CELL_SPAN, TABLE_CELL_COLSPAN_ATTR, TABLE_CELL_COLWIDTH_ATTR,
     TABLE_CELL_ROWSPAN_ATTR,
 };
-use crate::tables::types::TableError;
+use crate::tables::types::{try_resize, TableError};
 use crate::tables::widths::ColumnWidthResolver;
 
 const PROJECTION_WORK_PER_GRID_SLOT: usize = 16;
@@ -15,6 +15,7 @@ const UNSET_COLUMN_WIDTH: u32 = 0;
 const NODE_OPENING_TOKENS: u32 = 1;
 const NEXT_COLUMN_STEP: u32 = 1;
 const SINGLE_WORK_STEP: usize = 1;
+const MINIMUM_TABLE_GRID_CHARGE: usize = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CellRect {
@@ -212,7 +213,7 @@ impl Placement {
                 budget.spend(SINGLE_WORK_STEP)?;
                 let width = column_width(cell, offset)?;
                 self.widths
-                    .contribute_at(advance(column, offset)? as usize, width);
+                    .contribute_at(advance(column, offset)? as usize, width)?;
             }
         }
 
@@ -238,7 +239,7 @@ impl Placement {
 
     fn finish(self, budget: &mut TableGridBudget) -> Result<ProjectedTable, TableError> {
         let extent = grid_extent(self.rows, self.columns)?;
-        budget.charge(extent.max(self.raw_extent))?;
+        budget.charge(extent.max(self.raw_extent).max(MINIMUM_TABLE_GRID_CHARGE))?;
 
         let mut slots: Vec<Option<usize>> = Vec::new();
         try_resize(&mut slots, extent, None)?;
@@ -266,7 +267,7 @@ impl Placement {
             columns: self.columns,
             cells: self.cells,
             slots,
-            widths: self.widths.finish(self.columns as usize),
+            widths: self.widths.finish(self.columns as usize)?,
             irregular,
         })
     }
@@ -344,14 +345,6 @@ fn grid_extent(rows: u32, columns: u32) -> Result<usize, TableError> {
     (rows as usize)
         .checked_mul(columns as usize)
         .ok_or(TableError::Allocation)
-}
-
-fn try_resize<T: Clone>(values: &mut Vec<T>, length: usize, filler: T) -> Result<(), TableError> {
-    values
-        .try_reserve_exact(length.saturating_sub(values.len()))
-        .map_err(|_| TableError::Allocation)?;
-    values.resize(length, filler);
-    Ok(())
 }
 
 fn span_attribute(cell: &Node, name: &str) -> Result<u32, TableError> {

@@ -7,10 +7,13 @@ const UNSET_WIDTH: u32 = 0;
 fn resolve_single_column(contributions: &[u32]) -> Option<u32> {
     let mut resolver = ColumnWidthResolver::new();
     for width in contributions {
-        resolver.contribute_at(FIRST_COLUMN, *width);
+        resolver
+            .contribute_at(FIRST_COLUMN, *width)
+            .expect("a single column always fits");
     }
     resolver
         .finish(1)
+        .expect("a single column always fits")
         .first()
         .copied()
         .expect("one column resolves to one width")
@@ -66,9 +69,14 @@ fn zero_widths_never_contribute() {
 #[test]
 fn columns_without_contributions_resolve_to_no_width() {
     let mut resolver = ColumnWidthResolver::new();
-    resolver.contribute_at(SECOND_COLUMN, 120);
+    resolver
+        .contribute_at(SECOND_COLUMN, 120)
+        .expect("two columns always fit");
 
-    assert_eq!(resolver.finish(3), vec![None, Some(120), None]);
+    assert_eq!(
+        resolver.finish(3).expect("three columns always fit"),
+        vec![None, Some(120), None]
+    );
 }
 
 #[test]
@@ -82,17 +90,29 @@ fn columns_accumulate_independently() {
         (FIRST_COLUMN, 140),
         (SECOND_COLUMN, 180),
     ] {
-        resolver.contribute_at(column, width);
+        resolver
+            .contribute_at(column, width)
+            .expect("two columns always fit");
     }
 
-    assert_eq!(resolver.finish(2), vec![Some(100), Some(180)]);
+    assert_eq!(
+        resolver.finish(2).expect("two columns always fit"),
+        vec![Some(100), Some(180)]
+    );
 }
 
 #[test]
 fn finishing_narrows_to_the_projected_column_count() {
     let mut resolver = ColumnWidthResolver::new();
-    resolver.contribute_at(FIRST_COLUMN, 100);
-    resolver.contribute_at(SECOND_COLUMN, 140);
+    resolver
+        .contribute_at(FIRST_COLUMN, 100)
+        .expect("two columns always fit");
+    resolver
+        .contribute_at(SECOND_COLUMN, 140)
+        .expect("two columns always fit");
 
-    assert_eq!(resolver.finish(1), vec![Some(100)]);
+    assert_eq!(
+        resolver.finish(1).expect("one column always fits"),
+        vec![Some(100)]
+    );
 }
