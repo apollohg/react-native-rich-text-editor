@@ -316,6 +316,10 @@ export async function exchangeUntilIdle(
     }
 }
 
+export function tableFixture(schema: SchemaPreset): Record<string, unknown> {
+    return { ...paragraphFixture(schema), tables: true };
+}
+
 export function paragraphFixture(schema: SchemaPreset): Record<string, unknown> {
     return {
         schema,
@@ -342,7 +346,11 @@ function initializePayload(
     awaitSeed: boolean,
 ): Record<string, unknown> {
     if (kind === 'rust') {
-        return { schema: requireSchemaPreset(config), awaitSeed };
+        return {
+            schema: requireSchemaPreset(config),
+            tables: config['tables'],
+            awaitSeed,
+        };
     }
     return {
         tables: config['tables'],

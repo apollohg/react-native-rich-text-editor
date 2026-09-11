@@ -6,6 +6,7 @@ use super::{checked_operation_increment, YrsDocumentEngine};
 use crate::serialize::{
     from_prosemirror_json_with_limits, rehydrate_reserved_html_opaque, UnknownTypeMode,
 };
+use crate::tables::admission::admit_table_shapes;
 use crate::transform::{canonicalize_yrs_document, DocumentValidator};
 use crate::yrs_engine;
 use crate::yrs_engine::derived_state::{history_selection_to_relative, DerivedStateCache};
@@ -612,6 +613,14 @@ impl YrsDocumentEngine {
                 }
             },
         )?;
+        admit_table_shapes(&document, &self.schema, &self.resource_limits).map_err(|error| {
+            yrs_engine::OperationError::document_invalid(
+                request_id,
+                None,
+                "document",
+                error.to_string(),
+            )
+        })?;
         if let Some(limit) = self.max_length {
             let actual = document.root().text_content().chars().count() as u64;
             if actual > u64::from(limit) {

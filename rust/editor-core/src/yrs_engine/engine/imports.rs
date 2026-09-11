@@ -12,6 +12,7 @@ use crate::serialize::{
     from_html_with_limits, from_prosemirror_json_with_limits, FromHtmlOptions, JsonParseError,
     ParseError, UnknownTypeMode,
 };
+use crate::tables::admission::admit_table_shapes;
 use crate::transform::{
     canonicalize_yrs_document_with_evidence, validate_importable_marks_with_evidence,
     CanonicalMarksEvidence, DocumentValidationReport, DocumentValidator,
@@ -447,6 +448,7 @@ fn validate_import_document_report(
             ),
         ));
     }
+    admit_table_shapes(document, schema, resource_limits).map_err(map_import_validation_error)?;
     DocumentValidator::validate_report(document, schema, resource_limits)
         .map_err(map_import_validation_error)
 }

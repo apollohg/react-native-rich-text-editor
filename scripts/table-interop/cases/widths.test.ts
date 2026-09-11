@@ -2,54 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { call, paragraphFixture, withPeers } from '../controller.js';
 import type { Peer } from '../peer-protocol.js';
-
-const TABLE_NODE = 'table';
-const ROW_NODE = 'table_row';
-const CELL_NODE = 'table_cell';
-const HEADER_CELL_NODE = 'table_header';
-const PARAGRAPH_NODE = 'paragraph';
-const NO_COLLISIONS = 0;
-const CELL_ATTRIBUTES = {
-    colspan: { type: 'number', default: 1, min: 1 },
-    rowspan: { type: 'number', default: 1, min: 1 },
-    colwidth: { default: null },
-};
-
-const TABLE_SCHEMA = {
-    nodes: [
-        { name: 'doc', content: 'block+', role: 'doc' },
-        { name: PARAGRAPH_NODE, content: 'inline*', group: 'block', role: 'textBlock' },
-        { name: 'text', content: '', group: 'inline', role: 'text' },
-        {
-            name: TABLE_NODE,
-            content: `${ROW_NODE}+`,
-            group: 'block',
-            role: 'block',
-            tableRole: 'table',
-        },
-        {
-            name: ROW_NODE,
-            content: `(${CELL_NODE} | ${HEADER_CELL_NODE})*`,
-            role: 'block',
-            tableRole: 'row',
-        },
-        {
-            name: CELL_NODE,
-            content: 'block+',
-            role: 'block',
-            tableRole: 'cell',
-            attrs: CELL_ATTRIBUTES,
-        },
-        {
-            name: HEADER_CELL_NODE,
-            content: 'block+',
-            role: 'block',
-            tableRole: 'header_cell',
-            attrs: CELL_ATTRIBUTES,
-        },
-    ],
-    marks: [],
-};
+import {
+    CELL_NODE,
+    HEADER_CELL_NODE,
+    NO_COLLISIONS,
+    PARAGRAPH_NODE,
+    ROW_NODE,
+    TABLE_NODE,
+    TABLE_SCHEMA,
+    geometryOf,
+} from '../table-schema.js';
 
 type CellOptions = {
     colspan?: number;
@@ -146,16 +108,6 @@ const FIXTURES: Fixture[] = [
         ]),
     },
 ];
-
-function geometryOf(projection: Record<string, unknown>): Record<string, unknown> {
-    return {
-        rows: projection['rows'],
-        columns: projection['columns'],
-        widths: projection['widths'],
-        irregular: projection['irregular'],
-        slots: projection['slots'],
-    };
-}
 
 async function projectionOf(
     peer: Peer,

@@ -26,6 +26,150 @@ pub fn prosemirror_schema() -> Schema {
     build_schema(NamingConvention::SnakeCase)
 }
 
+#[cfg(any(feature = "table-interop", test))]
+pub(crate) use tabled::{prosemirror_table_schema, tiptap_table_schema};
+
+#[cfg(any(feature = "table-interop", test))]
+mod tabled {
+    use std::collections::HashMap;
+
+    use super::{build_schema_parts, name, NamingConvention};
+    use crate::schema::content_rule::ContentRule;
+    use crate::schema::{AttrSpec, NodeRole, NodeSpec, Schema};
+    use crate::tables::roles::{
+        MIN_TABLE_CELL_SPAN, TABLE_CELL_COLSPAN_ATTR, TABLE_CELL_COLWIDTH_ATTR,
+        TABLE_CELL_ROWSPAN_ATTR,
+    };
+    use crate::tables::TableRole;
+
+    const TABLE_NODE_GROUP: &str = "block";
+    const TABLE_CELL_CONTENT: &str = "block+";
+    const NUMBER_ATTR_TYPE: &str = "number";
+    const TABLE_NODE_NAME: &str = "table";
+    const TABLE_HTML_TAG: &str = "table";
+    const ROW_HTML_TAG: &str = "tr";
+    const CELL_HTML_TAG: &str = "td";
+    const HEADER_CELL_HTML_TAG: &str = "th";
+
+    /// Build the ProseMirror-named schema extended with `prosemirror-tables` roles.
+    pub(crate) fn prosemirror_table_schema() -> Schema {
+        build_tabled_schema(NamingConvention::SnakeCase)
+    }
+
+    /// Build the Tiptap-named schema extended with Tiptap's table roles.
+    pub(crate) fn tiptap_table_schema() -> Schema {
+        build_tabled_schema(NamingConvention::CamelCase)
+    }
+
+    struct TableNodeNames {
+        table: String,
+        row: String,
+        cell: String,
+        header_cell: String,
+    }
+
+    fn table_node_names(convention: &NamingConvention) -> TableNodeNames {
+        TableNodeNames {
+            table: TABLE_NODE_NAME.to_string(),
+            row: name(convention, "tableRow", "table_row"),
+            cell: name(convention, "tableCell", "table_cell"),
+            header_cell: name(convention, "tableHeader", "table_header"),
+        }
+    }
+
+    fn table_cell_span_attr() -> AttrSpec {
+        let mut spec = AttrSpec {
+            default: Some(serde_json::json!(MIN_TABLE_CELL_SPAN)),
+            has_default: true,
+            ..AttrSpec::default()
+        };
+        spec.constraints
+            .insert("type".to_string(), serde_json::json!(NUMBER_ATTR_TYPE));
+        spec.constraints
+            .insert("min".to_string(), serde_json::json!(MIN_TABLE_CELL_SPAN));
+        spec
+    }
+
+    fn table_cell_attrs() -> HashMap<String, AttrSpec> {
+        let mut attrs = HashMap::new();
+        attrs.insert(TABLE_CELL_COLSPAN_ATTR.to_string(), table_cell_span_attr());
+        attrs.insert(TABLE_CELL_ROWSPAN_ATTR.to_string(), table_cell_span_attr());
+        attrs.insert(
+            TABLE_CELL_COLWIDTH_ATTR.to_string(),
+            AttrSpec {
+                default: Some(serde_json::Value::Null),
+                has_default: true,
+                ..AttrSpec::default()
+            },
+        );
+        attrs
+    }
+
+    fn table_cell_node(name: String, html_tag: &str, table_role: TableRole) -> NodeSpec {
+        NodeSpec {
+            name,
+            content: ContentRule::parse(TABLE_CELL_CONTENT).unwrap(),
+            group: None,
+            attrs: table_cell_attrs(),
+            role: NodeRole::Block,
+            html_tag: Some(html_tag.to_string()),
+            html_rules: None,
+            json_projection: None,
+            is_void: false,
+            deletable_on_backspace: None,
+            allow_undeclared_attrs: false,
+            table_role: Some(table_role),
+        }
+    }
+
+    fn table_node_specs(convention: &NamingConvention) -> Vec<NodeSpec> {
+        let names = table_node_names(convention);
+        vec![
+            NodeSpec {
+                name: names.table.clone(),
+                content: ContentRule::parse(&format!("{}+", names.row)).unwrap(),
+                group: Some(TABLE_NODE_GROUP.to_string()),
+                attrs: HashMap::new(),
+                role: NodeRole::Block,
+                html_tag: Some(TABLE_HTML_TAG.to_string()),
+                html_rules: None,
+                json_projection: None,
+                is_void: false,
+                deletable_on_backspace: None,
+                allow_undeclared_attrs: false,
+                table_role: Some(TableRole::Table),
+            },
+            NodeSpec {
+                name: names.row.clone(),
+                content: ContentRule::parse(&format!("({} | {})*", names.cell, names.header_cell))
+                    .unwrap(),
+                group: None,
+                attrs: HashMap::new(),
+                role: NodeRole::Block,
+                html_tag: Some(ROW_HTML_TAG.to_string()),
+                html_rules: None,
+                json_projection: None,
+                is_void: false,
+                deletable_on_backspace: None,
+                allow_undeclared_attrs: false,
+                table_role: Some(TableRole::Row),
+            },
+            table_cell_node(names.cell, CELL_HTML_TAG, TableRole::Cell),
+            table_cell_node(
+                names.header_cell,
+                HEADER_CELL_HTML_TAG,
+                TableRole::HeaderCell,
+            ),
+        ]
+    }
+
+    fn build_tabled_schema(convention: NamingConvention) -> Schema {
+        let (mut nodes, marks) = build_schema_parts(&convention);
+        nodes.extend(table_node_specs(&convention));
+        Schema::new(nodes, marks)
+    }
+}
+
 enum NamingConvention {
     CamelCase,
     SnakeCase,
@@ -44,7 +188,12 @@ fn name(convention: &NamingConvention, camel: &str, snake: &str) -> String {
 }
 
 fn build_schema(convention: NamingConvention) -> Schema {
-    let list_item_name = name(&convention, "listItem", "list_item");
+    let (nodes, marks) = build_schema_parts(&convention);
+    Schema::new(nodes, marks)
+}
+
+fn build_schema_parts(convention: &NamingConvention) -> (Vec<NodeSpec>, Vec<MarkSpec>) {
+    let list_item_name = name(convention, "listItem", "list_item");
     let mut nodes = vec![
         NodeSpec {
             name: "doc".to_string(),
@@ -345,7 +494,7 @@ fn build_schema(convention: NamingConvention) -> Schema {
         },
     ];
 
-    Schema::new(nodes, marks)
+    (nodes, marks)
 }
 
 #[cfg(test)]

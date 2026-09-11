@@ -13,6 +13,7 @@ use crate::serialize::{
     from_prosemirror_json_with_limits, rehydrate_reserved_html_opaque, JsonParseError,
     UnknownTypeMode,
 };
+use crate::tables::admission::admit_table_shapes;
 use crate::transform::{DocumentValidator, StepMap};
 use crate::yrs_engine;
 use crate::yrs_engine::derived_state::{stored_marks_after_selection_change, DerivedStateCache};
@@ -268,6 +269,8 @@ impl YrsDocumentEngine {
         .map_err(|error| remote_json_error(request_id, error))?;
         let candidate_document = rehydrate_reserved_html_opaque(&candidate_document);
         DocumentValidator::validate(&candidate_document, &self.schema, &self.resource_limits)
+            .map_err(|error| remote_validation_error(request_id, error))?;
+        admit_table_shapes(&candidate_document, &self.schema, &self.resource_limits)
             .map_err(|error| remote_validation_error(request_id, error))?;
         if let Some(limit) = self.max_length {
             let actual = candidate_document.root().text_content().chars().count();

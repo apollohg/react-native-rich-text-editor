@@ -355,41 +355,59 @@ fn validate_node(
         let content = node.content().ok_or_else(|| {
             BoundaryError::new("DOCUMENT_INVALID", "non-void schema node has no content")
         })?;
-        let children = content.children();
-        let matches = spec
-            .content
-            .matches_with_budget(
-                children,
-                |child, symbol| child_matches_group(child, symbol, schema),
-                budget,
-            )
-            .map_err(|()| {
-                let mut error = BoundaryError::limit(
-                    "DOCUMENT_LIMIT_EXCEEDED",
-                    work_limit,
-                    work_limit.saturating_add(1),
-                );
-                error.details = Some(serde_json::json!({ "phase": "documentWork" }));
-                error
-            })?;
-        if !matches {
-            let child_types = children
-                .iter()
-                .map(|child| child.node_type())
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(BoundaryError::new(
-                "DOCUMENT_INVALID",
-                format!(
-                    "node '{}' content [{}] does not match its content expression",
-                    node.node_type(),
-                    child_types
-                ),
-            ));
+        let allowed_transient_empty_table =
+            spec.table_role == Some(crate::tables::TableRole::Table) && node.child_count() == 0;
+        if !allowed_transient_empty_table {
+            validate_declared_content(node, spec, schema, budget, work_limit)?;
         }
 
         let child_depth = depth.saturating_add(1);
         pending.extend(content.iter().rev().map(|child| (child, child_depth)));
+    }
+    Ok(())
+}
+
+fn validate_declared_content(
+    node: &Node,
+    spec: &crate::schema::NodeSpec,
+    schema: &Schema,
+    budget: &WorkBudget,
+    work_limit: usize,
+) -> BoundaryResult<()> {
+    let content = node.content().ok_or_else(|| {
+        BoundaryError::new("DOCUMENT_INVALID", "non-void schema node has no content")
+    })?;
+    let children = content.children();
+    let matches = spec
+        .content
+        .matches_with_budget(
+            children,
+            |child, symbol| child_matches_group(child, symbol, schema),
+            budget,
+        )
+        .map_err(|()| {
+            let mut error = BoundaryError::limit(
+                "DOCUMENT_LIMIT_EXCEEDED",
+                work_limit,
+                work_limit.saturating_add(1),
+            );
+            error.details = Some(serde_json::json!({ "phase": "documentWork" }));
+            error
+        })?;
+    if !matches {
+        let child_types = children
+            .iter()
+            .map(|child| child.node_type())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(BoundaryError::new(
+            "DOCUMENT_INVALID",
+            format!(
+                "node '{}' content [{}] does not match its content expression",
+                node.node_type(),
+                child_types
+            ),
+        ));
     }
     Ok(())
 }

@@ -21,6 +21,7 @@ use crate::position::update::UpdateMode;
 use crate::position::PositionMap;
 use crate::schema::Schema;
 use crate::selection::Selection;
+use crate::tables::admission::TableProjectionIndex;
 #[cfg(test)]
 use crate::transform::DocumentValidator;
 use crate::transform::StepMap;
@@ -116,6 +117,7 @@ pub(crate) struct DerivedStateCache {
     pub render_blocks: Arc<crate::render::incremental::CachedRenderBlocks>,
     pub mutation_lookup_seed: Arc<super::mutation::MutationLookupSeed>,
     pub validation_certificate: DocumentValidationCertificate,
+    pub table_projection_index: TableProjectionIndex,
 
     pub localized_text_index: Option<LocalizedTextLeafIndex>,
     active_state_certificate: Option<Arc<ActiveStateCertificate>>,
@@ -242,6 +244,7 @@ impl DerivedStateCache {
             render_blocks: Arc::clone(&self.render_blocks),
             mutation_lookup_seed: Arc::clone(&self.mutation_lookup_seed),
             validation_certificate: self.validation_certificate.clone(),
+            table_projection_index: self.table_projection_index.clone(),
             localized_text_index,
             active_state_certificate: None,
         }
@@ -539,6 +542,8 @@ impl DerivedStateCache {
             resource_limits,
             schema,
         );
+        let table_projection_index =
+            TableProjectionIndex::derive_or_fallback(&document, schema, resource_limits);
         Some(Self {
             document,
             canonical_artifact,
@@ -557,6 +562,7 @@ impl DerivedStateCache {
             render_blocks,
             mutation_lookup_seed,
             validation_certificate,
+            table_projection_index,
             localized_text_index,
             active_state_certificate: None,
         })
@@ -739,6 +745,8 @@ impl DerivedStateCache {
                 );
                 (validation_certificate, localized_text_index)
             };
+        let table_projection_index =
+            TableProjectionIndex::derive_or_fallback(&document, schema, resource_limits);
 
         Some(Self {
             document,
@@ -758,6 +766,7 @@ impl DerivedStateCache {
             render_blocks,
             mutation_lookup_seed,
             validation_certificate,
+            table_projection_index,
             localized_text_index,
             active_state_certificate: None,
         })

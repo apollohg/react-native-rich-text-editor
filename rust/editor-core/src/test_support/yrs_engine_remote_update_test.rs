@@ -877,3 +877,5 @@ fn undo_skips_stack_items_that_revert_nothing_and_applies_the_next_one() {
 include!("yrs_engine_remote_update_test/staging.rs");
 
 include!("yrs_engine_remote_update_test/replay_determinism.rs");
+
+include!("yrs_engine_remote_update_test/tables.rs");

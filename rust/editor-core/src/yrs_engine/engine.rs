@@ -369,6 +369,15 @@ impl YrsDocumentEngine {
         })
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn table_projection_index(
+        &self,
+    ) -> Option<&crate::tables::admission::TableProjectionIndex> {
+        self.derived_state
+            .as_ref()
+            .map(|state| &state.table_projection_index)
+    }
+
     pub fn document_html(&self) -> Option<String> {
         self.document()
             .map(|document| to_html(document, &self.schema))

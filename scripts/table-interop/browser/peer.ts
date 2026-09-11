@@ -1,10 +1,19 @@
 import * as Y from 'yjs';
-import { EditorState, Plugin, PluginKey } from 'prosemirror-state';
+import { EditorState, Plugin, PluginKey, TextSelection } from 'prosemirror-state';
 import type { Transaction } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { schema as prosemirrorBasicSchema } from 'prosemirror-schema-basic';
 import { Schema as ProsemirrorSchema } from 'prosemirror-model';
-import { TableMap, tableNodes } from 'prosemirror-tables';
+import {
+    TableMap,
+    addColumnAfter,
+    addRowAfter,
+    deleteColumn,
+    deleteRow,
+    tableEditing,
+    tableNodes,
+} from 'prosemirror-tables';
+import type { Command } from 'prosemirror-state';
 import type { Node as ProsemirrorNode } from 'prosemirror-model';
 import {
     ySyncPlugin,
@@ -19,6 +28,7 @@ import Document from '@tiptap/extension-document';
 import Paragraph from '@tiptap/extension-paragraph';
 import Text from '@tiptap/extension-text';
 import Collaboration from '@tiptap/extension-collaboration';
+import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import {
     ySyncPluginKey as tiptapSyncPluginKey,
     yXmlFragmentToProsemirrorJSON as tiptapXmlFragmentToProsemirrorJSON,
@@ -42,6 +52,15 @@ const SYNTHETIC_SLOT_POSITION = 0;
 const TABLE_CONTENT_OFFSET = 1;
 const CELL_COLLISION = 'collision';
 const UNSET_COLUMN_WIDTH = 0;
+const INSERT_TEXT_COMMAND = 'insertText';
+const INSERT_NODE_COMMAND = 'insertNode';
+const TABLE_COMMAND = 'tableCommand';
+const TABLE_COMMANDS: Record<string, Command> = {
+    addColumnAfter,
+    addRowAfter,
+    deleteColumn,
+    deleteRow,
+};
 
 const tableSchema = new ProsemirrorSchema({
     nodes: prosemirrorBasicSchema.spec.nodes.append(
@@ -150,10 +169,18 @@ function mountProsemirror(
     fragment: Y.XmlFragment,
     element: HTMLElement,
     counter: NormalizationCounter,
+    tables: boolean,
 ): MountedEditor {
     const state = EditorState.create({
-        schema: prosemirrorBasicSchema,
-        plugins: [ySyncPlugin(fragment), yUndoPlugin(), normalizationCounterPlugin(counter)],
+        schema: tables ? tableSchema : prosemirrorBasicSchema,
+        plugins: tables
+            ? [
+                ySyncPlugin(fragment),
+                yUndoPlugin(),
+                tableEditing(),
+                normalizationCounterPlugin(counter),
+            ]
+            : [ySyncPlugin(fragment), yUndoPlugin(), normalizationCounterPlugin(counter)],
     });
     const view = new EditorView(element, {
         state,
@@ -176,6 +203,7 @@ function mountTiptap(
     fragmentName: string,
     element: HTMLElement,
     counter: NormalizationCounter,
+    tables: boolean,
 ): MountedEditor {
     const fragment = sharedDocument.getXmlFragment(fragmentName);
     const instrumentation = Extension.create({
@@ -188,6 +216,7 @@ function mountTiptap(
             Document,
             Paragraph,
             Text,
+            ...(tables ? [Table, TableRow, TableHeader, TableCell] : []),
             Collaboration.configure({ document: sharedDocument, field: fragmentName }),
             instrumentation,
         ],
@@ -207,14 +236,43 @@ function bindingOriginFor(kind: WebPeerKind): unknown {
 
 function applyCommand(editor: MountedEditor, command: Record<string, unknown>): void {
     const type = command['type'];
-    if (type !== 'insertText') {
-        throw new PeerOperationError(
-            CONFIG_INVALID,
-            `command ${JSON.stringify(type)} is not served by the web peer`,
-        );
+    if (type === INSERT_TEXT_COMMAND) {
+        const text = requireString(command['text'], 'command.text');
+        editor.view.dispatch(editor.view.state.tr.insertText(text));
+        return;
     }
-    const text = requireString(command['text'], 'command.text');
-    editor.view.dispatch(editor.view.state.tr.insertText(text));
+    if (type === INSERT_NODE_COMMAND) {
+        const json = requireRecord(command['node'], 'command.node');
+        const node = editor.view.state.schema.nodeFromJSON(json);
+        editor.view.dispatch(editor.view.state.tr.replaceSelectionWith(node));
+        return;
+    }
+    if (type === TABLE_COMMAND) {
+        const name = requireString(command['name'], 'command.name');
+        const at = requirePositiveInteger(command['at'], 'command.at');
+        const tableCommand = TABLE_COMMANDS[name];
+        if (tableCommand === undefined) {
+            throw new PeerOperationError(
+                CONFIG_INVALID,
+                `table command ${JSON.stringify(name)} is not served by the web peer`,
+            );
+        }
+        const { state } = editor.view;
+        editor.view.dispatch(
+            state.tr.setSelection(TextSelection.near(state.doc.resolve(at))),
+        );
+        if (!tableCommand(editor.view.state, editor.view.dispatch, editor.view)) {
+            throw new PeerOperationError(
+                CONFIG_INVALID,
+                `table command ${name} did not apply at ${at}`,
+            );
+        }
+        return;
+    }
+    throw new PeerOperationError(
+        CONFIG_INVALID,
+        `command ${JSON.stringify(type)} is not served by the web peer`,
+    );
 }
 
 class WebPeerRuntime {
@@ -222,6 +280,7 @@ class WebPeerRuntime {
     private readonly element: HTMLElement;
     private readonly fragmentName: string;
     private readonly maxUpdateBytes: number;
+    private readonly tables: boolean;
     private readonly bindingOrigin: unknown;
     private readonly document = new Y.Doc();
     private readonly counter: NormalizationCounter = { passes: 0 };
@@ -236,11 +295,13 @@ class WebPeerRuntime {
         element: HTMLElement,
         fragmentName: string,
         maxUpdateBytes: number,
+        tables: boolean,
     ) {
         this.kind = kind;
         this.element = element;
         this.fragmentName = fragmentName;
         this.maxUpdateBytes = maxUpdateBytes;
+        this.tables = tables;
         this.bindingOrigin = bindingOriginFor(kind);
         this.document.on('update', (update: Uint8Array, origin: unknown) => {
             this.documentRevision += 1;
@@ -281,8 +342,15 @@ class WebPeerRuntime {
                 this.document.getXmlFragment(this.fragmentName),
                 this.element,
                 this.counter,
+                this.tables,
             )
-            : mountTiptap(this.document, this.fragmentName, this.element, this.counter);
+            : mountTiptap(
+                this.document,
+                this.fragmentName,
+                this.element,
+                this.counter,
+                this.tables,
+            );
     }
 
     mountForLocalInitialization(): void {
@@ -512,12 +580,6 @@ function initialize(payload: Record<string, unknown>): Record<string, unknown> {
         throw new PeerOperationError(CONFIG_INVALID, 'the peer session is already initialized');
     }
     const tables = requireBoolean(payload['tables'], 'payload.tables');
-    if (tables) {
-        throw new PeerOperationError(
-            CONFIG_INVALID,
-            'the web peer has no table schema yet; table enablement is not served',
-        );
-    }
     const fragmentName = requireString(payload['fragmentName'], 'payload.fragmentName');
     const limits = requireRecord(payload['limits'], 'payload.limits');
     const maxUpdateBytes = requirePositiveInteger(
@@ -525,7 +587,13 @@ function initialize(payload: Record<string, unknown>): Record<string, unknown> {
         'payload.limits.maxUpdateBytes',
     );
     const awaitSeed = requireBoolean(payload['awaitSeed'], 'payload.awaitSeed');
-    const created = new WebPeerRuntime(readKind(), readElement(), fragmentName, maxUpdateBytes);
+    const created = new WebPeerRuntime(
+        readKind(),
+        readElement(),
+        fragmentName,
+        maxUpdateBytes,
+        tables,
+    );
     runtime = created;
     if (!awaitSeed) {
         created.mountForLocalInitialization();

@@ -11,7 +11,7 @@ const INVALID_STRUCTURE_MESSAGE: &str =
 const INVALID_ATTRIBUTES_MESSAGE: &str =
     "schema table roles are invalid: table attributes are invalid";
 
-pub(super) const PROSEMIRROR_TABLE_NAMES: [&str; 4] =
+pub(crate) const PROSEMIRROR_TABLE_NAMES: [&str; 4] =
     ["table", "table_row", "table_cell", "table_header"];
 const TIPTAP_TABLE_NAMES: [&str; 4] = ["table", "tableRow", "tableCell", "tableHeader"];
 
@@ -75,7 +75,7 @@ fn tabled_schema_json(names: [&str; 4]) -> serde_json::Value {
     schema_json(nodes)
 }
 
-pub(super) fn tabled_schema(names: [&str; 4]) -> Schema {
+pub(crate) fn tabled_schema(names: [&str; 4]) -> Schema {
     Schema::from_json(&tabled_schema_json(names)).expect("tabled schema is valid")
 }
 

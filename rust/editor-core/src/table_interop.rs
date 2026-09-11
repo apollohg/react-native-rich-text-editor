@@ -15,7 +15,9 @@ use crate::native_transaction_bridge::{
     operation_error, serialize_native_outcome, NativeTransactionBridge,
     NATIVE_BRIDGE_ENVELOPE_VERSION,
 };
-use crate::schema::presets::{prosemirror_schema, tiptap_schema};
+use crate::schema::presets::{
+    prosemirror_schema, prosemirror_table_schema, tiptap_schema, tiptap_table_schema,
+};
 use crate::schema::Schema;
 use crate::serialize::json_in::{from_prosemirror_json_with_limits, UnknownTypeMode};
 use crate::session::{
@@ -65,6 +67,8 @@ struct WireRequest {
 struct InitializePayload {
     #[serde(default)]
     schema: Option<SchemaPreset>,
+    #[serde(default)]
+    tables: bool,
     #[serde(default)]
     await_seed: bool,
 }
@@ -302,9 +306,11 @@ impl RustPeer {
         if self.session.is_some() {
             return Err(config_invalid("the peer session is already initialized"));
         }
-        let schema = match payload.schema.unwrap_or(SchemaPreset::Tiptap) {
-            SchemaPreset::Tiptap => tiptap_schema(),
-            SchemaPreset::Prosemirror => prosemirror_schema(),
+        let schema = match (payload.schema.unwrap_or(SchemaPreset::Tiptap), payload.tables) {
+            (SchemaPreset::Tiptap, false) => tiptap_schema(),
+            (SchemaPreset::Tiptap, true) => tiptap_table_schema(),
+            (SchemaPreset::Prosemirror, false) => prosemirror_schema(),
+            (SchemaPreset::Prosemirror, true) => prosemirror_table_schema(),
         };
         let initialization = if payload.await_seed {
             EditorInitialization::Room {

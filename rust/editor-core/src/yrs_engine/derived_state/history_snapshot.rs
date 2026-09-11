@@ -766,6 +766,12 @@ impl DerivedStateCache {
             render_blocks: Arc::clone(&snapshot.render_blocks),
             mutation_lookup_seed,
             validation_certificate,
+            table_projection_index:
+                crate::tables::admission::TableProjectionIndex::derive_or_fallback(
+                    &snapshot.document,
+                    schema,
+                    &snapshot.resource_limits,
+                ),
             localized_text_index: None,
             active_state_certificate: None,
         };

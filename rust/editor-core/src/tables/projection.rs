@@ -16,6 +16,7 @@ const NODE_OPENING_TOKENS: u32 = 1;
 const NEXT_COLUMN_STEP: u32 = 1;
 const SINGLE_WORK_STEP: usize = 1;
 const MINIMUM_TABLE_GRID_CHARGE: usize = 1;
+const MAX_INTEGRAL_FLOAT_ATTRIBUTE: f64 = u32::MAX as f64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CellRect {
@@ -347,11 +348,25 @@ fn grid_extent(rows: u32, columns: u32) -> Result<usize, TableError> {
         .ok_or(TableError::Allocation)
 }
 
+fn integral_unsigned(value: &Value) -> Option<u64> {
+    value.as_u64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|number| {
+                number.is_finite()
+                    && number.fract() == 0.0
+                    && *number >= 0.0
+                    && *number <= MAX_INTEGRAL_FLOAT_ATTRIBUTE
+            })
+            .map(|number| number as u64)
+    })
+}
+
 fn span_attribute(cell: &Node, name: &str) -> Result<u32, TableError> {
     match cell.attrs().get(name) {
         None | Some(Value::Null) => Ok(DEFAULT_TABLE_CELL_SPAN),
         Some(value) => {
-            let span = value.as_u64().ok_or(TableError::InvalidAttributes)?;
+            let span = integral_unsigned(value).ok_or(TableError::InvalidAttributes)?;
             if span < MIN_TABLE_CELL_SPAN {
                 return Err(TableError::InvalidAttributes);
             }
@@ -369,7 +384,7 @@ fn column_width(cell: &Node, offset: u32) -> Result<u32, TableError> {
     match widths.get(offset as usize) {
         None | Some(Value::Null) => Ok(UNSET_COLUMN_WIDTH),
         Some(value) => {
-            let width = value.as_u64().ok_or(TableError::InvalidAttributes)?;
+            let width = integral_unsigned(value).ok_or(TableError::InvalidAttributes)?;
             u32::try_from(width).map_err(|_| TableError::InvalidAttributes)
         }
     }

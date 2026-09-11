@@ -7,6 +7,7 @@
         "typecheck": "tsc -p tsconfig.json && tsc -p browser/tsconfig.json",
         "test:unit": "tsx --test cases/*.test.ts",
         "test:plumbing": "tsx run.ts --suite plumbing",
+        "test:schema-admission": "tsx run.ts --suite schema-admission",
         "test:convergence": "tsx run.ts --suite convergence",
         "test:differential": "tsx run.ts --suite differential"
     },

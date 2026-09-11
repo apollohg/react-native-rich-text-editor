@@ -8,6 +8,7 @@ use crate::boundary::ResourceLimits;
 use crate::model::Document;
 use crate::schema::Schema;
 use crate::serialize::{from_prosemirror_json_with_limits, to_prosemirror_json, UnknownTypeMode};
+use crate::tables::admission::admit_table_shapes;
 use crate::transform::DocumentValidator;
 use crate::yrs_engine;
 use crate::yrs_engine::canonical::{CanonicalArtifact, CanonicalSchemaContext};
@@ -528,6 +529,7 @@ pub(super) fn build_local_empty_candidate(
     )
     .map_err(|error| YrsEngineError::parse("CODEC_INVARIANT_FAILED", error))?;
     DocumentValidator::validate(&document, schema, resource_limits)?;
+    admit_table_shapes(&document, schema, resource_limits)?;
     let canonical_artifact = canonical_schema
         .derive(&document)
         .map_err(|error| YrsEngineError::parse("CODEC_INVARIANT_FAILED", error))?;
