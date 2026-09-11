@@ -16,6 +16,40 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class EditorStyleSheetTest {
     @Test
+    fun `editor marker baseline ignores noncontiguous quote rules`() {
+        fun markerAppearance(rules: String? = null): Pair<Int, Int> {
+            val ruleJSON = rules?.let { ",\"rules\":$it" } ?: ""
+            val theme = EditorTheme.fromJson(
+                """{"version":1,"styles":{"text":{"fontSize":20},"blockquote":{"fontSize":30,"color":"#00ff00ff"},"listItem":{"fontSize":40,"color":"#0000ffff"},"listMarker":{"scale":1,"gap":0}}$ruleJSON}"""
+            )!!
+            val rendered = RenderBridge.buildSpannable(
+                """[
+                {"type":"blockStart","nodeType":"blockquote","depth":0},
+                {"type":"blockStart","nodeType":"listItem","depth":1,"listContext":{"ordered":false,"index":1,"isFirst":true,"isLast":true}},
+                {"type":"blockStart","nodeType":"paragraph","depth":1},
+                {"type":"textRun","text":"nested","marks":[]},
+                {"type":"blockEnd"},{"type":"blockEnd"},{"type":"blockEnd"}
+                ]""",
+                17f, Color.BLACK, theme, 1f
+            )
+            val width = rendered.getSpans(0, rendered.length, CenteredBulletSpan::class.java)
+                .single().getSize(android.graphics.Paint(), rendered, 0, 1, null)
+            val color = rendered.getSpans(0, 1, android.text.style.ForegroundColorSpan::class.java)
+                .last().foregroundColor
+            return width to color
+        }
+        val noncontiguous = """{"path":["blockquote","paragraph"],"style":{"fontSize":70,"color":"#ff0000ff"}}"""
+        val contiguous = """{"path":["blockquote","bulletList","listItem","paragraph"],"style":{"fontSize":50,"color":"#ff0000ff"}}"""
+        assertEquals(10 to Color.GREEN, markerAppearance())
+        assertEquals(10 to Color.GREEN, markerAppearance("[]"))
+        assertEquals(10 to Color.GREEN, markerAppearance("[$noncontiguous]"))
+        assertEquals(16 to Color.RED, markerAppearance("[$noncontiguous,$contiguous]"))
+        assertEquals(16 to Color.BLUE, markerAppearance(
+            """[$contiguous,{"path":["listItem","listMarker"],"style":{"color":"#0000ffff"}}]"""
+        ))
+    }
+
+    @Test
     fun `editor list markers inherit contextual paragraph typography`() {
         fun markerAppearance(rules: String): Pair<Int, Int> {
             val theme = EditorTheme.fromJson(

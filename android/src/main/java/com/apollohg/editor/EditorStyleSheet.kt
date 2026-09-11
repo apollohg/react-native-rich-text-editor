@@ -94,10 +94,9 @@ class EditorStyleSheet private constructor(
         return result
     }
 
-    fun resolveText(
+    internal fun resolveBaseText(
         element: String,
-        ancestors: List<String> = emptyList(),
-        marks: List<String> = emptyList()
+        ancestors: List<String> = emptyList()
     ): EditorTextStyle {
         val name = canonicalElement(element)
         var result = EditorTextStyle().mergedWith(this["text"]?.text)
@@ -105,7 +104,16 @@ class EditorStyleSheet private constructor(
         ancestors.forEach {
             result = result.mergedWith(this[it]?.text?.copy(backgroundColor = null))
         }
-        result = result.mergedWith(this[name]?.text?.copy(backgroundColor = null))
+        return result.mergedWith(this[name]?.text?.copy(backgroundColor = null))
+    }
+
+    fun resolveText(
+        element: String,
+        ancestors: List<String> = emptyList(),
+        marks: List<String> = emptyList()
+    ): EditorTextStyle {
+        val name = canonicalElement(element)
+        var result = resolveBaseText(name, ancestors)
         matchingRules(name, ancestors).forEach {
             result = result.mergedWith(EditorTextStyle.fromJson(it.style)?.copy(backgroundColor = null))
         }

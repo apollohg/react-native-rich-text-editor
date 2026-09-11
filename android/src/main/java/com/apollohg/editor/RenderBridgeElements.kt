@@ -313,10 +313,14 @@ internal fun RenderBridge.appendElements(
                         null
                     }
                     val marker = listMarkerString(markerListContext)
-                    var markerTextStyle = resolveTextStyle(
+                    val markerInBlockquote = blockquoteDepth(state.blockStack) > 0
+                    var markerTextStyle = theme?.styleSheet?.resolveBaseText(
+                        nodeType,
+                        if (markerInBlockquote) listOf("blockquote") else emptyList()
+                    ) ?: resolveTextStyle(
                         nodeType,
                         theme,
-                        blockquoteDepth(state.blockStack) > 0
+                        markerInBlockquote
                     )
                     theme?.styleSheet?.let { sheet ->
                         val ancestors = state.blockStack.dropLast(1).map { it.nodeType }
