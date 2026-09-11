@@ -54,10 +54,23 @@ struct EditorStyleSheet {
 
     subscript(_ element: String) -> [String: Any] { styles[Self.element(element)] ?? [:] }
 
-    func resolvedValues(_ element: String, ancestors: [String] = []) -> [String: Any] {
+    private func matchingRules(_ element: String, ancestors: [String]) -> [Rule] {
         let chain = (ancestors + [element]).map(Self.element)
+        return rules.filter { $0.path.count <= chain.count && Array(chain.suffix($0.path.count)) == $0.path }
+    }
+
+    func hasInlineFontRule(_ marks: [Any], ancestors: [String]) -> Bool {
+        marks.contains { mark in
+            guard let rawName = (mark as? String) ?? (mark as? [String: Any])?["type"] as? String else { return false }
+            let name = Self.element(rawName)
+            return Self.inlineMarkNames.contains(name)
+                && matchingRules(name, ancestors: ancestors).contains { $0.style["fontFamily"] is String }
+        }
+    }
+
+    func resolvedValues(_ element: String, ancestors: [String] = []) -> [String: Any] {
         var values = self[element]
-        for rule in rules where rule.path.count <= chain.count && Array(chain.suffix(rule.path.count)) == rule.path {
+        for rule in matchingRules(element, ancestors: ancestors) {
             values.merge(rule.style, uniquingKeysWith: Self.mergeValue)
         }
         return values
@@ -113,6 +126,8 @@ struct EditorStyleSheet {
         return result
     }
 
+    private static let inlineMarkNames = ["inlineCode", "bold", "italic", "link", "underline", "strike"]
+
     func inlineAttributes(_ marks: [Any], base: [NSAttributedString.Key: Any], scale: CGFloat = 1, ancestors: [String] = []) -> [NSAttributedString.Key: Any] {
         var attributes = base
         var byName: [String: [String: Any]] = [:]
@@ -122,7 +137,7 @@ struct EditorStyleSheet {
                 byName[Self.element(name)] = object
             }
         }
-        for name in ["inlineCode", "bold", "italic", "link", "underline", "strike"] where byName[name] != nil {
+        for name in Self.inlineMarkNames where byName[name] != nil {
             var values: [String: Any] = [:]
             switch name {
             case "inlineCode": values = ["fontFamily": "monospace"]

@@ -2,6 +2,50 @@ import CoreText
 import XCTest
 
 extension RenderBridgeTests {
+    func testRender_codeBlock_honorsContextualInlineFontFamily() throws {
+        let json = """
+        [
+            {"type":"blockStart","nodeType":"codeBlock","depth":0},
+            {"type":"textRun","text":"plain","marks":[]},
+            {"type":"textRun","text":"marked","marks":["strong",{"type":"italic"}]},
+            {"type":"blockEnd"}
+        ]
+        """
+        func theme(_ path: [String]?) -> [String: Any] {
+            ["version": 1, "styles": [:], "rules": path.map { [["path": $0, "style": ["fontFamily": "Courier New"]]] } ?? []]
+        }
+        func render(_ values: [String: Any]) -> NSAttributedString {
+            RenderBridge.renderElements(fromJSON: json, baseFont: baseFont, textColor: textColor,
+                theme: EditorTheme(dictionary: values))
+        }
+        let baseline = render(theme(nil))
+        let unmatched = render(theme(["paragraph", "bold"]))
+        let contextualTheme = theme(["codeBlock", "bold"])
+        let contextual = render(contextualTheme)
+        for offset in [0, 5] {
+            let baselineFont = try XCTUnwrap(baseline.attribute(.font, at: offset, effectiveRange: nil) as? UIFont)
+            XCTAssertTrue(baselineFont.fontDescriptor.symbolicTraits.contains(.traitMonoSpace))
+            XCTAssertEqual(unmatched.attribute(.font, at: offset, effectiveRange: nil) as? UIFont, baselineFont)
+        }
+        XCTAssertEqual(contextual.attribute(.font, at: 0, effectiveRange: nil) as? UIFont,
+            baseline.attribute(.font, at: 0, effectiveRange: nil) as? UIFont)
+        let editorFont = try XCTUnwrap(contextual.attribute(.font, at: 5, effectiveRange: nil) as? UIFont)
+        XCTAssertEqual(editorFont.familyName, "Courier New")
+        XCTAssertTrue(editorFont.fontDescriptor.symbolicTraits.contains([.traitBold, .traitItalic]))
+
+        let themeJSON = String(data: try JSONSerialization.data(withJSONObject: contextualTheme), encoding: .utf8)
+        let viewerTheme = PreparedProseTheme.resolve(themeJSON: themeJSON)
+        let block = ViewerBlock(nodeType: "codeBlock", depth: 0, inBlockquote: false,
+            listContext: nil, listItemBoundary: nil, inlines: [])
+        let attributes = CoreTextProseLayoutEngine().attributes(
+            for: [FfiViewerMark(markType: "strong", attrsJson: "{}"), FfiViewerMark(markType: "italic", attrsJson: "{}")],
+            paint: viewerTheme.paint(for: block), theme: viewerTheme,
+            warningSemanticGeneration: "contextual-inline-font-test", ancestors: ["codeBlock"])
+        let viewerFont = try XCTUnwrap(attributes[kCTFontAttributeName as NSAttributedString.Key]) as! CTFont
+        XCTAssertEqual(CTFontCopyFamilyName(viewerFont) as String, editorFont.familyName)
+        XCTAssertTrue(CTFontGetSymbolicTraits(viewerFont).contains([.traitBold, .traitItalic]))
+    }
+
     func testRender_codeBlock_honorsContextualFontFamily() throws {
         let json = """
         [

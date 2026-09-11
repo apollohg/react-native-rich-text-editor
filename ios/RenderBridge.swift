@@ -245,8 +245,9 @@ final class RenderBridge {
                         .intersection([.traitBold, .traitItalic])
                     let codeValues = theme?.styleSheet?.resolvedValues("codeBlock", ancestors: blockStack.dropLast().map(\.nodeType))
                     let themedFamily = (codeValues?["fontFamily"] as? String) ?? theme?.codeBlock?.text?.fontFamily
+                    let hasInlineFamily = theme?.styleSheet?.hasInlineFontRule(marks, ancestors: blockStack.map(\.nodeType)) == true
                     baseAttrs[.font] = ViewerFontEnvironment.shared.resolveFont(
-                        family: themedFamily != nil ? nil : "monospace",
+                        family: themedFamily != nil || hasInlineFamily ? nil : "monospace",
                         size: resolvedFont.pointSize,
                         fallback: resolvedFont,
                         additionalTraits: markTraits,
