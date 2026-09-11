@@ -200,6 +200,7 @@ impl YrsHistory {
             pending_replay_event: None,
             rebase_before_next_event: false,
             recording_replay_events,
+            redone_chains: Vec::new(),
         }
     }
 
@@ -347,7 +348,10 @@ impl YrsHistory {
                     replayed_events.push(event.clone());
                 }
                 ReplayEvent::Action(action) => {
-                    if !candidate.perform(*action, doc, fragment).changed {
+                    if !candidate
+                        .perform(request_id, *action, doc, fragment)?
+                        .changed
+                    {
                         return Err(OperationError::engine_invariant_failed(
                             request_id,
                             None,

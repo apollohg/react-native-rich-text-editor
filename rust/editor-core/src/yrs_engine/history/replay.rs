@@ -319,25 +319,6 @@ impl YrsHistory {
         self.install_stacks(doc, fragment, undo, redo);
     }
 
-    pub(crate) fn discard_acting_stack(
-        &mut self,
-        doc: &Doc,
-        fragment: &XmlFragmentRef,
-        action: HistoryAction,
-    ) -> bool {
-        if self.acting_stack(action).is_empty() {
-            return false;
-        }
-        let (mut undo, mut redo) = self.cloned_stacks();
-        match action {
-            HistoryAction::Undo => &mut undo,
-            HistoryAction::Redo => &mut redo,
-        }
-        .clear();
-        self.install_stacks(doc, fragment, undo, redo);
-        true
-    }
-
     fn pop_isolated_stack_item(
         &mut self,
         action: HistoryAction,
@@ -378,42 +359,97 @@ impl YrsHistory {
 
     pub(crate) fn perform(
         &mut self,
+        request_id: u64,
         action: HistoryAction,
         doc: &Doc,
         fragment: &XmlFragmentRef,
-    ) -> HistoryPop {
-        let mut pruned = false;
+    ) -> OperationResult<HistoryPop> {
+        let mut pruned = 0usize;
         loop {
             if self.acting_stack(action).is_empty() {
-                return HistoryPop::unchanged(pruned);
+                return Ok(HistoryPop::unchanged(pruned));
             }
-            pruned |= self.exclude_protected_containers(doc, fragment, action);
+            self.exclude_protected_containers(request_id, doc, fragment, action)?;
             if self.top_reverts_nothing(action) {
                 self.drop_top_stack_item(doc, fragment, action);
-                pruned = true;
+                pruned += 1;
                 continue;
             }
+            let originals = self
+                .acting_stack(action)
+                .last()
+                .map(|top| top.deletions().clone())
+                .unwrap_or_default();
             let beneath = self.isolate_top_stack_item(doc, fragment, action);
             let (changed, restored) = self.pop_isolated_stack_item(action);
+            if changed {
+                let copies = match action {
+                    HistoryAction::Undo => self.manager.redo_stack(),
+                    HistoryAction::Redo => self.manager.undo_stack(),
+                }
+                .last()
+                .map(|item| item.insertions().clone())
+                .unwrap_or_default();
+                self.record_redone_chain(originals, copies);
+            }
             self.restore_stack_items_beneath(doc, fragment, action, beneath);
             if changed {
                 self.reset_grouping();
-                return HistoryPop {
+                return Ok(HistoryPop {
                     changed,
                     pruned,
                     restored,
-                };
+                });
             }
-            pruned = true;
+            pruned += 1;
         }
     }
 
-    pub(crate) fn undo(&mut self, doc: &Doc, fragment: &XmlFragmentRef) -> HistoryPop {
-        self.perform(HistoryAction::Undo, doc, fragment)
+    pub(crate) fn undo(
+        &mut self,
+        request_id: u64,
+        doc: &Doc,
+        fragment: &XmlFragmentRef,
+    ) -> OperationResult<HistoryPop> {
+        self.perform(request_id, HistoryAction::Undo, doc, fragment)
     }
 
-    pub(crate) fn redo(&mut self, doc: &Doc, fragment: &XmlFragmentRef) -> HistoryPop {
-        self.perform(HistoryAction::Redo, doc, fragment)
+    pub(crate) fn redo(
+        &mut self,
+        request_id: u64,
+        doc: &Doc,
+        fragment: &XmlFragmentRef,
+    ) -> OperationResult<HistoryPop> {
+        self.perform(request_id, HistoryAction::Redo, doc, fragment)
+    }
+
+    pub(crate) fn acting_stack_matches(&self, other: &Self, action: HistoryAction) -> bool {
+        let mine = self.acting_stack(action);
+        let theirs = other.acting_stack(action);
+        mine.len() == theirs.len()
+            && mine.iter().zip(theirs.iter()).all(|(left, right)| {
+                left.insertions() == right.insertions() && left.deletions() == right.deletions()
+            })
+    }
+
+    pub(crate) fn drop_acting_stack_items(
+        &mut self,
+        doc: &Doc,
+        fragment: &XmlFragmentRef,
+        action: HistoryAction,
+        count: usize,
+    ) {
+        if count == 0 || self.acting_stack(action).is_empty() {
+            return;
+        }
+        let (mut undo, mut redo) = self.cloned_stacks();
+        let acting = match action {
+            HistoryAction::Undo => &mut undo,
+            HistoryAction::Redo => &mut redo,
+        };
+        let retained = acting.len().saturating_sub(count);
+        acting.truncate(retained);
+        self.install_stacks(doc, fragment, undo, redo);
     }
 
     pub(crate) fn retained_units(&self, request_id: u64) -> OperationResult<u64> {

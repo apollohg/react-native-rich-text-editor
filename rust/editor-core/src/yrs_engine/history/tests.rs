@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use yrs::block::ClientID;
@@ -7,9 +8,9 @@ use yrs::updates::decoder::Decode;
 use yrs::{Doc, GetString, IdSet, ReadTxn, StateVector, Transact, Update, XmlTextPrelim};
 
 use super::{
-    add_id_set_units, EditingLimits, HistoryClass, HistoryMetadata, HistoryMetadataSlots,
-    HistoryPolicy, HistorySnapshot, HistorySnapshotSlot, PendingReplayEvent, RelativeSelection,
-    ReplayEvent, ResolvedSelection, TransactionOrigin, YrsHistory, INPUT_ORIGIN,
+    add_id_set_units, EditingLimits, HistoryAction, HistoryClass, HistoryMetadata,
+    HistoryMetadataSlots, HistoryPolicy, HistorySnapshot, HistorySnapshotSlot, PendingReplayEvent,
+    RelativeSelection, ReplayEvent, ResolvedSelection, TransactionOrigin, YrsHistory, INPUT_ORIGIN,
 };
 
 fn history_snapshot(metadata_bytes: usize) -> HistorySnapshot {
@@ -166,6 +167,45 @@ fn insert_peer_text(doc: &Doc, text: &str) {
 }
 
 #[test]
+fn undo_keeps_a_container_an_earlier_undo_recreated() {
+    let now = Arc::new(AtomicU64::new(10_000));
+    let source = Arc::clone(&now);
+    let doc = Doc::new();
+    let fragment = doc.get_or_insert_xml_fragment("history-test");
+    let mut history = YrsHistory::new(
+        &doc,
+        &fragment,
+        EditingLimits::default(),
+        usize::MAX,
+        Arc::new(move || source.load(Ordering::SeqCst)),
+    );
+    {
+        let mut txn = doc.transact_mut_with(INPUT_ORIGIN);
+        fragment.push_back(&mut txn, XmlTextPrelim::new("local"));
+    }
+    now.fetch_add(5_000, Ordering::SeqCst);
+    {
+        let mut txn = doc.transact_mut_with(INPUT_ORIGIN);
+        fragment.remove(&mut txn, 0);
+    }
+    assert_eq!(history.manager.undo_stack().len(), 2);
+    assert_eq!(fragment.get_string(&doc.transact()), "");
+
+    assert!(history.undo(1, &doc, &fragment).unwrap().changed);
+    assert_eq!(fragment.get_string(&doc.transact()), "local");
+
+    insert_peer_text(&doc, "peer");
+    assert_eq!(fragment.get_string(&doc.transact()), "peerlocal");
+
+    assert!(history.undo(1, &doc, &fragment).unwrap().changed);
+    assert_eq!(
+        fragment.get_string(&doc.transact()),
+        "peer",
+        "undo must not delete a container an earlier undo recreated while a peer wrote into it",
+    );
+}
+
+#[test]
 fn undo_keeps_a_text_container_holding_peer_content() {
     let doc = Doc::new();
     let fragment = doc.get_or_insert_xml_fragment("history-test");
@@ -183,7 +223,7 @@ fn undo_keeps_a_text_container_holding_peer_content() {
     insert_peer_text(&doc, "peer");
     assert_eq!(fragment.get_string(&doc.transact()), "peerlocal");
 
-    let pop = history.undo(&doc, &fragment);
+    let pop = history.undo(1, &doc, &fragment).unwrap();
     assert!(pop.changed);
     assert_eq!(fragment.get_string(&doc.transact()), "peer");
 }
@@ -210,13 +250,13 @@ fn redo_keeps_a_text_container_a_prior_undo_recreated() {
     }
     assert_eq!(fragment.get_string(&doc.transact()), "");
 
-    assert!(history.undo(&doc, &fragment).changed);
+    assert!(history.undo(1, &doc, &fragment).unwrap().changed);
     assert_eq!(fragment.get_string(&doc.transact()), "local");
 
     insert_peer_text(&doc, "peer");
     assert_eq!(fragment.get_string(&doc.transact()), "peerlocal");
 
-    assert!(history.redo(&doc, &fragment).changed);
+    assert!(history.redo(1, &doc, &fragment).unwrap().changed);
     assert_eq!(
         fragment.get_string(&doc.transact()),
         "peer",
@@ -243,15 +283,119 @@ fn a_stack_item_that_reverts_only_protected_containers_is_drained() {
     assert_eq!(fragment.get_string(&doc.transact()), "peer");
     assert!(history.can_undo());
 
-    let pop = history.undo(&doc, &fragment);
+    let pop = history.undo(1, &doc, &fragment).unwrap();
     assert!(!pop.changed);
-    assert!(pop.pruned);
+    assert!(pop.pruned > 0);
     assert_eq!(fragment.get_string(&doc.transact()), "peer");
     assert!(
         !history.can_undo(),
         "a stack drained of unrevertible items must not report an available undo",
     );
     assert!(!history.can_redo());
+}
+
+#[test]
+fn a_redo_item_that_reverts_only_protected_containers_is_drained() {
+    let now = Arc::new(AtomicU64::new(10_000));
+    let source = Arc::clone(&now);
+    let doc = Doc::new();
+    let fragment = doc.get_or_insert_xml_fragment("history-test");
+    let mut history = YrsHistory::new(
+        &doc,
+        &fragment,
+        EditingLimits::default(),
+        usize::MAX,
+        Arc::new(move || source.load(Ordering::SeqCst)),
+    );
+    {
+        let mut txn = doc.transact_mut_with(INPUT_ORIGIN);
+        fragment.push_back(&mut txn, XmlTextPrelim::new(""));
+    }
+    now.fetch_add(5_000, Ordering::SeqCst);
+    {
+        let mut txn = doc.transact_mut_with(INPUT_ORIGIN);
+        fragment.remove(&mut txn, 0);
+    }
+    assert!(history.undo(1, &doc, &fragment).unwrap().changed);
+    insert_peer_text(&doc, "peer");
+    assert_eq!(fragment.get_string(&doc.transact()), "peer");
+    assert!(history.can_redo());
+
+    let pop = history.redo(2, &doc, &fragment).unwrap();
+    assert!(!pop.changed);
+    assert!(pop.pruned > 0);
+    assert_eq!(fragment.get_string(&doc.transact()), "peer");
+    assert!(
+        !history.can_redo(),
+        "a redo stack drained of unrevertible items must not report an available redo",
+    );
+}
+
+#[test]
+fn acting_stack_match_requires_the_same_items() {
+    let doc = Doc::new();
+    let fragment = doc.get_or_insert_xml_fragment("history-test");
+    let history = {
+        let history = YrsHistory::new(
+            &doc,
+            &fragment,
+            EditingLimits::default(),
+            usize::MAX,
+            Arc::new(|| 10_000),
+        );
+        {
+            let mut txn = doc.transact_mut_with(INPUT_ORIGIN);
+            fragment.push_back(&mut txn, XmlTextPrelim::new("local"));
+        }
+        history
+    };
+    let unrelated = YrsHistory::new(
+        &doc,
+        &fragment,
+        EditingLimits::default(),
+        usize::MAX,
+        Arc::new(|| 10_000),
+    );
+
+    assert!(history.acting_stack_matches(&history, HistoryAction::Undo));
+    assert!(
+        !history.acting_stack_matches(&unrelated, HistoryAction::Undo),
+        "a replayed stack that holds different items must not authorise dropping live history",
+    );
+}
+
+#[test]
+fn dropping_acting_stack_items_only_touches_the_requested_direction() {
+    let now = Arc::new(AtomicU64::new(10_000));
+    let source = Arc::clone(&now);
+    let doc = Doc::new();
+    let fragment = doc.get_or_insert_xml_fragment("history-test");
+    let mut history = YrsHistory::new(
+        &doc,
+        &fragment,
+        EditingLimits::default(),
+        usize::MAX,
+        Arc::new(move || source.load(Ordering::SeqCst)),
+    );
+    for text in ["a", "b", "c"] {
+        {
+            let mut txn = doc.transact_mut_with(INPUT_ORIGIN);
+            fragment.push_back(&mut txn, XmlTextPrelim::new(text));
+        }
+        now.fetch_add(5_000, Ordering::SeqCst);
+    }
+    assert!(history.undo(1, &doc, &fragment).unwrap().changed);
+    assert_eq!(history.manager.undo_stack().len(), 2);
+    assert_eq!(history.manager.redo_stack().len(), 1);
+
+    history.drop_acting_stack_items(&doc, &fragment, HistoryAction::Undo, 1);
+    assert_eq!(history.manager.undo_stack().len(), 1);
+    assert_eq!(history.manager.redo_stack().len(), 1);
+
+    history.drop_acting_stack_items(&doc, &fragment, HistoryAction::Redo, 5);
+    assert_eq!(history.manager.undo_stack().len(), 1);
+    assert!(history.manager.redo_stack().is_empty());
+    assert_eq!(fragment.get_string(&doc.transact()), "ab");
 }
 
 #[test]

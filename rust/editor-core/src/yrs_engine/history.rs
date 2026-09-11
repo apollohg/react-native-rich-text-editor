@@ -1,6 +1,6 @@
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -321,12 +321,12 @@ pub(crate) enum HistoryAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HistoryPop {
     pub changed: bool,
-    pub pruned: bool,
+    pub pruned: usize,
     pub restored: Option<HistorySnapshotSlot>,
 }
 
 impl HistoryPop {
-    fn unchanged(pruned: bool) -> Self {
+    fn unchanged(pruned: usize) -> Self {
         Self {
             changed: false,
             pruned,
@@ -486,6 +486,7 @@ pub(crate) struct YrsHistory {
     pending_replay_event: Option<PendingReplayEvent>,
     rebase_before_next_event: bool,
     recording_replay_events: bool,
+    redone_chains: Vec<RedoneChain>,
 }
 
 include!("history/recording.rs");

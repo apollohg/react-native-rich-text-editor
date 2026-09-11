@@ -19,6 +19,15 @@ struct PreparedHistoryCandidateState {
     candidate_publication: Option<yrs_engine::derived_state::HistoryMutationLookupCapability>,
 }
 
+enum HistoryPopPreparation {
+    Prepared(Box<PreparedHistoryPop>),
+    Drained {
+        action: yrs_engine::history::HistoryAction,
+        items: usize,
+    },
+    Unavailable,
+}
+
 struct PreparedHistoryPop {
     request_id: u64,
     candidate_doc: Doc,
@@ -132,25 +141,20 @@ impl YrsDocumentEngine {
             Option<yrs_engine::TypedTransactionResult>,
         )>,
     > {
-        let Some(prepared) = self.prepare_history_pop(request_id, undoing, with_result)? else {
-            self.discard_unrevertible_history(undoing);
-            return Ok(None);
-        };
-        self.commit_prepared_history_pop(prepared, outbound)
-            .map(Some)
-    }
-
-    fn discard_unrevertible_history(&mut self, undoing: bool) {
-        let action = if undoing {
-            yrs_engine::history::HistoryAction::Undo
-        } else {
-            yrs_engine::history::HistoryAction::Redo
-        };
-        let fragment = self
-            .doc
-            .get_or_insert_xml_fragment(self.fragment_name.as_str());
-        self.history
-            .discard_acting_stack(&self.doc, &fragment, action);
+        match self.prepare_history_pop(request_id, undoing, with_result)? {
+            HistoryPopPreparation::Prepared(prepared) => self
+                .commit_prepared_history_pop(*prepared, outbound)
+                .map(Some),
+            HistoryPopPreparation::Drained { action, items } => {
+                let fragment = self
+                    .doc
+                    .get_or_insert_xml_fragment(self.fragment_name.as_str());
+                self.history
+                    .drop_acting_stack_items(&self.doc, &fragment, action, items);
+                Ok(None)
+            }
+            HistoryPopPreparation::Unavailable => Ok(None),
+        }
     }
 
     fn prepare_history_pop(
@@ -158,13 +162,13 @@ impl YrsDocumentEngine {
         request_id: u64,
         undoing: bool,
         with_result: bool,
-    ) -> yrs_engine::OperationResult<Option<PreparedHistoryPop>> {
+    ) -> yrs_engine::OperationResult<HistoryPopPreparation> {
         if if undoing {
             !self.history.can_undo()
         } else {
             !self.history.can_redo()
         } {
-            return Ok(None);
+            return Ok(HistoryPopPreparation::Unavailable);
         }
 
         let next_document_revision =
@@ -186,23 +190,32 @@ impl YrsDocumentEngine {
         let mut candidate_history =
             self.history
                 .replay_into(request_id, &candidate_doc, &candidate_fragment)?;
+        let replayed_stack_matches_live =
+            candidate_history.acting_stack_matches(&self.history, action);
         let candidate_pop = match action {
             yrs_engine::history::HistoryAction::Undo => {
-                candidate_history.undo(&candidate_doc, &candidate_fragment)
+                candidate_history.undo(request_id, &candidate_doc, &candidate_fragment)?
             }
             yrs_engine::history::HistoryAction::Redo => {
-                candidate_history.redo(&candidate_doc, &candidate_fragment)
+                candidate_history.redo(request_id, &candidate_doc, &candidate_fragment)?
             }
         };
         if !candidate_pop.changed {
-            if candidate_pop.pruned {
-                return Ok(None);
+            if candidate_pop.pruned == 0 {
+                return Err(yrs_engine::OperationError::engine_invariant_failed(
+                    request_id,
+                    None,
+                    "bounded history replay cannot reproduce the next live pop",
+                ));
             }
-            return Err(yrs_engine::OperationError::engine_invariant_failed(
-                request_id,
-                None,
-                "bounded history replay cannot reproduce the next live pop",
-            ));
+            return Ok(if replayed_stack_matches_live {
+                HistoryPopPreparation::Drained {
+                    action,
+                    items: candidate_pop.pruned,
+                }
+            } else {
+                HistoryPopPreparation::Unavailable
+            });
         }
         let restored_slot = candidate_pop.restored.as_ref().ok_or_else(|| {
             yrs_engine::OperationError::engine_invariant_failed(
@@ -242,17 +255,19 @@ impl YrsDocumentEngine {
                 can_redo: candidate_history.can_redo(),
             };
         }
-        Ok(Some(PreparedHistoryPop {
-            request_id,
-            candidate_doc,
-            candidate_history,
-            candidate_state,
-            candidate_publication,
-            next_document_revision,
-            next_state_revision,
-            next_yrs_state_epoch,
-            result,
-        }))
+        Ok(HistoryPopPreparation::Prepared(Box::new(
+            PreparedHistoryPop {
+                request_id,
+                candidate_doc,
+                candidate_history,
+                candidate_state,
+                candidate_publication,
+                next_document_revision,
+                next_state_revision,
+                next_yrs_state_epoch,
+                result,
+            },
+        )))
     }
 
     fn commit_prepared_history_pop(
@@ -676,7 +691,9 @@ impl YrsDocumentEngine {
         request_id: u64,
         undoing: bool,
     ) -> yrs_engine::OperationResult<Option<usize>> {
-        let Some(prepared) = self.prepare_history_pop(request_id, undoing, false)? else {
+        let HistoryPopPreparation::Prepared(prepared) =
+            self.prepare_history_pop(request_id, undoing, false)?
+        else {
             return Ok(None);
         };
         let live_state_vector = self.doc.transact().state_vector();
