@@ -20,11 +20,13 @@ use crate::session::{
     outbound_lease_session_error, CollaborationLimits, EditorInitialization, EditorSession,
     EditorSessionConfig, ErrorDomain, InitialContent, SessionError,
 };
-use crate::yrs_engine::EditingLimits;
+use crate::yrs_engine::{DocumentScope, EditingLimits};
 
 const MAX_WIRE_LINE_BYTES: usize = 96 * 1024 * 1024;
 const MAX_REQUEST_ID_BYTES: usize = 128;
 const COLLABORATION_FRAGMENT_NAME: &str = "prosemirror";
+const AWAIT_SEED_DOCUMENT_ID: &str = "table-interop-document";
+const AWAIT_SEED_LINEAGE_ID: &str = "table-interop-lineage";
 const LEASE_ACTION: &str = "leaseOutbound";
 const ACK_ACTION: &str = "ackOutbound";
 
@@ -58,6 +60,8 @@ struct WireRequest {
 struct InitializePayload {
     #[serde(default)]
     schema: Option<SchemaPreset>,
+    #[serde(default)]
+    await_seed: bool,
 }
 
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
@@ -287,12 +291,23 @@ impl RustPeer {
             SchemaPreset::Tiptap => tiptap_schema(),
             SchemaPreset::Prosemirror => prosemirror_schema(),
         };
+        let initialization = if payload.await_seed {
+            EditorInitialization::Room {
+                scope: DocumentScope {
+                    document_id: AWAIT_SEED_DOCUMENT_ID.into(),
+                    lineage_id: AWAIT_SEED_LINEAGE_ID.into(),
+                },
+                snapshot: None,
+            }
+        } else {
+            EditorInitialization::Local {
+                initial_content: InitialContent::Empty,
+            }
+        };
         let config = EditorSessionConfig {
             schema_json: None,
             fragment_name: COLLABORATION_FRAGMENT_NAME.into(),
-            initialization: EditorInitialization::Local {
-                initial_content: InitialContent::Empty,
-            },
+            initialization,
             resource_limits: ResourceLimits::default(),
             editing_limits: EditingLimits::default(),
             collaboration_limits: CollaborationLimits::default(),
