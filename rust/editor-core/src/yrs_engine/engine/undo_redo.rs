@@ -11,7 +11,18 @@ use crate::yrs_engine;
 use crate::yrs_engine::derived_state::{history_selection_to_relative, DerivedStateCache};
 use crate::yrs_engine::{TransactionOrigin, YrsDocumentCodec};
 use std::sync::Arc;
-use yrs::{Doc, OffsetKind, Options, ReadTxn, Transact};
+use yrs::{Doc, OffsetKind, Options, ReadTxn, StateVector, Transact};
+
+fn replay_comparison_state(doc: &Doc) -> Vec<u8> {
+    #[cfg(test)]
+    super::test_hooks::HISTORY_REPLAY_GUARD_STATE_ENCODINGS.set(
+        super::test_hooks::HISTORY_REPLAY_GUARD_STATE_ENCODINGS
+            .get()
+            .saturating_add(1),
+    );
+    doc.transact()
+        .encode_state_as_update_v1(&StateVector::default())
+}
 
 #[cfg(test)]
 fn perturb_replayed_candidate_for_test(doc: &Doc, fragment: &yrs::XmlFragmentRef) {
@@ -288,11 +299,7 @@ impl YrsDocumentEngine {
         request_id: u64,
         candidate_doc: &Doc,
     ) -> yrs_engine::OperationResult<()> {
-        let live_state = encode_state_bounded(&self.doc, &self.resource_limits)
-            .map_err(|error| history_operation_error(request_id, error))?;
-        let candidate_state = encode_state_bounded(candidate_doc, &self.resource_limits)
-            .map_err(|error| history_operation_error(request_id, error))?;
-        if live_state != candidate_state {
+        if replay_comparison_state(&self.doc) != replay_comparison_state(candidate_doc) {
             return Err(yrs_engine::OperationError::engine_invariant_failed(
                 request_id,
                 None,

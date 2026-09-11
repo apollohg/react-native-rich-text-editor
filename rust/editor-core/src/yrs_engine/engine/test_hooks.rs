@@ -49,11 +49,22 @@ std::thread_local! {
     pub(super) static FAIL_QUARANTINED_UPDATE_RESERVATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     pub(super) static FAIL_OUTBOUND_STAGING_COPY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     pub(super) static PERTURB_REPLAYED_HISTORY_CANDIDATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(super) static HISTORY_REPLAY_GUARD_STATE_ENCODINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
 pub(super) fn set_replay_candidate_perturbation_for_test(enabled: bool) {
     PERTURB_REPLAYED_HISTORY_CANDIDATE.set(enabled);
+}
+
+#[cfg(test)]
+pub(super) fn reset_history_replay_guard_encodings_for_test() {
+    HISTORY_REPLAY_GUARD_STATE_ENCODINGS.set(0);
+}
+
+#[cfg(test)]
+pub(super) fn take_history_replay_guard_encodings_for_test() -> usize {
+    HISTORY_REPLAY_GUARD_STATE_ENCODINGS.replace(0)
 }
 
 #[cfg(test)]

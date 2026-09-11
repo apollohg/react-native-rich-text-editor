@@ -589,3 +589,95 @@ fn replayed_history_candidate_divergence_is_rejected_atomically() {
         "the rejected pop leaves the history intact for a later retry"
     );
 }
+
+#[test]
+fn each_history_pop_spends_exactly_two_replay_guard_state_encodings() {
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"abc"}]}]}"#,
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    engine
+        .apply_command(
+            76_300,
+            crate::yrs_engine::TypedCommand::InsertText { text: "z".into() },
+        )
+        .unwrap()
+        .expect("insert must apply");
+
+    reset_history_replay_guard_encodings_for_test();
+    engine.undo(76_301).unwrap().expect("undo must apply");
+    assert_eq!(
+        take_history_replay_guard_encodings_for_test(),
+        2,
+        "one live encoding and one replayed-candidate encoding per pop",
+    );
+
+    engine.redo(76_302).unwrap().expect("redo must apply");
+    assert_eq!(take_history_replay_guard_encodings_for_test(), 2);
+
+    reset_history_replay_guard_encodings_for_test();
+    assert!(
+        engine.redo(76_303).unwrap().is_none(),
+        "an exhausted redo stack pops nothing"
+    );
+    assert_eq!(
+        take_history_replay_guard_encodings_for_test(),
+        0,
+        "an unavailable pop never reaches the replay guard",
+    );
+}
+
+#[test]
+fn the_replay_guard_is_limit_free_and_defers_to_the_existing_encoded_state_admission() {
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"abc"}]}]}"#,
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    engine
+        .apply_command(
+            76_400,
+            crate::yrs_engine::TypedCommand::InsertText { text: "z".into() },
+        )
+        .unwrap()
+        .expect("insert must apply");
+    let live_encoded_len = engine.encoded_state().unwrap().len();
+    let before = atomic_audit(&engine);
+
+    engine.resource_limits.max_encoded_state_bytes = 1;
+    reset_history_replay_guard_encodings_for_test();
+    let error = engine
+        .undo(76_401)
+        .expect_err("a ceiling below the document is still rejected");
+
+    assert_eq!(
+        take_history_replay_guard_encodings_for_test(),
+        2,
+        "the guard ran to completion instead of failing on the ceiling",
+    );
+    assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED");
+    assert_eq!(
+        error.details,
+        Some(json!({ "field": "maxEncodedStateBytes" })),
+    );
+    assert_eq!(error.limit, Some(1));
+    assert!(
+        error.actual.unwrap() > u64::try_from(live_encoded_len).unwrap(),
+        "the reported size is the post-pop candidate from the existing admission point, \
+         not the live store the guard reads: actual={:?} live={live_encoded_len}",
+        error.actual,
+    );
+
+    engine.resource_limits.max_encoded_state_bytes =
+        ResourceLimits::default().max_encoded_state_bytes;
+    assert_eq!(atomic_audit(&engine), before);
+    engine
+        .undo(76_402)
+        .unwrap()
+        .expect("the pop succeeds once the ceiling admits the restored document");
+}
