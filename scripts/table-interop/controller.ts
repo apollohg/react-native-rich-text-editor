@@ -4,6 +4,19 @@ import { assertReply, isRecord } from './peer-protocol.js';
 import type { Peer, PeerKind, Request, UpdateEvent } from './peer-protocol.js';
 import { startRustPeer } from './rust-peer.js';
 import { startWebPeer } from './web-peer.js';
+import { DeliveryScheduler } from './scheduler.js';
+import type { DeliveryRecord, FlushResult, SchedulerAccess, ScheduledMessage } from './scheduler.js';
+import {
+    beginTrace,
+    dependencyManifest,
+    endTrace,
+    failureClassOf,
+    recordAction,
+    recordDelivery,
+    recordDrain,
+    recordOutput,
+} from './trace.js';
+import type { Trace } from './trace.js';
 
 export interface PeerSnapshot {
     documentJson: Record<string, unknown> | null;
@@ -11,6 +24,8 @@ export interface PeerSnapshot {
     documentRevision: string;
     stateVectorBase64: string;
     projection: unknown;
+    mounted: boolean;
+    pendingDependencies: boolean;
     normalizationPassesAfterLastAction: number;
     autonomousRepairWrites: number;
 }
@@ -23,10 +38,10 @@ const RUST_PEER_EXECUTABLE = process.env['RUST_PEER_EXECUTABLE'] ?? fileURLToPat
 const COLLABORATION_FRAGMENT_NAME = 'prosemirror';
 const MAX_UPDATE_BYTES = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT_MILLIS = 30_000;
-const EMPTY_STATE_VECTOR_BASE64 = Buffer.from([0]).toString('base64');
-const MAX_EXCHANGE_ROUNDS = 100;
-const MAX_EXCHANGE_UPDATES = 10_000;
+export const EMPTY_STATE_VECTOR_BASE64 = Buffer.from([0]).toString('base64');
+export const DEFAULT_EXCHANGE_SEED = 0x7ab1_e21d;
 const NATIVE_NORMALIZATION_IS_NOT_INSTRUMENTED = 0;
+const RECORDED_ACTIONS: readonly Request['operation'][] = ['command', 'undo', 'redo', 'applyUpdate'];
 
 export class PeerError extends Error {
     readonly code: string;
@@ -40,11 +55,14 @@ export class PeerError extends Error {
 
 type PeerRecord = {
     kind: PeerKind;
+    index: number;
     events: UpdateEvent[];
 };
 
 const records = new WeakMap<Peer, PeerRecord>();
 let requestCounter = 0;
+let drainCounter = 0;
+let activeDrainId: string | null = null;
 
 function recordFor(peer: Peer): PeerRecord {
     const record = records.get(peer);
@@ -56,6 +74,13 @@ function recordFor(peer: Peer): PeerRecord {
 
 function requireString(value: unknown, field: string): string {
     if (typeof value !== 'string') {
+        throw new Error(`peer reply field ${field} was ${JSON.stringify(value)}`);
+    }
+    return value;
+}
+
+function requireBoolean(value: unknown, field: string): boolean {
+    if (typeof value !== 'boolean') {
         throw new Error(`peer reply field ${field} was ${JSON.stringify(value)}`);
     }
     return value;
@@ -88,12 +113,16 @@ function wirePayload(
     return payload;
 }
 
-export async function call(
+async function performRequest(
     peer: Peer,
     operation: Request['operation'],
     payload: Record<string, unknown>,
+    capture: 'action' | 'delivery',
 ): Promise<Record<string, unknown>> {
     const record = recordFor(peer);
+    if (capture === 'action' && RECORDED_ACTIONS.includes(operation)) {
+        recordAction(record.index, operation, payload);
+    }
     requestCounter += 1;
     const id = `c${requestCounter}`;
     const reply = await peer.request({ id, operation, payload: wirePayload(operation, payload) });
@@ -106,6 +135,14 @@ export async function call(
         throw new Error(`peer reply ${id} carried no value`);
     }
     return reply.value;
+}
+
+export async function call(
+    peer: Peer,
+    operation: Request['operation'],
+    payload: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+    return performRequest(peer, operation, payload, 'action');
 }
 
 export async function snapshot(peer: Peer): Promise<PeerSnapshot> {
@@ -122,7 +159,7 @@ export async function snapshot(peer: Peer): Promise<PeerSnapshot> {
             value['normalizationPassesAfterLastAction'],
             'snapshot.normalizationPassesAfterLastAction',
         );
-    return {
+    const captured: PeerSnapshot = {
         documentJson,
         displayJson,
         documentRevision: requireString(value['documentRevision'], 'snapshot.documentRevision'),
@@ -131,12 +168,26 @@ export async function snapshot(peer: Peer): Promise<PeerSnapshot> {
             'stateVector.stateVectorBase64',
         ),
         projection: null,
+        mounted: requireBoolean(value['mounted'], 'snapshot.mounted'),
+        pendingDependencies: requireBoolean(
+            value['pendingDependencies'],
+            'snapshot.pendingDependencies',
+        ),
         normalizationPassesAfterLastAction,
         autonomousRepairWrites: requireCount(
             value['autonomousRepairWrites'],
             'snapshot.autonomousRepairWrites',
         ),
     };
+    recordOutput({
+        peer: record.index,
+        documentRevision: captured.documentRevision,
+        stateVectorBase64: captured.stateVectorBase64,
+        mounted: captured.mounted,
+        pendingDependencies: captured.pendingDependencies,
+        documentJson: captured.documentJson,
+    });
+    return captured;
 }
 
 export async function seedFrom(source: Peer, targets: Peer[]): Promise<void> {
@@ -165,37 +216,89 @@ function takeDocumentEvents(peer: Peer): UpdateEvent[] {
     return taken;
 }
 
-export async function exchangeUntilIdle(peers: Peer[]): Promise<void> {
-    let generated = 0;
-    for (let round = 0; round < MAX_EXCHANGE_ROUNDS; round += 1) {
-        for (const peer of peers) {
-            await call(peer, 'drain', {});
-        }
-        const batch: { source: Peer; updateBase64: string }[] = [];
-        for (const peer of peers) {
-            for (const event of takeDocumentEvents(peer)) {
-                batch.push({ source: peer, updateBase64: event.bytesBase64 });
-            }
-        }
-        if (batch.length === 0) {
-            return;
-        }
-        generated += batch.length;
-        if (generated > MAX_EXCHANGE_UPDATES) {
-            throw new Error(
-                `peer exchange generated more than ${MAX_EXCHANGE_UPDATES} document updates`,
-            );
-        }
-        for (const { source, updateBase64 } of batch) {
-            for (const target of peers) {
-                if (target === source) {
-                    continue;
-                }
-                await call(target, 'applyUpdate', { updateBase64 });
-            }
-        }
+class ControllerAccess implements SchedulerAccess {
+    private readonly peers: Peer[];
+
+    constructor(peers: Peer[]) {
+        this.peers = peers;
     }
-    throw new Error(`peer exchange did not settle within ${MAX_EXCHANGE_ROUNDS} rounds`);
+
+    peerCount(): number {
+        return this.peers.length;
+    }
+
+    private peerAt(index: number): Peer {
+        const peer = this.peers[index];
+        if (peer === undefined) {
+            throw new Error(`the scheduler addressed peer ${index} outside the started set`);
+        }
+        return peer;
+    }
+
+    async deliver(recipient: number, updateBase64: string): Promise<void> {
+        await performRequest(this.peerAt(recipient), 'applyUpdate', { updateBase64 }, 'delivery');
+    }
+
+    async flush(peer: number): Promise<FlushResult> {
+        const target = this.peerAt(peer);
+        const drained = await performRequest(target, 'drain', {}, 'delivery');
+        return {
+            events: takeDocumentEvents(target),
+            pendingDependencies: requireBoolean(
+                drained['pendingDependencies'],
+                'drain.pendingDependencies',
+            ),
+        };
+    }
+}
+
+function deliveryObserver(): { onDelivery: (record: DeliveryRecord, message: ScheduledMessage) => void } {
+    return {
+        onDelivery(record: DeliveryRecord, message: ScheduledMessage): void {
+            recordDelivery({
+                drainId: activeDrainId,
+                id: record.id,
+                sender: record.sender,
+                recipient: record.recipient,
+                sequence: record.sequence,
+                origin: record.origin,
+                digest: record.digest,
+                bytesBase64: message.event.bytesBase64,
+            });
+        },
+    };
+}
+
+export function createScheduler(
+    peers: Peer[],
+    seed: number = DEFAULT_EXCHANGE_SEED,
+): DeliveryScheduler {
+    return new DeliveryScheduler(new ControllerAccess(peers), {
+        seed,
+        observer: deliveryObserver(),
+    });
+}
+
+export async function flushDocumentEvents(peer: Peer): Promise<UpdateEvent[]> {
+    await performRequest(peer, 'drain', {}, 'delivery');
+    return takeDocumentEvents(peer);
+}
+
+export async function exchangeUntilIdle(
+    peers: Peer[],
+    seed: number = DEFAULT_EXCHANGE_SEED,
+): Promise<void> {
+    const scheduler = createScheduler(peers, seed);
+    drainCounter += 1;
+    const drainId = `x${drainCounter}`;
+    recordDrain(drainId, peers.map((peer) => recordFor(peer).index), seed);
+    const previousDrainId = activeDrainId;
+    activeDrainId = drainId;
+    try {
+        await scheduler.drain();
+    } finally {
+        activeDrainId = previousDrainId;
+    }
 }
 
 export function paragraphFixture(schema: SchemaPreset): Record<string, unknown> {
@@ -248,7 +351,7 @@ async function startPeer(kind: PeerKind, config: Record<string, unknown>): Promi
 
 export type PeerTuple<Kinds extends readonly PeerKind[]> = { [Index in keyof Kinds]: Peer };
 
-function assertOnePeerPerKind<Kinds extends readonly PeerKind[]>(
+function assertPeerCountMatchesKinds<Kinds extends readonly PeerKind[]>(
     peers: Peer[],
     kinds: Kinds,
 ): asserts peers is PeerTuple<Kinds> & Peer[] {
@@ -263,21 +366,27 @@ export async function withPeers<const Kinds extends readonly PeerKind[]>(
     kinds: Kinds,
     body: (peers: PeerTuple<Kinds>) => Promise<void>,
     config: Record<string, unknown> = paragraphFixture('prosemirror'),
+    seed: number = DEFAULT_EXCHANGE_SEED,
 ): Promise<void> {
     const started: Peer[] = [];
     let failure: unknown = null;
+    const outerTrace = beginTrace(
+        { kinds: [...kinds], config, seed },
+        dependencyManifest(RUST_PEER_EXECUTABLE),
+    );
     try {
         for (const [index, kind] of kinds.entries()) {
             const peer = await startPeer(kind, config);
             started.push(peer);
-            records.set(peer, { kind, events: [] });
+            records.set(peer, { kind, index, events: [] });
             await call(peer, 'initialize', initializePayload(kind, config, index !== 0));
         }
-        assertOnePeerPerKind(started, kinds);
+        assertPeerCountMatchesKinds(started, kinds);
         await body(started);
     } catch (error) {
         failure = error;
     }
+    endTrace(outerTrace, failure);
     const closeFailures: unknown[] = [];
     for (const peer of started) {
         try {
@@ -292,4 +401,56 @@ export async function withPeers<const Kinds extends readonly PeerKind[]>(
     if (closeFailures.length > 0) {
         throw closeFailures[0];
     }
+}
+
+function replayPeerAt(peers: Peer[], index: number): Peer {
+    const peer = peers[index];
+    if (peer === undefined) {
+        throw new Error(`the trace addressed peer ${index} outside the recorded set`);
+    }
+    return peer;
+}
+
+export async function replayTrace(trace: Trace): Promise<string | null> {
+    let failure: unknown = null;
+    try {
+        await withPeers(
+            trace.initialization.kinds,
+            async (peers) => {
+                const replayedDrains = new Set<string>();
+                for (const record of trace.records) {
+                    if (record.kind === 'output') {
+                        continue;
+                    }
+                    if (record.kind === 'action') {
+                        await call(
+                            replayPeerAt(peers, record.peer),
+                            record.operation,
+                            record.payload,
+                        );
+                        continue;
+                    }
+                    if (record.kind === 'drain') {
+                        replayedDrains.add(record.drainId);
+                        await exchangeUntilIdle(
+                            record.peers.map((index) => replayPeerAt(peers, index)),
+                            record.seed,
+                        );
+                        continue;
+                    }
+                    if (record.drainId !== null && replayedDrains.has(record.drainId)) {
+                        continue;
+                    }
+                    await call(replayPeerAt(peers, record.recipient), 'applyUpdate', {
+                        updateBase64: record.bytesBase64,
+                    });
+                }
+            },
+            trace.initialization.config,
+            trace.initialization.seed,
+        );
+    } catch (error) {
+        failure = error;
+    }
+    return failure === null ? null : failureClassOf(failure);
 }

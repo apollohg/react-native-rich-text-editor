@@ -394,14 +394,20 @@ impl RustPeer {
         let _: EmptyPayload = parse_payload(payload)?;
         let count = self.pending_events.len();
         self.emitted_events = std::mem::take(&mut self.pending_events);
-        Ok(serde_json::json!({ "count": count }))
+        Ok(serde_json::json!({
+            "count": count,
+            "pendingDependencies": self.has_pending_dependencies(),
+        }))
     }
 
     fn snapshot(&mut self, payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
         let _: EmptyPayload = parse_payload(payload)?;
         let autonomous_repair_writes = self.autonomous_repair_writes;
+        let pending_dependencies = self.has_pending_dependencies();
         let session = self.session_mut()?;
         Ok(serde_json::json!({
+            "mounted": session.engine.is_ready(),
+            "pendingDependencies": pending_dependencies,
             "json": session.engine.document_json(),
             "html": session.engine.document_html(),
             "documentRevision": session.engine.revision().to_string(),
@@ -447,6 +453,12 @@ impl RustPeer {
             session.teardown();
         }
         Ok(serde_json::json!({}))
+    }
+
+    fn has_pending_dependencies(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(|session| session.engine.pending_remote_dependency_bytes() > 0)
     }
 
     fn capture_outbound(

@@ -277,10 +277,13 @@ class WebPeerRuntime {
         this.createEditor();
     }
 
-    private seedHasArrived(): boolean {
+    hasPendingDependencies(): boolean {
         const store = this.document.store;
-        return store.pendingStructs === null
-            && store.pendingDs === null
+        return store.pendingStructs !== null || store.pendingDs !== null;
+    }
+
+    private seedHasArrived(): boolean {
+        return !this.hasPendingDependencies()
             && this.document.getXmlFragment(this.fragmentName).length > 0;
     }
 
@@ -384,6 +387,8 @@ class WebPeerRuntime {
             : this.editor.documentJson();
         return {
             json: documentJson,
+            mounted: this.editor !== null,
+            pendingDependencies: this.hasPendingDependencies(),
             displayJson: this.editor === null ? null : this.editor.view.state.doc.toJSON(),
             documentRevision: this.documentRevision.toString(),
             normalizationPassesAfterLastAction: this.counter.passes,
@@ -480,7 +485,10 @@ async function dispatch(
         case 'drain': {
             const peer = requireRuntime();
             await peer.settle();
-            return { count: peer.pendingEventCount() };
+            return {
+                count: peer.pendingEventCount(),
+                pendingDependencies: peer.hasPendingDependencies(),
+            };
         }
         case 'snapshot':
             return requireRuntime().snapshot();

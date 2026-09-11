@@ -44,13 +44,17 @@ test('TBL-21 Rust and a real Tiptap peer share text and undo', async () => {
 
 test('TBL-21 a web-initialized seed carries the document to the Rust peer', async () => {
     await withPeers(['prosemirror', 'rust'], async ([web, native]) => {
-        assert.equal((await snapshot(native)).documentJson, null);
+        const unseeded = await snapshot(native);
+        assert.equal(unseeded.documentJson, null);
+        assert.equal(unseeded.mounted, false);
         await seedFrom(web, [native]);
+        assert.equal((await snapshot(native)).mounted, false);
         assert.equal((await call(native, 'drain', {}))['count'], 0);
         await call(web, 'command', { type: 'insertText', text: 'web' });
         await exchangeUntilIdle([web, native]);
         assert.equal((await call(native, 'drain', {}))['count'], 0);
         const seeded = await snapshot(native);
+        assert.equal(seeded.mounted, true);
         assert.equal(JSON.stringify(seeded.documentJson).includes('web'), true);
         assert.deepEqual(seeded.documentJson, (await snapshot(web)).documentJson);
 
@@ -82,11 +86,13 @@ test('TBL-21 an awaiting web peer defers mounting until the complete seed arrive
             updateBase64: dependentUpdate['updateBase64'],
         });
         const unmounted = await snapshot(awaiting);
+        assert.equal(unmounted.mounted, false);
         assert.equal(unmounted.displayJson, null);
         assert.deepEqual(unmounted.documentJson, { type: 'doc', content: [] });
 
         await seedFrom(seeder, [awaiting]);
         const mounted = await snapshot(awaiting);
+        assert.equal(mounted.mounted, true);
         assert.notEqual(mounted.displayJson, null);
         assert.deepEqual(mounted.documentJson, (await snapshot(seeder)).documentJson);
         assert.equal(JSON.stringify(mounted.documentJson).includes('seedmore'), true);

@@ -9,6 +9,9 @@ const PACKAGE_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const CARGO_MANIFEST = fileURLToPath(
     new URL('../../rust/editor-core/Cargo.toml', import.meta.url),
 );
+const SUITE_CASES: Record<string, readonly string[]> = {
+    plumbing: ['plumbing', 'scheduler', 'dependencies'],
+};
 
 function requestedSuite(argv: string[]): string {
     const flagIndex = argv.indexOf(SUITE_FLAG);
@@ -34,9 +37,13 @@ function runToCompletion(command: string, args: string[]): Promise<number> {
 }
 
 const suite = requestedSuite(process.argv.slice(2));
-const suiteFile = fileURLToPath(new URL(`./cases/${suite}.test.ts`, import.meta.url));
-if (!existsSync(suiteFile)) {
-    throw new Error(`there is no interop suite at ${suiteFile}`);
+const suiteFiles = (SUITE_CASES[suite] ?? [suite]).map((name) =>
+    fileURLToPath(new URL(`./cases/${name}.test.ts`, import.meta.url)),
+);
+for (const suiteFile of suiteFiles) {
+    if (!existsSync(suiteFile)) {
+        throw new Error(`there is no interop suite at ${suiteFile}`);
+    }
 }
 
 const buildCode = await runToCompletion('cargo', [
@@ -55,6 +62,6 @@ if (buildCode !== 0) {
         '--import',
         'tsx',
         '--test',
-        suiteFile,
+        ...suiteFiles,
     ]);
 }
