@@ -133,10 +133,24 @@ impl YrsDocumentEngine {
         )>,
     > {
         let Some(prepared) = self.prepare_history_pop(request_id, undoing, with_result)? else {
+            self.discard_unrevertible_history(undoing);
             return Ok(None);
         };
         self.commit_prepared_history_pop(prepared, outbound)
             .map(Some)
+    }
+
+    fn discard_unrevertible_history(&mut self, undoing: bool) {
+        let action = if undoing {
+            yrs_engine::history::HistoryAction::Undo
+        } else {
+            yrs_engine::history::HistoryAction::Redo
+        };
+        let fragment = self
+            .doc
+            .get_or_insert_xml_fragment(self.fragment_name.as_str());
+        self.history
+            .discard_acting_stack(&self.doc, &fragment, action);
     }
 
     fn prepare_history_pop(
@@ -181,7 +195,7 @@ impl YrsDocumentEngine {
             }
         };
         if !candidate_pop.changed {
-            if candidate_pop.filtered {
+            if candidate_pop.pruned {
                 return Ok(None);
             }
             return Err(yrs_engine::OperationError::engine_invariant_failed(

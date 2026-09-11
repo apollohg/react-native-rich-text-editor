@@ -321,15 +321,15 @@ pub(crate) enum HistoryAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HistoryPop {
     pub changed: bool,
-    pub filtered: bool,
+    pub pruned: bool,
     pub restored: Option<HistorySnapshotSlot>,
 }
 
 impl HistoryPop {
-    fn unchanged(filtered: bool) -> Self {
+    fn unchanged(pruned: bool) -> Self {
         Self {
             changed: false,
-            filtered,
+            pruned,
             restored: None,
         }
     }

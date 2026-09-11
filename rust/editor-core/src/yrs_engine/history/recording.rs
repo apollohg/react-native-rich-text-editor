@@ -203,6 +203,37 @@ impl YrsHistory {
         }
     }
 
+    fn cloned_stacks(
+        &self,
+    ) -> (
+        Vec<StackItem<HistoryMetadata>>,
+        Vec<StackItem<HistoryMetadata>>,
+    ) {
+        (
+            self.manager.undo_stack().to_vec(),
+            self.manager.redo_stack().to_vec(),
+        )
+    }
+
+    fn install_stacks(
+        &mut self,
+        doc: &Doc,
+        fragment: &XmlFragmentRef,
+        undo: Vec<StackItem<HistoryMetadata>>,
+        redo: Vec<StackItem<HistoryMetadata>>,
+    ) {
+        self.manager = build_undo_manager(
+            doc,
+            fragment,
+            self.clock.clone(),
+            undo,
+            redo,
+            &self.pending_capture,
+            &self.pending_pop,
+            &self.popped,
+        );
+    }
+
     pub(crate) fn rebind(&mut self, doc: &Doc, fragment: &XmlFragmentRef) {
         let limits = self.limits.clone();
         let clock = self.clock.clone();

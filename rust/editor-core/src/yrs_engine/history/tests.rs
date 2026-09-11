@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use yrs::block::ClientID;
-use yrs::types::xml::XmlFragment;
-use yrs::{Doc, GetString, IdSet, Transact, XmlTextPrelim};
+use yrs::types::xml::{XmlFragment, XmlOut};
+use yrs::types::Text;
+use yrs::updates::decoder::Decode;
+use yrs::{Doc, GetString, IdSet, ReadTxn, StateVector, Transact, Update, XmlTextPrelim};
 
 use super::{
     add_id_set_units, EditingLimits, HistoryClass, HistoryMetadata, HistoryMetadataSlots,
@@ -139,6 +141,117 @@ fn id_set_accounting_counts_clock_ranges_not_clients() {
         (ClientID::new(2), [0..4, 4..4]),
     ]);
     assert_eq!(add_id_set_units(7, &set, 1).unwrap(), 16);
+}
+
+fn insert_peer_text(doc: &Doc, text: &str) {
+    let peer = Doc::new();
+    let peer_fragment = peer.get_or_insert_xml_fragment("history-test");
+    let shared = doc
+        .transact()
+        .encode_state_as_update_v1(&StateVector::default());
+    peer.transact_mut()
+        .apply_update(Update::decode_v1(&shared).expect("peer decodes the shared state"))
+        .expect("peer applies the shared state");
+    let target = match peer_fragment.get(&peer.transact(), 0) {
+        Some(XmlOut::Text(target)) => target,
+        _ => panic!("peer sees the shared text container"),
+    };
+    target.insert(&mut peer.transact_mut(), 0, text);
+    let peer_update = peer
+        .transact()
+        .encode_state_as_update_v1(&doc.transact().state_vector());
+    doc.transact_mut_with(TransactionOrigin::RemoteSync.as_yrs_origin())
+        .apply_update(Update::decode_v1(&peer_update).expect("local decodes the peer update"))
+        .expect("local applies the peer update");
+}
+
+#[test]
+fn undo_keeps_a_text_container_holding_peer_content() {
+    let doc = Doc::new();
+    let fragment = doc.get_or_insert_xml_fragment("history-test");
+    let mut history = YrsHistory::new(
+        &doc,
+        &fragment,
+        EditingLimits::default(),
+        usize::MAX,
+        Arc::new(|| 10_000),
+    );
+    {
+        let mut txn = doc.transact_mut_with(INPUT_ORIGIN);
+        fragment.push_back(&mut txn, XmlTextPrelim::new("local"));
+    }
+    insert_peer_text(&doc, "peer");
+    assert_eq!(fragment.get_string(&doc.transact()), "peerlocal");
+
+    let pop = history.undo(&doc, &fragment);
+    assert!(pop.changed);
+    assert_eq!(fragment.get_string(&doc.transact()), "peer");
+}
+
+#[test]
+fn redo_keeps_a_text_container_a_prior_undo_recreated() {
+    let doc = Doc::new();
+    let fragment = doc.get_or_insert_xml_fragment("history-test");
+    let mut history = YrsHistory::new(
+        &doc,
+        &fragment,
+        EditingLimits::default(),
+        usize::MAX,
+        Arc::new(|| 10_000),
+    );
+    {
+        let mut txn = doc.transact_mut_with(INPUT_ORIGIN);
+        fragment.push_back(&mut txn, XmlTextPrelim::new("local"));
+    }
+    history.manager.reset();
+    {
+        let mut txn = doc.transact_mut_with(INPUT_ORIGIN);
+        fragment.remove(&mut txn, 0);
+    }
+    assert_eq!(fragment.get_string(&doc.transact()), "");
+
+    assert!(history.undo(&doc, &fragment).changed);
+    assert_eq!(fragment.get_string(&doc.transact()), "local");
+
+    insert_peer_text(&doc, "peer");
+    assert_eq!(fragment.get_string(&doc.transact()), "peerlocal");
+
+    assert!(history.redo(&doc, &fragment).changed);
+    assert_eq!(
+        fragment.get_string(&doc.transact()),
+        "peer",
+        "redo must not delete the container a peer wrote into",
+    );
+}
+
+#[test]
+fn a_stack_item_that_reverts_only_protected_containers_is_drained() {
+    let doc = Doc::new();
+    let fragment = doc.get_or_insert_xml_fragment("history-test");
+    let mut history = YrsHistory::new(
+        &doc,
+        &fragment,
+        EditingLimits::default(),
+        usize::MAX,
+        Arc::new(|| 10_000),
+    );
+    {
+        let mut txn = doc.transact_mut_with(INPUT_ORIGIN);
+        fragment.push_back(&mut txn, XmlTextPrelim::new(""));
+    }
+    insert_peer_text(&doc, "peer");
+    assert_eq!(fragment.get_string(&doc.transact()), "peer");
+    assert!(history.can_undo());
+
+    let pop = history.undo(&doc, &fragment);
+    assert!(!pop.changed);
+    assert!(pop.pruned);
+    assert_eq!(fragment.get_string(&doc.transact()), "peer");
+    assert!(
+        !history.can_undo(),
+        "a stack drained of unrevertible items must not report an available undo",
+    );
+    assert!(!history.can_redo());
 }
 
 #[test]

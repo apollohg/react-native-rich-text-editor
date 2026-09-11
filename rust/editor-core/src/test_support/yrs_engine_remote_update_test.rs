@@ -1,4 +1,5 @@
 use crate::boundary::ResourceLimits;
+use crate::collaboration_runtime::outbox::CollaborationOutbox;
 use crate::schema::Schema;
 use crate::tiptap_schema;
 use crate::yrs_engine::{
@@ -753,7 +754,7 @@ fn repeated_history_pops_without_new_actions_advance_one_revision_each() {
 }
 
 #[test]
-fn undo_reverting_only_a_remotely_populated_container_is_a_no_op() {
+fn undo_reverting_only_a_remotely_populated_container_drains_the_stack_silently() {
     let mut local = engine(InitializationMode::LocalEmpty);
     let mut remote = engine(InitializationMode::AwaitRemote);
     remote
@@ -777,23 +778,44 @@ fn undo_reverting_only_a_remotely_populated_container_is_a_no_op() {
 
     let merged = local.document_json().unwrap();
     let merged_revision = local.revision();
+    let merged_state = local.encoded_state().unwrap();
     assert_eq!(
         merged,
         serde_json::json!({"type":"doc","content":[
             {"type":"paragraph"},
             {"type":"paragraph","content":[{"type":"text","text":"R"}]}]}),
     );
+    assert!(local.can_undo());
 
+    let mut outbox = CollaborationOutbox::with_ceilings(4, 1024);
     assert!(
-        local.undo(116).unwrap().is_none(),
+        local
+            .undo_with_outbox(116, Some(&mut outbox))
+            .unwrap()
+            .is_none(),
         "an undo whose only reverted structs are protected must report no change",
     );
+
     assert_eq!(local.document_json().unwrap(), merged);
+    assert_eq!(local.encoded_state().unwrap(), merged_state);
     assert_eq!(local.revision(), merged_revision);
+    assert_eq!(local.state_revision(), merged_revision);
+    assert_eq!(
+        outbox.pending_document_update_count(),
+        0,
+        "draining unrevertible stack items is bookkeeping, not a mutation",
+    );
+    assert!(
+        !local.can_undo(),
+        "a stack that cannot produce a change must not report an available undo",
+    );
+    assert!(!local.can_redo());
+    assert!(local.undo(117).unwrap().is_none());
+    assert!(!local.can_undo());
 }
 
 #[test]
-fn undo_skips_a_container_a_peer_already_removed() {
+fn undo_skips_stack_items_that_revert_nothing_and_applies_the_next_one() {
     let mut local = engine(InitializationMode::LocalEmpty);
     let mut remote = engine(InitializationMode::AwaitRemote);
     remote
@@ -833,14 +855,21 @@ fn undo_skips_a_container_a_peer_already_removed() {
         local.document_json().unwrap(),
         serde_json::json!({"type":"doc","content":[
             {"type":"paragraph","content":[{"type":"text","text":"ab"}]}]}),
-        "the peer merged both paragraphs and removed the locally created one",
+        "the peer merged both paragraphs, moving its own tail into the locally created container",
     );
+    let before = local.revision();
 
     local.undo(307).unwrap().expect("undo must apply");
     assert_eq!(
         local.document_json().unwrap(),
-        serde_json::json!({"type":"doc","content":[{"type":"paragraph"}]}),
-        "reverting insertions whose container a peer already removed must still apply",
+        serde_json::json!({"type":"doc","content":[
+            {"type":"paragraph","content":[{"type":"text","text":"b"}]}]}),
+        "the two stack items that revert nothing are skipped and the peer's merged text survives",
+    );
+    assert_eq!(
+        local.revision(),
+        before + 1,
+        "skipping unrevertible stack items is a single user-visible undo",
     );
     assert!(!local.can_undo());
 }

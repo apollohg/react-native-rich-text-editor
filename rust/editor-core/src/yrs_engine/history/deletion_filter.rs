@@ -211,23 +211,13 @@ impl YrsHistory {
             id_set_without(top.insertions(), &protected),
             top.meta().clone(),
         );
-        let mut undo_stack = self.manager.undo_stack().to_vec();
-        let mut redo_stack = self.manager.redo_stack().to_vec();
+        let (mut undo_stack, mut redo_stack) = self.cloned_stacks();
         let replaced = match action {
             HistoryAction::Undo => undo_stack.last_mut(),
             HistoryAction::Redo => redo_stack.last_mut(),
         };
         *replaced.expect("filtered history stack retains its top item") = filtered;
-        self.manager = build_undo_manager(
-            doc,
-            fragment,
-            self.clock.clone(),
-            undo_stack,
-            redo_stack,
-            &self.pending_capture,
-            &self.pending_pop,
-            &self.popped,
-        );
+        self.install_stacks(doc, fragment, undo_stack, redo_stack);
         true
     }
 }
