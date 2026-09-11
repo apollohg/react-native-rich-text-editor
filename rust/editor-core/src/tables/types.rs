@@ -1,12 +1,17 @@
 use std::fmt;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TableError {
     InvalidStructure,
     InvalidAttributes,
-    GridLimit { limit: usize, actual: usize },
+    #[allow(dead_code)]
+    GridLimit {
+        limit: usize,
+        actual: usize,
+    },
+    #[allow(dead_code)]
     WorkLimit,
+    #[allow(dead_code)]
     Allocation,
 }
 

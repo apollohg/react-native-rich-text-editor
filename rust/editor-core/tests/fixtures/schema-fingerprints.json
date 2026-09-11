@@ -422,6 +422,63 @@
                 "marks": []
             },
             "expectedFingerprint": "aa353d589096244ca9bc0a3aad27154024609888732da313b9ed51faa3d8659e"
+        },
+        {
+            "name": "ProseMirror-named table roles",
+            "schema": {
+                "nodes": [
+                    { "name": "doc", "content": "block+", "role": "doc" },
+                    {
+                        "name": "paragraph",
+                        "content": "inline*",
+                        "group": "block",
+                        "role": "textBlock",
+                        "htmlTag": "p"
+                    },
+                    { "name": "text", "content": "", "group": "inline", "role": "text" },
+                    {
+                        "name": "table",
+                        "content": "table_row+",
+                        "group": "block",
+                        "role": "block",
+                        "tableRole": "table",
+                        "htmlTag": "table"
+                    },
+                    {
+                        "name": "table_row",
+                        "content": "(table_cell | table_header)*",
+                        "role": "block",
+                        "tableRole": "row",
+                        "htmlTag": "tr"
+                    },
+                    {
+                        "name": "table_cell",
+                        "content": "block+",
+                        "role": "block",
+                        "tableRole": "cell",
+                        "htmlTag": "td",
+                        "attrs": {
+                            "colspan": { "type": "number", "default": 1, "min": 1 },
+                            "rowspan": { "type": "number", "default": 1, "min": 1 },
+                            "colwidth": { "default": null }
+                        }
+                    },
+                    {
+                        "name": "table_header",
+                        "content": "block+",
+                        "role": "block",
+                        "tableRole": "header_cell",
+                        "htmlTag": "th",
+                        "attrs": {
+                            "colspan": { "type": "number", "default": 1, "min": 1 },
+                            "rowspan": { "type": "number", "default": 1, "min": 1 },
+                            "colwidth": { "default": null }
+                        }
+                    }
+                ],
+                "marks": []
+            },
+            "expectedFingerprint": "bd6b3ad4cb7fdb23fdedae80c665521dcb8e381662caec9277ae87cff81fb302"
         }
     ],
     "equivalentSchemas": [

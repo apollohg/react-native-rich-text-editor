@@ -3,10 +3,10 @@ use serde::Serialize;
 use crate::schema::{AttrSpec, NodeSpec, Schema};
 use crate::tables::types::TableError;
 
-pub const COLSPAN_ATTR: &str = "colspan";
-pub const ROWSPAN_ATTR: &str = "rowspan";
-pub const COLWIDTH_ATTR: &str = "colwidth";
-pub const MIN_SPAN: u64 = 1;
+pub const TABLE_CELL_COLSPAN_ATTR: &str = "colspan";
+pub const TABLE_CELL_ROWSPAN_ATTR: &str = "rowspan";
+pub const TABLE_CELL_COLWIDTH_ATTR: &str = "colwidth";
+pub const MIN_TABLE_CELL_SPAN: u64 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -130,7 +130,7 @@ impl TableRoles {
         for name in [&self.cell, &self.header_cell] {
             let spec = self.node(schema, name)?;
 
-            for span in [COLSPAN_ATTR, ROWSPAN_ATTR] {
+            for span in [TABLE_CELL_COLSPAN_ATTR, TABLE_CELL_ROWSPAN_ATTR] {
                 let attr = spec.attrs.get(span).ok_or(TableError::InvalidAttributes)?;
 
                 if !span_default_is_valid(attr) {
@@ -140,7 +140,7 @@ impl TableRoles {
 
             let width = spec
                 .attrs
-                .get(COLWIDTH_ATTR)
+                .get(TABLE_CELL_COLWIDTH_ATTR)
                 .ok_or(TableError::InvalidAttributes)?;
 
             if !width.has_default {
@@ -162,5 +162,5 @@ fn span_default_is_valid(attr: &AttrSpec) -> bool {
             .default
             .as_ref()
             .and_then(serde_json::Value::as_u64)
-            .is_some_and(|value| value >= MIN_SPAN)
+            .is_some_and(|value| value >= MIN_TABLE_CELL_SPAN)
 }
