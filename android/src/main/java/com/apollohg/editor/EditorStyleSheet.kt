@@ -115,7 +115,8 @@ class EditorStyleSheet private constructor(
         val name = canonicalElement(element)
         var result = resolveBaseText(name, ancestors)
         matchingRules(name, ancestors).forEach {
-            result = result.mergedWith(EditorTextStyle.fromJson(it.style)?.copy(backgroundColor = null))
+            result =
+                result.mergedWith(EditorTextStyle.fromJson(it.style)?.copy(backgroundColor = null))
         }
         val active = marks.map(::canonicalMark).toSet()
         listOf("inlineCode", "bold", "italic", "link", "underline", "strike").filter {
@@ -321,7 +322,13 @@ private fun EditorElementStyle.overlaidWith(
             val current = ordered ?: EditorOrderedListMarkerTheme()
             val orderedJson = raw?.optJSONObject("ordered")
             EditorOrderedListMarkerTheme(
-                schemes = if (orderedJson?.has("schemes") == true) next.schemes else current.schemes,
+                schemes = if (orderedJson?.has("schemes") ==
+                    true
+                ) {
+                    next.schemes
+                } else {
+                    current.schemes
+                },
                 suffix = if (orderedJson?.has("suffix") == true) next.suffix else current.suffix
             )
         }
@@ -340,12 +347,27 @@ private fun EditorElementStyle.overlaidWith(
             margin = sides("margin", box.margin, other.box.margin),
             border = sides("border", box.border, other.box.border, "Width"),
             borderColors = listOf("Top", "Right", "Bottom", "Left").mapIndexed { index, side ->
-                if ("border${side}Color" in keys) other.box.borderColors[index]
-                else box.borderColors[index]
+                if ("border${side}Color" in keys) {
+                    other.box.borderColors[index]
+                } else {
+                    box.borderColors[index]
+                }
             },
             corners = EditorCorners(
-                if ("borderTopLeftRadius" in keys) other.box.corners.topLeft else box.corners.topLeft,
-                if ("borderTopRightRadius" in keys) other.box.corners.topRight else box.corners.topRight,
+                if ("borderTopLeftRadius" in
+                    keys
+                ) {
+                    other.box.corners.topLeft
+                } else {
+                    box.corners.topLeft
+                },
+                if ("borderTopRightRadius" in
+                    keys
+                ) {
+                    other.box.corners.topRight
+                } else {
+                    box.corners.topRight
+                },
                 if ("borderBottomRightRadius" in keys) {
                     other.box.corners.bottomRight
                 } else {

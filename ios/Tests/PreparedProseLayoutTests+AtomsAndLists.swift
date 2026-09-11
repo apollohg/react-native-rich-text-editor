@@ -87,7 +87,9 @@ extension PreparedProseLayoutTests {
         XCTAssertEqual(styled.blocks[2].fragments.first { $0.kind == .background }?.styleBox?.margin.bottom, 8)
         let run = try XCTUnwrap((CTLineGetGlyphRuns(try XCTUnwrap(text(styled, 0).line)) as? [CTRun])?.first)
         let attributes = CTRunGetAttributes(run) as NSDictionary
-        XCTAssertEqual(attributes[kCTForegroundColorAttributeName] as! CGColor, UIColor.red.cgColor)
+        XCTAssertEqual(
+            try unwrapCoreTextAttribute(attributes[kCTForegroundColorAttributeName], as: CGColor.self),
+            UIColor.red.cgColor)
     }
 
     func testViewerSpecialElementsUseOwningAncestry() throws {
@@ -119,7 +121,10 @@ extension PreparedProseLayoutTests {
         let atom = try XCTUnwrap(result.blocks[0].fragments.first { $0.kind == .atom })
         XCTAssertEqual(atom.styleBox?.padding.left, 17)
         let atomRun = try XCTUnwrap((CTLineGetGlyphRuns(try XCTUnwrap(atom.line)) as? [CTRun])?.first)
-        XCTAssertEqual((CTRunGetAttributes(atomRun) as NSDictionary)[kCTForegroundColorAttributeName] as! CGColor, UIColor.green.cgColor)
+        XCTAssertEqual(
+            try unwrapCoreTextAttribute(
+                (CTRunGetAttributes(atomRun) as NSDictionary)[kCTForegroundColorAttributeName], as: CGColor.self),
+            UIColor.green.cgColor)
         let rule = try XCTUnwrap(result.blocks[1].fragments.first { $0.kind == .background })
         XCTAssertEqual(rule.styleBox?.margin.top, 19)
         XCTAssertEqual(rule.bounds.height, 7)

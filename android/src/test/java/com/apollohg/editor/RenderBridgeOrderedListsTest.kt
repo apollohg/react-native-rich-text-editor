@@ -59,10 +59,14 @@ internal class RenderBridgeOrderedListsTest : RenderBridgeTestFixture() {
             """{"version":1,"styles":{"text":{"fontSize":32,"color":"#00ff00ff"},"orderedList":{"indent":0},"listMarker":{"color":"#ff0000ff","gap":4}}}"""
         )
         val rendered = RenderBridge.buildSpannable(json, 32f, Color.GREEN, theme, 1f)
-        val layout = EditorDocumentLayout(rendered, TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = 32f
-            color = Color.BLACK
-        }, 200)
+        val layout = EditorDocumentLayout(
+            rendered,
+            TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = 32f
+                color = Color.BLACK
+            },
+            200
+        )
         val bitmap = Bitmap.createBitmap(200, layout.height, Bitmap.Config.ARGB_8888)
         layout.draw(Canvas(bitmap))
         val textStartX = layout.getPrimaryHorizontal(rendered.indexOf("Item")).toInt()

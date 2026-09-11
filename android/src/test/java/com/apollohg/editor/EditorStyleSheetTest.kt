@@ -30,7 +30,10 @@ class EditorStyleSheetTest {
                 {"type":"textRun","text":"nested","marks":[]},
                 {"type":"blockEnd"},{"type":"blockEnd"},{"type":"blockEnd"}
                 ]""",
-                17f, Color.BLACK, theme, 1f
+                17f,
+                Color.BLACK,
+                theme,
+                1f
             )
             val width = rendered.getSpans(0, rendered.length, CenteredBulletSpan::class.java)
                 .single().getSize(android.graphics.Paint(), rendered, 0, 1, null)
@@ -38,15 +41,21 @@ class EditorStyleSheetTest {
                 .last().foregroundColor
             return width to color
         }
-        val noncontiguous = """{"path":["blockquote","paragraph"],"style":{"fontSize":70,"color":"#ff0000ff"}}"""
-        val contiguous = """{"path":["blockquote","bulletList","listItem","paragraph"],"style":{"fontSize":50,"color":"#ff0000ff"}}"""
+        val noncontiguous =
+            """{"path":["blockquote","paragraph"],"style":{"fontSize":70,"color":"#ff0000ff"}}"""
+        val contiguous =
+            """{"path":["blockquote","bulletList","listItem","paragraph"],"style":""" +
+                """{"fontSize":50,"color":"#ff0000ff"}}"""
         assertEquals(10 to Color.GREEN, markerAppearance())
         assertEquals(10 to Color.GREEN, markerAppearance("[]"))
         assertEquals(10 to Color.GREEN, markerAppearance("[$noncontiguous]"))
         assertEquals(16 to Color.RED, markerAppearance("[$noncontiguous,$contiguous]"))
-        assertEquals(16 to Color.BLUE, markerAppearance(
-            """[$contiguous,{"path":["listItem","listMarker"],"style":{"color":"#0000ffff"}}]"""
-        ))
+        assertEquals(
+            16 to Color.BLUE,
+            markerAppearance(
+                """[$contiguous,{"path":["listItem","listMarker"],"style":{"color":"#0000ffff"}}]"""
+            )
+        )
     }
 
     @Test
@@ -62,7 +71,10 @@ class EditorStyleSheetTest {
                 {"type":"textRun","text":"nested","marks":[]},
                 {"type":"blockEnd"},{"type":"blockEnd"}
                 ]""",
-                17f, Color.BLACK, theme, 1f
+                17f,
+                Color.BLACK,
+                theme,
+                1f
             )
             val width = rendered.getSpans(0, rendered.length, CenteredBulletSpan::class.java)
                 .single().getSize(android.graphics.Paint(), rendered, 0, 1, null)
@@ -71,8 +83,18 @@ class EditorStyleSheetTest {
             return width to color
         }
         assertEquals(7 to Color.BLACK, markerAppearance("[]"))
-        assertEquals(16 to Color.RED, markerAppearance("""[{"path":["listItem","paragraph"],"style":{"fontSize":50,"color":"#ff0000ff"}}]"""))
-        assertEquals(7 to Color.BLACK, markerAppearance("""[{"path":["blockquote","paragraph"],"style":{"fontSize":50,"color":"#ff0000ff"}}]"""))
+        assertEquals(
+            16 to Color.RED,
+            markerAppearance(
+                """[{"path":["listItem","paragraph"],"style":{"fontSize":50,"color":"#ff0000ff"}}]"""
+            )
+        )
+        assertEquals(
+            7 to Color.BLACK,
+            markerAppearance(
+                """[{"path":["blockquote","paragraph"],"style":{"fontSize":50,"color":"#ff0000ff"}}]"""
+            )
+        )
     }
 
     @Test
@@ -245,7 +267,11 @@ class EditorStyleSheetTest {
         val cases = listOf(
             Case("\"paragraph\"", emptyList(), true),
             Case("\"paragraph\"", listOf("blockquote", "bullet_list", "list_item"), true),
-            Case("\"listItem\",\"paragraph\"", listOf("blockquote", "bullet_list", "list_item"), true),
+            Case(
+                "\"listItem\",\"paragraph\"",
+                listOf("blockquote", "bullet_list", "list_item"),
+                true
+            ),
             Case(
                 "\"bulletList\",\"listItem\",\"paragraph\"",
                 listOf("blockquote", "bullet_list", "list_item"),
@@ -274,7 +300,11 @@ class EditorStyleSheetTest {
                 """{"version":1,"styles":{"paragraph":{"marginBottom":8}},"rules":[""" +
                     """{"path":[${case.path}],"style":{"marginBottom":17}}]}"""
             )!!.styleSheet!!
-            assertEquals("case $index", if (case.matches) 17f else 8f, sheet.box("paragraph", case.ancestors).margin.bottom)
+            assertEquals(
+                "case $index",
+                if (case.matches) 17f else 8f,
+                sheet.box("paragraph", case.ancestors).margin.bottom
+            )
         }
     }
 

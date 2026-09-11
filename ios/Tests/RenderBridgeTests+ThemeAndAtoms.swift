@@ -107,17 +107,23 @@ extension RenderBridgeTests {
         XCTAssertEqual(sheet["paragraph"]["marginBottom"] as? Int, 8)
     }
 
+    struct StyleSheetSuffixCase {
+        let path: [String]
+        let ancestors: [String]
+        let matches: Bool
+    }
+
     func testStyleSheetRulesMatchOnlyContiguousCanonicalSuffixes() throws {
-        let cases: [(path: [String], ancestors: [String], matches: Bool)] = [
-            (["paragraph"], [], true),
-            (["paragraph"], ["blockquote", "bullet_list", "list_item"], true),
-            (["listItem", "paragraph"], ["blockquote", "bullet_list", "list_item"], true),
-            (["bulletList", "listItem", "paragraph"], ["blockquote", "bullet_list", "list_item"], true),
-            (["blockquote", "listItem", "paragraph"], ["blockquote", "list_item"], true),
-            (["blockquote", "listItem", "paragraph"], ["blockquote", "bullet_list", "list_item"], false),
-            (["blockquote", "bulletList", "listItem", "paragraph"], ["bullet_list", "list_item"], false),
-            (["listItem", "paragraph"], ["blockquote"], false),
-            (["list_item", "paragraph"], ["listItem"], true)
+        let cases: [StyleSheetSuffixCase] = [
+            .init(path: ["paragraph"], ancestors: [], matches: true),
+            .init(path: ["paragraph"], ancestors: ["blockquote", "bullet_list", "list_item"], matches: true),
+            .init(path: ["listItem", "paragraph"], ancestors: ["blockquote", "bullet_list", "list_item"], matches: true),
+            .init(path: ["bulletList", "listItem", "paragraph"], ancestors: ["blockquote", "bullet_list", "list_item"], matches: true),
+            .init(path: ["blockquote", "listItem", "paragraph"], ancestors: ["blockquote", "list_item"], matches: true),
+            .init(path: ["blockquote", "listItem", "paragraph"], ancestors: ["blockquote", "bullet_list", "list_item"], matches: false),
+            .init(path: ["blockquote", "bulletList", "listItem", "paragraph"], ancestors: ["bullet_list", "list_item"], matches: false),
+            .init(path: ["listItem", "paragraph"], ancestors: ["blockquote"], matches: false),
+            .init(path: ["list_item", "paragraph"], ancestors: ["listItem"], matches: true)
         ]
         for (index, test) in cases.enumerated() {
             let sheet = try XCTUnwrap(EditorTheme(dictionary: [

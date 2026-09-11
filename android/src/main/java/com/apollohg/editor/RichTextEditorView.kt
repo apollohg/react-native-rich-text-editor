@@ -946,7 +946,11 @@ class RichTextEditorView @JvmOverloads constructor(
     internal fun selectedImageSpanForResize(): BlockImageSpan? =
         editorEditText.selectedImageSpanForResize()
 
-    internal fun previewImageResize(span: BlockImageSpan, widthPx: Float, heightPx: Float): Boolean {
+    internal fun previewImageResize(
+        span: BlockImageSpan,
+        widthPx: Float,
+        heightPx: Float
+    ): Boolean {
         if (!span.setTemporarySizePx(widthPx, heightPx)) return false
         editorEditText.relayoutImageResizePreview(span)
         return true

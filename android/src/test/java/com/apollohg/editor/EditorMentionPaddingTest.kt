@@ -22,7 +22,9 @@ internal class EditorMentionPaddingTest : EditorV2AdapterTestFixture() {
                 val root = JSONObject(atomicRenderSnapshot("Ada", "1"))
                 root.put(
                     "renderBlocks",
-                    JSONArray("""[[{"type":"opaqueInlineAtom","nodeType":"mention","label":"Ada","docPos":1,"mentionTheme":{"node":{"style":{"padding$side":$value}}}}]]""")
+                    JSONArray(
+                        """[[{"type":"opaqueInlineAtom","nodeType":"mention","label":"Ada","docPos":1,"mentionTheme":{"node":{"style":{"padding$side":$value}}}}]]"""
+                    )
                 )
                 return root.toString()
             }
@@ -42,15 +44,24 @@ internal class EditorMentionPaddingTest : EditorV2AdapterTestFixture() {
     @Test
     fun `omitted mention padding preserves defaults and explicit sides override independently`() {
         val base = EditorTextStyle(fontSize = 17f)
-        assertEquals(EditorEdges(2f, 4f, 2f, 4f), resolvedMentionStyle(base, null, null).box.padding)
+        assertEquals(
+            EditorEdges(2f, 4f, 2f, 4f),
+            resolvedMentionStyle(base, null, null).box.padding
+        )
         val theme = EditorTheme.fromJson(
             """{"version":1,"styles":{"mention":{"paddingTop":7,"paddingRight":9}},"mentions":{"node":{"style":{"paddingRight":0,"paddingBottom":5}}}}"""
         )!!
-        assertEquals(EditorEdges(7f, 0f, 5f, 4f), resolvedMentionStyle(base, theme, null).box.padding)
+        assertEquals(
+            EditorEdges(7f, 0f, 5f, 4f),
+            resolvedMentionStyle(base, theme, null).box.padding
+        )
         val local = EditorMentionTheme.fromJson(
             JSONObject("""{"node":{"style":{"paddingTop":0,"paddingLeft":8}}}""")
         )
-        assertEquals(EditorEdges(0f, 0f, 5f, 8f), resolvedMentionStyle(base, theme, local).box.padding)
+        assertEquals(
+            EditorEdges(0f, 0f, 5f, 8f),
+            resolvedMentionStyle(base, theme, local).box.padding
+        )
     }
 
     @Test

@@ -106,10 +106,8 @@ class MarkerGapSpan(private val widthPx: Float) : ReplacementSpan() {
     ) = Unit
 }
 
-internal class OrderedListMarkerSpan(
-    internal val label: String,
-    private val textColor: Int
-) : ReplacementSpan() {
+internal class OrderedListMarkerSpan(internal val label: String, private val textColor: Int) :
+    ReplacementSpan() {
     override fun getSize(
         paint: Paint,
         text: CharSequence,

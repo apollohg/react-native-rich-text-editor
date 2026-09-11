@@ -41,7 +41,8 @@ extension RenderBridgeTests {
             for: [FfiViewerMark(markType: "strong", attrsJson: "{}"), FfiViewerMark(markType: "italic", attrsJson: "{}")],
             paint: viewerTheme.paint(for: block), theme: viewerTheme,
             warningSemanticGeneration: "contextual-inline-font-test", ancestors: ["codeBlock"])
-        let viewerFont = try XCTUnwrap(attributes[kCTFontAttributeName as NSAttributedString.Key]) as! CTFont
+        let viewerFont = try unwrapCoreTextAttribute(
+            attributes[kCTFontAttributeName as NSAttributedString.Key], as: CTFont.self)
         XCTAssertEqual(CTFontCopyFamilyName(viewerFont) as String, editorFont.familyName)
         XCTAssertTrue(CTFontGetSymbolicTraits(viewerFont).contains([.traitBold, .traitItalic]))
     }

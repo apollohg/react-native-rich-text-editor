@@ -346,6 +346,9 @@ jobs:
                   npm run typecheck
                   npm run typecheck:example
 
+            - name: Lint Swift sources
+              run: npm run lint:ios
+
             - name: Run Rust tests
               run: npm run test:rust
 
@@ -832,6 +835,10 @@ jobs:
             - name: Run Android JVM tests
               if: matrix.check == 'jvm-lint'
               run: npm run test:android
+
+            - name: Lint Kotlin sources
+              if: matrix.check == 'jvm-lint'
+              run: npm run lint:kotlin
 
             - name: Run Android lint
               if: matrix.check == 'jvm-lint'

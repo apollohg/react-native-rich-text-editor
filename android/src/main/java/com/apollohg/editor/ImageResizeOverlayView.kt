@@ -83,7 +83,9 @@ internal class ImageResizeOverlayView @JvmOverloads constructor(
         val selectedSpan = editorView?.selectedImageSpanForResize()
         if (currentGeometry?.docPos != nextGeometry.docPos ||
             dragState?.span?.let { it !== selectedSpan } == true
-        ) cancelActiveResize()
+        ) {
+            cancelActiveResize()
+        }
         currentGeometry = nextGeometry
         visibility = VISIBLE
         bringToFront()
@@ -138,7 +140,10 @@ internal class ImageResizeOverlayView @JvmOverloads constructor(
                     fixedHeightPx = geometry.rect.height() - span.currentSizePx().second,
                     maximumWidthPx = editorView?.maximumImageWidthPx() ?: geometry.rect.width(),
                     previewRect = RectF(geometry.rect),
-                    previewContentSize = span.currentSizePx().let { it.first.toFloat() to it.second.toFloat() }
+                    previewContentSize = span.currentSizePx().let {
+                        it.first.toFloat() to
+                            it.second.toFloat()
+                    }
                 )
                 parent?.requestDisallowInterceptTouchEvent(true)
                 return true
@@ -163,7 +168,9 @@ internal class ImageResizeOverlayView @JvmOverloads constructor(
                         )
                     }
                     editorView?.restoreImageResizePreview(state.span)
-                } else editorView?.restoreImageResizePreview(state.span)
+                } else {
+                    editorView?.restoreImageResizePreview(state.span)
+                }
                 dragState = null
                 parent?.requestDisallowInterceptTouchEvent(false)
                 post { refresh() }
@@ -188,7 +195,9 @@ internal class ImageResizeOverlayView @JvmOverloads constructor(
                     originalContentSize.first,
                     originalContentSize.second
                 )
-            ) return
+            ) {
+                return
+            }
             state.previewRect = RectF(state.originalRect)
             state.previewContentSize = originalContentSize
             currentGeometry = boundEditor.selectedImageGeometry()
@@ -209,7 +218,14 @@ internal class ImageResizeOverlayView @JvmOverloads constructor(
             maximumWidthPx = state.maximumWidthPx
         )
         val boundEditor = editorView ?: return
-        if (!boundEditor.previewImageResize(state.span, contentSize.first, contentSize.second)) return
+        if (!boundEditor.previewImageResize(
+                state.span,
+                contentSize.first,
+                contentSize.second
+            )
+        ) {
+            return
+        }
         state.previewRect = RectF(nextRect)
         state.previewContentSize = contentSize
         currentGeometry = boundEditor.selectedImageGeometry()
@@ -324,10 +340,33 @@ internal class ImageResizeOverlayView @JvmOverloads constructor(
         val visualWidth = width + fixedWidthPx
         val visualHeight = height + fixedHeightPx
         val rect = when (corner) {
-            Corner.TOP_LEFT -> RectF(anchor.x - visualWidth, anchor.y - visualHeight, anchor.x, anchor.y)
-            Corner.TOP_RIGHT -> RectF(anchor.x, anchor.y - visualHeight, anchor.x + visualWidth, anchor.y)
-            Corner.BOTTOM_LEFT -> RectF(anchor.x - visualWidth, anchor.y, anchor.x, anchor.y + visualHeight)
-            Corner.BOTTOM_RIGHT -> RectF(anchor.x, anchor.y, anchor.x + visualWidth, anchor.y + visualHeight)
+            Corner.TOP_LEFT -> RectF(
+                anchor.x - visualWidth,
+                anchor.y - visualHeight,
+                anchor.x,
+                anchor.y
+            )
+
+            Corner.TOP_RIGHT -> RectF(
+                anchor.x,
+                anchor.y - visualHeight,
+                anchor.x + visualWidth,
+                anchor.y
+            )
+
+            Corner.BOTTOM_LEFT -> RectF(
+                anchor.x - visualWidth,
+                anchor.y,
+                anchor.x,
+                anchor.y + visualHeight
+            )
+
+            Corner.BOTTOM_RIGHT -> RectF(
+                anchor.x,
+                anchor.y,
+                anchor.x + visualWidth,
+                anchor.y + visualHeight
+            )
         }
         return rect to (width to height)
     }

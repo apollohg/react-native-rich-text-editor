@@ -100,10 +100,14 @@ internal class RichTextEditorViewImageResizeTest : RichTextEditorViewTestFixture
 
         dispatchResizeGestureEvent(fixture, MotionEvent.ACTION_MOVE, downX + 20f, downY - 20f)
 
-        val expectedScale = 1f + ((20f * originalSize.first) -
-            (20f * originalSize.second)) /
-            ((originalSize.first * originalSize.first) +
-                (originalSize.second * originalSize.second)).toFloat()
+        val expectedScale = 1f + (
+            (20f * originalSize.first) -
+                (20f * originalSize.second)
+            ) /
+            (
+                (originalSize.first * originalSize.first) +
+                    (originalSize.second * originalSize.second)
+                ).toFloat()
         assertTrue(
             kotlin.math.abs(
                 (originalSize.first * expectedScale).toInt() - span.currentSizePx().first

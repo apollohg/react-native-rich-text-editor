@@ -101,6 +101,9 @@ jobs:
       - name: Run Android unit tests
         run: npm run test:android
 
+      - name: Lint Kotlin sources
+        run: npm run lint:kotlin
+
       - name: Run Android lint
         run: npm run lint:android
 
@@ -176,6 +179,9 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             example/package-lock.json
+
+      - name: Lint Swift sources
+        run: npm run lint:ios
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.95.0
