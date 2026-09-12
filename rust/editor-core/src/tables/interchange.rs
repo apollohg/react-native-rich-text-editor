@@ -3,14 +3,15 @@ use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::command_context::CellAnchorPair;
-use crate::tables::commands::{fresh_cell_node, GridRequirement, TableTarget};
+use crate::tables::commands::{fresh_cell_node, node_starting_at, GridRequirement, TableTarget};
 use crate::tables::projection::{span_attribute, CellRect};
 use crate::tables::roles::{
-    TABLE_CELL_COLSPAN_ATTR, TABLE_CELL_COLWIDTH_ATTR, TABLE_CELL_ROWSPAN_ATTR,
+    TableRoles, TABLE_CELL_COLSPAN_ATTR, TABLE_CELL_COLWIDTH_ATTR, TABLE_CELL_ROWSPAN_ATTR,
 };
 use crate::tables::selection::resolve_cell_rect;
 
 const ONE_CELL: usize = 1;
+const NODE_OPENING_TOKENS: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InterchangeFailure {
@@ -105,6 +106,26 @@ fn effective_cell(node: &Node, rect: &CellRect) -> Result<Node, InterchangeFailu
         attrs,
         node.content().cloned().unwrap_or_else(Fragment::empty),
     ))
+}
+
+pub(crate) fn first_editable_position_in_cell(
+    document: &Document,
+    schema: &Schema,
+    cell_pos: u32,
+) -> Option<u32> {
+    let roles = match TableRoles::resolve(schema) {
+        Ok(Some(roles)) => roles,
+        Ok(None) | Err(_) => return None,
+    };
+    let cell = node_starting_at(document, cell_pos)?;
+    let mut child_pos = cell_pos.checked_add(NODE_OPENING_TOKENS)?;
+    for child in cell.content()?.iter() {
+        if child.node_type() != roles.table {
+            return child_pos.checked_add(NODE_OPENING_TOKENS);
+        }
+        child_pos = child_pos.checked_add(child.node_size())?;
+    }
+    None
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

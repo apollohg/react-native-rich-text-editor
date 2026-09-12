@@ -15,7 +15,9 @@ use crate::tables::commands::{
     SplitCellAction, TableCommand, TableEdge, TableTarget, ToggleHeaderAction,
     CELL_INTERIOR_OFFSET,
 };
-use crate::tables::interchange::{next_outer_cell, outer_cell_containing, CellStep};
+use crate::tables::interchange::{
+    first_editable_position_in_cell, next_outer_cell, outer_cell_containing, CellStep,
+};
 use crate::tables::selection::{cell_opening_containing, resolve_cell_rect};
 use crate::tables::types::TableError;
 use crate::yrs_engine::{
@@ -23,7 +25,6 @@ use crate::yrs_engine::{
 };
 
 const CLEAR_CELLS_FIELD: &str = "clearTableCells";
-const ADJACENT_CELL_FIELD: &str = "moveToAdjacentCell";
 const UNREADABLE_GRID_IS_NOT_AVAILABLE: bool = false;
 const SELECT_CELLS_FIELD: &str = "selectTableCells";
 const TABLE_COMMAND_OPERATION_INDEX: usize = 0;
@@ -359,14 +360,7 @@ fn navigating_caret(selection: &Selection) -> Option<u32> {
     }
 }
 
-fn caret_only(context: &PlanningContext<'_>, cell_pos: u32) -> OperationResult<CommandPlan> {
-    let interior = cell_pos.checked_add(CELL_INTERIOR_OFFSET).ok_or_else(|| {
-        OperationError::selection_position_invalid(
-            context.request_id,
-            ADJACENT_CELL_FIELD,
-            "the adjacent cell has no addressable caret position",
-        )
-    })?;
+fn caret_only(context: &PlanningContext<'_>, interior: u32) -> OperationResult<CommandPlan> {
     Ok(CommandPlan::SelectionOnly(TypedTransaction {
         request_id: context.request_id,
         base_document_revision: context.revision,
@@ -437,8 +431,14 @@ fn move_to_adjacent_cell(
     let Some(anchor) = outer_cell_anchor(&index, caret) else {
         return Ok(CommandPlan::NotApplicable);
     };
-    if let Some(next) = next_outer_cell(&index, caret, step) {
-        return caret_only(context, next);
+    let mut cursor = caret;
+    while let Some(next) = next_outer_cell(&index, cursor, step) {
+        if let Some(interior) =
+            first_editable_position_in_cell(context.document, context.schema, next)
+        {
+            return caret_only(context, interior);
+        }
+        cursor = next;
     }
     match (step, append_row) {
         (CellStep::Forward, true) => {

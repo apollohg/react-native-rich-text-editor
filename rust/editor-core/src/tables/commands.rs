@@ -345,7 +345,7 @@ impl<'a> TableTarget<'a> {
     }
 }
 
-fn node_starting_at(document: &Document, position: u32) -> Option<&Node> {
+pub(crate) fn node_starting_at(document: &Document, position: u32) -> Option<&Node> {
     let Ok(resolved) = document.resolve(position) else {
         return None;
     };

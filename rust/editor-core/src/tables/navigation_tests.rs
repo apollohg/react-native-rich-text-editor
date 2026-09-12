@@ -644,3 +644,63 @@ fn availability_and_planning_agree_for_a_caret_inside_a_nested_table() {
         "the appended row belongs to the outer table",
     );
 }
+
+fn cell_leading_with_a_nested_table() -> Value {
+    json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
+        "content": [
+            table(vec![row(vec![cell(NESTED_CELL_TEXT)])]),
+            { "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": "after" }] },
+        ],
+    })
+}
+
+#[test]
+fn tab_into_a_cell_that_leads_with_a_nested_table_lands_on_an_editable_caret() {
+    let mut engine = engine_with(json!({ "type": "doc", "content": [table(vec![
+        row(vec![cell("a"), cell_leading_with_a_nested_table()]),
+    ])] }));
+    let outer = openings(
+        &index_of(engine.document().expect("the engine is ready")),
+        OUTER_TABLE_POSITION,
+    );
+
+    caret_at(&mut engine, outer[0] + CELL_TEXT_OFFSET);
+    assert!(
+        step(&mut engine, CellStep::Forward, DEFAULT_TAB_APPENDS_A_ROW).is_some(),
+        "tab into the next outer cell must be planned",
+    );
+    engine
+        .apply_command(
+            REQUEST_ID,
+            TypedCommand::InsertText {
+                text: "x".to_string(),
+            },
+        )
+        .expect("the keystroke after tab must be admitted, not refused as a nested edit");
+}
+
+#[test]
+fn tab_skips_a_cell_whose_only_content_is_a_nested_table() {
+    let unreachable_cell = json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
+        "content": [table(vec![row(vec![cell(NESTED_CELL_TEXT)])])],
+    });
+    let mut engine = engine_with(json!({ "type": "doc", "content": [table(vec![
+        row(vec![cell("a"), unreachable_cell, cell("c")]),
+    ])] }));
+    let outer = openings(
+        &index_of(engine.document().expect("the engine is ready")),
+        OUTER_TABLE_POSITION,
+    );
+
+    caret_at(&mut engine, outer[0] + CELL_TEXT_OFFSET);
+    step(&mut engine, CellStep::Forward, DEFAULT_TAB_APPENDS_A_ROW);
+    assert_eq!(
+        caret_document_position(&engine),
+        Some(outer[2] + CELL_TEXT_OFFSET),
+        "a cell with no editable position is stepped over, not landed in",
+    );
+}
