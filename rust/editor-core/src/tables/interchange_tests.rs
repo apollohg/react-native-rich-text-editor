@@ -24,6 +24,9 @@ const MALFORMED_COLUMN_WIDTHS: &str = "100,abc";
 const UNSET_COLUMN_WIDTHS: &str = "0,";
 const DECLARED_COLUMN_WIDTH: u32 = 100;
 const DOUBLE_SPAN: u32 = 2;
+const CELL_INTERIOR: u32 = 2;
+const ROW_NODE: &str = "table_row";
+const CELL_NODE: &str = "table_cell";
 const OVERSIZED_ROWSPAN: u32 = 3;
 
 const REPLACEMENT_REQUEST_ID: u64 = 23;
@@ -504,5 +507,97 @@ fn a_clipboard_refusal_reports_the_kind_of_refusal_it_is() {
         crate::clipboard::export_cells(&document, &Selection::text(3, 4), &index, &schema()),
         Err(InterchangeFailure::NotACellRectangle),
         "a selection that is not a rectangle is refused as such, not as an unreadable grid",
+    );
+}
+
+fn schema_admitting_a_stray_table_child() -> Schema {
+    let cell_attrs = json!({
+        "colspan": { "type": "number", "default": SINGLE_SPAN, "min": SINGLE_SPAN },
+        "rowspan": { "type": "number", "default": SINGLE_SPAN, "min": SINGLE_SPAN },
+        "colwidth": { "default": Value::Null }
+    });
+    Schema::from_json(&json!({ "nodes": [
+        { "name": "doc", "content": "block+", "role": "doc" },
+        { "name": PARAGRAPH_NODE, "content": "inline*", "group": "block", "role": "textBlock", "htmlTag": "p" },
+        { "name": "text", "content": "", "group": "inline", "role": "text" },
+        {
+            "name": TABLE_NODE,
+            "content": format!("({ROW_NODE} | {PARAGRAPH_NODE})+"),
+            "group": "block",
+            "role": "block",
+            "tableRole": "table",
+            "htmlTag": "table"
+        },
+        { "name": ROW_NODE, "content": format!("({CELL_NODE} | {HEADER_CELL_NODE})*"), "role": "block", "tableRole": "row", "htmlTag": "tr" },
+        { "name": CELL_NODE, "content": "block+", "role": "block", "tableRole": "cell", "htmlTag": "td", "attrs": cell_attrs },
+        { "name": HEADER_CELL_NODE, "content": "block+", "role": "block", "tableRole": "header_cell", "htmlTag": "th", "attrs": cell_attrs },
+    ], "marks": [] }))
+    .expect("a table that also accepts a paragraph child resolves its roles")
+}
+
+#[test]
+fn a_stray_table_child_reports_an_unreadable_grid_to_the_host() {
+    let schema = schema_admitting_a_stray_table_child();
+    let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
+        schema: schema.clone(),
+        fragment_name: FRAGMENT_NAME.into(),
+        initialization_mode: InitializationMode::LocalEmpty,
+        resource_limits: limits(),
+        editing_limits: EditingLimits::default(),
+        max_length: None,
+        scope: None,
+    })
+    .expect("the engine initializes");
+    engine
+        .import_json(
+            &json!({ "type": "doc", "content": [{
+                "type": TABLE_NODE,
+                "content": [
+                    { "type": ROW_NODE, "content": [cell("a"), cell("b")] },
+                    { "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": "stray" }] },
+                ],
+            }] })
+            .to_string(),
+            TransactionOrigin::DocumentImport,
+        )
+        .expect("a table holding a stray paragraph is admitted by this schema");
+
+    let document = engine.document().expect("the engine is ready");
+    let index = TableProjectionIndex::derive_or_fallback(document, &schema, &limits());
+    let openings: Vec<u32> = index
+        .table_at(0)
+        .expect("the table still projects")
+        .cells
+        .iter()
+        .map(|cell| cell.source_pos)
+        .collect();
+    let map = engine.position_map().expect("the engine is ready");
+    let inside = |opening: u32| crate::yrs_engine::RevisionedPosition {
+        offset: map.doc_to_scalar(opening + CELL_INTERIOR, document),
+        kind: crate::yrs_engine::EditorOffsetKind::Scalar,
+        affinity: crate::yrs_engine::Affinity::Before,
+    };
+    let (anchor, head) = (inside(openings[0]), inside(openings[1]));
+
+    engine
+        .apply_typed_transaction(crate::yrs_engine::TypedTransaction {
+            request_id: REPLACEMENT_REQUEST_ID,
+            base_document_revision: engine.revision(),
+            origin: TransactionOrigin::LocalApi,
+            operations: Vec::new(),
+            selection_intent: crate::yrs_engine::SelectionIntent::Set(
+                crate::yrs_engine::SelectionInput::Cell { anchor, head },
+            ),
+            history_policy: crate::yrs_engine::HistoryPolicy::Skip,
+        })
+        .expect("the cell rectangle is admitted");
+
+    assert_eq!(
+        engine.clipboard(),
+        Some(json!({
+            crate::clipboard::CLIPBOARD_UNSUPPORTED_KEY:
+                crate::clipboard::CLIPBOARD_UNSUPPORTED_TABLE_GRID
+        })),
+        "a table the clipboard cannot read must say so, not blame the selection",
     );
 }
