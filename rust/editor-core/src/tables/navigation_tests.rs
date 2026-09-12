@@ -5,6 +5,7 @@ use crate::model::Document;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::interchange::{next_outer_cell, CellStep};
 use crate::tables::mutation_guard::{admit_local_mutation, LocalMutationRefusal};
+use crate::tables::commands::{TableCommand, DEFAULT_TAB_APPENDS_A_ROW};
 use crate::tables::normalize_tests::{cell, cell_with, document_with, limits, row, schema, table};
 use crate::yrs_engine::{
     Affinity, EditorOffsetKind, InitializationMode, RevisionedPosition, SelectionInput,
@@ -376,5 +377,128 @@ fn a_refusal_names_its_own_boundary_field() {
         refusal_field(&LocalMutationRefusal::CellBoundaryJoin.into_operation_error(REQUEST_ID))
             .as_deref(),
         Some(CELL_BOUNDARY_FIELD),
+    );
+}
+
+fn caret_document_position(engine: &YrsDocumentEngine) -> Option<u32> {
+    match engine.resolved_selection()? {
+        crate::yrs_engine::ResolvedSelection::Text { anchor, head } => {
+            (anchor.document == head.document).then_some(anchor.document)
+        }
+        crate::yrs_engine::ResolvedSelection::Cell { .. }
+        | crate::yrs_engine::ResolvedSelection::Node { .. }
+        | crate::yrs_engine::ResolvedSelection::All => None,
+    }
+}
+
+fn step(
+    engine: &mut YrsDocumentEngine,
+    step: CellStep,
+    append_row: bool,
+) -> Option<crate::yrs_engine::TypedTransactionResult> {
+    engine
+        .apply_command(
+            REQUEST_ID,
+            TypedCommand::Table(TableCommand::MoveToAdjacentCell { step, append_row }),
+        )
+        .expect("the navigation command plans")
+}
+
+#[test]
+fn tab_moves_the_caret_into_the_next_outer_cell_and_shift_tab_stops_at_the_first() {
+    let mut engine = engine_with(json!({ "type": "doc", "content": [table(vec![
+        row(vec![cell("a"), cell("b")]),
+        row(vec![cell_holding_a_nested_table(), cell("d")]),
+    ])] }));
+    let outer = openings(
+        &index_of(engine.document().expect("the engine is ready")),
+        OUTER_TABLE_POSITION,
+    );
+
+    caret_at(&mut engine, outer[0] + CELL_TEXT_OFFSET);
+    step(&mut engine, CellStep::Forward, DEFAULT_TAB_APPENDS_A_ROW);
+    assert_eq!(
+        caret_document_position(&engine),
+        Some(outer[1] + CELL_TEXT_OFFSET),
+        "tab lands the caret in the next real outer cell",
+    );
+
+    caret_at(&mut engine, outer[0] + CELL_TEXT_OFFSET);
+    assert_eq!(
+        step(&mut engine, CellStep::Backward, DEFAULT_TAB_APPENDS_A_ROW),
+        None,
+        "shift-tab in the first real cell has nowhere to go and never appends",
+    );
+}
+
+#[test]
+fn tab_from_inside_a_nested_table_leaves_through_the_outer_grid() {
+    let mut engine = engine_with(json!({ "type": "doc", "content": [table(vec![
+        row(vec![cell_holding_a_nested_table(), cell("d")]),
+    ])] }));
+    let index = index_of(engine.document().expect("the engine is ready"));
+    let outer = openings(&index, OUTER_TABLE_POSITION);
+    let nested = openings(&index, nested_table_position(&index));
+
+    caret_at(&mut engine, nested[0] + CELL_TEXT_OFFSET);
+    step(&mut engine, CellStep::Forward, DEFAULT_TAB_APPENDS_A_ROW);
+    assert_eq!(
+        caret_document_position(&engine),
+        Some(outer[1] + CELL_TEXT_OFFSET),
+        "a caret inside a nested table tabs to the next outer cell, never to an inner one",
+    );
+}
+
+#[test]
+fn tab_at_the_last_real_cell_appends_a_row_only_when_the_caller_asks_for_one() {
+    let fixture = json!({ "type": "doc", "content": [table(vec![
+        row(vec![cell("a"), cell("b")]),
+    ])] });
+
+    let mut refused = engine_with(fixture.clone());
+    let last = *openings(
+        &index_of(refused.document().expect("the engine is ready")),
+        OUTER_TABLE_POSITION,
+    )
+    .last()
+    .expect("the fixture holds cells");
+    caret_at(&mut refused, last + CELL_TEXT_OFFSET);
+    assert_eq!(
+        step(&mut refused, CellStep::Forward, false),
+        None,
+        "without appendRow, tab off the last real cell does nothing",
+    );
+    assert_eq!(
+        refused.document_json().expect("the engine is ready")["content"][0]["content"]
+            .as_array()
+            .expect("the table holds rows")
+            .len(),
+        1,
+        "a refused tab must not grow the table",
+    );
+
+    let mut appended = engine_with(fixture);
+    caret_at(&mut appended, last + CELL_TEXT_OFFSET);
+    assert!(
+        step(&mut appended, CellStep::Forward, true).is_some(),
+        "with appendRow, tab off the last real cell commits a new row",
+    );
+    let json = appended.document_json().expect("the engine is ready");
+    assert_eq!(
+        json["content"][0]["content"]
+            .as_array()
+            .expect("the table holds rows")
+            .len(),
+        2,
+        "the appended row is real: {json}",
+    );
+    let openings_after = openings(
+        &index_of(appended.document().expect("the engine is ready")),
+        OUTER_TABLE_POSITION,
+    );
+    assert_eq!(
+        caret_document_position(&appended),
+        Some(openings_after[2] + CELL_TEXT_OFFSET),
+        "the caret lands in the first cell of the appended row: {json}",
     );
 }
