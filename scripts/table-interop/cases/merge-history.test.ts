@@ -11,9 +11,10 @@ import {
 } from '../controller.js';
 import type { PeerSnapshot } from '../controller.js';
 import type { Peer, TableCommand } from '../peer-protocol.js';
-import { canonical, cell, cellAnchors, row, table, tableOf } from '../table-schema.js';
+import { cell, cellAnchors, row, table, tableOf } from '../table-schema.js';
 
 const TABLE_START = 0;
+const NOT_APPLICABLE = 'notApplicable';
 const FIRST_CELL = 0;
 const LAST_SURVIVING_CELL = 3;
 const REMOTE_TEXT = 'remote';
@@ -189,7 +190,7 @@ test('TBL-07 merge and split agree with prosemirror-tables 1.8.5', async (contex
     }
 });
 
-test('a selection cutting a span merges natively and is refused by the reference', async () => {
+test('TBL-07 a selection cutting a span is refused by both the engine and the reference', async () => {
     await withPeers(
         ['prosemirror', 'rust'] as const,
         async ([web, engine]) => {
@@ -203,6 +204,7 @@ test('a selection cutting a span merges natively and is refused by the reference
             const at = anchors[SPAN_CUT_ANCHOR];
             const head = anchors[SPAN_CUT_HEAD];
             assert.ok(at !== undefined && head !== undefined);
+            const before = tableOf((await snapshot(engine)).documentJson);
 
             const refusal = await call(web, 'command', {
                 type: 'tableCommand',
@@ -215,16 +217,21 @@ test('a selection cutting a span merges natively and is refused by the reference
                 'prosemirror-tables refuses a rectangle a span sticks out of',
             );
 
-            await call(engine, 'command', { type: 'mergeTableCells', at, head });
-
+            const outcome = await call(engine, 'command', { type: 'mergeTableCells', at, head });
+            assert.equal(
+                outcome['type'],
+                NOT_APPLICABLE,
+                'the engine must refuse a rectangle a span sticks out of, not expand it',
+            );
             assert.deepEqual(
                 tableOf((await snapshot(engine)).documentJson),
-                canonical(table([
-                    row([cell({ colspan: 2, rowspan: 3, blocks: ['tall', 'a', 'b', 'c', 'd'] })]),
-                    row([]),
-                    row([]),
-                ])),
-                'the native selection closes over the cut span before it merges',
+                before,
+                'a refused merge must leave the table exactly as it was',
+            );
+            assert.deepEqual(
+                tableOf((await snapshot(web)).documentJson),
+                before,
+                'both peers must be left on the same unmerged table',
             );
         },
         tableFixture('prosemirror'),

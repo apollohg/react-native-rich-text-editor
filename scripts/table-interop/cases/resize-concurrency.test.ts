@@ -10,12 +10,17 @@ import {
     withPeers,
 } from '../controller.js';
 import type { Peer } from '../peer-protocol.js';
-import { cell, cellAnchors, row, table, tableOf } from '../table-schema.js';
+import { TABLE_SCHEMA, cell, cellAnchors, row, table, tableOf } from '../table-schema.js';
 
 const TABLE_START = 0;
 const DOC_NODE = 'doc';
 const LEFT_WIDTH = 140;
 const RIGHT_WIDTH = 220;
+const SEEDED_FIRST_COLUMN = 100;
+const SEEDED_SECOND_COLUMN = 180;
+const SEEDED_LOWER_FIRST_COLUMN = 120;
+const SEEDED_LOWER_SECOND_COLUMN = 160;
+const UNRESOLVED = null;
 const REVERSED_EXCHANGE_SEED = DEFAULT_EXCHANGE_SEED ^ 0x5a5a_5a5a;
 
 const DELIVERY_ORDERS = ['forward', 'reversed'] as const;
@@ -25,6 +30,8 @@ type ResizeScenario = {
     table: Record<string, unknown>;
     leftCell: number;
     rightCell: number;
+    seeded: (number | null)[];
+    admissible: (number | null)[][];
 };
 
 const SCENARIOS: ResizeScenario[] = [
@@ -36,6 +43,11 @@ const SCENARIOS: ResizeScenario[] = [
         ]),
         leftCell: 0,
         rightCell: 2,
+        seeded: [UNRESOLVED, UNRESOLVED],
+        admissible: [
+            [LEFT_WIDTH, UNRESOLVED],
+            [RIGHT_WIDTH, UNRESOLVED],
+        ],
     },
     {
         name: 'the peers resize different logical columns',
@@ -45,24 +57,48 @@ const SCENARIOS: ResizeScenario[] = [
         ]),
         leftCell: 0,
         rightCell: 1,
+        seeded: [UNRESOLVED, UNRESOLVED],
+        admissible: [[LEFT_WIDTH, RIGHT_WIDTH]],
     },
     {
         name: 'the peers write conflicting per row width arrays',
         table: table([
-            row([cell({ colwidth: [100], text: 'a0' }), cell({ colwidth: [180], text: 'a1' })]),
-            row([cell({ colwidth: [120], text: 'b0' }), cell({ colwidth: [160], text: 'b1' })]),
+            row([
+                cell({ colwidth: [SEEDED_FIRST_COLUMN], text: 'a0' }),
+                cell({ colwidth: [SEEDED_SECOND_COLUMN], text: 'a1' }),
+            ]),
+            row([
+                cell({ colwidth: [SEEDED_LOWER_FIRST_COLUMN], text: 'b0' }),
+                cell({ colwidth: [SEEDED_LOWER_SECOND_COLUMN], text: 'b1' }),
+            ]),
         ]),
         leftCell: 0,
         rightCell: 2,
+        seeded: [SEEDED_LOWER_FIRST_COLUMN, SEEDED_LOWER_SECOND_COLUMN],
+        admissible: [
+            [LEFT_WIDTH, SEEDED_LOWER_SECOND_COLUMN],
+            [RIGHT_WIDTH, SEEDED_LOWER_SECOND_COLUMN],
+        ],
     },
     {
         name: 'the peers resize columns a spanning cell covers',
         table: table([
-            row([cell({ colspan: 2, colwidth: [100, 180], text: 'wide' })]),
+            row([
+                cell({
+                    colspan: 2,
+                    colwidth: [SEEDED_FIRST_COLUMN, SEEDED_SECOND_COLUMN],
+                    text: 'wide',
+                }),
+            ]),
             row([cell({ text: 'b0' }), cell({ text: 'b1' })]),
         ]),
         leftCell: 1,
         rightCell: 2,
+        seeded: [SEEDED_FIRST_COLUMN, SEEDED_SECOND_COLUMN],
+        admissible: [
+            [LEFT_WIDTH, SEEDED_SECOND_COLUMN],
+            [SEEDED_FIRST_COLUMN, RIGHT_WIDTH],
+        ],
     },
 ];
 
@@ -85,11 +121,34 @@ async function seedPair(
     return cellAnchors(fixture, TABLE_START);
 }
 
+async function resolvedWidths(
+    peer: Peer,
+    documentJson: Record<string, unknown> | null,
+): Promise<(number | null)[]> {
+    const projection = await call(peer, 'projectTable', {
+        schema: TABLE_SCHEMA,
+        table: tableOf(documentJson),
+    });
+    const widths = projection['widths'];
+    assert.ok(Array.isArray(widths), 'the projection reports the resolved column widths');
+    return widths as (number | null)[];
+}
+
+function admits(scenario: ResizeScenario, widths: (number | null)[]): boolean {
+    return scenario.admissible.some((candidate) => {
+        try {
+            assert.deepEqual(widths, candidate);
+            return true;
+        } catch {
+            return false;
+        }
+    });
+}
+
 async function concurrentResize(
     scenario: ResizeScenario,
     order: (typeof DELIVERY_ORDERS)[number],
-): Promise<unknown> {
-    let converged: unknown = null;
+): Promise<void> {
     await withPeers(
         ['rust', 'rust'] as const,
         async ([left, right]) => {
@@ -99,6 +158,11 @@ async function concurrentResize(
             assert.ok(
                 leftAt !== undefined && rightAt !== undefined,
                 'the scenario addresses cells the fixture holds',
+            );
+            assert.deepEqual(
+                await resolvedWidths(left, (await snapshot(left)).documentJson),
+                scenario.seeded,
+                'the seeded widths must be what the scenario claims, or the outcome proves nothing',
             );
 
             await call(left, 'command', {
@@ -123,19 +187,28 @@ async function concurrentResize(
                 (await snapshot(right)).documentJson,
                 `the peers diverged after ${scenario.name} delivered ${order}`,
             );
-            converged = tableOf(leftDocument);
+
+            const widths = await resolvedWidths(left, leftDocument);
+            assert.notDeepEqual(
+                widths,
+                scenario.seeded,
+                `${scenario.name} left the seeded widths untouched, so nothing was written`,
+            );
+            assert.ok(
+                admits(scenario, widths),
+                `${scenario.name} delivered ${order} settled on ${JSON.stringify(widths)}, `
+                    + `which is none of ${JSON.stringify(scenario.admissible)}`,
+            );
         },
         tableFixture('prosemirror'),
     );
-    return converged;
 }
 
 test('TBL-13 concurrent column widths converge on both replicas', async (context) => {
     for (const scenario of SCENARIOS) {
         for (const order of DELIVERY_ORDERS) {
             await context.test(`${scenario.name}, delivered ${order}`, async () => {
-                const converged = await concurrentResize(scenario, order);
-                assert.notEqual(converged, null, 'the scenario produced a converged table');
+                await concurrentResize(scenario, order);
             });
         }
     }
@@ -146,7 +219,13 @@ test('a concurrent width write never provokes an orphan cleanup write', async ()
         ['rust', 'rust'] as const,
         async ([left, right]) => {
             const fixture = table([
-                row([cell({ colspan: 2, colwidth: [100, 180], text: 'wide' })]),
+                row([
+                    cell({
+                        colspan: 2,
+                        colwidth: [SEEDED_FIRST_COLUMN, SEEDED_SECOND_COLUMN],
+                        text: 'wide',
+                    }),
+                ]),
                 row([cell({ text: 'b0' }), cell({ text: 'b1' })]),
             ]);
             const anchors = await seedPair(left, right, fixture);

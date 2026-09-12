@@ -79,6 +79,22 @@ pub(crate) fn tabled_schema(names: [&str; 4]) -> Schema {
     Schema::from_json(&tabled_schema_json(names)).expect("tabled schema is valid")
 }
 
+pub(crate) const SECOND_TEXT_BLOCK_NODE: &str = "heading";
+
+pub(crate) fn tabled_schema_with_second_text_block(names: [&str; 4]) -> Schema {
+    let mut json = tabled_schema_json(names);
+    let nodes = json["nodes"]
+        .as_array_mut()
+        .expect("the tabled schema lists nodes");
+    nodes.push(json!({
+        "name": SECOND_TEXT_BLOCK_NODE,
+        "content": "inline*",
+        "group": "block",
+        "role": "textBlock",
+    }));
+    Schema::from_json(&json).expect("the second text block schema is valid")
+}
+
 #[test]
 fn schemas_without_table_metadata_resolve_to_no_roles() {
     for schema in [prosemirror_schema(), tiptap_schema()] {

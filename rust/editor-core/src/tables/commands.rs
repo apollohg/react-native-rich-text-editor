@@ -46,6 +46,7 @@ pub(crate) const FIRST_COLUMN: u32 = 0;
 pub(crate) const FIRST_WIDTH_SLICE: u32 = 0;
 const UNSET_COLUMN_WIDTH: u64 = 0;
 const ONLY_CHILD: usize = 1;
+const NO_CHILDREN: usize = 0;
 pub(crate) const CELL_INTERIOR_OFFSET: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -501,12 +502,42 @@ pub(crate) fn cell_holds_only(cell: &Node, block: &Node) -> bool {
         .is_some_and(|content| content.children() == std::slice::from_ref(block))
 }
 
+pub(crate) fn cell_holds_no_content(cell: &Node, schema: &Schema) -> bool {
+    let Some(content) = cell.content() else {
+        return false;
+    };
+    let [block] = content.children() else {
+        return false;
+    };
+    schema
+        .node(block.node_type())
+        .is_some_and(|spec| matches!(spec.role, crate::schema::NodeRole::TextBlock))
+        && block
+            .content()
+            .is_none_or(|blocks| blocks.child_count() == NO_CHILDREN)
+}
+
 pub(crate) fn retyped_cell(schema: &Schema, cell: &Node, cell_type: &str) -> Option<Node> {
     Some(Node::element(
         cell_type.to_owned(),
         compatible_declared_attrs(schema, cell_type, cell.attrs())?,
         cell.content().cloned()?,
     ))
+}
+
+fn regular_target<'a>(
+    candidate: &TableActionCandidate<'a>,
+    schema: &Schema,
+    limits: &ResourceLimits,
+) -> Option<TableTarget<'a>> {
+    TableTarget::resolve(
+        candidate.document,
+        candidate.table_pos,
+        candidate.anchors,
+        schema,
+        limits,
+        GridRequirement::Regular,
+    )
 }
 
 pub(crate) struct InsertRowAction {
@@ -524,14 +555,7 @@ impl TableAction for InsertRowAction {
         schema: &Schema,
         limits: &ResourceLimits,
     ) -> Option<TableActionOutcome> {
-        let target = TableTarget::resolve(
-            candidate.document,
-            candidate.table_pos,
-            candidate.anchors,
-            schema,
-            limits,
-            GridRequirement::Regular,
-        )?;
+        let target = regular_target(candidate, schema, limits)?;
         rows::plan_insert_row(&target, self.side, schema)
     }
 }
@@ -549,14 +573,7 @@ impl TableAction for DeleteRowsAction {
         schema: &Schema,
         limits: &ResourceLimits,
     ) -> Option<TableActionOutcome> {
-        let target = TableTarget::resolve(
-            candidate.document,
-            candidate.table_pos,
-            candidate.anchors,
-            schema,
-            limits,
-            GridRequirement::Regular,
-        )?;
+        let target = regular_target(candidate, schema, limits)?;
         rows::plan_delete_rows(candidate.document, &target, schema, limits)
     }
 }
@@ -576,14 +593,7 @@ impl TableAction for InsertColumnAction {
         schema: &Schema,
         limits: &ResourceLimits,
     ) -> Option<TableActionOutcome> {
-        let target = TableTarget::resolve(
-            candidate.document,
-            candidate.table_pos,
-            candidate.anchors,
-            schema,
-            limits,
-            GridRequirement::Regular,
-        )?;
+        let target = regular_target(candidate, schema, limits)?;
         columns::plan_insert_column(&target, self.side, schema)
     }
 }
@@ -601,21 +611,13 @@ impl TableAction for DeleteColumnsAction {
         schema: &Schema,
         limits: &ResourceLimits,
     ) -> Option<TableActionOutcome> {
-        let target = TableTarget::resolve(
-            candidate.document,
-            candidate.table_pos,
-            candidate.anchors,
-            schema,
-            limits,
-            GridRequirement::Regular,
-        )?;
+        let target = regular_target(candidate, schema, limits)?;
         columns::plan_delete_columns(candidate.document, &target, schema, limits)
     }
 }
 
 pub(crate) struct ToggleHeaderAction {
     pub target: TableHeaderTarget,
-    pub selection_before: Selection,
 }
 
 impl TableAction for ToggleHeaderAction {
@@ -629,15 +631,8 @@ impl TableAction for ToggleHeaderAction {
         schema: &Schema,
         limits: &ResourceLimits,
     ) -> Option<TableActionOutcome> {
-        let target = TableTarget::resolve(
-            candidate.document,
-            candidate.table_pos,
-            candidate.anchors,
-            schema,
-            limits,
-            GridRequirement::Regular,
-        )?;
-        headers::plan_toggle_header(&target, self.target, schema, &self.selection_before)
+        let target = regular_target(candidate, schema, limits)?;
+        headers::plan_toggle_header(&target, self.target, schema)
     }
 }
 
@@ -654,14 +649,7 @@ impl TableAction for MergeCellsAction {
         schema: &Schema,
         limits: &ResourceLimits,
     ) -> Option<TableActionOutcome> {
-        let target = TableTarget::resolve(
-            candidate.document,
-            candidate.table_pos,
-            candidate.anchors,
-            schema,
-            limits,
-            GridRequirement::Regular,
-        )?;
+        let target = regular_target(candidate, schema, limits)?;
         merge::plan_merge_cells(&target, schema)
     }
 }
@@ -679,14 +667,7 @@ impl TableAction for SplitCellAction {
         schema: &Schema,
         limits: &ResourceLimits,
     ) -> Option<TableActionOutcome> {
-        let target = TableTarget::resolve(
-            candidate.document,
-            candidate.table_pos,
-            candidate.anchors,
-            schema,
-            limits,
-            GridRequirement::Regular,
-        )?;
+        let target = regular_target(candidate, schema, limits)?;
         merge::plan_split_cell(&target, schema)
     }
 }
@@ -706,14 +687,7 @@ impl TableAction for SetColumnWidthAction {
         schema: &Schema,
         limits: &ResourceLimits,
     ) -> Option<TableActionOutcome> {
-        let target = TableTarget::resolve(
-            candidate.document,
-            candidate.table_pos,
-            candidate.anchors,
-            schema,
-            limits,
-            GridRequirement::Regular,
-        )?;
+        let target = regular_target(candidate, schema, limits)?;
         resize::plan_set_column_width(&target, self.width)
     }
 }

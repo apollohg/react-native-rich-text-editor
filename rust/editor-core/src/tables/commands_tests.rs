@@ -5,13 +5,16 @@ use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::commands::{
     TableCommand, TableEdge, TableHeaderTarget, DEFAULT_INSERTED_TABLE_COLUMNS,
-    DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS,
+    DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS, MIN_TABLE_COLUMN_WIDTH,
 };
 use crate::tables::normalize_tests::{
     cell, cell_with, header_cell, limits, row, schema, seeded_session, table,
 };
 use crate::tables::projection::{project_table, ProjectedTable, TableGridBudget};
-use crate::tables::tests::tabled_schema;
+use crate::tables::tests::{
+    tabled_schema, tabled_schema_with_second_text_block, PROSEMIRROR_TABLE_NAMES,
+    SECOND_TEXT_BLOCK_NODE,
+};
 use crate::yrs_engine::{
     Affinity, EditingLimits, EditorOffsetKind, HistoryPolicy, InitializationMode, OperationError,
     RevisionedPosition, SelectionInput, SelectionIntent, TransactionOrigin, TypedCommand,
@@ -1005,7 +1008,7 @@ fn identity_session() -> crate::session::EditorSession {
     session
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum IdentitySelection {
     Cell(usize),
     Rectangle(usize, usize),
@@ -1093,6 +1096,7 @@ const IDENTITY_EXPECTATIONS: [IdentityExpectation; 10] = [
 fn every_mutating_table_command_keeps_exactly_the_cell_identities_it_does_not_touch() {
     for expectation in IDENTITY_EXPECTATIONS {
         let command = expectation.command;
+        let selection = expectation.selection;
         let mut session = identity_session();
         let before = session_cell_identities(&session);
         assert_eq!(before.len(), IDENTITY_FIXTURE_CELLS);
@@ -1106,21 +1110,21 @@ fn every_mutating_table_command_keeps_exactly_the_cell_identities_it_does_not_to
         session
             .engine
             .apply_command(REQUEST_ID, TypedCommand::Table(command))
-            .unwrap_or_else(|error| panic!("{command:?} applies: {error:?}"))
-            .unwrap_or_else(|| panic!("{command:?} produced a transaction"));
+            .unwrap_or_else(|error| panic!("{command:?} over {selection:?} applies: {error:?}"))
+            .unwrap_or_else(|| panic!("{command:?} over {selection:?} produced a transaction"));
 
         let after = session_cell_identities(&session);
         assert_eq!(
             after.len(),
             expectation.cells_after,
-            "{command:?} left an unexpected cell count",
+            "{command:?} over {selection:?} left an unexpected cell count",
         );
         for (index, identity) in before.iter().enumerate() {
             let kept = after.contains(identity);
             assert_eq!(
                 kept,
                 expectation.surviving.contains(&index),
-                "{command:?} disagrees about cell {index}: kept = {kept}",
+                "{command:?} over {selection:?} disagrees about cell {index}: kept = {kept}",
             );
         }
     }
@@ -1390,6 +1394,42 @@ fn merging_carries_every_source_block_into_the_top_left_cell() {
     assert_eq!(spans_at(&engine, 0, 0), (2, 2));
 }
 
+fn cell_with_block(block_type: &str, text: Option<&str>) -> Value {
+    let content = match text {
+        None => json!({ "type": block_type }),
+        Some(text) => json!({
+            "type": block_type,
+            "content": [{ "type": "text", "text": text }],
+        }),
+    };
+    json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
+        "content": [content],
+    })
+}
+
+#[test]
+fn merging_treats_any_empty_text_block_as_an_empty_source() {
+    let mut engine = engine_with(
+        tabled_schema_with_second_text_block(PROSEMIRROR_TABLE_NAMES),
+        vec![table(vec![row(vec![
+            cell_with_block(PARAGRAPH_NODE, Some("a")),
+            cell_with_block(SECOND_TEXT_BLOCK_NODE, None),
+        ])])],
+    );
+    select_cells(&mut engine, 0, 1);
+
+    applied(&mut engine, TableCommand::MergeTableCells);
+
+    let table = table_of(&engine);
+    assert_eq!(
+        cell_blocks(&table, 0, 0),
+        vec!["a"],
+        "an empty non paragraph text block contributes nothing to the merge",
+    );
+}
+
 #[test]
 fn merging_into_an_empty_survivor_replaces_its_placeholder_block() {
     let mut engine = seeded(vec![table(vec![row(vec![empty_cell(), cell("b")])])]);
@@ -1407,19 +1447,33 @@ fn merging_into_an_empty_survivor_replaces_its_placeholder_block() {
 }
 
 #[test]
-fn merging_a_selection_that_cuts_a_span_closes_over_the_whole_span() {
+fn merging_declines_when_the_selection_cuts_an_existing_span() {
     let mut engine = seeded(tall_span_fixture());
     select_cells(&mut engine, 2, 3);
+    let before = table_of(&engine);
+
+    assert_eq!(
+        run(&mut engine, TableCommand::MergeTableCells),
+        Ok(None),
+        "a rectangle an existing span sticks out of is not mergeable",
+    );
+    assert_eq!(
+        table_of(&engine),
+        before,
+        "a declined merge must leave the table exactly as it was",
+    );
+}
+
+#[test]
+fn merging_admits_a_selection_that_contains_a_whole_span() {
+    let mut engine = seeded(tall_span_fixture());
+    select_cells(&mut engine, 0, 2);
 
     applied(&mut engine, TableCommand::MergeTableCells);
 
     let table = table_of(&engine);
-    assert_eq!(
-        cell_blocks(&table, 0, 0),
-        vec!["tall", "a1", "b1", "c0", "c1"],
-        "the cut span pulls the whole table into the merge",
-    );
-    assert_eq!(spans_at(&engine, 0, 0), (3, 2));
+    assert_eq!(cell_blocks(&table, 0, 0), vec!["tall", "a1", "b1"]);
+    assert_eq!(spans_at(&engine, 0, 0), (2, 2));
 }
 
 #[test]
@@ -1572,6 +1626,44 @@ fn resizing_declines_when_every_covering_cell_already_carries_the_width() {
 }
 
 #[test]
+fn resizing_stays_available_on_a_column_that_already_carries_the_requested_width() {
+    let mut engine = seeded(resize_fixture());
+    select_cell(&mut engine, 1);
+    applied(
+        &mut engine,
+        TableCommand::SetTableColumnWidth {
+            width: MIN_TABLE_COLUMN_WIDTH,
+        },
+    );
+    select_cell(&mut engine, 1);
+    let openings = cell_openings(&engine);
+    let selection = Selection::cell(openings[1], openings[1]);
+
+    let commands = crate::editor_state::command_applicability(
+        document_of(&engine),
+        &engine_schema(&engine),
+        &selection,
+        &limits(),
+    );
+
+    assert_eq!(
+        commands.get("setTableColumnWidth"),
+        Some(&true),
+        "a resizable column stays advertised even when the advertised width is a no-op",
+    );
+    assert_eq!(
+        run(
+            &mut engine,
+            TableCommand::SetTableColumnWidth {
+                width: MIN_TABLE_COLUMN_WIDTH,
+            },
+        ),
+        Ok(None),
+        "the planner still declines the width the column already carries",
+    );
+}
+
+#[test]
 fn a_column_width_envelope_refuses_an_unbounded_width() {
     for width in [json!(0), json!(100_000)] {
         let refusal = crate::native_transaction_bridge::table_command_envelope_for_test(
@@ -1584,4 +1676,39 @@ fn a_column_width_envelope_refuses_an_unbounded_width() {
             "the refusal must name the width bound, got {refusal}",
         );
     }
+}
+
+fn short_first_row_fixture() -> Vec<Value> {
+    vec![table(vec![
+        row(vec![cell("a0")]),
+        row(vec![cell("b0"), cell("b1")]),
+    ])]
+}
+
+#[test]
+fn a_header_toggle_maps_its_selection_through_the_normalization_it_triggers() {
+    let mut engine = seeded(short_first_row_fixture());
+    assert_eq!(geometry(&projection_of(&engine)), (2, 2, true));
+    select_cell(&mut engine, 1);
+
+    applied(
+        &mut engine,
+        TableCommand::ToggleTableHeader {
+            target: TableHeaderTarget::Cell,
+        },
+    );
+
+    let table = table_of(&engine);
+    assert_eq!(row_types(&table, 0), vec![CELL_NODE.to_owned(); 2]);
+    assert_eq!(
+        row_types(&table, 1),
+        vec![HEADER_CELL_NODE.to_owned(), CELL_NODE.to_owned()],
+        "the toggle must land on the cell the caret named after the gap was filled",
+    );
+    let openings = cell_openings(&engine);
+    assert_eq!(
+        resolved_cells(&engine),
+        Some((openings[2], openings[2])),
+        "the surviving selection must name the toggled cell in post normalization positions",
+    );
 }

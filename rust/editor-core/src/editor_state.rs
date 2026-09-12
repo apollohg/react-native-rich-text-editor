@@ -10,14 +10,13 @@ use crate::schema::{NodeRole, Schema};
 use crate::selection::Selection;
 use crate::tables::commands::{
     TableCommand, TableEdge, TableHeaderTarget, DEFAULT_INSERTED_TABLE_COLUMNS,
-    DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS,
+    DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS, MIN_TABLE_COLUMN_WIDTH,
 };
 use crate::transform::{Step, Transaction};
 
 const FIXED_COMMAND_ENTRIES: usize = 8;
 const HEADING_COMMAND_LEVELS: u8 = 6;
 const TABLE_COMMAND_ENTRIES: usize = 17;
-pub(crate) const ADVERTISED_TABLE_COLUMN_WIDTH: u32 = 120;
 pub(crate) const ACTIVE_COMMAND_ENTRIES: usize =
     FIXED_COMMAND_ENTRIES + HEADING_COMMAND_LEVELS as usize + TABLE_COMMAND_ENTRIES;
 
@@ -340,7 +339,7 @@ fn table_command_surface() -> [(&'static str, TableCommand); TABLE_COMMAND_ENTRI
         (
             "setTableColumnWidth",
             TableCommand::SetTableColumnWidth {
-                width: ADVERTISED_TABLE_COLUMN_WIDTH,
+                width: MIN_TABLE_COLUMN_WIDTH,
             },
         ),
     ]

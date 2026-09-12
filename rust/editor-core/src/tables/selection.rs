@@ -75,6 +75,7 @@ pub(crate) struct CellSelectionRect {
     pub left: u32,
     pub bottom: u32,
     pub right: u32,
+    pub cuts_a_span: bool,
     pub cells: Vec<u32>,
 }
 
@@ -155,7 +156,9 @@ pub(crate) fn resolve_cell_rect(
     let mut bounds = (u32::MAX, u32::MAX, FIRST_ROW, FIRST_COLUMN);
     cover(&table.cells.get(anchor_cell)?.rect, &mut bounds);
     cover(&table.cells.get(head_cell)?.rect, &mut bounds);
-    let (top, left, bottom, right) = close_over_spans(table, bounds);
+    let closed = close_over_spans(table, bounds);
+    let cuts_a_span = closed != bounds;
+    let (top, left, bottom, right) = closed;
 
     let mut cells: Vec<u32> = Vec::new();
     for row in top..bottom {
@@ -175,6 +178,7 @@ pub(crate) fn resolve_cell_rect(
         left,
         bottom,
         right,
+        cuts_a_span,
         cells,
     })
 }

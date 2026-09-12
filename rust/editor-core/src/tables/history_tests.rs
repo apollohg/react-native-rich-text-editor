@@ -29,6 +29,18 @@ const MERGE_ANCHOR_CELL: usize = 0;
 const MERGE_HEAD_CELL: usize = 1;
 const UNRELATED_CELL_AFTER_MERGE: usize = 4;
 const SINGLE_SPAN: u32 = 1;
+const TABLE_POSITION: u32 = 0;
+const FIRST_TABLE: usize = 0;
+const TABLE_NODE: &str = "table";
+const ROW_NODE: &str = "table_row";
+const CELL_NODE: &str = "table_cell";
+const PARAGRAPH_NODE: &str = "paragraph";
+const SPLIT_SPAN: u32 = 2;
+const SPLIT_ROWS: u32 = 2;
+const SPLIT_COLUMNS_AFTER_UNDO: u32 = 3;
+const SPLIT_COLUMNS_AFTER_SPLIT: u32 = 2;
+const RAGGED: bool = true;
+const REGULAR: bool = false;
 const SPLIT_CELL: usize = 0;
 const MINTED_CELL_AFTER_SPLIT: usize = 1;
 const MERGED_TOP_ROW_CELLS: usize = 2;
@@ -93,6 +105,21 @@ fn awaiting_session() -> EditorSession {
     .expect("the awaiting replica is admitted");
     session.attach_collaboration_runtime();
     session
+}
+
+fn text_block(text: &str) -> serde_json::Value {
+    json!({ "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": text }] })
+}
+
+fn table_shape(session: &EditorSession) -> (u32, u32, bool) {
+    let index = session
+        .engine
+        .table_projection_index()
+        .expect("the engine is ready");
+    let projected = index
+        .table_at(TABLE_POSITION)
+        .expect("the fixture holds a table");
+    (projected.rows, projected.columns, projected.irregular)
 }
 
 fn document_json(session: &EditorSession) -> serde_json::Value {
@@ -339,11 +366,45 @@ fn undoing_a_split_never_destroys_remote_content_written_into_the_cell_it_minted
         "receiving the remote text must not write a repair",
     );
 
+    assert_eq!(
+        table_shape(&local),
+        (SPLIT_ROWS, SPLIT_COLUMNS_AFTER_SPLIT, REGULAR),
+        "the split leaves a regular grid, so the shape below proves undo changed it",
+    );
+
     undo(&mut local);
     assert_eq!(planned_normalization_passes(), NO_NORMALIZATION_PASSES);
-    assert!(
-        document_json(&local).to_string().contains(REMOTE_TEXT),
-        "undoing the split must not destroy the peer content inside the cell it minted",
+    assert_eq!(
+        document_json(&local)["content"][FIRST_TABLE],
+        json!({
+            "type": TABLE_NODE,
+            "content": [
+                {
+                    "type": ROW_NODE,
+                    "content": [
+                        {
+                            "type": CELL_NODE,
+                            "attrs": { "colspan": SPLIT_SPAN },
+                            "content": [text_block("wide")],
+                        },
+                        { "type": CELL_NODE, "content": [text_block(REMOTE_TEXT)] },
+                    ],
+                },
+                {
+                    "type": ROW_NODE,
+                    "content": [
+                        { "type": CELL_NODE, "content": [text_block("b0")] },
+                        { "type": CELL_NODE, "content": [text_block("b1")] },
+                    ],
+                },
+            ],
+        }),
+        "undo must restore the span it reverted and keep the peer cell it minted",
+    );
+    assert_eq!(
+        table_shape(&local),
+        (SPLIT_ROWS, SPLIT_COLUMNS_AFTER_UNDO, RAGGED),
+        "selective undo leaves the grid ragged and nothing repairs it in that transaction",
     );
 
     assert_eq!(exchange(&mut local, &mut remote), NO_DOCUMENT_UPDATES);

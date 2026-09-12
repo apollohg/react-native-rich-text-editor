@@ -1,7 +1,6 @@
 use crate::command_planner::SemanticOperation;
 use crate::model::Fragment;
 use crate::schema::Schema;
-use crate::selection::Selection;
 use crate::tables::command_context::TableActionOutcome;
 use crate::tables::commands::{
     retyped_cell, TableHeaderTarget, TableTarget, FIRST_COLUMN, FIRST_ROW,
@@ -11,7 +10,6 @@ pub(crate) fn plan_toggle_header(
     target: &TableTarget<'_>,
     header: TableHeaderTarget,
     schema: &Schema,
-    selection_before: &Selection,
 ) -> Option<TableActionOutcome> {
     let rect = target.rect()?;
     let (top, left, bottom, right) = match header {
@@ -51,6 +49,11 @@ pub(crate) fn plan_toggle_header(
     operations.reverse();
     Some(TableActionOutcome {
         operations,
-        selection_after: selection_before.clone(),
+        selection_after: target.cell_selection_over(
+            rect.top,
+            rect.left,
+            rect.bottom,
+            rect.right,
+        )?,
     })
 }

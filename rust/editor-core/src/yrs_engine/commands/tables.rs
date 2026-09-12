@@ -284,14 +284,7 @@ pub(super) fn plan(
         },
         TableCommand::ToggleTableHeader { target } => match anchor {
             None => Ok(CommandPlan::NotApplicable),
-            Some(anchor) => scoped_action(
-                &context,
-                &anchor,
-                &ToggleHeaderAction {
-                    target,
-                    selection_before: selection.clone(),
-                },
-            ),
+            Some(anchor) => scoped_action(&context, &anchor, &ToggleHeaderAction { target }),
         },
         TableCommand::SelectTableRows => {
             match anchored_target(
@@ -416,8 +409,7 @@ impl<'a> TableCommandSurface<'a> {
             }),
             TableCommand::ToggleTableHeader { target: header } => {
                 self.regular_target().is_some_and(|target| {
-                    headers::plan_toggle_header(target, header, self.schema, self.selection)
-                        .is_some()
+                    headers::plan_toggle_header(target, header, self.schema).is_some()
                 })
             }
             TableCommand::SelectTableRows => self
@@ -438,9 +430,9 @@ impl<'a> TableCommandSurface<'a> {
             TableCommand::SplitTableCell => self
                 .regular_target()
                 .is_some_and(|target| merge::plan_split_cell(target, self.schema).is_some()),
-            TableCommand::SetTableColumnWidth { width } => self
+            TableCommand::SetTableColumnWidth { .. } => self
                 .regular_target()
-                .is_some_and(|target| resize::plan_set_column_width(target, width).is_some()),
+                .is_some_and(resize::can_set_column_width),
         }
     }
 }

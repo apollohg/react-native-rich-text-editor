@@ -4,7 +4,7 @@ use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::command_context::TableActionOutcome;
 use crate::tables::commands::{
-    attrs_with_merged_span, attrs_with_unit_span, cell_holds_only, default_text_block_node,
+    attrs_with_merged_span, attrs_with_unit_span, cell_holds_no_content, default_text_block_node,
     TableTarget, FIRST_WIDTH_SLICE, NODE_CLOSING_TOKENS, NODE_OPENING_TOKENS, ONE_SLOT,
 };
 
@@ -16,12 +16,14 @@ pub(crate) fn plan_merge_cells(
     schema: &Schema,
 ) -> Option<TableActionOutcome> {
     let rect = target.rect()?;
+    if rect.cuts_a_span {
+        return None;
+    }
     let sources = target.cells_in_rectangle(rect.top, rect.left, rect.bottom, rect.right);
     if sources.len() < MERGE_SOURCE_MINIMUM {
         return None;
     }
     let (surviving, surviving_node) = target.cell_at(rect.top, rect.left)?;
-    let default_block = default_text_block_node(schema)?;
 
     let mut operations = vec![SemanticOperation::UpdateNodeAttrs {
         pos: surviving.source_pos,
@@ -37,7 +39,7 @@ pub(crate) fn plan_merge_cells(
         if cell.source_pos == surviving.source_pos {
             continue;
         }
-        if !cell_holds_only(node, &default_block) {
+        if !cell_holds_no_content(node, schema) {
             carried.extend(node.content()?.children().iter().cloned());
         }
         consumed.push(SemanticOperation::ReplaceRange {
@@ -49,7 +51,7 @@ pub(crate) fn plan_merge_cells(
 
     if !carried.is_empty() {
         let content_end = surviving.source_end.checked_sub(NODE_CLOSING_TOKENS)?;
-        let content_start = if cell_holds_only(surviving_node, &default_block) {
+        let content_start = if cell_holds_no_content(surviving_node, schema) {
             surviving.source_pos.checked_add(NODE_OPENING_TOKENS)?
         } else {
             content_end
