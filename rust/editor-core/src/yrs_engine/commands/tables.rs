@@ -13,7 +13,6 @@ use crate::tables::commands::{
     plan_select_columns, plan_select_rows, resize, rows, DeleteColumnsAction, DeleteRowsAction,
     GridRequirement, InsertColumnAction, InsertRowAction, MergeCellsAction, SetColumnWidthAction,
     SplitCellAction, TableCommand, TableEdge, TableTarget, ToggleHeaderAction,
-    CELL_INTERIOR_OFFSET,
 };
 use crate::tables::interchange::{
     first_editable_position_in_cell, next_outer_cell, outer_cell_containing, CellStep,
@@ -26,7 +25,6 @@ use crate::yrs_engine::{
 
 const CLEAR_CELLS_FIELD: &str = "clearTableCells";
 const UNREADABLE_GRID_IS_NOT_AVAILABLE: bool = false;
-const SELECT_CELLS_FIELD: &str = "selectTableCells";
 const TABLE_COMMAND_OPERATION_INDEX: usize = 0;
 
 pub(crate) struct TableAnchor {
@@ -192,7 +190,7 @@ fn cell_selection_intent(
         return None;
     };
     let inside = |opening: u32| {
-        let interior = opening.checked_add(CELL_INTERIOR_OFFSET)?;
+        let interior = first_editable_position_in_cell(context.document, context.schema, opening)?;
         Some(crate::yrs_engine::RevisionedPosition {
             offset: context
                 .position_map
@@ -211,13 +209,9 @@ fn selection_only(
     context: &PlanningContext<'_>,
     expanded: Selection,
 ) -> OperationResult<CommandPlan> {
-    let intent = cell_selection_intent(context, &expanded).ok_or_else(|| {
-        OperationError::selection_position_invalid(
-            context.request_id,
-            SELECT_CELLS_FIELD,
-            "the expanded cell rectangle is not representable as an editor selection",
-        )
-    })?;
+    let Some(intent) = cell_selection_intent(context, &expanded) else {
+        return Ok(CommandPlan::NotApplicable);
+    };
     Ok(CommandPlan::SelectionOnly(TypedTransaction {
         request_id: context.request_id,
         base_document_revision: context.revision,
@@ -386,6 +380,35 @@ fn caret_only(context: &PlanningContext<'_>, interior: u32) -> OperationResult<C
     }))
 }
 
+fn cell_rectangle_is_addressable(
+    document: &Document,
+    schema: &Schema,
+    expanded: &Selection,
+) -> bool {
+    let Selection::Cell { anchor, head } = expanded else {
+        return false;
+    };
+    first_editable_position_in_cell(document, schema, *anchor).is_some()
+        && first_editable_position_in_cell(document, schema, *head).is_some()
+}
+
+fn next_editable_outer_cell(
+    document: &Document,
+    index: &TableProjectionIndex,
+    schema: &Schema,
+    caret: u32,
+    step: CellStep,
+) -> Option<u32> {
+    let mut cursor = caret;
+    while let Some(next) = next_outer_cell(index, cursor, step) {
+        if let Some(interior) = first_editable_position_in_cell(document, schema, next) {
+            return Some(interior);
+        }
+        cursor = next;
+    }
+    None
+}
+
 fn outer_cell_anchor(index: &TableProjectionIndex, caret: u32) -> Option<TableAnchor> {
     let located = outer_cell_containing(index, caret)?;
     Some(TableAnchor {
@@ -431,14 +454,10 @@ fn move_to_adjacent_cell(
     let Some(anchor) = outer_cell_anchor(&index, caret) else {
         return Ok(CommandPlan::NotApplicable);
     };
-    let mut cursor = caret;
-    while let Some(next) = next_outer_cell(&index, cursor, step) {
-        if let Some(interior) =
-            first_editable_position_in_cell(context.document, context.schema, next)
-        {
-            return caret_only(context, interior);
-        }
-        cursor = next;
+    if let Some(interior) =
+        next_editable_outer_cell(context.document, &index, context.schema, caret, step)
+    {
+        return caret_only(context, interior);
     }
     match (step, append_row) {
         (CellStep::Forward, true) => {
@@ -543,14 +562,16 @@ impl<'a> TableCommandSurface<'a> {
                         .is_some()
                 })
             }
-            TableCommand::SelectTableRows => self
-                .target
-                .as_ref()
-                .is_some_and(|target| plan_select_rows(target).is_some()),
-            TableCommand::SelectTableColumns => self
-                .target
-                .as_ref()
-                .is_some_and(|target| plan_select_columns(target).is_some()),
+            TableCommand::SelectTableRows => self.target.as_ref().is_some_and(|target| {
+                plan_select_rows(target).is_some_and(|expanded| {
+                    cell_rectangle_is_addressable(self.document, self.schema, &expanded)
+                })
+            }),
+            TableCommand::SelectTableColumns => self.target.as_ref().is_some_and(|target| {
+                plan_select_columns(target).is_some_and(|expanded| {
+                    cell_rectangle_is_addressable(self.document, self.schema, &expanded)
+                })
+            }),
             TableCommand::ClearTableCells => self
                 .target
                 .as_ref()
@@ -582,7 +603,9 @@ impl<'a> TableCommandSurface<'a> {
                 let Some(anchor) = outer_cell_anchor(&self.index, caret) else {
                     return false;
                 };
-                if next_outer_cell(&self.index, caret, step).is_some() {
+                if next_editable_outer_cell(self.document, &self.index, self.schema, caret, step)
+                    .is_some()
+                {
                     return true;
                 }
                 match (step, append_row) {

@@ -704,3 +704,87 @@ fn tab_skips_a_cell_whose_only_content_is_a_nested_table() {
         "a cell with no editable position is stepped over, not landed in",
     );
 }
+
+fn nested_only_cell() -> Value {
+    json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
+        "content": [table(vec![row(vec![cell(NESTED_CELL_TEXT)])])],
+    })
+}
+
+fn advertised_and_executed(
+    fixture: Value,
+    anchor_cell: usize,
+    step_direction: CellStep,
+    append_row: bool,
+) -> (bool, bool) {
+    let mut engine = engine_with(fixture);
+    let outer = openings(
+        &index_of(engine.document().expect("the engine is ready")),
+        OUTER_TABLE_POSITION,
+    );
+    let caret = outer[anchor_cell] + CELL_TEXT_OFFSET;
+    caret_at(&mut engine, caret);
+    let command = TableCommand::MoveToAdjacentCell {
+        step: step_direction,
+        append_row,
+    };
+    let advertised = crate::yrs_engine::TableCommandSurface::resolve(
+        engine.document().expect("the engine is ready"),
+        &schema(),
+        &crate::selection::Selection::text(caret, caret),
+        &limits(),
+    )
+    .is_available(command);
+    let executed = engine
+        .apply_command(REQUEST_ID, TypedCommand::Table(command))
+        .expect("the navigation command plans")
+        .is_some();
+    (advertised, executed)
+}
+
+#[test]
+fn availability_and_planning_agree_when_the_only_neighbour_holds_a_nested_table() {
+    let forward = json!({ "type": "doc", "content": [table(vec![
+        row(vec![cell("a"), nested_only_cell()]),
+    ])] });
+    let (advertised, executed) = advertised_and_executed(forward, 0, CellStep::Forward, false);
+    assert_eq!(
+        advertised, executed,
+        "tab forward into an unreachable last cell must not be advertised when it cannot run",
+    );
+
+    let backward = json!({ "type": "doc", "content": [table(vec![
+        row(vec![nested_only_cell(), cell("c")]),
+    ])] });
+    let (advertised, executed) =
+        advertised_and_executed(backward, 1, CellStep::Backward, DEFAULT_TAB_APPENDS_A_ROW);
+    assert_eq!(
+        advertised, executed,
+        "shift-tab must not be advertised when every earlier cell is unreachable",
+    );
+    assert!(
+        !executed,
+        "shift-tab past an unreachable cell has nowhere to go",
+    );
+}
+
+#[test]
+fn shift_tab_skips_a_cell_whose_only_content_is_a_nested_table() {
+    let mut engine = engine_with(json!({ "type": "doc", "content": [table(vec![
+        row(vec![cell("a"), nested_only_cell(), cell("c")]),
+    ])] }));
+    let outer = openings(
+        &index_of(engine.document().expect("the engine is ready")),
+        OUTER_TABLE_POSITION,
+    );
+
+    caret_at(&mut engine, outer[2] + CELL_TEXT_OFFSET);
+    step(&mut engine, CellStep::Backward, DEFAULT_TAB_APPENDS_A_ROW);
+    assert_eq!(
+        caret_document_position(&engine),
+        Some(outer[0] + CELL_TEXT_OFFSET),
+        "shift-tab steps over an unreachable cell to the previous editable one",
+    );
+}

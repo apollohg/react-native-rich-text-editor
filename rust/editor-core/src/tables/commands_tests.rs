@@ -865,6 +865,14 @@ fn advertised(fixture: Vec<Value>, anchor: usize, command: TableCommand) -> bool
     .is_available(command)
 }
 
+fn nested_only_cell() -> Value {
+    json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
+        "content": [table(vec![row(vec![cell("inner")])])],
+    })
+}
+
 fn availability_fixtures() -> Vec<(&'static str, Vec<Value>, usize)> {
     vec![
         ("regular", regular_fixture(), ANCHOR_FOR_AVAILABILITY),
@@ -878,6 +886,20 @@ fn availability_fixtures() -> Vec<(&'static str, Vec<Value>, usize)> {
             ANCHOR_FOR_AVAILABILITY,
         ),
         ("last cell", regular_fixture(), LAST_REGULAR_CELL),
+        (
+            "nested only neighbour",
+            vec![table(vec![row(vec![
+                cell("a"),
+                nested_only_cell(),
+                cell("c"),
+            ])])],
+            ANCHOR_FOR_AVAILABILITY,
+        ),
+        (
+            "nested only last cell",
+            vec![table(vec![row(vec![cell("a"), nested_only_cell()])])],
+            ANCHOR_FOR_AVAILABILITY,
+        ),
         (
             "declared width",
             vec![table(vec![
