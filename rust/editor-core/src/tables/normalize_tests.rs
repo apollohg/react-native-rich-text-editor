@@ -5,7 +5,10 @@ use crate::command_planner::SemanticOperation;
 use crate::model::Document;
 use crate::schema::Schema;
 use crate::serialize::json_in::{from_prosemirror_json, UnknownTypeMode};
-use crate::tables::normalize::{normalize_outer_table, outer_table_grid};
+use crate::tables::normalize::{
+    normalize_outer_table, outer_table_grid, planned_normalization_passes,
+    reset_planned_normalization_passes,
+};
 use crate::tables::projection::{project_table, ProjectedTable, TableGridBudget};
 use crate::tables::tests::{tabled_schema, PROSEMIRROR_TABLE_NAMES};
 
@@ -58,6 +61,21 @@ pub(crate) fn document_with(content: Vec<Value>) -> Document {
         UnknownTypeMode::Preserve,
     )
     .expect("the fixture document parses")
+}
+
+pub(crate) fn merged_fixture_table() -> Value {
+    table(vec![
+        row(vec![cell_with(3, SINGLE_SPAN, json!([100, 140, 180]), "h")]),
+        row(vec![
+            cell_with(SINGLE_SPAN, 2, json!([100]), "v"),
+            cell_with(SINGLE_SPAN, SINGLE_SPAN, json!([140]), "b"),
+            cell_with(SINGLE_SPAN, SINGLE_SPAN, json!([180]), "c"),
+        ]),
+        row(vec![
+            cell_with(SINGLE_SPAN, SINGLE_SPAN, json!([140]), "d"),
+            cell_with(SINGLE_SPAN, SINGLE_SPAN, json!([180]), "e"),
+        ]),
+    ])
 }
 
 fn limits() -> ResourceLimits {
@@ -225,6 +243,20 @@ fn a_width_disagreement_rewrites_only_the_disagreeing_cell() {
 }
 
 #[test]
+fn a_valid_merged_grid_with_agreeing_widths_plans_no_normalization() {
+    let document = document_with(vec![merged_fixture_table()]);
+
+    let projected = projection_of(&document, TABLE_POSITION);
+    assert!(!projected.irregular, "the merged fixture must start valid");
+    assert_eq!(
+        projected.widths,
+        vec![Some(100), Some(140), Some(180)],
+        "the merged fixture must resolve every column width",
+    );
+    assert_eq!(normalize(&document), Vec::new());
+}
+
+#[test]
 fn a_row_free_table_plans_no_normalization_and_stays_irregular() {
     let document = document_with(vec![json!({ "type": TABLE_NODE, "content": [] })]);
 
@@ -298,20 +330,19 @@ fn normalization_never_targets_a_nested_descendant() {
     let outer = document
         .node_at(&table_path(&document, TABLE_POSITION))
         .expect("the outer table exists");
-    let nested_end = nested_table_pos
-        + outer
-            .child(0)
-            .and_then(|row| row.child(0))
-            .and_then(|cell| cell.child(0))
-            .expect("the nested table exists")
-            .node_size();
+    let containing_cell = outer
+        .child(0)
+        .and_then(|row| row.child(0))
+        .expect("the outer cell holding the nested table exists");
+    let cell_content_start = FIRST_CELL_POSITION + 1;
+    let cell_content_end = cell_content_start + containing_cell.content_size();
     for position in inserted_cell_positions(&operations)
         .into_iter()
         .chain(attribute_targets(&operations))
     {
         assert!(
-            position <= nested_table_pos || position >= nested_end,
-            "operation at {position} falls inside the nested table",
+            position < cell_content_start || position >= cell_content_end,
+            "operation at {position} falls inside the outer cell that holds the nested table",
         );
     }
     assert!(!operations.is_empty());
@@ -469,6 +500,22 @@ fn an_explicit_action_runs_exactly_one_pre_pass_and_one_post_pass() {
 }
 
 #[test]
+fn preparing_an_action_invokes_the_planner_exactly_twice() {
+    let document = short_row_document();
+    reset_planned_normalization_passes();
+
+    let prepared = prepare(&document, None, &typing_action()).expect("the action prepares");
+
+    assert_eq!(
+        planned_normalization_passes(),
+        u64::from(prepared.counters.pre_normalization_passes)
+            + u64::from(prepared.counters.post_normalization_passes),
+        "the reported counters must account for every planner invocation",
+    );
+    assert_eq!(planned_normalization_passes(), 2);
+}
+
+#[test]
 fn a_valid_grid_action_runs_two_passes_that_plan_nothing() {
     let document = document_with(vec![table(vec![
         row(vec![cell("a"), cell("b")]),
@@ -595,7 +642,7 @@ fn regular_fixture_json() -> String {
 
 fn table_action_command_plan(origin: TransactionOrigin) -> Result<CommandPlan, OperationError> {
     let session = seeded_session(regular_fixture_json());
-    session_table_action_plan(&session, origin, true)
+    session_table_action_plan(&session, origin)
 }
 
 #[test]
@@ -744,21 +791,13 @@ fn prepared_action(
 fn session_table_action_plan(
     session: &EditorSession,
     origin: TransactionOrigin,
-    guard_whole_table_lowering: bool,
 ) -> Result<CommandPlan, OperationError> {
-    session_action_plan(
-        session,
-        origin,
-        guard_whole_table_lowering,
-        &typing_action(),
-        &EditingLimits::default(),
-    )
+    session_action_plan(session, origin, &typing_action(), &EditingLimits::default())
 }
 
 fn session_action_plan(
     session: &EditorSession,
     origin: TransactionOrigin,
-    guard_whole_table_lowering: bool,
     action: &dyn TableAction,
     editing_limits: &EditingLimits,
 ) -> Result<CommandPlan, OperationError> {
@@ -781,7 +820,6 @@ fn session_action_plan(
             state_revision: session.engine.state_revision(),
             yrs_state_epoch: session.engine.yrs_state_epoch(),
             origin,
-            guard_whole_table_lowering,
         },
         prepared,
     )
@@ -791,7 +829,7 @@ fn session_action_plan(
 fn a_table_action_lowers_to_one_sealed_structural_edit_batch() {
     let session = seeded_session(identity_fixture_json());
 
-    let plan = session_table_action_plan(&session, TransactionOrigin::LocalCommand, true)
+    let plan = session_table_action_plan(&session, TransactionOrigin::LocalCommand)
         .expect("the prepared action lowers without replacing its whole table");
 
     let CommandPlan::Transaction(transaction) = plan else {
@@ -819,7 +857,7 @@ fn the_sealed_batch_keeps_every_cell_identity_the_whole_table_lowering_destroyed
     assert_eq!(before.len(), IDENTITY_FIXTURE_CELLS);
 
     let CommandPlan::Transaction(transaction) =
-        session_table_action_plan(&session, TransactionOrigin::LocalCommand, true)
+        session_table_action_plan(&session, TransactionOrigin::LocalCommand)
             .expect("the prepared action lowers")
     else {
         panic!("a table action lowers to a document transaction");
@@ -971,7 +1009,6 @@ fn inserting_a_column_across_rows_keeps_every_unchanged_cell_identity() {
     let plan = session_action_plan(
         &session,
         TransactionOrigin::LocalCommand,
-        true,
         &insert_column_action(),
         &EditingLimits::default(),
     )
@@ -1023,7 +1060,6 @@ fn insert_column_batch(session: &EditorSession) -> StructuralEditBatch {
     let plan = session_action_plan(
         session,
         TransactionOrigin::LocalCommand,
-        true,
         &insert_column_action(),
         &EditingLimits::default(),
     )
@@ -1247,7 +1283,6 @@ fn a_cell_inserted_between_identical_twins_keeps_both_twins_in_place() {
     let plan = session_action_plan(
         &session,
         TransactionOrigin::LocalCommand,
-        true,
         &insert_twin_action(),
         &EditingLimits::default(),
     )

@@ -193,7 +193,8 @@ pub(crate) fn table_action_transaction(
             context.revision,
         ));
     }
-    let plan = table_action_lowering(context, prepared)?;
+    let selection = structure::selection(context);
+    let plan = text::admitted_semantic_transaction(context, &selection, prepared.plan)?;
     let CommandPlan::Transaction(transaction) = &plan else {
         return Ok(plan);
     };
@@ -211,15 +212,6 @@ pub(crate) fn table_action_transaction(
     Ok(plan)
 }
 
-#[allow(dead_code)]
-pub(crate) fn table_action_lowering(
-    context: &PlanningContext<'_>,
-    prepared: crate::tables::command_context::PreparedTableAction,
-) -> OperationResult<CommandPlan> {
-    let selection = structure::selection(context);
-    text::admitted_semantic_transaction(context, &selection, prepared.plan)
-}
-
 #[cfg(test)]
 pub(crate) struct TableActionTestRequest<'a> {
     pub document: &'a Document,
@@ -230,7 +222,6 @@ pub(crate) struct TableActionTestRequest<'a> {
     pub state_revision: u64,
     pub yrs_state_epoch: u64,
     pub origin: TransactionOrigin,
-    pub guard_whole_table_lowering: bool,
 }
 
 #[cfg(test)]
@@ -275,9 +266,5 @@ pub(crate) fn table_action_plan_for_test(
         allow_deferred_admission: false,
         preparation: None,
     };
-    if request.guard_whole_table_lowering {
-        table_action_transaction(&context, prepared)
-    } else {
-        table_action_lowering(&context, prepared)
-    }
+    table_action_transaction(&context, prepared)
 }

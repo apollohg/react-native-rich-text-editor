@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use serde_json::Value;
@@ -17,6 +18,12 @@ use crate::tables::types::TableError;
 use crate::yrs_engine::{OperationError, OperationResult};
 
 pub(crate) const UNCORRELATED_REQUEST_ID: u64 = 0;
+const ONE_PLANNED_PASS: u64 = 1;
+const NO_PLANNED_PASSES: u64 = 0;
+
+std::thread_local! {
+    static PLANNED_NORMALIZATION_PASSES: Cell<u64> = const { Cell::new(NO_PLANNED_PASSES) };
+}
 const TABLE_NORMALIZATION_FIELD: &str = "tableNormalization";
 const TABLE_POSITION_FIELD: &str = "tablePos";
 const NODE_OPENING_TOKENS: u32 = 1;
@@ -82,12 +89,22 @@ impl NormalizationFailure {
     }
 }
 
+pub(crate) fn planned_normalization_passes() -> u64 {
+    PLANNED_NORMALIZATION_PASSES.with(Cell::get)
+}
+
+pub(crate) fn reset_planned_normalization_passes() {
+    PLANNED_NORMALIZATION_PASSES.with(|passes| passes.set(NO_PLANNED_PASSES));
+}
+
 pub(crate) fn normalize_outer_table(
     document: &Document,
     table_pos: u32,
     schema: &Schema,
     limits: &ResourceLimits,
 ) -> OperationResult<Vec<SemanticOperation>> {
+    PLANNED_NORMALIZATION_PASSES
+        .with(|passes| passes.set(passes.get().saturating_add(ONE_PLANNED_PASS)));
     plan_normalization(document, table_pos, schema, limits)
         .map_err(|failure| failure.into_operation_error(UNCORRELATED_REQUEST_ID))
 }

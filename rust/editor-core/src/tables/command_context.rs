@@ -75,10 +75,12 @@ pub(crate) fn prepare_table_action(
     let mut counters = TableWorkCounters::default();
     let mut operations: Vec<SemanticOperation> = Vec::new();
 
-    let pre_pass = normalization_pass(context, context.document)?;
-    counters.pre_normalization_passes = SINGLE_PASS;
-    counters.normalization_operations =
-        charge_operations(counters.normalization_operations, &pre_pass);
+    let pre_pass = normalization_pass(
+        context,
+        context.document,
+        NormalizationPhase::Pre,
+        &mut counters,
+    )?;
     let (candidate, pre_map) = advance_candidate(context, context.document, &pre_pass)?;
     operations.extend(pre_pass);
 
@@ -107,10 +109,8 @@ pub(crate) fn prepare_table_action(
     {
         None => acted,
         Some(_) => {
-            let post_pass = normalization_pass(context, &acted)?;
-            counters.post_normalization_passes = SINGLE_PASS;
-            counters.normalization_operations =
-                charge_operations(counters.normalization_operations, &post_pass);
+            let post_pass =
+                normalization_pass(context, &acted, NormalizationPhase::Post, &mut counters)?;
             let (normalized, _) = advance_candidate(context, &acted, &post_pass)?;
             operations.extend(post_pass);
             require_valid_outer_grid(context, &normalized)?;
@@ -148,21 +148,34 @@ pub(crate) fn prepare_table_action(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NormalizationPhase {
+    Pre,
+    Post,
+}
+
 fn normalization_pass(
     context: &TableActionContext<'_>,
     document: &Document,
+    phase: NormalizationPhase,
+    counters: &mut TableWorkCounters,
 ) -> OperationResult<Vec<SemanticOperation>> {
-    normalize_outer_table(
+    let counted = match phase {
+        NormalizationPhase::Pre => &mut counters.pre_normalization_passes,
+        NormalizationPhase::Post => &mut counters.post_normalization_passes,
+    };
+    *counted = counted.saturating_add(SINGLE_PASS);
+    let operations = normalize_outer_table(
         document,
         context.table_pos,
         context.schema,
         context.resource_limits,
     )
-    .map_err(|error| recorrelate(error, context.request_id))
-}
-
-fn charge_operations(charged: u32, operations: &[SemanticOperation]) -> u32 {
-    charged.saturating_add(u32::try_from(operations.len()).unwrap_or(u32::MAX))
+    .map_err(|error| recorrelate(error, context.request_id))?;
+    counters.normalization_operations = counters
+        .normalization_operations
+        .saturating_add(u32::try_from(operations.len()).unwrap_or(u32::MAX));
+    Ok(operations)
 }
 
 fn advance_candidate(

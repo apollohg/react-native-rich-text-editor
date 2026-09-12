@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { call, snapshot, tableFixture, withPeers } from '../controller.js';
+import {
+    call,
+    exchangeUntilIdle,
+    seedFrom,
+    snapshot,
+    tableFixture,
+    withPeers,
+} from '../controller.js';
 import type { Peer } from '../peer-protocol.js';
 import {
     CELL_NODE,
@@ -106,6 +113,13 @@ async function referenceNormalization(
     return call(peer, 'normalizeTable', { table: fixture });
 }
 
+function remoteTable(): Record<string, unknown> {
+    return table([
+        row([cell({ text: 'r1' }), cell({ text: 'r2' })]),
+        row([cell({ text: 'r3' }), cell({ text: 'r4' })]),
+    ]);
+}
+
 type AgreeingFixture = { name: string; table: Record<string, unknown> };
 
 const AGREEING_FIXTURES: AgreeingFixture[] = [
@@ -140,6 +154,18 @@ const AGREEING_FIXTURES: AgreeingFixture[] = [
             row([cell({ colspan: 2, colwidth: [100, 160], text: 'a' })]),
             row([cell({ colwidth: [140], text: 'b' }), cell({ colwidth: [160], text: 'c' })]),
             row([cell({ colwidth: [140], text: 'd' }), cell({ colwidth: [160], text: 'e' })]),
+        ]),
+    },
+    {
+        name: 'a valid merged grid with agreeing widths is left exactly as it is',
+        table: table([
+            row([cell({ colspan: 3, colwidth: [100, 140, 180], text: 'h' })]),
+            row([
+                cell({ rowspan: 2, colwidth: [100], text: 'v' }),
+                cell({ colwidth: [140], text: 'b' }),
+                cell({ colwidth: [180], text: 'c' }),
+            ]),
+            row([cell({ colwidth: [140], text: 'd' }), cell({ colwidth: [180], text: 'e' })]),
         ]),
     },
     {
@@ -187,15 +213,40 @@ test('the spec sanctioned divergences are pinned, not hidden', async (context) =
                 );
                 const native = await nativeNormalization(engine, fixture);
                 const reference = await referenceNormalization(web, fixture);
+                assert.deepEqual(
+                    canonical(native['table']),
+                    canonical(table([
+                        row([
+                            cell({ text: 'a' }),
+                            cell({ rowspan: 2, text: 'b' }),
+                            cell(),
+                            cell(),
+                        ]),
+                        row([cell(), cell({ colspan: 2, text: 'c' })]),
+                    ])),
+                    'the colliding cell shifts right past the rowspan and keeps its own colspan',
+                );
+                const nativeGrid = await call(web, 'projectTable', {
+                    table: native['table'],
+                });
+                assert.equal(nativeGrid['irregular'], false);
+                assert.deepEqual(
+                    [nativeGrid['rows'], nativeGrid['columns']],
+                    [2, 4],
+                    'shifting right widens the grid rather than trimming the colliding span',
+                );
+                assert.deepEqual(
+                    canonical(reference['table']),
+                    canonical(table([
+                        row([cell({ text: 'a' }), cell({ rowspan: 2, text: 'b' }), cell()]),
+                        row([cell(), cell(), cell({ text: 'c' })]),
+                    ])),
+                    'the pinned reference overlaps the collision and trims the colliding colspan',
+                );
                 assert.notDeepEqual(
                     canonical(native['table']),
                     canonical(reference['table']),
                     'TBL-11 mandates shift-right placement, so this fixture must diverge',
-                );
-                assert.equal(
-                    (native['table'] as Record<string, unknown>)['type'],
-                    TABLE_NODE,
-                    'native normalization never deletes the table it was asked to repair',
                 );
             });
 
@@ -223,8 +274,9 @@ test('the spec sanctioned divergences are pinned, not hidden', async (context) =
 
 test('only an explicit normalization request advances the native pass counter', async () => {
     await withPeers(
-        ['rust'] as const,
-        async ([engine]) => {
+        ['rust', 'prosemirror'] as const,
+        async ([engine, web]) => {
+            await seedFrom(engine, [web]);
             const initial = await snapshot(engine);
             assert.equal(initial.normalizationPassesAfterLastAction, NO_NORMALIZATION_PASSES);
 
@@ -243,18 +295,28 @@ test('only an explicit normalization request advances the native pass counter', 
             const afterTyping = await snapshot(engine);
             assert.equal(afterTyping.normalizationPassesAfterLastAction, NO_NORMALIZATION_PASSES);
 
-            const diff = await call(engine, 'stateDiff', {
-                stateVectorBase64: initial.stateVectorBase64,
-            });
-            await call(engine, 'applyUpdate', {
-                updateBase64: diff['updateBase64'] as string,
-            });
-            const afterRemote = await snapshot(engine);
-            assert.equal(afterRemote.normalizationPassesAfterLastAction, NO_NORMALIZATION_PASSES);
+            await call(web, 'command', { type: 'insertNode', node: remoteTable() });
+            await call(web, 'command', { type: 'insertText', text: 'peer' });
+            await exchangeUntilIdle([web, engine]);
+            const converged = await snapshot(engine);
+            assert.deepEqual(
+                converged.documentJson,
+                (await snapshot(web)).documentJson,
+                'the remote table must actually have arrived before its zero means anything',
+            );
+            assert.equal(
+                converged.normalizationPassesAfterLastAction,
+                NO_NORMALIZATION_PASSES,
+                'a remote update from another replica never plans a normalization pass',
+            );
 
             await call(engine, 'undo', {});
             const afterUndo = await snapshot(engine);
             assert.equal(afterUndo.normalizationPassesAfterLastAction, NO_NORMALIZATION_PASSES);
+
+            await call(engine, 'redo', {});
+            const afterRedo = await snapshot(engine);
+            assert.equal(afterRedo.normalizationPassesAfterLastAction, NO_NORMALIZATION_PASSES);
         },
         tableFixture('prosemirror'),
     );

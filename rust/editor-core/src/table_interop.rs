@@ -11,6 +11,7 @@ use base64::Engine as _;
 use crate::boundary::ResourceLimits;
 use crate::collaboration_runtime::awareness::awareness_limits;
 use crate::collaboration_runtime::outbox::OutboundLeasePayload;
+use crate::command_planner::apply_operations;
 use crate::document_api::DocumentApiFacade;
 use crate::native_transaction_bridge::{
     operation_error, serialize_native_outcome, NativeTransactionBridge,
@@ -21,13 +22,14 @@ use crate::schema::presets::{
 };
 use crate::schema::Schema;
 use crate::serialize::json_in::{from_prosemirror_json_with_limits, UnknownTypeMode};
+use crate::serialize::to_prosemirror_json;
 use crate::session::{
     outbound_lease_session_error, CollaborationLimits, EditorInitialization, EditorSession,
     EditorSessionConfig, ErrorDomain, InitialContent, SessionError,
 };
-use crate::command_planner::apply_operations;
-use crate::serialize::to_prosemirror_json;
-use crate::tables::normalize::normalize_outer_table;
+use crate::tables::normalize::{
+    normalize_outer_table, planned_normalization_passes, reset_planned_normalization_passes,
+};
 use crate::tables::projection::{project_table, ProjectedTable, TableGridBudget};
 use crate::yrs_engine::{DocumentScope, EditingLimits};
 
@@ -43,8 +45,6 @@ const ACK_ACTION: &str = "ackOutbound";
 const AWARENESS_EVENT_KIND: &str = "awareness";
 const AWARENESS_ACTION: &str = "awareness";
 const TABLE_NORMALIZATION_FAILED: &str = "TABLE_NORMALIZATION_FAILED";
-const SINGLE_NORMALIZATION_PASS: u64 = 1;
-const NO_NORMALIZATION_PASSES: u64 = 0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EventOrigin {
@@ -132,7 +132,6 @@ struct RustPeer {
     emitted_events: Vec<serde_json::Value>,
     next_request_id: u64,
     autonomous_repair_writes: u64,
-    normalization_passes: u64,
 }
 
 pub fn serve<R: BufRead, W: Write>(
@@ -238,7 +237,6 @@ impl RustPeer {
             emitted_events: Vec::new(),
             next_request_id: 1,
             autonomous_repair_writes: 0,
-            normalization_passes: NO_NORMALIZATION_PASSES,
         }
     }
 
@@ -292,7 +290,7 @@ impl RustPeer {
             "stateVector" => self.state_vector(payload),
             "stateDiff" => self.state_diff(payload),
             "projectTable" => project_table_payload(payload),
-            "normalizeTable" => self.normalize_table(payload),
+            "normalizeTable" => normalize_table_payload(payload),
             "setAwareness" => self.set_awareness(payload),
             "applyAwareness" => self.apply_awareness(payload),
             "shutdown" => self.shutdown(payload),
@@ -369,7 +367,7 @@ impl RustPeer {
 
     fn command(&mut self, payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
         let mutation: LocalMutation = parse_payload(payload)?;
-        self.normalization_passes = NO_NORMALIZATION_PASSES;
+        reset_planned_normalization_passes();
         let request_id = self.next_request_id();
         let session = self.session_mut()?;
         let base_document_revision = session.engine.revision();
@@ -393,7 +391,7 @@ impl RustPeer {
         undo: bool,
     ) -> Result<serde_json::Value, SessionError> {
         let _: EmptyPayload = parse_payload(payload)?;
-        self.normalization_passes = NO_NORMALIZATION_PASSES;
+        reset_planned_normalization_passes();
         let request_id = self.next_request_id();
         let session = self.session_mut()?;
         let mut bridge = NativeTransactionBridge::new(session);
@@ -416,7 +414,7 @@ impl RustPeer {
         payload: serde_json::Value,
     ) -> Result<serde_json::Value, SessionError> {
         let payload: UpdatePayload = parse_payload(payload)?;
-        self.normalization_passes = NO_NORMALIZATION_PASSES;
+        reset_planned_normalization_passes();
         let update = decode_base64(&payload.update_base64, "updateBase64")?;
         let request_id = self.next_request_id();
         let session = self.session_mut()?;
@@ -559,7 +557,7 @@ impl RustPeer {
             "canUndo": session.engine.can_undo(),
             "canRedo": session.engine.can_redo(),
             "autonomousRepairWrites": autonomous_repair_writes,
-            "normalizationPassesAfterLastAction": self.normalization_passes,
+            "normalizationPassesAfterLastAction": planned_normalization_passes(),
         }))
     }
 
@@ -598,48 +596,6 @@ impl RustPeer {
             session.teardown();
         }
         Ok(serde_json::json!({}))
-    }
-
-    fn normalize_table(
-        &mut self,
-        payload: serde_json::Value,
-    ) -> Result<serde_json::Value, SessionError> {
-        let payload: ProjectTablePayload = parse_payload(payload)?;
-        let limits = ResourceLimits::default();
-        let schema = Schema::from_json(&payload.schema)
-            .map_err(|error| config_invalid(format!("the normalized schema is invalid: {error}")))?;
-        let document = from_prosemirror_json_with_limits(
-            &serde_json::json!({
-                "type": PROJECTED_TABLE_DOCUMENT_ROOT,
-                "content": [payload.table],
-            }),
-            &schema,
-            UnknownTypeMode::Preserve,
-            &limits,
-        )
-        .map_err(|error| config_invalid(format!("the normalized table is invalid: {error}")))?;
-        let operations =
-            normalize_outer_table(&document, PROJECTED_TABLE_POSITION, &schema, &limits)
-                .map_err(|error| peer_error(TABLE_NORMALIZATION_FAILED, error.message.to_string()))?;
-        self.normalization_passes = self
-            .normalization_passes
-            .saturating_add(SINGLE_NORMALIZATION_PASS);
-        let normalized = apply_operations(&document, &schema, &operations).map_err(|()| {
-            peer_error(
-                TABLE_NORMALIZATION_FAILED,
-                "the normalization plan does not apply to its own table",
-            )
-        })?;
-        let json = to_prosemirror_json(&normalized, &schema);
-        let table = json
-            .get("content")
-            .and_then(|content| content.get(0))
-            .cloned()
-            .ok_or_else(|| peer_error(TABLE_NORMALIZATION_FAILED, "the table did not survive"))?;
-        Ok(serde_json::json!({
-            "table": table,
-            "operations": operations.len(),
-        }))
     }
 
     fn has_pending_dependencies(&self) -> bool {
@@ -717,6 +673,42 @@ fn local_mutation_envelope(
 
 fn parse_outcome(serialized: String) -> serde_json::Value {
     serde_json::from_str(&serialized).expect("native outcomes serialize as JSON objects")
+}
+
+fn normalize_table_payload(payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
+    let payload: ProjectTablePayload = parse_payload(payload)?;
+    let limits = ResourceLimits::default();
+    let schema = Schema::from_json(&payload.schema)
+        .map_err(|error| config_invalid(format!("the normalized schema is invalid: {error}")))?;
+    let document = from_prosemirror_json_with_limits(
+        &serde_json::json!({
+            "type": PROJECTED_TABLE_DOCUMENT_ROOT,
+            "content": [payload.table],
+        }),
+        &schema,
+        UnknownTypeMode::Preserve,
+        &limits,
+    )
+    .map_err(|error| config_invalid(format!("the normalized table is invalid: {error}")))?;
+    let operations =
+        normalize_outer_table(&document, PROJECTED_TABLE_POSITION, &schema, &limits)
+            .map_err(|error| peer_error(TABLE_NORMALIZATION_FAILED, error.message.to_string()))?;
+    let normalized = apply_operations(&document, &schema, &operations).map_err(|()| {
+        peer_error(
+            TABLE_NORMALIZATION_FAILED,
+            "the normalization plan does not apply to its own table",
+        )
+    })?;
+    let json = to_prosemirror_json(&normalized, &schema);
+    let table = json
+        .get("content")
+        .and_then(|content| content.get(0))
+        .cloned()
+        .ok_or_else(|| peer_error(TABLE_NORMALIZATION_FAILED, "the table did not survive"))?;
+    Ok(serde_json::json!({
+        "table": table,
+        "operations": operations.len(),
+    }))
 }
 
 fn project_table_payload(payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
