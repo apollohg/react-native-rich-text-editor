@@ -11,7 +11,7 @@ use crate::selection::Selection;
 use crate::tables::commands::{
     TableCommand, TableEdge, TableHeaderTarget, DEFAULT_INSERTED_TABLE_COLUMNS,
     DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS, DEFAULT_TAB_APPENDS_A_ROW,
-    MIN_TABLE_COLUMN_WIDTH,
+    UNSPECIFIED_TABLE_COLUMN_WIDTH,
 };
 use crate::tables::interchange::CellStep;
 use crate::transform::{Step, Transaction};
@@ -341,7 +341,7 @@ fn table_command_surface() -> [(&'static str, TableCommand); TABLE_COMMAND_ENTRI
         (
             "setTableColumnWidth",
             TableCommand::SetTableColumnWidth {
-                width: MIN_TABLE_COLUMN_WIDTH,
+                width: UNSPECIFIED_TABLE_COLUMN_WIDTH,
             },
         ),
         (

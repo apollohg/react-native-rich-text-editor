@@ -34,6 +34,8 @@ const NO_DOCUMENT_UPDATES: usize = 0;
 const ONE_DOCUMENT_UPDATE: usize = 1;
 const CUSTOM_TABLE_NAMES: [&str; 4] = ["grid", "gridRow", "gridCell", "gridHeader"];
 const ANCHOR_CELL: usize = 2;
+const ANCHOR_FOR_AVAILABILITY: usize = 0;
+const LAST_REGULAR_CELL: usize = 3;
 const IDENTITY_FIXTURE_CELLS: usize = 5;
 const ONE_CHARACTER: u32 = 1;
 const NO_CELLS: usize = 0;
@@ -839,41 +841,96 @@ fn availability_projects_the_document_once_for_the_whole_command_surface() {
     );
 }
 
-#[test]
-fn availability_matches_the_planner_on_a_regular_grid() {
-    let mut engine = seeded(regular_fixture());
-    select_cell(&mut engine, 0);
-    let openings = cell_openings(&engine);
-    let selection = Selection::cell(openings[0], openings[0]);
+fn planner_accepts(fixture: Vec<Value>, anchor: usize, command: TableCommand) -> bool {
+    let mut engine = seeded(fixture);
+    select_cell(&mut engine, anchor);
+    run(&mut engine, command)
+        .expect("the table command plans without erroring on a regular grid")
+        .is_some()
+}
 
-    let commands = crate::editor_state::command_applicability(
+fn advertised(fixture: Vec<Value>, anchor: usize, command: TableCommand) -> bool {
+    let mut engine = seeded(fixture);
+    select_cell(&mut engine, anchor);
+    let openings = cell_openings(&engine);
+    crate::yrs_engine::TableCommandSurface::resolve(
         document_of(&engine),
         &engine_schema(&engine),
-        &selection,
+        &Selection::cell(openings[anchor], openings[anchor]),
         &limits(),
-    );
+    )
+    .is_available(command)
+}
 
-    for name in [
-        "addTableRowBefore",
-        "addTableRowAfter",
-        "deleteTableRows",
-        "addTableColumnBefore",
-        "addTableColumnAfter",
-        "deleteTableColumns",
-        "toggleTableHeaderRow",
-        "toggleTableHeaderColumn",
-        "toggleTableHeaderCell",
-        "deleteTable",
-        "clearTableCells",
-        "selectTableRows",
-        "selectTableColumns",
-    ] {
-        assert_eq!(commands.get(name), Some(&true), "{name} must be available");
+fn availability_fixtures() -> Vec<(&'static str, Vec<Value>, usize)> {
+    vec![
+        ("regular", regular_fixture(), ANCHOR_FOR_AVAILABILITY),
+        ("tall span", tall_span_fixture(), ANCHOR_FOR_AVAILABILITY),
+        (
+            "header row",
+            vec![table(vec![
+                row(vec![header_cell("h0"), header_cell("h1")]),
+                row(vec![cell("b0"), cell("b1")]),
+            ])],
+            ANCHOR_FOR_AVAILABILITY,
+        ),
+        ("last cell", regular_fixture(), LAST_REGULAR_CELL),
+    ]
+}
+
+#[test]
+fn availability_matches_the_planner_for_every_table_command() {
+    for (name, fixture, anchor) in availability_fixtures() {
+        for command in every_table_command() {
+            assert_eq!(
+                advertised(fixture.clone(), anchor, command),
+                planner_accepts(fixture.clone(), anchor, command),
+                "on the {name} fixture at cell {anchor}, {command:?} must advertise \
+                 exactly what the planner will do",
+            );
+        }
     }
+}
+
+#[test]
+fn column_width_availability_answers_whether_a_resize_is_possible_at_all() {
+    let already = PROBE_COLUMN_WIDTH;
+    let fixture = vec![table(vec![
+        row(vec![
+            cell_with(SINGLE_SPAN, SINGLE_SPAN, json!([already]), "a0"),
+            cell("a1"),
+        ]),
+        row(vec![
+            cell_with(SINGLE_SPAN, SINGLE_SPAN, json!([already]), "b0"),
+            cell("b1"),
+        ]),
+    ])];
+    let resize = |width| TableCommand::SetTableColumnWidth { width };
+
+    assert!(
+        advertised(fixture.clone(), ANCHOR_FOR_AVAILABILITY, resize(already)),
+        "a column that already carries the width is still resizable",
+    );
     assert_eq!(
-        commands.get("insertTable"),
-        Some(&false),
-        "a table cannot be inserted inside a table",
+        advertised(fixture.clone(), ANCHOR_FOR_AVAILABILITY, resize(already)),
+        advertised(
+            fixture.clone(),
+            ANCHOR_FOR_AVAILABILITY,
+            resize(already + MIN_TABLE_COLUMN_WIDTH)
+        ),
+        "availability is width independent, so the advertised width carries no claim",
+    );
+    assert!(
+        !planner_accepts(fixture.clone(), ANCHOR_FOR_AVAILABILITY, resize(already)),
+        "re-applying the width the column already carries is a no-op, not an edit",
+    );
+    assert!(
+        planner_accepts(
+            fixture,
+            ANCHOR_FOR_AVAILABILITY,
+            resize(already + MIN_TABLE_COLUMN_WIDTH)
+        ),
+        "a different width is a real edit",
     );
 }
 

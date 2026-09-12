@@ -35,6 +35,7 @@ pub(crate) const DEFAULT_TAB_APPENDS_A_ROW: bool = true;
 pub(crate) const MIN_INSERTED_TABLE_DIMENSION: u32 = 1;
 pub(crate) const MAX_INSERTED_TABLE_DIMENSION: u32 = 1_000;
 pub(crate) const MIN_TABLE_COLUMN_WIDTH: u32 = 1;
+pub(crate) const UNSPECIFIED_TABLE_COLUMN_WIDTH: u32 = MIN_TABLE_COLUMN_WIDTH;
 pub(crate) const MAX_TABLE_COLUMN_WIDTH: u32 = 10_000;
 pub(crate) const MINIMUM_SURVIVING_ROWS: u32 = 1;
 pub(crate) const MINIMUM_SURVIVING_COLUMNS: u32 = 1;
