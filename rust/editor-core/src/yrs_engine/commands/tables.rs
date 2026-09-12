@@ -390,6 +390,34 @@ fn caret_only(context: &PlanningContext<'_>, cell_pos: u32) -> OperationResult<C
     }))
 }
 
+fn outer_cell_anchor(index: &TableProjectionIndex, caret: u32) -> Option<TableAnchor> {
+    let located = outer_cell_containing(index, caret)?;
+    Some(TableAnchor {
+        table_pos: located.table_pos,
+        anchors: CellAnchorPair {
+            anchor: located.cell_pos,
+            head: located.cell_pos,
+        },
+    })
+}
+
+fn appendable_outer_row<'a>(
+    document: &'a Document,
+    index: &TableProjectionIndex,
+    schema: &Schema,
+    anchor: &TableAnchor,
+) -> Option<TableTarget<'a>> {
+    let target = TableTarget::resolve_in(
+        document,
+        index,
+        anchor.table_pos,
+        Some(anchor.anchors),
+        schema,
+        GridRequirement::Regular,
+    )?;
+    rows::plan_insert_row(&target, TableEdge::After, schema).map(|_| target)
+}
+
 fn move_to_adjacent_cell(
     context: &PlanningContext<'_>,
     selection: &Selection,
@@ -404,27 +432,26 @@ fn move_to_adjacent_cell(
         context.schema,
         context.resource_limits,
     );
-    let Some(located) = outer_cell_containing(&index, caret) else {
+    let Some(anchor) = outer_cell_anchor(&index, caret) else {
         return Ok(CommandPlan::NotApplicable);
     };
     if let Some(next) = next_outer_cell(&index, caret, step) {
         return caret_only(context, next);
     }
     match (step, append_row) {
-        (CellStep::Forward, true) => scoped_action(
-            context,
-            &TableAnchor {
-                table_pos: located.table_pos,
-                anchors: CellAnchorPair {
-                    anchor: located.cell_pos,
-                    head: located.cell_pos,
+        (CellStep::Forward, true) => {
+            if appendable_outer_row(context.document, &index, context.schema, &anchor).is_none() {
+                return Ok(CommandPlan::NotApplicable);
+            }
+            scoped_action(
+                context,
+                &anchor,
+                selection,
+                &InsertRowAction {
+                    side: TableEdge::After,
                 },
-            },
-            selection,
-            &InsertRowAction {
-                side: TableEdge::After,
-            },
-        ),
+            )
+        }
         (CellStep::Forward, false) | (CellStep::Backward, _) => Ok(CommandPlan::NotApplicable),
     }
 }
@@ -539,13 +566,17 @@ impl<'a> TableCommandSurface<'a> {
                 let Some(caret) = navigating_caret(self.selection) else {
                     return false;
                 };
+                let Some(anchor) = outer_cell_anchor(&self.index, caret) else {
+                    return false;
+                };
                 if next_outer_cell(&self.index, caret, step).is_some() {
                     return true;
                 }
                 match (step, append_row) {
-                    (CellStep::Forward, true) => self.regular_target().is_some_and(|target| {
-                        rows::plan_insert_row(target, TableEdge::After, self.schema).is_some()
-                    }),
+                    (CellStep::Forward, true) => {
+                        appendable_outer_row(self.document, &self.index, self.schema, &anchor)
+                            .is_some()
+                    }
                     (CellStep::Forward, false) | (CellStep::Backward, _) => false,
                 }
             }

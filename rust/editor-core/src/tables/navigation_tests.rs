@@ -578,3 +578,69 @@ fn tab_at_the_last_real_cell_appends_a_row_only_when_the_caller_asks_for_one() {
         "the caret lands in the first cell of the appended row: {json}",
     );
 }
+
+fn cell_holding_an_irregular_nested_table() -> Value {
+    json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
+        "content": [
+            { "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": "outer" }] },
+            table(vec![
+                row(vec![cell(NESTED_CELL_TEXT), cell(NESTED_CELL_TEXT)]),
+                row(vec![cell(NESTED_CELL_TEXT)]),
+            ]),
+        ],
+    })
+}
+
+#[test]
+fn availability_and_planning_agree_for_a_caret_inside_a_nested_table() {
+    let fixture = json!({ "type": "doc", "content": [table(vec![
+        row(vec![cell_holding_an_irregular_nested_table()]),
+    ])] });
+    let mut engine = engine_with(fixture);
+    let index = index_of(engine.document().expect("the engine is ready"));
+    assert!(
+        index
+            .table_at(nested_table_position(&index))
+            .expect("the nested table projects")
+            .irregular,
+        "the fixture must hold an irregular nested table, so the two derivations can diverge",
+    );
+    let caret = openings(&index, nested_table_position(&index))[0] + CELL_TEXT_OFFSET;
+    let command = TableCommand::MoveToAdjacentCell {
+        step: CellStep::Forward,
+        append_row: DEFAULT_TAB_APPENDS_A_ROW,
+    };
+
+    let advertised = crate::yrs_engine::TableCommandSurface::resolve(
+        engine.document().expect("the engine is ready"),
+        &schema(),
+        &crate::selection::Selection::text(caret, caret),
+        &limits(),
+    )
+    .is_available(command);
+
+    caret_at(&mut engine, caret);
+    let executed = engine
+        .apply_command(REQUEST_ID, TypedCommand::Table(command))
+        .expect("the navigation command plans")
+        .is_some();
+
+    assert_eq!(
+        advertised, executed,
+        "availability and planning must derive the same outer table for a nested caret",
+    );
+    assert!(
+        executed,
+        "tab off the last real outer cell appends a row even when a nested table is irregular",
+    );
+    assert_eq!(
+        engine.document_json().expect("the engine is ready")["content"][0]["content"]
+            .as_array()
+            .expect("the outer table holds rows")
+            .len(),
+        2,
+        "the appended row belongs to the outer table",
+    );
+}
