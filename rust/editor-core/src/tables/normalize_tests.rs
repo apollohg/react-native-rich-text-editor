@@ -397,8 +397,8 @@ where
         candidate: &TableActionCandidate<'_>,
         _schema: &Schema,
         _limits: &ResourceLimits,
-    ) -> Option<TableActionOutcome> {
-        (self.plan)(candidate)
+    ) -> crate::yrs_engine::OperationResult<Option<TableActionOutcome>> {
+        Ok((self.plan)(candidate))
     }
 }
 

@@ -9,7 +9,7 @@ use crate::selection::Selection;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::normalize::{normalize_outer_table, outer_table_grid};
 use crate::tables::selection::resolve_cell_rect;
-use crate::tables::types::{TableActionKind, TableWorkCounters};
+use crate::tables::types::{TableActionKind, TableError, TableWorkCounters};
 use crate::transform::{apply_step_canonical_marks, StepMap};
 use crate::yrs_engine::{EditingLimits, OperationError, OperationResult, TransactionOrigin};
 
@@ -18,6 +18,7 @@ const TABLE_ACTION_UNAVAILABLE_FIELD: &str = "tableAction.unavailable";
 const TABLE_ACTION_UNAVAILABLE_CODE: &str = "OPERATION_INVALID";
 const TABLE_ACTION_ANCHOR_FIELD: &str = "tableAction.anchors";
 const TABLE_ACTION_GRID_FIELD: &str = "tableAction.grid";
+pub(crate) const TABLE_ACTION_SHAPE_FIELD: &str = "tableAction.shape";
 const TABLE_ACTION_OPERATIONS_FIELD: &str = "maxOperationsPerTransaction";
 const SINGLE_PASS: u32 = 1;
 const TRUSTED_TABLE_ACTION_ORIGIN: TransactionOrigin = TransactionOrigin::LocalCommand;
@@ -60,7 +61,7 @@ pub(crate) trait TableAction {
         candidate: &TableActionCandidate<'_>,
         schema: &Schema,
         limits: &ResourceLimits,
-    ) -> Option<TableActionOutcome>;
+    ) -> OperationResult<Option<TableActionOutcome>>;
 }
 
 pub(crate) struct PreparedTableAction {
@@ -100,6 +101,7 @@ pub(crate) fn prepare_table_action(
             context.schema,
             context.resource_limits,
         )
+        .map_err(|error| recorrelate(error, context.request_id))?
         .ok_or_else(|| action_unavailable(context, action.kind()))?;
     let (acted, _) = advance_candidate(context, &candidate, &outcome.operations)?;
     operations.extend(outcome.operations);
@@ -283,6 +285,33 @@ fn require_valid_outer_grid(
             TABLE_ACTION_GRID_FIELD,
             "the requested table action does not leave its target grid valid",
         )),
+    }
+}
+
+pub(crate) fn table_shape_operation_error(error: TableError, request_id: u64) -> OperationError {
+    match error {
+        TableError::GridLimit { limit, actual } => OperationError::document_limit_exceeded(
+            request_id,
+            None,
+            TABLE_ACTION_SHAPE_FIELD,
+            limit as u64,
+            actual as u64,
+        ),
+        error @ (TableError::WorkLimit | TableError::Allocation) => {
+            OperationError::operation_work_budget_exceeded(
+                request_id,
+                TABLE_ACTION_SHAPE_FIELD,
+                error.to_string(),
+            )
+        }
+        error @ (TableError::InvalidStructure | TableError::InvalidAttributes) => {
+            OperationError::document_invalid(
+                request_id,
+                None,
+                TABLE_ACTION_SHAPE_FIELD,
+                error.to_string(),
+            )
+        }
     }
 }
 

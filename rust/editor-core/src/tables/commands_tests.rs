@@ -36,6 +36,9 @@ const CUSTOM_TABLE_NAMES: [&str; 4] = ["grid", "gridRow", "gridCell", "gridHeade
 const ANCHOR_CELL: usize = 2;
 const ANCHOR_FOR_AVAILABILITY: usize = 0;
 const LAST_REGULAR_CELL: usize = 3;
+const DOCUMENT_INVALID_CODE: &str = "DOCUMENT_INVALID";
+const DOCUMENT_LIMIT_EXCEEDED_CODE: &str = "DOCUMENT_LIMIT_EXCEEDED";
+const OPERATION_WORK_BUDGET_CODE: &str = "OPERATION_LIMIT_EXCEEDED";
 const IDENTITY_FIXTURE_CELLS: usize = 5;
 const ONE_CHARACTER: u32 = 1;
 const NO_CELLS: usize = 0;
@@ -1841,4 +1844,71 @@ fn a_header_toggle_keeps_a_text_caret_and_maps_it_through_normalization() {
         )),
         "a non destructive toggle must leave the caret where it was, in mapped positions",
     );
+}
+
+#[test]
+fn a_malformed_column_width_is_refused_before_any_table_action_sees_it() {
+    for malformed in [json!(["abc"]), json!("140"), json!([-1])] {
+        let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
+            schema: schema(),
+            fragment_name: FRAGMENT_NAME.into(),
+            initialization_mode: InitializationMode::LocalEmpty,
+            resource_limits: limits(),
+            editing_limits: EditingLimits::default(),
+            max_length: None,
+            scope: None,
+        })
+        .expect("the tabled engine initializes");
+        let error = engine
+            .import_json(
+                &json!({ "type": "doc", "content": vec![table(vec![row(vec![
+                    cell_with(SINGLE_SPAN, SINGLE_SPAN, malformed.clone(), "a"),
+                ])])] })
+                .to_string(),
+                TransactionOrigin::DocumentImport,
+            )
+            .expect_err("a malformed column width must not be admitted");
+        assert_eq!(
+            error.code, DOCUMENT_INVALID_CODE,
+            "{malformed} must be refused as an invalid document, not admitted: {error:?}",
+        );
+    }
+}
+
+#[test]
+fn a_table_shape_failure_reaches_the_host_as_its_own_error_class() {
+    for (failure, code) in [
+        (
+            crate::tables::types::TableError::InvalidAttributes,
+            DOCUMENT_INVALID_CODE,
+        ),
+        (
+            crate::tables::types::TableError::InvalidStructure,
+            DOCUMENT_INVALID_CODE,
+        ),
+        (
+            crate::tables::types::TableError::GridLimit {
+                limit: 1,
+                actual: 2,
+            },
+            DOCUMENT_LIMIT_EXCEEDED_CODE,
+        ),
+        (
+            crate::tables::types::TableError::WorkLimit,
+            OPERATION_WORK_BUDGET_CODE,
+        ),
+    ] {
+        let error = crate::tables::command_context::table_shape_operation_error(
+            failure.clone(),
+            REQUEST_ID,
+        );
+        assert_eq!(
+            error.code, code,
+            "{failure:?} must keep its own error class instead of collapsing into unavailability",
+        );
+        assert!(
+            !crate::tables::command_context::is_action_unavailable(&error),
+            "{failure:?} must never look like a table action that simply does not apply",
+        );
+    }
 }

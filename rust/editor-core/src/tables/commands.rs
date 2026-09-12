@@ -21,6 +21,7 @@ use crate::tables::roles::{
 };
 use crate::tables::selection::{resolve_cell_rect, CellSelectionRect};
 use crate::tables::types::{try_resize, TableActionKind};
+use crate::yrs_engine::OperationResult;
 
 pub(crate) mod columns;
 pub(crate) mod headers;
@@ -573,9 +574,11 @@ impl TableAction for InsertRowAction {
         candidate: &TableActionCandidate<'_>,
         schema: &Schema,
         limits: &ResourceLimits,
-    ) -> Option<TableActionOutcome> {
-        let target = regular_target(candidate, schema, limits)?;
-        rows::plan_insert_row(&target, self.side, schema)
+    ) -> OperationResult<Option<TableActionOutcome>> {
+        let Some(target) = regular_target(candidate, schema, limits) else {
+            return Ok(None);
+        };
+        Ok(rows::plan_insert_row(&target, self.side, schema))
     }
 }
 
@@ -591,9 +594,16 @@ impl TableAction for DeleteRowsAction {
         candidate: &TableActionCandidate<'_>,
         schema: &Schema,
         limits: &ResourceLimits,
-    ) -> Option<TableActionOutcome> {
-        let target = regular_target(candidate, schema, limits)?;
-        rows::plan_delete_rows(candidate.document, &target, schema, limits)
+    ) -> OperationResult<Option<TableActionOutcome>> {
+        let Some(target) = regular_target(candidate, schema, limits) else {
+            return Ok(None);
+        };
+        Ok(rows::plan_delete_rows(
+            candidate.document,
+            &target,
+            schema,
+            limits,
+        ))
     }
 }
 
@@ -611,9 +621,11 @@ impl TableAction for InsertColumnAction {
         candidate: &TableActionCandidate<'_>,
         schema: &Schema,
         limits: &ResourceLimits,
-    ) -> Option<TableActionOutcome> {
-        let target = regular_target(candidate, schema, limits)?;
-        columns::plan_insert_column(&target, self.side, schema)
+    ) -> OperationResult<Option<TableActionOutcome>> {
+        let Some(target) = regular_target(candidate, schema, limits) else {
+            return Ok(None);
+        };
+        Ok(columns::plan_insert_column(&target, self.side, schema))
     }
 }
 
@@ -629,9 +641,16 @@ impl TableAction for DeleteColumnsAction {
         candidate: &TableActionCandidate<'_>,
         schema: &Schema,
         limits: &ResourceLimits,
-    ) -> Option<TableActionOutcome> {
-        let target = regular_target(candidate, schema, limits)?;
-        columns::plan_delete_columns(candidate.document, &target, schema, limits)
+    ) -> OperationResult<Option<TableActionOutcome>> {
+        let Some(target) = regular_target(candidate, schema, limits) else {
+            return Ok(None);
+        };
+        Ok(columns::plan_delete_columns(
+            candidate.document,
+            &target,
+            schema,
+            limits,
+        ))
     }
 }
 
@@ -649,9 +668,16 @@ impl TableAction for ToggleHeaderAction {
         candidate: &TableActionCandidate<'_>,
         schema: &Schema,
         limits: &ResourceLimits,
-    ) -> Option<TableActionOutcome> {
-        let target = regular_target(candidate, schema, limits)?;
-        headers::plan_toggle_header(&target, self.target, schema, &candidate.selection)
+    ) -> OperationResult<Option<TableActionOutcome>> {
+        let Some(target) = regular_target(candidate, schema, limits) else {
+            return Ok(None);
+        };
+        Ok(headers::plan_toggle_header(
+            &target,
+            self.target,
+            schema,
+            &candidate.selection,
+        ))
     }
 }
 
@@ -667,9 +693,11 @@ impl TableAction for MergeCellsAction {
         candidate: &TableActionCandidate<'_>,
         schema: &Schema,
         limits: &ResourceLimits,
-    ) -> Option<TableActionOutcome> {
-        let target = regular_target(candidate, schema, limits)?;
-        merge::plan_merge_cells(&target, schema)
+    ) -> OperationResult<Option<TableActionOutcome>> {
+        let Some(target) = regular_target(candidate, schema, limits) else {
+            return Ok(None);
+        };
+        Ok(merge::plan_merge_cells(&target, schema))
     }
 }
 
@@ -685,9 +713,11 @@ impl TableAction for SplitCellAction {
         candidate: &TableActionCandidate<'_>,
         schema: &Schema,
         limits: &ResourceLimits,
-    ) -> Option<TableActionOutcome> {
-        let target = regular_target(candidate, schema, limits)?;
-        merge::plan_split_cell(&target, schema)
+    ) -> OperationResult<Option<TableActionOutcome>> {
+        let Some(target) = regular_target(candidate, schema, limits) else {
+            return Ok(None);
+        };
+        Ok(merge::plan_split_cell(&target, schema))
     }
 }
 
@@ -705,9 +735,16 @@ impl TableAction for SetColumnWidthAction {
         candidate: &TableActionCandidate<'_>,
         schema: &Schema,
         limits: &ResourceLimits,
-    ) -> Option<TableActionOutcome> {
-        let target = regular_target(candidate, schema, limits)?;
-        resize::plan_set_column_width(&target, self.width)
+    ) -> OperationResult<Option<TableActionOutcome>> {
+        let Some(target) = regular_target(candidate, schema, limits) else {
+            return Ok(None);
+        };
+        resize::plan_set_column_width(&target, self.width).map_err(|error| {
+            crate::tables::command_context::table_shape_operation_error(
+                error,
+                crate::tables::normalize::UNCORRELATED_REQUEST_ID,
+            )
+        })
     }
 }
 

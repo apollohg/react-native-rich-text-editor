@@ -17,12 +17,14 @@ use crate::tables::commands::{
 };
 use crate::tables::interchange::{next_outer_cell, outer_cell_containing, CellStep};
 use crate::tables::selection::{cell_opening_containing, resolve_cell_rect};
+use crate::tables::types::TableError;
 use crate::yrs_engine::{
     HistoryPolicy, OperationError, OperationResult, SelectionIntent, TypedTransaction,
 };
 
 const CLEAR_CELLS_FIELD: &str = "clearTableCells";
 const ADJACENT_CELL_FIELD: &str = "moveToAdjacentCell";
+const UNREADABLE_GRID_IS_NOT_AVAILABLE: bool = false;
 const SELECT_CELLS_FIELD: &str = "selectTableCells";
 const TABLE_COMMAND_OPERATION_INDEX: usize = 0;
 
@@ -559,9 +561,20 @@ impl<'a> TableCommandSurface<'a> {
             TableCommand::SplitTableCell => self
                 .regular_target()
                 .is_some_and(|target| merge::plan_split_cell(target, self.schema).is_some()),
-            TableCommand::SetTableColumnWidth { .. } => self
-                .regular_target()
-                .is_some_and(resize::can_set_column_width),
+            TableCommand::SetTableColumnWidth { .. } => {
+                self.regular_target().is_some_and(|target| {
+                    match resize::can_set_column_width(target) {
+                        Ok(resizable) => resizable,
+                        Err(
+                            TableError::GridLimit { .. }
+                            | TableError::WorkLimit
+                            | TableError::Allocation
+                            | TableError::InvalidStructure
+                            | TableError::InvalidAttributes,
+                        ) => UNREADABLE_GRID_IS_NOT_AVAILABLE,
+                    }
+                })
+            }
             TableCommand::MoveToAdjacentCell { step, append_row } => {
                 let Some(caret) = navigating_caret(self.selection) else {
                     return false;
