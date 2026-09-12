@@ -24,6 +24,7 @@ const MALFORMED_COLUMN_WIDTHS: &str = "100,abc";
 const UNSET_COLUMN_WIDTHS: &str = "0,";
 const DECLARED_COLUMN_WIDTH: u32 = 100;
 const DOUBLE_SPAN: u32 = 2;
+const OVERSIZED_ROWSPAN: u32 = 3;
 
 const REPLACEMENT_REQUEST_ID: u64 = 23;
 const FRAGMENT_NAME: &str = "prosemirror";
@@ -446,4 +447,51 @@ fn a_partially_specified_column_width_keeps_every_slot() {
             "{widths} must reimport to a document that exports the same slots",
         );
     }
+}
+
+#[test]
+fn copying_a_cell_whose_declared_span_exceeds_the_grid_yields_the_effective_span() {
+    let document = document_with(vec![table(vec![row(vec![cell_with(
+        SINGLE_SPAN,
+        OVERSIZED_ROWSPAN,
+        Value::Null,
+        "a",
+    )])])]);
+    let before = to_prosemirror_json(&document, &schema());
+    let index = TableProjectionIndex::derive_or_fallback(&document, &schema(), &limits());
+    let projected = index.table_at(0).expect("the fixture projects");
+    assert_eq!(
+        projected.cells[0].rect.rowspan, SINGLE_SPAN,
+        "the projection clamps the declared rowspan to the one row that exists",
+    );
+    let opening = projected.cells[0].source_pos;
+
+    let fragment = table_clipboard_fragment(
+        &document,
+        &Selection::cell(opening, opening),
+        &index,
+        &schema(),
+    )
+    .expect("a cell rectangle copies");
+    let copied = Document::new(crate::model::Node::element(
+        document.root().node_type().into(),
+        Default::default(),
+        fragment,
+    ));
+    let json = to_prosemirror_json(&copied, &schema());
+    let copied_index = TableProjectionIndex::derive_or_fallback(&copied, &schema(), &limits());
+    let copied_table = copied_index.table_at(0).expect("the copy projects");
+    assert_eq!(
+        copied_table.cells[0].rect.rowspan, SINGLE_SPAN,
+        "the copy must carry the effective span, not the raw one that overruns it: {json}",
+    );
+    assert!(
+        !copied_table.irregular,
+        "a copied rectangle must be a valid table on its own: {json}",
+    );
+    assert_eq!(
+        to_prosemirror_json(&document, &schema()),
+        before,
+        "the source keeps its raw attributes untouched",
+    );
 }

@@ -4,6 +4,10 @@ use crate::selection::Selection;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::command_context::CellAnchorPair;
 use crate::tables::commands::{fresh_cell_node, GridRequirement, TableTarget};
+use crate::tables::projection::{span_attribute, CellRect};
+use crate::tables::roles::{
+    TABLE_CELL_COLSPAN_ATTR, TABLE_CELL_COLWIDTH_ATTR, TABLE_CELL_ROWSPAN_ATTR,
+};
 use crate::tables::selection::resolve_cell_rect;
 
 const ONE_CELL: usize = 1;
@@ -45,7 +49,7 @@ pub(crate) fn table_clipboard_fragment(
         for column in rect.left..rect.right {
             match target.cell_at(row, column) {
                 Some((cell, node)) if cell.rect.row == row && cell.rect.column == column => {
-                    cells.push(node.clone());
+                    cells.push(effective_cell(node, &cell.rect)?);
                 }
                 Some(_) => continue,
                 None => cells.push(
@@ -69,6 +73,38 @@ pub(crate) fn table_clipboard_fragment(
         table.attrs().clone(),
         Fragment::from(rows),
     )]))
+}
+
+fn effective_cell(node: &Node, rect: &CellRect) -> Result<Node, InterchangeFailure> {
+    let declared_colspan = span_attribute(node, TABLE_CELL_COLSPAN_ATTR)
+        .map_err(|_| InterchangeFailure::UnreadableGrid)?;
+    let declared_rowspan = span_attribute(node, TABLE_CELL_ROWSPAN_ATTR)
+        .map_err(|_| InterchangeFailure::UnreadableGrid)?;
+    if declared_colspan == rect.colspan && declared_rowspan == rect.rowspan {
+        return Ok(node.clone());
+    }
+    let mut attrs = node.attrs().clone();
+    attrs.insert(
+        TABLE_CELL_COLSPAN_ATTR.to_string(),
+        serde_json::Value::from(rect.colspan),
+    );
+    attrs.insert(
+        TABLE_CELL_ROWSPAN_ATTR.to_string(),
+        serde_json::Value::from(rect.rowspan),
+    );
+    if let Some(serde_json::Value::Array(widths)) = node.attrs().get(TABLE_CELL_COLWIDTH_ATTR) {
+        let mut clipped = widths.clone();
+        clipped.resize(rect.colspan as usize, serde_json::Value::Null);
+        attrs.insert(
+            TABLE_CELL_COLWIDTH_ATTR.to_string(),
+            serde_json::Value::Array(clipped),
+        );
+    }
+    Ok(Node::element(
+        node.node_type().into(),
+        attrs,
+        node.content().cloned().unwrap_or_else(Fragment::empty),
+    ))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
