@@ -17,6 +17,7 @@ pub(crate) struct ClipboardSlice {
 pub(crate) const CLIPBOARD_EMPTY_KEY: &str = "empty";
 pub(crate) const CLIPBOARD_UNSUPPORTED_KEY: &str = "unsupported";
 pub(crate) const CLIPBOARD_UNSUPPORTED_CELL_SELECTION: &str = "cellSelection";
+pub(crate) const CLOSED_FRAGMENT_DEPTH: usize = 0;
 
 pub(crate) fn unsupported_selection(selection: &Selection) -> Option<&'static str> {
     match selection {
@@ -106,11 +107,56 @@ pub(crate) fn export(document: &Document, selection: &Selection, schema: &Schema
         Default::default(),
         Fragment::from(clipped_children(document.root(), 0, from, to)),
     ));
-    Some(json!({
-        "fragment": json!({"version":1,"schema":crate::schema::schema_fingerprint(schema),"openStart":boundary_depth(document, from),"openEnd":boundary_depth(document, to),"document":to_prosemirror_json(&selected, schema),"text":readable_text(&selected, schema)}).to_string(),
-        "html": to_html(&selected, schema),
-        "text": readable_text(&selected, schema)
-    }))
+    Some(clipboard_payload(
+        &selected,
+        boundary_depth(document, from),
+        boundary_depth(document, to),
+        schema,
+    ))
+}
+
+pub(crate) fn export_cells(
+    document: &Document,
+    selection: &Selection,
+    projection_index: &crate::tables::admission::TableProjectionIndex,
+    schema: &Schema,
+) -> Option<Value> {
+    let fragment = match crate::tables::interchange::table_clipboard_fragment(
+        document,
+        selection,
+        projection_index,
+        schema,
+    ) {
+        Ok(fragment) => fragment,
+        Err(
+            crate::tables::interchange::InterchangeFailure::NotACellRectangle
+            | crate::tables::interchange::InterchangeFailure::UnreadableGrid,
+        ) => return None,
+    };
+    let copied = Document::new(Node::element(
+        document.root().node_type().into(),
+        Default::default(),
+        fragment,
+    ));
+    Some(clipboard_payload(
+        &copied,
+        CLOSED_FRAGMENT_DEPTH,
+        CLOSED_FRAGMENT_DEPTH,
+        schema,
+    ))
+}
+
+fn clipboard_payload(
+    selected: &Document,
+    open_start: usize,
+    open_end: usize,
+    schema: &Schema,
+) -> Value {
+    json!({
+        "fragment": json!({"version":1,"schema":crate::schema::schema_fingerprint(schema),"openStart":open_start,"openEnd":open_end,"document":to_prosemirror_json(selected, schema),"text":readable_text(selected, schema)}).to_string(),
+        "html": to_html(selected, schema),
+        "text": readable_text(selected, schema)
+    })
 }
 
 pub(crate) fn readable_text(document: &Document, schema: &Schema) -> String {

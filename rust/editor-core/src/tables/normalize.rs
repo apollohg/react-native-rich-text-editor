@@ -109,6 +109,48 @@ pub(crate) fn normalize_outer_table(
         .map_err(|failure| failure.into_operation_error(UNCORRELATED_REQUEST_ID))
 }
 
+pub(crate) fn outer_table_positions(
+    document: &Document,
+    schema: &Schema,
+    limits: &ResourceLimits,
+) -> OperationResult<Vec<u32>> {
+    collect_outer_table_positions(document, schema, limits)
+        .map_err(|failure| failure.into_operation_error(UNCORRELATED_REQUEST_ID))
+}
+
+fn collect_outer_table_positions(
+    document: &Document,
+    schema: &Schema,
+    limits: &ResourceLimits,
+) -> Result<Vec<u32>, NormalizationFailure> {
+    let Some(roles) = TableRoles::resolve(schema).map_err(NormalizationFailure::Shape)? else {
+        return Ok(Vec::new());
+    };
+    let mut positions = Vec::new();
+    let mut visited = 0usize;
+    let mut pending: Vec<(&Node, u32)> = vec![(document.root(), DOCUMENT_CONTENT_START)];
+    while let Some((node, content_start)) = pending.pop() {
+        let Some(content) = node.content() else {
+            continue;
+        };
+        let mut position = content_start;
+        for child in content.iter() {
+            visited = visited.saturating_add(1);
+            if visited > limits.max_document_nodes {
+                return Err(NormalizationFailure::Shape(TableError::WorkLimit));
+            }
+            if child.node_type() == roles.table {
+                positions.push(position);
+            } else if child.content().is_some() {
+                pending.push((child, advance(position, NODE_OPENING_TOKENS)?));
+            }
+            position = advance(position, child.node_size())?;
+        }
+    }
+    positions.sort_unstable();
+    Ok(positions)
+}
+
 pub(crate) fn outer_table_grid(
     document: &Document,
     table_pos: u32,

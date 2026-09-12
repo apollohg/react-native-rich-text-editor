@@ -10,6 +10,7 @@ use scraper::Html;
 use crate::boundary::ResourceLimits;
 use crate::model::{Document, Fragment, Mark, Node};
 use crate::schema::{NodeRole, Schema};
+use crate::tables::TableRole;
 
 /// Type alias for a node reference in the scraper parse tree.
 type SNodeRef<'a> = ego_tree::NodeRef<'a, scraper::Node>;
@@ -607,6 +608,11 @@ fn process_schema_node(
     block_acc: &mut Vec<Node>,
     inline_acc: &mut Vec<Node>,
 ) -> Result<(), ParseError> {
+    if let Some(node) = build_table_role_node(node_ref, _elem, spec, schema, options)? {
+        flush_inline_acc(inline_acc, schema, block_acc);
+        block_acc.push(node);
+        return Ok(());
+    }
     match &spec.role {
         NodeRole::HardBreak => {
             inline_acc.push(Node::void(
@@ -644,48 +650,25 @@ fn process_schema_node(
         }
         NodeRole::ListItem => {
             flush_inline_acc(inline_acc, schema, block_acc);
-            let mut li_blocks = Vec::new();
-            let mut li_inline = Vec::new();
-            process_children(
-                node_ref,
-                schema,
-                options,
-                &[],
-                &mut li_blocks,
-                &mut li_inline,
-            )?;
-            flush_inline_acc(&mut li_inline, schema, &mut li_blocks);
-            if li_blocks.is_empty() {
-                li_blocks.push(make_paragraph(schema, vec![]));
-            }
             let node = Node::element(
                 spec.name.clone(),
                 extract_node_attrs(_elem, spec),
-                Fragment::from(li_blocks),
+                Fragment::from(collect_block_children(node_ref, schema, options, &[])?),
             );
             block_acc.push(node);
             Ok(())
         }
         NodeRole::Block => {
             flush_inline_acc(inline_acc, schema, block_acc);
-            let mut child_blocks = Vec::new();
-            let mut child_inline = Vec::new();
-            process_children(
-                node_ref,
-                schema,
-                options,
-                active_marks,
-                &mut child_blocks,
-                &mut child_inline,
-            )?;
-            flush_inline_acc(&mut child_inline, schema, &mut child_blocks);
-            if child_blocks.is_empty() {
-                child_blocks.push(make_paragraph(schema, vec![]));
-            }
             let node = Node::element(
                 spec.name.clone(),
                 extract_node_attrs(_elem, spec),
-                Fragment::from(child_blocks),
+                Fragment::from(collect_block_children(
+                    node_ref,
+                    schema,
+                    options,
+                    active_marks,
+                )?),
             );
             block_acc.push(node);
             Ok(())
@@ -702,6 +685,177 @@ fn process_schema_node(
             )
         }
     }
+}
+
+fn collect_block_children(
+    node_ref: SNodeRef<'_>,
+    schema: &Schema,
+    options: &FromHtmlOptions,
+    active_marks: &[Mark],
+) -> Result<Vec<Node>, ParseError> {
+    let mut blocks = Vec::new();
+    let mut inline = Vec::new();
+    process_children(
+        node_ref,
+        schema,
+        options,
+        active_marks,
+        &mut blocks,
+        &mut inline,
+    )?;
+    flush_inline_acc(&mut inline, schema, &mut blocks);
+    if blocks.is_empty() {
+        blocks.push(make_paragraph(schema, vec![]));
+    }
+    Ok(blocks)
+}
+
+const TABLE_SECTION_HTML_ELEMENTS: &[&str] = &["tbody", "thead", "tfoot"];
+const TABLE_COLUMN_GROUP_HTML_ELEMENTS: &[&str] = &["colgroup", "col"];
+
+fn build_table_role_node(
+    node_ref: SNodeRef<'_>,
+    elem: &scraper::node::Element,
+    spec: &crate::schema::NodeSpec,
+    schema: &Schema,
+    options: &FromHtmlOptions,
+) -> Result<Option<Node>, ParseError> {
+    let Some(role) = spec.table_role else {
+        return Ok(None);
+    };
+    let (attrs, children) = match role {
+        TableRole::Table => (
+            extract_node_attrs(elem, spec),
+            collect_table_rows(node_ref, schema, options)?,
+        ),
+        TableRole::Row => (
+            extract_node_attrs(elem, spec),
+            collect_table_cells(node_ref, schema, options)?,
+        ),
+        TableRole::Cell | TableRole::HeaderCell => (
+            table_cell_attrs(elem, spec),
+            collect_block_children(node_ref, schema, options, &[])?,
+        ),
+    };
+    Ok(Some(Node::element(
+        spec.name.clone(),
+        attrs,
+        Fragment::from(children),
+    )))
+}
+
+fn child_table_role<'a>(
+    child: SNodeRef<'a>,
+    schema: &'a Schema,
+) -> Option<(
+    &'a scraper::node::Element,
+    &'a crate::schema::NodeSpec,
+    TableRole,
+)> {
+    let elem = child.value().as_element()?;
+    let spec = schema.node_by_html_tag(elem.name())?;
+    Some((elem, spec, spec.table_role?))
+}
+
+fn collect_table_rows(
+    table_ref: SNodeRef<'_>,
+    schema: &Schema,
+    options: &FromHtmlOptions,
+) -> Result<Vec<Node>, ParseError> {
+    let mut rows = Vec::new();
+    for child in table_ref.children() {
+        let Some(elem) = child.value().as_element() else {
+            continue;
+        };
+        let tag = elem.name();
+        if TABLE_SECTION_HTML_ELEMENTS.contains(&tag) {
+            rows.extend(collect_table_rows(child, schema, options)?);
+            continue;
+        }
+        if TABLE_COLUMN_GROUP_HTML_ELEMENTS.contains(&tag) {
+            continue;
+        }
+        match child_table_role(child, schema) {
+            Some((elem, spec, TableRole::Row)) => {
+                if let Some(row) = build_table_role_node(child, elem, spec, schema, options)? {
+                    rows.push(row);
+                }
+            }
+            Some((_, _, TableRole::Table | TableRole::Cell | TableRole::HeaderCell)) | None => {
+                if options.strict {
+                    return Err(ParseError::UnknownTag(tag.to_string()));
+                }
+            }
+        }
+    }
+    Ok(rows)
+}
+
+fn collect_table_cells(
+    row_ref: SNodeRef<'_>,
+    schema: &Schema,
+    options: &FromHtmlOptions,
+) -> Result<Vec<Node>, ParseError> {
+    let mut cells = Vec::new();
+    for child in row_ref.children() {
+        let Some(elem) = child.value().as_element() else {
+            continue;
+        };
+        match child_table_role(child, schema) {
+            Some((elem, spec, TableRole::Cell | TableRole::HeaderCell)) => {
+                if let Some(cell) = build_table_role_node(child, elem, spec, schema, options)? {
+                    cells.push(cell);
+                }
+            }
+            Some((_, _, TableRole::Table | TableRole::Row)) | None => {
+                if options.strict {
+                    return Err(ParseError::UnknownTag(elem.name().to_string()));
+                }
+            }
+        }
+    }
+    Ok(cells)
+}
+
+fn table_cell_attrs(
+    elem: &scraper::node::Element,
+    spec: &crate::schema::NodeSpec,
+) -> HashMap<String, serde_json::Value> {
+    let mut attrs = extract_node_attrs(elem, spec);
+    let widths = element_attr(elem, crate::serialize::html_out::TABLE_COLWIDTH_HTML_ATTR)
+        .and_then(parse_colwidth);
+    match widths {
+        Some(widths) => {
+            attrs.insert(
+                crate::tables::roles::TABLE_CELL_COLWIDTH_ATTR.to_string(),
+                serde_json::Value::Array(widths),
+            );
+        }
+        None => {
+            attrs.remove(crate::tables::roles::TABLE_CELL_COLWIDTH_ATTR);
+        }
+    }
+    attrs
+}
+
+fn parse_colwidth(raw: &str) -> Option<Vec<serde_json::Value>> {
+    let mut widths = Vec::new();
+    let mut carries_a_width = false;
+    for entry in raw.split(crate::serialize::html_out::TABLE_COLWIDTH_SEPARATOR) {
+        let width = entry
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|width| *width != crate::tables::projection::UNSET_COLUMN_WIDTH);
+        match width {
+            Some(width) => {
+                carries_a_width = true;
+                widths.push(serde_json::Value::from(width));
+            }
+            None => widths.push(serde_json::Value::Null),
+        }
+    }
+    carries_a_width.then_some(widths)
 }
 
 /// Collect inline children of an element (for paragraph-like nodes).
@@ -783,13 +937,7 @@ fn collect_list_items(
                         .clone()
                         .or_else(fallback_list_item)
                         .unwrap_or_else(|| spec.name.clone());
-                    let mut li_blocks = Vec::new();
-                    let mut li_inline = Vec::new();
-                    process_children(child, schema, options, &[], &mut li_blocks, &mut li_inline)?;
-                    flush_inline_acc(&mut li_inline, schema, &mut li_blocks);
-                    if li_blocks.is_empty() {
-                        li_blocks.push(make_paragraph(schema, vec![]));
-                    }
+                    let li_blocks = collect_block_children(child, schema, options, &[])?;
                     let item_spec = schema.node(&item_type).unwrap_or(spec);
                     let node = Node::element(
                         item_type,

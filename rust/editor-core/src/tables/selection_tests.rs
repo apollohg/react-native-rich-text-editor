@@ -755,7 +755,7 @@ mod engine_round_trip {
     }
 
     #[test]
-    fn a_cell_rectangle_is_never_exported_as_a_clipboard_text_range() {
+    fn a_cell_rectangle_exports_a_self_contained_table_instead_of_a_text_range() {
         let mut engine = seeded();
         let anchor = inside_cell(&engine, TOP_LEFT);
         let head = inside_cell(&engine, BOTTOM_RIGHT);
@@ -779,10 +779,25 @@ mod engine_round_trip {
         select_cells(&mut engine, 2, anchor, head).expect("the rectangle is admitted");
 
         assert!(text_clipboard.get("fragment").is_some());
+        let copied = engine.clipboard().expect("a cell rectangle exports");
         assert_eq!(
-            engine.clipboard(),
-            Some(json!({ "unsupported": "cellSelection" })),
-            "a cell rectangle must refuse distinguishably, not look like an empty clipboard"
+            copied.get("unsupported"),
+            None,
+            "a cell rectangle is no longer an unsupported clipboard shape: {copied}"
+        );
+        let html = copied["html"].as_str().expect("the copy carries HTML");
+        assert!(
+            html.starts_with("<table><tbody><tr>") && html.ends_with("</tbody></table>"),
+            "a cell rectangle exports as a self-contained table, not a text range: {html}"
+        );
+        assert_eq!(
+            copied["text"].as_str(),
+            Some("alpha\nbeta\ngamma\ndelta"),
+            "the plain text of the copy reads the rectangle in source order: {copied}"
+        );
+        assert!(
+            !html.contains(LEADING_PARAGRAPH_TEXT),
+            "only the rectangle is copied: {html}"
         );
     }
 

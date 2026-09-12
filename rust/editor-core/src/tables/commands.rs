@@ -31,6 +31,7 @@ pub(crate) mod rows;
 pub(crate) const DEFAULT_INSERTED_TABLE_ROWS: u32 = 3;
 pub(crate) const DEFAULT_INSERTED_TABLE_COLUMNS: u32 = 3;
 pub(crate) const DEFAULT_INSERTED_TABLE_HEADER_ROW: bool = true;
+pub(crate) const DEFAULT_TAB_APPENDS_A_ROW: bool = true;
 pub(crate) const MIN_INSERTED_TABLE_DIMENSION: u32 = 1;
 pub(crate) const MAX_INSERTED_TABLE_DIMENSION: u32 = 1_000;
 pub(crate) const MIN_TABLE_COLUMN_WIDTH: u32 = 1;
@@ -89,10 +90,15 @@ pub enum TableCommand {
     SetTableColumnWidth {
         width: u32,
     },
+    MoveToAdjacentCell {
+        step: crate::tables::interchange::CellStep,
+        append_row: bool,
+    },
 }
 
 pub(crate) struct TableTarget<'a> {
     table_pos: u32,
+    table_node: &'a Node,
     projected: ProjectedTable,
     cell_nodes: Vec<&'a Node>,
     row_nodes: Vec<&'a Node>,
@@ -173,6 +179,7 @@ impl<'a> TableTarget<'a> {
 
         Some(Self {
             table_pos,
+            table_node: table,
             projected,
             cell_nodes,
             row_nodes,
@@ -184,6 +191,10 @@ impl<'a> TableTarget<'a> {
 
     pub(crate) fn table_pos(&self) -> u32 {
         self.table_pos
+    }
+
+    pub(crate) fn table_node(&self) -> &'a Node {
+        self.table_node
     }
 
     pub(crate) fn is_regular(&self) -> bool {

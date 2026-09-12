@@ -1241,6 +1241,18 @@ fn envelope_payload(command: TableCommand) -> Value {
         TableCommand::SetTableColumnWidth { width } => {
             json!({ "type": "setTableColumnWidth", "width": width })
         }
+        TableCommand::MoveToAdjacentCell { step, append_row } => json!({
+            "type": "moveToAdjacentCell",
+            "step": step_payload(step),
+            "appendRow": append_row,
+        }),
+    }
+}
+
+fn step_payload(step: crate::tables::interchange::CellStep) -> &'static str {
+    match step {
+        crate::tables::interchange::CellStep::Forward => "forward",
+        crate::tables::interchange::CellStep::Backward => "backward",
     }
 }
 

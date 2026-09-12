@@ -228,6 +228,27 @@ enum CommandEnvelope {
         #[serde(deserialize_with = "deserialize_table_column_width")]
         width: u32,
     },
+    MoveToAdjacentCell {
+        step: CellStepEnvelope,
+        #[serde(default, rename = "appendRow")]
+        append_row: Option<bool>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum CellStepEnvelope {
+    Forward,
+    Backward,
+}
+
+impl From<CellStepEnvelope> for CellStep {
+    fn from(step: CellStepEnvelope) -> Self {
+        match step {
+            CellStepEnvelope::Forward => Self::Forward,
+            CellStepEnvelope::Backward => Self::Backward,
+        }
+    }
 }
 
 fn deserialize_table_column_width<'de, D>(deserializer: D) -> Result<u32, D::Error>
@@ -460,6 +481,12 @@ impl From<CommandEnvelope> for TypedCommand {
             CommandEnvelope::SplitTableCell => Self::Table(TableCommand::SplitTableCell),
             CommandEnvelope::SetTableColumnWidth { width } => {
                 Self::Table(TableCommand::SetTableColumnWidth { width })
+            }
+            CommandEnvelope::MoveToAdjacentCell { step, append_row } => {
+                Self::Table(TableCommand::MoveToAdjacentCell {
+                    step: step.into(),
+                    append_row: append_row.unwrap_or(DEFAULT_TAB_APPENDS_A_ROW),
+                })
             }
         }
     }

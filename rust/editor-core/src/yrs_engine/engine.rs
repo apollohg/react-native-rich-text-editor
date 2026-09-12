@@ -384,8 +384,12 @@ impl YrsDocumentEngine {
         let document = self.document()?;
         let selection = super::derived_state::resolved_to_legacy(self.resolved_selection()?);
         if let Some(reason) = crate::clipboard::unsupported_selection(&selection) {
+            let index = self.table_projection_index()?;
             return Some(
-                serde_json::json!({ crate::clipboard::CLIPBOARD_UNSUPPORTED_KEY: reason }),
+                crate::clipboard::export_cells(document, &selection, index, &self.schema)
+                    .unwrap_or_else(|| {
+                        serde_json::json!({ crate::clipboard::CLIPBOARD_UNSUPPORTED_KEY: reason })
+                    }),
             );
         }
         Some(

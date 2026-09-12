@@ -2,6 +2,8 @@ pub(crate) mod admission;
 #[allow(dead_code)]
 pub(crate) mod command_context;
 pub(crate) mod commands;
+pub(crate) mod interchange;
+pub(crate) mod mutation_guard;
 #[allow(dead_code)]
 pub(crate) mod normalize;
 pub(crate) mod projection;
@@ -16,6 +18,10 @@ mod admission_tests;
 mod commands_tests;
 #[cfg(test)]
 mod history_tests;
+#[cfg(test)]
+mod interchange_tests;
+#[cfg(test)]
+mod navigation_tests;
 #[cfg(test)]
 mod normalize_tests;
 #[cfg(test)]

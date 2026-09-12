@@ -337,12 +337,7 @@ impl YrsDocumentEngine {
                 "root child count exceeds the addressable replacement window",
             ))
         })?;
-        let content = source
-            .document
-            .root()
-            .content()
-            .cloned()
-            .unwrap_or_else(crate::model::Fragment::empty);
+        let content = self.authored_replacement_content(request_id, source, history)?;
         let history_policy = match history {
             yrs_engine::ReplacementHistory::UndoableBoundary => yrs_engine::HistoryPolicy::Boundary,
             yrs_engine::ReplacementHistory::ResetAndClear => yrs_engine::HistoryPolicy::Skip,
@@ -363,6 +358,59 @@ impl YrsDocumentEngine {
             selection_intent: yrs_engine::SelectionIntent::UseOperationResult,
             history_policy,
         })
+    }
+
+    fn authored_replacement_content(
+        &self,
+        request_id: u64,
+        source: &ValidatedImportDocument,
+        history: yrs_engine::ReplacementHistory,
+    ) -> Result<crate::model::Fragment, yrs_engine::RootReplacementError> {
+        use yrs_engine::RootReplacementError;
+        let raw = |document: &Document| {
+            document
+                .root()
+                .content()
+                .cloned()
+                .unwrap_or_else(crate::model::Fragment::empty)
+        };
+        match history {
+            yrs_engine::ReplacementHistory::ResetAndClear => return Ok(raw(&source.document)),
+            yrs_engine::ReplacementHistory::UndoableBoundary => {}
+        }
+        let mut authored = source.document.clone();
+        for table_pos in crate::tables::normalize::outer_table_positions(
+            &authored,
+            &self.schema,
+            &self.resource_limits,
+        )
+        .map_err(RootReplacementError::Transaction)?
+        .into_iter()
+        .rev()
+        {
+            let operations = crate::tables::normalize::normalize_outer_table(
+                &authored,
+                table_pos,
+                &self.schema,
+                &self.resource_limits,
+            )
+            .map_err(RootReplacementError::Transaction)?;
+            if operations.is_empty() {
+                continue;
+            }
+            authored =
+                crate::command_planner::apply_operations(&authored, &self.schema, &operations)
+                    .map_err(|()| {
+                        RootReplacementError::Transaction(
+                    yrs_engine::OperationError::engine_invariant_failed(
+                        request_id,
+                        None,
+                        "an authored replacement's table normalization could not be applied",
+                    ),
+                )
+                    })?;
+        }
+        Ok(raw(&authored))
     }
 
     /// Lower an admitted replacement document to one sealed whole-root

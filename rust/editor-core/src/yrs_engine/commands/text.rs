@@ -67,7 +67,9 @@ fn selection_range(
             anchor.scalar.min(head.scalar),
             anchor.scalar.max(head.scalar),
         )),
-        _ => Err(OperationError::transaction_invalid(
+        crate::yrs_engine::ResolvedSelection::Cell { .. }
+        | crate::yrs_engine::ResolvedSelection::Node { .. }
+        | crate::yrs_engine::ResolvedSelection::All => Err(OperationError::transaction_invalid(
             _request_id,
             "selection",
             "text command requires a text selection",
@@ -141,6 +143,14 @@ fn semantic_transaction_impl(
             plan.operations.len() as u64,
         ));
     }
+    crate::tables::mutation_guard::admit_local_mutation(
+        context.document,
+        context.schema,
+        context.resource_limits,
+        context.origin,
+        &plan.operations,
+    )
+    .map_err(|refusal| refusal.into_operation_error(context.request_id))?;
     let admitted = admitted_simulation.is_some();
     let simulated = match admitted_simulation {
         Some(simulated) => simulated,

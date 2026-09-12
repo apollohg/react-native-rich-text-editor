@@ -12,14 +12,17 @@ use crate::tables::commands::{
     columns, headers, merge, plan_clear_cells, plan_delete_table, plan_insert_table,
     plan_select_columns, plan_select_rows, resize, rows, DeleteColumnsAction, DeleteRowsAction,
     GridRequirement, InsertColumnAction, InsertRowAction, MergeCellsAction, SetColumnWidthAction,
-    SplitCellAction, TableCommand, TableTarget, ToggleHeaderAction, CELL_INTERIOR_OFFSET,
+    SplitCellAction, TableCommand, TableEdge, TableTarget, ToggleHeaderAction,
+    CELL_INTERIOR_OFFSET,
 };
+use crate::tables::interchange::{next_outer_cell, outer_cell_containing, CellStep};
 use crate::tables::selection::{cell_opening_containing, resolve_cell_rect};
 use crate::yrs_engine::{
     HistoryPolicy, OperationError, OperationResult, SelectionIntent, TypedTransaction,
 };
 
 const CLEAR_CELLS_FIELD: &str = "clearTableCells";
+const ADJACENT_CELL_FIELD: &str = "moveToAdjacentCell";
 const SELECT_CELLS_FIELD: &str = "selectTableCells";
 const TABLE_COMMAND_OPERATION_INDEX: usize = 0;
 
@@ -341,6 +344,88 @@ pub(super) fn plan(
                 &SetColumnWidthAction { width },
             ),
         },
+        TableCommand::MoveToAdjacentCell { step, append_row } => {
+            move_to_adjacent_cell(&context, &selection, step, append_row)
+        }
+    }
+}
+
+fn navigating_caret(selection: &Selection) -> Option<u32> {
+    match selection {
+        Selection::Text { head, .. } | Selection::Cell { head, .. } => Some(*head),
+        Selection::Node { .. } | Selection::All => None,
+    }
+}
+
+fn caret_only(context: &PlanningContext<'_>, cell_pos: u32) -> OperationResult<CommandPlan> {
+    let interior = cell_pos.checked_add(CELL_INTERIOR_OFFSET).ok_or_else(|| {
+        OperationError::selection_position_invalid(
+            context.request_id,
+            ADJACENT_CELL_FIELD,
+            "the adjacent cell has no addressable caret position",
+        )
+    })?;
+    Ok(CommandPlan::SelectionOnly(TypedTransaction {
+        request_id: context.request_id,
+        base_document_revision: context.revision,
+        origin: context.origin,
+        operations: Vec::new(),
+        selection_intent: SelectionIntent::Set(crate::yrs_engine::SelectionInput::Text {
+            anchor: crate::yrs_engine::RevisionedPosition {
+                offset: context
+                    .position_map
+                    .doc_to_scalar(interior, context.document),
+                kind: crate::yrs_engine::EditorOffsetKind::Scalar,
+                affinity: crate::yrs_engine::DEFAULT_POSITION_AFFINITY,
+            },
+            head: crate::yrs_engine::RevisionedPosition {
+                offset: context
+                    .position_map
+                    .doc_to_scalar(interior, context.document),
+                kind: crate::yrs_engine::EditorOffsetKind::Scalar,
+                affinity: crate::yrs_engine::DEFAULT_POSITION_AFFINITY,
+            },
+        }),
+        history_policy: HistoryPolicy::Skip,
+    }))
+}
+
+fn move_to_adjacent_cell(
+    context: &PlanningContext<'_>,
+    selection: &Selection,
+    step: CellStep,
+    append_row: bool,
+) -> OperationResult<CommandPlan> {
+    let Some(caret) = navigating_caret(selection) else {
+        return Ok(CommandPlan::NotApplicable);
+    };
+    let index = TableProjectionIndex::derive_or_fallback(
+        context.document,
+        context.schema,
+        context.resource_limits,
+    );
+    let Some(located) = outer_cell_containing(&index, caret) else {
+        return Ok(CommandPlan::NotApplicable);
+    };
+    if let Some(next) = next_outer_cell(&index, caret, step) {
+        return caret_only(context, next);
+    }
+    match (step, append_row) {
+        (CellStep::Forward, true) => scoped_action(
+            context,
+            &TableAnchor {
+                table_pos: located.table_pos,
+                anchors: CellAnchorPair {
+                    anchor: located.cell_pos,
+                    head: located.cell_pos,
+                },
+            },
+            selection,
+            &InsertRowAction {
+                side: TableEdge::After,
+            },
+        ),
+        (CellStep::Forward, false) | (CellStep::Backward, _) => Ok(CommandPlan::NotApplicable),
     }
 }
 
@@ -351,6 +436,7 @@ pub(crate) struct TableCommandSurface<'a> {
     selection: &'a Selection,
     anchor: Option<TableAnchor>,
     target: Option<TableTarget<'a>>,
+    index: TableProjectionIndex,
 }
 
 impl<'a> TableCommandSurface<'a> {
@@ -379,6 +465,7 @@ impl<'a> TableCommandSurface<'a> {
             selection,
             anchor,
             target,
+            index,
         }
     }
 
@@ -448,6 +535,20 @@ impl<'a> TableCommandSurface<'a> {
             TableCommand::SetTableColumnWidth { .. } => self
                 .regular_target()
                 .is_some_and(resize::can_set_column_width),
+            TableCommand::MoveToAdjacentCell { step, append_row } => {
+                let Some(caret) = navigating_caret(self.selection) else {
+                    return false;
+                };
+                if next_outer_cell(&self.index, caret, step).is_some() {
+                    return true;
+                }
+                match (step, append_row) {
+                    (CellStep::Forward, true) => self.regular_target().is_some_and(|target| {
+                        rows::plan_insert_row(target, TableEdge::After, self.schema).is_some()
+                    }),
+                    (CellStep::Forward, false) | (CellStep::Backward, _) => false,
+                }
+            }
         }
     }
 }

@@ -11,7 +11,7 @@ use crate::tables::widths::ColumnWidthResolver;
 
 const PROJECTION_WORK_PER_GRID_SLOT: usize = 16;
 const DEFAULT_TABLE_CELL_SPAN: u32 = MIN_TABLE_CELL_SPAN as u32;
-const UNSET_COLUMN_WIDTH: u32 = 0;
+pub(crate) const UNSET_COLUMN_WIDTH: u32 = 0;
 const NODE_OPENING_TOKENS: u32 = 1;
 const NEXT_COLUMN_STEP: u32 = 1;
 const SINGLE_WORK_STEP: usize = 1;

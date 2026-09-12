@@ -29,9 +29,11 @@ use crate::ffi_v2::types::{deserialize_canonical_u64, recover_request_id};
 use crate::session::{EditorSession, ErrorDomain, OperationFailureClass, SessionError};
 use crate::tables::commands::{
     TableCommand, TableEdge, TableHeaderTarget, DEFAULT_INSERTED_TABLE_COLUMNS,
-    DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS, MAX_INSERTED_TABLE_DIMENSION,
-    MAX_TABLE_COLUMN_WIDTH, MIN_INSERTED_TABLE_DIMENSION, MIN_TABLE_COLUMN_WIDTH,
+    DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS, DEFAULT_TAB_APPENDS_A_ROW,
+    MAX_INSERTED_TABLE_DIMENSION, MAX_TABLE_COLUMN_WIDTH, MIN_INSERTED_TABLE_DIMENSION,
+    MIN_TABLE_COLUMN_WIDTH,
 };
+use crate::tables::interchange::CellStep;
 use crate::yrs_engine::{
     Affinity, CommandPlan, EditorOffsetKind, HistoryPolicy, OperationError, ReplacementHistory,
     RevisionedPosition, RevisionedRange, SelectionInput, SelectionIntent, TransactionCommit,

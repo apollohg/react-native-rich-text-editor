@@ -1,0 +1,354 @@
+use serde_json::json;
+
+use crate::boundary::ResourceLimits;
+use crate::model::Document;
+use crate::schema::presets::prosemirror_table_schema;
+use crate::schema::Schema;
+use crate::selection::Selection;
+use crate::serialize::html_in::{from_html_with_limits, FromHtmlOptions};
+use crate::serialize::{to_html, to_prosemirror_json};
+use crate::tables::admission::TableProjectionIndex;
+use crate::tables::interchange::{table_clipboard_fragment, InterchangeFailure};
+use crate::tables::normalize_tests::{cell, cell_with, header_cell, limits, row, table};
+use crate::yrs_engine::{
+    EditingLimits, InitializationMode, ReplacementHistory, TransactionOrigin, YrsDocumentEngine,
+    YrsEngineConfig,
+};
+
+const TABLE_NODE: &str = "table";
+const HEADER_CELL_NODE: &str = "table_header";
+const PARAGRAPH_NODE: &str = "paragraph";
+const SINGLE_SPAN: u32 = 1;
+
+const REPLACEMENT_REQUEST_ID: u64 = 23;
+const FRAGMENT_NAME: &str = "prosemirror";
+
+fn nesting_cell() -> serde_json::Value {
+    json!({
+        "type": "table_cell",
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": serde_json::Value::Null },
+        "content": [
+            { "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": "outer" }] },
+            table(vec![row(vec![cell("inner")])]),
+        ],
+    })
+}
+
+fn replacement_engine() -> YrsDocumentEngine {
+    let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
+        schema: schema(),
+        fragment_name: FRAGMENT_NAME.into(),
+        initialization_mode: InitializationMode::LocalEmpty,
+        resource_limits: limits(),
+        editing_limits: EditingLimits::default(),
+        max_length: None,
+        scope: None,
+    })
+    .expect("the tabled engine initializes");
+    engine
+        .import_json(
+            &json!({ "type": "doc", "content": [{ "type": PARAGRAPH_NODE }] }).to_string(),
+            TransactionOrigin::DocumentImport,
+        )
+        .expect("the empty fixture imports");
+    engine
+}
+
+fn schema() -> Schema {
+    prosemirror_table_schema()
+}
+
+fn import(html: &str) -> Document {
+    from_html_with_limits(
+        html,
+        &schema(),
+        &FromHtmlOptions::default(),
+        &ResourceLimits::default(),
+    )
+    .expect("the interchange fixture imports")
+}
+
+fn document_with(content: Vec<serde_json::Value>) -> Document {
+    crate::serialize::json_in::from_prosemirror_json(
+        &json!({ "type": "doc", "content": content }),
+        &schema(),
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .expect("the interchange fixture parses")
+}
+
+#[test]
+fn a_browser_table_round_trips_through_sections_spans_and_column_widths() {
+    let source = concat!(
+        "<table>",
+        "<colgroup><col style=\"width: 100px\"><col></colgroup>",
+        "<thead><tr><th colspan=\"2\" data-colwidth=\"100,140\"><p>head</p></th></tr></thead>",
+        "<tbody><tr><td rowspan=\"2\" data-colwidth=\"100\"><p>tall</p></td>",
+        "<td data-colwidth=\"140\"><p>a</p></td></tr>",
+        "<tr><td data-colwidth=\"140\"><p>b</p></td></tr></tbody>",
+        "<tfoot><tr><td data-colwidth=\"100\"><p>f1</p></td>",
+        "<td data-colwidth=\"140\"><p>f2</p></td></tr></tfoot>",
+        "</table>"
+    );
+    let imported = import(source);
+    let expected = document_with(vec![table(vec![
+        row(vec![json!({
+            "type": HEADER_CELL_NODE,
+            "attrs": { "colspan": 2, "rowspan": SINGLE_SPAN, "colwidth": [100, 140] },
+            "content": [{ "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": "head" }] }],
+        })]),
+        row(vec![
+            cell_with(SINGLE_SPAN, 2, json!([100]), "tall"),
+            cell_with(SINGLE_SPAN, SINGLE_SPAN, json!([140]), "a"),
+        ]),
+        row(vec![cell_with(SINGLE_SPAN, SINGLE_SPAN, json!([140]), "b")]),
+        row(vec![
+            cell_with(SINGLE_SPAN, SINGLE_SPAN, json!([100]), "f1"),
+            cell_with(SINGLE_SPAN, SINGLE_SPAN, json!([140]), "f2"),
+        ]),
+    ])]);
+    assert_eq!(
+        to_prosemirror_json(&imported, &schema()),
+        to_prosemirror_json(&expected, &schema()),
+        "thead/tbody/tfoot must be transparent, th must keep its header role, and \
+         data-colwidth must decode to the colwidth array",
+    );
+
+    let exported = to_html(&imported, &schema());
+    assert!(
+        exported.starts_with("<table><tbody><tr>"),
+        "exported table rows must sit in a tbody: {exported}",
+    );
+    assert!(
+        exported.contains("data-colwidth=\"100,140\""),
+        "the colwidth array must export as a standard data-colwidth list: {exported}",
+    );
+    assert_eq!(
+        to_prosemirror_json(&import(&exported), &schema()),
+        to_prosemirror_json(&imported, &schema()),
+        "exported table HTML must reimport to the same document",
+    );
+}
+
+#[test]
+fn an_imported_row_never_gains_fabricated_block_content() {
+    let imported = import("<table><tbody><tr></tr><tr><td></td></tr></tbody></table>");
+    let json = to_prosemirror_json(&imported, &schema());
+    let rows = json["content"][0]["content"].as_array().expect("rows");
+    assert_eq!(rows.len(), 2, "both rows survive: {json}");
+    assert!(
+        rows[0].get("content").is_none(),
+        "an empty row must stay empty instead of gaining a paragraph: {json}",
+    );
+    assert_eq!(
+        rows[1]["content"][0]["content"][0]["type"], PARAGRAPH_NODE,
+        "an empty cell still gains the schema's required block content: {json}",
+    );
+}
+
+#[test]
+fn a_nested_table_survives_import_and_export_as_cell_content() {
+    let source = concat!(
+        "<table><tbody><tr><td>",
+        "<table><tbody><tr><td><p>inner</p></td></tr></tbody></table>",
+        "</td></tr></tbody></table>"
+    );
+    let imported = import(source);
+    let json = to_prosemirror_json(&imported, &schema());
+    let inner = &json["content"][0]["content"][0]["content"][0]["content"][0];
+    assert_eq!(
+        inner["type"], TABLE_NODE,
+        "the inner table must be preserved as cell content: {json}",
+    );
+    assert_eq!(
+        inner["content"][0]["content"][0]["content"][0]["content"][0]["text"], "inner",
+        "the inner table's text must be preserved: {json}",
+    );
+    let exported = to_html(&imported, &schema());
+    assert_eq!(
+        exported,
+        concat!(
+            "<table><tbody><tr><td colspan=\"1\" rowspan=\"1\">",
+            "<table><tbody><tr><td colspan=\"1\" rowspan=\"1\"><p>inner</p></td></tr></tbody></table>",
+            "</td></tr></tbody></table>"
+        ),
+        "a nested table must export as a nested table",
+    );
+}
+
+#[test]
+fn a_column_group_carries_no_model_state() {
+    let imported = import(
+        "<table><colgroup><col><col></colgroup><tbody><tr><td><p>x</p></td></tr></tbody></table>",
+    );
+    assert_eq!(
+        to_prosemirror_json(&imported, &schema()),
+        to_prosemirror_json(
+            &import("<table><tbody><tr><td><p>x</p></td></tr></tbody></table>"),
+            &schema()
+        ),
+        "a colgroup must not reach the model at all",
+    );
+}
+
+#[test]
+fn copying_a_rectangle_over_a_projected_hole_mints_a_cell_only_in_the_copy() {
+    let document = document_with(vec![table(vec![
+        row(vec![cell("a"), cell("b")]),
+        row(vec![cell("c")]),
+    ])]);
+    let before = to_prosemirror_json(&document, &schema());
+    let index = TableProjectionIndex::derive_or_fallback(&document, &schema(), &limits());
+    let projected = index.table_at(0).expect("the fixture projects");
+    assert!(
+        projected.irregular,
+        "the fixture must actually hold a projected hole",
+    );
+    let openings: Vec<u32> = projected.cells.iter().map(|cell| cell.source_pos).collect();
+    let fragment = table_clipboard_fragment(
+        &document,
+        &Selection::cell(openings[1], openings[2]),
+        &index,
+        &schema(),
+    )
+    .expect("a cell rectangle copies");
+
+    let copied = Document::new(crate::model::Node::element(
+        document.root().node_type().into(),
+        Default::default(),
+        fragment,
+    ));
+    let json = to_prosemirror_json(&copied, &schema());
+    let rows = json["content"][0]["content"].as_array().expect("rows");
+    assert_eq!(rows.len(), 2, "the copy spans both rows: {json}");
+    assert_eq!(
+        rows[1]["content"].as_array().expect("second row").len(),
+        2,
+        "the projected hole must become a real cell in the copy: {json}",
+    );
+    assert_eq!(
+        rows[1]["content"][1]["content"][0]["type"], PARAGRAPH_NODE,
+        "the minted cell carries the schema's default block: {json}",
+    );
+    assert!(
+        rows[1]["content"][1].get("content").is_some()
+            && rows[1]["content"][1]["content"][0].get("content").is_none(),
+        "the minted cell is empty: {json}",
+    );
+    assert_eq!(
+        to_prosemirror_json(&document, &schema()),
+        before,
+        "a read-only copy must never mutate the source document",
+    );
+}
+
+#[test]
+fn a_text_selection_is_never_a_table_clipboard_fragment() {
+    let document = document_with(vec![table(vec![row(vec![cell("a")])])]);
+    let index = TableProjectionIndex::derive_or_fallback(&document, &schema(), &limits());
+    assert_eq!(
+        table_clipboard_fragment(&document, &Selection::text(3, 4), &index, &schema()),
+        Err(InterchangeFailure::NotACellRectangle),
+        "only a cell rectangle produces a table clipboard fragment",
+    );
+}
+
+#[test]
+fn copying_a_merged_rectangle_keeps_its_spans_and_header_roles() {
+    let document = document_with(vec![table(vec![
+        row(vec![header_cell("h1"), header_cell("h2")]),
+        row(vec![cell_with(2, SINGLE_SPAN, json!([100, 140]), "wide")]),
+    ])]);
+    let index = TableProjectionIndex::derive_or_fallback(&document, &schema(), &limits());
+    let openings: Vec<u32> = index
+        .table_at(0)
+        .expect("the fixture projects")
+        .cells
+        .iter()
+        .map(|cell| cell.source_pos)
+        .collect();
+    let fragment = table_clipboard_fragment(
+        &document,
+        &Selection::cell(openings[0], openings[2]),
+        &index,
+        &schema(),
+    )
+    .expect("a cell rectangle copies");
+    let copied = Document::new(crate::model::Node::element(
+        document.root().node_type().into(),
+        Default::default(),
+        fragment,
+    ));
+    let json = to_prosemirror_json(&copied, &schema());
+    assert_eq!(
+        json["content"][0]["content"][0]["content"][0]["type"], HEADER_CELL_NODE,
+        "header cells stay header cells in the copy: {json}",
+    );
+    assert_eq!(
+        json["content"][0]["content"][1]["content"][0]["attrs"]["colspan"], 2,
+        "a merged cell keeps its colspan in the copy: {json}",
+    );
+    assert_eq!(
+        json["content"][0]["content"][1]["content"]
+            .as_array()
+            .expect("merged row")
+            .len(),
+        1,
+        "a merged cell is copied once, not once per covered slot: {json}",
+    );
+    assert_eq!(
+        to_html(&copied, &schema()),
+        concat!(
+            "<table><tbody>",
+            "<tr><th colspan=\"1\" rowspan=\"1\"><p>h1</p></th><th colspan=\"1\" rowspan=\"1\"><p>h2</p></th></tr>",
+            "<tr><td colspan=\"2\" data-colwidth=\"100,140\" rowspan=\"1\"><p>wide</p></td></tr>",
+            "</tbody></table>"
+        ),
+        "the copied rectangle serializes as a self-contained table",
+    );
+}
+
+#[test]
+fn an_authored_replacement_normalizes_its_outer_tables_and_a_restore_keeps_them_raw() {
+    let irregular = json!({ "type": "doc", "content": [table(vec![
+        row(vec![cell("a"), cell("b")]),
+        row(vec![nesting_cell()]),
+    ])] })
+    .to_string();
+
+    for (history, expected_second_row_cells, reason) in [
+        (
+            ReplacementHistory::UndoableBoundary,
+            2,
+            "a user-authored replacement owns its new outer table and normalizes it",
+        ),
+        (
+            ReplacementHistory::ResetAndClear,
+            1,
+            "a restore carries geometry this engine did not author and must stay raw",
+        ),
+    ] {
+        let mut engine = replacement_engine();
+        engine
+            .prepare_root_replacement_json(REPLACEMENT_REQUEST_ID, &irregular, history)
+            .expect("the replacement commits");
+        let json = engine.document_json().expect("the engine is ready");
+        let second_row = &json["content"][0]["content"][1];
+        assert_eq!(
+            second_row["content"]
+                .as_array()
+                .expect("the second row holds cells")
+                .len(),
+            expected_second_row_cells,
+            "{reason}: {json}",
+        );
+        assert_eq!(
+            second_row["content"][0]["content"][1]["content"][0]["content"]
+                .as_array()
+                .expect("the nested row holds cells")
+                .len(),
+            1,
+            "a nested descendant is never normalized by its owner's replacement: {json}",
+        );
+    }
+}
