@@ -27,18 +27,26 @@ use std::collections::HashMap;
 use crate::boundary::{BoundaryError, BoundedInput, InputKind};
 use crate::ffi_v2::types::{deserialize_canonical_u64, recover_request_id};
 use crate::session::{EditorSession, ErrorDomain, OperationFailureClass, SessionError};
+use crate::tables::commands::{
+    TableCommand, TableEdge, TableHeaderTarget, DEFAULT_INSERTED_TABLE_COLUMNS,
+    DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS, MIN_INSERTED_TABLE_DIMENSION,
+};
 use crate::yrs_engine::{
     Affinity, CommandPlan, EditorOffsetKind, HistoryPolicy, OperationError, ReplacementHistory,
     RevisionedPosition, RevisionedRange, SelectionInput, SelectionIntent, TransactionCommit,
     TransactionOrigin, TypedCommand, TypedTransaction, TypedTransactionResult, YrsDocumentEngine,
+    DEFAULT_POSITION_AFFINITY,
 };
+
+#[cfg(test)]
+pub(crate) fn table_command_envelope_for_test(payload: &str) -> Option<TypedCommand> {
+    serde_json::from_str::<CommandEnvelope>(payload)
+        .ok()
+        .map(TypedCommand::from)
+}
 
 /// The one supported native bridge envelope version.
 pub(crate) const NATIVE_BRIDGE_ENVELOPE_VERSION: u32 = 1;
-
-/// Affinity used when a data-only position envelope omits it: typing and
-/// selection anchors stick after the addressed position.
-const DEFAULT_POSITION_AFFINITY: Affinity = Affinity::After;
 
 /// One structured bridge result. Command planning that finds nothing
 /// applicable is a structured outcome, never a fabricated engine result.

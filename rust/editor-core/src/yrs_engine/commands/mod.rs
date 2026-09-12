@@ -4,6 +4,7 @@ mod clipboard;
 mod format;
 mod structural_batch;
 mod structure;
+pub(crate) mod tables;
 mod text;
 
 use std::collections::HashMap;
@@ -17,6 +18,8 @@ use super::{
     OperationError, OperationResult, ResolvedSelection, RevisionedPosition, RevisionedRange,
     SelectionInput, TransactionOrigin, TypedOperation, TypedTransaction,
 };
+
+pub(crate) use tables::table_command_is_available;
 
 const TABLE_ACTION_ORIGIN_FIELD: &str = "origin";
 
@@ -90,6 +93,7 @@ pub enum TypedCommand {
         range: RevisionedRange,
         at: RevisionedPosition,
     },
+    Table(crate::tables::commands::TableCommand),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -171,6 +175,7 @@ pub(crate) fn plan(
         | TypedCommand::UpdateNodeAttrs { .. }
         | TypedCommand::ResizeImage { .. }
         | TypedCommand::MoveSelection { .. }) => structure::plan(context, command),
+        command @ TypedCommand::Table(_) => tables::plan(context, command),
     }
 }
 

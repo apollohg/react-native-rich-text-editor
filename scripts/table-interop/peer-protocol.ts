@@ -1,4 +1,15 @@
 export type PeerKind = 'rust' | 'prosemirror' | 'tiptap';
+export type TableCommand =
+    | { type: 'insertTable'; rows?: number; columns?: number; withHeaderRow?: boolean }
+    | { type: 'deleteTable' }
+    | { type: 'addTableRow'; side: 'before' | 'after' }
+    | { type: 'deleteTableRows' }
+    | { type: 'addTableColumn'; side: 'before' | 'after' }
+    | { type: 'deleteTableColumns' }
+    | { type: 'toggleTableHeader'; target: 'row' | 'column' | 'cell' }
+    | { type: 'selectTableRows' }
+    | { type: 'selectTableColumns' }
+    | { type: 'clearTableCells' };
 export type Request = {
     id: string;
     operation: 'initialize' | 'command' | 'undo' | 'redo' | 'applyUpdate'

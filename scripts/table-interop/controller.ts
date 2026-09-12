@@ -121,7 +121,10 @@ function wirePayload(
     payload: Record<string, unknown>,
 ): Record<string, unknown> {
     if (operation === 'command') {
-        return { kind: 'command', command: payload };
+        const { at, ...command } = payload;
+        return at === undefined
+            ? { kind: 'command', command }
+            : { kind: 'command', command, at };
     }
     return payload;
 }

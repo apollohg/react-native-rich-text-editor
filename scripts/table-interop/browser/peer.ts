@@ -8,12 +8,18 @@ import { Schema as ProsemirrorSchema } from 'prosemirror-model';
 import {
     TableMap,
     addColumnAfter,
+    addColumnBefore,
     addRowAfter,
+    addRowBefore,
     deleteColumn,
     deleteRow,
+    deleteTable,
     fixTables,
     tableEditing,
     tableNodes,
+    toggleHeaderCell,
+    toggleHeaderColumn,
+    toggleHeaderRow,
 } from 'prosemirror-tables';
 import type { Command } from 'prosemirror-state';
 import type { Node as ProsemirrorNode } from 'prosemirror-model';
@@ -69,9 +75,15 @@ const CELL_SELECTION = 'cell';
 const AWARENESS_ORIGIN = 'tableInteropAwareness';
 const TABLE_COMMANDS: Record<string, Command> = {
     addColumnAfter,
+    addColumnBefore,
     addRowAfter,
+    addRowBefore,
     deleteColumn,
     deleteRow,
+    deleteTable,
+    toggleHeaderCell,
+    toggleHeaderColumn,
+    toggleHeaderRow,
 };
 
 const tableSchema = new ProsemirrorSchema({
@@ -628,7 +640,11 @@ class WebPeerRuntime {
                 `mutation kind ${JSON.stringify(mutationKind)} is not served by the web peer`,
             );
         }
-        const command = requireRecord(payload['command'], 'payload.command');
+        const anchor = payload['at'];
+        const command = {
+            ...requireRecord(payload['command'], 'payload.command'),
+            ...(anchor === undefined ? {} : { at: anchor }),
+        };
         const editor = this.requireEditor();
         const changed = await this.runRequestedOperation(() => {
             applyCommand(editor, command);

@@ -199,6 +199,86 @@ enum CommandEnvelope {
         range: RangeEnvelope,
         at: PositionEnvelope,
     },
+    InsertTable {
+        #[serde(default, deserialize_with = "deserialize_optional_table_dimension")]
+        rows: Option<u32>,
+        #[serde(default, deserialize_with = "deserialize_optional_table_dimension")]
+        columns: Option<u32>,
+        #[serde(default, rename = "withHeaderRow")]
+        with_header_row: Option<bool>,
+    },
+    DeleteTable,
+    AddTableRow {
+        side: TableEdgeEnvelope,
+    },
+    DeleteTableRows,
+    AddTableColumn {
+        side: TableEdgeEnvelope,
+    },
+    DeleteTableColumns,
+    ToggleTableHeader {
+        target: TableHeaderTargetEnvelope,
+    },
+    SelectTableRows,
+    SelectTableColumns,
+    ClearTableCells,
+}
+
+const MAX_INSERTED_TABLE_DIMENSION: u32 = 1_000;
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum TableEdgeEnvelope {
+    Before,
+    After,
+}
+
+impl From<TableEdgeEnvelope> for TableEdge {
+    fn from(side: TableEdgeEnvelope) -> Self {
+        match side {
+            TableEdgeEnvelope::Before => Self::Before,
+            TableEdgeEnvelope::After => Self::After,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum TableHeaderTargetEnvelope {
+    Row,
+    Column,
+    Cell,
+}
+
+impl From<TableHeaderTargetEnvelope> for TableHeaderTarget {
+    fn from(target: TableHeaderTargetEnvelope) -> Self {
+        match target {
+            TableHeaderTargetEnvelope::Row => Self::Row,
+            TableHeaderTargetEnvelope::Column => Self::Column,
+            TableHeaderTargetEnvelope::Cell => Self::Cell,
+        }
+    }
+}
+
+fn deserialize_optional_table_dimension<'de, D>(
+    deserializer: D,
+) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <Option<u32> as serde::Deserialize>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(dimension)
+            if (MIN_INSERTED_TABLE_DIMENSION..=MAX_INSERTED_TABLE_DIMENSION)
+                .contains(&dimension) =>
+        {
+            Ok(Some(dimension))
+        }
+        Some(dimension) => Err(serde::de::Error::custom(format!(
+            "table dimension {dimension} is outside              {MIN_INSERTED_TABLE_DIMENSION}..={MAX_INSERTED_TABLE_DIMENSION}"
+        ))),
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -331,6 +411,32 @@ impl From<CommandEnvelope> for TypedCommand {
                 range: range.into(),
                 at: at.into(),
             },
+            CommandEnvelope::InsertTable {
+                rows,
+                columns,
+                with_header_row,
+            } => Self::Table(TableCommand::InsertTable {
+                rows: rows.unwrap_or(DEFAULT_INSERTED_TABLE_ROWS),
+                columns: columns.unwrap_or(DEFAULT_INSERTED_TABLE_COLUMNS),
+                with_header_row: with_header_row.unwrap_or(DEFAULT_INSERTED_TABLE_HEADER_ROW),
+            }),
+            CommandEnvelope::DeleteTable => Self::Table(TableCommand::DeleteTable),
+            CommandEnvelope::AddTableRow { side } => Self::Table(TableCommand::AddTableRow {
+                side: side.into(),
+            }),
+            CommandEnvelope::DeleteTableRows => Self::Table(TableCommand::DeleteTableRows),
+            CommandEnvelope::AddTableColumn { side } => Self::Table(TableCommand::AddTableColumn {
+                side: side.into(),
+            }),
+            CommandEnvelope::DeleteTableColumns => Self::Table(TableCommand::DeleteTableColumns),
+            CommandEnvelope::ToggleTableHeader { target } => {
+                Self::Table(TableCommand::ToggleTableHeader {
+                    target: target.into(),
+                })
+            }
+            CommandEnvelope::SelectTableRows => Self::Table(TableCommand::SelectTableRows),
+            CommandEnvelope::SelectTableColumns => Self::Table(TableCommand::SelectTableColumns),
+            CommandEnvelope::ClearTableCells => Self::Table(TableCommand::ClearTableCells),
         }
     }
 }

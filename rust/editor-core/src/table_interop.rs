@@ -92,9 +92,17 @@ enum SchemaPreset {
 #[derive(serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 enum LocalMutation {
-    Input { text: String },
-    Command { command: serde_json::Value },
-    Selection { selection: serde_json::Value },
+    Input {
+        text: String,
+    },
+    Command {
+        command: serde_json::Value,
+        #[serde(default)]
+        at: Option<u32>,
+    },
+    Selection {
+        selection: serde_json::Value,
+    },
 }
 
 #[derive(serde::Deserialize)]
@@ -368,6 +376,9 @@ impl RustPeer {
     fn command(&mut self, payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
         let mutation: LocalMutation = parse_payload(payload)?;
         reset_planned_normalization_passes();
+        if let LocalMutation::Command { at: Some(at), .. } = &mutation {
+            self.anchor_caret(*at)?;
+        }
         let request_id = self.next_request_id();
         let session = self.session_mut()?;
         let base_document_revision = session.engine.revision();
@@ -383,6 +394,33 @@ impl RustPeer {
         let value = parse_outcome(serialize_native_outcome(outcome, false, document_changed));
         self.capture_outbound(EventOrigin::Local, request_id)?;
         Ok(value)
+    }
+
+    fn anchor_caret(&mut self, at: u32) -> Result<(), SessionError> {
+        let request_id = self.next_request_id();
+        let session = self.session_mut()?;
+        let base_document_revision = session.engine.revision();
+        let document = session
+            .engine
+            .document()
+            .ok_or_else(|| config_invalid("the peer has no document to anchor a command in"))?
+            .clone();
+        let scalar = session
+            .engine
+            .position_map()
+            .ok_or_else(|| config_invalid("the peer has no position map to anchor a command in"))?
+            .doc_to_scalar(at, &document);
+        let point = serde_json::json!({ "offset": scalar, "kind": "scalar" });
+        let envelope = serde_json::json!({
+            "version": NATIVE_BRIDGE_ENVELOPE_VERSION,
+            "requestId": request_id.to_string(),
+            "baseDocumentRevision": base_document_revision.to_string(),
+            "selection": { "type": "text", "anchor": point, "head": point },
+        })
+        .to_string();
+        NativeTransactionBridge::new(session).submit_selection(&envelope)?;
+        self.capture_outbound(EventOrigin::Local, request_id)?;
+        Ok(())
     }
 
     fn history(
@@ -661,7 +699,7 @@ fn local_mutation_envelope(
         LocalMutation::Input { text } => {
             envelope["text"] = serde_json::Value::String(text.clone());
         }
-        LocalMutation::Command { command } => {
+        LocalMutation::Command { command, .. } => {
             envelope["command"] = command.clone();
         }
         LocalMutation::Selection { selection } => {

@@ -314,7 +314,7 @@ impl YrsDocumentEngine {
             && result.active_state.nodes.len()
                 <= self.resource_limits.max_document_depth.saturating_add(1)
             && result.active_state.insertable_nodes.len() <= schema_nodes
-            && result.active_state.commands.len() <= 16;
+            && result.active_state.commands.len() <= crate::editor_state::ACTIVE_COMMAND_ENTRIES;
         if !active_is_bounded {
             return Err(yrs_engine::OperationError::document_limit_exceeded(
                 request_id,

@@ -78,7 +78,7 @@ pub(crate) fn merged_fixture_table() -> Value {
     ])
 }
 
-fn limits() -> ResourceLimits {
+pub(crate) fn limits() -> ResourceLimits {
     ResourceLimits {
         max_table_grid_slots: GENEROUS_GRID_LIMIT,
         ..ResourceLimits::default()
@@ -705,7 +705,7 @@ fn identity_fixture_json() -> String {
     .to_string()
 }
 
-fn seeded_session(initial_json: String) -> EditorSession {
+pub(crate) fn seeded_session(initial_json: String) -> EditorSession {
     seeded_session_with(initial_json, EditingLimits::default())
 }
 
@@ -730,7 +730,7 @@ fn seeded_session_with(initial_json: String, editing_limits: EditingLimits) -> E
     .expect("the table fixture is admitted")
 }
 
-fn cell_identities(state: &[u8]) -> Vec<String> {
+pub(crate) fn cell_identities(state: &[u8]) -> Vec<String> {
     let replica = Doc::new();
     {
         let mut txn = replica.transact_mut();

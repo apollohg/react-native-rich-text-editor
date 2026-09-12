@@ -18,10 +18,11 @@ pub(crate) use format::{
     plan_toggle_heading, plan_toggle_mark, plan_unset_mark, CommandReplacement, MarkCommandPlan,
 };
 pub(crate) use structure::{
-    default_attrs, plan_apply_list_type, plan_indent_list_item, plan_insert_node,
-    plan_move_selection, plan_outdent_list_item, plan_resize_image, plan_toggle_task_item_checked,
-    plan_unwrap_from_list, plan_update_node_attrs, plan_wrap_in_list_admitted,
-    prove_structural_diff, simulate_plan, structural_diff_bounded, structural_diff_range,
+    compatible_declared_attrs, default_attrs, empty_text_block_range, plan_apply_list_type,
+    plan_indent_list_item, plan_insert_node, plan_move_selection, plan_outdent_list_item,
+    plan_resize_image, plan_toggle_task_item_checked, plan_unwrap_from_list,
+    plan_update_node_attrs, plan_wrap_in_list_admitted, prove_structural_diff,
+    resolve_block_insert_pos, simulate_plan, structural_diff_bounded, structural_diff_range,
     AdmittedSemanticCommandPlan, ResizeImageRequest, SimulatedCommandPlan, StructuralDiff,
 };
 pub(crate) use text::{

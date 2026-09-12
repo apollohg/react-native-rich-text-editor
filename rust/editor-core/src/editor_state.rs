@@ -8,7 +8,17 @@ use crate::model::{Document, Fragment, Mark, Node};
 use crate::schema::content_rule::WorkBudget;
 use crate::schema::{NodeRole, Schema};
 use crate::selection::Selection;
+use crate::tables::commands::{
+    TableCommand, TableEdge, TableHeaderTarget, DEFAULT_INSERTED_TABLE_COLUMNS,
+    DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS,
+};
 use crate::transform::{Step, Transaction};
+
+const FIXED_COMMAND_ENTRIES: usize = 8;
+const HEADING_COMMAND_LEVELS: u8 = 6;
+const TABLE_COMMAND_ENTRIES: usize = 12;
+pub(crate) const ACTIVE_COMMAND_ENTRIES: usize =
+    FIXED_COMMAND_ENTRIES + HEADING_COMMAND_LEVELS as usize + TABLE_COMMAND_ENTRIES;
 
 /// Which marks and node types are active at the current selection.
 #[derive(Debug, Clone, PartialEq)]
@@ -193,7 +203,7 @@ fn command_applicability_with_known_node_count_impl(
             block_range.as_ref(),
         ),
     );
-    for level in 1..=6 {
+    for level in 1..=HEADING_COMMAND_LEVELS {
         commands.insert(
             format!("toggleHeading{level}"),
             can_toggle_heading(document, schema, block_range.as_ref(), level),
@@ -241,6 +251,14 @@ fn command_applicability_with_known_node_count_impl(
             root_wrap_range.as_ref(),
         ),
     );
+    for (name, command) in table_command_surface() {
+        commands.insert(
+            name.into(),
+            crate::yrs_engine::table_command_is_available(
+                document, schema, selection, limits, command,
+            ),
+        );
+    }
     commands.insert(
         "wrapTaskList".into(),
         can_apply_list_type_local(
@@ -259,6 +277,65 @@ fn command_applicability_with_known_node_count_impl(
         ),
     );
     commands
+}
+
+fn table_command_surface() -> [(&'static str, TableCommand); TABLE_COMMAND_ENTRIES] {
+    [
+        (
+            "insertTable",
+            TableCommand::InsertTable {
+                rows: DEFAULT_INSERTED_TABLE_ROWS,
+                columns: DEFAULT_INSERTED_TABLE_COLUMNS,
+                with_header_row: DEFAULT_INSERTED_TABLE_HEADER_ROW,
+            },
+        ),
+        ("deleteTable", TableCommand::DeleteTable),
+        (
+            "addTableRowBefore",
+            TableCommand::AddTableRow {
+                side: TableEdge::Before,
+            },
+        ),
+        (
+            "addTableRowAfter",
+            TableCommand::AddTableRow {
+                side: TableEdge::After,
+            },
+        ),
+        ("deleteTableRows", TableCommand::DeleteTableRows),
+        (
+            "addTableColumnBefore",
+            TableCommand::AddTableColumn {
+                side: TableEdge::Before,
+            },
+        ),
+        (
+            "addTableColumnAfter",
+            TableCommand::AddTableColumn {
+                side: TableEdge::After,
+            },
+        ),
+        ("deleteTableColumns", TableCommand::DeleteTableColumns),
+        (
+            "toggleTableHeaderRow",
+            TableCommand::ToggleTableHeader {
+                target: TableHeaderTarget::Row,
+            },
+        ),
+        (
+            "toggleTableHeaderColumn",
+            TableCommand::ToggleTableHeader {
+                target: TableHeaderTarget::Column,
+            },
+        ),
+        (
+            "toggleTableHeaderCell",
+            TableCommand::ToggleTableHeader {
+                target: TableHeaderTarget::Cell,
+            },
+        ),
+        ("clearTableCells", TableCommand::ClearTableCells),
+    ]
 }
 
 #[cfg(test)]

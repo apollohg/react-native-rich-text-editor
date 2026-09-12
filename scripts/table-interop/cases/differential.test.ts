@@ -321,3 +321,117 @@ test('only an explicit normalization request advances the native pass counter', 
         tableFixture('prosemirror'),
     );
 });
+
+const ANCHOR_CELL_POSITION = 3;
+const ONE_TABLE = 1;
+
+type CommandScenario = {
+    name: string;
+    native: Record<string, unknown>;
+    reference: string;
+};
+
+const COMMAND_SCENARIOS: CommandScenario[] = [
+    {
+        name: 'a row added after the anchored cell',
+        native: { type: 'addTableRow', side: 'after' },
+        reference: 'addRowAfter',
+    },
+    {
+        name: 'a row added before the anchored cell',
+        native: { type: 'addTableRow', side: 'before' },
+        reference: 'addRowBefore',
+    },
+    {
+        name: 'the anchored row deleted',
+        native: { type: 'deleteTableRows' },
+        reference: 'deleteRow',
+    },
+    {
+        name: 'a column added after the anchored cell',
+        native: { type: 'addTableColumn', side: 'after' },
+        reference: 'addColumnAfter',
+    },
+    {
+        name: 'a column added before the anchored cell',
+        native: { type: 'addTableColumn', side: 'before' },
+        reference: 'addColumnBefore',
+    },
+    {
+        name: 'the anchored column deleted',
+        native: { type: 'deleteTableColumns' },
+        reference: 'deleteColumn',
+    },
+    {
+        name: 'the anchored header row toggled on',
+        native: { type: 'toggleTableHeader', target: 'row' },
+        reference: 'toggleHeaderRow',
+    },
+    {
+        name: 'the anchored header column toggled on',
+        native: { type: 'toggleTableHeader', target: 'column' },
+        reference: 'toggleHeaderColumn',
+    },
+    {
+        name: 'the anchored header cell toggled on',
+        native: { type: 'toggleTableHeader', target: 'cell' },
+        reference: 'toggleHeaderCell',
+    },
+];
+
+function commandFixture(): Record<string, unknown> {
+    return table([
+        row([cell({ text: 'a' }), cell({ text: 'b' })]),
+        row([cell({ text: 'c' }), cell({ text: 'd' })]),
+        row([cell({ text: 'e' }), cell({ text: 'f' })]),
+    ]);
+}
+
+function onlyTable(documentJson: Record<string, unknown> | null): unknown {
+    const content = documentJson?.['content'];
+    assert.ok(Array.isArray(content), 'the peer document carried no content array');
+    const tables = content.filter(
+        (node): node is Record<string, unknown> =>
+            typeof node === 'object' && node !== null
+            && (node as Record<string, unknown>)['type'] === TABLE_NODE,
+    );
+    assert.equal(tables.length, ONE_TABLE, 'the fixture document holds exactly one table');
+    return canonical(tables[0]);
+}
+
+test('TBL-06 row, column and header commands agree with prosemirror-tables 1.8.5', async (context) => {
+    for (const scenario of COMMAND_SCENARIOS) {
+        await context.test(scenario.name, async () => {
+            await withPeers(
+                ['prosemirror', 'rust'] as const,
+                async ([web, engine]) => {
+                    await call(web, 'command', { type: 'insertNode', node: commandFixture() });
+                    await seedFrom(web, [engine]);
+                    await exchangeUntilIdle([web, engine]);
+                    assert.deepEqual(
+                        onlyTable((await snapshot(engine)).documentJson),
+                        onlyTable((await snapshot(web)).documentJson),
+                        'the peers must start from the same table',
+                    );
+
+                    await call(web, 'command', {
+                        type: 'tableCommand',
+                        name: scenario.reference,
+                        at: ANCHOR_CELL_POSITION,
+                    });
+                    await call(engine, 'command', {
+                        ...scenario.native,
+                        at: ANCHOR_CELL_POSITION,
+                    });
+
+                    assert.deepEqual(
+                        onlyTable((await snapshot(engine)).documentJson),
+                        onlyTable((await snapshot(web)).documentJson),
+                        `the engine and prosemirror-tables disagree about ${scenario.name}`,
+                    );
+                },
+                tableFixture('prosemirror'),
+            );
+        });
+    }
+});

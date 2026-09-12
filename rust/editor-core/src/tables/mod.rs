@@ -1,6 +1,7 @@
 pub(crate) mod admission;
 #[allow(dead_code)]
 pub(crate) mod command_context;
+pub(crate) mod commands;
 #[allow(dead_code)]
 pub(crate) mod normalize;
 pub(crate) mod projection;
@@ -11,6 +12,8 @@ pub(crate) mod widths;
 
 #[cfg(test)]
 mod admission_tests;
+#[cfg(test)]
+mod commands_tests;
 #[cfg(test)]
 mod normalize_tests;
 #[cfg(test)]

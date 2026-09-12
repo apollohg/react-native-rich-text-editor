@@ -39,6 +39,7 @@ pub use awareness::{
     AWARENESS_CELL_RECTANGLE_KEY,
 };
 pub(crate) use codec::YrsDocumentCodec;
+pub(crate) use commands::table_command_is_available;
 pub use commands::{CommandPlan, TypedCommand};
 #[allow(unused_imports)]
 pub use editing_limits::{
@@ -56,7 +57,7 @@ pub use operation::{
     Affinity, EditorOffsetKind, HistoryPolicy, OperationError, OperationResult, RenderUpdate,
     ResolvedPoint, ResolvedSelection, RevisionedPosition, RevisionedRange, SelectionInput,
     SelectionIntent, StructuralEdit, StructuralEditBatch, StructuralReplacement, TransactionCommit,
-    TypedOperation, TypedTransaction, TypedTransactionResult,
+    TypedOperation, TypedTransaction, TypedTransactionResult, DEFAULT_POSITION_AFFINITY,
 };
 pub use operation::{ReplacementHistory, RootReplacementError};
 pub use origin::{DocumentOrigin, TransactionOrigin};

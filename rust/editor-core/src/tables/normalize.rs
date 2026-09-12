@@ -542,16 +542,8 @@ fn filler_cell(row: &Node, schema: &Schema) -> Result<Node, NormalizationFailure
                 .map(|child| child.node_type().to_string())
         })
         .unwrap_or_else(|| roles.cell.clone());
-    let text_block = schema
-        .preferred_text_block()
-        .ok_or(NormalizationFailure::Shape(TableError::InvalidStructure))?
-        .name
-        .clone();
-    let block = Node::element(
-        text_block.clone(),
-        default_attrs(schema, &text_block).ok_or(NormalizationFailure::Unplannable)?,
-        Fragment::empty(),
-    );
+    let block = crate::tables::commands::default_text_block_node(schema)
+        .ok_or(NormalizationFailure::Unplannable)?;
     Ok(Node::element(
         cell_type.clone(),
         default_attrs(schema, &cell_type).ok_or(NormalizationFailure::Unplannable)?,

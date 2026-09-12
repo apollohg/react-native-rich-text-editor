@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::command_planner::SemanticOperation;
-use crate::model::{Document, Fragment, Mark, Node};
+use crate::model::{Document, Fragment, Mark, Node, ResolvedPos};
 use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::transform::apply_step_canonical_marks;
@@ -119,11 +119,13 @@ impl BatchBuilder<'_> {
     fn absorb(&mut self, operation: &SemanticOperation) -> OperationResult<Option<()>> {
         let absorbed = match operation {
             SemanticOperation::ReplaceRange { from, to, content } => {
-                self.absorb_splice(*from, *to, content)
+                self.absorb_splice(self.resolve(*from)?, self.resolve(*to)?, content)
             }
-            SemanticOperation::UpdateNodeAttrs { pos, attrs } => self.absorb_patch(*pos, attrs),
+            SemanticOperation::UpdateNodeAttrs { pos, attrs } => {
+                self.absorb_patch(self.resolve(*pos)?, attrs)
+            }
             SemanticOperation::InsertText { pos, text, marks } => {
-                self.absorb_text(*pos, text, marks)
+                self.absorb_text(self.resolve(*pos)?, text, marks)
             }
             SemanticOperation::DeleteRange { .. }
             | SemanticOperation::AddMark { .. }
@@ -197,9 +199,23 @@ impl BatchBuilder<'_> {
             .retain(|text| !text.parent_path.starts_with(deleted));
     }
 
-    fn absorb_splice(&mut self, from: u32, to: u32, content: &Fragment) -> Option<()> {
-        let from_resolved = self.shadow.resolve(from).ok()?;
-        let to_resolved = self.shadow.resolve(to).ok()?;
+    fn resolve(&self, position: u32) -> OperationResult<ResolvedPos> {
+        self.shadow.resolve(position).map_err(|error| {
+            OperationError::operation_invalid(
+                self.request_id,
+                BATCH_OPERATION_INDEX,
+                BATCH_FIELD,
+                error,
+            )
+        })
+    }
+
+    fn absorb_splice(
+        &mut self,
+        from_resolved: ResolvedPos,
+        to_resolved: ResolvedPos,
+        content: &Fragment,
+    ) -> Option<()> {
         if from_resolved.node_path != to_resolved.node_path {
             return None;
         }
@@ -282,8 +298,11 @@ impl BatchBuilder<'_> {
         Some(())
     }
 
-    fn absorb_patch(&mut self, pos: u32, attrs: &HashMap<String, Value>) -> Option<()> {
-        let resolved = self.shadow.resolve(pos).ok()?;
+    fn absorb_patch(
+        &mut self,
+        resolved: ResolvedPos,
+        attrs: &HashMap<String, Value>,
+    ) -> Option<()> {
         let parent = resolved.parent(&self.shadow);
         let child = child_index_at_offset(parent, resolved.parent_offset)?;
         let mut shadow_path: Vec<u32> = resolved.node_path.iter().copied().collect();
@@ -320,11 +339,10 @@ impl BatchBuilder<'_> {
         }
     }
 
-    fn absorb_text(&mut self, pos: u32, text: &str, marks: &[Mark]) -> Option<()> {
+    fn absorb_text(&mut self, resolved: ResolvedPos, text: &str, marks: &[Mark]) -> Option<()> {
         if text.is_empty() {
             return None;
         }
-        let resolved = self.shadow.resolve(pos).ok()?;
         let shadow_path: Vec<u32> = resolved.node_path.iter().copied().collect();
         match self.locate(&shadow_path)? {
             LocatedTarget::Created {

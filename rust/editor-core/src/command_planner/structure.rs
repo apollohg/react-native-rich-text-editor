@@ -33,7 +33,7 @@ pub(crate) fn default_attrs(
     compatible_declared_attrs(schema, node_type, &Default::default())
 }
 
-fn compatible_declared_attrs(
+pub(crate) fn compatible_declared_attrs(
     schema: &Schema,
     node_type: &str,
     current: &std::collections::HashMap<String, serde_json::Value>,
@@ -439,7 +439,7 @@ pub(crate) fn plan_toggle_task_item_checked(
     )
 }
 
-fn resolve_block_insert_pos(document: &Document, schema: &Schema, position: u32) -> u32 {
+pub(crate) fn resolve_block_insert_pos(document: &Document, schema: &Schema, position: u32) -> u32 {
     let Ok(resolved) = document.resolve(position) else {
         return position;
     };
@@ -567,7 +567,7 @@ pub(crate) fn plan_move_selection(
     admitted_plan(document, schema, selection, plan, limits).map(|admitted| admitted.plan)
 }
 
-fn empty_text_block_range(
+pub(crate) fn empty_text_block_range(
     document: &Document,
     schema: &Schema,
     position: u32,

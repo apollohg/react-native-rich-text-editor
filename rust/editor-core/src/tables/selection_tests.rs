@@ -864,8 +864,10 @@ mod engine_round_trip {
         assert_ne!(engine.revision(), revision_before);
     }
 
+    const TABLE_COMMAND_PREFIX: &str = "Table";
+
     #[test]
-    fn no_structural_command_is_offered_for_a_cell_rectangle() {
+    fn no_text_structural_command_is_offered_for_a_cell_rectangle() {
         let mut engine = seeded();
         let anchor = inside_cell(&engine, TOP_LEFT);
         let head = inside_cell(&engine, BOTTOM_RIGHT);
@@ -888,8 +890,17 @@ mod engine_round_trip {
             "the command map must keep every key so a host reads a definite answer"
         );
         assert!(
-            cell_commands.values().all(|applicable| !*applicable),
-            "no structural command may be offered for a cell rectangle: {cell_commands:?}"
+            cell_commands
+                .iter()
+                .filter(|(name, _)| !name.contains(TABLE_COMMAND_PREFIX))
+                .all(|(_, applicable)| !*applicable),
+            "no text structural command may be offered for a cell rectangle: {cell_commands:?}"
+        );
+        assert!(
+            cell_commands
+                .iter()
+                .any(|(name, applicable)| name.contains(TABLE_COMMAND_PREFIX) && *applicable),
+            "a cell rectangle is exactly where a table command applies: {cell_commands:?}"
         );
     }
 

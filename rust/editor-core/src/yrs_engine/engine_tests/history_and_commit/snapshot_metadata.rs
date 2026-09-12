@@ -1,7 +1,7 @@
 #[test]
 fn tight_history_metadata_budget_falls_back_to_full_candidate_derivation() {
     let mut engine = transaction_engine_with_editing_limits(crate::yrs_engine::EditingLimits {
-        max_derived_output_bytes: 2 * (512 + "prosemirror".len() + 2),
+        max_derived_output_bytes: 2 * (528 + "prosemirror".len() + 2),
         ..crate::yrs_engine::EditingLimits::default()
     });
     engine

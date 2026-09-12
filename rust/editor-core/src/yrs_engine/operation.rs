@@ -24,6 +24,8 @@ pub enum Affinity {
     After,
 }
 
+pub const DEFAULT_POSITION_AFFINITY: Affinity = Affinity::After;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RevisionedPosition {
     pub offset: u32,

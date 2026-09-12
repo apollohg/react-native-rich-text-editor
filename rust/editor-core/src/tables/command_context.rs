@@ -264,6 +264,13 @@ fn require_valid_outer_grid(
     }
 }
 
+pub(crate) fn is_action_unavailable(error: &OperationError) -> bool {
+    error.code == ACTION_UNAVAILABLE_CODE
+        && error.details == Some(serde_json::json!({ "field": TABLE_ACTION_FIELD }))
+}
+
+const ACTION_UNAVAILABLE_CODE: &str = "OPERATION_INVALID";
+
 fn action_unavailable(context: &TableActionContext<'_>, kind: TableActionKind) -> OperationError {
     OperationError::operation_invalid(
         context.request_id,
