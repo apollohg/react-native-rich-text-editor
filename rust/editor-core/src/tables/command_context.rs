@@ -98,7 +98,7 @@ pub(crate) fn prepare_table_action(
                 document: &candidate,
                 table_pos: context.table_pos,
                 anchors,
-                selection: remap_selection(context.selection, &pre_map),
+                selection: context.selection.map(&pre_map),
             },
             context.schema,
             context.resource_limits,
@@ -210,23 +210,6 @@ fn advance_candidate(
         candidate = next;
     }
     Ok((candidate, composed))
-}
-
-fn remap_selection(selection: &Selection, map: &StepMap) -> Selection {
-    match selection {
-        Selection::Text { anchor, head } => Selection::Text {
-            anchor: map.map_pos(*anchor),
-            head: map.map_pos(*head),
-        },
-        Selection::Cell { anchor, head } => Selection::Cell {
-            anchor: map.map_pos(*anchor),
-            head: map.map_pos(*head),
-        },
-        Selection::Node { pos } => Selection::Node {
-            pos: map.map_pos(*pos),
-        },
-        Selection::All => Selection::All,
-    }
 }
 
 fn remap_anchors(
