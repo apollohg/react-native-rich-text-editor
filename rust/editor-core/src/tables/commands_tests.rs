@@ -878,21 +878,55 @@ fn availability_fixtures() -> Vec<(&'static str, Vec<Value>, usize)> {
             ANCHOR_FOR_AVAILABILITY,
         ),
         ("last cell", regular_fixture(), LAST_REGULAR_CELL),
+        (
+            "declared width",
+            vec![table(vec![
+                row(vec![
+                    cell_with(SINGLE_SPAN, SINGLE_SPAN, json!([PROBE_COLUMN_WIDTH]), "a0"),
+                    cell("a1"),
+                ]),
+                row(vec![
+                    cell_with(SINGLE_SPAN, SINGLE_SPAN, json!([PROBE_COLUMN_WIDTH]), "b0"),
+                    cell("b1"),
+                ]),
+            ])],
+            ANCHOR_FOR_AVAILABILITY,
+        ),
     ]
+}
+
+fn resize_idempotence_carve_out(command: TableCommand) -> bool {
+    matches!(command, TableCommand::SetTableColumnWidth { .. })
 }
 
 #[test]
 fn availability_matches_the_planner_for_every_table_command() {
+    let mut carve_out_was_exercised = false;
     for (name, fixture, anchor) in availability_fixtures() {
         for command in every_table_command() {
+            let advertised = advertised(fixture.clone(), anchor, command);
+            let planned = planner_accepts(fixture.clone(), anchor, command);
+            assert!(
+                advertised || !planned,
+                "on the {name} fixture at cell {anchor}, {command:?} plans but is not advertised, \
+                 which hides an action the host could take",
+            );
+            if resize_idempotence_carve_out(command) {
+                carve_out_was_exercised |= advertised && !planned;
+                continue;
+            }
             assert_eq!(
-                advertised(fixture.clone(), anchor, command),
-                planner_accepts(fixture.clone(), anchor, command),
+                advertised, planned,
                 "on the {name} fixture at cell {anchor}, {command:?} must advertise \
                  exactly what the planner will do",
             );
         }
     }
+    assert!(
+        carve_out_was_exercised,
+        "a fixture must actually generate the advertised-but-idempotent resize, or the carve out \
+         is untested and the guard is weaker than it claims",
+    );
 }
 
 #[test]
