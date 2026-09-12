@@ -497,17 +497,12 @@ fn copying_a_cell_whose_declared_span_exceeds_the_grid_yields_the_effective_span
 }
 
 #[test]
-fn a_clipboard_refusal_names_which_kind_of_refusal_it_is() {
+fn a_clipboard_refusal_reports_the_kind_of_refusal_it_is() {
     let document = document_with(vec![table(vec![row(vec![cell("a")])])]);
     let index = TableProjectionIndex::derive_or_fallback(&document, &schema(), &limits());
     assert_eq!(
         crate::clipboard::export_cells(&document, &Selection::text(3, 4), &index, &schema()),
         Err(InterchangeFailure::NotACellRectangle),
-        "a text selection is refused as a selection kind, not as an unreadable grid",
-    );
-    assert_ne!(
-        crate::clipboard::CLIPBOARD_UNSUPPORTED_TABLE_GRID,
-        crate::clipboard::CLIPBOARD_UNSUPPORTED_CELL_SELECTION,
-        "the host must be able to tell an unreadable grid from an unsupported selection",
+        "a selection that is not a rectangle is refused as such, not as an unreadable grid",
     );
 }

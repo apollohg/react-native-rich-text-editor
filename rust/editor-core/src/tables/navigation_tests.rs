@@ -18,6 +18,8 @@ const FRAGMENT_NAME: &str = "prosemirror";
 const CELL_NODE: &str = "table_cell";
 const PARAGRAPH_NODE: &str = "paragraph";
 const OUTER_TABLE_POSITION: u32 = 0;
+const FIRST_CELL_ANCHOR: usize = 0;
+const SECOND_CELL_ANCHOR: usize = 1;
 const CELL_TEXT_OFFSET: u32 = 2;
 const REQUEST_ID: u64 = 11;
 const SINGLE_SPAN: u32 = 1;
@@ -749,7 +751,8 @@ fn availability_and_planning_agree_when_the_only_neighbour_holds_a_nested_table(
     let forward = json!({ "type": "doc", "content": [table(vec![
         row(vec![cell("a"), nested_only_cell_value()]),
     ])] });
-    let (advertised, executed) = advertised_and_executed(forward, 0, CellStep::Forward, false);
+    let (advertised, executed) =
+        advertised_and_executed(forward, FIRST_CELL_ANCHOR, CellStep::Forward, false);
     assert_eq!(
         advertised, executed,
         "tab forward into an unreachable last cell must not be advertised when it cannot run",
@@ -758,8 +761,12 @@ fn availability_and_planning_agree_when_the_only_neighbour_holds_a_nested_table(
     let backward = json!({ "type": "doc", "content": [table(vec![
         row(vec![nested_only_cell_value(), cell("c")]),
     ])] });
-    let (advertised, executed) =
-        advertised_and_executed(backward, 1, CellStep::Backward, DEFAULT_TAB_APPENDS_A_ROW);
+    let (advertised, executed) = advertised_and_executed(
+        backward,
+        SECOND_CELL_ANCHOR,
+        CellStep::Backward,
+        DEFAULT_TAB_APPENDS_A_ROW,
+    );
     assert_eq!(
         advertised, executed,
         "shift-tab must not be advertised when every earlier cell is unreachable",
