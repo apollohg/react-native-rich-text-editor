@@ -36,6 +36,7 @@ const CUSTOM_TABLE_NAMES: [&str; 4] = ["grid", "gridRow", "gridCell", "gridHeade
 const ANCHOR_CELL: usize = 2;
 const ANCHOR_FOR_AVAILABILITY: usize = 0;
 const LAST_REGULAR_CELL: usize = 3;
+const SECOND_CELL_ANCHOR: usize = 1;
 const DOCUMENT_INVALID_CODE: &str = "DOCUMENT_INVALID";
 const DOCUMENT_LIMIT_EXCEEDED_CODE: &str = "DOCUMENT_LIMIT_EXCEEDED";
 const OPERATION_WORK_BUDGET_CODE: &str = "OPERATION_LIMIT_EXCEEDED";
@@ -107,9 +108,16 @@ fn cell_openings(engine: &YrsDocumentEngine) -> Vec<u32> {
 
 fn inside_cell(engine: &YrsDocumentEngine, index: usize) -> RevisionedPosition {
     let opening = cell_openings(engine)[index];
+    let interior = crate::tables::interchange::first_editable_position_in_cell(
+        document_of(engine),
+        &engine_schema(engine),
+        opening,
+    )
+    .expect("the fixture schema resolves its table roles")
+    .expect("the fixture anchors on a cell that holds an editable position");
     let map = engine.position_map().expect("the engine is ready");
     RevisionedPosition {
-        offset: map.doc_to_scalar(opening + CELL_TEXT_OFFSET, document_of(engine)),
+        offset: map.doc_to_scalar(interior, document_of(engine)),
         kind: EditorOffsetKind::Scalar,
         affinity: Affinity::Before,
     }
@@ -899,6 +907,19 @@ fn availability_fixtures() -> Vec<(&'static str, Vec<Value>, usize)> {
             "nested only last cell",
             vec![table(vec![row(vec![cell("a"), nested_only_cell()])])],
             ANCHOR_FOR_AVAILABILITY,
+        ),
+        (
+            "nested only below",
+            vec![table(vec![
+                row(vec![cell("a"), cell("b")]),
+                row(vec![nested_only_cell(), cell("d")]),
+            ])],
+            ANCHOR_FOR_AVAILABILITY,
+        ),
+        (
+            "nested only before",
+            vec![table(vec![row(vec![nested_only_cell(), cell("c")])])],
+            SECOND_CELL_ANCHOR,
         ),
         (
             "declared width",
