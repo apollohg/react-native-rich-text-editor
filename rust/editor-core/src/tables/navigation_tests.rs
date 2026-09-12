@@ -1,11 +1,13 @@
+use std::collections::HashMap;
+
 use serde_json::{json, Value};
 
 use crate::command_planner::SemanticOperation;
 use crate::model::Document;
 use crate::tables::admission::TableProjectionIndex;
+use crate::tables::commands::{TableCommand, DEFAULT_TAB_APPENDS_A_ROW};
 use crate::tables::interchange::{next_outer_cell, CellStep};
 use crate::tables::mutation_guard::{admit_local_mutation, LocalMutationRefusal};
-use crate::tables::commands::{TableCommand, DEFAULT_TAB_APPENDS_A_ROW};
 use crate::tables::normalize_tests::{cell, cell_with, document_with, limits, row, schema, table};
 use crate::yrs_engine::{
     Affinity, EditorOffsetKind, InitializationMode, RevisionedPosition, SelectionInput,
@@ -22,6 +24,13 @@ const SINGLE_SPAN: u32 = 1;
 const NESTED_TABLE_FIELD: &str = "nestedTable";
 const CELL_BOUNDARY_FIELD: &str = "tableCellBoundary";
 const NESTED_ROW_AND_TABLE_CLOSING_TOKENS: u32 = 2;
+const NODE_OPENING_TOKENS: u32 = 1;
+const INSERTED_BRIDGE_TEXT: &str = "bridge";
+const BOLD_MARK: &str = "bold";
+const NESTED_CELL_TEXT: &str = "inner";
+const BLOCK_BOUNDARY_TOKENS: u32 = 2;
+const FIRST_INTRA_CELL_BLOCK_TEXT: &str = "one";
+const SECOND_INTRA_CELL_BLOCK_TEXT: &str = "two";
 
 fn cell_holding_a_nested_table() -> Value {
     json!({
@@ -29,7 +38,7 @@ fn cell_holding_a_nested_table() -> Value {
         "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
         "content": [
             { "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": "outer" }] },
-            table(vec![row(vec![cell("inner")])]),
+            table(vec![row(vec![cell(NESTED_CELL_TEXT)])]),
         ],
     })
 }
@@ -216,27 +225,90 @@ fn native_input_inside_a_nested_table_is_refused_while_the_outer_cell_accepts_it
 }
 
 #[test]
-fn a_programmatic_attribute_write_into_a_nested_table_is_refused() {
-    let document = nested_fixture();
-    let index = index_of(&document);
-    let nested_table = nested_table_position(&index);
-    let nested_cell = openings(&index, nested_table)[0];
-    for target in [nested_table, nested_cell] {
+fn programmatic_bridge_writes_into_a_nested_table_are_refused() {
+    for command in [
+        TypedCommand::InsertContentJson {
+            json: json!({
+                "type": PARAGRAPH_NODE,
+                "content": [{ "type": "text", "text": INSERTED_BRIDGE_TEXT }],
+            }),
+        },
+        TypedCommand::SplitBlock,
+    ] {
+        let mut engine = engine_with(json!({ "type": "doc", "content": [table(vec![
+            row(vec![cell_holding_a_nested_table(), cell("d")]),
+        ])] }));
+        let index = index_of(engine.document().expect("the engine is ready"));
+        let nested_cell = openings(&index, nested_table_position(&index))[0];
+        let outer_cell = openings(&index, OUTER_TABLE_POSITION)[1];
+        let before = engine.document_json().expect("the engine is ready");
+
+        caret_at(&mut engine, nested_cell + CELL_TEXT_OFFSET);
+        let refused = engine
+            .apply_command(REQUEST_ID, command.clone())
+            .expect_err("a bridge write into a nested cell must be refused");
         assert_eq!(
-            admit_local_mutation(
-                &document,
-                &schema(),
-                &limits(),
-                TransactionOrigin::LocalApi,
-                &[SemanticOperation::UpdateNodeAttrs {
-                    pos: target,
-                    attrs: std::collections::HashMap::new(),
-                }],
-            ),
-            Err(LocalMutationRefusal::NestedTableDescendant),
-            "a bridge attribute write at {target} must be refused, not merely hidden in the UI",
+            refusal_field(&refused).as_deref(),
+            Some(NESTED_TABLE_FIELD),
+            "{command:?} through the bridge must hit the same refusal native input does: {refused:?}",
+        );
+        assert_eq!(
+            engine.document_json().expect("the engine is ready"),
+            before,
+            "{command:?} was refused, so the document must be untouched",
+        );
+
+        caret_at(&mut engine, outer_cell + CELL_TEXT_OFFSET);
+        assert!(
+            engine
+                .apply_command(REQUEST_ID, command.clone())
+                .expect("the same bridge write on an outer cell still plans")
+                .is_some(),
+            "{command:?} must stay available outside a nested table",
         );
     }
+}
+
+#[test]
+fn formatting_a_range_inside_a_nested_table_is_refused() {
+    let document = nested_fixture();
+    let index = index_of(&document);
+    let nested_cell = openings(&index, nested_table_position(&index))[0];
+    assert_eq!(
+        admit_local_mutation(
+            &document,
+            &schema(),
+            &limits(),
+            TransactionOrigin::LocalApi,
+            &[SemanticOperation::AddMark {
+                from: nested_cell + CELL_TEXT_OFFSET,
+                to: nested_cell + CELL_TEXT_OFFSET + NESTED_CELL_TEXT.chars().count() as u32,
+                mark: crate::model::Mark::new(BOLD_MARK.to_string(), HashMap::new()),
+            }],
+        ),
+        Err(LocalMutationRefusal::NestedTableDescendant),
+        "formatting a range inside a nested table is refused like any other local mutation",
+    );
+}
+
+#[test]
+fn the_nested_table_node_itself_is_a_refused_attribute_target() {
+    let document = nested_fixture();
+    let index = index_of(&document);
+    assert_eq!(
+        admit_local_mutation(
+            &document,
+            &schema(),
+            &limits(),
+            TransactionOrigin::LocalApi,
+            &[SemanticOperation::UpdateNodeAttrs {
+                pos: nested_table_position(&index),
+                attrs: HashMap::new(),
+            }],
+        ),
+        Err(LocalMutationRefusal::NestedTableDescendant),
+        "the nested table's own opening is refused, not only the positions inside it",
+    );
 }
 
 #[test]
@@ -274,7 +346,7 @@ fn an_enclosing_deletion_that_covers_a_nested_table_whole_is_admitted() {
             &limits(),
             TransactionOrigin::LocalCommand,
             &[SemanticOperation::DeleteRange {
-                from: nested_table + 1,
+                from: nested_table + NODE_OPENING_TOKENS,
                 to: nested_end,
             }],
         ),
@@ -323,7 +395,7 @@ fn a_join_across_a_cell_boundary_is_refused_while_an_intra_cell_join_is_admitted
     let document = document_with(vec![table(vec![row(vec![cell("a"), cell("b")])])]);
     let index = index_of(&document);
     let outer = openings(&index, OUTER_TABLE_POSITION);
-    let first_block_start = outer[0] + 1;
+    let first_block_start = outer[0] + NODE_OPENING_TOKENS;
     assert_eq!(
         admit_local_mutation(
             &document,
@@ -342,13 +414,17 @@ fn a_join_across_a_cell_boundary_is_refused_while_an_intra_cell_join_is_admitted
         "type": CELL_NODE,
         "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
         "content": [
-            { "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": "one" }] },
-            { "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": "two" }] },
+            { "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": FIRST_INTRA_CELL_BLOCK_TEXT }] },
+            { "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": SECOND_INTRA_CELL_BLOCK_TEXT }] },
         ],
     });
     let document = document_with(vec![table(vec![row(vec![two_block_cell])])]);
     let index = index_of(&document);
     let opening = openings(&index, OUTER_TABLE_POSITION)[0];
+    let between_the_two_blocks = opening
+        + NODE_OPENING_TOKENS
+        + BLOCK_BOUNDARY_TOKENS
+        + FIRST_INTRA_CELL_BLOCK_TEXT.chars().count() as u32;
     assert_eq!(
         admit_local_mutation(
             &document,
@@ -356,7 +432,7 @@ fn a_join_across_a_cell_boundary_is_refused_while_an_intra_cell_join_is_admitted
             &limits(),
             TransactionOrigin::LocalInput,
             &[SemanticOperation::JoinBlocks {
-                pos: opening + 1 + 5
+                pos: between_the_two_blocks
             }],
         ),
         Ok(()),
