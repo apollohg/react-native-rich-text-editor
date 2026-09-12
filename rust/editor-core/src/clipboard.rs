@@ -29,24 +29,20 @@ pub(crate) fn unsupported_selection(selection: &Selection) -> Option<&'static st
 pub(crate) fn selection_range(document: &Document, selection: &Selection) -> Option<(u32, u32)> {
     match selection {
         Selection::Node { pos } => {
-            let size = document
-                .resolve(*pos)
-                .ok()
-                .and_then(|resolved| {
-                    let mut offset = 0;
-                    resolved
-                        .parent(document)
-                        .content()?
-                        .iter()
-                        .find_map(|node| {
-                            let found =
-                                (offset == resolved.parent_offset).then_some(node.node_size());
-                            offset += node.node_size();
-                            found
-                        })
-                })
-                .unwrap_or(1);
-            Some((*pos, pos.saturating_add(size)))
+            let Ok(resolved) = document.resolve(*pos) else {
+                return None;
+            };
+            let mut offset = 0;
+            let size = resolved
+                .parent(document)
+                .content()?
+                .iter()
+                .find_map(|node| {
+                    let found = (offset == resolved.parent_offset).then_some(node.node_size());
+                    offset += node.node_size();
+                    found
+                })?;
+            Some((*pos, pos.checked_add(size)?))
         }
         Selection::Cell { .. } => None,
         Selection::Text { .. } | Selection::All => {
@@ -577,6 +573,33 @@ mod tests {
         let mut limits = ResourceLimits::default();
         limits.max_input_bytes = 8;
         assert!(decode(copied["fragment"].as_str().unwrap(), &schema, &limits).is_none());
+    }
+
+    #[test]
+    fn a_node_selection_that_names_no_node_yields_no_clipboard_range() {
+        let schema = tiptap_schema();
+        let document = from_prosemirror_json(
+            &json!({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"abc"}]}]}),
+            &schema,
+            UnknownTypeMode::Error,
+        )
+        .unwrap();
+        let inside_the_text = 2;
+        assert_eq!(
+            selection_range(&document, &Selection::node(inside_the_text)),
+            None,
+            "a node selection that starts no child must not stand in for a one token range",
+        );
+        assert_eq!(
+            export(&document, &Selection::node(inside_the_text), &schema),
+            None,
+            "nothing is copied, so a cut of that selection removes nothing",
+        );
+        assert_eq!(
+            selection_range(&document, &Selection::node(0)),
+            Some((0, document.content_size())),
+            "a node selection that does start a child still reports the node extent",
+        );
     }
 
     #[test]
