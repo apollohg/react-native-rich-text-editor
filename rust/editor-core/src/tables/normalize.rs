@@ -1,3 +1,4 @@
+#[cfg(any(test, feature = "table-interop"))]
 use std::cell::Cell;
 use std::collections::HashMap;
 
@@ -18,11 +19,20 @@ use crate::tables::types::TableError;
 use crate::yrs_engine::{OperationError, OperationResult};
 
 pub(crate) const UNCORRELATED_REQUEST_ID: u64 = 0;
+#[cfg(any(test, feature = "table-interop"))]
 const ONE_PLANNED_PASS: u64 = 1;
+#[cfg(any(test, feature = "table-interop"))]
 const NO_PLANNED_PASSES: u64 = 0;
 
+#[cfg(any(test, feature = "table-interop"))]
 std::thread_local! {
     static PLANNED_NORMALIZATION_PASSES: Cell<u64> = const { Cell::new(NO_PLANNED_PASSES) };
+}
+
+#[cfg(any(test, feature = "table-interop"))]
+fn record_planned_normalization_pass() {
+    PLANNED_NORMALIZATION_PASSES
+        .with(|passes| passes.set(passes.get().saturating_add(ONE_PLANNED_PASS)));
 }
 const TABLE_NORMALIZATION_FIELD: &str = "tableNormalization";
 const TABLE_POSITION_FIELD: &str = "tablePos";
@@ -89,10 +99,12 @@ impl NormalizationFailure {
     }
 }
 
+#[cfg(any(test, feature = "table-interop"))]
 pub(crate) fn planned_normalization_passes() -> u64 {
     PLANNED_NORMALIZATION_PASSES.with(Cell::get)
 }
 
+#[cfg(any(test, feature = "table-interop"))]
 pub(crate) fn reset_planned_normalization_passes() {
     PLANNED_NORMALIZATION_PASSES.with(|passes| passes.set(NO_PLANNED_PASSES));
 }
@@ -103,8 +115,8 @@ pub(crate) fn normalize_outer_table(
     schema: &Schema,
     limits: &ResourceLimits,
 ) -> OperationResult<Vec<SemanticOperation>> {
-    PLANNED_NORMALIZATION_PASSES
-        .with(|passes| passes.set(passes.get().saturating_add(ONE_PLANNED_PASS)));
+    #[cfg(any(test, feature = "table-interop"))]
+    record_planned_normalization_pass();
     plan_normalization(document, table_pos, schema, limits)
         .map_err(|failure| failure.into_operation_error(UNCORRELATED_REQUEST_ID))
 }
