@@ -817,7 +817,9 @@ impl YrsDocumentEngine {
             let preserved_fallback = match &relative_selection_plan {
                 RelativeSelectionPlan::PreserveWithFallback(selection) => Some(selection),
                 RelativeSelectionPlan::Precomputed { fallback, .. } => Some(fallback),
-                _ => None,
+                RelativeSelectionPlan::Unsealed
+                | RelativeSelectionPlan::Preserve
+                | RelativeSelectionPlan::OperationResult => None,
             };
             let strict_fallback_affinity = matches!(
                 relative_selection_plan,

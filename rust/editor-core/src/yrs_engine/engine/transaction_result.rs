@@ -364,7 +364,30 @@ pub(super) fn affinity_aware_mapped_selection(
         (crate::selection::Selection::All, yrs_engine::RelativeSelection::All) => {
             crate::selection::Selection::all()
         }
-        _ => selection.map(map),
+        (
+            crate::selection::Selection::Text { .. },
+            yrs_engine::RelativeSelection::Node { .. }
+            | yrs_engine::RelativeSelection::Cell { .. }
+            | yrs_engine::RelativeSelection::All,
+        )
+        | (
+            crate::selection::Selection::Node { .. },
+            yrs_engine::RelativeSelection::Text { .. }
+            | yrs_engine::RelativeSelection::Cell { .. }
+            | yrs_engine::RelativeSelection::All,
+        )
+        | (
+            crate::selection::Selection::Cell { .. },
+            yrs_engine::RelativeSelection::Text { .. }
+            | yrs_engine::RelativeSelection::Node { .. }
+            | yrs_engine::RelativeSelection::All,
+        )
+        | (
+            crate::selection::Selection::All,
+            yrs_engine::RelativeSelection::Text { .. }
+            | yrs_engine::RelativeSelection::Node { .. }
+            | yrs_engine::RelativeSelection::Cell { .. },
+        ) => selection.map(map),
     };
     let owned_position_map;
     let position_map = if let Some(prepared) = prepared_position_map {

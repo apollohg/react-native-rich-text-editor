@@ -361,7 +361,7 @@ impl<'session> NativeTransactionBridge<'session> {
                 let point = scalar_position(offset, map.total_scalars(), affinity);
                 match edge {
                     AtomSelectionEdge::Node => SelectionInput::Node { at: point },
-                    _ => SelectionInput::Text {
+                    AtomSelectionEdge::Before | AtomSelectionEdge::After => SelectionInput::Text {
                         anchor: point,
                         head: point,
                     },

@@ -491,7 +491,30 @@ pub(crate) fn history_selection_to_relative<T: ReadTxn>(
             head: point(head.document, captured_head)?,
         }),
         (RelativeSelection::All, ResolvedSelection::All) => Some(RelativeSelection::All),
-        _ => None,
+        (
+            RelativeSelection::Text { .. },
+            ResolvedSelection::Node { .. }
+            | ResolvedSelection::Cell { .. }
+            | ResolvedSelection::All,
+        )
+        | (
+            RelativeSelection::Node { .. },
+            ResolvedSelection::Text { .. }
+            | ResolvedSelection::Cell { .. }
+            | ResolvedSelection::All,
+        )
+        | (
+            RelativeSelection::Cell { .. },
+            ResolvedSelection::Text { .. }
+            | ResolvedSelection::Node { .. }
+            | ResolvedSelection::All,
+        )
+        | (
+            RelativeSelection::All,
+            ResolvedSelection::Text { .. }
+            | ResolvedSelection::Node { .. }
+            | ResolvedSelection::Cell { .. },
+        ) => None,
     }
 }
 
