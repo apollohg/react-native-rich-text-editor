@@ -3,42 +3,14 @@ import test from 'node:test';
 import { call, paragraphFixture, withPeers } from '../controller.js';
 import type { Peer } from '../peer-protocol.js';
 import {
-    CELL_NODE,
-    HEADER_CELL_NODE,
     NO_COLLISIONS,
-    PARAGRAPH_NODE,
-    ROW_NODE,
-    TABLE_NODE,
     TABLE_SCHEMA,
+    cell,
     geometryOf,
+    row,
+    table,
 } from '../table-schema.js';
 
-type CellOptions = {
-    colspan?: number;
-    rowspan?: number;
-    colwidth?: number[] | null;
-    header?: boolean;
-};
-
-function cell(options: CellOptions = {}): Record<string, unknown> {
-    return {
-        type: options.header === true ? HEADER_CELL_NODE : CELL_NODE,
-        attrs: {
-            colspan: options.colspan ?? 1,
-            rowspan: options.rowspan ?? 1,
-            colwidth: options.colwidth ?? null,
-        },
-        content: [{ type: PARAGRAPH_NODE }],
-    };
-}
-
-function row(cells: Record<string, unknown>[]): Record<string, unknown> {
-    return { type: ROW_NODE, content: cells };
-}
-
-function table(rows: Record<string, unknown>[]): Record<string, unknown> {
-    return { type: TABLE_NODE, content: rows };
-}
 
 type Fixture = {
     name: string;

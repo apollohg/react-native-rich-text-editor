@@ -20,10 +20,12 @@ use crate::tables::roles::{
     TABLE_CELL_ROWSPAN_ATTR,
 };
 use crate::tables::selection::{resolve_cell_rect, CellSelectionRect};
-use crate::tables::types::TableActionKind;
+use crate::tables::types::{try_resize, TableActionKind};
 
 pub(crate) mod columns;
 pub(crate) mod headers;
+pub(crate) mod merge;
+pub(crate) mod resize;
 pub(crate) mod rows;
 
 pub(crate) const DEFAULT_INSERTED_TABLE_ROWS: u32 = 3;
@@ -31,6 +33,8 @@ pub(crate) const DEFAULT_INSERTED_TABLE_COLUMNS: u32 = 3;
 pub(crate) const DEFAULT_INSERTED_TABLE_HEADER_ROW: bool = true;
 pub(crate) const MIN_INSERTED_TABLE_DIMENSION: u32 = 1;
 pub(crate) const MAX_INSERTED_TABLE_DIMENSION: u32 = 1_000;
+pub(crate) const MIN_TABLE_COLUMN_WIDTH: u32 = 1;
+pub(crate) const MAX_TABLE_COLUMN_WIDTH: u32 = 10_000;
 pub(crate) const MINIMUM_SURVIVING_ROWS: u32 = 1;
 pub(crate) const MINIMUM_SURVIVING_COLUMNS: u32 = 1;
 
@@ -39,6 +43,7 @@ pub(crate) const NODE_CLOSING_TOKENS: u32 = 1;
 pub(crate) const ONE_SLOT: u32 = 1;
 pub(crate) const FIRST_ROW: u32 = 0;
 pub(crate) const FIRST_COLUMN: u32 = 0;
+pub(crate) const FIRST_WIDTH_SLICE: u32 = 0;
 const UNSET_COLUMN_WIDTH: u64 = 0;
 const ONLY_CHILD: usize = 1;
 pub(crate) const CELL_INTERIOR_OFFSET: u32 = 2;
@@ -78,6 +83,11 @@ pub enum TableCommand {
     SelectTableRows,
     SelectTableColumns,
     ClearTableCells,
+    MergeTableCells,
+    SplitTableCell,
+    SetTableColumnWidth {
+        width: u32,
+    },
 }
 
 pub(crate) struct TableTarget<'a> {
@@ -407,6 +417,90 @@ pub(crate) fn attrs_with_removed_column(
     Some(attrs)
 }
 
+pub(crate) fn attrs_with_merged_span(
+    cell: &Node,
+    colspan: u32,
+    rowspan: u32,
+) -> Option<HashMap<String, Value>> {
+    let Ok(declared) = span_attribute(cell, TABLE_CELL_COLSPAN_ATTR) else {
+        return None;
+    };
+    let widened_by = colspan.checked_sub(declared)?;
+    let mut attrs = cell.attrs().clone();
+    attrs.insert(TABLE_CELL_COLSPAN_ATTR.to_string(), Value::from(colspan));
+    attrs.insert(TABLE_CELL_ROWSPAN_ATTR.to_string(), Value::from(rowspan));
+    if let Some(Value::Array(widths)) = cell.attrs().get(TABLE_CELL_COLWIDTH_ATTR) {
+        let mut widened = widths.clone();
+        let slice = (declared as usize).min(widened.len());
+        for _ in FIRST_WIDTH_SLICE..widened_by {
+            widened.insert(slice, Value::from(UNSET_COLUMN_WIDTH));
+        }
+        attrs.insert(TABLE_CELL_COLWIDTH_ATTR.to_string(), Value::Array(widened));
+    }
+    Some(attrs)
+}
+
+pub(crate) fn attrs_with_unit_span(cell: &Node, offset: u32) -> HashMap<String, Value> {
+    let mut attrs = cell.attrs().clone();
+    attrs.insert(
+        TABLE_CELL_COLSPAN_ATTR.to_string(),
+        Value::from(MIN_TABLE_CELL_SPAN),
+    );
+    attrs.insert(
+        TABLE_CELL_ROWSPAN_ATTR.to_string(),
+        Value::from(MIN_TABLE_CELL_SPAN),
+    );
+    if let Some(Value::Array(widths)) = cell.attrs().get(TABLE_CELL_COLWIDTH_ATTR) {
+        let slice = widths
+            .get(offset as usize)
+            .and_then(integral_unsigned)
+            .filter(|width| *width > UNSET_COLUMN_WIDTH);
+        attrs.insert(
+            TABLE_CELL_COLWIDTH_ATTR.to_string(),
+            match slice {
+                Some(width) => Value::Array(vec![Value::from(width)]),
+                None => Value::Null,
+            },
+        );
+    }
+    attrs
+}
+
+pub(crate) fn attrs_with_column_width(
+    cell: &Node,
+    offset: u32,
+    width: u32,
+) -> Option<HashMap<String, Value>> {
+    let Ok(colspan) = span_attribute(cell, TABLE_CELL_COLSPAN_ATTR) else {
+        return None;
+    };
+    let mut widths = match cell.attrs().get(TABLE_CELL_COLWIDTH_ATTR) {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(declared)) => declared.clone(),
+        Some(_) => return None,
+    };
+    if widths.len() < colspan as usize
+        && try_resize(
+            &mut widths,
+            colspan as usize,
+            Value::from(UNSET_COLUMN_WIDTH),
+        )
+        .is_err()
+    {
+        return None;
+    }
+    let slot = widths.get_mut(offset as usize)?;
+    *slot = Value::from(width);
+    let mut attrs = cell.attrs().clone();
+    attrs.insert(TABLE_CELL_COLWIDTH_ATTR.to_string(), Value::Array(widths));
+    Some(attrs)
+}
+
+pub(crate) fn cell_holds_only(cell: &Node, block: &Node) -> bool {
+    cell.content()
+        .is_some_and(|content| content.children() == std::slice::from_ref(block))
+}
+
 pub(crate) fn retyped_cell(schema: &Schema, cell: &Node, cell_type: &str) -> Option<Node> {
     Some(Node::element(
         cell_type.to_owned(),
@@ -547,6 +641,83 @@ impl TableAction for ToggleHeaderAction {
     }
 }
 
+pub(crate) struct MergeCellsAction;
+
+impl TableAction for MergeCellsAction {
+    fn kind(&self) -> TableActionKind {
+        TableActionKind::Merge
+    }
+
+    fn plan(
+        &self,
+        candidate: &TableActionCandidate<'_>,
+        schema: &Schema,
+        limits: &ResourceLimits,
+    ) -> Option<TableActionOutcome> {
+        let target = TableTarget::resolve(
+            candidate.document,
+            candidate.table_pos,
+            candidate.anchors,
+            schema,
+            limits,
+            GridRequirement::Regular,
+        )?;
+        merge::plan_merge_cells(&target, schema)
+    }
+}
+
+pub(crate) struct SplitCellAction;
+
+impl TableAction for SplitCellAction {
+    fn kind(&self) -> TableActionKind {
+        TableActionKind::Split
+    }
+
+    fn plan(
+        &self,
+        candidate: &TableActionCandidate<'_>,
+        schema: &Schema,
+        limits: &ResourceLimits,
+    ) -> Option<TableActionOutcome> {
+        let target = TableTarget::resolve(
+            candidate.document,
+            candidate.table_pos,
+            candidate.anchors,
+            schema,
+            limits,
+            GridRequirement::Regular,
+        )?;
+        merge::plan_split_cell(&target, schema)
+    }
+}
+
+pub(crate) struct SetColumnWidthAction {
+    pub width: u32,
+}
+
+impl TableAction for SetColumnWidthAction {
+    fn kind(&self) -> TableActionKind {
+        TableActionKind::Resize
+    }
+
+    fn plan(
+        &self,
+        candidate: &TableActionCandidate<'_>,
+        schema: &Schema,
+        limits: &ResourceLimits,
+    ) -> Option<TableActionOutcome> {
+        let target = TableTarget::resolve(
+            candidate.document,
+            candidate.table_pos,
+            candidate.anchors,
+            schema,
+            limits,
+            GridRequirement::Regular,
+        )?;
+        resize::plan_set_column_width(&target, self.width)
+    }
+}
+
 pub(crate) fn plan_insert_table(
     document: &Document,
     schema: &Schema,
@@ -670,10 +841,7 @@ pub(crate) fn plan_clear_cells(
     let default_block = default_text_block_node(schema)?;
     let mut operations = Vec::new();
     for (cell, node) in target.cells_in_rectangle(rect.top, rect.left, rect.bottom, rect.right) {
-        if node
-            .content()
-            .is_some_and(|content| content.children() == [default_block.clone()])
-        {
+        if cell_holds_only(node, &default_block) {
             continue;
         }
         operations.push(SemanticOperation::ReplaceRange {

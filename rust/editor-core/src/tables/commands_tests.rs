@@ -33,6 +33,8 @@ const CUSTOM_TABLE_NAMES: [&str; 4] = ["grid", "gridRow", "gridCell", "gridHeade
 const ANCHOR_CELL: usize = 2;
 const IDENTITY_FIXTURE_CELLS: usize = 5;
 const ONE_CHARACTER: u32 = 1;
+const NO_CELLS: usize = 0;
+const PROBE_COLUMN_WIDTH: u32 = 140;
 const SHARED_SURFACE_PROJECTIONS: u64 = 1;
 const STAGED_DELETION_PROJECTIONS: u64 = 4;
 
@@ -921,13 +923,13 @@ fn identity_fixture_json() -> String {
     .to_string()
 }
 
-fn session_cell_identities(session: &crate::session::EditorSession) -> Vec<String> {
+pub(crate) fn session_cell_identities(session: &crate::session::EditorSession) -> Vec<String> {
     crate::tables::normalize_tests::cell_identities(
         &session.engine.encoded_state().expect("the state encodes"),
     )
 }
 
-fn session_cell_openings(session: &crate::session::EditorSession) -> Vec<u32> {
+pub(crate) fn session_cell_openings(session: &crate::session::EditorSession) -> Vec<u32> {
     session
         .engine
         .table_projection_index()
@@ -940,19 +942,31 @@ fn session_cell_openings(session: &crate::session::EditorSession) -> Vec<u32> {
         .collect()
 }
 
-fn session_select_cell(session: &mut crate::session::EditorSession, index: usize) {
-    let opening = session_cell_openings(session)[index];
+pub(crate) fn session_select_cell(session: &mut crate::session::EditorSession, index: usize) {
+    session_select_rectangle(session, index, index);
+}
+
+pub(crate) fn session_select_rectangle(
+    session: &mut crate::session::EditorSession,
+    anchor_index: usize,
+    head_index: usize,
+) {
+    let openings = session_cell_openings(session);
+    let anchor_opening = openings[anchor_index];
+    let head_opening = openings[head_index];
     let document = session
         .engine
         .document()
         .expect("the engine is ready")
         .clone();
     let map = session.engine.position_map().expect("the engine is ready");
-    let point = RevisionedPosition {
+    let point = |opening: u32| RevisionedPosition {
         offset: map.doc_to_scalar(opening + CELL_TEXT_OFFSET, &document),
         kind: EditorOffsetKind::Scalar,
         affinity: Affinity::Before,
     };
+    let anchor = point(anchor_opening);
+    let head = point(head_opening);
     let revision = session.engine.revision();
     session
         .engine
@@ -961,16 +975,13 @@ fn session_select_cell(session: &mut crate::session::EditorSession, index: usize
             base_document_revision: revision,
             origin: TransactionOrigin::LocalApi,
             operations: Vec::new(),
-            selection_intent: SelectionIntent::Set(SelectionInput::Cell {
-                anchor: point,
-                head: point,
-            }),
+            selection_intent: SelectionIntent::Set(SelectionInput::Cell { anchor, head }),
             history_policy: HistoryPolicy::Skip,
         })
         .expect("the cell selection applies");
 }
 
-fn drain_document_updates(session: &mut crate::session::EditorSession) -> usize {
+pub(crate) fn drain_document_updates(session: &mut crate::session::EditorSession) -> usize {
     let (_, outbox) = session.engine_and_outbox();
     let Some(outbox) = outbox else {
         return NO_DOCUMENT_UPDATES;
@@ -994,17 +1005,25 @@ fn identity_session() -> crate::session::EditorSession {
     session
 }
 
+#[derive(Clone, Copy)]
+enum IdentitySelection {
+    Cell(usize),
+    Rectangle(usize, usize),
+}
+
 struct IdentityExpectation {
     command: TableCommand,
+    selection: IdentitySelection,
     surviving: &'static [usize],
     cells_after: usize,
 }
 
-const IDENTITY_EXPECTATIONS: [IdentityExpectation; 6] = [
+const IDENTITY_EXPECTATIONS: [IdentityExpectation; 10] = [
     IdentityExpectation {
         command: TableCommand::AddTableRow {
             side: TableEdge::After,
         },
+        selection: IdentitySelection::Cell(ANCHOR_CELL),
         surviving: &[0, 1, 2, 3, 4],
         cells_after: 7,
     },
@@ -1012,16 +1031,19 @@ const IDENTITY_EXPECTATIONS: [IdentityExpectation; 6] = [
         command: TableCommand::AddTableColumn {
             side: TableEdge::After,
         },
+        selection: IdentitySelection::Cell(ANCHOR_CELL),
         surviving: &[0, 1, 2, 3, 4],
         cells_after: 8,
     },
     IdentityExpectation {
         command: TableCommand::DeleteTableRows,
+        selection: IdentitySelection::Cell(ANCHOR_CELL),
         surviving: &[0, 1, 3, 4],
         cells_after: 4,
     },
     IdentityExpectation {
         command: TableCommand::DeleteTableColumns,
+        selection: IdentitySelection::Cell(ANCHOR_CELL),
         surviving: &[0, 3],
         cells_after: 2,
     },
@@ -1029,11 +1051,39 @@ const IDENTITY_EXPECTATIONS: [IdentityExpectation; 6] = [
         command: TableCommand::ToggleTableHeader {
             target: TableHeaderTarget::Row,
         },
+        selection: IdentitySelection::Cell(ANCHOR_CELL),
         surviving: &[1, 3, 4],
         cells_after: 5,
     },
     IdentityExpectation {
         command: TableCommand::ClearTableCells,
+        selection: IdentitySelection::Cell(ANCHOR_CELL),
+        surviving: &[0, 1, 2, 3, 4],
+        cells_after: 5,
+    },
+    IdentityExpectation {
+        command: TableCommand::MergeTableCells,
+        selection: IdentitySelection::Rectangle(1, 4),
+        surviving: &[0, 1, 3],
+        cells_after: 3,
+    },
+    IdentityExpectation {
+        command: TableCommand::MergeTableCells,
+        selection: IdentitySelection::Rectangle(0, 2),
+        surviving: &[0, 3, 4],
+        cells_after: 3,
+    },
+    IdentityExpectation {
+        command: TableCommand::SplitTableCell,
+        selection: IdentitySelection::Cell(0),
+        surviving: &[0, 1, 2, 3, 4],
+        cells_after: 6,
+    },
+    IdentityExpectation {
+        command: TableCommand::SetTableColumnWidth {
+            width: PROBE_COLUMN_WIDTH,
+        },
+        selection: IdentitySelection::Cell(ANCHOR_CELL),
         surviving: &[0, 1, 2, 3, 4],
         cells_after: 5,
     },
@@ -1046,7 +1096,12 @@ fn every_mutating_table_command_keeps_exactly_the_cell_identities_it_does_not_to
         let mut session = identity_session();
         let before = session_cell_identities(&session);
         assert_eq!(before.len(), IDENTITY_FIXTURE_CELLS);
-        session_select_cell(&mut session, ANCHOR_CELL);
+        match expectation.selection {
+            IdentitySelection::Cell(index) => session_select_cell(&mut session, index),
+            IdentitySelection::Rectangle(anchor, head) => {
+                session_select_rectangle(&mut session, anchor, head)
+            }
+        }
 
         session
             .engine
@@ -1177,6 +1232,11 @@ fn envelope_payload(command: TableCommand) -> Value {
         TableCommand::SelectTableRows => json!({ "type": "selectTableRows" }),
         TableCommand::SelectTableColumns => json!({ "type": "selectTableColumns" }),
         TableCommand::ClearTableCells => json!({ "type": "clearTableCells" }),
+        TableCommand::MergeTableCells => json!({ "type": "mergeTableCells" }),
+        TableCommand::SplitTableCell => json!({ "type": "splitTableCell" }),
+        TableCommand::SetTableColumnWidth { width } => {
+            json!({ "type": "setTableColumnWidth", "width": width })
+        }
     }
 }
 
@@ -1201,7 +1261,7 @@ const EVERY_TABLE_HEADER_TARGET: [TableHeaderTarget; 3] = [
     TableHeaderTarget::Column,
     TableHeaderTarget::Cell,
 ];
-const TABLE_COMMAND_ENVELOPE_CASES: usize = 14;
+const TABLE_COMMAND_ENVELOPE_CASES: usize = 17;
 
 fn every_table_command() -> Vec<TableCommand> {
     let mut commands = vec![
@@ -1216,6 +1276,11 @@ fn every_table_command() -> Vec<TableCommand> {
         TableCommand::SelectTableRows,
         TableCommand::SelectTableColumns,
         TableCommand::ClearTableCells,
+        TableCommand::MergeTableCells,
+        TableCommand::SplitTableCell,
+        TableCommand::SetTableColumnWidth {
+            width: PROBE_COLUMN_WIDTH,
+        },
     ];
     for side in EVERY_TABLE_EDGE {
         commands.push(TableCommand::AddTableRow { side });
@@ -1250,6 +1315,273 @@ fn every_table_command_discriminant_round_trips_through_its_envelope() {
             crate::native_transaction_bridge::table_command_envelope_for_test(&payload.to_string()),
             Ok(TypedCommand::Table(command)),
             "{payload} must parse back to the command that produced it",
+        );
+    }
+}
+
+fn empty_cell() -> Value {
+    json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
+        "content": [{ "type": PARAGRAPH_NODE }],
+    })
+}
+
+fn rich_cell(blocks: [&str; 2]) -> Value {
+    json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
+        "content": blocks
+            .iter()
+            .map(|text| json!({
+                "type": PARAGRAPH_NODE,
+                "content": [{ "type": "text", "text": text }],
+            }))
+            .collect::<Vec<Value>>(),
+    })
+}
+
+fn cell_blocks(table: &Value, row: usize, column: usize) -> Vec<String> {
+    table["content"][row]["content"][column]["content"]
+        .as_array()
+        .expect("the cell holds blocks")
+        .iter()
+        .map(|block| {
+            block["content"][0]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect()
+}
+
+fn cell_attrs(table: &Value, row: usize, column: usize) -> Value {
+    table["content"][row]["content"][column]["attrs"].clone()
+}
+
+fn cell_count(table: &Value, row: usize) -> usize {
+    table["content"][row]["content"]
+        .as_array()
+        .map_or(NO_CELLS, Vec::len)
+}
+
+#[test]
+fn merging_carries_every_source_block_into_the_top_left_cell() {
+    let mut engine = seeded(vec![table(vec![
+        row(vec![rich_cell(["a0", "a1"]), cell("b")]),
+        row(vec![cell("c"), empty_cell()]),
+    ])]);
+    select_cells(&mut engine, 0, 3);
+
+    applied(&mut engine, TableCommand::MergeTableCells);
+
+    let table = table_of(&engine);
+    assert_eq!(
+        cell_count(&table, 0),
+        1,
+        "the rectangle collapses to one cell"
+    );
+    assert_eq!(cell_count(&table, 1), 0, "the consumed row keeps no cells");
+    assert_eq!(
+        cell_blocks(&table, 0, 0),
+        vec!["a0", "a1", "b", "c"],
+        "the surviving cell keeps every source block in document order",
+    );
+    assert_eq!(spans_at(&engine, 0, 0), (2, 2));
+}
+
+#[test]
+fn merging_into_an_empty_survivor_replaces_its_placeholder_block() {
+    let mut engine = seeded(vec![table(vec![row(vec![empty_cell(), cell("b")])])]);
+    select_cells(&mut engine, 0, 1);
+
+    applied(&mut engine, TableCommand::MergeTableCells);
+
+    let table = table_of(&engine);
+    assert_eq!(
+        cell_blocks(&table, 0, 0),
+        vec!["b"],
+        "an empty survivor drops its placeholder instead of keeping a blank block",
+    );
+    assert_eq!(spans_at(&engine, 0, 0), (1, 2));
+}
+
+#[test]
+fn merging_a_selection_that_cuts_a_span_closes_over_the_whole_span() {
+    let mut engine = seeded(tall_span_fixture());
+    select_cells(&mut engine, 2, 3);
+
+    applied(&mut engine, TableCommand::MergeTableCells);
+
+    let table = table_of(&engine);
+    assert_eq!(
+        cell_blocks(&table, 0, 0),
+        vec!["tall", "a1", "b1", "c0", "c1"],
+        "the cut span pulls the whole table into the merge",
+    );
+    assert_eq!(spans_at(&engine, 0, 0), (3, 2));
+}
+
+#[test]
+fn merging_mixed_cell_types_keeps_the_surviving_cell_type() {
+    let mut engine = seeded(header_fixture());
+    select_cells(&mut engine, 0, 1);
+
+    applied(&mut engine, TableCommand::MergeTableCells);
+
+    let table = table_of(&engine);
+    assert_eq!(row_types(&table, 0), vec![HEADER_CELL_NODE.to_owned()]);
+    assert_eq!(cell_blocks(&table, 0, 0), vec!["h0", "h1"]);
+}
+
+#[test]
+fn merging_declines_when_the_selection_covers_one_cell() {
+    let mut engine = seeded(regular_fixture());
+    select_cell(&mut engine, 0);
+
+    assert_eq!(
+        run(&mut engine, TableCommand::MergeTableCells),
+        Ok(None),
+        "a single cell has nothing to merge with",
+    );
+}
+
+#[test]
+fn splitting_a_horizontal_span_slices_its_widths_and_keeps_its_content() {
+    let mut engine = seeded(wide_span_fixture());
+    select_cell(&mut engine, 0);
+
+    applied(&mut engine, TableCommand::SplitTableCell);
+
+    let table = table_of(&engine);
+    assert_eq!(row_texts(&table, 0), vec!["wide".to_owned(), String::new()]);
+    assert_eq!(cell_attrs(&table, 0, 0)["colwidth"], json!([120]));
+    assert_eq!(cell_attrs(&table, 0, 1)["colwidth"], json!([160]));
+    assert_eq!(spans_at(&engine, 0, 0), (1, 1));
+}
+
+#[test]
+fn splitting_a_vertical_span_mints_an_empty_cell_in_every_covered_row() {
+    let mut engine = seeded(tall_span_fixture());
+    select_cell(&mut engine, 0);
+
+    applied(&mut engine, TableCommand::SplitTableCell);
+
+    let table = table_of(&engine);
+    assert_eq!(
+        row_texts(&table, 0),
+        vec!["tall".to_owned(), "a1".to_owned()]
+    );
+    assert_eq!(row_texts(&table, 1), vec![String::new(), "b1".to_owned()]);
+    assert_eq!(spans_at(&engine, 0, 0), (1, 1));
+}
+
+#[test]
+fn splitting_declines_on_a_cell_that_spans_nothing() {
+    let mut engine = seeded(regular_fixture());
+    select_cell(&mut engine, 0);
+
+    assert_eq!(
+        run(&mut engine, TableCommand::SplitTableCell),
+        Ok(None),
+        "an unspanned cell has nothing to split",
+    );
+}
+
+fn resize_fixture() -> Vec<Value> {
+    vec![table(vec![
+        row(vec![cell_with(2, SINGLE_SPAN, Value::Null, "wide")]),
+        row(vec![cell("b0"), cell("b1")]),
+    ])]
+}
+
+#[test]
+fn resizing_writes_one_logical_column_across_every_covering_cell() {
+    let mut engine = seeded(resize_fixture());
+    select_cell(&mut engine, 1);
+
+    applied(
+        &mut engine,
+        TableCommand::SetTableColumnWidth {
+            width: PROBE_COLUMN_WIDTH,
+        },
+    );
+
+    let table = table_of(&engine);
+    assert_eq!(
+        cell_attrs(&table, 0, 0)["colwidth"],
+        json!([PROBE_COLUMN_WIDTH, 0]),
+        "a spanning cell keeps its per-span indexing and only writes its own slice",
+    );
+    assert_eq!(
+        cell_attrs(&table, 1, 0)["colwidth"],
+        json!([PROBE_COLUMN_WIDTH]),
+    );
+    assert_eq!(
+        cell_attrs(&table, 1, 1)["colwidth"],
+        Value::Null,
+        "the untargeted column keeps its unset width",
+    );
+}
+
+#[test]
+fn resizing_targets_the_right_edge_of_the_selected_rectangle() {
+    let mut engine = seeded(resize_fixture());
+    select_cell(&mut engine, 2);
+
+    applied(
+        &mut engine,
+        TableCommand::SetTableColumnWidth {
+            width: PROBE_COLUMN_WIDTH,
+        },
+    );
+
+    let table = table_of(&engine);
+    assert_eq!(
+        cell_attrs(&table, 0, 0)["colwidth"],
+        json!([0, PROBE_COLUMN_WIDTH]),
+    );
+    assert_eq!(cell_attrs(&table, 1, 0)["colwidth"], Value::Null);
+    assert_eq!(
+        cell_attrs(&table, 1, 1)["colwidth"],
+        json!([PROBE_COLUMN_WIDTH]),
+    );
+}
+
+#[test]
+fn resizing_declines_when_every_covering_cell_already_carries_the_width() {
+    let mut engine = seeded(resize_fixture());
+    select_cell(&mut engine, 1);
+    applied(
+        &mut engine,
+        TableCommand::SetTableColumnWidth {
+            width: PROBE_COLUMN_WIDTH,
+        },
+    );
+
+    assert_eq!(
+        run(
+            &mut engine,
+            TableCommand::SetTableColumnWidth {
+                width: PROBE_COLUMN_WIDTH,
+            },
+        ),
+        Ok(None),
+        "an unchanged width must not mint a transaction",
+    );
+}
+
+#[test]
+fn a_column_width_envelope_refuses_an_unbounded_width() {
+    for width in [json!(0), json!(100_000)] {
+        let refusal = crate::native_transaction_bridge::table_command_envelope_for_test(
+            &json!({ "type": "setTableColumnWidth", "width": width }).to_string(),
+        )
+        .expect_err("an out-of-range width must not parse");
+
+        assert!(
+            refusal.contains("table column width"),
+            "the refusal must name the width bound, got {refusal}",
         );
     }
 }

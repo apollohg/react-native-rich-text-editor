@@ -121,10 +121,15 @@ function wirePayload(
     payload: Record<string, unknown>,
 ): Record<string, unknown> {
     if (operation === 'command') {
-        const { at, ...command } = payload;
-        return at === undefined
-            ? { kind: 'command', command }
-            : { kind: 'command', command, at };
+        const { at, head, ...command } = payload;
+        const wired: Record<string, unknown> = { kind: 'command', command };
+        if (at !== undefined) {
+            wired['at'] = at;
+        }
+        if (head !== undefined) {
+            wired['head'] = head;
+        }
+        return wired;
     }
     return payload;
 }

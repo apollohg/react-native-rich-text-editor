@@ -1,4 +1,3 @@
-const PROTECTED_UNDO_ELEMENT_TAGS: [&str; 1] = ["paragraph"];
 const MAX_RETAINED_REDONE_CHAINS: usize = 64;
 
 pub(crate) struct RedoneChain {
@@ -41,12 +40,8 @@ fn flatten_reverted_containers<T: ReadTxn>(
             XmlOut::Text(text) => ContainerProtection::Text {
                 empty: text.len(txn) == 0,
             },
-            XmlOut::Element(element)
-                if PROTECTED_UNDO_ELEMENT_TAGS.contains(&element.tag().as_ref()) =>
-            {
-                ContainerProtection::ProtectedElement
-            }
-            _ => ContainerProtection::Unprotected,
+            XmlOut::Element(_) => ContainerProtection::ProtectedElement,
+            XmlOut::Fragment(_) => ContainerProtection::Unprotected,
         };
         nodes.push(ContainerNode {
             parent,

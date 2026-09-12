@@ -99,6 +99,8 @@ enum LocalMutation {
         command: serde_json::Value,
         #[serde(default)]
         at: Option<u32>,
+        #[serde(default)]
+        head: Option<u32>,
     },
     Selection {
         selection: serde_json::Value,
@@ -376,8 +378,11 @@ impl RustPeer {
     fn command(&mut self, payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
         let mutation: LocalMutation = parse_payload(payload)?;
         reset_planned_normalization_passes();
-        if let LocalMutation::Command { at: Some(at), .. } = &mutation {
-            self.anchor_caret(*at)?;
+        if let LocalMutation::Command {
+            at: Some(at), head, ..
+        } = &mutation
+        {
+            self.anchor_selection(*at, *head)?;
         }
         let request_id = self.next_request_id();
         let session = self.session_mut()?;
@@ -396,7 +401,7 @@ impl RustPeer {
         Ok(value)
     }
 
-    fn anchor_caret(&mut self, at: u32) -> Result<(), SessionError> {
+    fn anchor_selection(&mut self, at: u32, head: Option<u32>) -> Result<(), SessionError> {
         let request_id = self.next_request_id();
         let session = self.session_mut()?;
         let base_document_revision = session.engine.revision();
@@ -411,11 +416,28 @@ impl RustPeer {
             .ok_or_else(|| config_invalid("the peer has no position map to anchor a command in"))?
             .doc_to_scalar(at, &document);
         let point = serde_json::json!({ "offset": scalar, "kind": "scalar" });
+        let selection = match head {
+            None => serde_json::json!({ "type": "text", "anchor": point, "head": point }),
+            Some(head) => {
+                let head_scalar = session
+                    .engine
+                    .position_map()
+                    .ok_or_else(|| {
+                        config_invalid("the peer has no position map to anchor a command in")
+                    })?
+                    .doc_to_scalar(head, &document);
+                serde_json::json!({
+                    "type": "cell",
+                    "anchorCell": point,
+                    "headCell": { "offset": head_scalar, "kind": "scalar" },
+                })
+            }
+        };
         let envelope = serde_json::json!({
             "version": NATIVE_BRIDGE_ENVELOPE_VERSION,
             "requestId": request_id.to_string(),
             "baseDocumentRevision": base_document_revision.to_string(),
-            "selection": { "type": "text", "anchor": point, "head": point },
+            "selection": selection,
         })
         .to_string();
         NativeTransactionBridge::new(session).submit_selection(&envelope)?;

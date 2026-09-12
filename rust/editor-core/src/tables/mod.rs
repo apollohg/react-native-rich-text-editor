@@ -15,6 +15,8 @@ mod admission_tests;
 #[cfg(test)]
 mod commands_tests;
 #[cfg(test)]
+mod history_tests;
+#[cfg(test)]
 mod normalize_tests;
 #[cfg(test)]
 mod projection_tests;

@@ -30,7 +30,7 @@ use crate::session::{EditorSession, ErrorDomain, OperationFailureClass, SessionE
 use crate::tables::commands::{
     TableCommand, TableEdge, TableHeaderTarget, DEFAULT_INSERTED_TABLE_COLUMNS,
     DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS, MAX_INSERTED_TABLE_DIMENSION,
-    MIN_INSERTED_TABLE_DIMENSION,
+    MAX_TABLE_COLUMN_WIDTH, MIN_INSERTED_TABLE_DIMENSION, MIN_TABLE_COLUMN_WIDTH,
 };
 use crate::yrs_engine::{
     Affinity, CommandPlan, EditorOffsetKind, HistoryPolicy, OperationError, ReplacementHistory,

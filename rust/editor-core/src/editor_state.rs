@@ -16,7 +16,8 @@ use crate::transform::{Step, Transaction};
 
 const FIXED_COMMAND_ENTRIES: usize = 8;
 const HEADING_COMMAND_LEVELS: u8 = 6;
-const TABLE_COMMAND_ENTRIES: usize = 14;
+const TABLE_COMMAND_ENTRIES: usize = 17;
+pub(crate) const ADVERTISED_TABLE_COLUMN_WIDTH: u32 = 120;
 pub(crate) const ACTIVE_COMMAND_ENTRIES: usize =
     FIXED_COMMAND_ENTRIES + HEADING_COMMAND_LEVELS as usize + TABLE_COMMAND_ENTRIES;
 
@@ -334,6 +335,14 @@ fn table_command_surface() -> [(&'static str, TableCommand); TABLE_COMMAND_ENTRI
         ("clearTableCells", TableCommand::ClearTableCells),
         ("selectTableRows", TableCommand::SelectTableRows),
         ("selectTableColumns", TableCommand::SelectTableColumns),
+        ("mergeTableCells", TableCommand::MergeTableCells),
+        ("splitTableCell", TableCommand::SplitTableCell),
+        (
+            "setTableColumnWidth",
+            TableCommand::SetTableColumnWidth {
+                width: ADVERTISED_TABLE_COLUMN_WIDTH,
+            },
+        ),
     ]
 }
 

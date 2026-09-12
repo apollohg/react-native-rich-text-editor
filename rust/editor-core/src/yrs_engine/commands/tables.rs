@@ -9,10 +9,10 @@ use crate::tables::command_context::{
     is_action_unavailable, prepare_table_action, CellAnchorPair, TableAction, TableActionContext,
 };
 use crate::tables::commands::{
-    columns, headers, plan_clear_cells, plan_delete_table, plan_insert_table, plan_select_columns,
-    plan_select_rows, rows, DeleteColumnsAction, DeleteRowsAction, GridRequirement,
-    InsertColumnAction, InsertRowAction, TableCommand, TableTarget, ToggleHeaderAction,
-    CELL_INTERIOR_OFFSET,
+    columns, headers, merge, plan_clear_cells, plan_delete_table, plan_insert_table,
+    plan_select_columns, plan_select_rows, resize, rows, DeleteColumnsAction, DeleteRowsAction,
+    GridRequirement, InsertColumnAction, InsertRowAction, MergeCellsAction, SetColumnWidthAction,
+    SplitCellAction, TableCommand, TableTarget, ToggleHeaderAction, CELL_INTERIOR_OFFSET,
 };
 use crate::tables::selection::{cell_opening_containing, resolve_cell_rect};
 use crate::yrs_engine::{
@@ -322,6 +322,18 @@ pub(super) fn plan(
             }
         }
         TableCommand::ClearTableCells => clear_cells(&context, &selection, anchor.as_ref()),
+        TableCommand::MergeTableCells => match anchor {
+            None => Ok(CommandPlan::NotApplicable),
+            Some(anchor) => scoped_action(&context, &anchor, &MergeCellsAction),
+        },
+        TableCommand::SplitTableCell => match anchor {
+            None => Ok(CommandPlan::NotApplicable),
+            Some(anchor) => scoped_action(&context, &anchor, &SplitCellAction),
+        },
+        TableCommand::SetTableColumnWidth { width } => match anchor {
+            None => Ok(CommandPlan::NotApplicable),
+            Some(anchor) => scoped_action(&context, &anchor, &SetColumnWidthAction { width }),
+        },
     }
 }
 
@@ -420,6 +432,15 @@ impl<'a> TableCommandSurface<'a> {
                 .target
                 .as_ref()
                 .is_some_and(|target| plan_clear_cells(target, self.schema).is_some()),
+            TableCommand::MergeTableCells => self
+                .regular_target()
+                .is_some_and(|target| merge::plan_merge_cells(target, self.schema).is_some()),
+            TableCommand::SplitTableCell => self
+                .regular_target()
+                .is_some_and(|target| merge::plan_split_cell(target, self.schema).is_some()),
+            TableCommand::SetTableColumnWidth { width } => self
+                .regular_target()
+                .is_some_and(|target| resize::plan_set_column_width(target, width).is_some()),
         }
     }
 }

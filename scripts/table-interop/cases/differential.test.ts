@@ -10,94 +10,18 @@ import {
 } from '../controller.js';
 import type { Peer, TableCommand } from '../peer-protocol.js';
 import {
-    CELL_NODE,
-    HEADER_CELL_NODE,
-    PARAGRAPH_NODE,
-    ROW_NODE,
     TABLE_NODE,
     TABLE_SCHEMA,
+    canonical,
+    cell,
+    row,
+    table,
+    tableOf,
 } from '../table-schema.js';
 
 const NO_NORMALIZATION_PASSES = 0;
 const NO_COLLISIONS = 0;
 const ONE_NORMALIZATION_PASS = 1;
-const SINGLE_SPAN = 1;
-
-type CellOptions = {
-    colspan?: number;
-    rowspan?: number;
-    colwidth?: number[] | null;
-    header?: boolean;
-    text?: string;
-};
-
-function cell(options: CellOptions = {}): Record<string, unknown> {
-    const paragraph = options.text === undefined
-        ? { type: PARAGRAPH_NODE }
-        : { type: PARAGRAPH_NODE, content: [{ type: 'text', text: options.text }] };
-    return {
-        type: options.header === true ? HEADER_CELL_NODE : CELL_NODE,
-        attrs: {
-            colspan: options.colspan ?? SINGLE_SPAN,
-            rowspan: options.rowspan ?? SINGLE_SPAN,
-            colwidth: options.colwidth ?? null,
-        },
-        content: [paragraph],
-    };
-}
-
-function row(cells: Record<string, unknown>[]): Record<string, unknown> {
-    return { type: ROW_NODE, content: cells };
-}
-
-function table(rows: Record<string, unknown>[]): Record<string, unknown> {
-    return { type: TABLE_NODE, content: rows };
-}
-
-const CELL_ATTRIBUTE_DEFAULTS: Record<string, unknown> = {
-    colspan: SINGLE_SPAN,
-    rowspan: SINGLE_SPAN,
-    colwidth: null,
-};
-
-function withoutDefaultCellAttributes(attrs: Record<string, unknown>): Record<string, unknown> {
-    const kept: Record<string, unknown> = {};
-    for (const key of Object.keys(attrs).sort()) {
-        const value = attrs[key];
-        if (key in CELL_ATTRIBUTE_DEFAULTS && value === CELL_ATTRIBUTE_DEFAULTS[key]) {
-            continue;
-        }
-        kept[key] = canonical(value);
-    }
-    return kept;
-}
-
-function canonical(value: unknown): unknown {
-    if (Array.isArray(value)) {
-        return value.map(canonical);
-    }
-    if (value === null || typeof value !== 'object') {
-        return value;
-    }
-    const record = value as Record<string, unknown>;
-    const result: Record<string, unknown> = {};
-    for (const key of Object.keys(record).sort()) {
-        const entry = record[key];
-        if (key === 'content' && Array.isArray(entry) && entry.length === 0) {
-            continue;
-        }
-        if (key === 'attrs' && entry !== null && typeof entry === 'object') {
-            const attrs = withoutDefaultCellAttributes(entry as Record<string, unknown>);
-            if (Object.keys(attrs).length === 0) {
-                continue;
-            }
-            result[key] = attrs;
-            continue;
-        }
-        result[key] = canonical(entry);
-    }
-    return result;
-}
 
 async function nativeNormalization(
     peer: Peer,
@@ -323,7 +247,6 @@ test('only an explicit normalization request advances the native pass counter', 
 });
 
 const ANCHOR_CELL_POSITION = 3;
-const ONE_TABLE = 1;
 
 type CommandScenario = {
     name: string;
@@ -387,18 +310,6 @@ function commandFixture(): Record<string, unknown> {
     ]);
 }
 
-function onlyTable(documentJson: Record<string, unknown> | null): unknown {
-    const content = documentJson?.['content'];
-    assert.ok(Array.isArray(content), 'the peer document carried no content array');
-    const tables = content.filter(
-        (node): node is Record<string, unknown> =>
-            typeof node === 'object' && node !== null
-            && (node as Record<string, unknown>)['type'] === TABLE_NODE,
-    );
-    assert.equal(tables.length, ONE_TABLE, 'the fixture document holds exactly one table');
-    return canonical(tables[0]);
-}
-
 test('TBL-06 row, column and header commands agree with prosemirror-tables 1.8.5', async (context) => {
     for (const scenario of COMMAND_SCENARIOS) {
         await context.test(scenario.name, async () => {
@@ -409,8 +320,8 @@ test('TBL-06 row, column and header commands agree with prosemirror-tables 1.8.5
                     await seedFrom(web, [engine]);
                     await exchangeUntilIdle([web, engine]);
                     assert.deepEqual(
-                        onlyTable((await snapshot(engine)).documentJson),
-                        onlyTable((await snapshot(web)).documentJson),
+                        tableOf((await snapshot(engine)).documentJson),
+                        tableOf((await snapshot(web)).documentJson),
                         'the peers must start from the same table',
                     );
 
@@ -425,8 +336,8 @@ test('TBL-06 row, column and header commands agree with prosemirror-tables 1.8.5
                     });
 
                     assert.deepEqual(
-                        onlyTable((await snapshot(engine)).documentJson),
-                        onlyTable((await snapshot(web)).documentJson),
+                        tableOf((await snapshot(engine)).documentJson),
+                        tableOf((await snapshot(web)).documentJson),
                         `the engine and prosemirror-tables disagree about ${scenario.name}`,
                     );
                 },

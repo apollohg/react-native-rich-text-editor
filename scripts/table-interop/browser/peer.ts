@@ -6,6 +6,7 @@ import { EditorView } from 'prosemirror-view';
 import { schema as prosemirrorBasicSchema } from 'prosemirror-schema-basic';
 import { Schema as ProsemirrorSchema } from 'prosemirror-model';
 import {
+    CellSelection,
     TableMap,
     addColumnAfter,
     addColumnBefore,
@@ -15,6 +16,8 @@ import {
     deleteRow,
     deleteTable,
     fixTables,
+    mergeCells,
+    splitCell,
     tableEditing,
     tableNodes,
     toggleHeaderCell,
@@ -81,10 +84,14 @@ const TABLE_COMMANDS: Record<string, Command> = {
     deleteColumn,
     deleteRow,
     deleteTable,
+    mergeCells,
+    splitCell,
     toggleHeaderCell,
     toggleHeaderColumn,
     toggleHeaderRow,
 };
+const TABLE_CELL_ROLES = ['cell', 'header_cell'];
+const CELL_DEPTH_FLOOR = 1;
 
 const tableSchema = new ProsemirrorSchema({
     nodes: prosemirrorBasicSchema.spec.nodes.append(
@@ -258,7 +265,41 @@ function bindingOriginFor(kind: WebPeerKind): unknown {
     return kind === 'prosemirror' ? ySyncPluginKey : tiptapSyncPluginKey;
 }
 
+function cellPositionAt(doc: ProsemirrorNode, position: number): number {
+    const resolved = doc.resolve(position);
+    for (let depth = resolved.depth; depth >= CELL_DEPTH_FLOOR; depth -= 1) {
+        const role = resolved.node(depth).type.spec['tableRole'];
+        if (typeof role === 'string' && TABLE_CELL_ROLES.includes(role)) {
+            return resolved.before(depth);
+        }
+    }
+    throw new PeerOperationError(
+        CONFIG_INVALID,
+        `document position ${position} is not inside a table cell`,
+    );
+}
+
+function anchorSelection(editor: MountedEditor, command: Record<string, unknown>): void {
+    const at = command['at'];
+    if (at === undefined) {
+        return;
+    }
+    const anchor = requirePositiveInteger(at, 'command.at');
+    const head = command['head'];
+    const { state } = editor.view;
+    const selection = head === undefined
+        ? TextSelection.near(state.doc.resolve(anchor))
+        : new CellSelection(
+            state.doc.resolve(cellPositionAt(state.doc, anchor)),
+            state.doc.resolve(
+                cellPositionAt(state.doc, requirePositiveInteger(head, 'command.head')),
+            ),
+        );
+    editor.view.dispatch(state.tr.setSelection(selection));
+}
+
 function applyCommand(editor: MountedEditor, command: Record<string, unknown>): void {
+    anchorSelection(editor, command);
     const type = command['type'];
     if (type === INSERT_TEXT_COMMAND) {
         const text = requireString(command['text'], 'command.text');
@@ -281,10 +322,6 @@ function applyCommand(editor: MountedEditor, command: Record<string, unknown>): 
                 `table command ${JSON.stringify(name)} is not served by the web peer`,
             );
         }
-        const { state } = editor.view;
-        editor.view.dispatch(
-            state.tr.setSelection(TextSelection.near(state.doc.resolve(at))),
-        );
         if (!tableCommand(editor.view.state, editor.view.dispatch, editor.view)) {
             throw new PeerOperationError(
                 CONFIG_INVALID,
@@ -641,9 +678,11 @@ class WebPeerRuntime {
             );
         }
         const anchor = payload['at'];
+        const head = payload['head'];
         const command = {
             ...requireRecord(payload['command'], 'payload.command'),
             ...(anchor === undefined ? {} : { at: anchor }),
+            ...(head === undefined ? {} : { head }),
         };
         const editor = this.requireEditor();
         const changed = await this.runRequestedOperation(() => {

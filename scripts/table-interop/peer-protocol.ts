@@ -9,7 +9,10 @@ export type TableCommand =
     | { type: 'toggleTableHeader'; target: 'row' | 'column' | 'cell' }
     | { type: 'selectTableRows' }
     | { type: 'selectTableColumns' }
-    | { type: 'clearTableCells' };
+    | { type: 'clearTableCells' }
+    | { type: 'mergeTableCells' }
+    | { type: 'splitTableCell' }
+    | { type: 'setTableColumnWidth'; width: number };
 export type Request = {
     id: string;
     operation: 'initialize' | 'command' | 'undo' | 'redo' | 'applyUpdate'

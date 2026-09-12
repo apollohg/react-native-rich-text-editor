@@ -222,6 +222,26 @@ enum CommandEnvelope {
     SelectTableRows,
     SelectTableColumns,
     ClearTableCells,
+    MergeTableCells,
+    SplitTableCell,
+    SetTableColumnWidth {
+        #[serde(deserialize_with = "deserialize_table_column_width")]
+        width: u32,
+    },
+}
+
+fn deserialize_table_column_width<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let width = <u32 as serde::Deserialize>::deserialize(deserializer)?;
+    if (MIN_TABLE_COLUMN_WIDTH..=MAX_TABLE_COLUMN_WIDTH).contains(&width) {
+        return Ok(width);
+    }
+    Err(serde::de::Error::custom(format!(
+        "table column width {width} is outside \
+         {MIN_TABLE_COLUMN_WIDTH}..={MAX_TABLE_COLUMN_WIDTH}"
+    )))
 }
 
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
@@ -436,6 +456,11 @@ impl From<CommandEnvelope> for TypedCommand {
             CommandEnvelope::SelectTableRows => Self::Table(TableCommand::SelectTableRows),
             CommandEnvelope::SelectTableColumns => Self::Table(TableCommand::SelectTableColumns),
             CommandEnvelope::ClearTableCells => Self::Table(TableCommand::ClearTableCells),
+            CommandEnvelope::MergeTableCells => Self::Table(TableCommand::MergeTableCells),
+            CommandEnvelope::SplitTableCell => Self::Table(TableCommand::SplitTableCell),
+            CommandEnvelope::SetTableColumnWidth { width } => {
+                Self::Table(TableCommand::SetTableColumnWidth { width })
+            }
         }
     }
 }
@@ -449,6 +474,12 @@ enum SelectionEnvelope {
     },
     Node {
         at: PositionEnvelope,
+    },
+    Cell {
+        #[serde(rename = "anchorCell")]
+        anchor_cell: PositionEnvelope,
+        #[serde(rename = "headCell")]
+        head_cell: PositionEnvelope,
     },
     Atom {
         #[serde(rename = "docPos")]
@@ -474,6 +505,13 @@ impl From<SelectionEnvelope> for SelectionInput {
                 head: head.into(),
             },
             SelectionEnvelope::Node { at } => Self::Node { at: at.into() },
+            SelectionEnvelope::Cell {
+                anchor_cell,
+                head_cell,
+            } => Self::Cell {
+                anchor: anchor_cell.into(),
+                head: head_cell.into(),
+            },
             SelectionEnvelope::All => Self::All,
             SelectionEnvelope::Atom { .. } => {
                 unreachable!("atom selections require document mapping")
