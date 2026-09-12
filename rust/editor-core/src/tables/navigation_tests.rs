@@ -4,11 +4,16 @@ use serde_json::{json, Value};
 
 use crate::command_planner::SemanticOperation;
 use crate::model::Document;
+use crate::schema::Schema;
 use crate::tables::admission::TableProjectionIndex;
+use crate::tables::commands::node_starting_at;
 use crate::tables::commands::{TableCommand, DEFAULT_TAB_APPENDS_A_ROW};
 use crate::tables::interchange::{first_editable_position_in_cell, next_outer_cell, CellStep};
 use crate::tables::mutation_guard::{admit_local_mutation, LocalMutationRefusal};
 use crate::tables::normalize_tests::{cell, cell_with, document_with, limits, row, schema, table};
+use crate::tables::tests::{
+    tabled_schema_with_wrapper_block, PROSEMIRROR_TABLE_NAMES, WRAPPER_BLOCK_NODE,
+};
 use crate::yrs_engine::{
     Affinity, EditorOffsetKind, InitializationMode, RevisionedPosition, SelectionInput,
     TransactionOrigin, TypedCommand, YrsDocumentEngine, YrsEngineConfig,
@@ -33,6 +38,8 @@ const NESTED_CELL_TEXT: &str = "inner";
 const BLOCK_BOUNDARY_TOKENS: u32 = 2;
 const FIRST_INTRA_CELL_BLOCK_TEXT: &str = "one";
 const SECOND_INTRA_CELL_BLOCK_TEXT: &str = "two";
+const TRAILING_CELL_TEXT: &str = "after";
+const TYPED_CHARACTER: &str = "x";
 
 fn cell_holding_a_nested_table() -> Value {
     json!({
@@ -53,7 +60,15 @@ fn nested_fixture() -> Document {
 }
 
 fn index_of(document: &Document) -> TableProjectionIndex {
-    TableProjectionIndex::derive_or_fallback(document, &schema(), &limits())
+    index_with(document, &schema())
+}
+
+fn index_with(document: &Document, schema: &Schema) -> TableProjectionIndex {
+    TableProjectionIndex::derive_or_fallback(document, schema, &limits())
+}
+
+fn wrapper_schema() -> Schema {
+    tabled_schema_with_wrapper_block(PROSEMIRROR_TABLE_NAMES)
 }
 
 fn openings(index: &TableProjectionIndex, table_pos: u32) -> Vec<u32> {
@@ -75,8 +90,12 @@ fn nested_table_position(index: &TableProjectionIndex) -> u32 {
 }
 
 fn engine_with(document_json: Value) -> YrsDocumentEngine {
+    engine_with_schema(schema(), document_json)
+}
+
+fn engine_with_schema(schema: Schema, document_json: Value) -> YrsDocumentEngine {
     let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
-        schema: schema(),
+        schema,
         fragment_name: FRAGMENT_NAME.into(),
         initialization_mode: InitializationMode::LocalEmpty,
         resource_limits: limits(),
@@ -814,5 +833,82 @@ fn an_unreachable_cell_declines_through_the_value_channel_not_the_error_channel(
         first_editable_position_in_cell(&document, &schema(), outer[0]),
         Ok(Some(outer[0] + CELL_TEXT_OFFSET)),
         "an ordinary cell reports its first editable position",
+    );
+}
+
+fn cell_wrapping_a_nested_table() -> Value {
+    json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
+        "content": [
+            {
+                "type": WRAPPER_BLOCK_NODE,
+                "content": [table(vec![row(vec![cell(NESTED_CELL_TEXT)])])],
+            },
+            { "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": TRAILING_CELL_TEXT }] },
+        ],
+    })
+}
+
+fn wrapped_nested_table_fixture() -> Value {
+    json!({ "type": "doc", "content": [table(vec![
+        row(vec![cell("a"), cell_wrapping_a_nested_table()]),
+    ])] })
+}
+
+#[test]
+fn a_nested_table_behind_a_wrapper_block_is_excluded_from_the_first_editable_position() {
+    let schema = wrapper_schema();
+    let document = crate::serialize::json_in::from_prosemirror_json(
+        &wrapped_nested_table_fixture(),
+        &schema,
+        crate::serialize::json_in::UnknownTypeMode::Preserve,
+    )
+    .expect("the wrapped fixture parses");
+    let index = index_with(&document, &schema);
+    let wrapped_cell = openings(&index, OUTER_TABLE_POSITION)[SECOND_CELL_ANCHOR];
+    let wrapper = node_starting_at(&document, wrapped_cell + NODE_OPENING_TOKENS)
+        .expect("the wrapped cell leads with the wrapper block");
+    let trailing_paragraph_interior =
+        wrapped_cell + NODE_OPENING_TOKENS + wrapper.node_size() + NODE_OPENING_TOKENS;
+
+    assert_eq!(
+        first_editable_position_in_cell(&document, &schema, wrapped_cell),
+        Ok(Some(trailing_paragraph_interior)),
+        "a nested table wrapped in another block is excluded with its whole subtree, so the \
+         first editable position is the paragraph that follows the wrapper",
+    );
+}
+
+#[test]
+fn tab_into_a_cell_that_wraps_a_nested_table_lands_on_an_editable_caret() {
+    let schema = wrapper_schema();
+    let mut engine = engine_with_schema(schema.clone(), wrapped_nested_table_fixture());
+    let outer = openings(
+        &index_with(engine.document().expect("the engine is ready"), &schema),
+        OUTER_TABLE_POSITION,
+    );
+
+    caret_at(&mut engine, outer[FIRST_CELL_ANCHOR] + CELL_TEXT_OFFSET);
+    assert!(
+        step(&mut engine, CellStep::Forward, DEFAULT_TAB_APPENDS_A_ROW).is_some(),
+        "tab into the wrapped cell must be planned",
+    );
+    engine
+        .apply_command(
+            REQUEST_ID,
+            TypedCommand::InsertText {
+                text: TYPED_CHARACTER.to_string(),
+            },
+        )
+        .expect("the keystroke after tab must be admitted, not refused as a nested edit");
+
+    let document = engine.document_json().expect("the engine is ready");
+    assert_eq!(
+        document["content"][0]["content"][0]["content"][SECOND_CELL_ANCHOR]["content"][1]
+            ["content"][0]["text"],
+        json!(format!("{TYPED_CHARACTER}{TRAILING_CELL_TEXT}")),
+        "the caret landed in the paragraph after the wrapper, so typing edits that paragraph \
+         rather than the cell the caret came from",
     );
 }

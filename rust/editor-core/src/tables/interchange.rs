@@ -144,6 +144,49 @@ fn effective_cell(node: &Node, rect: &CellRect) -> Result<Node, InterchangeFailu
     ))
 }
 
+fn encloses_a_table(node: &Node, roles: &TableRoles) -> bool {
+    if node.node_type() == roles.table {
+        return true;
+    }
+    node.content().is_some_and(|content| {
+        content
+            .iter()
+            .any(|descendant| encloses_a_table(descendant, roles))
+    })
+}
+
+fn first_editable_position_in(
+    content: &Fragment,
+    interior_pos: u32,
+    roles: &TableRoles,
+) -> Result<Option<u32>, InterchangeFailure> {
+    let mut child_pos = interior_pos;
+    for child in content.iter() {
+        if !encloses_a_table(child, roles) {
+            return match child_pos.checked_add(NODE_OPENING_TOKENS) {
+                Some(interior) => Ok(Some(interior)),
+                None => Err(InterchangeFailure::UnreadableGrid),
+            };
+        }
+        if child.node_type() != roles.table {
+            let child_interior = match child_pos.checked_add(NODE_OPENING_TOKENS) {
+                Some(child_interior) => child_interior,
+                None => return Err(InterchangeFailure::UnreadableGrid),
+            };
+            if let Some(nested) = child.content() {
+                if let Some(found) = first_editable_position_in(nested, child_interior, roles)? {
+                    return Ok(Some(found));
+                }
+            }
+        }
+        child_pos = match child_pos.checked_add(child.node_size()) {
+            Some(child_pos) => child_pos,
+            None => return Err(InterchangeFailure::UnreadableGrid),
+        };
+    }
+    Ok(None)
+}
+
 pub(crate) fn first_editable_position_in_cell(
     document: &Document,
     schema: &Schema,
@@ -158,20 +201,11 @@ pub(crate) fn first_editable_position_in_cell(
     let Some(content) = cell.content() else {
         return Ok(None);
     };
-    let mut child_pos = match cell_pos.checked_add(NODE_OPENING_TOKENS) {
-        Some(child_pos) => child_pos,
+    let interior_pos = match cell_pos.checked_add(NODE_OPENING_TOKENS) {
+        Some(interior_pos) => interior_pos,
         None => return Err(InterchangeFailure::UnreadableGrid),
     };
-    for child in content.iter() {
-        if child.node_type() != roles.table {
-            return Ok(child_pos.checked_add(NODE_OPENING_TOKENS));
-        }
-        child_pos = match child_pos.checked_add(child.node_size()) {
-            Some(child_pos) => child_pos,
-            None => return Err(InterchangeFailure::UnreadableGrid),
-        };
-    }
-    Ok(None)
+    first_editable_position_in(content, interior_pos, &roles)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
