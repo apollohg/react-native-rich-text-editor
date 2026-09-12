@@ -2,6 +2,7 @@
 
 mod clipboard;
 mod format;
+mod structural_batch;
 mod structure;
 mod text;
 

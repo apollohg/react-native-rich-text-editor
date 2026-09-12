@@ -155,8 +155,67 @@ impl StructuralReplacement {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum StructuralEdit {
+    SpliceChildren {
+        parent_path: Vec<u32>,
+        from_child: u32,
+        to_child: u32,
+        content: Fragment,
+    },
+    PatchAttributes {
+        path: Vec<u32>,
+        attrs: HashMap<String, serde_json::Value>,
+    },
+    InsertContentText {
+        parent_path: Vec<u32>,
+        parent_offset: u32,
+        text: String,
+        marks: Vec<Mark>,
+    },
+}
+
+impl StructuralEdit {
+    pub fn target_path(&self) -> &[u32] {
+        match self {
+            Self::SpliceChildren { parent_path, .. }
+            | Self::InsertContentText { parent_path, .. } => parent_path,
+            Self::PatchAttributes { path, .. } => path,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructuralEditBatch {
+    edits: Vec<StructuralEdit>,
+    selection_after: crate::selection::Selection,
+}
+
+impl StructuralEditBatch {
+    pub(crate) fn new(
+        edits: Vec<StructuralEdit>,
+        selection_after: crate::selection::Selection,
+    ) -> Self {
+        Self {
+            edits,
+            selection_after,
+        }
+    }
+
+    pub fn edits(&self) -> &[StructuralEdit] {
+        &self.edits
+    }
+
+    pub(crate) fn selection_after(&self) -> &crate::selection::Selection {
+        &self.selection_after
+    }
+}
+
+pub(crate) const SINGLE_OPERATION_UNIT: usize = 1;
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum TypedOperation {
     ReplaceStructure(StructuralReplacement),
+    EditStructure(StructuralEditBatch),
     InsertText {
         at: RevisionedPosition,
         text: String,
@@ -213,6 +272,29 @@ pub enum TypedOperation {
         at: RevisionedPosition,
         attrs: HashMap<String, serde_json::Value>,
     },
+}
+
+impl TypedOperation {
+    pub(crate) fn charged_operation_units(&self) -> usize {
+        match self {
+            Self::EditStructure(batch) => batch.edits().len().max(SINGLE_OPERATION_UNIT),
+            Self::ReplaceStructure(_)
+            | Self::InsertText { .. }
+            | Self::DeleteRange { .. }
+            | Self::ReplaceRange { .. }
+            | Self::AddMark { .. }
+            | Self::RemoveMark { .. }
+            | Self::ReplaceMark { .. }
+            | Self::SplitBlock { .. }
+            | Self::JoinBlocks { .. }
+            | Self::WrapInList { .. }
+            | Self::UnwrapFromList { .. }
+            | Self::IndentListItem { .. }
+            | Self::OutdentListItem { .. }
+            | Self::InsertNode { .. }
+            | Self::UpdateNodeAttrs { .. } => SINGLE_OPERATION_UNIT,
+        }
+    }
 }
 
 /// History class of a same-store whole-document root replacement.

@@ -35,162 +35,178 @@ pub(super) fn resolve_position(
     })
 }
 
-pub(super) fn resolve_structural_window(
+pub(super) struct ChildWindowTarget<'a> {
+    pub parent_path: &'a [u32],
+    pub from_child: u32,
+    pub to_child: u32,
+}
+
+struct StructuralWalk<'a> {
+    content_start: u32,
+    node: &'a Node,
+    work: usize,
+}
+
+fn structural_target_invalid(
     request_id: u64,
     operation_index: usize,
-    document: &Document,
-    replacement: &yrs_engine::StructuralReplacement,
+    message: &'static str,
+) -> OperationError {
+    OperationError::operation_invalid(request_id, operation_index, "structure", message)
+}
+
+fn charge_structural_walk(
+    request_id: u64,
+    operation_index: usize,
+    work: &mut usize,
     limits: &ResourceLimits,
-) -> OperationResult<(u32, u32)> {
-    if replacement.parent_path().len() > limits.max_document_depth {
+) -> OperationResult<()> {
+    *work = work.saturating_add(1);
+    if *work > limits.max_document_nodes {
+        return Err(OperationError::operation_limit_exceeded(
+            request_id,
+            Some(operation_index),
+            "maxDocumentNodes",
+            u64::try_from(limits.max_document_nodes).unwrap_or(u64::MAX),
+            u64::try_from(*work).unwrap_or(u64::MAX),
+        ));
+    }
+    Ok(())
+}
+
+fn walk_to_structural_parent<'a>(
+    request_id: u64,
+    operation_index: usize,
+    document: &'a Document,
+    parent_path: &[u32],
+    limits: &ResourceLimits,
+) -> OperationResult<StructuralWalk<'a>> {
+    if parent_path.len() > limits.max_document_depth {
         return Err(OperationError::operation_limit_exceeded(
             request_id,
             Some(operation_index),
             "maxDocumentDepth",
             u64::try_from(limits.max_document_depth).unwrap_or(u64::MAX),
-            u64::try_from(replacement.parent_path().len()).unwrap_or(u64::MAX),
+            u64::try_from(parent_path.len()).unwrap_or(u64::MAX),
         ));
     }
     let mut node = document.root();
     let mut content_start = 0u32;
     let mut work = 0usize;
-    for path_index in replacement.parent_path().iter().copied() {
-        work = work.saturating_add(1);
-        if work > limits.max_document_nodes {
-            return Err(OperationError::operation_limit_exceeded(
-                request_id,
-                Some(operation_index),
-                "maxDocumentNodes",
-                u64::try_from(limits.max_document_nodes).unwrap_or(u64::MAX),
-                u64::try_from(work).unwrap_or(u64::MAX),
-            ));
-        }
+    for path_index in parent_path.iter().copied() {
+        charge_structural_walk(request_id, operation_index, &mut work, limits)?;
         let content = node.content().ok_or_else(|| {
-            OperationError::operation_invalid(
+            structural_target_invalid(
                 request_id,
                 operation_index,
-                "structure",
                 "structural target parent has no child content",
             )
         })?;
         let index = usize::try_from(path_index).map_err(|_| {
-            OperationError::operation_invalid(
+            structural_target_invalid(
                 request_id,
                 operation_index,
-                "structure",
                 "structural target path index is not representable",
             )
         })?;
         for sibling in content.iter().take(index) {
-            work = work.saturating_add(1);
-            if work > limits.max_document_nodes {
-                return Err(OperationError::operation_limit_exceeded(
-                    request_id,
-                    Some(operation_index),
-                    "maxDocumentNodes",
-                    u64::try_from(limits.max_document_nodes).unwrap_or(u64::MAX),
-                    u64::try_from(work).unwrap_or(u64::MAX),
-                ));
-            }
+            charge_structural_walk(request_id, operation_index, &mut work, limits)?;
             content_start = content_start
                 .checked_add(sibling.node_size())
                 .ok_or_else(|| {
-                    OperationError::operation_invalid(
+                    structural_target_invalid(
                         request_id,
                         operation_index,
-                        "structure",
                         "structural target position overflowed",
                     )
                 })?;
         }
         content_start = content_start.checked_add(1).ok_or_else(|| {
-            OperationError::operation_invalid(
+            structural_target_invalid(
                 request_id,
                 operation_index,
-                "structure",
                 "structural target position overflowed",
             )
         })?;
         node = content.child(index).ok_or_else(|| {
-            OperationError::operation_invalid(
+            structural_target_invalid(
                 request_id,
                 operation_index,
-                "structure",
                 "structural target path is outside the document",
             )
         })?;
     }
+    Ok(StructuralWalk {
+        content_start,
+        node,
+        work,
+    })
+}
+
+pub(super) fn resolve_child_window(
+    request_id: u64,
+    operation_index: usize,
+    document: &Document,
+    target: ChildWindowTarget<'_>,
+    limits: &ResourceLimits,
+) -> OperationResult<(u32, u32)> {
+    let StructuralWalk {
+        content_start,
+        node,
+        mut work,
+    } = walk_to_structural_parent(
+        request_id,
+        operation_index,
+        document,
+        target.parent_path,
+        limits,
+    )?;
     let content = node.content().ok_or_else(|| {
-        OperationError::operation_invalid(
+        structural_target_invalid(
             request_id,
             operation_index,
-            "structure",
             "structural target parent has no child content",
         )
     })?;
-    let (from_child, to_child) = replacement.child_window();
-    let from_child = usize::try_from(from_child).map_err(|_| {
-        OperationError::operation_invalid(
+    let from_child = usize::try_from(target.from_child).map_err(|_| {
+        structural_target_invalid(
             request_id,
             operation_index,
-            "structure",
             "structural child window is not representable",
         )
     })?;
-    let to_child = usize::try_from(to_child).map_err(|_| {
-        OperationError::operation_invalid(
+    let to_child = usize::try_from(target.to_child).map_err(|_| {
+        structural_target_invalid(
             request_id,
             operation_index,
-            "structure",
             "structural child window is not representable",
         )
     })?;
     if from_child > to_child || to_child > content.child_count() {
-        return Err(OperationError::operation_invalid(
+        return Err(structural_target_invalid(
             request_id,
             operation_index,
-            "structure",
             "structural child window is outside its parent",
         ));
     }
     let mut from = content_start;
     for sibling in content.iter().take(from_child) {
-        work = work.saturating_add(1);
-        if work > limits.max_document_nodes {
-            return Err(OperationError::operation_limit_exceeded(
-                request_id,
-                Some(operation_index),
-                "maxDocumentNodes",
-                u64::try_from(limits.max_document_nodes).unwrap_or(u64::MAX),
-                u64::try_from(work).unwrap_or(u64::MAX),
-            ));
-        }
+        charge_structural_walk(request_id, operation_index, &mut work, limits)?;
         from = from.checked_add(sibling.node_size()).ok_or_else(|| {
-            OperationError::operation_invalid(
+            structural_target_invalid(
                 request_id,
                 operation_index,
-                "structure",
                 "structural target position overflowed",
             )
         })?;
     }
     let mut to = from;
     for sibling in content.iter().skip(from_child).take(to_child - from_child) {
-        work = work.saturating_add(1);
-        if work > limits.max_document_nodes {
-            return Err(OperationError::operation_limit_exceeded(
-                request_id,
-                Some(operation_index),
-                "maxDocumentNodes",
-                u64::try_from(limits.max_document_nodes).unwrap_or(u64::MAX),
-                u64::try_from(work).unwrap_or(u64::MAX),
-            ));
-        }
+        charge_structural_walk(request_id, operation_index, &mut work, limits)?;
         to = to.checked_add(sibling.node_size()).ok_or_else(|| {
-            OperationError::operation_invalid(
+            structural_target_invalid(
                 request_id,
                 operation_index,
-                "structure",
                 "structural target position overflowed",
             )
         })?;
@@ -198,7 +214,62 @@ pub(super) fn resolve_structural_window(
     Ok((from, to))
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(super) fn resolve_content_offset(
+    request_id: u64,
+    operation_index: usize,
+    document: &Document,
+    parent_path: &[u32],
+    parent_offset: u32,
+    limits: &ResourceLimits,
+) -> OperationResult<u32> {
+    let StructuralWalk {
+        content_start,
+        node,
+        ..
+    } = walk_to_structural_parent(request_id, operation_index, document, parent_path, limits)?;
+    let content = node.content().ok_or_else(|| {
+        structural_target_invalid(
+            request_id,
+            operation_index,
+            "structural target parent has no child content",
+        )
+    })?;
+    if parent_offset > content.size() {
+        return Err(structural_target_invalid(
+            request_id,
+            operation_index,
+            "structural content offset is outside its parent",
+        ));
+    }
+    content_start.checked_add(parent_offset).ok_or_else(|| {
+        structural_target_invalid(
+            request_id,
+            operation_index,
+            "structural target position overflowed",
+        )
+    })
+}
+
+pub(super) fn resolve_structural_window(
+    request_id: u64,
+    operation_index: usize,
+    document: &Document,
+    replacement: &yrs_engine::StructuralReplacement,
+    limits: &ResourceLimits,
+) -> OperationResult<(u32, u32)> {
+    let (from_child, to_child) = replacement.child_window();
+    resolve_child_window(
+        request_id,
+        operation_index,
+        document,
+        ChildWindowTarget {
+            parent_path: replacement.parent_path(),
+            from_child,
+            to_child,
+        },
+        limits,
+    )
+}
 pub(super) fn resolve_range(
     request_id: u64,
     operation_index: usize,

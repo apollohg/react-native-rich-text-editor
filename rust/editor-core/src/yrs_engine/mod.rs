@@ -55,8 +55,8 @@ pub use error::{YrsEngineError, YrsEngineResult};
 pub use operation::{
     Affinity, EditorOffsetKind, HistoryPolicy, OperationError, OperationResult, RenderUpdate,
     ResolvedPoint, ResolvedSelection, RevisionedPosition, RevisionedRange, SelectionInput,
-    SelectionIntent, StructuralReplacement, TransactionCommit, TypedOperation, TypedTransaction,
-    TypedTransactionResult,
+    SelectionIntent, StructuralEdit, StructuralEditBatch, StructuralReplacement, TransactionCommit,
+    TypedOperation, TypedTransaction, TypedTransactionResult,
 };
 pub use operation::{ReplacementHistory, RootReplacementError};
 pub use origin::{DocumentOrigin, TransactionOrigin};

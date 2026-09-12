@@ -1,3 +1,4 @@
+mod batch;
 mod marks;
 mod structure;
 mod text;
@@ -85,6 +86,9 @@ impl OperationCompiler<'_> {
             | TypedOperation::RemoveMark { .. }
             | TypedOperation::ReplaceMark { .. } => {
                 self.compile_marks(operation_index, operation)?
+            }
+            TypedOperation::EditStructure(batch) => {
+                self.compile_edit_structure(operation_index, batch)?
             }
             TypedOperation::ReplaceStructure(_)
             | TypedOperation::InsertNode { .. }

@@ -141,6 +141,7 @@ fn semantic_transaction_impl(
             plan.operations.len() as u64,
         ));
     }
+    let admitted = admitted_simulation.is_some();
     let simulated = match admitted_simulation {
         Some(simulated) => simulated,
         None => crate::command_planner::simulate_plan(
@@ -303,6 +304,12 @@ fn semantic_transaction_impl(
     )? {
         return Ok(CommandPlan::Transaction(transaction));
     }
+    if admitted {
+        if let Some(transaction) = sealed_batch_transaction(context, selection, &plan, &simulated)?
+        {
+            return Ok(CommandPlan::Transaction(transaction));
+        }
+    }
     let transaction = structural_fallback_transaction(
         context,
         plan.history,
@@ -310,6 +317,55 @@ fn semantic_transaction_impl(
         &simulated.selection,
     )?;
     Ok(CommandPlan::Transaction(transaction))
+}
+
+fn sealed_batch_transaction(
+    context: &PlanningContext<'_>,
+    selection: &crate::selection::Selection,
+    plan: &crate::command_planner::SemanticCommandPlan,
+    simulated: &crate::command_planner::SimulatedCommandPlan,
+) -> OperationResult<Option<TypedTransaction>> {
+    let Some(batch) = super::structural_batch::structural_edit_batch(
+        context.document,
+        context.schema,
+        &plan.operations,
+        &simulated.selection,
+    ) else {
+        return Ok(None);
+    };
+    let transaction = TypedTransaction {
+        request_id: context.request_id,
+        base_document_revision: context.revision,
+        origin: context.origin,
+        operations: vec![TypedOperation::EditStructure(batch)],
+        selection_intent: SelectionIntent::UseOperationResult,
+        history_policy: semantic_history_policy(plan.history),
+    };
+    let compiled = crate::yrs_engine::compiler::compile_transaction(
+        crate::yrs_engine::compiler::CompilationContext {
+            document: context.document,
+            selection: Some(selection),
+            schema: context.schema,
+            resource_limits: context.resource_limits,
+            editing_limits: context.editing_limits,
+            document_revision: context.revision,
+            max_length: context.max_length,
+        },
+        transaction.clone(),
+    )?;
+    let compiled_selection = match compiled.selection_plan {
+        crate::yrs_engine::compiler::SelectionPlan::Preserve => selection.clone(),
+        crate::yrs_engine::compiler::SelectionPlan::Mapped(selection)
+        | crate::yrs_engine::compiler::SelectionPlan::Explicit(selection) => selection,
+    };
+    if compiled.preview != simulated.document || compiled_selection != simulated.selection {
+        return Err(OperationError::engine_invariant_failed(
+            context.request_id,
+            None,
+            "a sealed structural edit batch did not reproduce its simulated candidate",
+        ));
+    }
+    Ok(Some(transaction))
 }
 
 fn is_prepared_root_wrap_shape(transaction: &TypedTransaction) -> bool {

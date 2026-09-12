@@ -334,7 +334,6 @@ fn a_table_position_that_holds_no_table_is_refused() {
 }
 
 use crate::command_planner::SemanticCommandHistory;
-use crate::position::PositionMap;
 use crate::selection::Selection;
 use crate::tables::command_context::{
     prepare_table_action, CellAnchorPair, PreparedTableAction, TableAction, TableActionCandidate,
@@ -342,10 +341,7 @@ use crate::tables::command_context::{
 };
 use crate::tables::types::{TableActionKind, TableWorkCounters};
 use crate::yrs_engine::{table_action_plan_for_test, CommandPlan, TableActionTestRequest};
-use crate::yrs_engine::{
-    EditingLimits, HistoryPolicy, OperationError, ResolvedPoint, ResolvedSelection,
-    TransactionOrigin,
-};
+use crate::yrs_engine::{EditingLimits, HistoryPolicy, OperationError, TransactionOrigin};
 
 const REQUEST_ID: u64 = 41;
 const BASE_REVISION: u64 = 7;
@@ -642,7 +638,9 @@ use crate::document_api::DocumentApiFacade;
 use crate::session::{
     CollaborationLimits, EditorInitialization, EditorSession, EditorSessionConfig, InitialContent,
 };
-use crate::yrs_engine::TypedTransaction;
+use crate::yrs_engine::{
+    SelectionIntent, StructuralEdit, StructuralEditBatch, TypedOperation, TypedTransaction,
+};
 
 const COLLABORATION_FRAGMENT_NAME: &str = "prosemirror";
 const IDENTITY_FIXTURE_CELLS: usize = 3;
@@ -661,6 +659,10 @@ fn identity_fixture_json() -> String {
 }
 
 fn seeded_session(initial_json: String) -> EditorSession {
+    seeded_session_with(initial_json, EditingLimits::default())
+}
+
+fn seeded_session_with(initial_json: String, editing_limits: EditingLimits) -> EditorSession {
     DocumentApiFacade::admit(
         EditorSessionConfig {
             schema_json: None,
@@ -669,7 +671,7 @@ fn seeded_session(initial_json: String) -> EditorSession {
                 initial_content: InitialContent::Json(initial_json),
             },
             resource_limits: limits(),
-            editing_limits: EditingLimits::default(),
+            editing_limits,
             collaboration_limits: CollaborationLimits::default(),
             max_length: None,
             read_only: false,
@@ -719,10 +721,10 @@ fn prepared_action(
     document: &Document,
     revision: u64,
     action: &dyn TableAction,
+    editing_limits: &EditingLimits,
 ) -> PreparedTableAction {
     let schema = schema();
     let limits = limits();
-    let editing_limits = EditingLimits::default();
     prepare_table_action(
         &TableActionContext {
             request_id: REQUEST_ID,
@@ -731,7 +733,7 @@ fn prepared_action(
             anchors: None,
             schema: &schema,
             resource_limits: &limits,
-            editing_limits: &editing_limits,
+            editing_limits,
             document,
         },
         action,
@@ -744,22 +746,37 @@ fn session_table_action_plan(
     origin: TransactionOrigin,
     guard_whole_table_lowering: bool,
 ) -> Result<CommandPlan, OperationError> {
+    session_action_plan(
+        session,
+        origin,
+        guard_whole_table_lowering,
+        &typing_action(),
+        &EditingLimits::default(),
+    )
+}
+
+fn session_action_plan(
+    session: &EditorSession,
+    origin: TransactionOrigin,
+    guard_whole_table_lowering: bool,
+    action: &dyn TableAction,
+    editing_limits: &EditingLimits,
+) -> Result<CommandPlan, OperationError> {
     let schema = schema();
     let limits = limits();
-    let editing_limits = EditingLimits::default();
     let document = session
         .engine
         .document()
         .expect("the seeded session has a document")
         .clone();
     let revision = session.engine.revision();
-    let prepared = prepared_action(&document, revision, &typing_action());
+    let prepared = prepared_action(&document, revision, action, editing_limits);
     table_action_plan_for_test(
         TableActionTestRequest {
             document: &document,
             schema: &schema,
             resource_limits: &limits,
-            editing_limits: &editing_limits,
+            editing_limits,
             revision,
             state_revision: session.engine.state_revision(),
             yrs_state_epoch: session.engine.yrs_state_epoch(),
@@ -771,19 +788,27 @@ fn session_table_action_plan(
 }
 
 #[test]
-fn a_table_action_is_refused_rather_than_replacing_its_whole_table() {
+fn a_table_action_lowers_to_one_sealed_structural_edit_batch() {
     let session = seeded_session(identity_fixture_json());
 
-    let error = match session_table_action_plan(&session, TransactionOrigin::LocalCommand, true) {
-        Ok(_) => panic!("a whole table replacement must never reach the engine"),
-        Err(error) => error,
-    };
+    let plan = session_table_action_plan(&session, TransactionOrigin::LocalCommand, true)
+        .expect("the prepared action lowers without replacing its whole table");
 
-    assert_eq!(error.code, "ENGINE_INVARIANT_FAILED");
+    let CommandPlan::Transaction(transaction) = plan else {
+        panic!("a table action lowers to a document transaction");
+    };
+    let [TypedOperation::EditStructure(batch)] = transaction.operations.as_slice() else {
+        panic!("a table action lowers to exactly one sealed structural edit batch");
+    };
+    assert!(
+        batch.edits().len() > 1,
+        "the identity fixture needs more than one disjoint edit, got {:?}",
+        batch.edits(),
+    );
 }
 
 #[test]
-fn the_whole_table_lowering_this_release_refuses_would_destroy_cell_identities() {
+fn the_sealed_batch_keeps_every_cell_identity_the_whole_table_lowering_destroyed() {
     let mut session = seeded_session(identity_fixture_json());
     let before = cell_identities(
         &session
@@ -794,32 +819,458 @@ fn the_whole_table_lowering_this_release_refuses_would_destroy_cell_identities()
     assert_eq!(before.len(), IDENTITY_FIXTURE_CELLS);
 
     let CommandPlan::Transaction(transaction) =
-        session_table_action_plan(&session, TransactionOrigin::LocalCommand, false)
+        session_table_action_plan(&session, TransactionOrigin::LocalCommand, true)
             .expect("the prepared action lowers")
     else {
         panic!("a table action lowers to a document transaction");
     };
-    assert!(
-        matches!(
-            transaction.operations.as_slice(),
-            [crate::yrs_engine::TypedOperation::ReplaceStructure(_)]
-        ),
-        "the engine can only express this action as one structural replacement",
-    );
     session
         .engine
         .apply_typed_transaction(transaction)
-        .expect("the whole table replacement commits");
+        .expect("the sealed structural edit batch commits");
 
     let after = cell_identities(
         &session
             .engine
             .encoded_state()
-            .expect("the replaced state encodes"),
+            .expect("the committed state encodes"),
     );
     assert_eq!(after.len(), NORMALIZED_FIXTURE_CELLS);
+    for identity in &before {
+        assert!(
+            after.contains(identity),
+            "normalization replaced the cell with identity {identity}",
+        );
+    }
+}
+
+const SPANNING_COLSPAN: u32 = 2;
+const WIDENED_COLSPAN: u32 = 3;
+const SPANNED_FIXTURE_CELLS: usize = 5;
+const SPANNED_FIXTURE_CELLS_AFTER_INSERT: usize = 7;
+const INSERTED_COLUMN_INDEX: u32 = 1;
+const CARET_OFFSET_IN_NEW_CELL: u32 = 2;
+
+fn spanned_fixture_json() -> String {
+    json!({
+        "type": "doc",
+        "content": [table(vec![
+            row(vec![cell("a0"), cell("a1")]),
+            row(vec![cell_with(SPANNING_COLSPAN, SINGLE_SPAN, Value::Null, "b0")]),
+            row(vec![cell("c0"), cell("c1")]),
+        ])],
+    })
+    .to_string()
+}
+
+fn empty_cell_json() -> Value {
+    json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
+        "content": [{ "type": PARAGRAPH_NODE, "content": [] }],
+    })
+}
+
+fn empty_cell_node() -> crate::model::Node {
+    document_with(vec![table(vec![row(vec![empty_cell_json()])])])
+        .node_at(&[0, 0, 0])
+        .expect("the fixture holds one cell")
+        .clone()
+}
+
+fn child_start(document: &Document, parent_path: &[u32], child_index: u32) -> u32 {
+    let mut position = 0u32;
+    let mut node = document.root();
+    for step in parent_path {
+        let content = node.content().expect("the fixture path has content");
+        for sibling in content.iter().take(*step as usize) {
+            position += sibling.node_size();
+        }
+        position += 1;
+        node = content
+            .child(*step as usize)
+            .expect("the fixture path exists");
+    }
+    let content = node.content().expect("the fixture parent has content");
+    for sibling in content.iter().take(child_index as usize) {
+        position += sibling.node_size();
+    }
+    position
+}
+
+fn widened_span_attrs() -> std::collections::HashMap<String, Value> {
+    let mut attrs = std::collections::HashMap::new();
+    attrs.insert("colspan".to_string(), Value::from(WIDENED_COLSPAN));
+    attrs.insert("rowspan".to_string(), Value::from(SINGLE_SPAN));
+    attrs.insert("colwidth".to_string(), Value::Null);
+    attrs
+}
+
+fn insert_column_action(
+) -> ScriptedAction<impl Fn(&TableActionCandidate<'_>) -> Option<TableActionOutcome>> {
+    ScriptedAction {
+        kind: TableActionKind::InsertColumn,
+        plan: |candidate: &TableActionCandidate<'_>| {
+            let document = candidate.document;
+            let inserted = empty_cell_node();
+            let inserted_size = inserted.node_size();
+            let first_row = child_start(document, &[0, 0], INSERTED_COLUMN_INDEX);
+            let spanning_cell = child_start(document, &[0, 1], 0);
+            let last_row = child_start(document, &[0, 2], INSERTED_COLUMN_INDEX);
+            Some(TableActionOutcome {
+                operations: vec![
+                    SemanticOperation::ReplaceRange {
+                        from: first_row,
+                        to: first_row,
+                        content: crate::model::Fragment::from(vec![inserted.clone()]),
+                    },
+                    SemanticOperation::UpdateNodeAttrs {
+                        pos: spanning_cell + inserted_size,
+                        attrs: widened_span_attrs(),
+                    },
+                    SemanticOperation::ReplaceRange {
+                        from: last_row + inserted_size,
+                        to: last_row + inserted_size,
+                        content: crate::model::Fragment::from(vec![inserted]),
+                    },
+                ],
+                selection_after: Selection::cursor(first_row + CARET_OFFSET_IN_NEW_CELL),
+            })
+        },
+    }
+}
+
+fn spanned_fixture_after_insert() -> Value {
+    crate::serialize::json_out::node_to_json(
+        document_with(vec![table(vec![
+            row(vec![cell("a0"), empty_cell_json(), cell("a1")]),
+            row(vec![cell_with(
+                WIDENED_COLSPAN,
+                SINGLE_SPAN,
+                Value::Null,
+                "b0",
+            )]),
+            row(vec![cell("c0"), empty_cell_json(), cell("c1")]),
+        ])])
+        .root(),
+        &schema(),
+    )
+}
+
+#[test]
+fn inserting_a_column_across_rows_keeps_every_unchanged_cell_identity() {
+    let mut session = seeded_session(spanned_fixture_json());
+    let before = cell_identities(
+        &session
+            .engine
+            .encoded_state()
+            .expect("the seeded state encodes"),
+    );
+    assert_eq!(before.len(), SPANNED_FIXTURE_CELLS);
+
+    let plan = session_action_plan(
+        &session,
+        TransactionOrigin::LocalCommand,
+        true,
+        &insert_column_action(),
+        &EditingLimits::default(),
+    )
+    .expect("the column insertion lowers");
+    let CommandPlan::Transaction(transaction) = plan else {
+        panic!("a table action lowers to a document transaction");
+    };
+    let [TypedOperation::EditStructure(batch)] = transaction.operations.as_slice() else {
+        panic!("a column insertion lowers to exactly one sealed structural edit batch");
+    };
+    assert_eq!(batch.edits().len(), 3, "{:?}", batch.edits());
+
+    session
+        .engine
+        .apply_typed_transaction(transaction)
+        .expect("the sealed structural edit batch commits");
+
+    assert_eq!(
+        crate::serialize::json_out::node_to_json(
+            session
+                .engine
+                .document()
+                .expect("the committed session has a document")
+                .root(),
+            &schema(),
+        ),
+        spanned_fixture_after_insert(),
+    );
+    let after = cell_identities(
+        &session
+            .engine
+            .encoded_state()
+            .expect("the committed state encodes"),
+    );
+    assert_eq!(after.len(), SPANNED_FIXTURE_CELLS_AFTER_INSERT);
+    for identity in &before {
+        assert!(
+            after.contains(identity),
+            "the column insertion replaced the cell with identity {identity}",
+        );
+    }
+}
+
+const RESTRICTED_OPERATION_BUDGET: usize = 2;
+const BATCH_EDIT_COUNT: usize = 3;
+const MISSING_ROW_INDEX: u32 = 9;
+
+fn insert_column_batch(session: &EditorSession) -> StructuralEditBatch {
+    let plan = session_action_plan(
+        session,
+        TransactionOrigin::LocalCommand,
+        true,
+        &insert_column_action(),
+        &EditingLimits::default(),
+    )
+    .expect("the column insertion lowers");
+    let CommandPlan::Transaction(transaction) = plan else {
+        panic!("a table action lowers to a document transaction");
+    };
+    let [TypedOperation::EditStructure(batch)] = transaction.operations.as_slice() else {
+        panic!("a column insertion lowers to exactly one sealed structural edit batch");
+    };
+    batch.clone()
+}
+
+fn batch_transaction(session: &EditorSession, batch: StructuralEditBatch) -> TypedTransaction {
+    TypedTransaction {
+        request_id: REQUEST_ID,
+        base_document_revision: session.engine.revision(),
+        origin: TransactionOrigin::LocalCommand,
+        operations: vec![TypedOperation::EditStructure(batch)],
+        selection_intent: SelectionIntent::UseOperationResult,
+        history_policy: HistoryPolicy::Boundary,
+    }
+}
+
+fn restricted_limits(max_operations: usize) -> EditingLimits {
+    EditingLimits {
+        max_operations_per_transaction: max_operations,
+        ..EditingLimits::default()
+    }
+}
+
+#[test]
+fn a_sealed_batch_refuses_a_target_that_is_not_in_its_base_document() {
+    let mut session = seeded_session(spanned_fixture_json());
+    let batch = insert_column_batch(&session);
+    let mut edits = batch.edits().to_vec();
+    edits.push(StructuralEdit::SpliceChildren {
+        parent_path: vec![0, MISSING_ROW_INDEX],
+        from_child: 0,
+        to_child: 0,
+        content: crate::model::Fragment::from(vec![empty_cell_node()]),
+    });
+    let stale = batch_transaction(
+        &session,
+        StructuralEditBatch::new(edits, batch.selection_after().clone()),
+    );
+
+    let error = session
+        .engine
+        .apply_typed_transaction(stale)
+        .expect_err("a target outside the base document cannot be admitted");
+
+    assert_eq!(error.code, "OPERATION_INVALID");
+    assert_eq!(error.details, Some(json!({ "field": "structure" })));
+    assert_eq!(
+        error.message.as_ref(),
+        "structural target path is outside the document",
+    );
+}
+
+#[test]
+fn a_sealed_batch_refuses_an_edit_under_a_replaced_ancestor() {
+    let mut session = seeded_session(spanned_fixture_json());
+    let dependent = StructuralEditBatch::new(
+        vec![
+            StructuralEdit::SpliceChildren {
+                parent_path: vec![0],
+                from_child: 1,
+                to_child: 2,
+                content: crate::model::Fragment::empty(),
+            },
+            StructuralEdit::PatchAttributes {
+                path: vec![0, 1, 0],
+                attrs: widened_span_attrs(),
+            },
+        ],
+        Selection::cursor(TABLE_POSITION),
+    );
+
+    let error = session
+        .engine
+        .apply_typed_transaction(batch_transaction(&session, dependent))
+        .expect_err("a descendant of a replaced row cannot survive as a target");
+
+    assert_eq!(error.code, "OPERATION_INVALID");
+    assert_eq!(error.details, Some(json!({ "field": "structure" })));
+    assert_eq!(
+        error.message.as_ref(),
+        "a sealed structural edit cannot survive under a replaced ancestor",
+    );
+}
+
+#[test]
+fn a_sealed_batch_is_charged_for_every_edit_it_carries() {
+    let batch = insert_column_batch(&seeded_session(spanned_fixture_json()));
+    assert_eq!(batch.edits().len(), BATCH_EDIT_COUNT);
+    let mut restricted = seeded_session_with(
+        spanned_fixture_json(),
+        restricted_limits(RESTRICTED_OPERATION_BUDGET),
+    );
+    let mut generous =
+        seeded_session_with(spanned_fixture_json(), restricted_limits(BATCH_EDIT_COUNT));
+
+    let error = restricted
+        .engine
+        .apply_typed_transaction(batch_transaction(&restricted, batch.clone()))
+        .expect_err("three batched edits cost three operations");
+
+    assert_eq!(error.code, "OPERATION_LIMIT_EXCEEDED");
+    assert_eq!(
+        error.details,
+        Some(json!({ "field": "maxOperationsPerTransaction" })),
+    );
+    assert_eq!(error.limit, Some(RESTRICTED_OPERATION_BUDGET as u64));
+    assert_eq!(error.actual, Some(BATCH_EDIT_COUNT as u64));
+    generous
+        .engine
+        .apply_typed_transaction(batch_transaction(&generous, batch))
+        .expect("a budget that admits three operations admits three batched edits");
+}
+
+#[test]
+fn a_refused_sealed_batch_publishes_nothing() {
+    let mut session = seeded_session(spanned_fixture_json());
+    let before_revision = session.engine.revision();
+    let before_document = session
+        .engine
+        .document_json()
+        .expect("the seeded document serializes");
+    let before_identities = cell_identities(
+        &session
+            .engine
+            .encoded_state()
+            .expect("the seeded state encodes"),
+    );
+    let batch = insert_column_batch(&session);
+    let mut edits = batch.edits().to_vec();
+    edits.push(StructuralEdit::SpliceChildren {
+        parent_path: vec![0, MISSING_ROW_INDEX],
+        from_child: 0,
+        to_child: 0,
+        content: crate::model::Fragment::from(vec![empty_cell_node()]),
+    });
+
+    session
+        .engine
+        .apply_typed_transaction(batch_transaction(
+            &session,
+            StructuralEditBatch::new(edits, batch.selection_after().clone()),
+        ))
+        .expect_err("one unusable edit refuses the whole sealed batch");
+
+    assert_eq!(session.engine.revision(), before_revision);
+    assert_eq!(
+        session
+            .engine
+            .document_json()
+            .expect("the refused document still serializes"),
+        before_document,
+    );
+    assert_eq!(
+        cell_identities(
+            &session
+                .engine
+                .encoded_state()
+                .expect("the refused state still encodes"),
+        ),
+        before_identities,
+    );
+}
+
+const TWIN_FIXTURE_CELLS: usize = 2;
+const TWIN_FIXTURE_CELLS_AFTER_INSERT: usize = 3;
+const TWIN_CELL_TEXT: &str = "x";
+
+fn twin_fixture_json() -> String {
+    json!({
+        "type": "doc",
+        "content": [table(vec![row(vec![
+            cell(TWIN_CELL_TEXT),
+            cell(TWIN_CELL_TEXT),
+        ])])],
+    })
+    .to_string()
+}
+
+fn insert_twin_action(
+) -> ScriptedAction<impl Fn(&TableActionCandidate<'_>) -> Option<TableActionOutcome>> {
+    ScriptedAction {
+        kind: TableActionKind::InsertColumn,
+        plan: |candidate: &TableActionCandidate<'_>| {
+            let inserted = candidate
+                .document
+                .node_at(&[0, 0, 0])
+                .expect("the twin fixture holds its first cell")
+                .clone();
+            let between = child_start(candidate.document, &[0, 0], INSERTED_COLUMN_INDEX);
+            Some(TableActionOutcome {
+                operations: vec![SemanticOperation::ReplaceRange {
+                    from: between,
+                    to: between,
+                    content: crate::model::Fragment::from(vec![inserted]),
+                }],
+                selection_after: Selection::cursor(between + CARET_OFFSET_IN_NEW_CELL),
+            })
+        },
+    }
+}
+
+#[test]
+fn a_cell_inserted_between_identical_twins_keeps_both_twins_in_place() {
+    let mut session = seeded_session(twin_fixture_json());
+    let before = cell_identities(
+        &session
+            .engine
+            .encoded_state()
+            .expect("the seeded state encodes"),
+    );
+    assert_eq!(before.len(), TWIN_FIXTURE_CELLS);
+
+    let plan = session_action_plan(
+        &session,
+        TransactionOrigin::LocalCommand,
+        true,
+        &insert_twin_action(),
+        &EditingLimits::default(),
+    )
+    .expect("the twin insertion lowers");
+    let CommandPlan::Transaction(transaction) = plan else {
+        panic!("a table action lowers to a document transaction");
+    };
+    session
+        .engine
+        .apply_typed_transaction(transaction)
+        .expect("the sealed structural edit batch commits");
+
+    let after = cell_identities(
+        &session
+            .engine
+            .encoded_state()
+            .expect("the committed state encodes"),
+    );
+    assert_eq!(after.len(), TWIN_FIXTURE_CELLS_AFTER_INSERT);
+    assert_eq!(after[0], before[0], "the left twin kept its place");
+    assert_eq!(after[2], before[1], "the right twin kept its place");
     assert!(
-        before.iter().any(|identity| !after.contains(identity)),
-        "the refused lowering would have preserved every cell identity",
+        !before.contains(&after[1]),
+        "only the middle cell is newly created",
     );
 }
