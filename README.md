@@ -18,6 +18,17 @@ See the [documentation](https://github.com/apollohg/react-native-rich-text-edito
 **⭐ Optional native code syntax highlighting**  
 **⭐ Rich copy and paste**  
 
+## Roadmap
+
+Below is a list of features that are planned or in progress. If you have a feature/idea suggestion, please [add it to the discussion](https://github.com/apollohg/react-native-rich-text-editor/discussions/4).
+
+- [x] External text composition
+- [x] Custom atoms via React Native components
+- [ ] Tables *(in progress)*
+- [ ] Output as Markdown/GitHub Flavored Markdown (GFM)
+- [ ] Extension framework
+- [ ] Inline node extensions
+
 ## Requirements
 
 The package uses custom native code and Expo Modules. Use a development build or a bare React Native app with Expo Modules configured; it does not run in Expo Go.
