@@ -7,8 +7,10 @@ use crate::model::{Document, Fragment, Mark, Node};
 use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::transform::apply_step_canonical_marks;
-use crate::yrs_engine::{StructuralEdit, StructuralEditBatch};
+use crate::yrs_engine::{OperationError, OperationResult, StructuralEdit, StructuralEditBatch};
 
+const BATCH_FIELD: &str = "structure";
+const BATCH_OPERATION_INDEX: usize = 0;
 const ROOT_PATH: &[u32] = &[];
 const FIRST_CHILD: u32 = 0;
 const NO_CHILDREN: usize = 0;
@@ -39,6 +41,7 @@ struct PendingText {
 }
 
 struct BatchBuilder<'a> {
+    request_id: u64,
     base: &'a Document,
     schema: &'a Schema,
     shadow: Document,
@@ -48,12 +51,14 @@ struct BatchBuilder<'a> {
 }
 
 pub(super) fn structural_edit_batch(
+    request_id: u64,
     document: &Document,
     schema: &Schema,
     operations: &[SemanticOperation],
     selection_after: &Selection,
-) -> Option<StructuralEditBatch> {
+) -> OperationResult<Option<StructuralEditBatch>> {
     let mut builder = BatchBuilder {
+        request_id,
         base: document,
         schema,
         shadow: document.clone(),
@@ -62,10 +67,14 @@ pub(super) fn structural_edit_batch(
         texts: Vec::new(),
     };
     for operation in operations {
-        builder.absorb(operation)?;
+        if builder.absorb(operation)?.is_none() {
+            return Ok(None);
+        }
     }
-    let edits = builder.into_edits()?;
-    (!edits.is_empty()).then(|| StructuralEditBatch::new(edits, selection_after.clone()))
+    let Some(edits) = builder.into_edits() else {
+        return Ok(None);
+    };
+    Ok((!edits.is_empty()).then(|| StructuralEditBatch::new(edits, selection_after.clone())))
 }
 
 fn child_index_at_offset(parent: &Node, offset: u32) -> Option<u32> {
@@ -107,16 +116,14 @@ fn rebuild_at(
 }
 
 impl BatchBuilder<'_> {
-    fn absorb(&mut self, operation: &SemanticOperation) -> Option<()> {
-        match operation {
+    fn absorb(&mut self, operation: &SemanticOperation) -> OperationResult<Option<()>> {
+        let absorbed = match operation {
             SemanticOperation::ReplaceRange { from, to, content } => {
-                self.absorb_splice(*from, *to, content)?;
+                self.absorb_splice(*from, *to, content)
             }
-            SemanticOperation::UpdateNodeAttrs { pos, attrs } => {
-                self.absorb_patch(*pos, attrs)?;
-            }
+            SemanticOperation::UpdateNodeAttrs { pos, attrs } => self.absorb_patch(*pos, attrs),
             SemanticOperation::InsertText { pos, text, marks } => {
-                self.absorb_text(*pos, text, marks)?;
+                self.absorb_text(*pos, text, marks)
             }
             SemanticOperation::DeleteRange { .. }
             | SemanticOperation::AddMark { .. }
@@ -128,12 +135,22 @@ impl BatchBuilder<'_> {
             | SemanticOperation::OutdentListItem { .. }
             | SemanticOperation::WrapInList { .. }
             | SemanticOperation::IndentListItem { .. }
-            | SemanticOperation::InsertNode { .. } => return None,
+            | SemanticOperation::InsertNode { .. } => None,
+        };
+        if absorbed.is_none() {
+            return Ok(None);
         }
-        let (next, _) =
-            apply_step_canonical_marks(&self.shadow, &operation.as_step(), self.schema).ok()?;
+        let (next, _) = apply_step_canonical_marks(&self.shadow, &operation.as_step(), self.schema)
+            .map_err(|error| {
+                OperationError::operation_invalid(
+                    self.request_id,
+                    BATCH_OPERATION_INDEX,
+                    BATCH_FIELD,
+                    error.to_string(),
+                )
+            })?;
         self.shadow = next;
-        Some(())
+        Ok(Some(()))
     }
 
     fn locate(&self, shadow_path: &[u32]) -> Option<LocatedTarget> {

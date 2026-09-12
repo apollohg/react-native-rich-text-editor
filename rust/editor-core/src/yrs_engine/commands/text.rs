@@ -326,11 +326,13 @@ fn sealed_batch_transaction(
     simulated: &crate::command_planner::SimulatedCommandPlan,
 ) -> OperationResult<Option<TypedTransaction>> {
     let Some(batch) = super::structural_batch::structural_edit_batch(
+        context.request_id,
         context.document,
         context.schema,
         &plan.operations,
         &simulated.selection,
-    ) else {
+    )?
+    else {
         return Ok(None);
     };
     let transaction = TypedTransaction {

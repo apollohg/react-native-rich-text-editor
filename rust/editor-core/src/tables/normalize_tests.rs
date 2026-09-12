@@ -1309,3 +1309,55 @@ fn a_cell_inserted_between_identical_twins_keeps_both_twins_in_place() {
         "only the middle cell is newly created",
     );
 }
+
+const PARAGRAPH_PATH: [u32; 4] = [0, 0, 0, 0];
+const PARAGRAPH_CONTENT_START: u32 = 0;
+const SPLICED_TEXT: &str = "r";
+const RETEXT_TEXT: &str = "q";
+
+fn retext_edit() -> StructuralEdit {
+    StructuralEdit::InsertContentText {
+        parent_path: PARAGRAPH_PATH.to_vec(),
+        parent_offset: PARAGRAPH_CONTENT_START,
+        text: RETEXT_TEXT.to_string(),
+        marks: Vec::new(),
+    }
+}
+
+fn paragraph_splice_edit() -> StructuralEdit {
+    StructuralEdit::SpliceChildren {
+        parent_path: PARAGRAPH_PATH.to_vec(),
+        from_child: 0,
+        to_child: 0,
+        content: crate::model::Fragment::from(vec![crate::model::Node::text(
+            SPLICED_TEXT.to_string(),
+            Vec::new(),
+        )]),
+    }
+}
+
+#[test]
+fn a_sealed_batch_refuses_splicing_and_retexting_one_parent_in_either_order() {
+    for (case, edits) in [
+        ("splice first", vec![paragraph_splice_edit(), retext_edit()]),
+        ("retext first", vec![retext_edit(), paragraph_splice_edit()]),
+    ] {
+        let mut session = seeded_session(twin_fixture_json());
+        let batch = StructuralEditBatch::new(edits, Selection::cursor(TABLE_POSITION));
+
+        let error = match session
+            .engine
+            .apply_typed_transaction(batch_transaction(&session, batch))
+        {
+            Ok(commit) => panic!("{case} must be refused, but it committed {commit:?}"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.code, "OPERATION_INVALID", "{case}");
+        assert_eq!(
+            error.message.as_ref(),
+            "a sealed structural edit batch cannot splice and retext one parent",
+            "{case}",
+        );
+    }
+}

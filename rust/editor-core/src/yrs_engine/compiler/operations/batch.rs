@@ -23,6 +23,7 @@ const SINGLE_CHILD: u32 = 1;
 struct PlannedEdit {
     edit_index: usize,
     from: u32,
+    to: u32,
     rank: u8,
 }
 
@@ -32,6 +33,40 @@ fn batch_invalid(request_id: u64, operation_index: usize, message: &'static str)
 
 fn parent_of(path: &[u32]) -> Option<(&[u32], u32)> {
     path.split_last().map(|(child, parent)| (parent, *child))
+}
+
+fn resolve_patch_window(
+    request_id: u64,
+    operation_index: usize,
+    document: &crate::model::Document,
+    path: &[u32],
+    limits: &crate::boundary::ResourceLimits,
+) -> OperationResult<(u32, u32)> {
+    let (parent_path, child) = parent_of(path).ok_or_else(|| {
+        batch_invalid(
+            request_id,
+            operation_index,
+            "an attribute patch cannot target the document root",
+        )
+    })?;
+    let to_child = child.checked_add(SINGLE_CHILD).ok_or_else(|| {
+        batch_invalid(
+            request_id,
+            operation_index,
+            "attribute patch child index overflowed",
+        )
+    })?;
+    resolve_child_window(
+        request_id,
+        operation_index,
+        document,
+        ChildWindowTarget {
+            parent_path,
+            from_child: child,
+            to_child,
+        },
+        limits,
+    )
 }
 
 fn window_kills(parent_path: &[u32], from_child: u32, to_child: u32, target: &[u32]) -> bool {
@@ -64,14 +99,14 @@ impl OperationCompiler<'_> {
                 )
             })?;
         for (edit_index, edit) in batch.edits().iter().enumerate() {
-            let (from, rank) = match edit {
+            let (from, to, rank) = match edit {
                 StructuralEdit::SpliceChildren {
                     parent_path,
                     from_child,
                     to_child,
                     ..
                 } => {
-                    let (from, _) = resolve_child_window(
+                    let (from, to) = resolve_child_window(
                         request_id,
                         operation_index,
                         document,
@@ -82,35 +117,12 @@ impl OperationCompiler<'_> {
                         },
                         limits,
                     )?;
-                    (from, SPLICE_RANK)
+                    (from, to, SPLICE_RANK)
                 }
                 StructuralEdit::PatchAttributes { path, .. } => {
-                    let (parent_path, child) = parent_of(path).ok_or_else(|| {
-                        batch_invalid(
-                            request_id,
-                            operation_index,
-                            "an attribute patch cannot target the document root",
-                        )
-                    })?;
-                    let to_child = child.checked_add(SINGLE_CHILD).ok_or_else(|| {
-                        batch_invalid(
-                            request_id,
-                            operation_index,
-                            "attribute patch child index overflowed",
-                        )
-                    })?;
-                    let (from, _) = resolve_child_window(
-                        request_id,
-                        operation_index,
-                        document,
-                        ChildWindowTarget {
-                            parent_path,
-                            from_child: child,
-                            to_child,
-                        },
-                        limits,
-                    )?;
-                    (from, PATCH_RANK)
+                    let (from, to) =
+                        resolve_patch_window(request_id, operation_index, document, path, limits)?;
+                    (from, to, PATCH_RANK)
                 }
                 StructuralEdit::InsertContentText {
                     parent_path,
@@ -125,12 +137,13 @@ impl OperationCompiler<'_> {
                         *parent_offset,
                         limits,
                     )?;
-                    (position, CONTENT_TEXT_RANK)
+                    (position, position, CONTENT_TEXT_RANK)
                 }
             };
             planned.push(PlannedEdit {
                 edit_index,
                 from,
+                to,
                 rank,
             });
         }
@@ -150,70 +163,17 @@ impl OperationCompiler<'_> {
         batch: &StructuralEditBatch,
         planned: &[PlannedEdit],
     ) -> OperationResult<()> {
-        let request_id = self.request_id;
         for (left_index, left) in batch.edits().iter().enumerate() {
-            for (right_index, right) in batch.edits().iter().enumerate() {
-                if left_index == right_index {
-                    continue;
-                }
-                if let StructuralEdit::SpliceChildren {
-                    parent_path,
-                    from_child,
-                    to_child,
-                    ..
-                } = left
-                {
-                    if window_kills(parent_path, *from_child, *to_child, right.target_path()) {
-                        return Err(batch_invalid(
-                            request_id,
-                            operation_index,
-                            "a sealed structural edit cannot survive under a replaced ancestor",
-                        ));
-                    }
-                    if left_index < right_index && right.target_path() == parent_path.as_slice() {
-                        match right {
-                            StructuralEdit::SpliceChildren {
-                                from_child: right_from,
-                                to_child: right_to,
-                                ..
-                            } => {
-                                if *to_child > *right_from && *right_to > *from_child {
-                                    return Err(batch_invalid(
-                                        request_id,
-                                        operation_index,
-                                        "a sealed structural edit batch cannot overlap two splices of one parent",
-                                    ));
-                                }
-                            }
-                            StructuralEdit::InsertContentText { .. } => {
-                                return Err(batch_invalid(
-                                    request_id,
-                                    operation_index,
-                                    "a sealed structural edit batch cannot splice and retext one parent",
-                                ));
-                            }
-                            StructuralEdit::PatchAttributes { .. } => {}
-                        }
-                    }
-                }
-                if left_index < right_index
-                    && matches!(left, StructuralEdit::PatchAttributes { .. })
-                    && matches!(right, StructuralEdit::PatchAttributes { .. })
-                    && left.target_path() == right.target_path()
-                {
-                    return Err(batch_invalid(
-                        request_id,
-                        operation_index,
-                        "a sealed structural edit batch patches each node at most once",
-                    ));
-                }
+            for right in batch.edits().iter().skip(left_index.saturating_add(1)) {
+                self.admit_edit_pair(operation_index, left, right)?;
+                self.admit_edit_pair(operation_index, right, left)?;
             }
         }
         for (left_index, left) in planned.iter().enumerate() {
             for right in planned.iter().skip(left_index.saturating_add(1)) {
                 if left.from == right.from && left.rank == right.rank {
                     return Err(batch_invalid(
-                        request_id,
+                        self.request_id,
                         operation_index,
                         "a sealed structural edit batch cannot hold two edits at one coordinate",
                     ));
@@ -221,6 +181,66 @@ impl OperationCompiler<'_> {
             }
         }
         Ok(())
+    }
+
+    fn admit_edit_pair(
+        &self,
+        operation_index: usize,
+        left: &StructuralEdit,
+        right: &StructuralEdit,
+    ) -> OperationResult<()> {
+        let request_id = self.request_id;
+        if matches!(left, StructuralEdit::PatchAttributes { .. })
+            && matches!(right, StructuralEdit::PatchAttributes { .. })
+            && left.target_path() == right.target_path()
+        {
+            return Err(batch_invalid(
+                request_id,
+                operation_index,
+                "a sealed structural edit batch patches each node at most once",
+            ));
+        }
+        let StructuralEdit::SpliceChildren {
+            parent_path,
+            from_child,
+            to_child,
+            ..
+        } = left
+        else {
+            return Ok(());
+        };
+        if window_kills(parent_path, *from_child, *to_child, right.target_path()) {
+            return Err(batch_invalid(
+                request_id,
+                operation_index,
+                "a sealed structural edit cannot survive under a replaced ancestor",
+            ));
+        }
+        if right.target_path() != parent_path.as_slice() {
+            return Ok(());
+        }
+        match right {
+            StructuralEdit::SpliceChildren {
+                from_child: right_from,
+                to_child: right_to,
+                ..
+            } => {
+                if *to_child > *right_from && *right_to > *from_child {
+                    return Err(batch_invalid(
+                        request_id,
+                        operation_index,
+                        "a sealed structural edit batch cannot overlap two splices of one parent",
+                    ));
+                }
+                Ok(())
+            }
+            StructuralEdit::InsertContentText { .. } => Err(batch_invalid(
+                request_id,
+                operation_index,
+                "a sealed structural edit batch cannot splice and retext one parent",
+            )),
+            StructuralEdit::PatchAttributes { .. } => Ok(()),
+        }
     }
 
     #[inline]
@@ -311,7 +331,7 @@ impl OperationCompiler<'_> {
                         },
                         context.resource_limits,
                     )?;
-                    if from != plan.from {
+                    if (from, to) != (plan.from, plan.to) {
                         return Err(rebased_target(request_id, operation_index));
                     }
                     let step = Step::ReplaceRange {
@@ -369,29 +389,11 @@ impl OperationCompiler<'_> {
                     next
                 }
                 StructuralEdit::PatchAttributes { path, attrs } => {
-                    let (parent_path, child) = parent_of(path).ok_or_else(|| {
-                        batch_invalid(
-                            request_id,
-                            operation_index,
-                            "an attribute patch cannot target the document root",
-                        )
-                    })?;
-                    let to_child = child.checked_add(SINGLE_CHILD).ok_or_else(|| {
-                        batch_invalid(
-                            request_id,
-                            operation_index,
-                            "attribute patch child index overflowed",
-                        )
-                    })?;
-                    let (from, to) = resolve_child_window(
+                    let (from, _) = resolve_patch_window(
                         request_id,
                         operation_index,
                         &preview,
-                        ChildWindowTarget {
-                            parent_path,
-                            from_child: child,
-                            to_child,
-                        },
+                        path,
                         context.resource_limits,
                     )?;
                     if from != plan.from {
