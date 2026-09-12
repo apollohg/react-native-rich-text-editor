@@ -1712,3 +1712,54 @@ fn a_header_toggle_maps_its_selection_through_the_normalization_it_triggers() {
         "the surviving selection must name the toggled cell in post normalization positions",
     );
 }
+
+fn place_caret(engine: &mut YrsDocumentEngine, index: usize) {
+    let point = after_first_character(engine, index);
+    engine
+        .apply_typed_transaction(TypedTransaction {
+            request_id: REQUEST_ID,
+            base_document_revision: engine.revision(),
+            origin: TransactionOrigin::LocalApi,
+            operations: Vec::new(),
+            selection_intent: SelectionIntent::Set(SelectionInput::Text {
+                anchor: point,
+                head: point,
+            }),
+            history_policy: HistoryPolicy::Skip,
+        })
+        .expect("the caret applies");
+}
+
+fn resolved_caret(engine: &YrsDocumentEngine) -> Option<(u32, u32)> {
+    match engine.resolved_selection()? {
+        crate::yrs_engine::ResolvedSelection::Text { anchor, head } => {
+            Some((anchor.document, head.document))
+        }
+        crate::yrs_engine::ResolvedSelection::Cell { .. }
+        | crate::yrs_engine::ResolvedSelection::Node { .. }
+        | crate::yrs_engine::ResolvedSelection::All => None,
+    }
+}
+
+#[test]
+fn a_header_toggle_keeps_a_text_caret_and_maps_it_through_normalization() {
+    let mut engine = seeded(short_first_row_fixture());
+    place_caret(&mut engine, 1);
+
+    applied(
+        &mut engine,
+        TableCommand::ToggleTableHeader {
+            target: TableHeaderTarget::Cell,
+        },
+    );
+
+    let openings = cell_openings(&engine);
+    assert_eq!(
+        resolved_caret(&engine),
+        Some((
+            openings[2] + CELL_TEXT_OFFSET + ONE_CHARACTER,
+            openings[2] + CELL_TEXT_OFFSET + ONE_CHARACTER,
+        )),
+        "a non destructive toggle must leave the caret where it was, in mapped positions",
+    );
+}

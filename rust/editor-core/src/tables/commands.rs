@@ -275,6 +275,13 @@ impl<'a> TableTarget<'a> {
             .checked_sub(NODE_CLOSING_TOKENS)
     }
 
+    pub(crate) fn cell_starting_at(&self, source_pos: u32) -> Option<&ProjectedCell> {
+        self.projected
+            .cells
+            .iter()
+            .find(|cell| cell.source_pos == source_pos)
+    }
+
     pub(crate) fn cells_in_rectangle(
         &self,
         top: u32,
@@ -632,7 +639,7 @@ impl TableAction for ToggleHeaderAction {
         limits: &ResourceLimits,
     ) -> Option<TableActionOutcome> {
         let target = regular_target(candidate, schema, limits)?;
-        headers::plan_toggle_header(&target, self.target, schema)
+        headers::plan_toggle_header(&target, self.target, schema, &candidate.selection)
     }
 }
 

@@ -1,15 +1,36 @@
 use crate::command_planner::SemanticOperation;
 use crate::model::Fragment;
 use crate::schema::Schema;
+use crate::selection::Selection;
 use crate::tables::command_context::TableActionOutcome;
 use crate::tables::commands::{
     retyped_cell, TableHeaderTarget, TableTarget, FIRST_COLUMN, FIRST_ROW,
 };
 
+fn surviving_selection(target: &TableTarget<'_>, selection: &Selection) -> Option<Selection> {
+    let rect = target.rect()?;
+    match selection {
+        Selection::Text { anchor, head } => {
+            let inside = |position: u32| {
+                rect.cells.iter().any(|source_pos| {
+                    target.cell_starting_at(*source_pos).is_some_and(|cell| {
+                        cell.source_pos < position && position < cell.source_end
+                    })
+                })
+            };
+            (inside(*anchor) && inside(*head)).then(|| selection.clone())
+        }
+        Selection::Cell { .. } | Selection::Node { .. } | Selection::All => {
+            target.cell_selection_over(rect.top, rect.left, rect.bottom, rect.right)
+        }
+    }
+}
+
 pub(crate) fn plan_toggle_header(
     target: &TableTarget<'_>,
     header: TableHeaderTarget,
     schema: &Schema,
+    selection: &Selection,
 ) -> Option<TableActionOutcome> {
     let rect = target.rect()?;
     let (top, left, bottom, right) = match header {
@@ -49,11 +70,6 @@ pub(crate) fn plan_toggle_header(
     operations.reverse();
     Some(TableActionOutcome {
         operations,
-        selection_after: target.cell_selection_over(
-            rect.top,
-            rect.left,
-            rect.bottom,
-            rect.right,
-        )?,
+        selection_after: surviving_selection(target, selection)?,
     })
 }

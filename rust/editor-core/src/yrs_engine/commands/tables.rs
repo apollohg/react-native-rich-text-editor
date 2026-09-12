@@ -116,6 +116,7 @@ fn clear_cells(
 fn scoped_action(
     context: &PlanningContext<'_>,
     anchor: &TableAnchor,
+    selection: &Selection,
     action: &dyn TableAction,
 ) -> OperationResult<CommandPlan> {
     let prepared = prepare_table_action(
@@ -128,6 +129,7 @@ fn scoped_action(
             resource_limits: context.resource_limits,
             editing_limits: context.editing_limits,
             document: context.document,
+            selection,
         },
         action,
     );
@@ -268,23 +270,30 @@ pub(super) fn plan(
         },
         TableCommand::AddTableRow { side } => match anchor {
             None => Ok(CommandPlan::NotApplicable),
-            Some(anchor) => scoped_action(&context, &anchor, &InsertRowAction { side }),
+            Some(anchor) => scoped_action(&context, &anchor, &selection, &InsertRowAction { side }),
         },
         TableCommand::DeleteTableRows => match anchor {
             None => Ok(CommandPlan::NotApplicable),
-            Some(anchor) => scoped_action(&context, &anchor, &DeleteRowsAction),
+            Some(anchor) => scoped_action(&context, &anchor, &selection, &DeleteRowsAction),
         },
         TableCommand::AddTableColumn { side } => match anchor {
             None => Ok(CommandPlan::NotApplicable),
-            Some(anchor) => scoped_action(&context, &anchor, &InsertColumnAction { side }),
+            Some(anchor) => {
+                scoped_action(&context, &anchor, &selection, &InsertColumnAction { side })
+            }
         },
         TableCommand::DeleteTableColumns => match anchor {
             None => Ok(CommandPlan::NotApplicable),
-            Some(anchor) => scoped_action(&context, &anchor, &DeleteColumnsAction),
+            Some(anchor) => scoped_action(&context, &anchor, &selection, &DeleteColumnsAction),
         },
         TableCommand::ToggleTableHeader { target } => match anchor {
             None => Ok(CommandPlan::NotApplicable),
-            Some(anchor) => scoped_action(&context, &anchor, &ToggleHeaderAction { target }),
+            Some(anchor) => scoped_action(
+                &context,
+                &anchor,
+                &selection,
+                &ToggleHeaderAction { target },
+            ),
         },
         TableCommand::SelectTableRows => {
             match anchored_target(
@@ -317,15 +326,20 @@ pub(super) fn plan(
         TableCommand::ClearTableCells => clear_cells(&context, &selection, anchor.as_ref()),
         TableCommand::MergeTableCells => match anchor {
             None => Ok(CommandPlan::NotApplicable),
-            Some(anchor) => scoped_action(&context, &anchor, &MergeCellsAction),
+            Some(anchor) => scoped_action(&context, &anchor, &selection, &MergeCellsAction),
         },
         TableCommand::SplitTableCell => match anchor {
             None => Ok(CommandPlan::NotApplicable),
-            Some(anchor) => scoped_action(&context, &anchor, &SplitCellAction),
+            Some(anchor) => scoped_action(&context, &anchor, &selection, &SplitCellAction),
         },
         TableCommand::SetTableColumnWidth { width } => match anchor {
             None => Ok(CommandPlan::NotApplicable),
-            Some(anchor) => scoped_action(&context, &anchor, &SetColumnWidthAction { width }),
+            Some(anchor) => scoped_action(
+                &context,
+                &anchor,
+                &selection,
+                &SetColumnWidthAction { width },
+            ),
         },
     }
 }
@@ -409,7 +423,8 @@ impl<'a> TableCommandSurface<'a> {
             }),
             TableCommand::ToggleTableHeader { target: header } => {
                 self.regular_target().is_some_and(|target| {
-                    headers::plan_toggle_header(target, header, self.schema).is_some()
+                    headers::plan_toggle_header(target, header, self.schema, self.selection)
+                        .is_some()
                 })
             }
             TableCommand::SelectTableRows => self

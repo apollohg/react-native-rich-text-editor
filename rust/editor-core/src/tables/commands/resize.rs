@@ -8,6 +8,7 @@ struct CoveringCell<'a> {
     source_pos: u32,
     node: &'a Node,
     slice: u32,
+    declared: u32,
 }
 
 fn covering_cells<'a>(target: &TableTarget<'a>) -> Option<Vec<CoveringCell<'a>>> {
@@ -18,13 +19,14 @@ fn covering_cells<'a>(target: &TableTarget<'a>) -> Option<Vec<CoveringCell<'a>>>
     while row < target.rows() {
         let (cell, node) = target.cell_at(row, column)?;
         let slice = column.checked_sub(cell.rect.column)?;
-        if column_width(node, slice).is_err() {
+        let Ok(declared) = column_width(node, slice) else {
             return None;
-        }
+        };
         cells.push(CoveringCell {
             source_pos: cell.source_pos,
             node,
             slice,
+            declared,
         });
         row = row.checked_add(cell.rect.rowspan)?;
     }
@@ -45,10 +47,7 @@ pub(crate) fn plan_set_column_width(
 
     let mut operations = Vec::new();
     for cell in covering_cells(target)? {
-        let Ok(declared) = column_width(cell.node, cell.slice) else {
-            return None;
-        };
-        if declared == width {
+        if cell.declared == width {
             continue;
         }
         operations.push(SemanticOperation::UpdateNodeAttrs {

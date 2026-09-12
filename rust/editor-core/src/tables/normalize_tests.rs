@@ -433,6 +433,7 @@ fn context<'a>(
     limits: &'a ResourceLimits,
     editing_limits: &'a EditingLimits,
     anchors: Option<CellAnchorPair>,
+    selection: &'a crate::selection::Selection,
 ) -> TableActionContext<'a> {
     TableActionContext {
         request_id: REQUEST_ID,
@@ -443,6 +444,7 @@ fn context<'a>(
         resource_limits: limits,
         editing_limits,
         document,
+        selection,
     }
 }
 
@@ -454,8 +456,16 @@ fn prepare(
     let schema = schema();
     let limits = limits();
     let editing_limits = EditingLimits::default();
+    let selection = crate::selection::Selection::All;
     prepare_table_action(
-        &context(document, &schema, &limits, &editing_limits, anchors),
+        &context(
+            document,
+            &schema,
+            &limits,
+            &editing_limits,
+            anchors,
+            &selection,
+        ),
         action,
     )
 }
@@ -812,6 +822,7 @@ fn prepared_action(
             resource_limits: &limits,
             editing_limits,
             document,
+            selection: &crate::selection::Selection::All,
         },
         action,
     )

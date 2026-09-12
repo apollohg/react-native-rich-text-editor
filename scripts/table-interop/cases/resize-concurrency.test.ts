@@ -102,6 +102,8 @@ const SCENARIOS: ResizeScenario[] = [
     },
 ];
 
+const SPANNING_SCENARIO = SCENARIOS[SCENARIOS.length - 1] as ResizeScenario;
+
 async function seedPair(
     source: Peer,
     target: Peer,
@@ -218,20 +220,16 @@ test('a concurrent width write never provokes an orphan cleanup write', async ()
     await withPeers(
         ['rust', 'rust'] as const,
         async ([left, right]) => {
-            const fixture = table([
-                row([
-                    cell({
-                        colspan: 2,
-                        colwidth: [SEEDED_FIRST_COLUMN, SEEDED_SECOND_COLUMN],
-                        text: 'wide',
-                    }),
-                ]),
-                row([cell({ text: 'b0' }), cell({ text: 'b1' })]),
-            ]);
-            const anchors = await seedPair(left, right, fixture);
-            const leftAt = anchors[1];
-            const rightAt = anchors[2];
+            const scenario = SPANNING_SCENARIO;
+            const anchors = await seedPair(left, right, scenario.table);
+            const leftAt = anchors[scenario.leftCell];
+            const rightAt = anchors[scenario.rightCell];
             assert.ok(leftAt !== undefined && rightAt !== undefined);
+            assert.deepEqual(
+                await resolvedWidths(left, (await snapshot(left)).documentJson),
+                scenario.seeded,
+                'the seeded widths must be what the scenario claims, or the outcome proves nothing',
+            );
 
             await call(left, 'command', {
                 type: 'setTableColumnWidth',
@@ -258,9 +256,19 @@ test('a concurrent width write never provokes an orphan cleanup write', async ()
                 before,
                 'receiving a concurrent width must not make a replica write a repair',
             );
-            assert.deepEqual(
-                (await snapshot(left)).documentJson,
-                (await snapshot(right)).documentJson,
+            const leftDocument = (await snapshot(left)).documentJson;
+            assert.deepEqual(leftDocument, (await snapshot(right)).documentJson);
+
+            const widths = await resolvedWidths(left, leftDocument);
+            assert.notDeepEqual(
+                widths,
+                scenario.seeded,
+                'the widths must actually have been written, or the repair count proves nothing',
+            );
+            assert.ok(
+                admits(scenario, widths),
+                `the converged widths ${JSON.stringify(widths)} are none of `
+                    + JSON.stringify(scenario.admissible),
             );
         },
         tableFixture('prosemirror'),

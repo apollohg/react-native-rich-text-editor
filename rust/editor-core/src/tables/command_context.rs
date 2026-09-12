@@ -37,12 +37,14 @@ pub(crate) struct TableActionContext<'a> {
     pub resource_limits: &'a ResourceLimits,
     pub editing_limits: &'a EditingLimits,
     pub document: &'a Document,
+    pub selection: &'a Selection,
 }
 
 pub(crate) struct TableActionCandidate<'a> {
     pub document: &'a Document,
     pub table_pos: u32,
     pub anchors: Option<CellAnchorPair>,
+    pub selection: Selection,
 }
 
 pub(crate) struct TableActionOutcome {
@@ -93,6 +95,7 @@ pub(crate) fn prepare_table_action(
                 document: &candidate,
                 table_pos: context.table_pos,
                 anchors,
+                selection: remap_selection(context.selection, &pre_map),
             },
             context.schema,
             context.resource_limits,
@@ -203,6 +206,23 @@ fn advance_candidate(
         candidate = next;
     }
     Ok((candidate, composed))
+}
+
+fn remap_selection(selection: &Selection, map: &StepMap) -> Selection {
+    match selection {
+        Selection::Text { anchor, head } => Selection::Text {
+            anchor: map.map_pos(*anchor),
+            head: map.map_pos(*head),
+        },
+        Selection::Cell { anchor, head } => Selection::Cell {
+            anchor: map.map_pos(*anchor),
+            head: map.map_pos(*head),
+        },
+        Selection::Node { pos } => Selection::Node {
+            pos: map.map_pos(*pos),
+        },
+        Selection::All => Selection::All,
+    }
 }
 
 fn remap_anchors(
