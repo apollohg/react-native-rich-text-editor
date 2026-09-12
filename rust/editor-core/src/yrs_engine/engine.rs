@@ -386,10 +386,18 @@ impl YrsDocumentEngine {
         if let Some(reason) = crate::clipboard::unsupported_selection(&selection) {
             let index = self.table_projection_index()?;
             return Some(
-                crate::clipboard::export_cells(document, &selection, index, &self.schema)
-                    .unwrap_or_else(|| {
+                match crate::clipboard::export_cells(document, &selection, index, &self.schema) {
+                    Ok(copied) => copied,
+                    Err(crate::tables::interchange::InterchangeFailure::NotACellRectangle) => {
                         serde_json::json!({ crate::clipboard::CLIPBOARD_UNSUPPORTED_KEY: reason })
-                    }),
+                    }
+                    Err(crate::tables::interchange::InterchangeFailure::UnreadableGrid) => {
+                        serde_json::json!({
+                            crate::clipboard::CLIPBOARD_UNSUPPORTED_KEY:
+                                crate::clipboard::CLIPBOARD_UNSUPPORTED_TABLE_GRID
+                        })
+                    }
+                },
             );
         }
         Some(

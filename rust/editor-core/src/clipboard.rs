@@ -17,6 +17,7 @@ pub(crate) struct ClipboardSlice {
 pub(crate) const CLIPBOARD_EMPTY_KEY: &str = "empty";
 pub(crate) const CLIPBOARD_UNSUPPORTED_KEY: &str = "unsupported";
 pub(crate) const CLIPBOARD_UNSUPPORTED_CELL_SELECTION: &str = "cellSelection";
+pub(crate) const CLIPBOARD_UNSUPPORTED_TABLE_GRID: &str = "tableGrid";
 pub(crate) const CLOSED_FRAGMENT_DEPTH: usize = 0;
 
 pub(crate) fn unsupported_selection(selection: &Selection) -> Option<&'static str> {
@@ -116,25 +117,19 @@ pub(crate) fn export_cells(
     selection: &Selection,
     projection_index: &crate::tables::admission::TableProjectionIndex,
     schema: &Schema,
-) -> Option<Value> {
-    let fragment = match crate::tables::interchange::table_clipboard_fragment(
+) -> Result<Value, crate::tables::interchange::InterchangeFailure> {
+    let fragment = crate::tables::interchange::table_clipboard_fragment(
         document,
         selection,
         projection_index,
         schema,
-    ) {
-        Ok(fragment) => fragment,
-        Err(
-            crate::tables::interchange::InterchangeFailure::NotACellRectangle
-            | crate::tables::interchange::InterchangeFailure::UnreadableGrid,
-        ) => return None,
-    };
+    )?;
     let copied = Document::new(Node::element(
         document.root().node_type().into(),
         Default::default(),
         fragment,
     ));
-    Some(clipboard_payload(
+    Ok(clipboard_payload(
         &copied,
         CLOSED_FRAGMENT_DEPTH,
         CLOSED_FRAGMENT_DEPTH,
