@@ -105,10 +105,21 @@ impl<'a> TableTarget<'a> {
         limits: &ResourceLimits,
         requirement: GridRequirement,
     ) -> Option<Self> {
+        let index = TableProjectionIndex::derive_or_fallback(document, schema, limits);
+        Self::resolve_in(document, &index, table_pos, anchors, schema, requirement)
+    }
+
+    pub(crate) fn resolve_in(
+        document: &'a Document,
+        index: &TableProjectionIndex,
+        table_pos: u32,
+        anchors: Option<CellAnchorPair>,
+        schema: &Schema,
+        requirement: GridRequirement,
+    ) -> Option<Self> {
         let Ok(Some(roles)) = TableRoles::resolve(schema) else {
             return None;
         };
-        let index = TableProjectionIndex::derive_or_fallback(document, schema, limits);
         let projected = index.table_at(table_pos)?.clone();
         match requirement {
             GridRequirement::Regular if projected.irregular => return None,
@@ -117,7 +128,7 @@ impl<'a> TableTarget<'a> {
         let rect = match anchors {
             None => None,
             Some(anchors) => Some(
-                resolve_cell_rect(&index, anchors.anchor, anchors.head)
+                resolve_cell_rect(index, anchors.anchor, anchors.head)
                     .filter(|rect| rect.table_pos == table_pos)?,
             ),
         };
@@ -162,6 +173,10 @@ impl<'a> TableTarget<'a> {
 
     pub(crate) fn table_pos(&self) -> u32 {
         self.table_pos
+    }
+
+    pub(crate) fn is_regular(&self) -> bool {
+        !self.projected.irregular
     }
 
     pub(crate) fn rows(&self) -> u32 {

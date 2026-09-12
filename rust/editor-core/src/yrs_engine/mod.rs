@@ -39,7 +39,7 @@ pub use awareness::{
     AWARENESS_CELL_RECTANGLE_KEY,
 };
 pub(crate) use codec::YrsDocumentCodec;
-pub(crate) use commands::table_command_is_available;
+pub(crate) use commands::TableCommandSurface;
 pub use commands::{CommandPlan, TypedCommand};
 #[allow(unused_imports)]
 pub use editing_limits::{

@@ -1,16 +1,10 @@
-const HISTORY_SNAPSHOT_METADATA_BYTES: usize = 512 + "prosemirror".len() + 2;
-const ACTIVE_COMMAND_ENTRY_BYTES_CEILING: usize = 64;
+const EMPTY_DOCUMENT_JSON: &str = r#"{"type":"doc","content":[{"type":"paragraph"}]}"#;
 
 #[test]
-fn tight_history_metadata_budget_falls_back_to_full_candidate_derivation() {
-    let mut engine = transaction_engine_with_editing_limits(crate::yrs_engine::EditingLimits {
-        max_derived_output_bytes: 2 * HISTORY_SNAPSHOT_METADATA_BYTES
-            + crate::editor_state::ACTIVE_COMMAND_ENTRIES * ACTIVE_COMMAND_ENTRY_BYTES_CEILING,
-        ..crate::yrs_engine::EditingLimits::default()
-    });
-    engine
-        .apply_typed_transaction(TypedTransaction {
-            request_id: 108_004,
+fn the_history_retention_boundary_decides_full_candidate_derivation() {
+    fn insert(engine: &YrsDocumentEngine, request_id: u64) -> TypedTransaction {
+        TypedTransaction {
+            request_id,
             base_document_revision: engine.revision(),
             origin: TransactionOrigin::LocalInput,
             operations: vec![TypedOperation::InsertText {
@@ -24,21 +18,84 @@ fn tight_history_metadata_budget_falls_back_to_full_candidate_derivation() {
             }],
             selection_intent: SelectionIntent::UseOperationResult,
             history_policy: HistoryPolicy::Boundary,
-        })
+        }
+    }
+
+    let probe = transaction_engine();
+    let compiled = probe
+        .compile_typed_transaction(insert(&probe, 108_004))
         .unwrap();
-
-    crate::yrs_engine::observability::reset_full_pass_counts_for_test();
-    engine.undo_with_result(108_005).unwrap().unwrap();
-
-    assert_eq!(
-        engine.document_json().unwrap(),
-        serde_json::from_str::<serde_json::Value>(
-            r#"{"type":"doc","content":[{"type":"paragraph"}]}"#,
+    let after = compiled.preview_derivations.as_ref().unwrap();
+    let before = probe.derived_state.as_ref().unwrap();
+    let before_retained =
+        crate::yrs_engine::derived_state::history_document_snapshot_retained_bytes(
+            crate::yrs_engine::derived_state::HistoryDocumentSnapshotRetainedInput {
+                document: &before.document,
+                canonical_artifact: &before.canonical_artifact,
+                position_map: &before.position_map,
+                rendered_text: &before.rendered_text,
+                render_blocks: &before.render_blocks,
+                schema_fingerprint: &probe.schema_fingerprint,
+                fragment_name: &probe.fragment_name,
+                scope: probe.scope.as_ref(),
+            },
         )
-        .unwrap()
+        .unwrap();
+    let after_retained =
+        crate::yrs_engine::derived_state::history_document_snapshot_retained_bytes(
+            crate::yrs_engine::derived_state::HistoryDocumentSnapshotRetainedInput {
+                document: &compiled.preview,
+                canonical_artifact: compiled.canonical_artifact.as_ref().unwrap(),
+                position_map: &after.position_map,
+                rendered_text: &after.rendered_text,
+                render_blocks: &crate::render::incremental::CachedRenderBlocks::build(
+                    &compiled.preview,
+                    &probe.schema,
+                    &probe.resource_limits,
+                )
+                .unwrap(),
+                schema_fingerprint: &probe.schema_fingerprint,
+                fragment_name: &probe.fragment_name,
+                scope: probe.scope.as_ref(),
+            },
+        )
+        .unwrap();
+    let retention_boundary =
+        super::history_metadata_bytes(before.stored_marks.as_deref(), &probe.fragment_name)
+            .checked_add(super::history_metadata_bytes(None, &probe.fragment_name))
+            .and_then(|bytes| bytes.checked_add(before_retained.get()))
+            .and_then(|bytes| bytes.checked_add(after_retained.get()))
+            .unwrap();
+
+    let run = |limit, request_id| {
+        let mut engine = transaction_engine_with_editing_limits(crate::yrs_engine::EditingLimits {
+            max_derived_output_bytes: limit,
+            ..crate::yrs_engine::EditingLimits::default()
+        });
+        engine
+            .apply_typed_transaction(insert(&engine, request_id))
+            .unwrap();
+        crate::yrs_engine::observability::reset_full_pass_counts_for_test();
+        engine.undo_with_result(request_id + 1).unwrap().unwrap();
+        assert_eq!(
+            engine.document_json().unwrap(),
+            serde_json::from_str::<serde_json::Value>(EMPTY_DOCUMENT_JSON).unwrap(),
+            "undo must restore the document at every budget the boundary admits"
+        );
+        crate::yrs_engine::observability::take_full_pass_counts_for_test()
+    };
+
+    let retained = run(retention_boundary, 108_004);
+    assert_eq!(
+        retained.canonical_projections, 0,
+        "at the retention boundary the optional snapshots are kept and nothing is re-derived"
     );
-    let full_passes = crate::yrs_engine::observability::take_full_pass_counts_for_test();
-    assert!(full_passes.canonical_projections > 0);
+
+    let full_passes = run(retention_boundary - 1, 108_006);
+    assert!(
+        full_passes.canonical_projections > 0,
+        "one byte under the retention boundary must fall back to full candidate derivation"
+    );
     assert!(full_passes.canonical_serializations > 0);
     assert!(full_passes.canonical_hashes > 0);
 }

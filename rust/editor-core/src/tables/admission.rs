@@ -14,6 +14,26 @@ const DOCUMENT_LIMIT_EXCEEDED: &str = "DOCUMENT_LIMIT_EXCEEDED";
 const TABLE_GRID_PHASE: &str = "tableGrid";
 const TABLE_SHAPE_PHASE: &str = "tableShape";
 
+#[cfg(test)]
+std::thread_local! {
+    static PROJECTION_DERIVATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn record_projection_derivation() {
+    PROJECTION_DERIVATIONS.with(|count| count.set(count.get().saturating_add(1)));
+}
+
+#[cfg(test)]
+pub(crate) fn reset_projection_derivations() {
+    PROJECTION_DERIVATIONS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn projection_derivations() -> u64 {
+    PROJECTION_DERIVATIONS.with(std::cell::Cell::get)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProjectionFailure {
     ResourceExhausted,
@@ -57,6 +77,8 @@ impl TableProjectionIndex {
         schema: &Schema,
         limits: &ResourceLimits,
     ) -> Self {
+        #[cfg(test)]
+        record_projection_derivation();
         validate_table_shapes(document, schema, limits)
             .unwrap_or_else(|error| Self::fallback(ProjectionFailure::of(&error)))
     }

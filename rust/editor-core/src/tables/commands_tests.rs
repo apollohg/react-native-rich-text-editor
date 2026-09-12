@@ -33,28 +33,8 @@ const CUSTOM_TABLE_NAMES: [&str; 4] = ["grid", "gridRow", "gridCell", "gridHeade
 const ANCHOR_CELL: usize = 2;
 const IDENTITY_FIXTURE_CELLS: usize = 5;
 const ONE_CHARACTER: u32 = 1;
-const EVERY_TABLE_COMMAND: [TableCommand; 10] = [
-    TableCommand::InsertTable {
-        rows: DEFAULT_INSERTED_TABLE_ROWS,
-        columns: DEFAULT_INSERTED_TABLE_COLUMNS,
-        with_header_row: DEFAULT_INSERTED_TABLE_HEADER_ROW,
-    },
-    TableCommand::DeleteTable,
-    TableCommand::AddTableRow {
-        side: TableEdge::Before,
-    },
-    TableCommand::DeleteTableRows,
-    TableCommand::AddTableColumn {
-        side: TableEdge::After,
-    },
-    TableCommand::DeleteTableColumns,
-    TableCommand::ToggleTableHeader {
-        target: TableHeaderTarget::Row,
-    },
-    TableCommand::SelectTableRows,
-    TableCommand::SelectTableColumns,
-    TableCommand::ClearTableCells,
-];
+const SHARED_SURFACE_PROJECTIONS: u64 = 1;
+const STAGED_DELETION_PROJECTIONS: u64 = 4;
 
 fn engine_with(schema: Schema, content: Vec<Value>) -> YrsDocumentEngine {
     let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
@@ -828,6 +808,33 @@ fn availability_separates_geometry_from_content_on_an_irregular_grid() {
 }
 
 #[test]
+fn availability_projects_the_document_once_for_the_whole_command_surface() {
+    let mut engine = seeded(tall_span_fixture());
+    select_cell(&mut engine, ANCHOR_CELL);
+    let openings = cell_openings(&engine);
+    let selection = Selection::cell(openings[ANCHOR_CELL], openings[ANCHOR_CELL]);
+    crate::tables::admission::reset_projection_derivations();
+
+    let commands = crate::editor_state::command_applicability(
+        document_of(&engine),
+        &engine_schema(&engine),
+        &selection,
+        &limits(),
+    );
+
+    assert_eq!(
+        commands.len(),
+        crate::editor_state::ACTIVE_COMMAND_ENTRIES,
+        "the surface must answer every command it advertises",
+    );
+    assert_eq!(
+        crate::tables::admission::projection_derivations(),
+        SHARED_SURFACE_PROJECTIONS + STAGED_DELETION_PROJECTIONS,
+        "the surface must project once and pay only for the documents deletion stages",
+    );
+}
+
+#[test]
 fn availability_matches_the_planner_on_a_regular_grid() {
     let mut engine = seeded(regular_fixture());
     select_cell(&mut engine, 0);
@@ -1188,9 +1195,56 @@ fn header_payload(target: TableHeaderTarget) -> &'static str {
     }
 }
 
+const EVERY_TABLE_EDGE: [TableEdge; 2] = [TableEdge::Before, TableEdge::After];
+const EVERY_TABLE_HEADER_TARGET: [TableHeaderTarget; 3] = [
+    TableHeaderTarget::Row,
+    TableHeaderTarget::Column,
+    TableHeaderTarget::Cell,
+];
+const TABLE_COMMAND_ENVELOPE_CASES: usize = 14;
+
+fn every_table_command() -> Vec<TableCommand> {
+    let mut commands = vec![
+        TableCommand::InsertTable {
+            rows: DEFAULT_INSERTED_TABLE_ROWS,
+            columns: DEFAULT_INSERTED_TABLE_COLUMNS,
+            with_header_row: DEFAULT_INSERTED_TABLE_HEADER_ROW,
+        },
+        TableCommand::DeleteTable,
+        TableCommand::DeleteTableRows,
+        TableCommand::DeleteTableColumns,
+        TableCommand::SelectTableRows,
+        TableCommand::SelectTableColumns,
+        TableCommand::ClearTableCells,
+    ];
+    for side in EVERY_TABLE_EDGE {
+        commands.push(TableCommand::AddTableRow { side });
+        commands.push(TableCommand::AddTableColumn { side });
+    }
+    for target in EVERY_TABLE_HEADER_TARGET {
+        commands.push(TableCommand::ToggleTableHeader { target });
+    }
+    commands
+}
+
 #[test]
 fn every_table_command_discriminant_round_trips_through_its_envelope() {
-    for command in EVERY_TABLE_COMMAND {
+    let commands = every_table_command();
+    assert_eq!(
+        commands.len(),
+        TABLE_COMMAND_ENVELOPE_CASES,
+        "every edge and header target must be round tripped, not one instance per variant",
+    );
+    let payloads: std::collections::BTreeSet<String> = commands
+        .iter()
+        .map(|command| envelope_payload(*command).to_string())
+        .collect();
+    assert_eq!(
+        payloads.len(),
+        TABLE_COMMAND_ENVELOPE_CASES,
+        "each case must address a distinct envelope",
+    );
+    for command in commands {
         let payload = envelope_payload(command);
         assert_eq!(
             crate::native_transaction_bridge::table_command_envelope_for_test(&payload.to_string()),

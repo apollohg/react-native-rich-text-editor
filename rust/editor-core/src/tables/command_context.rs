@@ -15,6 +15,7 @@ use crate::yrs_engine::{EditingLimits, OperationError, OperationResult, Transact
 
 const TABLE_ACTION_FIELD: &str = "tableAction";
 const TABLE_ACTION_UNAVAILABLE_FIELD: &str = "tableAction.unavailable";
+const TABLE_ACTION_UNAVAILABLE_CODE: &str = "OPERATION_INVALID";
 const TABLE_ACTION_ANCHOR_FIELD: &str = "tableAction.anchors";
 const TABLE_ACTION_GRID_FIELD: &str = "tableAction.grid";
 const TABLE_ACTION_OPERATIONS_FIELD: &str = "maxOperationsPerTransaction";
@@ -266,7 +267,8 @@ fn require_valid_outer_grid(
 }
 
 pub(crate) fn is_action_unavailable(error: &OperationError) -> bool {
-    error.details == Some(serde_json::json!({ "field": TABLE_ACTION_UNAVAILABLE_FIELD }))
+    error.code == TABLE_ACTION_UNAVAILABLE_CODE
+        && error.details == Some(serde_json::json!({ "field": TABLE_ACTION_UNAVAILABLE_FIELD }))
 }
 
 fn action_unavailable(context: &TableActionContext<'_>, kind: TableActionKind) -> OperationError {

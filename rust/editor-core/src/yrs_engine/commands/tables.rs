@@ -35,15 +35,19 @@ pub(crate) fn anchor_from_selection(
     selection: &Selection,
 ) -> Option<TableAnchor> {
     let index = TableProjectionIndex::derive_or_fallback(document, schema, limits);
+    anchor_in(&index, selection)
+}
+
+fn anchor_in(index: &TableProjectionIndex, selection: &Selection) -> Option<TableAnchor> {
     let (anchor, head) = match selection {
         Selection::Cell { anchor, head } => (*anchor, *head),
         Selection::Text { anchor, head } => {
-            let opening = cell_opening_containing(&index, (*anchor).min(*head))?;
+            let opening = cell_opening_containing(index, (*anchor).min(*head))?;
             (opening, opening)
         }
         Selection::Node { .. } | Selection::All => return None,
     };
-    let rect = resolve_cell_rect(&index, anchor, head)?;
+    let rect = resolve_cell_rect(index, anchor, head)?;
     Some(TableAnchor {
         table_pos: rect.table_pos,
         anchors: CellAnchorPair { anchor, head },
@@ -321,70 +325,101 @@ pub(super) fn plan(
     }
 }
 
-pub(crate) fn table_command_is_available(
-    document: &Document,
-    schema: &Schema,
-    selection: &Selection,
-    limits: &ResourceLimits,
-    command: TableCommand,
-) -> bool {
-    let anchor = anchor_from_selection(document, schema, limits, selection);
-    let target = anchored_target(
-        document,
-        schema,
-        limits,
-        anchor.as_ref(),
-        GridRequirement::Regular,
-    );
-    let projected_target = anchored_target(
-        document,
-        schema,
-        limits,
-        anchor.as_ref(),
-        GridRequirement::AsProjected,
-    );
-    match command {
-        TableCommand::InsertTable {
-            rows,
-            columns,
-            with_header_row,
-        } => {
-            anchor.is_none()
-                && plan_insert_table(
-                    document,
-                    schema,
-                    selection,
-                    limits,
-                    rows,
-                    columns,
-                    with_header_row,
-                )
-                .is_some()
+pub(crate) struct TableCommandSurface<'a> {
+    document: &'a Document,
+    schema: &'a Schema,
+    limits: &'a ResourceLimits,
+    selection: &'a Selection,
+    anchor: Option<TableAnchor>,
+    target: Option<TableTarget<'a>>,
+}
+
+impl<'a> TableCommandSurface<'a> {
+    pub(crate) fn resolve(
+        document: &'a Document,
+        schema: &'a Schema,
+        selection: &'a Selection,
+        limits: &'a ResourceLimits,
+    ) -> Self {
+        let index = TableProjectionIndex::derive_or_fallback(document, schema, limits);
+        let anchor = anchor_in(&index, selection);
+        let target = anchor.as_ref().and_then(|anchor| {
+            TableTarget::resolve_in(
+                document,
+                &index,
+                anchor.table_pos,
+                Some(anchor.anchors),
+                schema,
+                GridRequirement::AsProjected,
+            )
+        });
+        Self {
+            document,
+            schema,
+            limits,
+            selection,
+            anchor,
+            target,
         }
-        TableCommand::DeleteTable => anchor
-            .is_some_and(|anchor| plan_delete_table(document, schema, anchor.table_pos).is_some()),
-        TableCommand::AddTableRow { side } => {
-            target.is_some_and(|target| rows::plan_insert_row(&target, side, schema).is_some())
-        }
-        TableCommand::DeleteTableRows => target.is_some_and(|target| {
-            rows::plan_delete_rows(document, &target, schema, limits).is_some()
-        }),
-        TableCommand::AddTableColumn { side } => target
-            .is_some_and(|target| columns::plan_insert_column(&target, side, schema).is_some()),
-        TableCommand::DeleteTableColumns => target.is_some_and(|target| {
-            columns::plan_delete_columns(document, &target, schema, limits).is_some()
-        }),
-        TableCommand::ToggleTableHeader { target: header } => target.is_some_and(|target| {
-            headers::plan_toggle_header(&target, header, schema, selection).is_some()
-        }),
-        TableCommand::SelectTableRows => {
-            projected_target.is_some_and(|target| plan_select_rows(&target).is_some())
-        }
-        TableCommand::SelectTableColumns => {
-            projected_target.is_some_and(|target| plan_select_columns(&target).is_some())
-        }
-        TableCommand::ClearTableCells => {
-            projected_target.is_some_and(|target| plan_clear_cells(&target, schema).is_some())
+    }
+
+    fn regular_target(&self) -> Option<&TableTarget<'a>> {
+        self.target.as_ref().filter(|target| target.is_regular())
+    }
+
+    pub(crate) fn is_available(&self, command: TableCommand) -> bool {
+        match command {
+            TableCommand::InsertTable {
+                rows,
+                columns,
+                with_header_row,
+            } => {
+                self.anchor.is_none()
+                    && plan_insert_table(
+                        self.document,
+                        self.schema,
+                        self.selection,
+                        self.limits,
+                        rows,
+                        columns,
+                        with_header_row,
+                    )
+                    .is_some()
+            }
+            TableCommand::DeleteTable => self.anchor.as_ref().is_some_and(|anchor| {
+                plan_delete_table(self.document, self.schema, anchor.table_pos).is_some()
+            }),
+            TableCommand::AddTableRow { side } => self
+                .regular_target()
+                .is_some_and(|target| rows::plan_insert_row(target, side, self.schema).is_some()),
+            TableCommand::DeleteTableRows => self.regular_target().is_some_and(|target| {
+                rows::plan_delete_rows(self.document, target, self.schema, self.limits).is_some()
+            }),
+            TableCommand::AddTableColumn { side } => self.regular_target().is_some_and(|target| {
+                columns::plan_insert_column(target, side, self.schema).is_some()
+            }),
+            TableCommand::DeleteTableColumns => self.regular_target().is_some_and(|target| {
+                columns::plan_delete_columns(self.document, target, self.schema, self.limits)
+                    .is_some()
+            }),
+            TableCommand::ToggleTableHeader { target: header } => {
+                self.regular_target().is_some_and(|target| {
+                    headers::plan_toggle_header(target, header, self.schema, self.selection)
+                        .is_some()
+                })
+            }
+            TableCommand::SelectTableRows => self
+                .target
+                .as_ref()
+                .is_some_and(|target| plan_select_rows(target).is_some()),
+            TableCommand::SelectTableColumns => self
+                .target
+                .as_ref()
+                .is_some_and(|target| plan_select_columns(target).is_some()),
+            TableCommand::ClearTableCells => self
+                .target
+                .as_ref()
+                .is_some_and(|target| plan_clear_cells(target, self.schema).is_some()),
         }
     }
 }

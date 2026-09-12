@@ -251,13 +251,10 @@ fn command_applicability_with_known_node_count_impl(
             root_wrap_range.as_ref(),
         ),
     );
+    let table_commands =
+        crate::yrs_engine::TableCommandSurface::resolve(document, schema, selection, limits);
     for (name, command) in table_command_surface() {
-        commands.insert(
-            name.into(),
-            crate::yrs_engine::table_command_is_available(
-                document, schema, selection, limits, command,
-            ),
-        );
+        commands.insert(name.into(), table_commands.is_available(command));
     }
     commands.insert(
         "wrapTaskList".into(),

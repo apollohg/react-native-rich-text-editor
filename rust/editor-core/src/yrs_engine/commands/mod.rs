@@ -19,7 +19,7 @@ use super::{
     SelectionInput, TransactionOrigin, TypedOperation, TypedTransaction,
 };
 
-pub(crate) use tables::table_command_is_available;
+pub(crate) use tables::TableCommandSurface;
 
 const TABLE_ACTION_ORIGIN_FIELD: &str = "origin";
 
