@@ -9,6 +9,7 @@ use crate::tables::roles::{
     TableRoles, TABLE_CELL_COLSPAN_ATTR, TABLE_CELL_COLWIDTH_ATTR, TABLE_CELL_ROWSPAN_ATTR,
 };
 use crate::tables::selection::resolve_cell_rect;
+use crate::tables::types::TableError;
 use crate::yrs_engine::OperationError;
 
 const ONE_CELL: usize = 1;
@@ -99,11 +100,21 @@ pub(crate) fn table_clipboard_fragment(
     )]))
 }
 
+fn unreadable_grid(error: TableError) -> InterchangeFailure {
+    match error {
+        TableError::GridLimit { .. }
+        | TableError::WorkLimit
+        | TableError::Allocation
+        | TableError::InvalidStructure
+        | TableError::InvalidAttributes => InterchangeFailure::UnreadableGrid,
+    }
+}
+
 fn effective_cell(node: &Node, rect: &CellRect) -> Result<Node, InterchangeFailure> {
-    let declared_colspan = span_attribute(node, TABLE_CELL_COLSPAN_ATTR)
-        .map_err(|_| InterchangeFailure::UnreadableGrid)?;
-    let declared_rowspan = span_attribute(node, TABLE_CELL_ROWSPAN_ATTR)
-        .map_err(|_| InterchangeFailure::UnreadableGrid)?;
+    let declared_colspan =
+        span_attribute(node, TABLE_CELL_COLSPAN_ATTR).map_err(unreadable_grid)?;
+    let declared_rowspan =
+        span_attribute(node, TABLE_CELL_ROWSPAN_ATTR).map_err(unreadable_grid)?;
     if declared_colspan == rect.colspan && declared_rowspan == rect.rowspan {
         return Ok(node.clone());
     }
@@ -138,10 +149,8 @@ pub(crate) fn first_editable_position_in_cell(
     schema: &Schema,
     cell_pos: u32,
 ) -> Result<Option<u32>, InterchangeFailure> {
-    let roles = match TableRoles::resolve(schema) {
-        Ok(Some(roles)) => roles,
-        Ok(None) => return Ok(None),
-        Err(_) => return Err(InterchangeFailure::UnreadableGrid),
+    let Some(roles) = TableRoles::resolve(schema).map_err(unreadable_grid)? else {
+        return Ok(None);
     };
     let Some(cell) = node_starting_at(document, cell_pos) else {
         return Ok(None);
