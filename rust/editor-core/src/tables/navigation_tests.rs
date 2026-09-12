@@ -40,6 +40,8 @@ const FIRST_INTRA_CELL_BLOCK_TEXT: &str = "one";
 const SECOND_INTRA_CELL_BLOCK_TEXT: &str = "two";
 const TRAILING_CELL_TEXT: &str = "after";
 const TYPED_CHARACTER: &str = "x";
+const APPENDED_TABLE_ROWS: usize = 3;
+const PRESERVED_ROWS: usize = 2;
 
 fn cell_holding_a_nested_table() -> Value {
     json!({
@@ -910,5 +912,51 @@ fn tab_into_a_cell_that_wraps_a_nested_table_lands_on_an_editable_caret() {
         json!(format!("{TYPED_CHARACTER}{TRAILING_CELL_TEXT}")),
         "the caret landed in the paragraph after the wrapper, so typing edits that paragraph \
          rather than the cell the caret came from",
+    );
+}
+
+#[test]
+fn tab_with_no_further_editable_cell_appends_after_the_last_row() {
+    let mut engine = engine_with(json!({ "type": "doc", "content": [table(vec![
+        row(vec![cell("a")]),
+        row(vec![nested_only_cell_value()]),
+    ])] }));
+    let outer = openings(
+        &index_of(engine.document().expect("the engine is ready")),
+        OUTER_TABLE_POSITION,
+    );
+    let before = engine.document_json().expect("the engine is ready");
+
+    caret_at(&mut engine, outer[FIRST_CELL_ANCHOR] + CELL_TEXT_OFFSET);
+    assert!(
+        step(&mut engine, CellStep::Forward, DEFAULT_TAB_APPENDS_A_ROW).is_some(),
+        "tab off the last editable cell must append a row",
+    );
+
+    let after = engine.document_json().expect("the engine is ready");
+    let rows = after["content"][0]["content"]
+        .as_array()
+        .expect("the outer table holds rows");
+    assert_eq!(
+        rows.len(),
+        APPENDED_TABLE_ROWS,
+        "the append grows the outer table by one row",
+    );
+    assert_eq!(
+        rows[..PRESERVED_ROWS],
+        before["content"][0]["content"]
+            .as_array()
+            .expect("the fixture table holds rows")[..],
+        "the appended row lands after the last row, so no existing row is displaced",
+    );
+
+    let appended = openings(
+        &index_of(engine.document().expect("the engine is ready")),
+        OUTER_TABLE_POSITION,
+    );
+    assert_eq!(
+        caret_document_position(&engine),
+        Some(*appended.last().expect("the grown table holds cells") + CELL_TEXT_OFFSET),
+        "the caret lands in the appended row's first editable cell",
     );
 }

@@ -433,21 +433,38 @@ fn outer_cell_anchor(index: &TableProjectionIndex, caret: u32) -> Option<TableAn
     })
 }
 
-fn appendable_outer_row<'a>(
-    document: &'a Document,
+fn last_row_anchor(index: &TableProjectionIndex, table_pos: u32) -> Option<TableAnchor> {
+    let table = index.table_at(table_pos)?;
+    let cell_pos = table
+        .cells
+        .iter()
+        .find(|cell| cell.rect.row.checked_add(cell.rect.rowspan) == Some(table.rows))
+        .map(|cell| cell.source_pos)?;
+    Some(TableAnchor {
+        table_pos,
+        anchors: CellAnchorPair {
+            anchor: cell_pos,
+            head: cell_pos,
+        },
+    })
+}
+
+fn appendable_outer_row(
+    document: &Document,
     index: &TableProjectionIndex,
     schema: &Schema,
     anchor: &TableAnchor,
-) -> Option<TableTarget<'a>> {
+) -> Option<TableAnchor> {
+    let trailing = last_row_anchor(index, anchor.table_pos)?;
     let target = TableTarget::resolve_in(
         document,
         index,
-        anchor.table_pos,
-        Some(anchor.anchors),
+        trailing.table_pos,
+        Some(trailing.anchors),
         schema,
         GridRequirement::Regular,
     )?;
-    rows::plan_insert_row(&target, TableEdge::After, schema).map(|_| target)
+    rows::plan_insert_row(&target, TableEdge::After, schema).map(|_| trailing)
 }
 
 fn move_to_adjacent_cell(
@@ -474,12 +491,14 @@ fn move_to_adjacent_cell(
     }
     match (step, append_row) {
         (CellStep::Forward, true) => {
-            if appendable_outer_row(context.document, &index, context.schema, &anchor).is_none() {
+            let Some(trailing) =
+                appendable_outer_row(context.document, &index, context.schema, &anchor)
+            else {
                 return Ok(CommandPlan::NotApplicable);
-            }
+            };
             scoped_action(
                 context,
-                &anchor,
+                &trailing,
                 selection,
                 &InsertRowAction {
                     side: TableEdge::After,
