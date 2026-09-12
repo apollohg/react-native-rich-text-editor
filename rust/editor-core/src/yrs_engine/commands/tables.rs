@@ -16,6 +16,7 @@ use crate::tables::commands::{
 };
 use crate::tables::interchange::{
     first_editable_position_in_cell, next_outer_cell, outer_cell_containing, CellStep,
+    InterchangeFailure,
 };
 use crate::tables::selection::{cell_opening_containing, resolve_cell_rect};
 use crate::tables::types::TableError;
@@ -185,31 +186,37 @@ fn admitted_cell_content(
 fn cell_selection_intent(
     context: &PlanningContext<'_>,
     expanded: &Selection,
-) -> Option<crate::yrs_engine::SelectionInput> {
+) -> OperationResult<Option<crate::yrs_engine::SelectionInput>> {
     let Selection::Cell { anchor, head } = expanded else {
-        return None;
+        return Ok(None);
     };
-    let inside = |opening: u32| {
-        let interior = first_editable_position_in_cell(context.document, context.schema, opening)?;
-        Some(crate::yrs_engine::RevisionedPosition {
-            offset: context
-                .position_map
-                .doc_to_scalar(interior, context.document),
-            kind: crate::yrs_engine::EditorOffsetKind::Scalar,
-            affinity: crate::yrs_engine::DEFAULT_POSITION_AFFINITY,
-        })
+    let inside = |opening: u32| -> OperationResult<Option<crate::yrs_engine::RevisionedPosition>> {
+        let interior = first_editable_position_in_cell(context.document, context.schema, opening)
+            .map_err(|failure| failure.into_operation_error(context.request_id))?;
+        Ok(
+            interior.map(|interior| crate::yrs_engine::RevisionedPosition {
+                offset: context
+                    .position_map
+                    .doc_to_scalar(interior, context.document),
+                kind: crate::yrs_engine::EditorOffsetKind::Scalar,
+                affinity: crate::yrs_engine::DEFAULT_POSITION_AFFINITY,
+            }),
+        )
     };
-    Some(crate::yrs_engine::SelectionInput::Cell {
-        anchor: inside(*anchor)?,
-        head: inside(*head)?,
-    })
+    let (Some(anchor), Some(head)) = (inside(*anchor)?, inside(*head)?) else {
+        return Ok(None);
+    };
+    Ok(Some(crate::yrs_engine::SelectionInput::Cell {
+        anchor,
+        head,
+    }))
 }
 
 fn selection_only(
     context: &PlanningContext<'_>,
     expanded: Selection,
 ) -> OperationResult<CommandPlan> {
-    let Some(intent) = cell_selection_intent(context, &expanded) else {
+    let Some(intent) = cell_selection_intent(context, &expanded)? else {
         return Ok(CommandPlan::NotApplicable);
     };
     Ok(CommandPlan::SelectionOnly(TypedTransaction {
@@ -388,8 +395,14 @@ fn cell_rectangle_is_addressable(
     let Selection::Cell { anchor, head } = expanded else {
         return false;
     };
-    first_editable_position_in_cell(document, schema, *anchor).is_some()
-        && first_editable_position_in_cell(document, schema, *head).is_some()
+    [*anchor, *head].into_iter().all(|opening| {
+        match first_editable_position_in_cell(document, schema, opening) {
+            Ok(interior) => interior.is_some(),
+            Err(InterchangeFailure::NotACellRectangle | InterchangeFailure::UnreadableGrid) => {
+                UNREADABLE_GRID_IS_NOT_AVAILABLE
+            }
+        }
+    })
 }
 
 fn next_editable_outer_cell(
@@ -398,15 +411,15 @@ fn next_editable_outer_cell(
     schema: &Schema,
     caret: u32,
     step: CellStep,
-) -> Option<u32> {
+) -> Result<Option<u32>, InterchangeFailure> {
     let mut cursor = caret;
     while let Some(next) = next_outer_cell(index, cursor, step) {
-        if let Some(interior) = first_editable_position_in_cell(document, schema, next) {
-            return Some(interior);
+        if let Some(interior) = first_editable_position_in_cell(document, schema, next)? {
+            return Ok(Some(interior));
         }
         cursor = next;
     }
-    None
+    Ok(None)
 }
 
 fn outer_cell_anchor(index: &TableProjectionIndex, caret: u32) -> Option<TableAnchor> {
@@ -454,9 +467,9 @@ fn move_to_adjacent_cell(
     let Some(anchor) = outer_cell_anchor(&index, caret) else {
         return Ok(CommandPlan::NotApplicable);
     };
-    if let Some(interior) =
-        next_editable_outer_cell(context.document, &index, context.schema, caret, step)
-    {
+    let landing = next_editable_outer_cell(context.document, &index, context.schema, caret, step)
+        .map_err(|failure| failure.into_operation_error(context.request_id))?;
+    if let Some(interior) = landing {
         return caret_only(context, interior);
     }
     match (step, append_row) {
@@ -603,10 +616,13 @@ impl<'a> TableCommandSurface<'a> {
                 let Some(anchor) = outer_cell_anchor(&self.index, caret) else {
                     return false;
                 };
-                if next_editable_outer_cell(self.document, &self.index, self.schema, caret, step)
-                    .is_some()
+                match next_editable_outer_cell(self.document, &self.index, self.schema, caret, step)
                 {
-                    return true;
+                    Ok(Some(_)) => return true,
+                    Ok(None) => {}
+                    Err(
+                        InterchangeFailure::NotACellRectangle | InterchangeFailure::UnreadableGrid,
+                    ) => return UNREADABLE_GRID_IS_NOT_AVAILABLE,
                 }
                 match (step, append_row) {
                     (CellStep::Forward, true) => {

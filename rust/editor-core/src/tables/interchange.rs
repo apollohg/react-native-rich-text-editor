@@ -9,14 +9,37 @@ use crate::tables::roles::{
     TableRoles, TABLE_CELL_COLSPAN_ATTR, TABLE_CELL_COLWIDTH_ATTR, TABLE_CELL_ROWSPAN_ATTR,
 };
 use crate::tables::selection::resolve_cell_rect;
+use crate::yrs_engine::OperationError;
 
 const ONE_CELL: usize = 1;
 const NODE_OPENING_TOKENS: u32 = 1;
+const TABLE_INTERCHANGE_OPERATION_INDEX: usize = 0;
+pub(crate) const TABLE_CLIPBOARD_SELECTION_FIELD: &str = "tableClipboard.selection";
+pub(crate) const TABLE_CLIPBOARD_GRID_FIELD: &str = "tableClipboard.grid";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InterchangeFailure {
     NotACellRectangle,
     UnreadableGrid,
+}
+
+impl InterchangeFailure {
+    pub(crate) fn into_operation_error(self, request_id: u64) -> OperationError {
+        match self {
+            Self::NotACellRectangle => OperationError::operation_invalid(
+                request_id,
+                TABLE_INTERCHANGE_OPERATION_INDEX,
+                TABLE_CLIPBOARD_SELECTION_FIELD,
+                "a table clipboard fragment requires a cell rectangle",
+            ),
+            Self::UnreadableGrid => OperationError::document_invalid(
+                request_id,
+                None,
+                TABLE_CLIPBOARD_GRID_FIELD,
+                "the table grid cannot be read",
+            ),
+        }
+    }
 }
 
 pub(crate) fn table_clipboard_fragment(
@@ -114,20 +137,32 @@ pub(crate) fn first_editable_position_in_cell(
     document: &Document,
     schema: &Schema,
     cell_pos: u32,
-) -> Option<u32> {
+) -> Result<Option<u32>, InterchangeFailure> {
     let roles = match TableRoles::resolve(schema) {
         Ok(Some(roles)) => roles,
-        Ok(None) | Err(_) => return None,
+        Ok(None) => return Ok(None),
+        Err(_) => return Err(InterchangeFailure::UnreadableGrid),
     };
-    let cell = node_starting_at(document, cell_pos)?;
-    let mut child_pos = cell_pos.checked_add(NODE_OPENING_TOKENS)?;
-    for child in cell.content()?.iter() {
+    let Some(cell) = node_starting_at(document, cell_pos) else {
+        return Ok(None);
+    };
+    let Some(content) = cell.content() else {
+        return Ok(None);
+    };
+    let mut child_pos = match cell_pos.checked_add(NODE_OPENING_TOKENS) {
+        Some(child_pos) => child_pos,
+        None => return Err(InterchangeFailure::UnreadableGrid),
+    };
+    for child in content.iter() {
         if child.node_type() != roles.table {
-            return child_pos.checked_add(NODE_OPENING_TOKENS);
+            return Ok(child_pos.checked_add(NODE_OPENING_TOKENS));
         }
-        child_pos = child_pos.checked_add(child.node_size())?;
+        child_pos = match child_pos.checked_add(child.node_size()) {
+            Some(child_pos) => child_pos,
+            None => return Err(InterchangeFailure::UnreadableGrid),
+        };
     }
-    None
+    Ok(None)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

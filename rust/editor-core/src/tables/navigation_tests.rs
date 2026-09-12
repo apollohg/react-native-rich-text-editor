@@ -6,7 +6,7 @@ use crate::command_planner::SemanticOperation;
 use crate::model::Document;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::commands::{TableCommand, DEFAULT_TAB_APPENDS_A_ROW};
-use crate::tables::interchange::{next_outer_cell, CellStep};
+use crate::tables::interchange::{first_editable_position_in_cell, next_outer_cell, CellStep};
 use crate::tables::mutation_guard::{admit_local_mutation, LocalMutationRefusal};
 use crate::tables::normalize_tests::{cell, cell_with, document_with, limits, row, schema, table};
 use crate::yrs_engine::{
@@ -705,7 +705,7 @@ fn tab_skips_a_cell_whose_only_content_is_a_nested_table() {
     );
 }
 
-fn nested_only_cell() -> Value {
+fn nested_only_cell_value() -> Value {
     json!({
         "type": CELL_NODE,
         "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
@@ -747,7 +747,7 @@ fn advertised_and_executed(
 #[test]
 fn availability_and_planning_agree_when_the_only_neighbour_holds_a_nested_table() {
     let forward = json!({ "type": "doc", "content": [table(vec![
-        row(vec![cell("a"), nested_only_cell()]),
+        row(vec![cell("a"), nested_only_cell_value()]),
     ])] });
     let (advertised, executed) = advertised_and_executed(forward, 0, CellStep::Forward, false);
     assert_eq!(
@@ -756,7 +756,7 @@ fn availability_and_planning_agree_when_the_only_neighbour_holds_a_nested_table(
     );
 
     let backward = json!({ "type": "doc", "content": [table(vec![
-        row(vec![nested_only_cell(), cell("c")]),
+        row(vec![nested_only_cell_value(), cell("c")]),
     ])] });
     let (advertised, executed) =
         advertised_and_executed(backward, 1, CellStep::Backward, DEFAULT_TAB_APPENDS_A_ROW);
@@ -773,7 +773,7 @@ fn availability_and_planning_agree_when_the_only_neighbour_holds_a_nested_table(
 #[test]
 fn shift_tab_skips_a_cell_whose_only_content_is_a_nested_table() {
     let mut engine = engine_with(json!({ "type": "doc", "content": [table(vec![
-        row(vec![cell("a"), nested_only_cell(), cell("c")]),
+        row(vec![cell("a"), nested_only_cell_value(), cell("c")]),
     ])] }));
     let outer = openings(
         &index_of(engine.document().expect("the engine is ready")),
@@ -786,5 +786,26 @@ fn shift_tab_skips_a_cell_whose_only_content_is_a_nested_table() {
         caret_document_position(&engine),
         Some(outer[0] + CELL_TEXT_OFFSET),
         "shift-tab steps over an unreachable cell to the previous editable one",
+    );
+}
+
+#[test]
+fn an_unreachable_cell_declines_through_the_value_channel_not_the_error_channel() {
+    let document = document_with(vec![table(vec![row(vec![
+        cell("a"),
+        nested_only_cell_value(),
+    ])])]);
+    let index = index_of(&document);
+    let outer = openings(&index, OUTER_TABLE_POSITION);
+
+    assert_eq!(
+        first_editable_position_in_cell(&document, &schema(), outer[1]),
+        Ok(None),
+        "a cell with no editable position declines by value, so tab may still append a row",
+    );
+    assert_eq!(
+        first_editable_position_in_cell(&document, &schema(), outer[0]),
+        Ok(Some(outer[0] + CELL_TEXT_OFFSET)),
+        "an ordinary cell reports its first editable position",
     );
 }
