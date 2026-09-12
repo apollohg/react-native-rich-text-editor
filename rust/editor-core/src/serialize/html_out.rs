@@ -6,6 +6,7 @@ use crate::tables::TableRole;
 pub(crate) const TABLE_BODY_HTML_TAG: &str = "tbody";
 pub(crate) const TABLE_COLWIDTH_HTML_ATTR: &str = "data-colwidth";
 pub(crate) const TABLE_COLWIDTH_SEPARATOR: char = ',';
+const FIRST_WIDTH_SLICE: usize = 0;
 
 /// Serialize a document to an HTML string using the given schema for tag mappings.
 ///
@@ -182,15 +183,18 @@ fn render_colwidth(value: &serde_json::Value) -> Option<String> {
     };
     let mut rendered = String::new();
     let mut carries_a_width = false;
-    for width in widths {
-        if !rendered.is_empty() {
+    for (slice, width) in widths.iter().enumerate() {
+        if slice > FIRST_WIDTH_SLICE {
             rendered.push(TABLE_COLWIDTH_SEPARATOR);
         }
         let width = crate::tables::projection::integral_unsigned(width)
             .filter(|width| *width != u64::from(crate::tables::projection::UNSET_COLUMN_WIDTH));
-        if let Some(width) = width {
-            rendered.push_str(&width.to_string());
-            carries_a_width = true;
+        match width {
+            Some(width) => {
+                rendered.push_str(&width.to_string());
+                carries_a_width = true;
+            }
+            None => rendered.push_str(&crate::tables::projection::UNSET_COLUMN_WIDTH.to_string()),
         }
     }
     carries_a_width.then_some(rendered)

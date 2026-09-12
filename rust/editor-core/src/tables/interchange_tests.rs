@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::boundary::ResourceLimits;
 use crate::model::Document;
@@ -6,6 +6,7 @@ use crate::schema::presets::prosemirror_table_schema;
 use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::serialize::html_in::{from_html_with_limits, FromHtmlOptions};
+use crate::serialize::html_out::TABLE_COLWIDTH_SEPARATOR;
 use crate::serialize::{to_html, to_prosemirror_json};
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::interchange::{table_clipboard_fragment, InterchangeFailure};
@@ -22,6 +23,7 @@ const SINGLE_SPAN: u32 = 1;
 const MALFORMED_COLUMN_WIDTHS: &str = "100,abc";
 const UNSET_COLUMN_WIDTHS: &str = "0,";
 const DECLARED_COLUMN_WIDTH: u32 = 100;
+const DOUBLE_SPAN: u32 = 2;
 
 const REPLACEMENT_REQUEST_ID: u64 = 23;
 const FRAGMENT_NAME: &str = "prosemirror";
@@ -402,4 +404,46 @@ fn a_malformed_column_width_list_is_distinguishable_from_a_deliberately_unset_on
         Some(json!({ "colwidth": [DECLARED_COLUMN_WIDTH] })),
         "a well-formed list is kept, so dropping the malformed one is a real distinction",
     );
+}
+
+#[test]
+fn a_partially_specified_column_width_keeps_every_slot() {
+    let cell_with_widths = |widths: serde_json::Value| {
+        json!({
+            "type": HEADER_CELL_NODE,
+            "attrs": { "colspan": 2, "rowspan": SINGLE_SPAN, "colwidth": widths },
+            "content": [{ "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": "h" }] }],
+        })
+    };
+    for (widths, expected) in [
+        (json!([0, 140]), "0,140"),
+        (json!([100, 0]), "100,0"),
+        (json!([Value::Null, 140]), "0,140"),
+        (json!([100, Value::Null]), "100,0"),
+        (json!([100, 140]), "100,140"),
+    ] {
+        let document = document_with(vec![table(vec![row(vec![cell_with_widths(
+            widths.clone(),
+        )])])]);
+        let exported = to_html(&document, &schema());
+        assert!(
+            exported.contains(&format!("data-colwidth=\"{expected}\"")),
+            "{widths} must export every slot as {expected}: {exported}",
+        );
+        let slices: Vec<&str> = expected.split(TABLE_COLWIDTH_SEPARATOR).collect();
+        assert_eq!(
+            slices.len(),
+            DOUBLE_SPAN as usize,
+            "the pinned parser keeps a width list only when its length equals colspan: {exported}",
+        );
+        assert!(
+            slices.iter().all(|slice| slice.parse::<u32>().is_ok()),
+            "the pinned parser rejects any list with a non digit slice: {exported}",
+        );
+        assert_eq!(
+            to_html(&import(&exported), &schema()),
+            exported,
+            "{widths} must reimport to a document that exports the same slots",
+        );
+    }
 }
