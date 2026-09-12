@@ -104,7 +104,9 @@ fn effective_cell(node: &Node, rect: &CellRect) -> Result<Node, InterchangeFailu
     Ok(Node::element(
         node.node_type().into(),
         attrs,
-        node.content().cloned().unwrap_or_else(Fragment::empty),
+        node.content()
+            .cloned()
+            .ok_or(InterchangeFailure::UnreadableGrid)?,
     ))
 }
 
