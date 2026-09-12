@@ -20,7 +20,6 @@ const TABLE_ACTION_ANCHOR_BEFORE_FIELD: &str = "tableAction.anchors.before";
 const TABLE_ACTION_ANCHOR_AFTER_FIELD: &str = "tableAction.anchors.after";
 const TABLE_ACTION_ANCHOR_MOVED_FIELD: &str = "tableAction.anchors.moved";
 const TABLE_ACTION_GRID_IRREGULAR_FIELD: &str = "tableAction.grid.irregular";
-const TABLE_ACTION_GRID_MISSING_FIELD: &str = "tableAction.grid.missing";
 pub(crate) const TABLE_ACTION_SHAPE_FIELD: &str = "tableAction.shape";
 const TABLE_ACTION_OPERATIONS_FIELD: &str = "maxOperationsPerTransaction";
 const SINGLE_PASS: u32 = 1;
