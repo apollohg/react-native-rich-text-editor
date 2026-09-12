@@ -1277,7 +1277,12 @@ const EVERY_TABLE_HEADER_TARGET: [TableHeaderTarget; 3] = [
     TableHeaderTarget::Column,
     TableHeaderTarget::Cell,
 ];
-const TABLE_COMMAND_ENVELOPE_CASES: usize = 17;
+const EVERY_CELL_STEP: [crate::tables::interchange::CellStep; 2] = [
+    crate::tables::interchange::CellStep::Forward,
+    crate::tables::interchange::CellStep::Backward,
+];
+const EVERY_TAB_ROW_APPEND: [bool; 2] = [true, false];
+const TABLE_COMMAND_ENVELOPE_CASES: usize = 21;
 
 fn every_table_command() -> Vec<TableCommand> {
     let mut commands = vec![
@@ -1304,6 +1309,11 @@ fn every_table_command() -> Vec<TableCommand> {
     }
     for target in EVERY_TABLE_HEADER_TARGET {
         commands.push(TableCommand::ToggleTableHeader { target });
+    }
+    for step in EVERY_CELL_STEP {
+        for append_row in EVERY_TAB_ROW_APPEND {
+            commands.push(TableCommand::MoveToAdjacentCell { step, append_row });
+        }
     }
     commands
 }
