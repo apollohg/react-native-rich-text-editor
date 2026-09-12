@@ -29,7 +29,8 @@ use crate::ffi_v2::types::{deserialize_canonical_u64, recover_request_id};
 use crate::session::{EditorSession, ErrorDomain, OperationFailureClass, SessionError};
 use crate::tables::commands::{
     TableCommand, TableEdge, TableHeaderTarget, DEFAULT_INSERTED_TABLE_COLUMNS,
-    DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS, MIN_INSERTED_TABLE_DIMENSION,
+    DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS, MAX_INSERTED_TABLE_DIMENSION,
+    MIN_INSERTED_TABLE_DIMENSION,
 };
 use crate::yrs_engine::{
     Affinity, CommandPlan, EditorOffsetKind, HistoryPolicy, OperationError, ReplacementHistory,
@@ -39,10 +40,10 @@ use crate::yrs_engine::{
 };
 
 #[cfg(test)]
-pub(crate) fn table_command_envelope_for_test(payload: &str) -> Option<TypedCommand> {
+pub(crate) fn table_command_envelope_for_test(payload: &str) -> Result<TypedCommand, String> {
     serde_json::from_str::<CommandEnvelope>(payload)
-        .ok()
         .map(TypedCommand::from)
+        .map_err(|error| error.to_string())
 }
 
 /// The one supported native bridge envelope version.

@@ -150,6 +150,9 @@ pub(crate) fn plan(
     command: TypedCommand,
 ) -> OperationResult<CommandPlan> {
     match command {
+        TypedCommand::DeleteBackward if tables::selection_is_a_cell_rectangle(&context) => {
+            tables::plan_clear_cell_rectangle(context)
+        }
         command @ (TypedCommand::InsertText { .. }
         | TypedCommand::DeleteRange { .. }
         | TypedCommand::DeleteBackward

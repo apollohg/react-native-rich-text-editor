@@ -1,7 +1,11 @@
+const HISTORY_SNAPSHOT_METADATA_BYTES: usize = 512 + "prosemirror".len() + 2;
+const ACTIVE_COMMAND_ENTRY_BYTES_CEILING: usize = 64;
+
 #[test]
 fn tight_history_metadata_budget_falls_back_to_full_candidate_derivation() {
     let mut engine = transaction_engine_with_editing_limits(crate::yrs_engine::EditingLimits {
-        max_derived_output_bytes: 2 * (528 + "prosemirror".len() + 2),
+        max_derived_output_bytes: 2 * HISTORY_SNAPSHOT_METADATA_BYTES
+            + crate::editor_state::ACTIVE_COMMAND_ENTRIES * ACTIVE_COMMAND_ENTRY_BYTES_CEILING,
         ..crate::yrs_engine::EditingLimits::default()
     });
     engine

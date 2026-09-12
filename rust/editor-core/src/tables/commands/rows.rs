@@ -4,8 +4,8 @@ use crate::model::{Document, Fragment, Node};
 use crate::schema::Schema;
 use crate::tables::command_context::TableActionOutcome;
 use crate::tables::commands::{
-    attrs_with_row_span, caret_in_cell, fresh_cell_node, TableEdge, TableTarget, FIRST_COLUMN,
-    FIRST_ROW, MINIMUM_SURVIVING_ROWS, NODE_OPENING_TOKENS, ONE_SLOT,
+    attrs_with_row_span, caret_in_cell, fresh_cell_node, GridRequirement, TableEdge, TableTarget,
+    FIRST_COLUMN, FIRST_ROW, MINIMUM_SURVIVING_ROWS, NODE_OPENING_TOKENS, ONE_SLOT,
 };
 
 fn reference_row(target: &TableTarget<'_>, row: u32) -> Option<u32> {
@@ -94,7 +94,14 @@ pub(crate) fn plan_delete_rows(
     let mut operations = Vec::new();
     for row in (rect.top..rect.bottom).rev() {
         let step = {
-            let stage = TableTarget::resolve(&candidate, target.table_pos(), None, schema, limits)?;
+            let stage = TableTarget::resolve(
+                &candidate,
+                target.table_pos(),
+                None,
+                schema,
+                limits,
+                GridRequirement::Regular,
+            )?;
             plan_delete_one_row(&stage, row)?
         };
         let Ok(next) = apply_operations(&candidate, schema, &step) else {
@@ -104,7 +111,14 @@ pub(crate) fn plan_delete_rows(
         operations.extend(step);
     }
 
-    let surviving = TableTarget::resolve(&candidate, target.table_pos(), None, schema, limits)?;
+    let surviving = TableTarget::resolve(
+        &candidate,
+        target.table_pos(),
+        None,
+        schema,
+        limits,
+        GridRequirement::Regular,
+    )?;
     let row = rect.top.min(surviving.rows().checked_sub(ONE_SLOT)?);
     Some(TableActionOutcome {
         operations,

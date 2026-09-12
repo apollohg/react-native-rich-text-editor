@@ -4,8 +4,9 @@ use crate::model::{Document, Fragment};
 use crate::schema::Schema;
 use crate::tables::command_context::TableActionOutcome;
 use crate::tables::commands::{
-    attrs_with_added_column, attrs_with_removed_column, caret_in_cell, fresh_cell_node, TableEdge,
-    TableTarget, FIRST_COLUMN, FIRST_ROW, MINIMUM_SURVIVING_COLUMNS, ONE_SLOT,
+    attrs_with_added_column, attrs_with_removed_column, caret_in_cell, fresh_cell_node,
+    GridRequirement, TableEdge, TableTarget, FIRST_COLUMN, FIRST_ROW, MINIMUM_SURVIVING_COLUMNS,
+    ONE_SLOT,
 };
 
 fn reference_column(target: &TableTarget<'_>, column: u32) -> Option<u32> {
@@ -91,7 +92,14 @@ pub(crate) fn plan_delete_columns(
     let mut operations = Vec::new();
     for column in (rect.left..rect.right).rev() {
         let step = {
-            let stage = TableTarget::resolve(&candidate, target.table_pos(), None, schema, limits)?;
+            let stage = TableTarget::resolve(
+                &candidate,
+                target.table_pos(),
+                None,
+                schema,
+                limits,
+                GridRequirement::Regular,
+            )?;
             plan_delete_one_column(&stage, column)?
         };
         let Ok(next) = apply_operations(&candidate, schema, &step) else {
@@ -101,7 +109,14 @@ pub(crate) fn plan_delete_columns(
         operations.extend(step);
     }
 
-    let surviving = TableTarget::resolve(&candidate, target.table_pos(), None, schema, limits)?;
+    let surviving = TableTarget::resolve(
+        &candidate,
+        target.table_pos(),
+        None,
+        schema,
+        limits,
+        GridRequirement::Regular,
+    )?;
     let column = rect.left.min(surviving.columns().checked_sub(ONE_SLOT)?);
     let row = rect.top.min(surviving.rows().checked_sub(ONE_SLOT)?);
     Some(TableActionOutcome {

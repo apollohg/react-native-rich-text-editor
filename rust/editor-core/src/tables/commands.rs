@@ -30,6 +30,7 @@ pub(crate) const DEFAULT_INSERTED_TABLE_ROWS: u32 = 3;
 pub(crate) const DEFAULT_INSERTED_TABLE_COLUMNS: u32 = 3;
 pub(crate) const DEFAULT_INSERTED_TABLE_HEADER_ROW: bool = true;
 pub(crate) const MIN_INSERTED_TABLE_DIMENSION: u32 = 1;
+pub(crate) const MAX_INSERTED_TABLE_DIMENSION: u32 = 1_000;
 pub(crate) const MINIMUM_SURVIVING_ROWS: u32 = 1;
 pub(crate) const MINIMUM_SURVIVING_COLUMNS: u32 = 1;
 
@@ -89,6 +90,12 @@ pub(crate) struct TableTarget<'a> {
     rect: Option<CellSelectionRect>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GridRequirement {
+    Regular,
+    AsProjected,
+}
+
 impl<'a> TableTarget<'a> {
     pub(crate) fn resolve(
         document: &'a Document,
@@ -96,14 +103,16 @@ impl<'a> TableTarget<'a> {
         anchors: Option<CellAnchorPair>,
         schema: &Schema,
         limits: &ResourceLimits,
+        requirement: GridRequirement,
     ) -> Option<Self> {
         let Ok(Some(roles)) = TableRoles::resolve(schema) else {
             return None;
         };
         let index = TableProjectionIndex::derive_or_fallback(document, schema, limits);
         let projected = index.table_at(table_pos)?.clone();
-        if projected.irregular {
-            return None;
+        match requirement {
+            GridRequirement::Regular if projected.irregular => return None,
+            GridRequirement::Regular | GridRequirement::AsProjected => {}
         }
         let rect = match anchors {
             None => None,
@@ -412,6 +421,7 @@ impl TableAction for InsertRowAction {
             candidate.anchors,
             schema,
             limits,
+            GridRequirement::Regular,
         )?;
         rows::plan_insert_row(&target, self.side, schema)
     }
@@ -436,6 +446,7 @@ impl TableAction for DeleteRowsAction {
             candidate.anchors,
             schema,
             limits,
+            GridRequirement::Regular,
         )?;
         rows::plan_delete_rows(candidate.document, &target, schema, limits)
     }
@@ -462,6 +473,7 @@ impl TableAction for InsertColumnAction {
             candidate.anchors,
             schema,
             limits,
+            GridRequirement::Regular,
         )?;
         columns::plan_insert_column(&target, self.side, schema)
     }
@@ -486,6 +498,7 @@ impl TableAction for DeleteColumnsAction {
             candidate.anchors,
             schema,
             limits,
+            GridRequirement::Regular,
         )?;
         columns::plan_delete_columns(candidate.document, &target, schema, limits)
     }
@@ -513,6 +526,7 @@ impl TableAction for ToggleHeaderAction {
             candidate.anchors,
             schema,
             limits,
+            GridRequirement::Regular,
         )?;
         headers::plan_toggle_header(&target, self.target, schema, &self.selection_before)
     }

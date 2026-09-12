@@ -20,6 +20,7 @@ const PARAGRAPH_NODE: &str = "paragraph";
 const TABLE_POSITION: u32 = 0;
 const FIRST_CELL_POSITION: u32 = 2;
 const GENEROUS_GRID_LIMIT: usize = 4_096;
+const UNREACHABLE_POSITION: u32 = 10_000;
 const SINGLE_SPAN: u32 = 1;
 
 pub(crate) fn schema() -> Schema {
@@ -367,8 +368,8 @@ fn a_table_position_that_holds_no_table_is_refused() {
 use crate::command_planner::SemanticCommandHistory;
 use crate::selection::Selection;
 use crate::tables::command_context::{
-    prepare_table_action, CellAnchorPair, PreparedTableAction, TableAction, TableActionCandidate,
-    TableActionContext, TableActionOutcome,
+    is_action_unavailable, prepare_table_action, CellAnchorPair, PreparedTableAction, TableAction,
+    TableActionCandidate, TableActionContext, TableActionOutcome,
 };
 use crate::tables::types::{TableActionKind, TableWorkCounters};
 use crate::yrs_engine::{table_action_plan_for_test, CommandPlan, TableActionTestRequest};
@@ -545,8 +546,37 @@ fn an_unavailable_action_never_commits_its_normalization() {
     assert_eq!(error.request_id, REQUEST_ID);
     assert_eq!(
         error.details,
-        Some(json!({ "field": "tableAction" })),
-        "a failed action reports the action field, not a normalization commit",
+        Some(json!({ "field": "tableAction.unavailable" })),
+        "a declined action reports its own field, not a normalization commit",
+    );
+    assert!(
+        is_action_unavailable(&error),
+        "a declined action is what callers may turn into a not-applicable plan",
+    );
+}
+
+#[test]
+fn a_step_that_cannot_apply_is_never_mistaken_for_an_unavailable_action() {
+    let document = short_row_document();
+    let impossible = ScriptedAction {
+        kind: TableActionKind::InsertRow,
+        plan: |_candidate: &TableActionCandidate<'_>| {
+            Some(TableActionOutcome {
+                operations: vec![SemanticOperation::DeleteRange {
+                    from: UNREACHABLE_POSITION,
+                    to: UNREACHABLE_POSITION + 1,
+                }],
+                selection_after: Selection::cursor(0),
+            })
+        },
+    };
+
+    let error = refused(prepare(&document, None, &impossible));
+
+    assert_eq!(error.code, "OPERATION_INVALID", "unexpected: {error:?}");
+    assert!(
+        !is_action_unavailable(&error),
+        "a step that cannot apply must reach the caller as an error: {error:?}",
     );
 }
 

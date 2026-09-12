@@ -30,6 +30,31 @@ const SINGLE_SPAN: u32 = 1;
 const NO_DOCUMENT_UPDATES: usize = 0;
 const ONE_DOCUMENT_UPDATE: usize = 1;
 const CUSTOM_TABLE_NAMES: [&str; 4] = ["grid", "gridRow", "gridCell", "gridHeader"];
+const ANCHOR_CELL: usize = 2;
+const IDENTITY_FIXTURE_CELLS: usize = 5;
+const ONE_CHARACTER: u32 = 1;
+const EVERY_TABLE_COMMAND: [TableCommand; 10] = [
+    TableCommand::InsertTable {
+        rows: DEFAULT_INSERTED_TABLE_ROWS,
+        columns: DEFAULT_INSERTED_TABLE_COLUMNS,
+        with_header_row: DEFAULT_INSERTED_TABLE_HEADER_ROW,
+    },
+    TableCommand::DeleteTable,
+    TableCommand::AddTableRow {
+        side: TableEdge::Before,
+    },
+    TableCommand::DeleteTableRows,
+    TableCommand::AddTableColumn {
+        side: TableEdge::After,
+    },
+    TableCommand::DeleteTableColumns,
+    TableCommand::ToggleTableHeader {
+        target: TableHeaderTarget::Row,
+    },
+    TableCommand::SelectTableRows,
+    TableCommand::SelectTableColumns,
+    TableCommand::ClearTableCells,
+];
 
 fn engine_with(schema: Schema, content: Vec<Value>) -> YrsDocumentEngine {
     let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
@@ -95,6 +120,19 @@ fn inside_cell(engine: &YrsDocumentEngine, index: usize) -> RevisionedPosition {
     let map = engine.position_map().expect("the engine is ready");
     RevisionedPosition {
         offset: map.doc_to_scalar(opening + CELL_TEXT_OFFSET, document_of(engine)),
+        kind: EditorOffsetKind::Scalar,
+        affinity: Affinity::Before,
+    }
+}
+
+fn after_first_character(engine: &YrsDocumentEngine, index: usize) -> RevisionedPosition {
+    let opening = cell_openings(engine)[index];
+    let map = engine.position_map().expect("the engine is ready");
+    RevisionedPosition {
+        offset: map.doc_to_scalar(
+            opening + CELL_TEXT_OFFSET + ONE_CHARACTER,
+            document_of(engine),
+        ),
         kind: EditorOffsetKind::Scalar,
         affinity: Affinity::Before,
     }
@@ -622,22 +660,115 @@ fn clearing_a_merged_selection_keeps_its_spans_and_its_grid() {
 }
 
 #[test]
-fn clearing_cells_leaves_a_synthetic_gap_synthetic() {
+fn clearing_over_a_synthetic_gap_clears_the_real_cells_and_leaves_the_gap() {
     let mut engine = seeded(ragged_fixture());
-    let before = table_of(&engine);
     assert_eq!(geometry(&projection_of(&engine)), (2, 2, true));
-    select_cell(&mut engine, 0);
+    select_cells(&mut engine, 1, 2);
 
-    let outcome = run(&mut engine, TableCommand::ClearTableCells)
-        .expect("clearing declines on an irregular grid rather than erroring");
+    applied(&mut engine, TableCommand::ClearTableCells);
 
-    assert!(outcome.is_none());
+    let table = table_of(&engine);
+    assert_eq!(row_texts(&table, 0), vec![String::new(), String::new()]);
     assert_eq!(
-        table_of(&engine),
-        before,
-        "clearing must never write the cell a synthetic slot stands in for",
+        row_texts(&table, 1),
+        vec![String::new()],
+        "the short row keeps exactly one real cell",
     );
-    assert_eq!(geometry(&projection_of(&engine)), (2, 2, true));
+    assert_eq!(
+        geometry(&projection_of(&engine)),
+        (2, 2, true),
+        "clearing must never mint the cell a synthetic slot stands in for",
+    );
+}
+
+#[test]
+fn backspace_over_a_cell_rectangle_clears_it_instead_of_deleting_a_text_span() {
+    let mut engine = seeded(wide_span_fixture());
+    let before = geometry(&projection_of(&engine));
+    select_cells(&mut engine, 0, 2);
+
+    let result = engine
+        .apply_command(REQUEST_ID, TypedCommand::DeleteBackward)
+        .expect("a backspace over a cell rectangle plans");
+
+    assert!(
+        result.is_some(),
+        "a backspace over a cell rectangle must not be a silent no-op",
+    );
+    let table = table_of(&engine);
+    assert_eq!(row_texts(&table, 0), vec![String::new()]);
+    assert_eq!(row_texts(&table, 1), vec![String::new(), String::new()]);
+    assert_eq!(
+        table["content"][0]["content"][0]["attrs"]["colspan"],
+        json!(2),
+        "clearing by backspace keeps every span",
+    );
+    assert_eq!(geometry(&projection_of(&engine)), before);
+}
+
+#[test]
+fn backspace_outside_a_cell_rectangle_still_deletes_text() {
+    let mut engine = seeded(regular_fixture());
+    let caret = after_first_character(&engine, 0);
+    engine
+        .apply_typed_transaction(TypedTransaction {
+            request_id: REQUEST_ID,
+            base_document_revision: engine.revision(),
+            origin: TransactionOrigin::LocalApi,
+            operations: Vec::new(),
+            selection_intent: SelectionIntent::Set(SelectionInput::Text {
+                anchor: caret,
+                head: caret,
+            }),
+            history_policy: HistoryPolicy::Skip,
+        })
+        .expect("the text selection applies");
+
+    engine
+        .apply_command(REQUEST_ID, TypedCommand::DeleteBackward)
+        .expect("a backspace inside a cell plans")
+        .expect("a backspace inside a cell mutates");
+
+    assert_eq!(
+        row_texts(&table_of(&engine), 0),
+        vec!["0".to_owned(), "a1".to_owned()],
+        "a caret inside a cell still deletes one character",
+    );
+}
+
+#[test]
+fn no_table_command_takes_the_single_operation_prepared_path() {
+    for command in [
+        TableCommand::AddTableRow {
+            side: TableEdge::After,
+        },
+        TableCommand::AddTableColumn {
+            side: TableEdge::After,
+        },
+        TableCommand::DeleteTableRows,
+        TableCommand::DeleteTableColumns,
+        TableCommand::ToggleTableHeader {
+            target: TableHeaderTarget::Row,
+        },
+        TableCommand::ClearTableCells,
+    ] {
+        let mut engine = seeded(tall_span_fixture());
+        select_cell(&mut engine, ANCHOR_CELL);
+        let plan = engine
+            .plan_command(REQUEST_ID, TypedCommand::Table(command))
+            .unwrap_or_else(|error| panic!("{command:?} plans: {error:?}"));
+        let crate::yrs_engine::CommandPlan::Transaction(transaction) = plan else {
+            panic!("{command:?} must lower to a document transaction");
+        };
+        assert!(
+            transaction
+                .operations
+                .iter()
+                .all(|operation| matches!(operation, TypedOperation::EditStructure(_))),
+            "{command:?} must stay outside the single-operation prepared admission, which \
+             only ever carries InsertText, AddMark, RemoveMark or WrapInList",
+        );
+    }
 }
 
 #[test]
@@ -656,7 +787,7 @@ fn a_row_command_normalizes_a_ragged_table_before_it_inserts() {
 }
 
 #[test]
-fn availability_reports_no_proof_on_an_irregular_grid_and_normalizes_nothing() {
+fn availability_separates_geometry_from_content_on_an_irregular_grid() {
     let engine = seeded(ragged_fixture());
     let document = document_of(&engine).clone();
     let schema = engine_schema(&engine);
@@ -667,8 +798,27 @@ fn availability_reports_no_proof_on_an_irregular_grid_and_normalizes_nothing() {
     let commands =
         crate::editor_state::command_applicability(&document, &schema, &selection, &limits());
 
-    assert_eq!(commands.get("addTableRowAfter"), Some(&false));
-    assert_eq!(commands.get("clearTableCells"), Some(&false));
+    for geometry_command in [
+        "addTableRowAfter",
+        "addTableRowBefore",
+        "deleteTableRows",
+        "addTableColumnAfter",
+        "deleteTableColumns",
+        "toggleTableHeaderRow",
+    ] {
+        assert_eq!(
+            commands.get(geometry_command),
+            Some(&false),
+            "{geometry_command} needs a regular grid it cannot prove here",
+        );
+    }
+    for content_command in ["clearTableCells", "selectTableRows", "selectTableColumns"] {
+        assert_eq!(
+            commands.get(content_command),
+            Some(&true),
+            "{content_command} works on the projection as it is",
+        );
+    }
     assert_eq!(
         crate::tables::normalize::planned_normalization_passes(),
         0,
@@ -703,6 +853,8 @@ fn availability_matches_the_planner_on_a_regular_grid() {
         "toggleTableHeaderCell",
         "deleteTable",
         "clearTableCells",
+        "selectTableRows",
+        "selectTableColumns",
     ] {
         assert_eq!(commands.get(name), Some(&true), "{name} must be available");
     }
@@ -835,43 +987,78 @@ fn identity_session() -> crate::session::EditorSession {
     session
 }
 
+struct IdentityExpectation {
+    command: TableCommand,
+    surviving: &'static [usize],
+    cells_after: usize,
+}
+
+const IDENTITY_EXPECTATIONS: [IdentityExpectation; 6] = [
+    IdentityExpectation {
+        command: TableCommand::AddTableRow {
+            side: TableEdge::After,
+        },
+        surviving: &[0, 1, 2, 3, 4],
+        cells_after: 7,
+    },
+    IdentityExpectation {
+        command: TableCommand::AddTableColumn {
+            side: TableEdge::After,
+        },
+        surviving: &[0, 1, 2, 3, 4],
+        cells_after: 8,
+    },
+    IdentityExpectation {
+        command: TableCommand::DeleteTableRows,
+        surviving: &[0, 1, 3, 4],
+        cells_after: 4,
+    },
+    IdentityExpectation {
+        command: TableCommand::DeleteTableColumns,
+        surviving: &[0, 3],
+        cells_after: 2,
+    },
+    IdentityExpectation {
+        command: TableCommand::ToggleTableHeader {
+            target: TableHeaderTarget::Row,
+        },
+        surviving: &[1, 3, 4],
+        cells_after: 5,
+    },
+    IdentityExpectation {
+        command: TableCommand::ClearTableCells,
+        surviving: &[0, 1, 2, 3, 4],
+        cells_after: 5,
+    },
+];
+
 #[test]
-fn every_table_command_keeps_the_cell_identities_it_does_not_touch() {
-    for (command, untouched) in [
-        (
-            TableCommand::AddTableRow {
-                side: TableEdge::After,
-            },
-            vec!["tall", "a1", "b1", "c0", "c1"],
-        ),
-        (
-            TableCommand::AddTableColumn {
-                side: TableEdge::After,
-            },
-            vec!["tall", "a1", "b1", "c0", "c1"],
-        ),
-        (
-            TableCommand::ClearTableCells,
-            vec!["tall", "a1", "b1", "c0", "c1"],
-        ),
-    ] {
+fn every_mutating_table_command_keeps_exactly_the_cell_identities_it_does_not_touch() {
+    for expectation in IDENTITY_EXPECTATIONS {
+        let command = expectation.command;
         let mut session = identity_session();
         let before = session_cell_identities(&session);
-        assert_eq!(before.len(), untouched.len());
-        session_select_cell(&mut session, 2);
+        assert_eq!(before.len(), IDENTITY_FIXTURE_CELLS);
+        session_select_cell(&mut session, ANCHOR_CELL);
 
-        let request_id = REQUEST_ID;
         session
             .engine
-            .apply_command(request_id, TypedCommand::Table(command))
+            .apply_command(REQUEST_ID, TypedCommand::Table(command))
             .unwrap_or_else(|error| panic!("{command:?} applies: {error:?}"))
             .unwrap_or_else(|| panic!("{command:?} produced a transaction"));
 
         let after = session_cell_identities(&session);
-        for identity in &before {
-            assert!(
-                after.contains(identity),
-                "{command:?} replaced the cell with identity {identity}",
+        assert_eq!(
+            after.len(),
+            expectation.cells_after,
+            "{command:?} left an unexpected cell count",
+        );
+        for (index, identity) in before.iter().enumerate() {
+            let kept = after.contains(identity);
+            assert_eq!(
+                kept,
+                expectation.surviving.contains(&index),
+                "{command:?} disagrees about cell {index}: kept = {kept}",
             );
         }
     }
@@ -904,7 +1091,7 @@ fn a_table_command_emits_exactly_one_document_update_and_a_selection_none() {
         (TableCommand::SelectTableRows, NO_DOCUMENT_UPDATES),
     ] {
         let mut session = identity_session();
-        session_select_cell(&mut session, 2);
+        session_select_cell(&mut session, ANCHOR_CELL);
         assert_eq!(
             drain_document_updates(&mut session),
             NO_DOCUMENT_UPDATES,
@@ -944,81 +1131,71 @@ fn an_insertion_envelope_defaults_to_three_by_three_with_a_header_row() {
 #[test]
 fn an_insertion_envelope_refuses_an_unbounded_dimension() {
     for dimension in [json!(0), json!(100_000)] {
+        let refusal = crate::native_transaction_bridge::table_command_envelope_for_test(
+            &json!({ "type": "insertTable", "rows": dimension }).to_string(),
+        )
+        .expect_err("an out-of-range dimension must not parse");
+
         assert!(
-            crate::native_transaction_bridge::table_command_envelope_for_test(
-                &json!({ "type": "insertTable", "rows": dimension }).to_string(),
-            )
-            .is_none(),
-            "an out-of-range dimension {dimension} must not parse",
+            refusal.contains("table dimension"),
+            "the refusal must name the dimension bound, got {refusal}",
         );
     }
 }
 
+fn envelope_payload(command: TableCommand) -> Value {
+    match command {
+        TableCommand::InsertTable {
+            rows,
+            columns,
+            with_header_row,
+        } => json!({
+            "type": "insertTable",
+            "rows": rows,
+            "columns": columns,
+            "withHeaderRow": with_header_row,
+        }),
+        TableCommand::DeleteTable => json!({ "type": "deleteTable" }),
+        TableCommand::AddTableRow { side } => {
+            json!({ "type": "addTableRow", "side": edge_payload(side) })
+        }
+        TableCommand::DeleteTableRows => json!({ "type": "deleteTableRows" }),
+        TableCommand::AddTableColumn { side } => {
+            json!({ "type": "addTableColumn", "side": edge_payload(side) })
+        }
+        TableCommand::DeleteTableColumns => json!({ "type": "deleteTableColumns" }),
+        TableCommand::ToggleTableHeader { target } => {
+            json!({ "type": "toggleTableHeader", "target": header_payload(target) })
+        }
+        TableCommand::SelectTableRows => json!({ "type": "selectTableRows" }),
+        TableCommand::SelectTableColumns => json!({ "type": "selectTableColumns" }),
+        TableCommand::ClearTableCells => json!({ "type": "clearTableCells" }),
+    }
+}
+
+fn edge_payload(side: TableEdge) -> &'static str {
+    match side {
+        TableEdge::Before => "before",
+        TableEdge::After => "after",
+    }
+}
+
+fn header_payload(target: TableHeaderTarget) -> &'static str {
+    match target {
+        TableHeaderTarget::Row => "row",
+        TableHeaderTarget::Column => "column",
+        TableHeaderTarget::Cell => "cell",
+    }
+}
+
 #[test]
-fn every_table_command_discriminant_has_an_envelope() {
-    for (payload, expected) in [
-        (json!({ "type": "deleteTable" }), TableCommand::DeleteTable),
-        (
-            json!({ "type": "addTableRow", "side": "before" }),
-            TableCommand::AddTableRow {
-                side: TableEdge::Before,
-            },
-        ),
-        (
-            json!({ "type": "addTableRow", "side": "after" }),
-            TableCommand::AddTableRow {
-                side: TableEdge::After,
-            },
-        ),
-        (
-            json!({ "type": "deleteTableRows" }),
-            TableCommand::DeleteTableRows,
-        ),
-        (
-            json!({ "type": "addTableColumn", "side": "before" }),
-            TableCommand::AddTableColumn {
-                side: TableEdge::Before,
-            },
-        ),
-        (
-            json!({ "type": "deleteTableColumns" }),
-            TableCommand::DeleteTableColumns,
-        ),
-        (
-            json!({ "type": "toggleTableHeader", "target": "row" }),
-            TableCommand::ToggleTableHeader {
-                target: TableHeaderTarget::Row,
-            },
-        ),
-        (
-            json!({ "type": "toggleTableHeader", "target": "column" }),
-            TableCommand::ToggleTableHeader {
-                target: TableHeaderTarget::Column,
-            },
-        ),
-        (
-            json!({ "type": "toggleTableHeader", "target": "cell" }),
-            TableCommand::ToggleTableHeader {
-                target: TableHeaderTarget::Cell,
-            },
-        ),
-        (
-            json!({ "type": "selectTableRows" }),
-            TableCommand::SelectTableRows,
-        ),
-        (
-            json!({ "type": "selectTableColumns" }),
-            TableCommand::SelectTableColumns,
-        ),
-        (
-            json!({ "type": "clearTableCells" }),
-            TableCommand::ClearTableCells,
-        ),
-    ] {
+fn every_table_command_discriminant_round_trips_through_its_envelope() {
+    for command in EVERY_TABLE_COMMAND {
+        let payload = envelope_payload(command);
         assert_eq!(
             crate::native_transaction_bridge::table_command_envelope_for_test(&payload.to_string()),
-            Some(TypedCommand::Table(expected)),
-            "{payload} must parse",
+            Ok(TypedCommand::Table(command)),
+            "{payload} must parse back to the command that produced it",
         );
     }
 }

@@ -224,8 +224,6 @@ enum CommandEnvelope {
     ClearTableCells,
 }
 
-const MAX_INSERTED_TABLE_DIMENSION: u32 = 1_000;
-
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum TableEdgeEnvelope {
@@ -276,7 +274,8 @@ where
             Ok(Some(dimension))
         }
         Some(dimension) => Err(serde::de::Error::custom(format!(
-            "table dimension {dimension} is outside              {MIN_INSERTED_TABLE_DIMENSION}..={MAX_INSERTED_TABLE_DIMENSION}"
+            "table dimension {dimension} is outside \
+             {MIN_INSERTED_TABLE_DIMENSION}..={MAX_INSERTED_TABLE_DIMENSION}"
         ))),
     }
 }

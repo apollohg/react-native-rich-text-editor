@@ -10,8 +10,9 @@ use crate::tables::command_context::{
 };
 use crate::tables::commands::{
     columns, headers, plan_clear_cells, plan_delete_table, plan_insert_table, plan_select_columns,
-    plan_select_rows, rows, DeleteColumnsAction, DeleteRowsAction, InsertColumnAction,
-    InsertRowAction, TableCommand, TableTarget, ToggleHeaderAction, CELL_INTERIOR_OFFSET,
+    plan_select_rows, rows, DeleteColumnsAction, DeleteRowsAction, GridRequirement,
+    InsertColumnAction, InsertRowAction, TableCommand, TableTarget, ToggleHeaderAction,
+    CELL_INTERIOR_OFFSET,
 };
 use crate::tables::selection::{cell_opening_containing, resolve_cell_rect};
 use crate::yrs_engine::{
@@ -54,6 +55,7 @@ fn anchored_target<'a>(
     schema: &Schema,
     limits: &ResourceLimits,
     anchor: Option<&TableAnchor>,
+    requirement: GridRequirement,
 ) -> Option<TableTarget<'a>> {
     let anchor = anchor?;
     TableTarget::resolve(
@@ -62,7 +64,49 @@ fn anchored_target<'a>(
         Some(anchor.anchors),
         schema,
         limits,
+        requirement,
     )
+}
+
+pub(super) fn selection_is_a_cell_rectangle(context: &PlanningContext<'_>) -> bool {
+    match context.selection {
+        crate::yrs_engine::ResolvedSelection::Cell { .. } => true,
+        crate::yrs_engine::ResolvedSelection::Text { .. }
+        | crate::yrs_engine::ResolvedSelection::Node { .. }
+        | crate::yrs_engine::ResolvedSelection::All => false,
+    }
+}
+
+pub(super) fn plan_clear_cell_rectangle(
+    context: PlanningContext<'_>,
+) -> OperationResult<CommandPlan> {
+    let selection = super::structure::selection(&context);
+    let anchor = anchor_from_selection(
+        context.document,
+        context.schema,
+        context.resource_limits,
+        &selection,
+    );
+    clear_cells(&context, &selection, anchor.as_ref())
+}
+
+fn clear_cells(
+    context: &PlanningContext<'_>,
+    selection: &Selection,
+    anchor: Option<&TableAnchor>,
+) -> OperationResult<CommandPlan> {
+    match anchored_target(
+        context.document,
+        context.schema,
+        context.resource_limits,
+        anchor,
+        GridRequirement::AsProjected,
+    )
+    .and_then(|target| plan_clear_cells(&target, context.schema))
+    {
+        None => Ok(CommandPlan::NotApplicable),
+        Some(plan) => admitted_cell_content(context, selection, plan),
+    }
 }
 
 fn scoped_action(
@@ -251,6 +295,7 @@ pub(super) fn plan(
                 context.schema,
                 context.resource_limits,
                 anchor.as_ref(),
+                GridRequirement::AsProjected,
             )
             .and_then(|target| plan_select_rows(&target))
             {
@@ -264,6 +309,7 @@ pub(super) fn plan(
                 context.schema,
                 context.resource_limits,
                 anchor.as_ref(),
+                GridRequirement::AsProjected,
             )
             .and_then(|target| plan_select_columns(&target))
             {
@@ -271,19 +317,7 @@ pub(super) fn plan(
                 Some(expanded) => selection_only(&context, expanded),
             }
         }
-        TableCommand::ClearTableCells => {
-            match anchored_target(
-                context.document,
-                context.schema,
-                context.resource_limits,
-                anchor.as_ref(),
-            )
-            .and_then(|target| plan_clear_cells(&target, context.schema))
-            {
-                None => Ok(CommandPlan::NotApplicable),
-                Some(plan) => admitted_cell_content(&context, &selection, plan),
-            }
-        }
+        TableCommand::ClearTableCells => clear_cells(&context, &selection, anchor.as_ref()),
     }
 }
 
@@ -295,7 +329,20 @@ pub(crate) fn table_command_is_available(
     command: TableCommand,
 ) -> bool {
     let anchor = anchor_from_selection(document, schema, limits, selection);
-    let target = anchored_target(document, schema, limits, anchor.as_ref());
+    let target = anchored_target(
+        document,
+        schema,
+        limits,
+        anchor.as_ref(),
+        GridRequirement::Regular,
+    );
+    let projected_target = anchored_target(
+        document,
+        schema,
+        limits,
+        anchor.as_ref(),
+        GridRequirement::AsProjected,
+    );
     match command {
         TableCommand::InsertTable {
             rows,
@@ -331,13 +378,13 @@ pub(crate) fn table_command_is_available(
             headers::plan_toggle_header(&target, header, schema, selection).is_some()
         }),
         TableCommand::SelectTableRows => {
-            target.is_some_and(|target| plan_select_rows(&target).is_some())
+            projected_target.is_some_and(|target| plan_select_rows(&target).is_some())
         }
         TableCommand::SelectTableColumns => {
-            target.is_some_and(|target| plan_select_columns(&target).is_some())
+            projected_target.is_some_and(|target| plan_select_columns(&target).is_some())
         }
         TableCommand::ClearTableCells => {
-            target.is_some_and(|target| plan_clear_cells(&target, schema).is_some())
+            projected_target.is_some_and(|target| plan_clear_cells(&target, schema).is_some())
         }
     }
 }

@@ -8,7 +8,7 @@ import {
     tableFixture,
     withPeers,
 } from '../controller.js';
-import type { Peer } from '../peer-protocol.js';
+import type { Peer, TableCommand } from '../peer-protocol.js';
 import {
     CELL_NODE,
     HEADER_CELL_NODE,
@@ -327,7 +327,7 @@ const ONE_TABLE = 1;
 
 type CommandScenario = {
     name: string;
-    native: Record<string, unknown>;
+    native: TableCommand;
     reference: string;
 };
 
