@@ -1897,6 +1897,10 @@ fn a_table_shape_failure_reaches_the_host_as_its_own_error_class() {
             crate::tables::types::TableError::WorkLimit,
             OPERATION_WORK_BUDGET_CODE,
         ),
+        (
+            crate::tables::types::TableError::Allocation,
+            OPERATION_WORK_BUDGET_CODE,
+        ),
     ] {
         let error = crate::tables::command_context::table_shape_operation_error(
             failure.clone(),
