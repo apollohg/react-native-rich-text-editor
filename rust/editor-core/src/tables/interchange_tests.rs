@@ -19,6 +19,9 @@ const TABLE_NODE: &str = "table";
 const HEADER_CELL_NODE: &str = "table_header";
 const PARAGRAPH_NODE: &str = "paragraph";
 const SINGLE_SPAN: u32 = 1;
+const MALFORMED_COLUMN_WIDTHS: &str = "100,abc";
+const UNSET_COLUMN_WIDTHS: &str = "0,";
+const DECLARED_COLUMN_WIDTH: u32 = 100;
 
 const REPLACEMENT_REQUEST_ID: u64 = 23;
 const FRAGMENT_NAME: &str = "prosemirror";
@@ -351,4 +354,52 @@ fn an_authored_replacement_normalizes_its_outer_tables_and_a_restore_keeps_them_
             "a nested descendant is never normalized by its owner's replacement: {json}",
         );
     }
+}
+
+#[test]
+fn a_malformed_column_width_list_is_distinguishable_from_a_deliberately_unset_one() {
+    let malformed = format!(
+        "<table><tbody><tr><td data-colwidth=\"{MALFORMED_COLUMN_WIDTHS}\"><p>x</p></td></tr></tbody></table>"
+    );
+    let unset = format!(
+        "<table><tbody><tr><td data-colwidth=\"{UNSET_COLUMN_WIDTHS}\"><p>x</p></td></tr></tbody></table>"
+    );
+
+    let strict = FromHtmlOptions {
+        strict: true,
+        ..FromHtmlOptions::default()
+    };
+    let refusal = from_html_with_limits(&malformed, &schema(), &strict, &ResourceLimits::default())
+        .expect_err("a malformed column width list must be refused in strict mode");
+    assert!(
+        matches!(
+            &refusal,
+            crate::serialize::html_in::ParseError::InvalidAttribute { attr, value }
+                if attr == "data-colwidth" && value == MALFORMED_COLUMN_WIDTHS
+        ),
+        "the refusal must name the attribute and the value it could not decode: {refusal:?}",
+    );
+    assert!(
+        from_html_with_limits(&unset, &schema(), &strict, &ResourceLimits::default()).is_ok(),
+        "a deliberately unset list is not malformed and must still import in strict mode",
+    );
+
+    let cell_attrs = |html: &str| {
+        to_prosemirror_json(&import(html), &schema())["content"][0]["content"][0]["content"][0]
+            .get("attrs")
+            .cloned()
+    };
+    assert_eq!(
+        cell_attrs(&malformed),
+        cell_attrs(&unset),
+        "outside strict mode both drop the attribute rather than inventing a width",
+    );
+    let declared = format!(
+        "<table><tbody><tr><td data-colwidth=\"{DECLARED_COLUMN_WIDTH}\"><p>x</p></td></tr></tbody></table>"
+    );
+    assert_eq!(
+        cell_attrs(&declared),
+        Some(json!({ "colwidth": [DECLARED_COLUMN_WIDTH] })),
+        "a well-formed list is kept, so dropping the malformed one is a real distinction",
+    );
 }

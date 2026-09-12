@@ -20,6 +20,10 @@ type SNodeRef<'a> = ego_tree::NodeRef<'a, scraper::Node>;
 pub enum ParseError {
     /// An unknown HTML tag was encountered in strict mode.
     UnknownTag(String),
+    InvalidAttribute {
+        attr: String,
+        value: String,
+    },
     ResourceLimit {
         limit: usize,
         actual: usize,
@@ -30,6 +34,9 @@ impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ParseError::UnknownTag(tag) => write!(f, "unknown HTML tag: <{}>", tag),
+            ParseError::InvalidAttribute { attr, value } => {
+                write!(f, "malformed {attr} attribute value: {value:?}")
+            }
             ParseError::ResourceLimit { limit, actual } => {
                 write!(f, "HTML parse work exceeds limit {limit}: {actual}")
             }
@@ -733,7 +740,7 @@ fn build_table_role_node(
             collect_table_cells(node_ref, schema, options)?,
         ),
         TableRole::Cell | TableRole::HeaderCell => (
-            table_cell_attrs(elem, spec),
+            table_cell_attrs(elem, spec, options)?,
             collect_block_children(node_ref, schema, options, &[])?,
         ),
     };
@@ -820,42 +827,64 @@ fn collect_table_cells(
 fn table_cell_attrs(
     elem: &scraper::node::Element,
     spec: &crate::schema::NodeSpec,
-) -> HashMap<String, serde_json::Value> {
+    options: &FromHtmlOptions,
+) -> Result<HashMap<String, serde_json::Value>, ParseError> {
+    let colwidth = crate::tables::roles::TABLE_CELL_COLWIDTH_ATTR;
     let mut attrs = extract_node_attrs(elem, spec);
-    let widths = element_attr(elem, crate::serialize::html_out::TABLE_COLWIDTH_HTML_ATTR)
-        .and_then(parse_colwidth);
-    match widths {
-        Some(widths) => {
-            attrs.insert(
-                crate::tables::roles::TABLE_CELL_COLWIDTH_ATTR.to_string(),
-                serde_json::Value::Array(widths),
-            );
+    let Some(raw) = element_attr(elem, crate::serialize::html_out::TABLE_COLWIDTH_HTML_ATTR) else {
+        attrs.remove(colwidth);
+        return Ok(attrs);
+    };
+    match parse_colwidth(raw) {
+        ColumnWidths::Declared(widths) => {
+            attrs.insert(colwidth.to_string(), serde_json::Value::Array(widths));
         }
-        None => {
-            attrs.remove(crate::tables::roles::TABLE_CELL_COLWIDTH_ATTR);
+        ColumnWidths::Unset => {
+            attrs.remove(colwidth);
+        }
+        ColumnWidths::Malformed => {
+            if options.strict {
+                return Err(ParseError::InvalidAttribute {
+                    attr: crate::serialize::html_out::TABLE_COLWIDTH_HTML_ATTR.to_string(),
+                    value: raw.to_string(),
+                });
+            }
+            attrs.remove(colwidth);
         }
     }
-    attrs
+    Ok(attrs)
 }
 
-fn parse_colwidth(raw: &str) -> Option<Vec<serde_json::Value>> {
+enum ColumnWidths {
+    Declared(Vec<serde_json::Value>),
+    Unset,
+    Malformed,
+}
+
+fn parse_colwidth(raw: &str) -> ColumnWidths {
     let mut widths = Vec::new();
     let mut carries_a_width = false;
     for entry in raw.split(crate::serialize::html_out::TABLE_COLWIDTH_SEPARATOR) {
-        let width = entry
-            .trim()
-            .parse::<u32>()
-            .ok()
-            .filter(|width| *width != crate::tables::projection::UNSET_COLUMN_WIDTH);
-        match width {
-            Some(width) => {
-                carries_a_width = true;
-                widths.push(serde_json::Value::from(width));
-            }
-            None => widths.push(serde_json::Value::Null),
+        let entry = entry.trim();
+        if entry.is_empty() {
+            widths.push(serde_json::Value::Null);
+            continue;
         }
+        let Ok(width) = entry.parse::<u32>() else {
+            return ColumnWidths::Malformed;
+        };
+        if width == crate::tables::projection::UNSET_COLUMN_WIDTH {
+            widths.push(serde_json::Value::Null);
+            continue;
+        }
+        carries_a_width = true;
+        widths.push(serde_json::Value::from(width));
     }
-    carries_a_width.then_some(widths)
+    if carries_a_width {
+        ColumnWidths::Declared(widths)
+    } else {
+        ColumnWidths::Unset
+    }
 }
 
 /// Collect inline children of an element (for paragraph-like nodes).
