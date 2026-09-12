@@ -606,7 +606,11 @@ fn an_action_that_leaves_an_invalid_grid_fails_preparation() {
     let error = refused(prepare(&document, None, &emptying_action));
 
     assert_eq!(error.code, "OPERATION_INVALID");
-    assert_eq!(error.details, Some(json!({ "field": "tableAction.grid" })));
+    assert_eq!(
+        error.details,
+        Some(json!({ "field": "tableAction.grid.irregular" })),
+        "an irregular result must be distinguishable from a table that vanished",
+    );
 }
 
 #[test]
@@ -621,7 +625,8 @@ fn a_gap_is_never_a_usable_action_anchor() {
 
     assert_eq!(
         error.details,
-        Some(json!({ "field": "tableAction.anchors" }))
+        Some(json!({ "field": "tableAction.anchors.before" })),
+        "anchors that never named real cells are distinguishable from anchors normalization moved",
     );
 }
 
@@ -645,7 +650,8 @@ fn normalization_that_changes_a_merge_rectangle_refuses_the_action() {
 
     assert_eq!(
         error.details,
-        Some(json!({ "field": "tableAction.anchors" }))
+        Some(json!({ "field": "tableAction.anchors.moved" })),
+        "anchors normalization moved are distinguishable from anchors that were never real",
     );
 }
 

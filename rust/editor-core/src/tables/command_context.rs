@@ -16,8 +16,11 @@ use crate::yrs_engine::{EditingLimits, OperationError, OperationResult, Transact
 const TABLE_ACTION_FIELD: &str = "tableAction";
 const TABLE_ACTION_UNAVAILABLE_FIELD: &str = "tableAction.unavailable";
 const TABLE_ACTION_UNAVAILABLE_CODE: &str = "OPERATION_INVALID";
-const TABLE_ACTION_ANCHOR_FIELD: &str = "tableAction.anchors";
-const TABLE_ACTION_GRID_FIELD: &str = "tableAction.grid";
+const TABLE_ACTION_ANCHOR_BEFORE_FIELD: &str = "tableAction.anchors.before";
+const TABLE_ACTION_ANCHOR_AFTER_FIELD: &str = "tableAction.anchors.after";
+const TABLE_ACTION_ANCHOR_MOVED_FIELD: &str = "tableAction.anchors.moved";
+const TABLE_ACTION_GRID_IRREGULAR_FIELD: &str = "tableAction.grid.irregular";
+const TABLE_ACTION_GRID_MISSING_FIELD: &str = "tableAction.grid.missing";
 pub(crate) const TABLE_ACTION_SHAPE_FIELD: &str = "tableAction.shape";
 const TABLE_ACTION_OPERATIONS_FIELD: &str = "maxOperationsPerTransaction";
 const SINGLE_PASS: u32 = 1;
@@ -242,7 +245,13 @@ fn remap_anchors(
     );
     let before_rect = resolve_cell_rect(&before, anchors.anchor, anchors.head)
         .filter(|rect| rect.table_pos == context.table_pos)
-        .ok_or_else(|| anchors_unusable(context))?;
+        .ok_or_else(|| {
+            anchors_unusable(
+                context,
+                TABLE_ACTION_ANCHOR_BEFORE_FIELD,
+                "the requested anchors do not name real cells of the target table",
+            )
+        })?;
     let mapped = CellAnchorPair {
         anchor: map.map_pos(anchors.anchor),
         head: map.map_pos(anchors.head),
@@ -254,14 +263,24 @@ fn remap_anchors(
     );
     let after_rect = resolve_cell_rect(&after, mapped.anchor, mapped.head)
         .filter(|rect| rect.table_pos == context.table_pos)
-        .ok_or_else(|| anchors_unusable(context))?;
+        .ok_or_else(|| {
+            anchors_unusable(
+                context,
+                TABLE_ACTION_ANCHOR_AFTER_FIELD,
+                "normalization left the requested anchors outside the target table",
+            )
+        })?;
     let expected: Vec<u32> = before_rect
         .cells
         .iter()
         .map(|cell| map.map_pos(*cell))
         .collect();
     if after_rect.cells != expected {
-        return Err(anchors_unusable(context));
+        return Err(anchors_unusable(
+            context,
+            TABLE_ACTION_ANCHOR_MOVED_FIELD,
+            "normalization changed the real cells the table action targets",
+        ));
     }
     Ok(Some(mapped))
 }
@@ -279,11 +298,16 @@ fn require_valid_outer_grid(
     .map_err(|error| recorrelate(error, context.request_id))?;
     match grid {
         Some(grid) if !grid.irregular => Ok(()),
-        Some(_) | None => Err(OperationError::operation_invalid(
+        Some(_) => Err(OperationError::operation_invalid(
             context.request_id,
             0,
-            TABLE_ACTION_GRID_FIELD,
-            "the requested table action does not leave its target grid valid",
+            TABLE_ACTION_GRID_IRREGULAR_FIELD,
+            "the requested table action leaves its target grid irregular",
+        )),
+        None => Err(OperationError::engine_invariant_failed(
+            context.request_id,
+            None,
+            "the requested table action left no outer table at its target position",
         )),
     }
 }
@@ -329,13 +353,12 @@ fn action_unavailable(context: &TableActionContext<'_>, kind: TableActionKind) -
     )
 }
 
-fn anchors_unusable(context: &TableActionContext<'_>) -> OperationError {
-    OperationError::operation_invalid(
-        context.request_id,
-        0,
-        TABLE_ACTION_ANCHOR_FIELD,
-        "normalization changed the real cells the table action targets",
-    )
+fn anchors_unusable(
+    context: &TableActionContext<'_>,
+    field: &'static str,
+    message: &'static str,
+) -> OperationError {
+    OperationError::operation_invalid(context.request_id, 0, field, message)
 }
 
 fn recorrelate(mut error: OperationError, request_id: u64) -> OperationError {
