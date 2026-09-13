@@ -17,6 +17,7 @@ export type Request = {
     id: string;
     operation: 'initialize' | 'command' | 'undo' | 'redo' | 'applyUpdate'
         | 'drain' | 'snapshot' | 'stateVector' | 'stateDiff' | 'projectTable' | 'normalizeTable'
+        | 'repairTableDuringRemoteWindow'
         | 'setAwareness' | 'applyAwareness' | 'shutdown';
     payload: Record<string, unknown>;
 };

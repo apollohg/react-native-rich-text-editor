@@ -31,7 +31,7 @@ use crate::tables::normalize::{
     normalize_outer_table, planned_normalization_passes, reset_planned_normalization_passes,
 };
 use crate::tables::projection::{project_table, ProjectedTable, TableGridBudget};
-use crate::yrs_engine::{DocumentScope, EditingLimits};
+use crate::yrs_engine::{DocumentScope, EditingLimits, ReplacementHistory, RootReplacementError};
 
 const MAX_WIRE_LINE_BYTES: usize = 96 * 1024 * 1024;
 const MAX_REQUEST_ID_BYTES: usize = 128;
@@ -45,6 +45,7 @@ const ACK_ACTION: &str = "ackOutbound";
 const AWARENESS_EVENT_KIND: &str = "awareness";
 const AWARENESS_ACTION: &str = "awareness";
 const TABLE_NORMALIZATION_FAILED: &str = "TABLE_NORMALIZATION_FAILED";
+const AUTONOMOUS_REPAIR_CANARY_FAILED: &str = "AUTONOMOUS_REPAIR_CANARY_FAILED";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EventOrigin {
@@ -300,6 +301,7 @@ impl RustPeer {
             "stateVector" => self.state_vector(payload),
             "stateDiff" => self.state_diff(payload),
             "projectTable" => project_table_payload(payload),
+            "repairTableDuringRemoteWindow" => self.repair_table_during_remote_window(payload),
             "normalizeTable" => normalize_table_payload(payload),
             "setAwareness" => self.set_awareness(payload),
             "applyAwareness" => self.apply_awareness(payload),
@@ -490,6 +492,40 @@ impl RustPeer {
         Ok(serde_json::json!({
             "changed": commit.changed,
             "documentRevision": commit.revision.to_string(),
+        }))
+    }
+
+    fn repair_table_during_remote_window(
+        &mut self,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, SessionError> {
+        let _: EmptyPayload = parse_payload(payload)?;
+        reset_planned_normalization_passes();
+        let request_id = self.next_request_id();
+        let session = self.session_mut()?;
+        let authored = session.engine.document_json_string().ok_or_else(|| {
+            peer_error(
+                AUTONOMOUS_REPAIR_CANARY_FAILED,
+                "the peer has no document to repair",
+            )
+        })?;
+        let (engine, outbox) = session.engine_and_outbox();
+        let commit = engine
+            .prepare_root_replacement_json_with_outbox(
+                request_id,
+                &authored,
+                ReplacementHistory::UndoableBoundary,
+                outbox,
+            )
+            .map_err(|error| match error {
+                RootReplacementError::Admission(admission) => SessionError::from(admission),
+                RootReplacementError::Transaction(transaction) => operation_error(transaction),
+            })?;
+        self.capture_outbound(EventOrigin::Remote, request_id)?;
+        Ok(serde_json::json!({
+            "changed": commit.changed,
+            "documentRevision": commit.document_revision.to_string(),
+            "normalizationPasses": planned_normalization_passes(),
         }))
     }
 
