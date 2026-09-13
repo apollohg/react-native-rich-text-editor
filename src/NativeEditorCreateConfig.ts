@@ -21,6 +21,7 @@ import {
     V2_CREATE_COLLABORATION_LIMIT_KEYS,
     V2_CREATE_INITIALIZATION_KEYS,
     V2_CREATE_ROOM_SNAPSHOT_KEYS,
+    V2_CREATE_SNAPSHOT_SCOPE_KEYS,
     NativeEditorCreateConfigError,
     validateV2CreateLimits,
 } from './NativeEditorCreateValidation';
@@ -89,6 +90,28 @@ export function normalizeV2SnapshotMetadata(value: unknown): Record<string, unkn
     }
 
     return metadata;
+}
+
+function normalizeV2SnapshotScope(value: unknown): Record<string, unknown> {
+    requireKnownV2CreateKeys(value, V2_CREATE_SNAPSHOT_SCOPE_KEYS, 'localHtml snapshotScope');
+    const documentId = ownV2CreateValue(value, 'documentId');
+    const lineageId = ownV2CreateValue(value, 'lineageId');
+
+    if (
+        typeof documentId !== 'string' ||
+        !documentId.trim() ||
+        typeof lineageId !== 'string' ||
+        !lineageId.trim()
+    ) {
+        throw invalidV2CreateRequestError(
+            'NativeEditorBridge: invalid localHtml snapshotScope for v2 create'
+        );
+    }
+
+    const scope = emptyV2CreateRecord();
+    scope.documentId = documentId;
+    scope.lineageId = lineageId;
+    return scope;
 }
 
 export function buildV2CreateRequestUnchecked(config: NativeEditorCreateConfig): {
@@ -219,6 +242,11 @@ export function buildV2CreateRequestUnchecked(config: NativeEditorCreateConfig):
             const localHtml = emptyV2CreateRecord();
             localHtml.type = 'localHtml';
             localHtml.html = html;
+            const snapshotScope = ownV2CreateValue(initialization, 'snapshotScope');
+
+            if (snapshotScope !== undefined) {
+                localHtml.snapshotScope = normalizeV2SnapshotScope(snapshotScope);
+            }
             envelope.initialization = localHtml;
             break;
         }

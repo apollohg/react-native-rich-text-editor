@@ -313,6 +313,8 @@ struct LocalHtmlInitialization<'a> {
     _kind: InitializationKind,
     #[serde(borrow)]
     html: &'a RawValue,
+    #[serde(default, deserialize_with = "deserialize_non_null_option")]
+    snapshot_scope: Option<DocumentScope>,
 }
 
 #[derive(serde::Deserialize)]
@@ -366,16 +368,28 @@ fn create_impl(config_json: &str, snapshot_state: Option<Vec<u8>>) -> Result<Str
     let schema = match &config.initialization {
         EditorInitialization::Local {
             initial_content: InitialContent::Empty,
+        }
+        | EditorInitialization::LocalScoped {
+            initial_content: InitialContent::Empty,
+            ..
         } => resolve_local_empty_document(config_json)
             .map(|resolved| resolved.schema)
             .map_err(ffi_error)?,
         EditorInitialization::Local {
             initial_content: InitialContent::Json(source),
+        }
+        | EditorInitialization::LocalScoped {
+            initial_content: InitialContent::Json(source),
+            ..
         } => resolve_local_document(config_json, FfiViewerSourceKind::Json, source)
             .map(|resolved| resolved.schema)
             .map_err(ffi_error)?,
         EditorInitialization::Local {
             initial_content: InitialContent::Html(source),
+        }
+        | EditorInitialization::LocalScoped {
+            initial_content: InitialContent::Html(source),
+            ..
         } => resolve_local_document(config_json, FfiViewerSourceKind::Html, source)
             .map(|resolved| resolved.schema)
             .map_err(ffi_error)?,

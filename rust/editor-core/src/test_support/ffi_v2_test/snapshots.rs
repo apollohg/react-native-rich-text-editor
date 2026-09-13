@@ -112,6 +112,60 @@ fn snapshot_export_restore_round_trip_and_policy_errors() {
 }
 
 #[test]
+fn scoped_local_html_exports_its_exact_state_without_starting_transport() {
+    let local = create_handle(json!({
+        "initialization": {
+            "type": "localHtml",
+            "html": "<p>offline authoring</p>",
+            "snapshotScope": {
+                "documentId": DOCUMENT_ID,
+                "lineageId": LINEAGE_ID,
+            },
+        },
+    }));
+
+    assert_eq!(state_of(&local)["documentState"], "LocalReady");
+    assert_eq!(state_of(&local)["transportState"], "Detached");
+
+    let exported = v2_snapshot::editor_v2_snapshot_export(local.clone())
+        .value
+        .expect("scoped local HTML exports a snapshot");
+    let restarted = create_handle(json!({
+        "initialization": {
+            "type": "localHtml",
+            "html": "<p>discarded bootstrap</p>",
+            "snapshotScope": {
+                "documentId": DOCUMENT_ID,
+                "lineageId": LINEAGE_ID,
+            },
+        },
+    }));
+    let local_restore = ok_json(&v2_snapshot::editor_v2_snapshot_restore(
+        restarted.clone(),
+        exported.metadata_json.clone(),
+        exported.encoded_state.clone(),
+    ));
+    assert_eq!(local_restore["changed"], true);
+    assert_eq!(state_of(&restarted)["documentState"], "LocalReady");
+    assert_eq!(state_of(&restarted)["transportState"], "Detached");
+    assert_eq!(document_json_of(&restarted), document_json_of(&local));
+
+    let target = create_handle(room_config(None));
+    let outcome = ok_json(&v2_snapshot::editor_v2_snapshot_restore(
+        target.clone(),
+        exported.metadata_json,
+        exported.encoded_state,
+    ));
+
+    assert_eq!(outcome["changed"], true);
+    assert_eq!(state_of(&target)["documentState"], "RoomReady");
+    assert_eq!(document_json_of(&target), document_json_of(&local));
+    destroy_handle(&target);
+    destroy_handle(&restarted);
+    destroy_handle(&local);
+}
+
+#[test]
 fn full_drive_local_editing_to_synchronized_room() {
     // Local editor: input, undo, redo through the mutation entries.
     let local = create_handle(json!({ "initialization": { "type": "localEmpty" } }));

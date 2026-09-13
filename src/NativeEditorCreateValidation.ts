@@ -56,11 +56,13 @@ export const V2_CREATE_COLLABORATION_LIMIT_KEYS = new Set([
 export const V2_CREATE_INITIALIZATION_KEYS: Readonly<Record<string, ReadonlySet<string>>> = {
     localEmpty: new Set([ 'type' ]),
     localJson: new Set([ 'type', 'json' ]),
-    localHtml: new Set([ 'type', 'html' ]),
+    localHtml: new Set([ 'type', 'html', 'snapshotScope' ]),
     room: new Set([ 'type', 'documentId', 'lineageId', 'snapshot' ]),
 };
 
 export const V2_CREATE_ROOM_SNAPSHOT_KEYS = new Set([ 'metadata', 'encodedState' ]);
+
+export const V2_CREATE_SNAPSHOT_SCOPE_KEYS = new Set([ 'documentId', 'lineageId' ]);
 
 export const V2_CREATE_SNAPSHOT_METADATA_KEYS = new Set([
     'formatVersion',
