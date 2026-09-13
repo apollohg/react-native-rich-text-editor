@@ -10,6 +10,7 @@
         "test:awareness": "tsx run.ts --suite awareness",
         "test:schema-admission": "tsx run.ts --suite schema-admission",
         "test:convergence": "tsx run.ts --suite convergence",
+        "test:native-structural-edits": "tsx run.ts --suite native-structural-edits",
         "test:differential": "tsx run.ts --suite differential"
     },
     "dependencies": {

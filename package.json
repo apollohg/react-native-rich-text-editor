@@ -76,6 +76,8 @@
         "test:tables:interop": "npm --prefix scripts/table-interop run test:unit",
         "test:tables:interop:plumbing": "npm --prefix scripts/table-interop run test:plumbing",
         "test:tables:interop:awareness": "npm --prefix scripts/table-interop run test:awareness",
+        "test:tables:interop:convergence": "npm --prefix scripts/table-interop run test:convergence",
+        "test:tables:interop:native": "npm --prefix scripts/table-interop run test:native-structural-edits",
         "typecheck": "tsc --noEmit",
         "typecheck:example": "npm --prefix example run typecheck",
         "validate:package": "npm run prepare:example:native && npm run install:ios-test-pods && npm run lint:ios && npm run lint:kotlin && node scripts/tests/validate-prepared-prose-viewer-cutover.mjs && npm run validate:security -- --release --behavior && node scripts/tests/validate-security-contracts-negative.mjs && node scripts/tests/validate-publish-lifecycle.mjs && bash ./scripts/tests/validate-generated-bindings.sh && bash ./scripts/tests/validate-packed-xcframework.sh && node scripts/tests/validate-packed-package.test.mjs && bash ./scripts/validate-packed-package.sh",
