@@ -599,17 +599,9 @@ pub(crate) fn rehydrate_reserved_html_opaque(document: &Document) -> Document {
 pub(crate) fn normalized_wire_json_node_type(tag: &str, attrs: &Map<String, Value>) -> String {
     if tag == "heading" {
         let level = attrs.get("level").and_then(|value| match value {
-            Value::Number(number) => number
-                .as_u64()
-                .and_then(|value| u8::try_from(value).ok())
-                .or_else(|| number.as_i64().and_then(|value| u8::try_from(value).ok()))
-                .or_else(|| {
-                    number.as_f64().and_then(|value| {
-                        (value.is_finite() && value.fract() == 0.0)
-                            .then(|| u8::try_from(value as i64).ok())
-                            .flatten()
-                    })
-                }),
+            Value::Number(_) => {
+                crate::model::integral_unsigned(value).and_then(|level| u8::try_from(level).ok())
+            }
             Value::String(value) => parse_wire_heading_level_str(value),
             _ => None,
         });

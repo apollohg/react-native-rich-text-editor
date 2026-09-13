@@ -176,17 +176,9 @@ fn legacy_heading_projection_name(projection: &NodeJsonProjection) -> Option<Str
         return None;
     }
     let level = match projection.attrs.get("level")? {
-        serde_json::Value::Number(number) => number
-            .as_u64()
-            .and_then(|value| u8::try_from(value).ok())
-            .or_else(|| number.as_i64().and_then(|value| u8::try_from(value).ok()))
-            .or_else(|| {
-                number.as_f64().and_then(|value| {
-                    (value.is_finite() && value.fract() == 0.0)
-                        .then(|| u8::try_from(value as i64).ok())
-                        .flatten()
-                })
-            }),
+        value @ serde_json::Value::Number(_) => {
+            crate::model::integral_unsigned(value).and_then(|level| u8::try_from(level).ok())
+        }
         serde_json::Value::String(value) => (value.len() <= 3)
             .then(|| value.parse::<u8>().ok())
             .flatten(),
