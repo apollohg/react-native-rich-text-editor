@@ -12,6 +12,7 @@
         "test:convergence": "tsx run.ts --suite convergence",
         "test:native-structural-edits": "tsx run.ts --suite native-structural-edits",
         "test:differential": "tsx run.ts --suite differential",
+        "test:upstream-mutex": "tsx run.ts --suite upstream-mutex-repair-write-back",
         "reduce": "tsx reduce.ts"
     },
     "dependencies": {

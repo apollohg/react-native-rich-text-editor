@@ -1,5 +1,13 @@
 {
   "protocolVersion": "table-interop-trace-1",
+  "retention": {
+    "status": "retained as the record of a corpus failure, not as a runnable reproducer",
+    "replayable": false,
+    "whyNotReplayable": "replayTrace re-executes the recorded local actions, which mint fresh CRDT client identities, while replaying the recorded binary updates that reference the original run's identities; the receiving peer quarantines them with UNRESOLVED_DEPENDENCIES. Any trace that mixes re-executed commands with replayed updates is unreplayable by construction, so this file does not reproduce its recorded failure and is not a runnable reproducer.",
+    "whatItRecords": "a stock web peer admitting a remote update whose fixTables repair reached its view but not its own CRDT, which the convergence oracle reports as DIVERGED",
+    "runnableReproducer": "scripts/table-interop/cases/upstream-mutex-repair-write-back.test.ts",
+    "runnableReproducerCommand": "npm run test:tables:interop:upstream-mutex"
+  },
   "dependencies": {
     "node": "24.19.0",
     "packages": {
