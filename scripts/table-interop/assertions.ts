@@ -3,10 +3,11 @@ import { EMPTY_STATE_VECTOR_BASE64, call, flushDocumentEvents, snapshot } from '
 import type { PeerSnapshot } from './controller.js';
 import { isRecord } from './peer-protocol.js';
 import type { Peer } from './peer-protocol.js';
-import { CELL_ATTRIBUTE_DEFAULTS } from './table-schema.js';
+import { CELL_ATTRIBUTE_DEFAULTS, CELL_NODE_TYPES } from './table-schema.js';
 
 const MINIMUM_CONVERGENCE_PEERS = 2;
 const ATTRIBUTES_KEY = 'attrs';
+const NODE_TYPE_KEY = 'type';
 const NO_ATTRIBUTES = 0;
 
 export function assertDrainBound(rounds: number, newUpdates: number): void {
@@ -116,10 +117,12 @@ export function canonicalDocumentShape(value: unknown): unknown {
     if (!isRecord(value)) {
         return value;
     }
+    const nodeType = value[NODE_TYPE_KEY];
+    const normalizesAttributes = typeof nodeType === 'string' && CELL_NODE_TYPES.includes(nodeType);
     const shaped: Record<string, unknown> = {};
     for (const key of Object.keys(value).sort()) {
         const child = value[key];
-        if (key === ATTRIBUTES_KEY && isRecord(child)) {
+        if (key === ATTRIBUTES_KEY && isRecord(child) && normalizesAttributes) {
             const kept = withoutImplicitAttributes(child);
             if (Object.keys(kept).length === NO_ATTRIBUTES) {
                 continue;

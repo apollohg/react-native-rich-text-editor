@@ -50,11 +50,14 @@ const TEXT_NODE = 'text';
 const TABLE_START = 0;
 const SINGLE_SPAN = 1;
 const NO_LOOPS = 0;
+const NO_REPAIR_WRITES = 0;
 const TOP_LEFT_CELL = 0;
 const TOP_RIGHT_CELL = 1;
 const BOTTOM_LEFT_CELL = 2;
 const TYPED_TEXT = 'typed';
 const OUT_OF_ORDER_DELIVERY = 2;
+const ONE_CELL = 1;
+const RESIZED_WIDTH = 180;
 
 type PresetNodes = {
     readonly row: string;
@@ -119,9 +122,55 @@ async function typeInCell(peer: Peer, at: number): Promise<void> {
     await call(peer, 'command', { type: 'insertText', text: TYPED_TEXT, at });
 }
 
+async function splitCell(peer: Peer, at: number): Promise<void> {
+    if (peerKindOf(peer) === NATIVE_PEER_KIND) {
+        await call(peer, 'command', { type: 'splitTableCell', at });
+        return;
+    }
+    await call(peer, 'command', { type: 'tableCommand', name: 'splitCell', at });
+}
+
+async function deleteRow(peer: Peer, at: number): Promise<void> {
+    if (peerKindOf(peer) === NATIVE_PEER_KIND) {
+        await call(peer, 'command', { type: 'deleteTableRows', at });
+        return;
+    }
+    await call(peer, 'command', { type: 'tableCommand', name: 'deleteRow', at });
+}
+
+async function resizeColumn(peer: Peer, at: number, width: number): Promise<void> {
+    await call(peer, 'command', { type: 'setTableColumnWidth', width, at });
+}
+
+function nestedIrregularTable(preset: SchemaPreset): Record<string, unknown> {
+    const row = PRESET_NODES[preset].row;
+    const cellType = PRESET_NODES[preset].cell;
+    const inner = {
+        type: TABLE_NODE,
+        content: [
+            { type: row, content: [presetCell(preset, 'x'), presetCell(preset, 'y')] },
+            { type: row, content: [presetCell(preset, 'z')] },
+        ],
+    };
+    const hostCell = {
+        type: cellType,
+        attrs: { colspan: SINGLE_SPAN, rowspan: SINGLE_SPAN, colwidth: null },
+        content: [inner],
+    };
+    return {
+        type: TABLE_NODE,
+        content: [
+            { type: row, content: [hostCell, presetCell(preset, 'b')] },
+            { type: row, content: [presetCell(preset, 'c'), presetCell(preset, 'd')] },
+        ],
+    };
+}
+
 type ScenarioContext = {
     readonly peers: readonly Peer[];
+    readonly author: Peer;
     readonly anchors: readonly number[];
+    readonly liveAnchors: () => Promise<number[]>;
     readonly preset: SchemaPreset;
     readonly seed: number;
 };
@@ -129,6 +178,9 @@ type ScenarioContext = {
 export type CorpusScenario = {
     readonly name: string;
     readonly mutatesGeometry: boolean;
+    readonly requiresNativeActor: boolean;
+    readonly requiresWebActor: boolean;
+    readonly table?: (preset: SchemaPreset) => Record<string, unknown>;
     readonly act: (context: ScenarioContext) => Promise<void>;
 };
 
@@ -138,6 +190,30 @@ function peerAt(peers: readonly Peer[], index: number): Peer {
         throw new Error(`the corpus scenario addressed peer ${index} outside the started set`);
     }
     return peer;
+}
+
+function nonAuthoringPeer(peers: readonly Peer[], author: Peer): Peer {
+    const editor = peers.find((peer) => peer !== author);
+    if (editor === undefined) {
+        throw new Error('the corpus scenario needs a peer that did not author the table');
+    }
+    return editor;
+}
+
+function webActor(peers: readonly Peer[]): Peer {
+    const web = peers.find((peer) => peerKindOf(peer) !== NATIVE_PEER_KIND);
+    if (web === undefined) {
+        throw new Error('the corpus scenario needs a web actor');
+    }
+    return web;
+}
+
+function nativeActor(peers: readonly Peer[]): Peer {
+    const native = peers.find((peer) => peerKindOf(peer) === NATIVE_PEER_KIND);
+    if (native === undefined) {
+        throw new Error('the corpus scenario needs a native actor');
+    }
+    return native;
 }
 
 function anchorAt(anchors: readonly number[], index: number): number {
@@ -152,6 +228,8 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'concurrent row and column insertion at the same boundary',
         mutatesGeometry: true,
+        requiresNativeActor: false,
+        requiresWebActor: false,
         act: async ({ peers, anchors }) => {
             await addRowAfter(peerAt(peers, 0), anchorAt(anchors, TOP_LEFT_CELL));
             await addColumnAfter(peerAt(peers, 1), anchorAt(anchors, TOP_LEFT_CELL));
@@ -160,6 +238,8 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'concurrent merges from opposite corners',
         mutatesGeometry: true,
+        requiresNativeActor: false,
+        requiresWebActor: false,
         act: async ({ peers, anchors }) => {
             await mergeCells(
                 peerAt(peers, 0),
@@ -176,8 +256,10 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'a structural action undone and redone by a peer that did not author the table',
         mutatesGeometry: true,
-        act: async ({ peers, anchors, seed }) => {
-            const editor = peerAt(peers, 1);
+        requiresNativeActor: false,
+        requiresWebActor: false,
+        act: async ({ peers, author, anchors, seed }) => {
+            const editor = nonAuthoringPeer(peers, author);
             await addRowAfter(editor, anchorAt(anchors, TOP_LEFT_CELL));
             await exchangeUntilIdle([...peers], seed);
             await call(editor, 'undo', {});
@@ -188,6 +270,8 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'a dependent update released before its prerequisite',
         mutatesGeometry: true,
+        requiresNativeActor: false,
+        requiresWebActor: false,
         act: async ({ peers, anchors }) => {
             const author = peerAt(peers, 0);
             await addRowAfter(author, anchorAt(anchors, TOP_LEFT_CELL));
@@ -211,8 +295,81 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'typing inside a cell without touching geometry',
         mutatesGeometry: false,
+        requiresNativeActor: false,
+        requiresWebActor: false,
         act: async ({ peers, anchors }) => {
             await typeInCell(peerAt(peers, 0), anchorAt(anchors, TOP_LEFT_CELL));
+        },
+    },
+    {
+        name: 'a merged cell split against a concurrent row deletion',
+        mutatesGeometry: true,
+        requiresNativeActor: false,
+        requiresWebActor: false,
+        act: async ({ peers, anchors, liveAnchors, seed }) => {
+            await mergeCells(
+                peerAt(peers, 0),
+                anchorAt(anchors, TOP_LEFT_CELL),
+                anchorAt(anchors, TOP_RIGHT_CELL),
+            );
+            await exchangeUntilIdle([...peers], seed);
+            const settled = await liveAnchors();
+            await splitCell(peerAt(peers, 0), anchorAt(settled, TOP_LEFT_CELL));
+            await deleteRow(peerAt(peers, 1), anchorAt(settled, settled.length - ONE_CELL));
+        },
+    },
+    {
+        name: 'a row inserted across a spanning cell',
+        mutatesGeometry: true,
+        requiresNativeActor: false,
+        requiresWebActor: false,
+        act: async ({ peers, anchors, liveAnchors, seed }) => {
+            await mergeCells(
+                peerAt(peers, 0),
+                anchorAt(anchors, TOP_LEFT_CELL),
+                anchorAt(anchors, TOP_RIGHT_CELL),
+            );
+            await exchangeUntilIdle([...peers], seed);
+            const settled = await liveAnchors();
+            await addRowAfter(peerAt(peers, 1), anchorAt(settled, TOP_LEFT_CELL));
+            await addColumnAfter(peerAt(peers, 0), anchorAt(settled, TOP_LEFT_CELL));
+        },
+    },
+    {
+        name: 'a native column resize concurrent with a remote row insertion',
+        mutatesGeometry: true,
+        requiresNativeActor: true,
+        requiresWebActor: false,
+        act: async ({ peers, anchors }) => {
+            const native = nativeActor(peers);
+            await resizeColumn(native, anchorAt(anchors, TOP_LEFT_CELL), RESIZED_WIDTH);
+            await addRowAfter(
+                nonAuthoringPeer(peers, native),
+                anchorAt(anchors, TOP_LEFT_CELL),
+            );
+        },
+    },
+    {
+        name: 'a remote structural edit inside a normalization created cell',
+        mutatesGeometry: true,
+        requiresNativeActor: false,
+        requiresWebActor: true,
+        act: async ({ peers, anchors, liveAnchors, seed }) => {
+            await addRowAfter(peerAt(peers, 0), anchorAt(anchors, TOP_LEFT_CELL));
+            await exchangeUntilIdle([...peers], seed);
+            const settled = await liveAnchors();
+            await addColumnAfter(webActor(peers), anchorAt(settled, BOTTOM_LEFT_CELL));
+        },
+    },
+    {
+        name: 'a nested irregular table under an outer structural edit',
+        mutatesGeometry: true,
+        requiresNativeActor: false,
+        requiresWebActor: false,
+        table: nestedIrregularTable,
+        act: async ({ peers, liveAnchors }) => {
+            const settled = await liveAnchors();
+            await addRowAfter(peerAt(peers, 1), anchorAt(settled, settled.length - ONE_CELL));
         },
     },
 ];
@@ -224,7 +381,21 @@ export interface CorpusSchedule {
     readonly participants: number;
     readonly preset: SchemaPreset;
     readonly scenario: CorpusScenario;
+    readonly actorOffset: number;
     readonly seed: number;
+}
+
+function rotate(peers: readonly Peer[], offset: number): readonly Peer[] {
+    return peers.map((_peer, index) => peerAt(peers, (index + offset) % peers.length));
+}
+
+function scenariosFor(topology: ConvergenceTopology): readonly CorpusScenario[] {
+    const nativeInclusive = topology !== TOPOLOGY_TWO_WEB_CONTROL;
+    const webInclusive = topology !== TOPOLOGY_NATIVE_NATIVE;
+    return CORPUS_SCENARIOS.filter(
+        (scenario) => (nativeInclusive || !scenario.requiresNativeActor)
+            && (webInclusive || !scenario.requiresWebActor),
+    );
 }
 
 function kindsFor(topology: ConvergenceTopology, preset: SchemaPreset): {
@@ -257,18 +428,21 @@ function buildCorpus(): readonly CorpusSchedule[] {
         for (let index = 0; index < SCHEDULES_PER_TOPOLOGY; index += 1) {
             seed = nextRandom(seed);
             const preset = CORPUS_PRESETS[index % CORPUS_PRESETS.length];
-            const scenario = CORPUS_SCENARIOS[index % CORPUS_SCENARIOS.length];
+            const applicable = scenariosFor(topology);
+            const scenario = applicable[index % applicable.length];
             if (preset === undefined || scenario === undefined) {
                 throw new Error('the corpus generator produced an incomplete schedule');
             }
             const { kinds, participants } = kindsFor(topology, preset);
+            const actorOffset = index % participants;
             schedules.push({
-                name: `${topology} ${preset} ${scenario.name} seed ${seed}`,
+                name: `${topology} ${preset} ${scenario.name} actor ${actorOffset} seed ${seed}`,
                 topology,
                 kinds,
                 participants,
                 preset,
                 scenario,
+                actorOffset,
                 seed,
             });
         }
@@ -282,6 +456,7 @@ export interface ScheduleOutcome {
     readonly peers: readonly Peer[];
     readonly geometry: SettledGeometry;
     readonly webControlLoops: number;
+    readonly nativeAutonomousRepairWrites: number;
 }
 
 async function projectedGeometry(
@@ -333,6 +508,17 @@ export async function settledGeometryOf(
     return projectedGeometry(judge, preset, JSON.parse(first));
 }
 
+export async function nativeRepairWrites(peers: readonly Peer[]): Promise<number> {
+    let total = NO_REPAIR_WRITES;
+    for (const peer of peers) {
+        if (peerKindOf(peer) !== NATIVE_PEER_KIND) {
+            continue;
+        }
+        total += (await snapshot(peer)).autonomousRepairWrites;
+    }
+    return total;
+}
+
 export async function webRepairWrites(peers: readonly Peer[]): Promise<number> {
     let total = NO_LOOPS;
     for (const peer of peers) {
@@ -344,8 +530,7 @@ export async function webRepairWrites(peers: readonly Peer[]): Promise<number> {
     return total;
 }
 
-async function authorTable(peer: Peer, preset: SchemaPreset): Promise<void> {
-    const table = corpusTable(preset);
+async function authorTable(peer: Peer, table: Record<string, unknown>): Promise<void> {
     if (peerKindOf(peer) === NATIVE_PEER_KIND) {
         await call(peer, 'command', {
             type: 'insertContentJson',
@@ -359,6 +544,7 @@ async function authorTable(peer: Peer, preset: SchemaPreset): Promise<void> {
 export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOutcome> {
     let outcome: ScheduleOutcome | null = null;
     let started: readonly Peer[] = [];
+    let nativeRepairs = NO_REPAIR_WRITES;
     try {
         await withPeers(
             schedule.kinds as PeerKind[],
@@ -367,15 +553,21 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
                 const participants = peers.slice(0, schedule.participants);
                 const judge = peerAt(peers, peers.length - 1);
                 const author = peerAt(participants, 0);
-                await authorTable(author, schedule.preset);
+                const fixture = (schedule.scenario.table ?? corpusTable)(schedule.preset);
+                await authorTable(author, fixture);
                 await seedFrom(author, participants.slice(1));
                 await exchangeUntilIdle([...participants], schedule.seed);
                 const seeded = JSON.stringify(tableOf((await snapshot(author)).documentJson));
                 const repairsBefore = await webRepairWrites(participants);
 
                 await schedule.scenario.act({
-                    peers: participants,
-                    anchors: cellAnchors(corpusTable(schedule.preset), TABLE_START),
+                    peers: rotate(participants, schedule.actorOffset),
+                    author,
+                    anchors: cellAnchors(fixture, TABLE_START),
+                    liveAnchors: async () => cellAnchors(
+                        tableOf((await snapshot(author)).documentJson) as Record<string, unknown>,
+                        TABLE_START,
+                    ),
                     preset: schedule.preset,
                     seed: schedule.seed,
                 });
@@ -390,11 +582,13 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
                             + 'proves nothing',
                     );
                 }
+                nativeRepairs = await nativeRepairWrites(participants);
                 await assertConverged([...participants]);
                 outcome = {
                     peers: participants,
                     geometry: await settledGeometryOf(participants, judge, schedule.preset),
                     webControlLoops: (await webRepairWrites(participants)) - repairsBefore,
+                    nativeAutonomousRepairWrites: nativeRepairs,
                 };
             },
             { ...tableFixture(schedule.preset), [PARTICIPANT_COUNT_KEY]: schedule.participants },
@@ -412,6 +606,7 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
                 message: error.message,
             },
             webControlLoops: NO_LOOPS,
+            nativeAutonomousRepairWrites: nativeRepairs,
         };
     }
     if (outcome === null) {

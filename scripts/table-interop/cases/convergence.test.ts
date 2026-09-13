@@ -46,7 +46,9 @@ import { canonicalDocumentShape } from '../assertions.js';
 import {
     CONVERGENCE_CORPUS,
     SCHEDULES_PER_TOPOLOGY,
+    nativeRepairWrites,
     runSchedule,
+    webRepairWrites,
 } from '../corpus.js';
 import {
     CELL_NODE,
@@ -88,6 +90,7 @@ const ONE_CHILD = 1;
 const SPANNING_CELL = 2;
 const WIDER_SPANNING_CELL = 3;
 const SEEDED_COLUMN_WIDTH = 120;
+const OPAQUE_NODE = 'opaqueMetadata';
 
 const UNCOVERED_PEER_KIND = 'quill';
 
@@ -183,14 +186,6 @@ async function assertJudgeStayedOutside(judge: Peer): Promise<void> {
         'the control topology judge must never join the room it judges',
     );
     assert.equal(judged.documentJson, null);
-}
-
-async function webRepairWrites(peers: Peer[]): Promise<number> {
-    let total = NO_LOOPS;
-    for (const peer of peers) {
-        total += (await snapshot(peer)).autonomousRepairWrites;
-    }
-    return total;
 }
 
 test('TBL-21 a settled run label is derived from the peers, never from the caller', async () => {
@@ -801,6 +796,25 @@ test('TBL-21 the convergence oracle reads an attribute at its schema default as 
     );
 });
 
+test('TBL-21 the convergence oracle leaves attributes of undeclared node types untouched', () => {
+    const opaque = { type: OPAQUE_NODE, attrs: { colspan: SINGLE_SPAN } };
+    assert.notEqual(
+        JSON.stringify(canonicalDocumentShape(opaque)),
+        JSON.stringify(canonicalDocumentShape({ type: OPAQUE_NODE })),
+        'a node type the schema declares no cell attributes for is compared untouched',
+    );
+    assert.notEqual(
+        JSON.stringify(canonicalDocumentShape({ attrs: { colspan: SINGLE_SPAN } })),
+        JSON.stringify(canonicalDocumentShape({})),
+        'metadata with no node type at all is compared untouched',
+    );
+    assert.notEqual(
+        JSON.stringify(canonicalDocumentShape({ type: OPAQUE_NODE, attrs: { colwidth: null } })),
+        JSON.stringify(canonicalDocumentShape({ type: OPAQUE_NODE })),
+        'the null attribute arm is scoped the same way',
+    );
+});
+
 test('TBL-21 the convergence oracle still diverges on a genuinely different attribute', () => {
     assert.notEqual(
         shapeOf(cellWith({ colspan: SPANNING_CELL, rowspan: SINGLE_SPAN, colwidth: null })),
@@ -819,10 +833,46 @@ test('TBL-21 the convergence oracle still diverges on a genuinely different attr
     );
 });
 
+test('TBL-10 the corpus native repair assertion fires on a deliberate autonomous repair', async () => {
+    await withPeers(['rust', 'rust'] as const, async ([native, replica]) => {
+        await call(native, 'command', {
+            type: 'insertContentJson',
+            json: { type: DOC_NODE, content: [raggedTable()] },
+        });
+        await seedFrom(native, [replica]);
+        await exchangeUntilIdle([native, replica]);
+        assert.equal(await nativeRepairWrites([native, replica]), NO_FAILURES);
+        assert.equal(
+            await webRepairWrites([native, replica]),
+            NO_FAILURES,
+            'the web repair counter must not be reading native peers',
+        );
+
+        await call(native, 'repairTableDuringRemoteWindow', {});
+
+        assert.equal(
+            await nativeRepairWrites([native, replica]),
+            ONE_FAILURE,
+            'the canary repair is exactly the write TBL-10 forbids',
+        );
+        assert.equal(
+            await webRepairWrites([native, replica]),
+            NO_FAILURES,
+            'a native repair must never be charged to webControlLoops',
+        );
+    }, tableFixture('prosemirror'));
+});
+
 test('TBL-21 the seeded schedule corpus runs every topology and preset', async () => {
     const startedAt = Date.now();
     for (const schedule of CONVERGENCE_CORPUS) {
         const outcome = await runSchedule(schedule);
+        assert.equal(
+            outcome.nativeAutonomousRepairWrites,
+            NO_FAILURES,
+            `TBL-10 forbids an autonomous native repair; ${schedule.name} wrote `
+                + `${outcome.nativeAutonomousRepairWrites}`,
+        );
         chargeCorpusRun({
             name: schedule.name,
             peers: outcome.peers,

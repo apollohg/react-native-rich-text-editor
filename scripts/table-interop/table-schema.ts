@@ -56,41 +56,14 @@ export function tableSchemaOf(
     };
 }
 
-export const TABLE_SCHEMA = {
-    nodes: [
-        { name: 'doc', content: 'block+', role: 'doc' },
-        { name: PARAGRAPH_NODE, content: 'inline*', group: 'block', role: 'textBlock' },
-        { name: 'text', content: '', group: 'inline', role: 'text' },
-        {
-            name: TABLE_NODE,
-            content: `${ROW_NODE}+`,
-            group: 'block',
-            role: 'block',
-            tableRole: 'table',
-        },
-        {
-            name: ROW_NODE,
-            content: `(${CELL_NODE} | ${HEADER_CELL_NODE})*`,
-            role: 'block',
-            tableRole: 'row',
-        },
-        {
-            name: CELL_NODE,
-            content: 'block+',
-            role: 'block',
-            tableRole: 'cell',
-            attrs: CELL_ATTRIBUTES,
-        },
-        {
-            name: HEADER_CELL_NODE,
-            content: 'block+',
-            role: 'block',
-            tableRole: 'header_cell',
-            attrs: CELL_ATTRIBUTES,
-        },
-    ],
-    marks: [],
-};
+export const TABLE_SCHEMA = tableSchemaOf(ROW_NODE, CELL_NODE, HEADER_CELL_NODE);
+
+export const CELL_NODE_TYPES: readonly string[] = [
+    CELL_NODE,
+    HEADER_CELL_NODE,
+    TIPTAP_CELL_NODE,
+    TIPTAP_HEADER_CELL_NODE,
+];
 
 export function geometryOf(projection: Record<string, unknown>): Record<string, unknown> {
     return {
