@@ -255,13 +255,13 @@ export interface NativeEditorSnapshotMetadata {
     schemaFingerprint: string;
 }
 
-/** Scope attached to a local document solely so it can export a snapshot. */
+/** Snapshot identity for a local document. */
 export interface NativeEditorSnapshotScope {
     documentId: string;
     lineageId: string;
 }
 
-/** An exported room document: its provenance plus the encoded Yjs state. */
+/** Snapshot provenance and encoded Yjs state. */
 export interface NativeEditorRoomSnapshot {
     metadata: NativeEditorSnapshotMetadata;
     /** Encoded Yjs state. Bounded by `EditorResourceLimits.maxEncodedStateBytes`. */
@@ -283,7 +283,7 @@ export type NativeEditorInitialization =
     | {
           type: 'localHtml';
           html: string;
-          /** Enables snapshot export without creating a room or transport. */
+          /** Enables local snapshot export and restore. */
           snapshotScope?: NativeEditorSnapshotScope;
       }
     | {
