@@ -5,6 +5,8 @@ import { isRecord } from './peer-protocol.js';
 import type { Peer } from './peer-protocol.js';
 
 const MINIMUM_CONVERGENCE_PEERS = 2;
+const ATTRIBUTES_KEY = 'attrs';
+const NO_ATTRIBUTES = 0;
 
 export function assertDrainBound(rounds: number, newUpdates: number): void {
     if (rounds > 100 || newUpdates > 10_000) {
@@ -87,6 +89,18 @@ function mergedTextRuns(content: unknown[]): unknown[] {
     return merged;
 }
 
+function withoutUnpersistedAttributes(attrs: Record<string, unknown>): Record<string, unknown> {
+    const kept: Record<string, unknown> = {};
+    for (const key of Object.keys(attrs).sort()) {
+        const value = attrs[key];
+        if (value === null) {
+            continue;
+        }
+        kept[key] = canonicalDocumentShape(value);
+    }
+    return kept;
+}
+
 export function canonicalDocumentShape(value: unknown): unknown {
     if (Array.isArray(value)) {
         return value.map((entry) => canonicalDocumentShape(entry));
@@ -97,6 +111,14 @@ export function canonicalDocumentShape(value: unknown): unknown {
     const shaped: Record<string, unknown> = {};
     for (const key of Object.keys(value).sort()) {
         const child = value[key];
+        if (key === ATTRIBUTES_KEY && isRecord(child)) {
+            const kept = withoutUnpersistedAttributes(child);
+            if (Object.keys(kept).length === NO_ATTRIBUTES) {
+                continue;
+            }
+            shaped[key] = kept;
+            continue;
+        }
         shaped[key] = key === 'content' && Array.isArray(child)
             ? mergedTextRuns(child)
             : canonicalDocumentShape(child);
