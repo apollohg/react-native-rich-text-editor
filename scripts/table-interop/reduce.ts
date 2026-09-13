@@ -3,7 +3,12 @@ import { isAbsolute, resolve } from 'node:path';
 import { replayTrace } from './controller.js';
 import { isRecord } from './peer-protocol.js';
 import { buildRustPeer, PACKAGE_DIRECTORY } from './peer-build.js';
-import { lastMinimizedTracePath, reduceTrace, TRACE_PROTOCOL_VERSION } from './trace.js';
+import {
+    lastMinimizedTracePath,
+    reduceTrace,
+    traceFailureSignature,
+    TRACE_PROTOCOL_VERSION,
+} from './trace.js';
 import type { Trace } from './trace.js';
 
 const TRACE_FLAG = '--trace';
@@ -78,9 +83,10 @@ if (buildCode !== 0) {
             + `  recorded failure ${String(trace.failureClass)}: ${String(trace.failureMessage)}\n`
             + `  records ${trace.records.length}\n`,
     );
+    const expected = traceFailureSignature(trace);
     const observed = await replayTrace(trace);
-    process.stdout.write(`  replayed failure ${String(observed)}\n`);
-    if (observed !== trace.failureClass) {
+    process.stdout.write(`  recorded signature ${expected}\n  replayed signature ${String(observed)}\n`);
+    if (observed !== expected) {
         process.stdout.write(
             '  the recorded failure no longer reproduces, so there is nothing to reduce\n',
         );
