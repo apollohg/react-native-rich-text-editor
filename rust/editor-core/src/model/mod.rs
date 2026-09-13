@@ -10,6 +10,22 @@ pub use resolved_pos::ResolvedPos;
 
 use smallvec::SmallVec;
 
+const MAX_INTEGRAL_FLOAT_ATTRIBUTE: f64 = u32::MAX as f64;
+
+pub(crate) fn integral_unsigned(value: &serde_json::Value) -> Option<u64> {
+    value.as_u64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|number| {
+                number.is_finite()
+                    && number.fract() == 0.0
+                    && *number >= 0.0
+                    && *number <= MAX_INTEGRAL_FLOAT_ATTRIBUTE
+            })
+            .map(|number| number as u64)
+    })
+}
+
 pub(crate) fn arc_allocation_retained_bytes(payload_bytes: usize) -> Option<usize> {
     payload_bytes.checked_add(std::mem::size_of::<[usize; 3]>())
 }

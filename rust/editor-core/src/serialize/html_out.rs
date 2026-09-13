@@ -187,7 +187,7 @@ fn render_colwidth(value: &serde_json::Value) -> Option<String> {
         if slice > FIRST_WIDTH_SLICE {
             rendered.push(TABLE_COLWIDTH_SEPARATOR);
         }
-        let width = crate::tables::projection::integral_unsigned(width)
+        let width = crate::model::integral_unsigned(width)
             .filter(|width| *width != u64::from(crate::tables::projection::UNSET_COLUMN_WIDTH));
         match width {
             Some(width) => {

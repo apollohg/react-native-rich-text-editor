@@ -7,14 +7,14 @@ use crate::command_planner::{
     compatible_declared_attrs, default_attrs, empty_text_block_range, resolve_block_insert_pos,
     SemanticCommandHistory, SemanticCommandPlan, SemanticOperation,
 };
-use crate::model::{Document, Fragment, Node};
+use crate::model::{integral_unsigned, Document, Fragment, Node};
 use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::command_context::{
     CellAnchorPair, TableAction, TableActionCandidate, TableActionOutcome,
 };
-use crate::tables::projection::{integral_unsigned, span_attribute, ProjectedCell, ProjectedTable};
+use crate::tables::projection::{span_attribute, ProjectedCell, ProjectedTable};
 use crate::tables::roles::{
     TableRoles, MIN_TABLE_CELL_SPAN, TABLE_CELL_COLSPAN_ATTR, TABLE_CELL_COLWIDTH_ATTR,
     TABLE_CELL_ROWSPAN_ATTR,

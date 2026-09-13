@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::model::Node;
+use crate::model::{integral_unsigned, Node};
 use crate::schema::Schema;
 use crate::tables::roles::{
     TableRoles, MIN_TABLE_CELL_SPAN, TABLE_CELL_COLSPAN_ATTR, TABLE_CELL_COLWIDTH_ATTR,
@@ -16,7 +16,6 @@ const NODE_OPENING_TOKENS: u32 = 1;
 const NEXT_COLUMN_STEP: u32 = 1;
 const SINGLE_WORK_STEP: usize = 1;
 const MINIMUM_TABLE_GRID_CHARGE: usize = 1;
-const MAX_INTEGRAL_FLOAT_ATTRIBUTE: f64 = u32::MAX as f64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CellRect {
@@ -348,20 +347,6 @@ fn grid_extent(rows: u32, columns: u32) -> Result<usize, TableError> {
     (rows as usize)
         .checked_mul(columns as usize)
         .ok_or(TableError::Allocation)
-}
-
-pub(crate) fn integral_unsigned(value: &Value) -> Option<u64> {
-    value.as_u64().or_else(|| {
-        value
-            .as_f64()
-            .filter(|number| {
-                number.is_finite()
-                    && number.fract() == 0.0
-                    && *number >= 0.0
-                    && *number <= MAX_INTEGRAL_FLOAT_ATTRIBUTE
-            })
-            .map(|number| number as u64)
-    })
 }
 
 pub(crate) fn span_attribute(cell: &Node, name: &str) -> Result<u32, TableError> {

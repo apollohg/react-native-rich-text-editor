@@ -20,7 +20,7 @@ use yrs::updates::encoder::Encode;
 use yrs::{ClientID, Doc, StickyIndex};
 
 use crate::ffi_v2::types::AWARENESS_CLOCK_EXHAUSTED;
-use crate::tables::projection::integral_unsigned;
+use crate::model::integral_unsigned;
 
 use super::{YrsEngineError, YrsEngineResult};
 
