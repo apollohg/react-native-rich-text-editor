@@ -176,6 +176,13 @@ export function cellAnchors(
     return anchors;
 }
 
+export function cellSourceAnchors(
+    tableJson: Record<string, unknown>,
+    tableStart: number,
+): number[] {
+    return cellAnchors(tableJson, tableStart).map((anchor) => anchor - CELL_INTERIOR_OFFSET);
+}
+
 export function tableOf(documentJson: Record<string, unknown> | null): unknown {
     const content = documentJson?.['content'];
     if (!Array.isArray(content)) {

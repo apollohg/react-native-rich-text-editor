@@ -11,6 +11,7 @@ const CARGO_MANIFEST = fileURLToPath(
 );
 const SUITE_CASES: Record<string, readonly string[]> = {
     plumbing: ['plumbing', 'scheduler', 'dependencies'],
+    convergence: ['convergence', 'projection-properties'],
 };
 
 function requestedSuite(argv: string[]): string {
