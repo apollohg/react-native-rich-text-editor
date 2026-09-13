@@ -173,10 +173,13 @@ fn wrap_in_list_canonicalizes_partial_duplicate_selection_with_typed_attrs() {
         .collect::<Vec<_>>();
     let from = u32::try_from(rendered[..occurrences[0]].chars().count() + 1).unwrap();
     let to = u32::try_from(rendered[..occurrences[1]].chars().count() + 2).unwrap();
-    let attrs = HashMap::from([("listMeta".into(), json!({ "nested": [1, { "ok": true }] }))]);
+    let attrs = HashMap::from([(
+        "listMeta".into(),
+        json!({ "nested": [1.0, { "ok": true }] }),
+    )]);
     let item_attrs = HashMap::from([
         ("checked".into(), Value::Bool(true)),
-        ("itemMeta".into(), json!({ "ids": [1, 2, 3] })),
+        ("itemMeta".into(), json!({ "ids": [1.0, 2.0, 3.0] })),
     ]);
     let operations = || {
         vec![TypedOperation::WrapInList {

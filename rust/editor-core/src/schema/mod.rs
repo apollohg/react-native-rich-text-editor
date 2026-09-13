@@ -163,7 +163,7 @@ fn json_projection_float_matches(value: f64, number: &serde_json::Number) -> boo
         .is_some_and(|integer| integer_is_exact_binary64(integer) && (integer as f64) == value)
 }
 
-fn integer_is_exact_binary64(magnitude: u64) -> bool {
+pub(crate) fn integer_is_exact_binary64(magnitude: u64) -> bool {
     if magnitude == 0 {
         return true;
     }

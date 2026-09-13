@@ -690,26 +690,6 @@ pub(crate) fn removed_mark_attr(mark_type: &str) -> Attrs {
     Attrs::from([(Arc::<str>::from(mark_type), Any::Null)])
 }
 
-fn json_to_any(value: &Value) -> Any {
-    match value {
-        Value::Null => Any::Null,
-        Value::Bool(value) => Any::Bool(*value),
-        Value::Number(number) => number
-            .as_i64()
-            .map(Any::BigInt)
-            .or_else(|| number.as_f64().map(Any::Number))
-            .unwrap_or(Any::Null),
-        Value::String(value) => Any::String(value.clone().into()),
-        Value::Array(values) => Any::Array(values.iter().map(json_to_any).collect()),
-        Value::Object(values) => Any::Map(Arc::new(
-            values
-                .iter()
-                .map(|(key, value)| (key.clone(), json_to_any(value)))
-                .collect(),
-        )),
-    }
-}
-
 fn inline_text_pieces(
     request_id: u64,
     operation_index: usize,

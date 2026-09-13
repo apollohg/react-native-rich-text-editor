@@ -252,9 +252,15 @@ fn any_matches_json(value: &Any, expected: Option<&Value>) -> bool {
         Any::Bool(value) => expected.and_then(Value::as_bool) == Some(*value),
         Any::Number(value) => serde_json::Number::from_f64(*value).map_or_else(
             || expected.is_some_and(Value::is_null),
-            |number| Some(&number) == expected.and_then(Value::as_number),
+            |number| {
+                expected.is_some_and(|expected| {
+                    json_projection_values_equal(&Value::Number(number.clone()), expected)
+                })
+            },
         ),
-        Any::BigInt(value) => expected.and_then(Value::as_i64) == Some(*value),
+        Any::BigInt(value) => expected.is_some_and(|expected| {
+            json_projection_values_equal(&Value::Number((*value).into()), expected)
+        }),
         Any::String(value) => expected.and_then(Value::as_str) == Some(value.as_ref()),
         Any::Buffer(value) => expected.and_then(Value::as_array).is_some_and(|expected| {
             expected.len() == value.len()
@@ -279,17 +285,6 @@ fn any_matches_json(value: &Any, expected: Option<&Value>) -> bool {
     }
 }
 
-fn projection_value_matches_json(value: &Any, expected: &Value) -> bool {
-    match value {
-        Any::Number(value) if value.is_finite() => serde_json::Number::from_f64(*value)
-            .is_some_and(|number| json_projection_values_equal(&Value::Number(number), expected)),
-        Any::BigInt(value) => {
-            json_projection_values_equal(&Value::Number((*value).into()), expected)
-        }
-        _ => any_matches_json(value, Some(expected)),
-    }
-}
-
 fn element_matches_projection<T: ReadTxn>(
     element: &XmlElementRef,
     txn: &T,
@@ -299,7 +294,7 @@ fn element_matches_projection<T: ReadTxn>(
         let Some(yrs::Out::Any(actual)) = element.get_attribute(txn, name) else {
             return false;
         };
-        projection_value_matches_json(&actual, expected)
+        any_matches_json(&actual, Some(expected))
     })
 }
 
@@ -362,7 +357,7 @@ pub(crate) fn prepared_wire_node_spec<'schema>(
             attrs
                 .iter()
                 .find(|(candidate, _)| candidate == name)
-                .is_some_and(|(_, actual)| projection_value_matches_json(actual, expected))
+                .is_some_and(|(_, actual)| any_matches_json(actual, Some(expected)))
         })
     })
 }
@@ -565,7 +560,7 @@ fn match_xml_element_json<T: ReadTxn>(
         }
         validate_any_projection(&value, &mut context.budget, 1)?;
         if let Some(expected) = projection.and_then(|projection| projection.attrs.get(key)) {
-            local_match &= projection_value_matches_json(&value, expected);
+            local_match &= any_matches_json(&value, Some(expected));
             continue;
         }
         if removes_level && key == "level" {

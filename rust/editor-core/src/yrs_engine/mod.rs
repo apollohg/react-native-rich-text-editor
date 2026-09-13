@@ -23,6 +23,7 @@ mod position;
 mod prepared_admission;
 mod snapshot;
 mod update_preflight;
+mod wire_number;
 
 const RAW_STORAGE_WORK_MULTIPLIER: usize = 128;
 

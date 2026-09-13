@@ -316,10 +316,10 @@ fn assert_installed_position_map_matches_full_build(
 }
 
 fn opaque_inline(salt: u64) -> Node {
-    let exact_yjs_integer = salt % 9_007_199_254_740_991;
+    let exact_yjs_number = (salt % 9_007_199_254_740_991) as f64;
     let original = serde_json::json!({
         "type": "traceExtension",
-        "attrs": { "seed": exact_yjs_integer },
+        "attrs": { "seed": exact_yjs_number },
         "content": [{ "type": "text", "text": "wire-only" }]
     });
     Node::void(

@@ -35,7 +35,7 @@ const TABLE_NODE: &str = "table";
 const ROW_NODE: &str = "table_row";
 const CELL_NODE: &str = "table_cell";
 const PARAGRAPH_NODE: &str = "paragraph";
-const SPLIT_SPAN: u32 = 2;
+const SPLIT_SPAN: f64 = 2.0;
 const SPLIT_ROWS: u32 = 2;
 const SPLIT_COLUMNS_AFTER_UNDO: u32 = 3;
 const SPLIT_COLUMNS_AFTER_SPLIT: u32 = 2;
@@ -235,8 +235,20 @@ fn repeated_undo_and_redo_restores_merged_content_without_reusing_the_same_bytes
 
     apply(&mut session, TableCommand::MergeTableCells);
 
+    assert_ne!(
+        document_json(&session),
+        unmerged,
+        "the merge must actually change the table",
+    );
+    assert_eq!(top_row_cells(&session), MERGED_TOP_ROW_CELLS);
+
+    undo(&mut session);
+    redo(&mut session);
     let merged = document_json(&session);
-    assert_ne!(merged, unmerged, "the merge must actually change the table");
+    assert_ne!(
+        merged, unmerged,
+        "the restored merge must still differ from the unmerged table",
+    );
     assert_eq!(top_row_cells(&session), MERGED_TOP_ROW_CELLS);
 
     for round in 0..HISTORY_ROUND_TRIPS {

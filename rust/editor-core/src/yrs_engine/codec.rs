@@ -16,6 +16,7 @@ use crate::schema::{json_projection_values_equal, NodeJsonProjection, NodeRole, 
 use super::mutation::{
     ImportElementAttributeWork, ImportLookupMaterializationCollector, ImportTextCaptureWork,
 };
+use super::wire_number::{wire_number_to_any, WireNumberError};
 use super::{raw_storage_work_limit, YrsEngineError, YrsEngineResult};
 
 const RECURSION_RED_ZONE_BYTES: usize = 64 * 1024;
@@ -494,7 +495,7 @@ fn nodes_are_compatible(old_node: &Value, new_node: &Value) -> bool {
     }
 }
 
-fn json_to_any(value: &Value) -> Any {
+pub(crate) fn json_to_any(value: &Value) -> Any {
     stacker::maybe_grow(
         RECURSION_RED_ZONE_BYTES,
         RECURSION_STACK_SEGMENT_BYTES,
@@ -506,17 +507,7 @@ fn json_to_any_inner(value: &Value) -> Any {
     match value {
         Value::Null => Any::Null,
         Value::Bool(value) => Any::Bool(*value),
-        Value::Number(number) => {
-            if let Some(value) = number.as_i64() {
-                Any::BigInt(value)
-            } else if let Some(value) = number.as_u64() {
-                Any::Number(value as f64)
-            } else if let Some(value) = number.as_f64() {
-                Any::Number(value)
-            } else {
-                Any::Null
-            }
-        }
+        Value::Number(number) => wire_number_to_any(number).unwrap_or(Any::Null),
         Value::String(value) => Any::String(value.clone().into()),
         Value::Array(values) => Any::Array(values.iter().map(json_to_any).collect()),
         Value::Object(values) => Any::Map(Arc::new(

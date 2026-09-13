@@ -767,7 +767,9 @@ fn normalize_json_object_aliases<'a>(
 fn parse_heading_level_value(value: Option<&Value>) -> Option<u8> {
     let value = value?;
     let level = match value {
-        Value::Number(number) => number.as_u64().and_then(|value| u8::try_from(value).ok())?,
+        Value::Number(_) => {
+            crate::model::integral_unsigned(value).and_then(|level| u8::try_from(level).ok())?
+        }
         Value::String(value) => parse_wire_heading_level_str(value)?,
         _ => return None,
     };

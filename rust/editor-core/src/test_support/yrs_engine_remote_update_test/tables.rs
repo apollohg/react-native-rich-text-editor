@@ -62,7 +62,7 @@ fn irregular_table() -> serde_json::Value {
         "type": TABLE_NODE,
         "content": [
             table_row(vec![table_cell(
-                serde_json::json!({"colspan":2,"rowspan":1,"colwidth":null}),
+                serde_json::json!({"colspan":2.0,"rowspan":1.0,"colwidth":null}),
             )]),
             table_row(vec![plain_table_cell(), plain_table_cell(), plain_table_cell()]),
         ],

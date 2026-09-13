@@ -57,16 +57,16 @@ fn update_node_attrs_preserves_nested_custom_any_values() {
     });
     let attrs = HashMap::from([
         ("flag".into(), Value::Bool(true)),
-        ("count".into(), json!(7)),
+        ("count".into(), json!(7.0)),
         ("label".into(), Value::String("custom".into())),
-        ("items".into(), json!([1, false, "x"])),
+        ("items".into(), json!([1.0, false, "x"])),
         ("meta".into(), json!({ "nested": { "ok": true } })),
     ]);
     let (actual, expected) = compile_and_execute_attribute_update(source, attrs);
     assert_eq!(actual, expected);
     assert_eq!(
         actual["content"][0]["attrs"]["items"],
-        json!([1, false, "x"])
+        json!([1.0, false, "x"])
     );
     assert_eq!(
         actual["content"][0]["attrs"]["meta"],

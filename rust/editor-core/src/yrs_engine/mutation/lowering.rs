@@ -14,7 +14,9 @@ use crate::model::{Document, Fragment, Mark, Node};
 use crate::schema::{NodeRole, Schema};
 
 use super::super::canonical::CanonicalArtifact;
-use super::super::codec::{prepare_xml_nodes, PreparedTextRun, PreparedXmlChild, PreparedXmlNode};
+use super::super::codec::{
+    json_to_any, prepare_xml_nodes, PreparedTextRun, PreparedXmlChild, PreparedXmlNode,
+};
 use super::super::{EditingLimits, OperationError, OperationResult};
 use super::plan::{
     attrs_work, binary_partition_work, capture_document_guard, crdt_clock_scan_reservation,

@@ -398,7 +398,7 @@ fn round_trips_list_attrs_and_inline_and_block_void_nodes() {
         "content": [
             {
                 "type": "orderedList",
-                "attrs": { "start": 3 },
+                "attrs": { "start": 3.0 },
                 "content": [{
                     "type": "listItem",
                     "content": [{
@@ -438,7 +438,7 @@ fn round_trips_opaque_json_nodes_without_changing_payloads() {
                     "type": "callout",
                     "attrs": {
                         "kind": "warning",
-                        "metadata": [true, null, { "rank": 2 }]
+                        "metadata": [true, null, { "rank": 2.0 }]
                     },
                     "content": [
                         { "type": "text", "text": "preserve " },

@@ -153,7 +153,7 @@ fn clipboard_html_multiple_paragraphs_join_destination_edges() {
 #[test]
 fn clipboard_atom_copy_paste_and_cut_keep_attrs_and_undo() {
     let mut engine = transaction_engine();
-    engine.import_json(r#"{"type":"doc","content":[{"type":"image","attrs":{"src":"https://example.com/image.png","alt":"diagram","width":123,"height":45}}]}"#, TransactionOrigin::DocumentImport).unwrap();
+    engine.import_json(r#"{"type":"doc","content":[{"type":"image","attrs":{"src":"https://example.com/image.png","alt":"diagram","width":123.0,"height":45.0}}]}"#, TransactionOrigin::DocumentImport).unwrap();
     engine
         .apply_typed_transaction(TypedTransaction {
             request_id: 1,

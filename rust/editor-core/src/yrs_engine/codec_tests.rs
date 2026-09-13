@@ -67,7 +67,7 @@ fn custom_json_projection_round_trips_through_yrs() {
         "type": "doc",
         "content": [{
             "type": "callout",
-            "attrs": { "tone": "info", "level": 7 },
+            "attrs": { "tone": "info", "level": 7.0 },
             "content": [{ "type": "text", "text": "Projected" }]
         }]
     });
@@ -105,8 +105,11 @@ fn custom_json_projection_round_trips_through_yrs() {
 }
 
 #[test]
-fn ordinary_numeric_attrs_require_the_exact_json_number_representation() {
-    assert!(!any_matches_json(&Any::Number(2.0), Some(&json!(2))));
+fn ordinary_numeric_attrs_match_a_json_number_of_the_same_value() {
+    assert!(any_matches_json(&Any::Number(2.0), Some(&json!(2))));
+    assert!(any_matches_json(&Any::BigInt(2), Some(&json!(2.0))));
+    assert!(!any_matches_json(&Any::Number(2.5), Some(&json!(2))));
+    assert!(!any_matches_json(&Any::Number(3.0), Some(&json!(2))));
 }
 
 #[test]

@@ -342,30 +342,18 @@ fn prepare_json_value_inner(
     match value {
         Value::Null => Ok(Any::Null),
         Value::Bool(value) => Ok(Any::Bool(*value)),
-        Value::Number(number) => {
-            if let Some(value) = number.as_i64() {
-                Ok(Any::BigInt(value))
-            } else if let Some(value) = number.as_u64() {
-                Err(YrsEngineError::new(
-                    "DOCUMENT_INVALID",
-                    format!("numeric attribute {value} exceeds the exact Yjs integer range"),
-                ))
-            } else if let Some(value) = number.as_f64() {
-                if value.is_finite() {
-                    Ok(Any::Number(value))
-                } else {
-                    Err(YrsEngineError::new(
-                        "DOCUMENT_INVALID",
-                        "numeric attribute must be finite",
-                    ))
-                }
-            } else {
-                Err(YrsEngineError::new(
-                    "DOCUMENT_INVALID",
-                    "numeric attribute is not representable",
-                ))
+        Value::Number(number) => wire_number_to_any(number).map_err(|error| match error {
+            WireNumberError::ExceedsExactIntegerRange => YrsEngineError::new(
+                "DOCUMENT_INVALID",
+                format!("numeric attribute {number} exceeds the exact Yjs integer range"),
+            ),
+            WireNumberError::NotFinite => {
+                YrsEngineError::new("DOCUMENT_INVALID", "numeric attribute must be finite")
             }
-        }
+            WireNumberError::NotRepresentable => {
+                YrsEngineError::new("DOCUMENT_INVALID", "numeric attribute is not representable")
+            }
+        }),
         Value::String(value) => {
             budget.admit_any(depth, value.len())?;
             budget.charge_output(value.len())?;
