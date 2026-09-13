@@ -19,6 +19,7 @@ fn local_json_config(document: &str) -> Value {
 
 const FIXTURE_MULTI_BLOCK: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"ab"}]},{"type":"paragraph","content":[{"type":"text","text":"cd"}]}]}"#;
 const ORDERED_LIST_START_MISSING: &str = r#"{"type":"doc","content":[{"type":"orderedList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}"#;
+const ORDERED_LIST_START_NULL: &str = r#"{"type":"doc","content":[{"type":"orderedList","attrs":{"start":null},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}"#;
 const ORDERED_LIST_START_MAX: &str = r#"{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4294967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"last"}]}]}]}]}"#;
 const ORDERED_LIST_START_ABOVE_U32: &str = r#"{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4294967296},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"overflow"}]}]}]}]}"#;
 const ORDERED_LIST_INDEX_ABOVE_U32: &str = r#"{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4294967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"last"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"overflow"}]}]}]}]}"#;
@@ -34,6 +35,15 @@ fn render_update_ordered_list_u32_boundary_is_exact_or_rejected() {
     );
     destroy_handle(&id);
 
+    let id = create_handle(local_json_config(ORDERED_LIST_START_NULL));
+    let update = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    assert_eq!(
+        update["renderBlocks"][0][0]["listContext"]["index"],
+        json!(1),
+        "a null ordered-list start means absent and must default to one"
+    );
+    destroy_handle(&id);
+
     let id = create_handle(local_json_config(ORDERED_LIST_START_MAX));
     let update = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
     assert_eq!(
@@ -46,7 +56,6 @@ fn render_update_ordered_list_u32_boundary_is_exact_or_rejected() {
     let malformed_starts = [
         json!(-1),
         json!(1.5),
-        Value::Null,
         json!("1"),
         json!(u64::from(u32::MAX) + 1),
     ];

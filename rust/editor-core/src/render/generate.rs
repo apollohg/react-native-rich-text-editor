@@ -79,14 +79,7 @@ fn walk_children(
                 // List is a transparent container. Walk its children (listItems)
                 // providing list context. The list node's open tag consumes 1 token.
                 let ordered = *ordered;
-                let start_attr = child
-                    .attrs()
-                    .get("start")
-                    .and_then(|v| v.as_u64())
-                    .map(u32::try_from)
-                    .transpose()
-                    .map_err(|_| GenerateError::OrderedListStartOutOfRange)?
-                    .unwrap_or(1);
+                let start_attr = crate::render::ordered_list_start(child)?;
                 let total = u32::try_from(child.child_count())
                     .map_err(|_| GenerateError::ListItemCountOutOfRange)?;
 

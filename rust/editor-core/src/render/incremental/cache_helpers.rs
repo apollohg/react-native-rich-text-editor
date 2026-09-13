@@ -6,14 +6,14 @@ fn max_cached_elements(limits: &ResourceLimits) -> Result<usize, CachedRenderErr
 }
 
 fn ordered_list_start(node: &Node) -> Result<u32, CachedRenderError> {
-    match node.attrs().get("start") {
-        None => Ok(1),
-        Some(start) => start
-            .as_u64()
-            .ok_or(CachedRenderError::PositionOverflow)
-            .and_then(|start| {
-                u32::try_from(start).map_err(|_| CachedRenderError::PositionOverflow)
-            }),
+    match crate::render::ordered_list_start(node) {
+        Ok(start) => Ok(start),
+        Err(GenerateError::OrderedListStartOutOfRange) => {
+            Err(CachedRenderError::InvalidOrderedListStart)
+        }
+        Err(GenerateError::ListItemCountOutOfRange) | Err(GenerateError::OrderedListIndexOverflow) => {
+            Err(CachedRenderError::PositionOverflow)
+        }
     }
 }
 

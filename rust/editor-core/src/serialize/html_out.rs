@@ -132,7 +132,8 @@ fn serialize_node_attrs(node: &Node, spec: &crate::schema::NodeSpec, buf: &mut S
         }
         if key == "start"
             && matches!(spec.role, NodeRole::List { ordered: true })
-            && value.as_u64() == Some(1)
+            && crate::model::integral_unsigned(value)
+                == Some(u64::from(crate::render::DEFAULT_ORDERED_LIST_START))
         {
             continue;
         }

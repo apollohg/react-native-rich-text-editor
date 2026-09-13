@@ -5,6 +5,7 @@ use crate::boundary::ResourceLimits;
 use crate::model::Document;
 use crate::model::Node;
 use crate::render::empty_text_block_placeholder_string;
+use crate::render::generate::GenerateError;
 use crate::render::inline_atom_label;
 use crate::render::inline_atom_mention_theme;
 use crate::render::opaque_node_is_inline;
@@ -325,6 +326,7 @@ pub(crate) enum CachedRenderError {
     AllocationFailed,
     PositionOverflow,
     CacheInvariantViolation,
+    InvalidOrderedListStart,
 }
 
 #[derive(Debug, Clone)]

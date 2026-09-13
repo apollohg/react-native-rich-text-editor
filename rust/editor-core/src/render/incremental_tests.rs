@@ -855,7 +855,7 @@ fn incremental_ordered_list_indices_are_exact_or_structured_overflow() {
 }
 
 #[test]
-fn ordered_list_start_defaults_only_when_absent_and_rejects_present_malformed_values() {
+fn ordered_list_start_defaults_when_absent_or_null_and_rejects_malformed_values() {
     let schema = tiptap_schema();
     let limits = ResourceLimits::default();
     let missing = doc(vec![ordered_list_with_start(
@@ -863,20 +863,27 @@ fn ordered_list_start_defaults_only_when_absent_and_rejects_present_malformed_va
         vec![list_item(vec![paragraph(vec![text("first")])])],
     )]);
 
-    let blocks = try_render_blocks(&missing, &schema).expect("missing start defaults to one");
-    let RenderElement::BlockStart {
-        list_context: Some(context),
-        ..
-    } = &blocks[0][0]
-    else {
-        panic!("ordered-list item must carry a list context");
-    };
-    assert_eq!(context.index, 1);
+    let null_start = doc(vec![ordered_list_with_start(
+        Some(serde_json::Value::Null),
+        vec![list_item(vec![paragraph(vec![text("first")])])],
+    )]);
+
+    for (document, label) in [(missing, "missing"), (null_start, "null")] {
+        let blocks = try_render_blocks(&document, &schema)
+            .unwrap_or_else(|error| panic!("{label} start defaults to one, got {error:?}"));
+        let RenderElement::BlockStart {
+            list_context: Some(context),
+            ..
+        } = &blocks[0][0]
+        else {
+            panic!("ordered-list item must carry a list context");
+        };
+        assert_eq!(context.index, 1, "{label} start must default to one");
+    }
 
     for start in [
         serde_json::json!(-1),
         serde_json::json!(1.5),
-        serde_json::Value::Null,
         serde_json::json!("1"),
         serde_json::json!(u64::from(u32::MAX) + 1),
     ] {
@@ -886,11 +893,11 @@ fn ordered_list_start_defaults_only_when_absent_and_rejects_present_malformed_va
         )]);
         assert!(matches!(
             CachedRenderBlocks::build(&malformed, &schema, &limits),
-            Err(super::CachedRenderError::PositionOverflow)
+            Err(super::CachedRenderError::InvalidOrderedListStart)
         ));
         assert!(matches!(
             try_render_blocks(&malformed, &schema),
-            Err(super::CachedRenderError::PositionOverflow)
+            Err(super::CachedRenderError::InvalidOrderedListStart)
         ));
     }
 }
@@ -925,4 +932,62 @@ proptest! {
 
         assert_update_reconstructs(old_render, &transition, &expected);
     }
+}
+
+fn web_authored_ordered_list(start: serde_json::Value, labels: &[&str]) -> Document {
+    let items = labels
+        .iter()
+        .map(|label| {
+            serde_json::json!({
+                "type": "listItem",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{ "type": "text", "text": label }],
+                }],
+            })
+        })
+        .collect::<Vec<_>>();
+    let json = serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "orderedList",
+            "attrs": { "start": start },
+            "content": items,
+        }],
+    });
+    crate::serialize::from_prosemirror_json(
+        &json,
+        &tiptap_schema(),
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .expect("web-authored ordered list must import")
+}
+
+#[test]
+fn cached_render_accepts_a_web_authored_float_ordered_list_start() {
+    let schema = tiptap_schema();
+    let limits = ResourceLimits::default();
+    let document = web_authored_ordered_list(serde_json::json!(3.0), &["Three", "Four"]);
+
+    let blocks = try_render_blocks(&document, &schema)
+        .expect("a float-valued start of 3.0 must render instead of raising PositionOverflow");
+    CachedRenderBlocks::build(&document, &schema, &limits)
+        .expect("a float-valued start of 3.0 must build cached render blocks");
+
+    let indexes = blocks
+        .iter()
+        .flatten()
+        .filter_map(|element| match element {
+            RenderElement::BlockStart {
+                list_context: Some(context),
+                ..
+            } => Some(context.index),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        indexes,
+        vec![3, 4],
+        "a float-valued start of 3.0 must number the cached render from 3"
+    );
 }

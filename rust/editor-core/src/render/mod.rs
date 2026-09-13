@@ -1,8 +1,23 @@
 pub mod generate;
 pub mod incremental;
 
-use crate::model::{Document, Node};
+use crate::model::{integral_unsigned, Document, Node};
 use crate::schema::{NodeRole, Schema};
+
+use generate::GenerateError;
+
+pub const DEFAULT_ORDERED_LIST_START: u32 = 1;
+
+pub(crate) fn ordered_list_start(node: &Node) -> Result<u32, GenerateError> {
+    match node.attrs().get("start") {
+        None | Some(serde_json::Value::Null) => Ok(DEFAULT_ORDERED_LIST_START),
+        Some(value) => {
+            let start =
+                integral_unsigned(value).ok_or(GenerateError::OrderedListStartOutOfRange)?;
+            u32::try_from(start).map_err(|_| GenerateError::OrderedListStartOutOfRange)
+        }
+    }
+}
 
 /// Context for list items, providing numbering and position metadata.
 #[derive(Debug, Clone, PartialEq)]

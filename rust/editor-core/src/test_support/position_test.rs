@@ -621,3 +621,105 @@ fn test_task_list_content_positions_account_for_checkbox_prefixes() {
 include!("position_test/void_and_unicode.rs");
 
 include!("position_test/incremental.rs");
+
+fn web_authored_ordered_list(start: serde_json::Value, labels: &[&str]) -> Document {
+    let items = labels
+        .iter()
+        .map(|label| {
+            serde_json::json!({
+                "type": "listItem",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{ "type": "text", "text": label }],
+                }],
+            })
+        })
+        .collect::<Vec<_>>();
+    let json = serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "orderedList",
+            "attrs": { "start": start },
+            "content": items,
+        }],
+    });
+    crate::serialize::from_prosemirror_json(
+        &json,
+        &tiptap_schema(),
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .expect("web-authored ordered list must import")
+}
+
+#[test]
+fn position_map_marker_width_follows_a_web_authored_float_ordered_list_start() {
+    let schema = tiptap_schema();
+    let document = web_authored_ordered_list(serde_json::json!(10.0), &["A", "B"]);
+    let map = PositionMap::build(&document, &schema);
+
+    let expected_first_marker = list_marker_string(true, 10).chars().count() as u32;
+    let expected_second_marker = list_marker_string(true, 11).chars().count() as u32;
+    assert_eq!(expected_first_marker, 4);
+
+    let first = map.block(0).expect("first list item block");
+    let second = map.block(1).expect("second list item block");
+    assert_eq!(
+        first.scalar_prefix_len, expected_first_marker,
+        "a float-valued start of 10.0 must reserve the width of the marker \"10. \""
+    );
+    assert_eq!(
+        second.scalar_prefix_len, expected_second_marker,
+        "the second item of a list starting at 10 must reserve the width of \"11. \""
+    );
+
+    let rendered = crate::render::rendered_text(&document, &schema);
+    assert_eq!(rendered, "10. A\n11. B");
+    assert_eq!(
+        map.total_scalars(),
+        u32::try_from(rendered.chars().count()).unwrap(),
+        "position arithmetic must match the rendered marker widths"
+    );
+
+    let second_content_scalar =
+        expected_first_marker + 1 + BLOCK_BREAK_SCALARS + expected_second_marker;
+    assert_eq!(
+        map.scalar_to_doc(second_content_scalar, &document),
+        map.effective_doc_start(1),
+        "the scalar offset just past the second marker must map to the second item content start"
+    );
+}
+
+#[test]
+fn position_map_treats_a_null_ordered_list_start_as_absent() {
+    let schema = tiptap_schema();
+    let mut attrs = HashMap::new();
+    attrs.insert("start".to_string(), serde_json::Value::Null);
+    let document = Document::new(doc(vec![Node::element(
+        "orderedList".to_string(),
+        attrs,
+        Fragment::from(vec![
+            list_item(vec![paragraph(vec![text("A")])]),
+            list_item(vec![paragraph(vec![text("B")])]),
+        ]),
+    )]));
+
+    let map = PositionMap::build(&document, &schema);
+
+    assert_eq!(
+        map.block(0)
+            .expect("first list item block")
+            .scalar_prefix_len,
+        list_marker_string(true, 1).chars().count() as u32
+    );
+    assert_eq!(
+        map.block(1)
+            .expect("second list item block")
+            .scalar_prefix_len,
+        list_marker_string(true, 2).chars().count() as u32
+    );
+    assert_eq!(
+        crate::render::rendered_text(&document, &schema),
+        "1. A\n2. B",
+        "a null start means absent in this codebase and must default to one"
+    );
+}

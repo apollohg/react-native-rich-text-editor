@@ -440,6 +440,14 @@ pub(super) fn cached_render_operation_error(
                 u64::try_from(limit.saturating_add(1)).unwrap_or(u64::MAX),
             )
         }
+        crate::render::incremental::CachedRenderError::InvalidOrderedListStart => {
+            yrs_engine::OperationError::document_invalid(
+                request_id,
+                None,
+                "start",
+                "ordered-list start attribute is not a readable unsigned integer",
+            )
+        }
         crate::render::incremental::CachedRenderError::AllocationFailed
         | crate::render::incremental::CachedRenderError::PositionOverflow
         | crate::render::incremental::CachedRenderError::CacheInvariantViolation => {
@@ -508,5 +516,36 @@ impl YrsDocumentEngine {
         transition.map_err(|error| {
             cached_render_operation_error(compiled.request_id, &self.resource_limits, error)
         })
+    }
+}
+
+#[cfg(test)]
+mod cached_render_error_classification_tests {
+    use super::cached_render_operation_error;
+    use crate::boundary::ResourceLimits;
+    use crate::render::incremental::CachedRenderError;
+
+    fn code(error: CachedRenderError) -> &'static str {
+        cached_render_operation_error(7, &ResourceLimits::default(), error).code
+    }
+
+    #[test]
+    fn an_unreadable_ordered_list_start_is_reported_as_invalid_document_content() {
+        assert_eq!(
+            code(CachedRenderError::InvalidOrderedListStart),
+            "DOCUMENT_INVALID"
+        );
+        assert_eq!(
+            code(CachedRenderError::CacheInvariantViolation),
+            "ENGINE_INVARIANT_FAILED"
+        );
+        assert_eq!(
+            code(CachedRenderError::PositionOverflow),
+            "ENGINE_INVARIANT_FAILED"
+        );
+        assert_eq!(
+            code(CachedRenderError::ResourceLimitExceeded),
+            "DOCUMENT_LIMIT_EXCEEDED"
+        );
     }
 }

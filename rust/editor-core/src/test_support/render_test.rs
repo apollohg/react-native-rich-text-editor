@@ -1021,3 +1021,98 @@ fn code_language_survives_full_and_incremental_rendering() {
         matches!(&blocks[0][0], RenderElement::BlockStart { language: Some(language), .. } if language == "rust")
     );
 }
+
+fn web_authored_ordered_list(start: serde_json::Value, labels: &[&str]) -> Document {
+    let items = labels
+        .iter()
+        .map(|label| {
+            serde_json::json!({
+                "type": "listItem",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{ "type": "text", "text": label }],
+                }],
+            })
+        })
+        .collect::<Vec<_>>();
+    let json = serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "orderedList",
+            "attrs": { "start": start },
+            "content": items,
+        }],
+    });
+    crate::serialize::from_prosemirror_json(
+        &json,
+        &tiptap_schema(),
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .expect("web-authored ordered list must import")
+}
+
+#[test]
+fn generate_numbers_a_web_authored_float_ordered_list_start_from_three() {
+    let schema = tiptap_schema();
+    let document = web_authored_ordered_list(serde_json::json!(3.0), &["Three", "Four"]);
+
+    let elements = generate(&document, &schema);
+
+    let indexes = elements
+        .iter()
+        .filter_map(|element| match element {
+            RenderElement::BlockStart {
+                list_context: Some(context),
+                ..
+            } => Some((context.start, context.index)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        indexes,
+        vec![(3, 3), (3, 4)],
+        "a float-valued start of 3.0 must number the list from 3, not renumber it from 1"
+    );
+
+    assert_eq!(
+        try_generate(
+            &web_authored_ordered_list(serde_json::json!(1.5), &["Fraction"]),
+            &schema
+        ),
+        Err(GenerateError::OrderedListStartOutOfRange),
+        "a non-integral start must be rejected rather than falling back to 1"
+    );
+}
+
+fn ordered_list_with_null_start(children: Vec<Node>) -> Node {
+    let mut attrs = HashMap::new();
+    attrs.insert("start".to_string(), serde_json::Value::Null);
+    Node::element("orderedList".to_string(), attrs, Fragment::from(children))
+}
+
+#[test]
+fn generate_treats_a_null_ordered_list_start_as_absent() {
+    let schema = tiptap_schema();
+    let document = Document::new(doc(vec![ordered_list_with_null_start(vec![
+        list_item(vec![paragraph(vec![text("One")])]),
+        list_item(vec![paragraph(vec![text("Two")])]),
+    ])]));
+
+    let elements = generate(&document, &schema);
+
+    let indexes = elements
+        .iter()
+        .filter_map(|element| match element {
+            RenderElement::BlockStart {
+                list_context: Some(context),
+                ..
+            } => Some(context.index),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        indexes,
+        vec![1, 2],
+        "a null start means absent in this codebase and must default to one"
+    );
+}
