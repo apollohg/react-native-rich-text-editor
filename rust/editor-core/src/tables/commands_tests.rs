@@ -79,8 +79,8 @@ fn table_of(engine: &YrsDocumentEngine) -> Value {
     engine.document_json().expect("the engine is ready")["content"][0].clone()
 }
 
-fn engine_schema(_engine: &YrsDocumentEngine) -> Schema {
-    schema()
+fn engine_schema(engine: &YrsDocumentEngine) -> Schema {
+    engine.schema().clone()
 }
 
 fn projection_of(engine: &YrsDocumentEngine) -> ProjectedTable {

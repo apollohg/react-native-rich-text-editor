@@ -80,8 +80,9 @@ pub(crate) fn tabled_schema(names: [&str; 4]) -> Schema {
 }
 
 pub(crate) const WRAPPER_BLOCK_NODE: &str = "blockquote";
+pub(crate) const VOID_BLOCK_NODE: &str = "horizontal_rule";
 
-pub(crate) fn tabled_schema_with_wrapper_block(names: [&str; 4]) -> Schema {
+pub(crate) fn tabled_schema_with_cell_content_blocks(names: [&str; 4]) -> Schema {
     let mut json = tabled_schema_json(names);
     let nodes = json["nodes"]
         .as_array_mut()
@@ -92,7 +93,14 @@ pub(crate) fn tabled_schema_with_wrapper_block(names: [&str; 4]) -> Schema {
         "group": "block",
         "role": "block",
     }));
-    Schema::from_json(&json).expect("the wrapper block schema is valid")
+    nodes.push(json!({
+        "name": VOID_BLOCK_NODE,
+        "content": "",
+        "group": "block",
+        "role": "block",
+        "isVoid": true,
+    }));
+    Schema::from_json(&json).expect("the cell content block schema is valid")
 }
 
 pub(crate) const SECOND_TEXT_BLOCK_NODE: &str = "heading";

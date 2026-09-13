@@ -12,7 +12,8 @@ use crate::tables::interchange::{first_editable_position_in_cell, next_outer_cel
 use crate::tables::mutation_guard::{admit_local_mutation, LocalMutationRefusal};
 use crate::tables::normalize_tests::{cell, cell_with, document_with, limits, row, schema, table};
 use crate::tables::tests::{
-    tabled_schema_with_wrapper_block, PROSEMIRROR_TABLE_NAMES, WRAPPER_BLOCK_NODE,
+    tabled_schema_with_cell_content_blocks, PROSEMIRROR_TABLE_NAMES, VOID_BLOCK_NODE,
+    WRAPPER_BLOCK_NODE,
 };
 use crate::yrs_engine::{
     Affinity, EditorOffsetKind, InitializationMode, RevisionedPosition, SelectionInput,
@@ -69,8 +70,8 @@ fn index_with(document: &Document, schema: &Schema) -> TableProjectionIndex {
     TableProjectionIndex::derive_or_fallback(document, schema, &limits())
 }
 
-fn wrapper_schema() -> Schema {
-    tabled_schema_with_wrapper_block(PROSEMIRROR_TABLE_NAMES)
+fn cell_content_schema() -> Schema {
+    tabled_schema_with_cell_content_blocks(PROSEMIRROR_TABLE_NAMES)
 }
 
 fn openings(index: &TableProjectionIndex, table_pos: u32) -> Vec<u32> {
@@ -860,7 +861,7 @@ fn wrapped_nested_table_fixture() -> Value {
 
 #[test]
 fn a_nested_table_behind_a_wrapper_block_is_excluded_from_the_first_editable_position() {
-    let schema = wrapper_schema();
+    let schema = cell_content_schema();
     let document = crate::serialize::json_in::from_prosemirror_json(
         &wrapped_nested_table_fixture(),
         &schema,
@@ -884,7 +885,7 @@ fn a_nested_table_behind_a_wrapper_block_is_excluded_from_the_first_editable_pos
 
 #[test]
 fn tab_into_a_cell_that_wraps_a_nested_table_lands_on_an_editable_caret() {
-    let schema = wrapper_schema();
+    let schema = cell_content_schema();
     let mut engine = engine_with_schema(schema.clone(), wrapped_nested_table_fixture());
     let outer = openings(
         &index_with(engine.document().expect("the engine is ready"), &schema),
@@ -958,5 +959,112 @@ fn tab_with_no_further_editable_cell_appends_after_the_last_row() {
         caret_document_position(&engine),
         Some(*appended.last().expect("the grown table holds cells") + CELL_TEXT_OFFSET),
         "the caret lands in the appended row's first editable cell",
+    );
+}
+
+fn cell_leading_with_a_void_block() -> Value {
+    json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
+        "content": [
+            { "type": VOID_BLOCK_NODE },
+            { "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": TRAILING_CELL_TEXT }] },
+        ],
+    })
+}
+
+fn void_block_fixture() -> Value {
+    json!({ "type": "doc", "content": [table(vec![
+        row(vec![cell("a"), cell_leading_with_a_void_block()]),
+    ])] })
+}
+
+fn parsed_with(fixture: Value, schema: &Schema) -> Document {
+    crate::serialize::json_in::from_prosemirror_json(
+        &fixture,
+        schema,
+        crate::serialize::json_in::UnknownTypeMode::Preserve,
+    )
+    .expect("the fixture parses")
+}
+
+#[test]
+fn a_void_block_is_not_an_editable_position_even_though_it_holds_no_table() {
+    let schema = cell_content_schema();
+    let document = parsed_with(void_block_fixture(), &schema);
+    let index = index_with(&document, &schema);
+    let void_led_cell = openings(&index, OUTER_TABLE_POSITION)[SECOND_CELL_ANCHOR];
+    let void_block = node_starting_at(&document, void_led_cell + NODE_OPENING_TOKENS)
+        .expect("the cell leads with the void block");
+    let trailing_paragraph_interior =
+        void_led_cell + NODE_OPENING_TOKENS + void_block.node_size() + NODE_OPENING_TOKENS;
+
+    assert_eq!(
+        first_editable_position_in_cell(&document, &schema, void_led_cell),
+        Ok(Some(trailing_paragraph_interior)),
+        "editability is whether the schema lets text be inserted, not whether the subtree \
+         happens to be free of tables, so a leading void block is stepped over",
+    );
+}
+
+#[test]
+fn tab_into_a_cell_that_leads_with_a_void_block_lands_where_text_can_be_inserted() {
+    let schema = cell_content_schema();
+    let mut engine = engine_with_schema(schema.clone(), void_block_fixture());
+    let outer = openings(
+        &index_with(engine.document().expect("the engine is ready"), &schema),
+        OUTER_TABLE_POSITION,
+    );
+
+    caret_at(&mut engine, outer[FIRST_CELL_ANCHOR] + CELL_TEXT_OFFSET);
+    assert!(
+        step(&mut engine, CellStep::Forward, DEFAULT_TAB_APPENDS_A_ROW).is_some(),
+        "tab into the void-led cell must be planned",
+    );
+    assert!(
+        engine
+            .apply_command(
+                REQUEST_ID,
+                TypedCommand::InsertText {
+                    text: TYPED_CHARACTER.to_string(),
+                },
+            )
+            .expect("the keystroke after tab must not error")
+            .is_some(),
+        "the keystroke after tab must produce a transaction, not decline as inapplicable \
+         because the caret sits inside a void block",
+    );
+
+    let document = engine.document_json().expect("the engine is ready");
+    assert_eq!(
+        document["content"][0]["content"][0]["content"][SECOND_CELL_ANCHOR]["content"][1]
+            ["content"][0]["text"],
+        json!(format!("{TYPED_CHARACTER}{TRAILING_CELL_TEXT}")),
+        "the caret landed in the paragraph after the void block, so typing edits that paragraph",
+    );
+}
+
+#[test]
+fn a_cell_holding_only_a_void_block_reports_no_editable_position() {
+    let schema = cell_content_schema();
+    let void_only_cell = json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
+        "content": [{ "type": VOID_BLOCK_NODE }],
+    });
+    let document = parsed_with(
+        json!({ "type": "doc", "content": [table(vec![
+            row(vec![cell("a"), void_only_cell]),
+        ])] }),
+        &schema,
+    );
+    let index = index_with(&document, &schema);
+    let openings = openings(&index, OUTER_TABLE_POSITION);
+
+    assert_eq!(
+        first_editable_position_in_cell(&document, &schema, openings[SECOND_CELL_ANCHOR]),
+        Ok(None),
+        "a cell whose only content admits no text declines by value, not by failing to read \
+         the grid",
     );
 }

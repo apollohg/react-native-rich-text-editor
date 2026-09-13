@@ -303,9 +303,7 @@ fn join_with_previous_block_action(
 }
 
 fn is_text_block(schema: &Schema, node: &crate::model::Node) -> bool {
-    schema
-        .node(node.node_type())
-        .is_some_and(|spec| matches!(spec.role, NodeRole::TextBlock))
+    schema.is_text_block(node.node_type())
 }
 
 /// Position of the boundary immediately before the node at `path` — the

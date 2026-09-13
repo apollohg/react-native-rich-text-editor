@@ -144,37 +144,26 @@ fn effective_cell(node: &Node, rect: &CellRect) -> Result<Node, InterchangeFailu
     ))
 }
 
-fn encloses_a_table(node: &Node, roles: &TableRoles) -> bool {
-    if node.node_type() == roles.table {
-        return true;
-    }
-    node.content().is_some_and(|content| {
-        content
-            .iter()
-            .any(|descendant| encloses_a_table(descendant, roles))
-    })
-}
-
 fn first_editable_position_in(
     content: &Fragment,
     interior_pos: u32,
+    schema: &Schema,
     roles: &TableRoles,
 ) -> Result<Option<u32>, InterchangeFailure> {
     let mut child_pos = interior_pos;
     for child in content.iter() {
-        if !encloses_a_table(child, roles) {
-            return match child_pos.checked_add(NODE_OPENING_TOKENS) {
-                Some(interior) => Ok(Some(interior)),
-                None => Err(InterchangeFailure::UnreadableGrid),
-            };
-        }
         if child.node_type() != roles.table {
             let child_interior = match child_pos.checked_add(NODE_OPENING_TOKENS) {
                 Some(child_interior) => child_interior,
                 None => return Err(InterchangeFailure::UnreadableGrid),
             };
+            if schema.is_text_block(child.node_type()) {
+                return Ok(Some(child_interior));
+            }
             if let Some(nested) = child.content() {
-                if let Some(found) = first_editable_position_in(nested, child_interior, roles)? {
+                if let Some(found) =
+                    first_editable_position_in(nested, child_interior, schema, roles)?
+                {
                     return Ok(Some(found));
                 }
             }
@@ -205,7 +194,7 @@ pub(crate) fn first_editable_position_in_cell(
         Some(interior_pos) => interior_pos,
         None => return Err(InterchangeFailure::UnreadableGrid),
     };
-    first_editable_position_in(content, interior_pos, &roles)
+    first_editable_position_in(content, interior_pos, schema, &roles)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

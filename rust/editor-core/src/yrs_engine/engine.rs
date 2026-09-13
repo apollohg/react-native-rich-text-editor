@@ -608,6 +608,11 @@ impl YrsDocumentEngine {
     }
 
     #[allow(dead_code)]
+    pub fn schema(&self) -> &Schema {
+        &self.schema
+    }
+
+    #[allow(dead_code)]
     pub fn schema_fingerprint(&self) -> &str {
         &self.schema_fingerprint
     }
