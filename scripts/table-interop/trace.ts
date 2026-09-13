@@ -19,6 +19,10 @@ const RAW_TRACE_SUFFIX = '';
 const MINIMIZED_TRACE_SUFFIX = '-min';
 const TRACE_JSON_INDENT = 2;
 const FIRST_TRACE_ORDINAL = 2;
+const FAILURE_SIGNATURE_SEPARATOR = '|';
+const TRACE_SUMMARY_SEPARATOR = ';';
+const DIGIT_RUN = /\d+/g;
+const DIGIT_PLACEHOLDER = '#';
 
 export interface TraceDependencyManifest {
     node: string;
@@ -126,6 +130,29 @@ export function failureClassOf(failure: unknown): string {
         return ASSERTION_FAILURE_CLASS;
     }
     return UNCLASSIFIED_FAILURE_CLASS;
+}
+
+export function failureReasonOf(message: string): string {
+    const [head] = message.split(TRACE_SUMMARY_SEPARATOR);
+    return (head ?? message).replace(DIGIT_RUN, DIGIT_PLACEHOLDER).trim();
+}
+
+export function failureSignatureOf(failure: unknown): string {
+    const message = failure instanceof Error ? failure.message : String(failure);
+    return `${failureClassOf(failure)}${FAILURE_SIGNATURE_SEPARATOR}${failureReasonOf(message)}`;
+}
+
+export function traceFailureSignature(trace: Trace): string {
+    if (trace.failureClass === null || trace.failureMessage === null) {
+        throw new Error('a trace without a recorded failure cannot be reduced');
+    }
+    return `${trace.failureClass}${FAILURE_SIGNATURE_SEPARATOR}`
+        + failureReasonOf(trace.failureMessage);
+}
+
+export function signatureClass(signature: string): string {
+    const [failureClass] = signature.split(FAILURE_SIGNATURE_SEPARATOR);
+    return failureClass ?? signature;
 }
 
 let active: Trace | null = null;
@@ -274,10 +301,7 @@ export async function reduceTrace(
     trace: Trace,
     classify: (candidate: Trace) => Promise<string | null>,
 ): Promise<Trace> {
-    const target = trace.failureClass;
-    if (target === null) {
-        throw new Error('a trace without a recorded failure class cannot be reduced');
-    }
+    const target = traceFailureSignature(trace);
     let records = [...trace.records];
     let size = Math.max(1, Math.floor(records.length / 2));
     while (size >= 1) {

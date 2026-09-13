@@ -17,7 +17,7 @@ import {
     beginTrace,
     dependencyManifest,
     endTrace,
-    failureClassOf,
+    failureSignatureOf,
     recordAction,
     recordDelivery,
     recordDrain,
@@ -582,5 +582,5 @@ export async function replayTrace(trace: Trace): Promise<string | null> {
     } catch (error) {
         failure = error;
     }
-    return failure === null ? null : failureClassOf(failure);
+    return failure === null ? null : failureSignatureOf(failure);
 }

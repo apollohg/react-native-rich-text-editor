@@ -14,7 +14,15 @@ import {
     snapshot,
     withPeers,
 } from '../controller.js';
-import { TRACE_PROTOCOL_VERSION, lastTrace, reduceTrace } from '../trace.js';
+import {
+    TRACE_PROTOCOL_VERSION,
+    failureClassOf,
+    failureSignatureOf,
+    lastTrace,
+    reduceTrace,
+    signatureClass,
+} from '../trace.js';
+import type { Trace } from '../trace.js';
 import type { UpdateEvent } from '../peer-protocol.js';
 
 const REMOTE_ORIGIN = 'schedulerCaseRemote';
@@ -302,11 +310,11 @@ test('TBL-21 a captured failing trace replays and reduces to the same failure cl
     assert.equal(trace.records.some((record) => record.kind === 'drain'), true);
     assert.equal(trace.records.some((record) => record.kind === 'output'), true);
 
-    assert.equal(await replayTrace(trace), 'UNRESOLVED_DEPENDENCIES');
+    assert.equal(signatureClass(String(await replayTrace(trace))), 'UNRESOLVED_DEPENDENCIES');
 
     const reduced = await reduceTrace(trace, replayTrace);
     assert.equal(reduced.records.length < trace.records.length, true);
-    assert.equal(await replayTrace(reduced), 'UNRESOLVED_DEPENDENCIES');
+    assert.equal(signatureClass(String(await replayTrace(reduced))), 'UNRESOLVED_DEPENDENCIES');
     assert.equal(
         reduced.records.some(
             (record) => record.kind === 'action' && record.operation === 'applyUpdate',
@@ -359,4 +367,48 @@ test('TBL-21 a delivered message is recorded as a single successful attempt', as
     assert.equal(scheduler.deliveries()[0]?.failed, false);
     assert.equal(scheduler.deliveries()[0]?.attempt, 1);
     assert.equal(network.textAt(1), 'delivered');
+});
+
+const NOT_MOUNTED_FAILURE = 'TBL-21 DIVERGED: peer 0 is not mounted before the full-state exchange';
+const DISPLAY_FAILURE = 'TBL-21 DIVERGED: peer 0 projects a display document that disagrees with '
+    + 'its own CRDT document before the full-state exchange';
+const NO_REDUCTION = 0;
+
+test('TBL-21 reduction rejects a candidate that fails the same class for a different reason', async () => {
+    assert.equal(
+        failureClassOf(new Error(NOT_MOUNTED_FAILURE)),
+        failureClassOf(new Error(DISPLAY_FAILURE)),
+        'the failure class alone cannot tell an unseeded peer from a diverged projection',
+    );
+    assert.notEqual(
+        failureSignatureOf(new Error(NOT_MOUNTED_FAILURE)),
+        failureSignatureOf(new Error(DISPLAY_FAILURE)),
+        'the failure signature must distinguish them',
+    );
+
+    const trace = lastTrace();
+    const diverged: Trace = {
+        ...trace,
+        failureClass: 'DIVERGED',
+        failureMessage: DISPLAY_FAILURE,
+    };
+    const unseeded = await reduceTrace(
+        diverged,
+        () => Promise.resolve(failureSignatureOf(new Error(NOT_MOUNTED_FAILURE))),
+    );
+    assert.equal(
+        trace.records.length - unseeded.records.length,
+        NO_REDUCTION,
+        'a candidate that stops seeding its peers is not a reduction of a projection divergence',
+    );
+
+    const faithful = await reduceTrace(
+        diverged,
+        () => Promise.resolve(failureSignatureOf(new Error(DISPLAY_FAILURE))),
+    );
+    assert.equal(
+        faithful.records.length < trace.records.length,
+        true,
+        'a candidate that keeps the same failing invariant does reduce',
+    );
 });
