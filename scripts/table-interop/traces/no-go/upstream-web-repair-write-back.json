@@ -1,0 +1,1010 @@
+{
+  "protocolVersion": "table-interop-trace-1",
+  "dependencies": {
+    "node": "24.19.0",
+    "packages": {
+      "@tiptap/core": "3.31.3",
+      "@tiptap/extension-collaboration": "3.31.3",
+      "@tiptap/extension-document": "3.31.3",
+      "@tiptap/extension-paragraph": "3.31.3",
+      "@tiptap/extension-table": "3.31.3",
+      "@tiptap/extension-text": "3.31.3",
+      "playwright": "1.63.0",
+      "prosemirror-commands": "1.7.2",
+      "prosemirror-model": "1.25.11",
+      "prosemirror-schema-basic": "1.2.4",
+      "prosemirror-state": "1.4.4",
+      "prosemirror-tables": "1.8.5",
+      "prosemirror-transform": "1.12.1",
+      "prosemirror-view": "1.42.3",
+      "y-prosemirror": "1.3.7",
+      "y-protocols": "1.0.7",
+      "yjs": "13.6.32",
+      "@types/node": "24.13.4",
+      "esbuild": "0.28.2",
+      "tsx": "4.23.13",
+      "typescript": "5.9.3"
+    },
+    "rustPeerExecutable": "/Users/jayden/public_html/native-editor/rust/editor-core/target/debug/examples/table_interop_peer"
+  },
+  "initialization": {
+    "kinds": [
+      "prosemirror",
+      "prosemirror",
+      "rust"
+    ],
+    "config": {
+      "schema": "prosemirror",
+      "tables": true,
+      "fragmentName": "prosemirror",
+      "limits": {
+        "maxUpdateBytes": 8388608,
+        "requestTimeoutMillis": 30000
+      },
+      "participants": 2
+    },
+    "seed": 4017616356
+  },
+  "records": [
+    {
+      "kind": "action",
+      "step": 1,
+      "peer": 0,
+      "operation": "command",
+      "payload": {
+        "type": "insertNode",
+        "node": {
+          "type": "table",
+          "content": [
+            {
+              "type": "table_row",
+              "content": [
+                {
+                  "type": "table_cell",
+                  "attrs": {
+                    "colspan": 1,
+                    "rowspan": 1,
+                    "colwidth": null
+                  },
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "a"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table_cell",
+                  "attrs": {
+                    "colspan": 1,
+                    "rowspan": 1,
+                    "colwidth": null
+                  },
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "b"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "table_row",
+              "content": [
+                {
+                  "type": "table_cell",
+                  "attrs": {
+                    "colspan": 1,
+                    "rowspan": 1,
+                    "colwidth": null
+                  },
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "c"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "table_cell",
+                  "attrs": {
+                    "colspan": 1,
+                    "rowspan": 1,
+                    "colwidth": null
+                  },
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "d"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "action",
+      "step": 2,
+      "peer": 1,
+      "operation": "applyUpdate",
+      "payload": {
+        "updateBase64": "ARvXgf3JAwAHAQtwcm9zZW1pcnJvcgMFdGFibGUHANeB/ckDAAMJdGFibGVfcm93BwDXgf3JAwEDCnRhYmxlX2NlbGwHANeB/ckDAgMJcGFyYWdyYXBoBwDXgf3JAwMGBADXgf3JAwQBYSgA14H9yQMCB2NvbHNwYW4BfQEoANeB/ckDAgdyb3dzcGFuAX0Bh9eB/ckDAgMKdGFibGVfY2VsbAcA14H9yQMIAwlwYXJhZ3JhcGgHANeB/ckDCQYEANeB/ckDCgFiKADXgf3JAwgHY29sc3BhbgF9ASgA14H9yQMIB3Jvd3NwYW4BfQGH14H9yQMBAwl0YWJsZV9yb3cHANeB/ckDDgMKdGFibGVfY2VsbAcA14H9yQMPAwlwYXJhZ3JhcGgHANeB/ckDEAYEANeB/ckDEQFjKADXgf3JAw8HY29sc3BhbgF9ASgA14H9yQMPB3Jvd3NwYW4BfQGH14H9yQMPAwp0YWJsZV9jZWxsBwDXgf3JAxUDCXBhcmFncmFwaAcA14H9yQMWBgQA14H9yQMXAWQoANeB/ckDFQdjb2xzcGFuAX0BKADXgf3JAxUHcm93c3BhbgF9AQA="
+      }
+    },
+    {
+      "kind": "drain",
+      "step": 3,
+      "drainId": "x1",
+      "peers": [
+        0,
+        1
+      ],
+      "seed": 4017616356
+    },
+    {
+      "kind": "delivery",
+      "step": 4,
+      "drainId": "x1",
+      "id": "d1",
+      "attempt": 1,
+      "failed": false,
+      "sender": 0,
+      "recipient": 1,
+      "sequence": 1,
+      "origin": "local",
+      "digest": "bdb6c342b3d29317",
+      "bytesBase64": "ARvXgf3JAwAHAQtwcm9zZW1pcnJvcgMFdGFibGUHANeB/ckDAAMJdGFibGVfcm93BwDXgf3JAwEDCnRhYmxlX2NlbGwHANeB/ckDAgMJcGFyYWdyYXBoBwDXgf3JAwMGBADXgf3JAwQBYSgA14H9yQMCB2NvbHNwYW4BfQEoANeB/ckDAgdyb3dzcGFuAX0Bh9eB/ckDAgMKdGFibGVfY2VsbAcA14H9yQMIAwlwYXJhZ3JhcGgHANeB/ckDCQYEANeB/ckDCgFiKADXgf3JAwgHY29sc3BhbgF9ASgA14H9yQMIB3Jvd3NwYW4BfQGH14H9yQMBAwl0YWJsZV9yb3cHANeB/ckDDgMKdGFibGVfY2VsbAcA14H9yQMPAwlwYXJhZ3JhcGgHANeB/ckDEAYEANeB/ckDEQFjKADXgf3JAw8HY29sc3BhbgF9ASgA14H9yQMPB3Jvd3NwYW4BfQGH14H9yQMPAwp0YWJsZV9jZWxsBwDXgf3JAxUDCXBhcmFncmFwaAcA14H9yQMWBgQA14H9yQMXAWQoANeB/ckDFQdjb2xzcGFuAX0BKADXgf3JAxUHcm93c3BhbgF9AQA="
+    },
+    {
+      "kind": "output",
+      "step": 5,
+      "peer": 0,
+      "documentRevision": "1",
+      "stateVectorBase64": "AdeB/ckDGw==",
+      "mounted": true,
+      "pendingDependencies": false,
+      "documentJson": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "table",
+            "content": [
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "b"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "c"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "d"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "output",
+      "step": 6,
+      "peer": 0,
+      "documentRevision": "1",
+      "stateVectorBase64": "AdeB/ckDGw==",
+      "mounted": true,
+      "pendingDependencies": false,
+      "documentJson": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "table",
+            "content": [
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "b"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "c"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "d"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "output",
+      "step": 7,
+      "peer": 1,
+      "documentRevision": "1",
+      "stateVectorBase64": "AdeB/ckDGw==",
+      "mounted": true,
+      "pendingDependencies": false,
+      "documentJson": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "table",
+            "content": [
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "b"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "c"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "d"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "action",
+      "step": 8,
+      "peer": 0,
+      "operation": "command",
+      "payload": {
+        "type": "tableCommand",
+        "name": "addRowAfter",
+        "at": 4
+      }
+    },
+    {
+      "kind": "action",
+      "step": 9,
+      "peer": 1,
+      "operation": "command",
+      "payload": {
+        "type": "tableCommand",
+        "name": "addColumnAfter",
+        "at": 4
+      }
+    },
+    {
+      "kind": "drain",
+      "step": 10,
+      "drainId": "x2",
+      "peers": [
+        0,
+        1
+      ],
+      "seed": 4017616356
+    },
+    {
+      "kind": "delivery",
+      "step": 11,
+      "drainId": "x2",
+      "id": "d1",
+      "attempt": 1,
+      "failed": false,
+      "sender": 0,
+      "recipient": 1,
+      "sequence": 1,
+      "origin": "local",
+      "digest": "991bcc2dda5933ef",
+      "bytesBase64": "AQnXgf3JAxvH14H9yQMB14H9yQMOAwl0YWJsZV9yb3cHANeB/ckDGwMKdGFibGVfY2VsbAcA14H9yQMcAwlwYXJhZ3JhcGgoANeB/ckDHAdjb2xzcGFuAX0BKADXgf3JAxwHcm93c3BhbgF9AYfXgf3JAxwDCnRhYmxlX2NlbGwHANeB/ckDIAMJcGFyYWdyYXBoKADXgf3JAyAHY29sc3BhbgF9ASgA14H9yQMgB3Jvd3NwYW4BfQEA"
+    },
+    {
+      "kind": "delivery",
+      "step": 12,
+      "drainId": "x2",
+      "id": "d2",
+      "attempt": 1,
+      "failed": false,
+      "sender": 1,
+      "recipient": 0,
+      "sequence": 1,
+      "origin": "local",
+      "digest": "9dda6363fd26a902",
+      "bytesBase64": "AQjazbzVAwDH14H9yQMC14H9yQMIAwp0YWJsZV9jZWxsBwDazbzVAwADCXBhcmFncmFwaCgA2s281QMAB2NvbHNwYW4BfQEoANrNvNUDAAdyb3dzcGFuAX0Bx9eB/ckDD9eB/ckDFQMKdGFibGVfY2VsbAcA2s281QMEAwlwYXJhZ3JhcGgoANrNvNUDBAdjb2xzcGFuAX0BKADazbzVAwQHcm93c3BhbgF9AQA="
+    },
+    {
+      "kind": "output",
+      "step": 13,
+      "peer": 0,
+      "documentRevision": "3",
+      "stateVectorBase64": "AtrNvNUDCNeB/ckDJA==",
+      "mounted": true,
+      "pendingDependencies": false,
+      "documentJson": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "table",
+            "content": [
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "b"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "c"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "d"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "output",
+      "step": 14,
+      "peer": 0,
+      "documentRevision": "3",
+      "stateVectorBase64": "AtrNvNUDCNeB/ckDJA==",
+      "mounted": true,
+      "pendingDependencies": false,
+      "documentJson": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "table",
+            "content": [
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "b"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "c"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "d"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "output",
+      "step": 15,
+      "peer": 1,
+      "documentRevision": "3",
+      "stateVectorBase64": "AtrNvNUDCNeB/ckDJA==",
+      "mounted": true,
+      "pendingDependencies": false,
+      "documentJson": {
+        "type": "doc",
+        "content": [
+          {
+            "type": "table",
+            "content": [
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "a"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "b"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "table_row",
+                "content": [
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "c"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "table_cell",
+                    "attrs": {
+                      "colspan": 1,
+                      "rowspan": 1
+                    },
+                    "content": [
+                      {
+                        "type": "paragraph",
+                        "content": [
+                          {
+                            "type": "text",
+                            "text": "d"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "failureClass": "DIVERGED",
+  "failureMessage": "TBL-21 DIVERGED: peer 0 projects a display document that disagrees with its own CRDT document before the full-state exchange"
+}

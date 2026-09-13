@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { assertConverged } from './assertions.js';
 import { assertReply, isRecord, NATIVE_PEER_KIND } from './peer-protocol.js';
 import type { Peer, PeerKind, Request, UpdateEvent } from './peer-protocol.js';
 import { startRustPeer } from './rust-peer.js';
@@ -54,6 +55,8 @@ const MAX_UPDATE_BYTES = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT_MILLIS = 30_000;
 export const EMPTY_STATE_VECTOR_BASE64 = Buffer.from([0]).toString('base64');
 export const DEFAULT_EXCHANGE_SEED = 0x7ab1_e21d;
+export const PARTICIPANT_COUNT_KEY = 'participants';
+const MINIMUM_CONVERGED_PEERS = 2;
 const RECORDED_ACTIONS: readonly Request['operation'][] = ['command', 'undo', 'redo', 'applyUpdate'];
 
 export class PeerError extends Error {
@@ -515,6 +518,17 @@ export async function withPeers<const Kinds extends readonly PeerKind[]>(
     }
 }
 
+function replayedParticipants(peers: Peer[], config: Record<string, unknown>): Peer[] {
+    const declared = config[PARTICIPANT_COUNT_KEY];
+    if (declared === undefined) {
+        return peers;
+    }
+    if (typeof declared !== 'number' || !Number.isInteger(declared) || declared < 0) {
+        throw new Error(`the trace declared ${JSON.stringify(declared)} participants`);
+    }
+    return peers.slice(0, declared);
+}
+
 function replayPeerAt(peers: Peer[], index: number): Peer {
     const peer = peers[index];
     if (peer === undefined) {
@@ -556,6 +570,10 @@ export async function replayTrace(trace: Trace): Promise<string | null> {
                     await call(replayPeerAt(peers, record.recipient), 'applyUpdate', {
                         updateBase64: record.bytesBase64,
                     });
+                }
+                const participants = replayedParticipants(peers, trace.initialization.config);
+                if (participants.length >= MINIMUM_CONVERGED_PEERS) {
+                    await assertConverged(participants);
                 }
             },
             trace.initialization.config,

@@ -11,7 +11,8 @@
         "test:schema-admission": "tsx run.ts --suite schema-admission",
         "test:convergence": "tsx run.ts --suite convergence",
         "test:native-structural-edits": "tsx run.ts --suite native-structural-edits",
-        "test:differential": "tsx run.ts --suite differential"
+        "test:differential": "tsx run.ts --suite differential",
+        "reduce": "tsx reduce.ts"
     },
     "dependencies": {
         "@tiptap/core": "3.31.3",

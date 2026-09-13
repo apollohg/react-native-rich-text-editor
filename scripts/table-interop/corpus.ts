@@ -1,5 +1,6 @@
 import { assertConverged } from './assertions.js';
 import {
+    PARTICIPANT_COUNT_KEY,
     PeerError,
     call,
     exchangeUntilIdle,
@@ -396,7 +397,7 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
                     webControlLoops: (await webRepairWrites(participants)) - repairsBefore,
                 };
             },
-            tableFixture(schedule.preset),
+            { ...tableFixture(schedule.preset), [PARTICIPANT_COUNT_KEY]: schedule.participants },
             schedule.seed,
         );
     } catch (error) {

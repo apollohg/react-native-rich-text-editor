@@ -130,6 +130,7 @@ export function failureClassOf(failure: unknown): string {
 
 let active: Trace | null = null;
 let completed: Trace | null = null;
+let minimizedPath: string | null = null;
 let steps = 0;
 
 export function beginTrace(
@@ -187,7 +188,15 @@ export function persistTrace(trace: Trace): string {
 }
 
 export function persistMinimizedTrace(trace: Trace): string {
-    return persist(trace, MINIMIZED_TRACE_SUFFIX);
+    minimizedPath = persist(trace, MINIMIZED_TRACE_SUFFIX);
+    return minimizedPath;
+}
+
+export function lastMinimizedTracePath(): string {
+    if (minimizedPath === null) {
+        throw new Error('no minimized interop trace has been persisted yet');
+    }
+    return minimizedPath;
 }
 
 export function endTrace(previous: Trace | null, failure: unknown): Trace | null {

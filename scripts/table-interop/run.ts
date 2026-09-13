@@ -1,15 +1,10 @@
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildRustPeer, runToCompletion } from './peer-build.js';
 
 const SUITE_FLAG = '--suite';
 const SUITE_VALUE_OFFSET = 1;
 const SUITE_NAME_PATTERN = /^[a-z][a-z-]*$/;
-const PACKAGE_DIRECTORY = dirname(fileURLToPath(import.meta.url));
-const CARGO_MANIFEST = fileURLToPath(
-    new URL('../../rust/editor-core/Cargo.toml', import.meta.url),
-);
 const SUITE_CASES: Record<string, readonly string[]> = {
     plumbing: ['plumbing', 'scheduler', 'dependencies'],
     convergence: ['convergence', 'projection-properties'],
@@ -31,20 +26,6 @@ function runnerOptions(argv: string[]): string[] {
     );
 }
 
-function runToCompletion(command: string, args: string[]): Promise<number> {
-    return new Promise<number>((resolve, reject) => {
-        const child = spawn(command, args, { cwd: PACKAGE_DIRECTORY, stdio: 'inherit' });
-        child.on('error', reject);
-        child.on('exit', (code, signal) => {
-            if (code === null) {
-                reject(new Error(`${command} terminated with signal ${String(signal)}`));
-                return;
-            }
-            resolve(code);
-        });
-    });
-}
-
 const argv = process.argv.slice(2);
 const suite = requestedSuite(argv);
 const suiteFiles = (SUITE_CASES[suite] ?? [suite]).map((name) =>
@@ -56,15 +37,7 @@ for (const suiteFile of suiteFiles) {
     }
 }
 
-const buildCode = await runToCompletion('cargo', [
-    'build',
-    '--manifest-path',
-    CARGO_MANIFEST,
-    '--features',
-    'table-interop',
-    '--example',
-    'table_interop_peer',
-]);
+const buildCode = await buildRustPeer();
 if (buildCode !== 0) {
     process.exitCode = buildCode;
 } else {
