@@ -146,7 +146,7 @@ export function table(rows: Record<string, unknown>[]): Record<string, unknown> 
     return { type: TABLE_NODE, content: rows };
 }
 
-const CELL_ATTRIBUTE_DEFAULTS: Record<string, unknown> = {
+export const CELL_ATTRIBUTE_DEFAULTS: Record<string, unknown> = {
     colspan: SINGLE_SPAN,
     rowspan: SINGLE_SPAN,
     colwidth: null,

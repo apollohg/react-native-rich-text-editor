@@ -42,6 +42,7 @@ import type {
     SettledGeometry,
     SettledRun,
 } from '../convergence-report.js';
+import { canonicalDocumentShape } from '../assertions.js';
 import {
     CONVERGENCE_CORPUS,
     SCHEDULES_PER_TOPOLOGY,
@@ -51,6 +52,7 @@ import {
     CELL_NODE,
     PARAGRAPH_NODE,
     ROW_NODE,
+    SINGLE_SPAN,
     TABLE_NODE,
     TABLE_SCHEMA,
     cell,
@@ -83,6 +85,9 @@ const LOWER_COLUMN_WIDTH = 180;
 const FIRST_CHILD = 0;
 const SECOND_CHILD = 1;
 const ONE_CHILD = 1;
+const SPANNING_CELL = 2;
+const WIDER_SPANNING_CELL = 3;
+const SEEDED_COLUMN_WIDTH = 120;
 
 const UNCOVERED_PEER_KIND = 'quill';
 
@@ -766,6 +771,52 @@ test('TBL-10 unsafeAdmissions charges an unsafe update the engine admitted', asy
         assert.equal(report.unsafeAdmissions, ONE_FAILURE, describeConvergenceReport(report));
         assert.equal(convergenceScalarsPassed(report), false, describeConvergenceReport(report));
     }, tableFixture('prosemirror'));
+});
+
+function cellWith(attrs: Record<string, unknown> | undefined): Record<string, unknown> {
+    const node: Record<string, unknown> = {
+        type: CELL_NODE,
+        content: [{ type: PARAGRAPH_NODE, content: [{ type: TEXT_NODE, text: 'a' }] }],
+    };
+    if (attrs !== undefined) {
+        node['attrs'] = attrs;
+    }
+    return node;
+}
+
+function shapeOf(node: Record<string, unknown>): string {
+    return JSON.stringify(canonicalDocumentShape(node));
+}
+
+test('TBL-21 the convergence oracle reads an attribute at its schema default as absent', () => {
+    assert.equal(
+        shapeOf(cellWith({ colspan: SINGLE_SPAN, rowspan: SINGLE_SPAN, colwidth: null })),
+        shapeOf(cellWith(undefined)),
+        'a cell carrying only default attributes is the same content as one carrying none',
+    );
+    assert.equal(
+        shapeOf(cellWith({ colspan: SPANNING_CELL, rowspan: SINGLE_SPAN, colwidth: null })),
+        shapeOf(cellWith({ colspan: SPANNING_CELL })),
+        'defaults elide around a non-default attribute without disturbing it',
+    );
+});
+
+test('TBL-21 the convergence oracle still diverges on a genuinely different attribute', () => {
+    assert.notEqual(
+        shapeOf(cellWith({ colspan: SPANNING_CELL, rowspan: SINGLE_SPAN, colwidth: null })),
+        shapeOf(cellWith({ colspan: WIDER_SPANNING_CELL, rowspan: SINGLE_SPAN, colwidth: null })),
+        'two different colspans are different content',
+    );
+    assert.notEqual(
+        shapeOf(cellWith({ colspan: SPANNING_CELL })),
+        shapeOf(cellWith(undefined)),
+        'a non-default colspan is not the same content as an absent one',
+    );
+    assert.notEqual(
+        shapeOf(cellWith({ colwidth: [SEEDED_COLUMN_WIDTH] })),
+        shapeOf(cellWith({ colwidth: null })),
+        'a resolved column width is not the same content as an unset one',
+    );
 });
 
 test('TBL-21 the seeded schedule corpus runs every topology and preset', async () => {
