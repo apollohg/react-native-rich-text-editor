@@ -94,7 +94,11 @@ impl ResourceLimits {
     pub(crate) fn validate(&self) -> BoundaryResult<()> {
         for (name, actual, ceiling) in [
             ("maxInputBytes", self.max_input_bytes, HARD_MAX_INPUT_BYTES),
-            ("maxDocumentNodes", self.max_document_nodes, 1_000_000),
+            (
+                "maxDocumentNodes",
+                self.max_document_nodes,
+                HARD_MAX_DOCUMENT_NODES as usize,
+            ),
             (
                 "maxDocumentDepth",
                 self.max_document_depth,

@@ -2,7 +2,10 @@ use memchr::memchr2;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const HARD_MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const HARD_MAX_DOCUMENT_NODES: u32 = 1_000_000;
 pub(crate) const HARD_MAX_DOCUMENT_DEPTH: usize = 1_024;
+pub(crate) const MIN_ORDERED_LIST_START: u32 = 0;
+pub(crate) const MAX_ORDERED_LIST_START: u32 = u32::MAX - HARD_MAX_DOCUMENT_NODES;
 pub(crate) const DEFAULT_MAX_TABLE_GRID_SLOTS: usize = 25_000;
 pub(crate) const HARD_MAX_TABLE_GRID_SLOTS: usize = 4_000_000;
 

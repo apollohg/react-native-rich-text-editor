@@ -20,12 +20,33 @@ fn local_json_config(document: &str) -> Value {
 const FIXTURE_MULTI_BLOCK: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"ab"}]},{"type":"paragraph","content":[{"type":"text","text":"cd"}]}]}"#;
 const ORDERED_LIST_START_MISSING: &str = r#"{"type":"doc","content":[{"type":"orderedList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}"#;
 const ORDERED_LIST_START_NULL: &str = r#"{"type":"doc","content":[{"type":"orderedList","attrs":{"start":null},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}"#;
-const ORDERED_LIST_START_MAX: &str = r#"{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4294967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"last"}]}]}]}]}"#;
-const ORDERED_LIST_START_ABOVE_U32: &str = r#"{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4294967296},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"overflow"}]}]}]}]}"#;
-const ORDERED_LIST_INDEX_ABOVE_U32: &str = r#"{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4294967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"last"}]}]},{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"overflow"}]}]}]}]}"#;
+
+fn ordered_list_document_with_start(start: Value, labels: &[&str]) -> String {
+    let items = labels
+        .iter()
+        .map(|label| {
+            json!({
+                "type": "listItem",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{ "type": "text", "text": label }],
+                }],
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "type": "doc",
+        "content": [{
+            "type": "orderedList",
+            "attrs": { "start": start },
+            "content": items,
+        }],
+    })
+    .to_string()
+}
 
 #[test]
-fn render_update_ordered_list_u32_boundary_is_exact_or_rejected() {
+fn render_update_ordered_list_start_bound_is_exact_or_rejected_at_validation() {
     let id = create_handle(local_json_config(ORDERED_LIST_START_MISSING));
     let update = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
     assert_eq!(
@@ -44,12 +65,15 @@ fn render_update_ordered_list_u32_boundary_is_exact_or_rejected() {
     );
     destroy_handle(&id);
 
-    let id = create_handle(local_json_config(ORDERED_LIST_START_MAX));
+    let id = create_handle(local_json_config(&ordered_list_document_with_start(
+        json!(MAX_ORDERED_LIST_START),
+        &["last"],
+    )));
     let update = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
     assert_eq!(
         update["renderBlocks"][0][0]["listContext"]["index"],
-        json!(u32::MAX),
-        "the v2 render accessor must preserve u32::MAX exactly"
+        json!(MAX_ORDERED_LIST_START),
+        "the v2 render accessor must preserve the largest admitted start exactly"
     );
     destroy_handle(&id);
 
@@ -57,38 +81,42 @@ fn render_update_ordered_list_u32_boundary_is_exact_or_rejected() {
         json!(-1),
         json!(1.5),
         json!("1"),
+        json!(u64::from(MAX_ORDERED_LIST_START) + 1),
         json!(u64::from(u32::MAX) + 1),
+        json!(1e30),
     ];
-    let malformed_documents = malformed_starts.into_iter().map(|start| {
-        json!({
-            "type": "doc",
-            "content": [{
-                "type": "orderedList",
-                "attrs": { "start": start },
-                "content": [{
-                    "type": "listItem",
-                    "content": [{
-                        "type": "paragraph",
-                        "content": [{ "type": "text", "text": "bad" }],
-                    }],
-                }],
-            }],
-        })
-        .to_string()
-    });
+    let malformed_documents = malformed_starts
+        .into_iter()
+        .map(|start| ordered_list_document_with_start(start, &["bad"]));
 
-    for document in [
-        ORDERED_LIST_START_ABOVE_U32.to_string(),
-        ORDERED_LIST_INDEX_ABOVE_U32.to_string(),
-    ]
-    .into_iter()
-    .chain(malformed_documents)
-    {
+    let id = create_handle(local_json_config(&ordered_list_document_with_start(
+        json!(MAX_ORDERED_LIST_START),
+        &["last", "headroom"],
+    )));
+    let update = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    let indexes = update["renderBlocks"]
+        .as_array()
+        .expect("render blocks is an array")
+        .iter()
+        .flat_map(|block| block.as_array().expect("each render block is an array"))
+        .filter_map(|element| element["listContext"]["index"].as_u64())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        indexes,
+        vec![
+            u64::from(MAX_ORDERED_LIST_START),
+            u64::from(MAX_ORDERED_LIST_START) + 1
+        ],
+        "the admitted start bound must leave headroom for every item index a document can hold"
+    );
+    destroy_handle(&id);
+
+    for document in malformed_documents {
         let error = err_json(&v2::editor_v2_create(
             local_json_config(&document).to_string(),
             None,
         ));
-        assert_error(&error, "boundary", "CODEC_INVARIANT_FAILED", None);
+        assert_error(&error, "document", "DOCUMENT_INVALID", None);
     }
 }
 

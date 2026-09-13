@@ -348,6 +348,10 @@ fn validate_node(
             work_limit,
         )?;
 
+        if matches!(spec.role, crate::schema::NodeRole::List { ordered: true }) {
+            validate_ordered_list_start(node)?;
+        }
+
         if node.is_void() {
             continue;
         }
@@ -365,6 +369,25 @@ fn validate_node(
         pending.extend(content.iter().rev().map(|child| (child, child_depth)));
     }
     Ok(())
+}
+
+fn validate_ordered_list_start(node: &Node) -> BoundaryResult<()> {
+    use crate::boundary::{MAX_ORDERED_LIST_START, MIN_ORDERED_LIST_START};
+    use crate::render::generate::GenerateError;
+
+    match crate::render::ordered_list_start(node) {
+        Ok(start) if (MIN_ORDERED_LIST_START..=MAX_ORDERED_LIST_START).contains(&start) => Ok(()),
+        Ok(_)
+        | Err(GenerateError::OrderedListStartOutOfRange)
+        | Err(GenerateError::ListItemCountOutOfRange)
+        | Err(GenerateError::OrderedListIndexOverflow) => Err(BoundaryError::new(
+            "DOCUMENT_INVALID",
+            format!(
+                "'{}' attribute 'start' must be an integer in {MIN_ORDERED_LIST_START}..={MAX_ORDERED_LIST_START}",
+                node.node_type()
+            ),
+        )),
+    }
 }
 
 fn validate_declared_content(

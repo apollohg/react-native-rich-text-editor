@@ -14,7 +14,7 @@
 //! arrays. Handles are decimal strings; request ids in errors are decimal
 //! strings, omitted when the entry takes no request envelope.
 
-use crate::boundary::ResourceLimits;
+use crate::boundary::{ResourceLimits, MAX_ORDERED_LIST_START};
 use crate::ffi_v2::collaboration as v2_collab;
 use crate::ffi_v2::editor as v2;
 use crate::ffi_v2::render as v2_render;

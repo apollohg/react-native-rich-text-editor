@@ -181,3 +181,63 @@ fn many_admitted_opaque_siblings_match_against_near_ceiling_schema() {
         node.attrs()["opaque_placement"] == serde_json::Value::String("inline".to_string())
     }));
 }
+
+fn ordered_list_document_with_start(start: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "orderedList",
+            "attrs": { "start": start },
+            "content": [{
+                "type": "listItem",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{ "type": "text", "text": "item" }],
+                }],
+            }],
+        }],
+    })
+}
+
+#[test]
+fn ordered_list_start_outside_the_admitted_bound_is_rejected_at_validation() {
+    let schema = tiptap_schema();
+    let limits = ResourceLimits::default();
+
+    for start in [
+        serde_json::json!(crate::boundary::MIN_ORDERED_LIST_START),
+        serde_json::json!(crate::boundary::MAX_ORDERED_LIST_START),
+        serde_json::json!(3.0),
+    ] {
+        let document = from_prosemirror_json(
+            &ordered_list_document_with_start(start.clone()),
+            &schema,
+            UnknownTypeMode::Error,
+        )
+        .expect("an in-bound start imports");
+        crate::transform::DocumentValidator::validate(&document, &schema, &limits)
+            .unwrap_or_else(|error| panic!("start {start} must be admitted, got {error:?}"));
+    }
+
+    for start in [
+        serde_json::json!(1e30),
+        serde_json::json!(u64::from(crate::boundary::MAX_ORDERED_LIST_START) + 1),
+        serde_json::json!(u64::from(u32::MAX) + 1),
+        serde_json::json!(-1),
+        serde_json::json!(1.5),
+        serde_json::json!("3"),
+    ] {
+        let document = from_prosemirror_json(
+            &ordered_list_document_with_start(start.clone()),
+            &schema,
+            UnknownTypeMode::Error,
+        )
+        .expect("an out-of-bound start still imports as JSON");
+        let error = crate::transform::DocumentValidator::validate(&document, &schema, &limits)
+            .expect_err(&format!("start {start} must be rejected at validation"));
+        assert_eq!(
+            error.code, "DOCUMENT_INVALID",
+            "start {start} must be refused as invalid document content, not at render time"
+        );
+    }
+}
