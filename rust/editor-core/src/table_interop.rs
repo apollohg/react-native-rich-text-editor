@@ -46,6 +46,8 @@ const AWARENESS_EVENT_KIND: &str = "awareness";
 const AWARENESS_ACTION: &str = "awareness";
 const TABLE_NORMALIZATION_FAILED: &str = "TABLE_NORMALIZATION_FAILED";
 const AUTONOMOUS_REPAIR_CANARY_FAILED: &str = "AUTONOMOUS_REPAIR_CANARY_FAILED";
+const TABLE_INTEROP_OWNER_ID: u64 = 1;
+const SET_SELECTION_INTENT: &str = "setSelection";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EventOrigin {
@@ -417,24 +419,36 @@ impl RustPeer {
             .position_map()
             .ok_or_else(|| config_invalid("the peer has no position map to anchor a command in"))?
             .doc_to_scalar(at, &document);
-        let point = serde_json::json!({ "offset": scalar, "kind": "scalar" });
-        let selection = match head {
-            None => serde_json::json!({ "type": "text", "anchor": point, "head": point }),
-            Some(head) => {
-                let head_scalar = session
-                    .engine
-                    .position_map()
-                    .ok_or_else(|| {
-                        config_invalid("the peer has no position map to anchor a command in")
-                    })?
-                    .doc_to_scalar(head, &document);
-                serde_json::json!({
-                    "type": "cell",
-                    "anchorCell": point,
-                    "headCell": { "offset": head_scalar, "kind": "scalar" },
-                })
-            }
+        let Some(head) = head else {
+            let epoch =
+                session.pin_position_epoch(TABLE_INTEROP_OWNER_ID, base_document_revision)?;
+            let intent = serde_json::json!({
+                "version": NATIVE_BRIDGE_ENVELOPE_VERSION,
+                "requestId": request_id.to_string(),
+                "ownerId": TABLE_INTEROP_OWNER_ID.to_string(),
+                "positionEpoch": epoch.to_string(),
+                "intent": {
+                    "type": SET_SELECTION_INTENT,
+                    "anchor": scalar,
+                    "head": scalar,
+                },
+            })
+            .to_string();
+            NativeTransactionBridge::new(session).submit_native_intent(&intent)?;
+            self.capture_outbound(EventOrigin::Local, request_id)?;
+            return Ok(());
         };
+        let point = serde_json::json!({ "offset": scalar, "kind": "scalar" });
+        let head_scalar = session
+            .engine
+            .position_map()
+            .ok_or_else(|| config_invalid("the peer has no position map to anchor a command in"))?
+            .doc_to_scalar(head, &document);
+        let selection = serde_json::json!({
+            "type": "cell",
+            "anchorCell": point,
+            "headCell": { "offset": head_scalar, "kind": "scalar" },
+        });
         let envelope = serde_json::json!({
             "version": NATIVE_BRIDGE_ENVELOPE_VERSION,
             "requestId": request_id.to_string(),
