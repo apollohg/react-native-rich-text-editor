@@ -46,6 +46,7 @@ import { canonicalDocumentShape } from '../assertions.js';
 import {
     CONVERGENCE_CORPUS,
     CORPUS_PRESETS,
+    CORPUS_SCENARIOS,
     SCHEDULES_PER_TOPOLOGY,
     nativeRepairWrites,
     nestedTablesOf,
@@ -926,6 +927,32 @@ test('TBL-21 a nested table is judged alongside the table that hosts it', () => 
         nestedTablesOf({ type: CELL_NODE, attrs: { carried: outer } }).length,
         NO_FAILURES,
         'a table shape inside an attribute payload is data, never a table to judge',
+    );
+});
+
+const SCENARIOS_WITHOUT_EVIDENCE: readonly string[] = [
+    'concurrent row and column insertion at the same boundary',
+    'concurrent merges from opposite corners',
+    'a structural action undone and redone by a peer that did not author the table',
+    'a dependent update released before its prerequisite',
+    'typing inside a cell without touching geometry',
+    'a merged cell split against a concurrent row deletion',
+    'a row inserted across a spanning cell',
+    'a native column resize concurrent with a remote row insertion',
+    'concurrent resizes of the same logical column',
+    'concurrent resizes of different logical columns',
+    'a web repair followed by a native undo',
+    'a nested irregular table under an outer structural edit',
+];
+
+test('TBL-21 every scenario without evidence is a declared gap, not a default', () => {
+    assert.deepEqual(
+        CORPUS_SCENARIOS
+            .filter((scenario) => scenario.proves === undefined)
+            .map((scenario) => scenario.name),
+        SCENARIOS_WITHOUT_EVIDENCE,
+        'a scenario that only compares settled against seeded relies on the retired net-change '
+            + 'guard; add evidence or declare the gap',
     );
 });
 

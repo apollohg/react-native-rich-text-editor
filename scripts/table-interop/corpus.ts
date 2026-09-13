@@ -193,13 +193,20 @@ type ScenarioContext = {
     readonly author: Peer;
     readonly anchors: readonly number[];
     readonly liveAnchors: () => Promise<number[]>;
+    readonly liveRowAnchors: () => Promise<number[][]>;
     readonly preset: SchemaPreset;
     readonly seed: number;
+};
+
+export type ScenarioEvidence = {
+    readonly settledTable: Record<string, unknown>;
+    readonly seededTable: Record<string, unknown>;
 };
 
 export type CorpusScenario = {
     readonly name: string;
     readonly mutatesGeometry: boolean;
+    readonly proves?: (evidence: ScenarioEvidence) => void;
     readonly minimumNativeActors: number;
     readonly minimumWebActors: number;
     readonly table?: (preset: SchemaPreset) => Record<string, unknown>;
@@ -244,6 +251,90 @@ function anchorAt(anchors: readonly number[], index: number): number {
         throw new Error(`the corpus fixture exposes no cell anchor ${index}`);
     }
     return anchor;
+}
+
+const NORMALIZED_ROW_COUNT = 2;
+const CREATED_ROW_INDEX = 1;
+const ONE_OCCURRENCE = 1;
+const ONE_ROW = 1;
+const FIRST_CELL_IN_ROW = 0;
+
+function rowGroupedAnchors(tableJson: Record<string, unknown>): number[][] {
+    const flat = cellAnchors(tableJson, TABLE_START);
+    const grouped: number[][] = [];
+    let cursor = 0;
+    for (const rowJson of tableRows(tableJson)) {
+        const cells = rowJson['content'];
+        const width = Array.isArray(cells) ? cells.length : 0;
+        grouped.push(flat.slice(cursor, cursor + width));
+        cursor += width;
+    }
+    return grouped;
+}
+
+function tableRows(tableJson: Record<string, unknown>): Record<string, unknown>[] {
+    const rows = tableJson['content'];
+    return Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [];
+}
+
+function rowText(rowJson: Record<string, unknown>): string {
+    return JSON.stringify(rowJson['content'] ?? []);
+}
+
+function scenarioEvidenceFailure(detail: string): Error {
+    return new Error(`TBL-21 SCENARIO_EVIDENCE: ${detail}`);
+}
+
+function provesNormalizationHistory(evidence: ScenarioEvidence): void {
+    const seededRows = tableRows(evidence.seededTable);
+    const settledRows = tableRows(evidence.settledTable);
+    if (seededRows.length !== NORMALIZED_ROW_COUNT) {
+        throw scenarioEvidenceFailure(
+            `the ragged fixture must settle on ${NORMALIZED_ROW_COUNT} rows, not ${seededRows.length}`,
+        );
+    }
+    if (settledRows.length !== seededRows.length + ONE_ROW) {
+        throw scenarioEvidenceFailure(
+            `the redone row insertion must leave ${seededRows.length + ONE_ROW} rows, not `
+                + `${settledRows.length}`,
+        );
+    }
+    const carrying = settledRows.filter((rowJson) => rowText(rowJson).includes(TYPED_TEXT));
+    if (carrying.length !== ONE_OCCURRENCE) {
+        throw scenarioEvidenceFailure(
+            `the remote edit must survive in exactly one row, found ${carrying.length}`,
+        );
+    }
+    const created = settledRows[CREATED_ROW_INDEX];
+    if (created === undefined || !rowText(created).includes(TYPED_TEXT)) {
+        throw scenarioEvidenceFailure(
+            'the remote edit must survive inside the row the editor created',
+        );
+    }
+}
+
+async function normalizationHistory(
+    context: ScenarioContext,
+    selectEditor: (peers: readonly Peer[]) => Peer,
+): Promise<void> {
+    const { peers, author, anchors, liveRowAnchors, seed } = context;
+    const editor = selectEditor(peers.filter((peer) => peer !== author));
+    await addRowAfter(editor, anchorAt(anchors, TOP_LEFT_CELL));
+    await exchangeUntilIdle([...peers], seed);
+    const created = await liveRowAnchors();
+    const createdRow = created[CREATED_ROW_INDEX];
+    if (createdRow === undefined) {
+        throw scenarioEvidenceFailure('the editor created no row to edit');
+    }
+    const typist = peers.find((peer) => peer !== editor);
+    if (typist === undefined) {
+        throw scenarioEvidenceFailure('the scenario needs a peer other than the editor to type');
+    }
+    await typeInCell(typist, anchorAt(createdRow, FIRST_CELL_IN_ROW));
+    await exchangeUntilIdle([...peers], seed);
+    await call(editor, 'undo', {});
+    await exchangeUntilIdle([...peers], seed);
+    await call(editor, 'redo', {});
 }
 
 export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
@@ -372,25 +463,22 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
         },
     },
     {
-        name: 'a remote edit inside a normalization created cell, then undone and redone',
-        mutatesGeometry: true,
+        name: 'a native edit inside a normalization created cell, then undone and redone',
+        mutatesGeometry: false,
+        proves: provesNormalizationHistory,
+        minimumNativeActors: ONE_ACTOR,
+        minimumWebActors: NO_ACTORS,
+        table: raggedCorpusTable,
+        act: async (context) => normalizationHistory(context, nativeActor),
+    },
+    {
+        name: 'a web edit inside a normalization created cell, then undone and redone',
+        mutatesGeometry: false,
+        proves: provesNormalizationHistory,
         minimumNativeActors: NO_ACTORS,
         minimumWebActors: TWO_ACTORS,
         table: raggedCorpusTable,
-        act: async ({ peers, author, anchors, liveAnchors, seed }) => {
-            const editor = webActor(peers.filter((peer) => peer !== author));
-            await addRowAfter(editor, anchorAt(anchors, TOP_LEFT_CELL));
-            await exchangeUntilIdle([...peers], seed);
-            const created = await liveAnchors();
-            await typeInCell(
-                webActor(peers.filter((peer) => peer !== editor)),
-                anchorAt(created, created.length - ONE_CELL),
-            );
-            await exchangeUntilIdle([...peers], seed);
-            await call(editor, 'undo', {});
-            await exchangeUntilIdle([...peers], seed);
-            await call(editor, 'redo', {});
-        },
+        act: async (context) => normalizationHistory(context, webActor),
     },
     {
         name: 'concurrent resizes of the same logical column',
@@ -681,19 +769,28 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
                         tableOf((await snapshot(author)).documentJson) as Record<string, unknown>,
                         TABLE_START,
                     ),
+                    liveRowAnchors: async () => rowGroupedAnchors(
+                        tableOf((await snapshot(author)).documentJson) as Record<string, unknown>,
+                    ),
                     preset: schedule.preset,
                     seed: schedule.seed,
                 });
                 await exchangeUntilIdle([...participants], schedule.seed);
 
-                const settledTable = JSON.stringify(
-                    tableOf((await snapshot(author)).documentJson),
-                );
-                if (schedule.scenario.mutatesGeometry && settledTable === seeded) {
-                    throw new Error(
-                        `the schedule ${schedule.name} left the seeded table unchanged, so it `
-                            + 'proves nothing',
-                    );
+                const settledJson = tableOf((await snapshot(author)).documentJson);
+                const settledTable = JSON.stringify(settledJson);
+                if (schedule.scenario.proves === undefined) {
+                    if (schedule.scenario.mutatesGeometry && settledTable === seeded) {
+                        throw new Error(
+                            `the schedule ${schedule.name} left the seeded table unchanged, so it `
+                                + 'proves nothing',
+                        );
+                    }
+                } else {
+                    schedule.scenario.proves({
+                        settledTable: settledJson as Record<string, unknown>,
+                        seededTable: JSON.parse(seeded) as Record<string, unknown>,
+                    });
                 }
                 nativeRepairs = await nativeRepairWrites(participants);
                 await assertConverged([...participants]);
