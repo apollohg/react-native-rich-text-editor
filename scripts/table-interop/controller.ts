@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { assertReply, isRecord } from './peer-protocol.js';
+import { assertReply, isRecord, NATIVE_PEER_KIND } from './peer-protocol.js';
 import type { Peer, PeerKind, Request, UpdateEvent } from './peer-protocol.js';
 import { startRustPeer } from './rust-peer.js';
 import { startWebPeer } from './web-peer.js';
@@ -175,7 +175,7 @@ export async function snapshot(peer: Peer): Promise<PeerSnapshot> {
     const value = await call(peer, 'snapshot', {});
     const vector = await call(peer, 'stateVector', {});
     const documentJson = requireJsonOrNull(value['json'], 'snapshot.json');
-    const displayJson = record.kind === 'rust'
+    const displayJson = record.kind === NATIVE_PEER_KIND
         ? documentJson
         : requireJsonOrNull(value['displayJson'], 'snapshot.displayJson');
     const normalizationPassesAfterLastAction = requireCount(
@@ -426,7 +426,7 @@ function initializePayload(
     config: Record<string, unknown>,
     awaitSeed: boolean,
 ): Record<string, unknown> {
-    if (kind === 'rust') {
+    if (kind === NATIVE_PEER_KIND) {
         return {
             schema: requireSchemaPreset(config),
             tables: config['tables'],
@@ -442,7 +442,7 @@ function initializePayload(
 }
 
 async function startPeer(kind: PeerKind, config: Record<string, unknown>): Promise<Peer> {
-    if (kind === 'rust') {
+    if (kind === NATIVE_PEER_KIND) {
         if (!existsSync(RUST_PEER_EXECUTABLE)) {
             throw new Error(
                 `the Rust peer executable is missing at ${RUST_PEER_EXECUTABLE}; run npm run test:plumbing so the harness builds it`,

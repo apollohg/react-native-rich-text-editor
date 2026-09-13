@@ -13,7 +13,8 @@ import {
     tableFixture,
     withPeers,
 } from '../controller.js';
-import type { Peer } from '../peer-protocol.js';
+import { NATIVE_PEER_KIND } from '../peer-protocol.js';
+import type { Peer, PeerKind } from '../peer-protocol.js';
 import {
     ADMISSIBLE_IRREGULAR_INPUT,
     GEOMETRY_ADMITTED,
@@ -23,9 +24,9 @@ import {
     TOPOLOGY_NATIVE_TWO_WEB,
     TOPOLOGY_NATIVE_WEB,
     TOPOLOGY_TWO_WEB_CONTROL,
-    NATIVE_PEER_KIND,
     UNSAFE_INPUT,
     CONVERGENCE_TOPOLOGIES,
+    chargedScalars,
     topologyOf,
     convergenceScalarsPassed,
     createConvergenceReport,
@@ -77,8 +78,23 @@ const FIRST_CHILD = 0;
 const SECOND_CHILD = 1;
 const ONE_CHILD = 1;
 
+const UNCOVERED_PEER_KIND = 'quill';
+
+const CORPUS_RUN_TOPOLOGIES: readonly ConvergenceTopology[] = [
+    TOPOLOGY_NATIVE_NATIVE,
+    TOPOLOGY_NATIVE_WEB,
+    TOPOLOGY_NATIVE_TWO_WEB,
+    TOPOLOGY_TWO_WEB_CONTROL,
+    TOPOLOGY_TWO_WEB_CONTROL,
+];
+
 const suiteReport = createConvergenceReport();
 const chargedTopologies = new Set<ConvergenceTopology>();
+const attemptedRuns: ConvergenceTopology[] = [];
+
+function attemptRun(topology: ConvergenceTopology): void {
+    attemptedRuns.push(topology);
+}
 
 function chargeRun(local: ConvergenceReport, run: SettledRun): void {
     recordSettledRun(local, run);
@@ -190,6 +206,16 @@ test('TBL-21 a settled run label is derived from the peers, never from the calle
                 () => topologyOf([first].map(peerKindOf)),
                 /no convergence topology covers 0 native and 1 web peers/,
             );
+            assert.equal(
+                topologyOf(['tiptap', 'prosemirror']),
+                TOPOLOGY_TWO_WEB_CONTROL,
+                'both web peer kinds run the same pinned prosemirror-tables repair engine',
+            );
+            assert.equal(topologyOf(['tiptap', NATIVE_PEER_KIND]), TOPOLOGY_NATIVE_WEB);
+            assert.throws(
+                () => topologyOf([UNCOVERED_PEER_KIND as PeerKind, NATIVE_PEER_KIND]),
+                /covers only rust and prosemirror\/tiptap peers/,
+            );
             assert.throws(
                 () => recordSettledRun(createConvergenceReport(), {
                     name: 'a control run wearing a native label',
@@ -293,6 +319,7 @@ test('TBL-21 an invalid geometry in a still-repairing web run charges no settled
 });
 
 test('TBL-21 a drained native/native run settles on admissible geometry', async () => {
+    attemptRun(TOPOLOGY_NATIVE_NATIVE);
     const report = createConvergenceReport();
     await withPeers(['rust', 'rust'] as const, async ([source, replica]) => {
         await call(source, 'command', {
@@ -320,6 +347,7 @@ test('TBL-21 a drained native/native run settles on admissible geometry', async 
 });
 
 test('TBL-21 a drained native/web run settles on admissible geometry', async () => {
+    attemptRun(TOPOLOGY_NATIVE_WEB);
     const report = createConvergenceReport();
     await withPeers(['prosemirror', 'rust'] as const, async ([web, native]) => {
         await seedFrom(web, [native]);
@@ -353,6 +381,7 @@ test('TBL-21 a drained native/web run settles on admissible geometry', async () 
 });
 
 test('TBL-21 a drained native/two-web run with reordered native delivery stays admissible', async () => {
+    attemptRun(TOPOLOGY_NATIVE_TWO_WEB);
     const report = createConvergenceReport();
     await withPeers(
         ['prosemirror', 'prosemirror', 'rust'] as const,
@@ -415,6 +444,7 @@ test('TBL-21 a drained native/two-web run with reordered native delivery stays a
 });
 
 test('TBL-21 a drained two-web control is judged by the Rust projection, not by its own peers', async () => {
+    attemptRun(TOPOLOGY_TWO_WEB_CONTROL);
     const report = createConvergenceReport();
     await withPeers(
         ['prosemirror', 'prosemirror', 'rust'] as const,
@@ -448,6 +478,7 @@ test('TBL-21 a drained two-web control is judged by the Rust projection, not by 
 });
 
 test('TBL-21 a drained two-web control settling concurrent overlapping merges stays admissible', async () => {
+    attemptRun(TOPOLOGY_TWO_WEB_CONTROL);
     const report = createConvergenceReport();
     await withPeers(
         ['prosemirror', 'prosemirror', 'rust'] as const,
@@ -717,6 +748,22 @@ test('TBL-10 unsafeAdmissions charges an unsafe update the engine admitted', asy
 });
 
 test('TBL-21 the convergence corpus passes the settled-geometry gate', () => {
+    assert.deepEqual(
+        attemptedRuns.filter((topology) => !chargedTopologies.has(topology)),
+        [],
+        'a corpus run was attempted but its settled geometry was never charged: '
+            + describeConvergenceReport(suiteReport),
+    );
+    if (attemptedRuns.length < CORPUS_RUN_TOPOLOGIES.length) {
+        assert.deepEqual(
+            chargedScalars(suiteReport),
+            [],
+            `${attemptedRuns.length} of ${CORPUS_RUN_TOPOLOGIES.length} corpus runs were `
+                + 'selected, so the aggregate topology coverage is not asserted: '
+                + describeConvergenceReport(suiteReport),
+        );
+        return;
+    }
     assert.deepEqual(
         [...CONVERGENCE_TOPOLOGIES].filter((topology) => !chargedTopologies.has(topology)),
         [],

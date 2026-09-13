@@ -1,7 +1,7 @@
 import { peerKindOf } from './controller.js';
+import { NATIVE_PEER_KIND, WEB_PEER_KINDS } from './peer-protocol.js';
 import type { Peer, PeerKind } from './peer-protocol.js';
 
-export const NATIVE_PEER_KIND = 'rust';
 export const TOPOLOGY_NATIVE_NATIVE = 'native/native';
 export const TOPOLOGY_NATIVE_WEB = 'native/web';
 export const TOPOLOGY_NATIVE_TWO_WEB = 'native/two-web';
@@ -15,6 +15,7 @@ export const CONVERGENCE_TOPOLOGIES = [
 ] as const;
 
 export type ConvergenceTopology = (typeof CONVERGENCE_TOPOLOGIES)[number];
+type WebPeerKind = (typeof WEB_PEER_KINDS)[number];
 
 const NATIVE_INCLUSIVE_TOPOLOGIES: readonly ConvergenceTopology[] = [
     TOPOLOGY_NATIVE_NATIVE,
@@ -86,7 +87,13 @@ const ONE_OBSERVATION = 1;
 
 export function topologyOf(kinds: readonly PeerKind[]): ConvergenceTopology {
     const native = kinds.filter((kind) => kind === NATIVE_PEER_KIND).length;
-    const web = kinds.length - native;
+    const web = kinds.filter((kind) => WEB_PEER_KINDS.includes(kind as WebPeerKind)).length;
+    if (native + web !== kinds.length) {
+        throw new Error(
+            `a convergence topology covers only ${NATIVE_PEER_KIND} and `
+                + `${WEB_PEER_KINDS.join('/')} peers, not ${kinds.join(', ')}`,
+        );
+    }
     if (native === TWO_PEERS && web === NO_PEERS) {
         return TOPOLOGY_NATIVE_NATIVE;
     }
@@ -200,6 +207,26 @@ export function recordSourceCellCoverage(
         `${coverage.name} projected ${coverage.sourceCellAnchors.length} source cells, `
             + `lost ${JSON.stringify(lost)}`,
     );
+}
+
+export function chargedScalars(report: ConvergenceReport): string[] {
+    const charged: string[] = [];
+    if (report.invalidSettledNativeTables > NO_OBSERVATIONS) {
+        charged.push('invalidSettledNativeTables');
+    }
+    if (report.invalidSettledWebControlTables > NO_OBSERVATIONS) {
+        charged.push('invalidSettledWebControlTables');
+    }
+    if (report.webControlLoops > NO_OBSERVATIONS) {
+        charged.push('webControlLoops');
+    }
+    if (report.unsafeAdmissions > NO_OBSERVATIONS) {
+        charged.push('unsafeAdmissions');
+    }
+    if (report.unexpectedSourceCellLosses > NO_OBSERVATIONS) {
+        charged.push('unexpectedSourceCellLosses');
+    }
+    return charged;
 }
 
 export function convergenceScalarsPassed(report: ConvergenceReport): boolean {

@@ -1,4 +1,6 @@
-export type PeerKind = 'rust' | 'prosemirror' | 'tiptap';
+export const NATIVE_PEER_KIND = 'rust';
+export const WEB_PEER_KINDS = ['prosemirror', 'tiptap'] as const;
+export type PeerKind = typeof NATIVE_PEER_KIND | (typeof WEB_PEER_KINDS)[number];
 export type TableCommand =
     | { type: 'insertTable'; rows?: number; columns?: number; withHeaderRow?: boolean }
     | { type: 'deleteTable' }

@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SUITE_FLAG = '--suite';
+const SUITE_VALUE_OFFSET = 1;
 const SUITE_NAME_PATTERN = /^[a-z][a-z-]*$/;
 const PACKAGE_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const CARGO_MANIFEST = fileURLToPath(
@@ -18,9 +19,16 @@ function requestedSuite(argv: string[]): string {
     const flagIndex = argv.indexOf(SUITE_FLAG);
     const suite = flagIndex === -1 ? undefined : argv[flagIndex + 1];
     if (suite === undefined || !SUITE_NAME_PATTERN.test(suite)) {
-        throw new Error(`usage: run.ts ${SUITE_FLAG} <suite>`);
+        throw new Error(`usage: run.ts ${SUITE_FLAG} <suite> [node --test options]`);
     }
     return suite;
+}
+
+function runnerOptions(argv: string[]): string[] {
+    const flagIndex = argv.indexOf(SUITE_FLAG);
+    return argv.filter(
+        (_argument, index) => index !== flagIndex && index !== flagIndex + SUITE_VALUE_OFFSET,
+    );
 }
 
 function runToCompletion(command: string, args: string[]): Promise<number> {
@@ -37,7 +45,8 @@ function runToCompletion(command: string, args: string[]): Promise<number> {
     });
 }
 
-const suite = requestedSuite(process.argv.slice(2));
+const argv = process.argv.slice(2);
+const suite = requestedSuite(argv);
 const suiteFiles = (SUITE_CASES[suite] ?? [suite]).map((name) =>
     fileURLToPath(new URL(`./cases/${name}.test.ts`, import.meta.url)),
 );
@@ -63,6 +72,7 @@ if (buildCode !== 0) {
         '--import',
         'tsx',
         '--test',
+        ...runnerOptions(argv),
         ...suiteFiles,
     ]);
 }
