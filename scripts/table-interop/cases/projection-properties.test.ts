@@ -194,13 +194,12 @@ test('TBL-11 projection is deterministic, finitely bounded, rectangular and loss
                     + `${sourceAnchors.length} source cells`,
             );
         }
+        assert.equal(
+            report.unexpectedSourceCellLosses,
+            NO_LOSSES,
+            describeConvergenceReport(report),
+        );
     }, tableFixture('prosemirror'));
-
-    assert.equal(
-        report.unexpectedSourceCellLosses,
-        NO_LOSSES,
-        describeConvergenceReport(report),
-    );
 });
 
 test('TBL-11 unexpectedSourceCellLosses counts a source cell the projection did not place', () => {

@@ -7,6 +7,7 @@ import {
     call,
     exchangeUntilIdle,
     flushDocumentEvents,
+    peerKindOf,
     seedFrom,
     snapshot,
     tableFixture,
@@ -20,15 +21,23 @@ import {
     GEOMETRY_RAW_JSON_DISAGREEMENT,
     TOPOLOGY_NATIVE_NATIVE,
     TOPOLOGY_NATIVE_TWO_WEB,
+    TOPOLOGY_NATIVE_WEB,
     TOPOLOGY_TWO_WEB_CONTROL,
     UNSAFE_INPUT,
+    CONVERGENCE_TOPOLOGIES,
     convergenceScalarsPassed,
     createConvergenceReport,
     describeConvergenceReport,
     recordAdmission,
     recordSettledRun,
 } from '../convergence-report.js';
-import type { AdmissionClassification, SettledGeometry } from '../convergence-report.js';
+import type {
+    AdmissionClassification,
+    ConvergenceReport,
+    ConvergenceTopology,
+    SettledGeometry,
+    SettledRun,
+} from '../convergence-report.js';
 import {
     CELL_NODE,
     PARAGRAPH_NODE,
@@ -44,22 +53,37 @@ import {
 
 const DOC_NODE = 'doc';
 const COLLABORATION_FRAGMENT_NAME = 'prosemirror';
+const NATIVE_PEER_KIND = 'rust';
 const TABLE_START = 0;
 const FIRST_CELL_POSITION = 3;
 const NO_LOOPS = 0;
 const NO_FAILURES = 0;
 const ONE_FAILURE = 1;
 const ONE_SETTLED_RUN = 1;
-const TWO_SETTLED_RUNS = 2;
 const UNSETTLED_WEB_REPAIRS = 2;
 const TEXT_NODE = 'text';
 const OVERLONG_ROWSPAN = 100_000_000;
+const COLLIDING_ROWSPAN = 2;
 const ZERO_COLSPAN = 0;
 const NEGATIVE_COLSPAN = -3;
 const NON_NUMERIC_COLSPAN = 'two';
 const FRACTIONAL_COLSPAN = 1.5;
 const BUDGET_BUSTING_COLSPAN = 4_000_000_000;
 const NON_NUMERIC_COLWIDTH = 'wide';
+const UPPER_COLUMN_WIDTH = 100;
+const LOWER_COLUMN_WIDTH = 180;
+const FIRST_CHILD = 0;
+const SECOND_CHILD = 1;
+const ONE_CHILD = 1;
+
+const suiteReport = createConvergenceReport();
+const chargedTopologies = new Set<ConvergenceTopology>();
+
+function chargeRun(local: ConvergenceReport, run: SettledRun): void {
+    recordSettledRun(local, run);
+    recordSettledRun(suiteReport, run);
+    chargedTopologies.add(run.topology);
+}
 
 function webCell(text: string): Record<string, unknown> {
     return {
@@ -90,12 +114,15 @@ function raggedTable(): Record<string, unknown> {
     ]);
 }
 
-async function projectedGeometry(
-    projector: Peer,
-    tableJson: unknown,
-): Promise<SettledGeometry> {
+async function projectedGeometry(judge: Peer, tableJson: unknown): Promise<SettledGeometry> {
+    if (peerKindOf(judge) !== NATIVE_PEER_KIND) {
+        throw new Error(
+            `TBL-11 admissibility is the Rust projectTable result; a ${peerKindOf(judge)} peer `
+                + 'cannot judge a settled table',
+        );
+    }
     try {
-        const projection = await call(projector, 'projectTable', {
+        const projection = await call(judge, 'projectTable', {
             schema: TABLE_SCHEMA,
             table: tableJson,
         });
@@ -112,7 +139,7 @@ async function projectedGeometry(
     }
 }
 
-async function settledGeometryOf(peers: Peer[], projector: Peer): Promise<SettledGeometry> {
+async function settledGeometryOf(peers: Peer[], judge: Peer): Promise<SettledGeometry> {
     const tables: string[] = [];
     for (const peer of peers) {
         tables.push(JSON.stringify(tableOf((await snapshot(peer)).documentJson)));
@@ -129,7 +156,17 @@ async function settledGeometryOf(peers: Peer[], projector: Peer): Promise<Settle
             };
         }
     }
-    return projectedGeometry(projector, JSON.parse(first));
+    return projectedGeometry(judge, JSON.parse(first));
+}
+
+async function assertJudgeStayedOutside(judge: Peer): Promise<void> {
+    const judged = await snapshot(judge);
+    assert.equal(
+        judged.mounted,
+        false,
+        'the control topology judge must never join the room it judges',
+    );
+    assert.equal(judged.documentJson, null);
 }
 
 async function webRepairWrites(peers: Peer[]): Promise<number> {
@@ -197,92 +234,65 @@ test('TBL-21 an invalid geometry in a still-repairing web run charges no settled
     assert.match(report.findings.join('\n'), /still wrote 2 repair transactions/);
 });
 
-test('TBL-21 native peers that never received a delivery charge invalidSettledNativeTables', async () => {
+test('TBL-21 a drained native/native run settles on admissible geometry', async () => {
     const report = createConvergenceReport();
-    await withPeers(['rust', 'rust'] as const, async ([source, starved]) => {
+    await withPeers(['rust', 'rust'] as const, async ([source, replica]) => {
         await call(source, 'command', {
             type: 'insertContentJson',
             json: { type: DOC_NODE, content: [raggedTable()] },
         });
-        await seedFrom(source, [starved]);
-        await exchangeUntilIdle([source, starved]);
-        const settled = await settledGeometryOf([source, starved], source);
-        recordSettledRun(report, {
-            name: 'native/native ragged table fully delivered',
+        await seedFrom(source, [replica]);
+        await exchangeUntilIdle([source, replica]);
+        const settled = await settledGeometryOf([source, replica], source);
+        chargeRun(report, {
+            name: 'native/native ragged table, drained',
             topology: TOPOLOGY_NATIVE_NATIVE,
             webControlLoops: NO_LOOPS,
             geometry: settled,
         });
         assert.equal(settled.kind, GEOMETRY_ADMITTED, describeConvergenceReport(report));
-
-        const anchors = cellAnchors(raggedTable(), TABLE_START);
-        const [firstAnchor] = anchors;
-        assert.ok(firstAnchor !== undefined, 'the ragged fixture exposes a cell anchor');
-        await call(source, 'command', {
-            type: 'addTableRow',
-            side: 'after',
-            at: firstAnchor,
-        });
-        const withheld = await flushDocumentEvents(source);
-        assert.ok(withheld.length > 0, 'the structural edit produced a delivery to withhold');
-        recordSettledRun(report, {
-            name: 'native/native structural edit withheld from one replica',
-            topology: TOPOLOGY_NATIVE_NATIVE,
-            webControlLoops: NO_LOOPS,
-            geometry: await settledGeometryOf([source, starved], source),
-        });
+        assert.equal(
+            (await snapshot(replica)).autonomousRepairWrites,
+            NO_FAILURES,
+            'a native replica admits ragged geometry without repairing it',
+        );
+        assert.ok(convergenceScalarsPassed(report), describeConvergenceReport(report));
     }, tableFixture('prosemirror'));
-
-    assert.equal(report.settledRuns, TWO_SETTLED_RUNS);
-    assert.equal(
-        report.invalidSettledNativeTables,
-        ONE_FAILURE,
-        describeConvergenceReport(report),
-    );
-    assert.equal(report.invalidSettledWebControlTables, NO_FAILURES);
-    assert.equal(convergenceScalarsPassed(report), false, describeConvergenceReport(report));
 });
 
-test('TBL-21 a two-web control that never received a delivery charges only the control scalar', async () => {
+test('TBL-21 a drained native/web run settles on admissible geometry', async () => {
     const report = createConvergenceReport();
-    await withPeers(['prosemirror', 'prosemirror'] as const, async ([source, starved]) => {
-        await call(source, 'command', { type: 'insertNode', node: regularTable() });
-        await seedFrom(source, [starved]);
-        await exchangeUntilIdle([source, starved]);
-        recordSettledRun(report, {
-            name: 'two-web control regular table fully delivered',
-            topology: TOPOLOGY_TWO_WEB_CONTROL,
-            webControlLoops: NO_LOOPS,
-            geometry: await settledGeometryOf([source, starved], source),
-        });
+    await withPeers(['prosemirror', 'rust'] as const, async ([web, native]) => {
+        await seedFrom(web, [native]);
+        await exchangeUntilIdle([web, native]);
+        const before = await webRepairWrites([web]);
 
-        const before = await webRepairWrites([source, starved]);
-        await call(source, 'command', {
+        await call(web, 'command', { type: 'insertNode', node: regularTable() });
+        await call(web, 'command', {
             type: 'tableCommand',
             name: 'addRowAfter',
             at: FIRST_CELL_POSITION,
         });
-        const withheld = await flushDocumentEvents(source);
-        assert.ok(withheld.length > 0, 'the structural edit produced a delivery to withhold');
-        recordSettledRun(report, {
-            name: 'two-web control structural edit withheld from one replica',
-            topology: TOPOLOGY_TWO_WEB_CONTROL,
-            webControlLoops: (await webRepairWrites([source, starved])) - before,
-            geometry: await settledGeometryOf([source, starved], source),
-        });
-    }, tableFixture('prosemirror'));
+        await exchangeUntilIdle([web, native]);
 
-    assert.equal(report.settledRuns, TWO_SETTLED_RUNS);
-    assert.equal(report.invalidSettledNativeTables, NO_FAILURES);
-    assert.equal(
-        report.invalidSettledWebControlTables,
-        ONE_FAILURE,
-        describeConvergenceReport(report),
-    );
-    assert.equal(convergenceScalarsPassed(report), false, describeConvergenceReport(report));
+        const settled = await settledGeometryOf([web, native], native);
+        chargeRun(report, {
+            name: 'native/web structural edit, drained',
+            topology: TOPOLOGY_NATIVE_WEB,
+            webControlLoops: (await webRepairWrites([web])) - before,
+            geometry: settled,
+        });
+        assert.equal(settled.kind, GEOMETRY_ADMITTED, describeConvergenceReport(report));
+        assert.equal(
+            (await snapshot(native)).autonomousRepairWrites,
+            NO_FAILURES,
+            'native carries the web geometry without writing a repair',
+        );
+        assert.ok(convergenceScalarsPassed(report), describeConvergenceReport(report));
+    }, tableFixture('prosemirror'));
 });
 
-test('TBL-21 a settled native/two-web run with reordered native delivery stays admissible', async () => {
+test('TBL-21 a drained native/two-web run with reordered native delivery stays admissible', async () => {
     const report = createConvergenceReport();
     await withPeers(
         ['prosemirror', 'prosemirror', 'rust'] as const,
@@ -320,11 +330,13 @@ test('TBL-21 a settled native/two-web run with reordered native delivery stays a
             await exchangeUntilIdle([first, second, native]);
 
             const settled = await settledGeometryOf([first, second, native], native);
-            assert.equal(
-                settled.kind,
-                GEOMETRY_ADMITTED,
-                `reordered native delivery settled as ${JSON.stringify(settled)}`,
-            );
+            chargeRun(report, {
+                name: 'native/two-web concurrent row and column, reversed native delivery, drained',
+                topology: TOPOLOGY_NATIVE_TWO_WEB,
+                webControlLoops: (await webRepairWrites([first, second])) - before,
+                geometry: settled,
+            });
+            assert.equal(settled.kind, GEOMETRY_ADMITTED, describeConvergenceReport(report));
             assert.equal(
                 settled.irregular,
                 true,
@@ -335,71 +347,131 @@ test('TBL-21 a settled native/two-web run with reordered native delivery stays a
                 NO_FAILURES,
                 'native carries the web-settled geometry without writing a repair',
             );
-            recordSettledRun(report, {
-                name: 'native/two-web concurrent row and column, reversed native delivery',
-                topology: TOPOLOGY_NATIVE_TWO_WEB,
-                webControlLoops: (await webRepairWrites([first, second])) - before,
-                geometry: settled,
-            });
+            assert.ok(convergenceScalarsPassed(report), describeConvergenceReport(report));
         },
         tableFixture('prosemirror'),
     );
-
-    assert.equal(report.invalidSettledNativeTables, NO_FAILURES, describeConvergenceReport(report));
-    assert.equal(report.invalidSettledWebControlTables, NO_FAILURES);
-    assert.ok(convergenceScalarsPassed(report), describeConvergenceReport(report));
 });
 
-test('TBL-21 a two-web control settling concurrent overlapping merges stays admissible', async () => {
+test('TBL-21 a drained two-web control is judged by the Rust projection, not by its own peers', async () => {
     const report = createConvergenceReport();
-    await withPeers(['prosemirror', 'prosemirror'] as const, async ([first, second]) => {
-        await call(first, 'command', { type: 'insertNode', node: regularTable() });
-        await seedFrom(first, [second]);
-        await exchangeUntilIdle([first, second]);
-        const anchors = cellAnchors(regularTable(), TABLE_START);
-        const [topLeft, topRight, bottomLeft] = anchors;
-        assert.ok(
-            topLeft !== undefined && topRight !== undefined && bottomLeft !== undefined,
-            'the two by two fixture exposes three distinct cell anchors',
-        );
-        const before = await webRepairWrites([first, second]);
+    await withPeers(
+        ['prosemirror', 'prosemirror', 'rust'] as const,
+        async ([first, second, judge]) => {
+            await call(first, 'command', { type: 'insertNode', node: regularTable() });
+            await seedFrom(first, [second]);
+            await exchangeUntilIdle([first, second]);
+            const before = await webRepairWrites([first, second]);
 
-        await call(first, 'command', {
-            type: 'tableCommand',
-            name: 'mergeCells',
-            at: topLeft,
-            head: topRight,
-        });
-        await call(second, 'command', {
-            type: 'tableCommand',
-            name: 'mergeCells',
-            at: bottomLeft,
-            head: topLeft,
-        });
-        await exchangeUntilIdle([first, second]);
-        await exchangeUntilIdle([first, second]);
+            await call(first, 'command', {
+                type: 'tableCommand',
+                name: 'addRowAfter',
+                at: FIRST_CELL_POSITION,
+            });
+            await exchangeUntilIdle([first, second]);
+            await assertJudgeStayedOutside(judge);
 
-        recordSettledRun(report, {
-            name: 'two-web control concurrent overlapping merges',
-            topology: TOPOLOGY_TWO_WEB_CONTROL,
-            webControlLoops: (await webRepairWrites([first, second])) - before,
-            geometry: await settledGeometryOf([first, second], first),
-        });
-    }, tableFixture('prosemirror'));
-
-    assert.equal(
-        report.invalidSettledWebControlTables,
-        NO_FAILURES,
-        `pinned prosemirror-tables settled the adversarial merge pair as `
-            + describeConvergenceReport(report),
+            const settled = await settledGeometryOf([first, second], judge);
+            chargeRun(report, {
+                name: 'two-web control structural edit, drained',
+                topology: TOPOLOGY_TWO_WEB_CONTROL,
+                webControlLoops: (await webRepairWrites([first, second])) - before,
+                geometry: settled,
+            });
+            assert.equal(settled.kind, GEOMETRY_ADMITTED, describeConvergenceReport(report));
+            assert.ok(convergenceScalarsPassed(report), describeConvergenceReport(report));
+        },
+        tableFixture('prosemirror'),
     );
-    assert.equal(report.invalidSettledNativeTables, NO_FAILURES);
+});
+
+test('TBL-21 a drained two-web control settling concurrent overlapping merges stays admissible', async () => {
+    const report = createConvergenceReport();
+    await withPeers(
+        ['prosemirror', 'prosemirror', 'rust'] as const,
+        async ([first, second, judge]) => {
+            await call(first, 'command', { type: 'insertNode', node: regularTable() });
+            await seedFrom(first, [second]);
+            await exchangeUntilIdle([first, second]);
+            const anchors = cellAnchors(regularTable(), TABLE_START);
+            const [topLeft, topRight, bottomLeft] = anchors;
+            assert.ok(
+                topLeft !== undefined && topRight !== undefined && bottomLeft !== undefined,
+                'the two by two fixture exposes three distinct cell anchors',
+            );
+            const before = await webRepairWrites([first, second]);
+
+            await call(first, 'command', {
+                type: 'tableCommand',
+                name: 'mergeCells',
+                at: topLeft,
+                head: topRight,
+            });
+            await call(second, 'command', {
+                type: 'tableCommand',
+                name: 'mergeCells',
+                at: bottomLeft,
+                head: topLeft,
+            });
+            await exchangeUntilIdle([first, second]);
+            await exchangeUntilIdle([first, second]);
+            await assertJudgeStayedOutside(judge);
+
+            const settled = await settledGeometryOf([first, second], judge);
+            chargeRun(report, {
+                name: 'two-web control concurrent overlapping merges, drained',
+                topology: TOPOLOGY_TWO_WEB_CONTROL,
+                webControlLoops: (await webRepairWrites([first, second])) - before,
+                geometry: settled,
+            });
+            assert.equal(
+                report.invalidSettledWebControlTables,
+                NO_FAILURES,
+                `pinned prosemirror-tables settled the adversarial merge pair as `
+                    + describeConvergenceReport(report),
+            );
+            assert.equal(report.invalidSettledNativeTables, NO_FAILURES);
+        },
+        tableFixture('prosemirror'),
+    );
+});
+
+test('TBL-21 an undrained run is reported as raw JSON disagreement, not as settled geometry', async () => {
+    await withPeers(['rust', 'rust'] as const, async ([source, starved]) => {
+        await call(source, 'command', {
+            type: 'insertContentJson',
+            json: { type: DOC_NODE, content: [raggedTable()] },
+        });
+        await seedFrom(source, [starved]);
+        await exchangeUntilIdle([source, starved]);
+        const [firstAnchor] = cellAnchors(raggedTable(), TABLE_START);
+        assert.ok(firstAnchor !== undefined, 'the ragged fixture exposes a cell anchor');
+
+        await call(source, 'command', {
+            type: 'addTableRow',
+            side: 'after',
+            at: firstAnchor,
+        });
+        const withheld = await flushDocumentEvents(source);
+        assert.ok(withheld.length > 0, 'the structural edit produced a delivery to withhold');
+
+        const undrained = await settledGeometryOf([source, starved], source);
+        assert.equal(
+            undrained.kind,
+            GEOMETRY_RAW_JSON_DISAGREEMENT,
+            'an undelivered structural edit leaves the replicas holding different raw tables',
+        );
+    }, tableFixture('prosemirror'));
 });
 
 type HostileMutation = {
     readonly name: string;
     readonly classification: AdmissionClassification;
-    readonly apply: (cellElement: Y.XmlElement, rowElement: Y.XmlElement) => void;
+    readonly apply: (
+        cellElement: Y.XmlElement,
+        rowElement: Y.XmlElement,
+        tableElement: Y.XmlElement,
+    ) => void;
 };
 
 const HOSTILE_MUTATIONS: HostileMutation[] = [
@@ -448,11 +520,42 @@ const HOSTILE_MUTATIONS: HostileMutation[] = [
         classification: ADMISSIBLE_IRREGULAR_INPUT,
         apply: (cellElement) => cellElement.setAttribute('rowspan', OVERLONG_ROWSPAN as never),
     },
+    {
+        name: 'a missing slot',
+        classification: ADMISSIBLE_IRREGULAR_INPUT,
+        apply: (_cellElement, rowElement) => rowElement.delete(SECOND_CHILD, ONE_CHILD),
+    },
+    {
+        name: 'a span collision',
+        classification: ADMISSIBLE_IRREGULAR_INPUT,
+        apply: (cellElement) => cellElement.setAttribute('rowspan', COLLIDING_ROWSPAN as never),
+    },
+    {
+        name: 'a width disagreement between rows',
+        classification: ADMISSIBLE_IRREGULAR_INPUT,
+        apply: (cellElement, _rowElement, tableElement) => {
+            const lowerRow = tableElement.toArray()[SECOND_CHILD];
+            if (!(lowerRow instanceof Y.XmlElement)) {
+                throw new Error('the width fixture needs a second row');
+            }
+            const lowerCell = lowerRow.toArray()[FIRST_CHILD];
+            if (!(lowerCell instanceof Y.XmlElement)) {
+                throw new Error('the width fixture needs a second row cell');
+            }
+            cellElement.setAttribute('colwidth', [UPPER_COLUMN_WIDTH] as never);
+            lowerCell.setAttribute('colwidth', [LOWER_COLUMN_WIDTH] as never);
+        },
+    },
+    {
+        name: 'a table with no rows',
+        classification: ADMISSIBLE_IRREGULAR_INPUT,
+        apply: (_cellElement, _rowElement, tableElement) =>
+            tableElement.delete(FIRST_CHILD, tableElement.length),
+    },
 ];
 
 async function observeAdmission(
     mutation: HostileMutation,
-    classification: AdmissionClassification,
 ): Promise<{ admitted: boolean; detail: string }> {
     let observed: { admitted: boolean; detail: string } | null = null;
     await withPeers(['rust', 'rust'] as const, async ([author, target]) => {
@@ -478,24 +581,24 @@ async function observeAdmission(
         if (!(tableElement instanceof Y.XmlElement)) {
             throw new Error('the seeded document carried no table element');
         }
-        const rowElement = tableElement.toArray()[0];
+        const rowElement = tableElement.toArray()[FIRST_CHILD];
         if (!(rowElement instanceof Y.XmlElement)) {
             throw new Error('the seeded table carried no row element');
         }
-        const cellElement = rowElement.toArray()[0];
+        const cellElement = rowElement.toArray()[FIRST_CHILD];
         if (!(cellElement instanceof Y.XmlElement)) {
             throw new Error('the seeded row carried no cell element');
         }
         const baseline = Y.encodeStateVector(mirror);
         mirror.transact(() => {
-            mutation.apply(cellElement, rowElement);
+            mutation.apply(cellElement, rowElement, tableElement);
         });
         const hostile = Buffer.from(Y.encodeStateAsUpdate(mirror, baseline)).toString('base64');
         try {
             await call(target, 'applyUpdate', { updateBase64: hostile });
             observed = {
                 admitted: true,
-                detail: JSON.stringify(tableOf((await snapshot(target)).documentJson)),
+                detail: JSON.stringify((await snapshot(target)).documentJson),
             };
         } catch (error) {
             if (!(error instanceof PeerError)) {
@@ -505,43 +608,31 @@ async function observeAdmission(
         }
     }, tableFixture('prosemirror'));
     if (observed === null) {
-        throw new Error(`the ${classification} admission probe recorded no outcome`);
+        throw new Error(`the ${mutation.name} admission probe recorded no outcome`);
     }
     return observed;
 }
 
 test('TBL-10 native admission separates unsafe table input from admissible irregularity', async () => {
-    const report = createConvergenceReport();
     for (const mutation of HOSTILE_MUTATIONS) {
-        const observed = await observeAdmission(mutation, mutation.classification);
-        recordAdmission(report, {
+        const observed = await observeAdmission(mutation);
+        recordAdmission(suiteReport, {
             name: mutation.name,
             classification: mutation.classification,
             admitted: observed.admitted,
             detail: observed.detail,
         });
-        if (mutation.classification === UNSAFE_INPUT) {
-            assert.equal(
-                observed.admitted,
-                false,
-                `${mutation.name} must fail admission: ${observed.detail}`,
-            );
-        } else {
-            assert.equal(
-                observed.admitted,
-                true,
-                `${mutation.name} is admissible irregular geometry: ${observed.detail}`,
-            );
-        }
+        assert.equal(
+            observed.admitted,
+            mutation.classification === ADMISSIBLE_IRREGULAR_INPUT,
+            `${mutation.name} is classified ${mutation.classification} but the engine `
+                + `${observed.admitted ? 'admitted' : 'rejected'} it: ${observed.detail}`,
+        );
     }
-    assert.equal(report.unsafeAdmissions, NO_FAILURES, describeConvergenceReport(report));
+    assert.equal(suiteReport.unsafeAdmissions, NO_FAILURES, describeConvergenceReport(suiteReport));
 });
 
-test('TBL-10 unsafeAdmissions counts an unsafe-classified update the engine admitted', async () => {
-    const overlongRowspan = HOSTILE_MUTATIONS[HOSTILE_MUTATIONS.length - 1];
-    assert.ok(overlongRowspan !== undefined, 'the mutation corpus ends with the rowspan case');
-    const observed = await observeAdmission(overlongRowspan, UNSAFE_INPUT);
-    assert.equal(observed.admitted, true, 'the deliberate fixture needs an admitted update');
+test('TBL-10 unsafeAdmissions charges an unsafe update the engine admitted', () => {
     const report = createConvergenceReport();
     recordSettledRun(report, {
         name: 'native/native settled run carrying the admitted update',
@@ -550,11 +641,20 @@ test('TBL-10 unsafeAdmissions counts an unsafe-classified update the engine admi
         geometry: { kind: GEOMETRY_ADMITTED, irregular: true },
     });
     recordAdmission(report, {
-        name: overlongRowspan.name,
+        name: 'colspan below the span domain',
         classification: UNSAFE_INPUT,
-        admitted: observed.admitted,
-        detail: observed.detail,
+        admitted: true,
+        detail: 'an engine that stopped enforcing the span domain',
     });
     assert.equal(report.unsafeAdmissions, ONE_FAILURE, describeConvergenceReport(report));
     assert.equal(convergenceScalarsPassed(report), false, describeConvergenceReport(report));
+});
+
+test('TBL-21 the convergence corpus passes the settled-geometry gate', () => {
+    assert.deepEqual(
+        [...CONVERGENCE_TOPOLOGIES].filter((topology) => !chargedTopologies.has(topology)),
+        [],
+        `the corpus left topologies unrun: ${describeConvergenceReport(suiteReport)}`,
+    );
+    assert.ok(convergenceScalarsPassed(suiteReport), describeConvergenceReport(suiteReport));
 });
