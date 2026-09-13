@@ -23,8 +23,10 @@ import {
     TOPOLOGY_NATIVE_TWO_WEB,
     TOPOLOGY_NATIVE_WEB,
     TOPOLOGY_TWO_WEB_CONTROL,
+    NATIVE_PEER_KIND,
     UNSAFE_INPUT,
     CONVERGENCE_TOPOLOGIES,
+    topologyOf,
     convergenceScalarsPassed,
     createConvergenceReport,
     describeConvergenceReport,
@@ -53,7 +55,6 @@ import {
 
 const DOC_NODE = 'doc';
 const COLLABORATION_FRAGMENT_NAME = 'prosemirror';
-const NATIVE_PEER_KIND = 'rust';
 const TABLE_START = 0;
 const FIRST_CELL_POSITION = 3;
 const NO_LOOPS = 0;
@@ -177,61 +178,118 @@ async function webRepairWrites(peers: Peer[]): Promise<number> {
     return total;
 }
 
-test('TBL-21 an admitted irregular settled table charges neither settled-geometry scalar', () => {
-    const report = createConvergenceReport();
-    recordSettledRun(report, {
-        name: 'web plugin settles irregular',
-        topology: TOPOLOGY_NATIVE_TWO_WEB,
-        webControlLoops: NO_LOOPS,
-        geometry: { kind: GEOMETRY_ADMITTED, irregular: true },
-    });
-    assert.equal(report.invalidSettledNativeTables, NO_FAILURES);
-    assert.equal(report.invalidSettledWebControlTables, NO_FAILURES);
-    assert.equal(report.settledRuns, ONE_SETTLED_RUN);
-    assert.ok(convergenceScalarsPassed(report), describeConvergenceReport(report));
-});
-
-test('TBL-21 the settled-geometry scalars route by topology class', () => {
-    const nativeReport = createConvergenceReport();
-    recordSettledRun(nativeReport, {
-        name: 'native integration fault',
-        topology: TOPOLOGY_NATIVE_TWO_WEB,
-        webControlLoops: NO_LOOPS,
-        geometry: { kind: GEOMETRY_PROJECTION_FAILED, code: 'TABLE_PROJECTION_FAILED', message: 'x' },
-    });
-    assert.equal(nativeReport.invalidSettledNativeTables, ONE_FAILURE);
-    assert.equal(nativeReport.invalidSettledWebControlTables, NO_FAILURES);
-    assert.equal(convergenceScalarsPassed(nativeReport), false);
-
-    const controlReport = createConvergenceReport();
-    recordSettledRun(controlReport, {
-        name: 'upstream loop',
-        topology: TOPOLOGY_TWO_WEB_CONTROL,
-        webControlLoops: NO_LOOPS,
-        geometry: { kind: GEOMETRY_PROJECTION_FAILED, code: 'TABLE_PROJECTION_FAILED', message: 'x' },
-    });
-    assert.equal(controlReport.invalidSettledNativeTables, NO_FAILURES);
-    assert.equal(controlReport.invalidSettledWebControlTables, ONE_FAILURE);
-    assert.equal(convergenceScalarsPassed(controlReport), false);
-});
-
-test('TBL-21 an invalid geometry in a still-repairing web run charges no settled scalar', () => {
-    const report = createConvergenceReport();
-    recordSettledRun(report, {
-        name: 'web plugin still repairing',
-        topology: TOPOLOGY_TWO_WEB_CONTROL,
-        webControlLoops: UNSETTLED_WEB_REPAIRS,
-        geometry: { kind: GEOMETRY_PROJECTION_FAILED, code: 'TABLE_PROJECTION_FAILED', message: 'x' },
-    });
-    assert.equal(report.invalidSettledNativeTables, NO_FAILURES);
-    assert.equal(report.invalidSettledWebControlTables, NO_FAILURES);
-    assert.equal(report.webControlLoops, UNSETTLED_WEB_REPAIRS);
-    assert.equal(
-        convergenceScalarsPassed(report),
-        false,
-        'an unsettled web plugin still fails the core gate through webControlLoops',
+test('TBL-21 a settled run label is derived from the peers, never from the caller', async () => {
+    await withPeers(
+        ['prosemirror', 'prosemirror', 'rust'] as const,
+        async ([first, second, native]) => {
+            assert.equal(topologyOf([first, second, native].map(peerKindOf)), TOPOLOGY_NATIVE_TWO_WEB);
+            assert.equal(topologyOf([first, second].map(peerKindOf)), TOPOLOGY_TWO_WEB_CONTROL);
+            assert.equal(topologyOf([first, native].map(peerKindOf)), TOPOLOGY_NATIVE_WEB);
+            assert.equal(topologyOf([native, native].map(peerKindOf)), TOPOLOGY_NATIVE_NATIVE);
+            assert.throws(
+                () => topologyOf([first].map(peerKindOf)),
+                /no convergence topology covers 0 native and 1 web peers/,
+            );
+            assert.throws(
+                () => recordSettledRun(createConvergenceReport(), {
+                    name: 'a control run wearing a native label',
+                    peers: [first, second],
+                    topology: TOPOLOGY_NATIVE_TWO_WEB,
+                    webControlLoops: NO_LOOPS,
+                    geometry: { kind: GEOMETRY_ADMITTED, irregular: false },
+                }),
+                /is labelled native\/two-web but its peers form two-web-control/,
+            );
+        },
+        tableFixture('prosemirror'),
     );
-    assert.match(report.findings.join('\n'), /still wrote 2 repair transactions/);
+});
+
+test('TBL-21 an admitted irregular settled table charges neither settled-geometry scalar', async () => {
+    await withPeers(
+        ['prosemirror', 'prosemirror', 'rust'] as const,
+        async ([first, second, native]) => {
+            const report = createConvergenceReport();
+            recordSettledRun(report, {
+                name: 'web plugin settles irregular',
+                peers: [first, second, native],
+                topology: TOPOLOGY_NATIVE_TWO_WEB,
+                webControlLoops: NO_LOOPS,
+                geometry: { kind: GEOMETRY_ADMITTED, irregular: true },
+            });
+            assert.equal(report.invalidSettledNativeTables, NO_FAILURES);
+            assert.equal(report.invalidSettledWebControlTables, NO_FAILURES);
+            assert.equal(report.settledRuns, ONE_SETTLED_RUN);
+            assert.ok(convergenceScalarsPassed(report), describeConvergenceReport(report));
+        },
+        tableFixture('prosemirror'),
+    );
+});
+
+test('TBL-21 the settled-geometry scalars route by topology class', async () => {
+    await withPeers(
+        ['prosemirror', 'prosemirror', 'rust'] as const,
+        async ([first, second, native]) => {
+            const nativeReport = createConvergenceReport();
+            recordSettledRun(nativeReport, {
+                name: 'native integration fault',
+                peers: [first, second, native],
+                topology: TOPOLOGY_NATIVE_TWO_WEB,
+                webControlLoops: NO_LOOPS,
+                geometry: {
+                    kind: GEOMETRY_PROJECTION_FAILED,
+                    code: 'TABLE_PROJECTION_FAILED',
+                    message: 'a deliberately failed projection',
+                },
+            });
+            assert.equal(nativeReport.invalidSettledNativeTables, ONE_FAILURE);
+            assert.equal(nativeReport.invalidSettledWebControlTables, NO_FAILURES);
+            assert.equal(convergenceScalarsPassed(nativeReport), false);
+
+            const controlReport = createConvergenceReport();
+            recordSettledRun(controlReport, {
+                name: 'upstream loop',
+                peers: [first, second],
+                topology: TOPOLOGY_TWO_WEB_CONTROL,
+                webControlLoops: NO_LOOPS,
+                geometry: {
+                    kind: GEOMETRY_PROJECTION_FAILED,
+                    code: 'TABLE_PROJECTION_FAILED',
+                    message: 'a deliberately failed projection',
+                },
+            });
+            assert.equal(controlReport.invalidSettledNativeTables, NO_FAILURES);
+            assert.equal(controlReport.invalidSettledWebControlTables, ONE_FAILURE);
+            assert.equal(convergenceScalarsPassed(controlReport), false);
+        },
+        tableFixture('prosemirror'),
+    );
+});
+
+test('TBL-21 an invalid geometry in a still-repairing web run charges no settled scalar', async () => {
+    await withPeers(['prosemirror', 'prosemirror'] as const, async ([first, second]) => {
+        const report = createConvergenceReport();
+        recordSettledRun(report, {
+            name: 'web plugin still repairing',
+            peers: [first, second],
+            topology: TOPOLOGY_TWO_WEB_CONTROL,
+            webControlLoops: UNSETTLED_WEB_REPAIRS,
+            geometry: {
+                kind: GEOMETRY_PROJECTION_FAILED,
+                code: 'TABLE_PROJECTION_FAILED',
+                message: 'a deliberately failed projection',
+            },
+        });
+        assert.equal(report.invalidSettledNativeTables, NO_FAILURES);
+        assert.equal(report.invalidSettledWebControlTables, NO_FAILURES);
+        assert.equal(report.webControlLoops, UNSETTLED_WEB_REPAIRS);
+        assert.equal(
+            convergenceScalarsPassed(report),
+            false,
+            'an unsettled web plugin still fails the core gate through webControlLoops',
+        );
+        assert.match(report.findings.join('\n'), /still wrote 2 repair transactions/);
+    }, tableFixture('prosemirror'));
 });
 
 test('TBL-21 a drained native/native run settles on admissible geometry', async () => {
@@ -246,6 +304,7 @@ test('TBL-21 a drained native/native run settles on admissible geometry', async 
         const settled = await settledGeometryOf([source, replica], source);
         chargeRun(report, {
             name: 'native/native ragged table, drained',
+            peers: [source, replica],
             topology: TOPOLOGY_NATIVE_NATIVE,
             webControlLoops: NO_LOOPS,
             geometry: settled,
@@ -278,6 +337,7 @@ test('TBL-21 a drained native/web run settles on admissible geometry', async () 
         const settled = await settledGeometryOf([web, native], native);
         chargeRun(report, {
             name: 'native/web structural edit, drained',
+            peers: [web, native],
             topology: TOPOLOGY_NATIVE_WEB,
             webControlLoops: (await webRepairWrites([web])) - before,
             geometry: settled,
@@ -332,6 +392,7 @@ test('TBL-21 a drained native/two-web run with reordered native delivery stays a
             const settled = await settledGeometryOf([first, second, native], native);
             chargeRun(report, {
                 name: 'native/two-web concurrent row and column, reversed native delivery, drained',
+                peers: [first, second, native],
                 topology: TOPOLOGY_NATIVE_TWO_WEB,
                 webControlLoops: (await webRepairWrites([first, second])) - before,
                 geometry: settled,
@@ -374,6 +435,7 @@ test('TBL-21 a drained two-web control is judged by the Rust projection, not by 
             const settled = await settledGeometryOf([first, second], judge);
             chargeRun(report, {
                 name: 'two-web control structural edit, drained',
+                peers: [first, second],
                 topology: TOPOLOGY_TWO_WEB_CONTROL,
                 webControlLoops: (await webRepairWrites([first, second])) - before,
                 geometry: settled,
@@ -420,6 +482,7 @@ test('TBL-21 a drained two-web control settling concurrent overlapping merges st
             const settled = await settledGeometryOf([first, second], judge);
             chargeRun(report, {
                 name: 'two-web control concurrent overlapping merges, drained',
+                peers: [first, second],
                 topology: TOPOLOGY_TWO_WEB_CONTROL,
                 webControlLoops: (await webRepairWrites([first, second])) - before,
                 geometry: settled,
@@ -632,22 +695,25 @@ test('TBL-10 native admission separates unsafe table input from admissible irreg
     assert.equal(suiteReport.unsafeAdmissions, NO_FAILURES, describeConvergenceReport(suiteReport));
 });
 
-test('TBL-10 unsafeAdmissions charges an unsafe update the engine admitted', () => {
-    const report = createConvergenceReport();
-    recordSettledRun(report, {
-        name: 'native/native settled run carrying the admitted update',
-        topology: TOPOLOGY_NATIVE_NATIVE,
-        webControlLoops: NO_LOOPS,
-        geometry: { kind: GEOMETRY_ADMITTED, irregular: true },
-    });
-    recordAdmission(report, {
-        name: 'colspan below the span domain',
-        classification: UNSAFE_INPUT,
-        admitted: true,
-        detail: 'an engine that stopped enforcing the span domain',
-    });
-    assert.equal(report.unsafeAdmissions, ONE_FAILURE, describeConvergenceReport(report));
-    assert.equal(convergenceScalarsPassed(report), false, describeConvergenceReport(report));
+test('TBL-10 unsafeAdmissions charges an unsafe update the engine admitted', async () => {
+    await withPeers(['rust', 'rust'] as const, async ([author, target]) => {
+        const report = createConvergenceReport();
+        recordSettledRun(report, {
+            name: 'native/native settled run carrying the admitted update',
+            peers: [author, target],
+            topology: TOPOLOGY_NATIVE_NATIVE,
+            webControlLoops: NO_LOOPS,
+            geometry: { kind: GEOMETRY_ADMITTED, irregular: true },
+        });
+        recordAdmission(report, {
+            name: 'colspan below the span domain',
+            classification: UNSAFE_INPUT,
+            admitted: true,
+            detail: 'an engine that stopped enforcing the span domain',
+        });
+        assert.equal(report.unsafeAdmissions, ONE_FAILURE, describeConvergenceReport(report));
+        assert.equal(convergenceScalarsPassed(report), false, describeConvergenceReport(report));
+    }, tableFixture('prosemirror'));
 });
 
 test('TBL-21 the convergence corpus passes the settled-geometry gate', () => {

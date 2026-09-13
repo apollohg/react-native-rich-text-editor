@@ -202,27 +202,30 @@ test('TBL-11 projection is deterministic, finitely bounded, rectangular and loss
     }, tableFixture('prosemirror'));
 });
 
-test('TBL-11 unexpectedSourceCellLosses counts a source cell the projection did not place', () => {
-    const sourceCellAnchors = [2, 7, 14];
-    const projectedSlots = [2, 7, null, null];
-    assert.deepEqual(
-        lostSourceCells({ name: 'a dropped source cell', sourceCellAnchors, projectedSlots }),
-        [14],
-    );
-    const report = createConvergenceReport();
-    recordSettledRun(report, {
-        name: 'native/native settled run projecting the faulted table',
-        topology: TOPOLOGY_NATIVE_NATIVE,
-        webControlLoops: NO_LOOPS,
-        geometry: { kind: GEOMETRY_ADMITTED, irregular: true },
-    });
-    recordSourceCellCoverage(report, {
-        name: 'a dropped source cell',
-        sourceCellAnchors,
-        projectedSlots,
-    });
-    assert.equal(report.unexpectedSourceCellLosses, ONE_LOSS, describeConvergenceReport(report));
-    assert.equal(convergenceScalarsPassed(report), false, describeConvergenceReport(report));
+test('TBL-11 unexpectedSourceCellLosses counts a source cell the projection did not place', async () => {
+    await withPeers(['rust', 'rust'] as const, async ([author, replica]) => {
+        const sourceCellAnchors = [2, 7, 14];
+        const projectedSlots = [2, 7, null, null];
+        assert.deepEqual(
+            lostSourceCells({ name: 'a dropped source cell', sourceCellAnchors, projectedSlots }),
+            [14],
+        );
+        const report = createConvergenceReport();
+        recordSettledRun(report, {
+            name: 'native/native settled run projecting the faulted table',
+            peers: [author, replica],
+            topology: TOPOLOGY_NATIVE_NATIVE,
+            webControlLoops: NO_LOOPS,
+            geometry: { kind: GEOMETRY_ADMITTED, irregular: true },
+        });
+        recordSourceCellCoverage(report, {
+            name: 'a dropped source cell',
+            sourceCellAnchors,
+            projectedSlots,
+        });
+        assert.equal(report.unexpectedSourceCellLosses, ONE_LOSS, describeConvergenceReport(report));
+        assert.equal(convergenceScalarsPassed(report), false, describeConvergenceReport(report));
+    }, tableFixture('prosemirror'));
 });
 
 test('TBL-11 projecting and snapshotting a table writes nothing to the document', async () => {

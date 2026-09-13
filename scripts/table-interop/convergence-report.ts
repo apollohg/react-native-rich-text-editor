@@ -1,3 +1,7 @@
+import { peerKindOf } from './controller.js';
+import type { Peer, PeerKind } from './peer-protocol.js';
+
+export const NATIVE_PEER_KIND = 'rust';
 export const TOPOLOGY_NATIVE_NATIVE = 'native/native';
 export const TOPOLOGY_NATIVE_WEB = 'native/web';
 export const TOPOLOGY_NATIVE_TWO_WEB = 'native/two-web';
@@ -39,6 +43,7 @@ export type SettledGeometry =
 
 export interface SettledRun {
     readonly name: string;
+    readonly peers: readonly Peer[];
     readonly topology: ConvergenceTopology;
     readonly webControlLoops: number;
     readonly geometry: SettledGeometry;
@@ -72,9 +77,33 @@ export interface ConvergenceReport {
     readonly findings: string[];
 }
 
+const NO_PEERS = 0;
+const ONE_PEER = 1;
+const TWO_PEERS = 2;
 const NO_OBSERVATIONS = 0;
 const QUIESCENT_WEB_CONTROL_LOOPS = 0;
 const ONE_OBSERVATION = 1;
+
+export function topologyOf(kinds: readonly PeerKind[]): ConvergenceTopology {
+    const native = kinds.filter((kind) => kind === NATIVE_PEER_KIND).length;
+    const web = kinds.length - native;
+    if (native === TWO_PEERS && web === NO_PEERS) {
+        return TOPOLOGY_NATIVE_NATIVE;
+    }
+    if (native === ONE_PEER && web === ONE_PEER) {
+        return TOPOLOGY_NATIVE_WEB;
+    }
+    if (native === ONE_PEER && web === TWO_PEERS) {
+        return TOPOLOGY_NATIVE_TWO_WEB;
+    }
+    if (native === NO_PEERS && web === TWO_PEERS) {
+        return TOPOLOGY_TWO_WEB_CONTROL;
+    }
+    throw new Error(
+        `no convergence topology covers ${native} native and ${web} web peers `
+            + `(${kinds.join(', ')})`,
+    );
+}
 
 export function createConvergenceReport(): ConvergenceReport {
     return {
@@ -107,6 +136,13 @@ function requireNonNegativeInteger(value: number, field: string): number {
 
 export function recordSettledRun(report: ConvergenceReport, run: SettledRun): void {
     requireNonNegativeInteger(run.webControlLoops, `${run.name}.webControlLoops`);
+    const observed = topologyOf(run.peers.map((peer) => peerKindOf(peer)));
+    if (observed !== run.topology) {
+        throw new Error(
+            `the settled run ${run.name} is labelled ${run.topology} but its peers form `
+                + `${observed}`,
+        );
+    }
     report.settledRuns += ONE_OBSERVATION;
     report.webControlLoops += run.webControlLoops;
     const description = `${run.name} [${run.topology}] ${describeGeometry(run.geometry)}`;
