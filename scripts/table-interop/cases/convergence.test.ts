@@ -45,9 +45,12 @@ import type {
 import { canonicalDocumentShape } from '../assertions.js';
 import {
     CONVERGENCE_CORPUS,
+    CORPUS_PRESETS,
     SCHEDULES_PER_TOPOLOGY,
     nativeRepairWrites,
+    nestedTablesOf,
     runSchedule,
+    scenariosFor,
     webRepairWrites,
 } from '../corpus.js';
 import {
@@ -91,6 +94,7 @@ const SPANNING_CELL = 2;
 const WIDER_SPANNING_CELL = 3;
 const SEEDED_COLUMN_WIDTH = 120;
 const OPAQUE_NODE = 'opaqueMetadata';
+const NESTED_TABLE_COUNT = 2;
 
 const UNCOVERED_PEER_KIND = 'quill';
 
@@ -815,6 +819,31 @@ test('TBL-21 the convergence oracle leaves attributes of undeclared node types u
     );
 });
 
+test('TBL-21 the convergence oracle treats an attribute payload as an opaque leaf', () => {
+    const carried = { type: CELL_NODE, attrs: { colspan: SINGLE_SPAN } };
+    assert.notEqual(
+        JSON.stringify(cellWith({ metadata: carried })),
+        JSON.stringify(canonicalDocumentShape(
+            cellWith({ metadata: { type: CELL_NODE } }),
+        )),
+        'a cell shape nested inside an attribute payload is data, never a node',
+    );
+    assert.notEqual(
+        JSON.stringify(canonicalDocumentShape(cellWith({ metadata: carried }))),
+        JSON.stringify(canonicalDocumentShape(cellWith({ metadata: { type: CELL_NODE } }))),
+        'normalization never re-enters an attribute payload at any depth',
+    );
+    assert.notEqual(
+        JSON.stringify(canonicalDocumentShape(
+            cellWith({ metadata: { content: [{ type: TEXT_NODE, text: 'a' }, { type: TEXT_NODE, text: 'b' }] } }),
+        )),
+        JSON.stringify(canonicalDocumentShape(
+            cellWith({ metadata: { content: [{ type: TEXT_NODE, text: 'ab' }] } }),
+        )),
+        'text runs inside an attribute payload are not merged',
+    );
+});
+
 test('TBL-21 the convergence oracle still diverges on a genuinely different attribute', () => {
     assert.notEqual(
         shapeOf(cellWith({ colspan: SPANNING_CELL, rowspan: SINGLE_SPAN, colwidth: null })),
@@ -861,6 +890,43 @@ test('TBL-10 the corpus native repair assertion fires on a deliberate autonomous
             'a native repair must never be charged to webControlLoops',
         );
     }, tableFixture('prosemirror'));
+});
+
+test('TBL-21 every applicable scenario meets every schema preset in every topology', () => {
+    for (const topology of CONVERGENCE_TOPOLOGIES) {
+        const scheduled = new Set(
+            CONVERGENCE_CORPUS
+                .filter((schedule) => schedule.topology === topology)
+                .map((schedule) => `${schedule.scenario.name}|${schedule.preset}`),
+        );
+        const required: string[] = [];
+        for (const scenario of scenariosFor(topology)) {
+            for (const preset of CORPUS_PRESETS) {
+                required.push(`${scenario.name}|${preset}`);
+            }
+        }
+        assert.deepEqual(
+            required.filter((pair) => !scheduled.has(pair)),
+            [],
+            `${topology} never runs these scenario and preset pairs`,
+        );
+    }
+});
+
+test('TBL-21 a nested table is judged alongside the table that hosts it', () => {
+    const inner = { type: TABLE_NODE, content: [{ type: ROW_NODE, content: [webCell('x')] }] };
+    const host = {
+        type: CELL_NODE,
+        attrs: { colspan: SINGLE_SPAN, rowspan: SINGLE_SPAN, colwidth: null },
+        content: [inner],
+    };
+    const outer = { type: TABLE_NODE, content: [webRow([host, webCell('b')])] };
+    assert.equal(nestedTablesOf(outer).length, NESTED_TABLE_COUNT);
+    assert.equal(
+        nestedTablesOf({ type: CELL_NODE, attrs: { carried: outer } }).length,
+        NO_FAILURES,
+        'a table shape inside an attribute payload is data, never a table to judge',
+    );
 });
 
 test('TBL-21 the seeded schedule corpus runs every topology and preset', async () => {

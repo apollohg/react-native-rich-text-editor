@@ -8,6 +8,7 @@ import { CELL_ATTRIBUTE_DEFAULTS, CELL_NODE_TYPES } from './table-schema.js';
 const MINIMUM_CONVERGENCE_PEERS = 2;
 const ATTRIBUTES_KEY = 'attrs';
 const NODE_TYPE_KEY = 'type';
+const CONTENT_KEY = 'content';
 const NO_ATTRIBUTES = 0;
 
 export function assertDrainBound(rounds: number, newUpdates: number): void {
@@ -91,23 +92,26 @@ function mergedTextRuns(content: unknown[]): unknown[] {
     return merged;
 }
 
+function canonicalAttributes(
+    attrs: Record<string, unknown>,
+    normalizes: boolean,
+): Record<string, unknown> {
+    const kept: Record<string, unknown> = {};
+    for (const key of Object.keys(attrs).sort()) {
+        const value = attrs[key];
+        if (normalizes && isImplicitAttribute(key, value)) {
+            continue;
+        }
+        kept[key] = canonical(value);
+    }
+    return kept;
+}
+
 function isImplicitAttribute(key: string, value: unknown): boolean {
     if (value === null) {
         return true;
     }
     return key in CELL_ATTRIBUTE_DEFAULTS && value === CELL_ATTRIBUTE_DEFAULTS[key];
-}
-
-function withoutImplicitAttributes(attrs: Record<string, unknown>): Record<string, unknown> {
-    const kept: Record<string, unknown> = {};
-    for (const key of Object.keys(attrs).sort()) {
-        const value = attrs[key];
-        if (isImplicitAttribute(key, value)) {
-            continue;
-        }
-        kept[key] = canonicalDocumentShape(value);
-    }
-    return kept;
 }
 
 export function canonicalDocumentShape(value: unknown): unknown {
@@ -122,17 +126,21 @@ export function canonicalDocumentShape(value: unknown): unknown {
     const shaped: Record<string, unknown> = {};
     for (const key of Object.keys(value).sort()) {
         const child = value[key];
-        if (key === ATTRIBUTES_KEY && isRecord(child) && normalizesAttributes) {
-            const kept = withoutImplicitAttributes(child);
+        if (key === ATTRIBUTES_KEY && isRecord(child)) {
+            const kept = canonicalAttributes(child, normalizesAttributes);
             if (Object.keys(kept).length === NO_ATTRIBUTES) {
                 continue;
             }
             shaped[key] = kept;
             continue;
         }
-        shaped[key] = key === 'content' && Array.isArray(child)
-            ? mergedTextRuns(child)
-            : canonicalDocumentShape(child);
+        if (key === CONTENT_KEY && Array.isArray(child)) {
+            shaped[key] = mergedTextRuns(child);
+            continue;
+        }
+        shaped[key] = Array.isArray(child) || isRecord(child)
+            ? canonicalDocumentShape(child)
+            : child;
     }
     return shaped;
 }

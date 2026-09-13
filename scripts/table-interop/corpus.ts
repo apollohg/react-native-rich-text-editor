@@ -58,6 +58,10 @@ const TYPED_TEXT = 'typed';
 const OUT_OF_ORDER_DELIVERY = 2;
 const ONE_CELL = 1;
 const RESIZED_WIDTH = 180;
+const OTHER_RESIZED_WIDTH = 220;
+const NO_ACTORS = 0;
+const ONE_ACTOR = 1;
+const TWO_ACTORS = 2;
 
 type PresetNodes = {
     readonly row: string;
@@ -142,6 +146,24 @@ async function resizeColumn(peer: Peer, at: number, width: number): Promise<void
     await call(peer, 'command', { type: 'setTableColumnWidth', width, at });
 }
 
+export function raggedCorpusTable(preset: SchemaPreset): Record<string, unknown> {
+    const row = PRESET_NODES[preset].row;
+    return {
+        type: TABLE_NODE,
+        content: [
+            {
+                type: row,
+                content: [
+                    presetCell(preset, 'a'),
+                    presetCell(preset, 'b'),
+                    presetCell(preset, 'c'),
+                ],
+            },
+            { type: row, content: [presetCell(preset, 'd')] },
+        ],
+    };
+}
+
 function nestedIrregularTable(preset: SchemaPreset): Record<string, unknown> {
     const row = PRESET_NODES[preset].row;
     const cellType = PRESET_NODES[preset].cell;
@@ -178,8 +200,8 @@ type ScenarioContext = {
 export type CorpusScenario = {
     readonly name: string;
     readonly mutatesGeometry: boolean;
-    readonly requiresNativeActor: boolean;
-    readonly requiresWebActor: boolean;
+    readonly minimumNativeActors: number;
+    readonly minimumWebActors: number;
     readonly table?: (preset: SchemaPreset) => Record<string, unknown>;
     readonly act: (context: ScenarioContext) => Promise<void>;
 };
@@ -228,8 +250,8 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'concurrent row and column insertion at the same boundary',
         mutatesGeometry: true,
-        requiresNativeActor: false,
-        requiresWebActor: false,
+        minimumNativeActors: NO_ACTORS,
+        minimumWebActors: NO_ACTORS,
         act: async ({ peers, anchors }) => {
             await addRowAfter(peerAt(peers, 0), anchorAt(anchors, TOP_LEFT_CELL));
             await addColumnAfter(peerAt(peers, 1), anchorAt(anchors, TOP_LEFT_CELL));
@@ -238,8 +260,8 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'concurrent merges from opposite corners',
         mutatesGeometry: true,
-        requiresNativeActor: false,
-        requiresWebActor: false,
+        minimumNativeActors: NO_ACTORS,
+        minimumWebActors: NO_ACTORS,
         act: async ({ peers, anchors }) => {
             await mergeCells(
                 peerAt(peers, 0),
@@ -256,8 +278,8 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'a structural action undone and redone by a peer that did not author the table',
         mutatesGeometry: true,
-        requiresNativeActor: false,
-        requiresWebActor: false,
+        minimumNativeActors: NO_ACTORS,
+        minimumWebActors: NO_ACTORS,
         act: async ({ peers, author, anchors, seed }) => {
             const editor = nonAuthoringPeer(peers, author);
             await addRowAfter(editor, anchorAt(anchors, TOP_LEFT_CELL));
@@ -270,8 +292,8 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'a dependent update released before its prerequisite',
         mutatesGeometry: true,
-        requiresNativeActor: false,
-        requiresWebActor: false,
+        minimumNativeActors: NO_ACTORS,
+        minimumWebActors: NO_ACTORS,
         act: async ({ peers, anchors }) => {
             const author = peerAt(peers, 0);
             await addRowAfter(author, anchorAt(anchors, TOP_LEFT_CELL));
@@ -295,8 +317,8 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'typing inside a cell without touching geometry',
         mutatesGeometry: false,
-        requiresNativeActor: false,
-        requiresWebActor: false,
+        minimumNativeActors: NO_ACTORS,
+        minimumWebActors: NO_ACTORS,
         act: async ({ peers, anchors }) => {
             await typeInCell(peerAt(peers, 0), anchorAt(anchors, TOP_LEFT_CELL));
         },
@@ -304,8 +326,8 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'a merged cell split against a concurrent row deletion',
         mutatesGeometry: true,
-        requiresNativeActor: false,
-        requiresWebActor: false,
+        minimumNativeActors: NO_ACTORS,
+        minimumWebActors: NO_ACTORS,
         act: async ({ peers, anchors, liveAnchors, seed }) => {
             await mergeCells(
                 peerAt(peers, 0),
@@ -321,8 +343,8 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'a row inserted across a spanning cell',
         mutatesGeometry: true,
-        requiresNativeActor: false,
-        requiresWebActor: false,
+        minimumNativeActors: NO_ACTORS,
+        minimumWebActors: NO_ACTORS,
         act: async ({ peers, anchors, liveAnchors, seed }) => {
             await mergeCells(
                 peerAt(peers, 0),
@@ -338,8 +360,8 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'a native column resize concurrent with a remote row insertion',
         mutatesGeometry: true,
-        requiresNativeActor: true,
-        requiresWebActor: false,
+        minimumNativeActors: ONE_ACTOR,
+        minimumWebActors: NO_ACTORS,
         act: async ({ peers, anchors }) => {
             const native = nativeActor(peers);
             await resizeColumn(native, anchorAt(anchors, TOP_LEFT_CELL), RESIZED_WIDTH);
@@ -350,22 +372,72 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
         },
     },
     {
-        name: 'a remote structural edit inside a normalization created cell',
+        name: 'a remote edit inside a normalization created cell, then undone and redone',
         mutatesGeometry: true,
-        requiresNativeActor: false,
-        requiresWebActor: true,
-        act: async ({ peers, anchors, liveAnchors, seed }) => {
-            await addRowAfter(peerAt(peers, 0), anchorAt(anchors, TOP_LEFT_CELL));
+        minimumNativeActors: NO_ACTORS,
+        minimumWebActors: TWO_ACTORS,
+        table: raggedCorpusTable,
+        act: async ({ peers, author, anchors, liveAnchors, seed }) => {
+            const editor = webActor(peers.filter((peer) => peer !== author));
+            await addRowAfter(editor, anchorAt(anchors, TOP_LEFT_CELL));
             await exchangeUntilIdle([...peers], seed);
-            const settled = await liveAnchors();
-            await addColumnAfter(webActor(peers), anchorAt(settled, BOTTOM_LEFT_CELL));
+            const created = await liveAnchors();
+            await typeInCell(
+                webActor(peers.filter((peer) => peer !== editor)),
+                anchorAt(created, created.length - ONE_CELL),
+            );
+            await exchangeUntilIdle([...peers], seed);
+            await call(editor, 'undo', {});
+            await exchangeUntilIdle([...peers], seed);
+            await call(editor, 'redo', {});
+        },
+    },
+    {
+        name: 'concurrent resizes of the same logical column',
+        mutatesGeometry: true,
+        minimumNativeActors: TWO_ACTORS,
+        minimumWebActors: NO_ACTORS,
+        act: async ({ peers, anchors }) => {
+            await resizeColumn(peerAt(peers, 0), anchorAt(anchors, TOP_LEFT_CELL), RESIZED_WIDTH);
+            await resizeColumn(
+                peerAt(peers, 1),
+                anchorAt(anchors, BOTTOM_LEFT_CELL),
+                OTHER_RESIZED_WIDTH,
+            );
+        },
+    },
+    {
+        name: 'concurrent resizes of different logical columns',
+        mutatesGeometry: true,
+        minimumNativeActors: TWO_ACTORS,
+        minimumWebActors: NO_ACTORS,
+        act: async ({ peers, anchors }) => {
+            await resizeColumn(peerAt(peers, 0), anchorAt(anchors, TOP_LEFT_CELL), RESIZED_WIDTH);
+            await resizeColumn(
+                peerAt(peers, 1),
+                anchorAt(anchors, TOP_RIGHT_CELL),
+                OTHER_RESIZED_WIDTH,
+            );
+        },
+    },
+    {
+        name: 'a web repair followed by a native undo',
+        mutatesGeometry: false,
+        minimumNativeActors: ONE_ACTOR,
+        minimumWebActors: ONE_ACTOR,
+        table: raggedCorpusTable,
+        act: async ({ peers, anchors, seed }) => {
+            const native = nativeActor(peers);
+            await addRowAfter(native, anchorAt(anchors, TOP_LEFT_CELL));
+            await exchangeUntilIdle([...peers], seed);
+            await call(native, 'undo', {});
         },
     },
     {
         name: 'a nested irregular table under an outer structural edit',
         mutatesGeometry: true,
-        requiresNativeActor: false,
-        requiresWebActor: false,
+        minimumNativeActors: NO_ACTORS,
+        minimumWebActors: NO_ACTORS,
         table: nestedIrregularTable,
         act: async ({ peers, liveAnchors }) => {
             const settled = await liveAnchors();
@@ -389,12 +461,13 @@ function rotate(peers: readonly Peer[], offset: number): readonly Peer[] {
     return peers.map((_peer, index) => peerAt(peers, (index + offset) % peers.length));
 }
 
-function scenariosFor(topology: ConvergenceTopology): readonly CorpusScenario[] {
-    const nativeInclusive = topology !== TOPOLOGY_TWO_WEB_CONTROL;
-    const webInclusive = topology !== TOPOLOGY_NATIVE_NATIVE;
+export function scenariosFor(topology: ConvergenceTopology): readonly CorpusScenario[] {
+    const { kinds, participants } = kindsFor(topology, CORPUS_PRESETS[0] ?? 'prosemirror');
+    const actors = kinds.slice(0, participants);
+    const native = actors.filter((kind) => kind === NATIVE_PEER_KIND).length;
+    const web = actors.length - native;
     return CORPUS_SCENARIOS.filter(
-        (scenario) => (nativeInclusive || !scenario.requiresNativeActor)
-            && (webInclusive || !scenario.requiresWebActor),
+        (scenario) => native >= scenario.minimumNativeActors && web >= scenario.minimumWebActors,
     );
 }
 
@@ -427,9 +500,10 @@ function buildCorpus(): readonly CorpusSchedule[] {
     for (const topology of CORPUS_TOPOLOGY_ORDER) {
         for (let index = 0; index < SCHEDULES_PER_TOPOLOGY; index += 1) {
             seed = nextRandom(seed);
-            const preset = CORPUS_PRESETS[index % CORPUS_PRESETS.length];
             const applicable = scenariosFor(topology);
             const scenario = applicable[index % applicable.length];
+            const presetIndex = Math.floor(index / applicable.length) % CORPUS_PRESETS.length;
+            const preset = CORPUS_PRESETS[presetIndex];
             if (preset === undefined || scenario === undefined) {
                 throw new Error('the corpus generator produced an incomplete schedule');
             }
@@ -484,6 +558,45 @@ async function projectedGeometry(
     }
 }
 
+function structuralTables(node: unknown, found: Record<string, unknown>[]): void {
+    if (Array.isArray(node)) {
+        for (const entry of node) {
+            structuralTables(entry, found);
+        }
+        return;
+    }
+    if (typeof node !== 'object' || node === null) {
+        return;
+    }
+    const record = node as Record<string, unknown>;
+    if (record['type'] === TABLE_NODE) {
+        found.push(record);
+    }
+    structuralTables(record['content'], found);
+}
+
+export function nestedTablesOf(tableJson: unknown): Record<string, unknown>[] {
+    const found: Record<string, unknown>[] = [];
+    structuralTables(tableJson, found);
+    return found;
+}
+
+async function projectedNestedGeometry(
+    judge: Peer,
+    preset: SchemaPreset,
+    tableJson: unknown,
+): Promise<SettledGeometry> {
+    let irregular = false;
+    for (const table of nestedTablesOf(tableJson)) {
+        const projected = await projectedGeometry(judge, preset, table);
+        if (projected.kind !== GEOMETRY_ADMITTED) {
+            return projected;
+        }
+        irregular = irregular || projected.irregular;
+    }
+    return { kind: GEOMETRY_ADMITTED, irregular };
+}
+
 export async function settledGeometryOf(
     peers: readonly Peer[],
     judge: Peer,
@@ -505,7 +618,7 @@ export async function settledGeometryOf(
             };
         }
     }
-    return projectedGeometry(judge, preset, JSON.parse(first));
+    return projectedNestedGeometry(judge, preset, JSON.parse(first));
 }
 
 export async function nativeRepairWrites(peers: readonly Peer[]): Promise<number> {
