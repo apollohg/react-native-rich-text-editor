@@ -32,6 +32,9 @@ const WEB_INCLUSIVE_TOPOLOGIES: readonly ConvergenceTopology[] = [
 export const GEOMETRY_ADMITTED = 'admitted';
 export const GEOMETRY_PROJECTION_FAILED = 'projectionFailed';
 export const GEOMETRY_RAW_JSON_DISAGREEMENT = 'rawJsonDisagreement';
+export const GEOMETRY_ORACLE_FAILED = 'convergenceOracleFailed';
+
+const IRREGULAR_ALLOWED_TOPOLOGIES: readonly ConvergenceTopology[] = [TOPOLOGY_NATIVE_NATIVE];
 
 export type SettledGeometry =
     | { readonly kind: typeof GEOMETRY_ADMITTED; readonly irregular: boolean }
@@ -40,7 +43,12 @@ export type SettledGeometry =
         readonly code: string;
         readonly message: string;
     }
-    | { readonly kind: typeof GEOMETRY_RAW_JSON_DISAGREEMENT; readonly detail: string };
+    | { readonly kind: typeof GEOMETRY_RAW_JSON_DISAGREEMENT; readonly detail: string }
+    | {
+        readonly kind: typeof GEOMETRY_ORACLE_FAILED;
+        readonly failureClass: string;
+        readonly message: string;
+    };
 
 export interface SettledRun {
     readonly name: string;
@@ -78,6 +86,7 @@ export interface ConvergenceReport {
     readonly findings: string[];
 }
 
+const CHARGED_MARKER = '; charged to ';
 const NO_PEERS = 0;
 const ONE_PEER = 1;
 const TWO_PEERS = 2;
@@ -131,7 +140,20 @@ function describeGeometry(geometry: SettledGeometry): string {
     if (geometry.kind === GEOMETRY_RAW_JSON_DISAGREEMENT) {
         return `${GEOMETRY_RAW_JSON_DISAGREEMENT}: ${geometry.detail}`;
     }
+    if (geometry.kind === GEOMETRY_ORACLE_FAILED) {
+        return `${GEOMETRY_ORACLE_FAILED} ${geometry.failureClass}: ${geometry.message}`;
+    }
     return `${GEOMETRY_ADMITTED} irregular=${String(geometry.irregular)}`;
+}
+
+export function settlesWithValidGeometry(
+    topology: ConvergenceTopology,
+    geometry: SettledGeometry,
+): boolean {
+    if (geometry.kind !== GEOMETRY_ADMITTED) {
+        return false;
+    }
+    return !geometry.irregular || IRREGULAR_ALLOWED_TOPOLOGIES.includes(topology);
 }
 
 function requireNonNegativeInteger(value: number, field: string): number {
@@ -153,7 +175,7 @@ export function recordSettledRun(report: ConvergenceReport, run: SettledRun): vo
     report.settledRuns += ONE_OBSERVATION;
     report.webControlLoops += run.webControlLoops;
     const description = `${run.name} [${run.topology}] ${describeGeometry(run.geometry)}`;
-    if (run.geometry.kind === GEOMETRY_ADMITTED) {
+    if (settlesWithValidGeometry(run.topology, run.geometry)) {
         report.findings.push(description);
         return;
     }
@@ -169,11 +191,11 @@ export function recordSettledRun(report: ConvergenceReport, run: SettledRun): vo
     }
     if (NATIVE_INCLUSIVE_TOPOLOGIES.includes(run.topology)) {
         report.invalidSettledNativeTables += ONE_OBSERVATION;
-        report.findings.push(`${description}; charged to invalidSettledNativeTables`);
+        report.findings.push(`${description}${CHARGED_MARKER}invalidSettledNativeTables`);
         return;
     }
     report.invalidSettledWebControlTables += ONE_OBSERVATION;
-    report.findings.push(`${description}; charged to invalidSettledWebControlTables`);
+    report.findings.push(`${description}${CHARGED_MARKER}invalidSettledWebControlTables`);
 }
 
 export function recordAdmission(
@@ -184,7 +206,7 @@ export function recordAdmission(
         + `admitted=${String(observation.admitted)}: ${observation.detail}`;
     if (observation.classification === UNSAFE_INPUT && observation.admitted) {
         report.unsafeAdmissions += ONE_OBSERVATION;
-        report.findings.push(`${description}; charged to unsafeAdmissions`);
+        report.findings.push(`${description}${CHARGED_MARKER}unsafeAdmissions`);
         return;
     }
     report.findings.push(description);
@@ -207,6 +229,10 @@ export function recordSourceCellCoverage(
         `${coverage.name} projected ${coverage.sourceCellAnchors.length} source cells, `
             + `lost ${JSON.stringify(lost)}`,
     );
+}
+
+export function chargedFindings(report: ConvergenceReport): string[] {
+    return report.findings.filter((finding) => finding.includes(CHARGED_MARKER));
 }
 
 export function chargedScalars(report: ConvergenceReport): string[] {

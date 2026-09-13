@@ -26,6 +26,7 @@ import {
     TOPOLOGY_TWO_WEB_CONTROL,
     UNSAFE_INPUT,
     CONVERGENCE_TOPOLOGIES,
+    chargedFindings,
     chargedScalars,
     topologyOf,
     convergenceScalarsPassed,
@@ -41,6 +42,11 @@ import type {
     SettledGeometry,
     SettledRun,
 } from '../convergence-report.js';
+import {
+    CONVERGENCE_CORPUS,
+    SCHEDULES_PER_TOPOLOGY,
+    runSchedule,
+} from '../corpus.js';
 import {
     CELL_NODE,
     PARAGRAPH_NODE,
@@ -80,24 +86,12 @@ const ONE_CHILD = 1;
 
 const UNCOVERED_PEER_KIND = 'quill';
 
-const CORPUS_RUN_TOPOLOGIES: readonly ConvergenceTopology[] = [
-    TOPOLOGY_NATIVE_NATIVE,
-    TOPOLOGY_NATIVE_WEB,
-    TOPOLOGY_NATIVE_TWO_WEB,
-    TOPOLOGY_TWO_WEB_CONTROL,
-    TOPOLOGY_TWO_WEB_CONTROL,
-];
-
 const suiteReport = createConvergenceReport();
 const chargedTopologies = new Set<ConvergenceTopology>();
 const attemptedRuns: ConvergenceTopology[] = [];
 
-function attemptRun(topology: ConvergenceTopology): void {
-    attemptedRuns.push(topology);
-}
-
-function chargeRun(local: ConvergenceReport, run: SettledRun): void {
-    recordSettledRun(local, run);
+function chargeCorpusRun(run: SettledRun): void {
+    attemptedRuns.push(run.topology);
     recordSettledRun(suiteReport, run);
     chargedTopologies.add(run.topology);
 }
@@ -231,22 +225,41 @@ test('TBL-21 a settled run label is derived from the peers, never from the calle
     );
 });
 
-test('TBL-21 an admitted irregular settled table charges neither settled-geometry scalar', async () => {
+test('TBL-21 irregular settled geometry is allowed for native-only runs and charged for mixed runs', async () => {
     await withPeers(
         ['prosemirror', 'prosemirror', 'rust'] as const,
         async ([first, second, native]) => {
-            const report = createConvergenceReport();
-            recordSettledRun(report, {
-                name: 'web plugin settles irregular',
+            const nativeOnly = createConvergenceReport();
+            recordSettledRun(nativeOnly, {
+                name: 'a native-only document that stays irregular',
+                peers: [native, native],
+                topology: TOPOLOGY_NATIVE_NATIVE,
+                webControlLoops: NO_LOOPS,
+                geometry: { kind: GEOMETRY_ADMITTED, irregular: true },
+            });
+            assert.equal(nativeOnly.invalidSettledNativeTables, NO_FAILURES);
+            assert.equal(nativeOnly.settledRuns, ONE_SETTLED_RUN);
+            assert.ok(
+                convergenceScalarsPassed(nativeOnly),
+                'spec:296 allows native-only irregular raw state under TBL-11 projection: '
+                    + describeConvergenceReport(nativeOnly),
+            );
+
+            const mixed = createConvergenceReport();
+            recordSettledRun(mixed, {
+                name: 'a settled mixed run that stays irregular',
                 peers: [first, second, native],
                 topology: TOPOLOGY_NATIVE_TWO_WEB,
                 webControlLoops: NO_LOOPS,
                 geometry: { kind: GEOMETRY_ADMITTED, irregular: true },
             });
-            assert.equal(report.invalidSettledNativeTables, NO_FAILURES);
-            assert.equal(report.invalidSettledWebControlTables, NO_FAILURES);
-            assert.equal(report.settledRuns, ONE_SETTLED_RUN);
-            assert.ok(convergenceScalarsPassed(report), describeConvergenceReport(report));
+            assert.equal(
+                mixed.invalidSettledNativeTables,
+                ONE_FAILURE,
+                'spec:145 requires valid shared raw geometry once web repairs quiesce: '
+                    + describeConvergenceReport(mixed),
+            );
+            assert.equal(convergenceScalarsPassed(mixed), false);
         },
         tableFixture('prosemirror'),
     );
@@ -319,7 +332,6 @@ test('TBL-21 an invalid geometry in a still-repairing web run charges no settled
 });
 
 test('TBL-21 a drained native/native run settles on admissible geometry', async () => {
-    attemptRun(TOPOLOGY_NATIVE_NATIVE);
     const report = createConvergenceReport();
     await withPeers(['rust', 'rust'] as const, async ([source, replica]) => {
         await call(source, 'command', {
@@ -329,7 +341,7 @@ test('TBL-21 a drained native/native run settles on admissible geometry', async 
         await seedFrom(source, [replica]);
         await exchangeUntilIdle([source, replica]);
         const settled = await settledGeometryOf([source, replica], source);
-        chargeRun(report, {
+        recordSettledRun(report, {
             name: 'native/native ragged table, drained',
             peers: [source, replica],
             topology: TOPOLOGY_NATIVE_NATIVE,
@@ -337,6 +349,11 @@ test('TBL-21 a drained native/native run settles on admissible geometry', async 
             geometry: settled,
         });
         assert.equal(settled.kind, GEOMETRY_ADMITTED, describeConvergenceReport(report));
+        assert.equal(
+            settled.irregular,
+            true,
+            'spec:296 allows a native-only document to stay structurally irregular',
+        );
         assert.equal(
             (await snapshot(replica)).autonomousRepairWrites,
             NO_FAILURES,
@@ -347,7 +364,6 @@ test('TBL-21 a drained native/native run settles on admissible geometry', async 
 });
 
 test('TBL-21 a drained native/web run settles on admissible geometry', async () => {
-    attemptRun(TOPOLOGY_NATIVE_WEB);
     const report = createConvergenceReport();
     await withPeers(['prosemirror', 'rust'] as const, async ([web, native]) => {
         await seedFrom(web, [native]);
@@ -363,7 +379,7 @@ test('TBL-21 a drained native/web run settles on admissible geometry', async () 
         await exchangeUntilIdle([web, native]);
 
         const settled = await settledGeometryOf([web, native], native);
-        chargeRun(report, {
+        recordSettledRun(report, {
             name: 'native/web structural edit, drained',
             peers: [web, native],
             topology: TOPOLOGY_NATIVE_WEB,
@@ -380,8 +396,7 @@ test('TBL-21 a drained native/web run settles on admissible geometry', async () 
     }, tableFixture('prosemirror'));
 });
 
-test('TBL-21 a drained native/two-web run with reordered native delivery stays admissible', async () => {
-    attemptRun(TOPOLOGY_NATIVE_TWO_WEB);
+test('TBL-21 a settled mixed run that stays irregular charges the native scalar', async () => {
     const report = createConvergenceReport();
     await withPeers(
         ['prosemirror', 'prosemirror', 'rust'] as const,
@@ -419,7 +434,7 @@ test('TBL-21 a drained native/two-web run with reordered native delivery stays a
             await exchangeUntilIdle([first, second, native]);
 
             const settled = await settledGeometryOf([first, second, native], native);
-            chargeRun(report, {
+            recordSettledRun(report, {
                 name: 'native/two-web concurrent row and column, reversed native delivery, drained',
                 peers: [first, second, native],
                 topology: TOPOLOGY_NATIVE_TWO_WEB,
@@ -437,14 +452,20 @@ test('TBL-21 a drained native/two-web run with reordered native delivery stays a
                 NO_FAILURES,
                 'native carries the web-settled geometry without writing a repair',
             );
-            assert.ok(convergenceScalarsPassed(report), describeConvergenceReport(report));
+            assert.equal(
+                report.invalidSettledNativeTables,
+                ONE_FAILURE,
+                'spec:145 requires valid shared raw geometry once a mixed run settles; the '
+                    + 'spec:296 allowance for irregular raw state covers native-only documents '
+                    + `only: ${describeConvergenceReport(report)}`,
+            );
+            assert.equal(convergenceScalarsPassed(report), false);
         },
         tableFixture('prosemirror'),
     );
 });
 
 test('TBL-21 a drained two-web control is judged by the Rust projection, not by its own peers', async () => {
-    attemptRun(TOPOLOGY_TWO_WEB_CONTROL);
     const report = createConvergenceReport();
     await withPeers(
         ['prosemirror', 'prosemirror', 'rust'] as const,
@@ -463,7 +484,7 @@ test('TBL-21 a drained two-web control is judged by the Rust projection, not by 
             await assertJudgeStayedOutside(judge);
 
             const settled = await settledGeometryOf([first, second], judge);
-            chargeRun(report, {
+            recordSettledRun(report, {
                 name: 'two-web control structural edit, drained',
                 peers: [first, second],
                 topology: TOPOLOGY_TWO_WEB_CONTROL,
@@ -477,8 +498,7 @@ test('TBL-21 a drained two-web control is judged by the Rust projection, not by 
     );
 });
 
-test('TBL-21 a drained two-web control settling concurrent overlapping merges stays admissible', async () => {
-    attemptRun(TOPOLOGY_TWO_WEB_CONTROL);
+test('TBL-21 a drained two-web control settling concurrent overlapping merges charges the control scalar', async () => {
     const report = createConvergenceReport();
     await withPeers(
         ['prosemirror', 'prosemirror', 'rust'] as const,
@@ -511,7 +531,7 @@ test('TBL-21 a drained two-web control settling concurrent overlapping merges st
             await assertJudgeStayedOutside(judge);
 
             const settled = await settledGeometryOf([first, second], judge);
-            chargeRun(report, {
+            recordSettledRun(report, {
                 name: 'two-web control concurrent overlapping merges, drained',
                 peers: [first, second],
                 topology: TOPOLOGY_TWO_WEB_CONTROL,
@@ -520,8 +540,9 @@ test('TBL-21 a drained two-web control settling concurrent overlapping merges st
             });
             assert.equal(
                 report.invalidSettledWebControlTables,
-                NO_FAILURES,
-                `pinned prosemirror-tables settled the adversarial merge pair as `
+                ONE_FAILURE,
+                'the pinned prosemirror-tables control settles the adversarial merge pair on '
+                    + 'geometry TBL-21 does not accept for a mixed-client product: '
                     + describeConvergenceReport(report),
             );
             assert.equal(report.invalidSettledNativeTables, NO_FAILURES);
@@ -747,27 +768,52 @@ test('TBL-10 unsafeAdmissions charges an unsafe update the engine admitted', asy
     }, tableFixture('prosemirror'));
 });
 
-test('TBL-21 the convergence corpus passes the settled-geometry gate', () => {
-    assert.deepEqual(
-        attemptedRuns.filter((topology) => !chargedTopologies.has(topology)),
-        [],
-        'a corpus run was attempted but its settled geometry was never charged: '
-            + describeConvergenceReport(suiteReport),
+test('TBL-21 the seeded schedule corpus runs every topology and preset', async () => {
+    const startedAt = Date.now();
+    for (const schedule of CONVERGENCE_CORPUS) {
+        const outcome = await runSchedule(schedule);
+        chargeCorpusRun({
+            name: schedule.name,
+            peers: outcome.peers,
+            topology: schedule.topology,
+            webControlLoops: outcome.webControlLoops,
+            geometry: outcome.geometry,
+        });
+    }
+    process.stdout.write(
+        `corpus wall time ${Date.now() - startedAt}ms over ${CONVERGENCE_CORPUS.length} schedules\n`,
     );
-    if (attemptedRuns.length < CORPUS_RUN_TOPOLOGIES.length) {
+    assert.equal(attemptedRuns.length, CONVERGENCE_CORPUS.length);
+    for (const topology of CONVERGENCE_TOPOLOGIES) {
+        assert.equal(
+            attemptedRuns.filter((attempted) => attempted === topology).length,
+            SCHEDULES_PER_TOPOLOGY,
+            `${topology} did not run ${SCHEDULES_PER_TOPOLOGY} schedules`,
+        );
+    }
+});
+
+test('TBL-21 the convergence corpus passes the settled-geometry gate', () => {
+    if (attemptedRuns.length < CONVERGENCE_CORPUS.length) {
         assert.deepEqual(
             chargedScalars(suiteReport),
             [],
-            `${attemptedRuns.length} of ${CORPUS_RUN_TOPOLOGIES.length} corpus runs were `
-                + 'selected, so the aggregate topology coverage is not asserted: '
-                + describeConvergenceReport(suiteReport),
+            `${attemptedRuns.length} of ${CONVERGENCE_CORPUS.length} corpus schedules ran, so `
+                + 'the aggregate topology coverage is not asserted: '
+                + chargedFindings(suiteReport).join('\n'),
         );
         return;
     }
     assert.deepEqual(
         [...CONVERGENCE_TOPOLOGIES].filter((topology) => !chargedTopologies.has(topology)),
         [],
-        `the corpus left topologies unrun: ${describeConvergenceReport(suiteReport)}`,
+        'the corpus left topologies unrun',
     );
-    assert.ok(convergenceScalarsPassed(suiteReport), describeConvergenceReport(suiteReport));
+    assert.deepEqual(
+        chargedScalars(suiteReport),
+        [],
+        `TBL-21 go/no-go: ${chargedFindings(suiteReport).length} of ${suiteReport.settledRuns} `
+            + `settled runs charged a gate scalar:\n${chargedFindings(suiteReport).join('\n')}`,
+    );
+    assert.ok(convergenceScalarsPassed(suiteReport));
 });

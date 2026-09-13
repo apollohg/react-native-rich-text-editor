@@ -10,6 +10,52 @@ export const CELL_ATTRIBUTES = {
     colwidth: { default: null },
 };
 
+export const TIPTAP_ROW_NODE = 'tableRow';
+export const TIPTAP_CELL_NODE = 'tableCell';
+export const TIPTAP_HEADER_CELL_NODE = 'tableHeader';
+
+export function tableSchemaOf(
+    rowNode: string,
+    cellNode: string,
+    headerCellNode: string,
+): Record<string, unknown> {
+    return {
+        nodes: [
+            { name: 'doc', content: 'block+', role: 'doc' },
+            { name: PARAGRAPH_NODE, content: 'inline*', group: 'block', role: 'textBlock' },
+            { name: 'text', content: '', group: 'inline', role: 'text' },
+            {
+                name: TABLE_NODE,
+                content: `${rowNode}+`,
+                group: 'block',
+                role: 'block',
+                tableRole: 'table',
+            },
+            {
+                name: rowNode,
+                content: `(${cellNode} | ${headerCellNode})*`,
+                role: 'block',
+                tableRole: 'row',
+            },
+            {
+                name: cellNode,
+                content: 'block+',
+                role: 'block',
+                tableRole: 'cell',
+                attrs: CELL_ATTRIBUTES,
+            },
+            {
+                name: headerCellNode,
+                content: 'block+',
+                role: 'block',
+                tableRole: 'header_cell',
+                attrs: CELL_ATTRIBUTES,
+            },
+        ],
+        marks: [],
+    };
+}
+
 export const TABLE_SCHEMA = {
     nodes: [
         { name: 'doc', content: 'block+', role: 'doc' },
