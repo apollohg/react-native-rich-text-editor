@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isRecord } from './peer-protocol.js';
@@ -18,6 +18,7 @@ const TRACE_FILE_EXTENSION = '.json';
 const RAW_TRACE_SUFFIX = '';
 const MINIMIZED_TRACE_SUFFIX = '-min';
 const TRACE_JSON_INDENT = 2;
+const FIRST_TRACE_ORDINAL = 2;
 
 export interface TraceDependencyManifest {
     node: string;
@@ -158,9 +159,25 @@ export function traceFileName(trace: Trace, suffix: string): string {
     return `${parts.join(TRACE_NAME_SEPARATOR)}${suffix}${TRACE_FILE_EXTENSION}`;
 }
 
+function uncollidedPath(trace: Trace, suffix: string): string {
+    const preferred = join(TRACE_DIRECTORY, traceFileName(trace, suffix));
+    if (!existsSync(preferred)) {
+        return preferred;
+    }
+    for (let ordinal = FIRST_TRACE_ORDINAL; ; ordinal += 1) {
+        const candidate = join(
+            TRACE_DIRECTORY,
+            traceFileName(trace, `${suffix}${TRACE_NAME_SEPARATOR}${ordinal}`),
+        );
+        if (!existsSync(candidate)) {
+            return candidate;
+        }
+    }
+}
+
 function persist(trace: Trace, suffix: string): string {
     mkdirSync(TRACE_DIRECTORY, { recursive: true });
-    const path = join(TRACE_DIRECTORY, traceFileName(trace, suffix));
+    const path = uncollidedPath(trace, suffix);
     writeFileSync(path, JSON.stringify(trace, null, TRACE_JSON_INDENT), 'utf8');
     return path;
 }

@@ -166,6 +166,10 @@ export async function call(
     return performRequest(peer, operation, payload, 'action');
 }
 
+export function peerKindOf(peer: Peer): PeerKind {
+    return recordFor(peer).kind;
+}
+
 export async function snapshot(peer: Peer): Promise<PeerSnapshot> {
     const record = recordFor(peer);
     const value = await call(peer, 'snapshot', {});
@@ -486,7 +490,12 @@ export async function withPeers<const Kinds extends readonly PeerKind[]>(
     } catch (error) {
         failure = error;
     }
-    endTrace(outerTrace, failure);
+    let traceFailure: unknown = null;
+    try {
+        endTrace(outerTrace, failure);
+    } catch (error) {
+        traceFailure = error;
+    }
     const closeFailures: unknown[] = [];
     for (const peer of started) {
         try {
@@ -497,6 +506,9 @@ export async function withPeers<const Kinds extends readonly PeerKind[]>(
     }
     if (failure !== null) {
         throw failure;
+    }
+    if (traceFailure !== null) {
+        throw traceFailure;
     }
     if (closeFailures.length > 0) {
         throw closeFailures[0];
