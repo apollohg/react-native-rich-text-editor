@@ -190,6 +190,8 @@ function nestedIrregularTable(preset: SchemaPreset): Record<string, unknown> {
 
 type ScenarioContext = {
     readonly peers: readonly Peer[];
+    readonly fixture: Record<string, unknown>;
+    readonly liveTable: () => Promise<Record<string, unknown>>;
     readonly author: Peer;
     readonly anchors: readonly number[];
     readonly liveAnchors: () => Promise<number[]>;
@@ -201,6 +203,7 @@ type ScenarioContext = {
 export type ScenarioEvidence = {
     readonly settledTable: Record<string, unknown>;
     readonly seededTable: Record<string, unknown>;
+    readonly fixtureTable: Record<string, unknown>;
 };
 
 export type CorpusScenario = {
@@ -253,10 +256,10 @@ function anchorAt(anchors: readonly number[], index: number): number {
     return anchor;
 }
 
-const NORMALIZED_ROW_COUNT = 2;
-const CREATED_ROW_INDEX = 1;
 const ONE_OCCURRENCE = 1;
 const ONE_ROW = 1;
+const NO_SLOTS = 0;
+const FIRST_MARKER = 0;
 const FIRST_CELL_IN_ROW = 0;
 
 function rowGroupedAnchors(tableJson: Record<string, unknown>): number[][] {
@@ -277,38 +280,128 @@ function tableRows(tableJson: Record<string, unknown>): Record<string, unknown>[
     return Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [];
 }
 
-function rowText(rowJson: Record<string, unknown>): string {
-    return JSON.stringify(rowJson['content'] ?? []);
+function structuralText(node: unknown, collected: string[]): void {
+    if (Array.isArray(node)) {
+        for (const entry of node) {
+            structuralText(entry, collected);
+        }
+        return;
+    }
+    if (typeof node !== 'object' || node === null) {
+        return;
+    }
+    const record = node as Record<string, unknown>;
+    const text = record['text'];
+    if (typeof text === 'string') {
+        collected.push(text);
+    }
+    structuralText(record['content'], collected);
+}
+
+function cellTexts(cellJson: Record<string, unknown>): string {
+    const collected: string[] = [];
+    structuralText(cellJson['content'], collected);
+    return collected.join('');
+}
+
+function rowCells(rowJson: Record<string, unknown>): Record<string, unknown>[] {
+    const cells = rowJson['content'];
+    return Array.isArray(cells) ? (cells as Record<string, unknown>[]) : [];
+}
+
+function rowTexts(rowJson: Record<string, unknown>): string[] {
+    return rowCells(rowJson).map((cellJson) => cellTexts(cellJson));
+}
+
+function fixtureRowWidths(fixtureTable: Record<string, unknown>): number[] {
+    return tableRows(fixtureTable).map((rowJson) => rowCells(rowJson).length);
+}
+
+function preExistingRowMarkers(fixtureTable: Record<string, unknown>): string[] {
+    return tableRows(fixtureTable).map((rowJson) => rowTexts(rowJson)[FIRST_CELL_IN_ROW] ?? '');
+}
+
+function gapFilledSlots(
+    fixtureTable: Record<string, unknown>,
+    settledTable: Record<string, unknown>,
+): { rowIndex: number; columnIndex: number }[] {
+    const widths = fixtureRowWidths(fixtureTable);
+    const markers = preExistingRowMarkers(fixtureTable);
+    const slots: { rowIndex: number; columnIndex: number }[] = [];
+    for (const [rowIndex, rowJson] of tableRows(settledTable).entries()) {
+        const texts = rowTexts(rowJson);
+        const fixtureIndex = markers.findIndex(
+            (marker) => marker.length > 0 && texts[FIRST_CELL_IN_ROW] === marker,
+        );
+        if (fixtureIndex === -1) {
+            continue;
+        }
+        const authored = widths[fixtureIndex] ?? 0;
+        for (let columnIndex = authored; columnIndex < texts.length; columnIndex += 1) {
+            slots.push({ rowIndex, columnIndex });
+        }
+    }
+    return slots;
 }
 
 function scenarioEvidenceFailure(detail: string): Error {
     return new Error(`TBL-21 SCENARIO_EVIDENCE: ${detail}`);
 }
 
+function markerSlots(tableJson: Record<string, unknown>): { rowIndex: number; columnIndex: number }[] {
+    const found: { rowIndex: number; columnIndex: number }[] = [];
+    for (const [rowIndex, rowJson] of tableRows(tableJson).entries()) {
+        for (const [columnIndex, text] of rowTexts(rowJson).entries()) {
+            if (text.includes(TYPED_TEXT)) {
+                found.push({ rowIndex, columnIndex });
+            }
+        }
+    }
+    return found;
+}
+
 function provesNormalizationHistory(evidence: ScenarioEvidence): void {
-    const seededRows = tableRows(evidence.seededTable);
-    const settledRows = tableRows(evidence.settledTable);
-    if (seededRows.length !== NORMALIZED_ROW_COUNT) {
+    const settledGaps = gapFilledSlots(evidence.fixtureTable, evidence.settledTable);
+    if (settledGaps.length === NO_SLOTS) {
         throw scenarioEvidenceFailure(
-            `the ragged fixture must settle on ${NORMALIZED_ROW_COUNT} rows, not ${seededRows.length}`,
+            'normalization filled no gap in a pre-existing row, so no cell here was created by '
+                + 'normalization',
         );
     }
+    const settledRows = tableRows(evidence.settledTable);
+    const seededRows = tableRows(evidence.seededTable);
     if (settledRows.length !== seededRows.length + ONE_ROW) {
         throw scenarioEvidenceFailure(
             `the redone row insertion must leave ${seededRows.length + ONE_ROW} rows, not `
                 + `${settledRows.length}`,
         );
     }
-    const carrying = settledRows.filter((rowJson) => rowText(rowJson).includes(TYPED_TEXT));
+    const carrying = markerSlots(evidence.settledTable);
     if (carrying.length !== ONE_OCCURRENCE) {
         throw scenarioEvidenceFailure(
-            `the remote edit must survive in exactly one row, found ${carrying.length}`,
+            `the remote edit must survive in exactly one cell, found ${carrying.length}`,
         );
     }
-    const created = settledRows[CREATED_ROW_INDEX];
-    if (created === undefined || !rowText(created).includes(TYPED_TEXT)) {
+    const edited = carrying[FIRST_MARKER];
+    if (
+        edited === undefined
+        || !settledGaps.some(
+            (slot) => slot.rowIndex === edited.rowIndex && slot.columnIndex === edited.columnIndex,
+        )
+    ) {
         throw scenarioEvidenceFailure(
-            'the remote edit must survive inside the row the editor created',
+            'the remote edit must survive in a cell normalization created, not one an insertion '
+                + `created; it is at ${JSON.stringify(edited)} and the gap-filled slots are `
+                + JSON.stringify(settledGaps),
+        );
+    }
+}
+
+function requireApplied(result: Record<string, unknown>, operation: string): void {
+    if (result['applied'] !== true) {
+        throw scenarioEvidenceFailure(
+            `${operation} reported applied=${JSON.stringify(result['applied'])}, so the history `
+                + 'step this scenario exists to prove never happened',
         );
     }
 }
@@ -317,24 +410,57 @@ async function normalizationHistory(
     context: ScenarioContext,
     selectEditor: (peers: readonly Peer[]) => Peer,
 ): Promise<void> {
-    const { peers, author, anchors, liveRowAnchors, seed } = context;
+    const { peers, author, anchors, fixture, liveTable, liveRowAnchors, seed } = context;
     const editor = selectEditor(peers.filter((peer) => peer !== author));
-    await addRowAfter(editor, anchorAt(anchors, TOP_LEFT_CELL));
-    await exchangeUntilIdle([...peers], seed);
-    const created = await liveRowAnchors();
-    const createdRow = created[CREATED_ROW_INDEX];
-    if (createdRow === undefined) {
-        throw scenarioEvidenceFailure('the editor created no row to edit');
-    }
     const typist = peers.find((peer) => peer !== editor);
     if (typist === undefined) {
         throw scenarioEvidenceFailure('the scenario needs a peer other than the editor to type');
     }
-    await typeInCell(typist, anchorAt(createdRow, FIRST_CELL_IN_ROW));
+
+    const seededTable = await liveTable();
+    const seededRowCount = tableRows(seededTable).length;
+    await addRowAfter(editor, anchorAt(anchors, TOP_LEFT_CELL));
     await exchangeUntilIdle([...peers], seed);
-    await call(editor, 'undo', {});
+
+    const inserted = await liveTable();
+    if (tableRows(inserted).length !== seededRowCount + ONE_ROW) {
+        throw scenarioEvidenceFailure(
+            `the editor's row insertion must add one row, leaving ${seededRowCount + ONE_ROW}, not `
+                + `${tableRows(inserted).length}`,
+        );
+    }
+    const target = gapFilledSlots(fixture, inserted)[FIRST_MARKER];
+    if (target === undefined) {
+        throw scenarioEvidenceFailure(
+            'normalization filled no gap in a pre-existing row, so there is nothing this '
+                + 'scenario can remotely edit',
+        );
+    }
+    const rows = await liveRowAnchors();
+    const targetRow = rows[target.rowIndex];
+    if (targetRow === undefined) {
+        throw scenarioEvidenceFailure('the gap-filled row exposes no cell anchors');
+    }
+    await typeInCell(typist, anchorAt(targetRow, target.columnIndex));
     await exchangeUntilIdle([...peers], seed);
-    await call(editor, 'redo', {});
+
+    requireApplied(await call(editor, 'undo', {}), 'undo');
+    await exchangeUntilIdle([...peers], seed);
+    const undone = await liveTable();
+    if (tableRows(undone).length !== seededRowCount) {
+        throw scenarioEvidenceFailure(
+            `undoing the row insertion must restore ${seededRowCount} rows, not `
+                + `${tableRows(undone).length}`,
+        );
+    }
+    if (markerSlots(undone).length !== ONE_OCCURRENCE) {
+        throw scenarioEvidenceFailure(
+            'the remote edit must survive the undo of an unrelated structural action, found '
+                + `${markerSlots(undone).length} occurrences`,
+        );
+    }
+
+    requireApplied(await call(editor, 'redo', {}), 'redo');
 }
 
 export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
@@ -769,6 +895,10 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
                         tableOf((await snapshot(author)).documentJson) as Record<string, unknown>,
                         TABLE_START,
                     ),
+                    fixture,
+                    liveTable: async () => tableOf(
+                        (await snapshot(author)).documentJson,
+                    ) as Record<string, unknown>,
                     liveRowAnchors: async () => rowGroupedAnchors(
                         tableOf((await snapshot(author)).documentJson) as Record<string, unknown>,
                     ),
@@ -790,6 +920,7 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
                     schedule.scenario.proves({
                         settledTable: settledJson as Record<string, unknown>,
                         seededTable: JSON.parse(seeded) as Record<string, unknown>,
+                        fixtureTable: fixture,
                     });
                 }
                 nativeRepairs = await nativeRepairWrites(participants);
