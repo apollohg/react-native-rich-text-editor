@@ -111,6 +111,13 @@ export class DeliveryScheduler {
         return this.deliveryRecords;
     }
 
+    drainStats(): { rounds: number; emitted: number } {
+        return {
+            rounds: this.roundRecords.length,
+            emitted: this.roundRecords.reduce((total, round) => total + round.emitted, 0),
+        };
+    }
+
     enqueue(sender: number, event: UpdateEvent): ScheduledMessage[] {
         if (event.kind !== 'document') {
             throw new Error(`TBL-21 SCHEDULER_MISUSE: ${event.kind} events are not document deliveries`);

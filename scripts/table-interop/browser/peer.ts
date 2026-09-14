@@ -303,6 +303,15 @@ function anchorSelection(editor: MountedEditor, command: Record<string, unknown>
 function applyCommand(editor: MountedEditor, command: Record<string, unknown>): void {
     anchorSelection(editor, command);
     const type = command['type'];
+    if (type === 'appendParagraph') {
+        const { state } = editor.view;
+        const paragraph = state.schema.nodes['paragraph'];
+        if (!paragraph) {
+            throw new PeerOperationError(CONFIG_INVALID, 'paragraph node is unavailable');
+        }
+        editor.view.dispatch(state.tr.insert(state.doc.content.size, paragraph.create()));
+        return;
+    }
     if (type === INSERT_TEXT_COMMAND) {
         const text = requireString(command['text'], 'command.text');
         editor.view.dispatch(editor.view.state.tr.insertText(text));

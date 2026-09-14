@@ -9,6 +9,7 @@ import {
     snapshot,
     tableFixture,
     withPeers,
+    createScheduler,
 } from './controller.js';
 import type { SchemaPreset } from './controller.js';
 import {
@@ -23,7 +24,7 @@ import {
 } from './convergence-report.js';
 import type { ConvergenceTopology, SettledGeometry } from './convergence-report.js';
 import { NATIVE_PEER_KIND } from './peer-protocol.js';
-import type { Peer, PeerKind } from './peer-protocol.js';
+import type { Peer, PeerKind, EffectiveDocument, JsonNode } from './peer-protocol.js';
 import { nextRandom } from './scheduler.js';
 import {
     CELL_NODE,
@@ -38,10 +39,39 @@ import {
     tableOf,
     tableSchemaOf,
 } from './table-schema.js';
-import { failureClassOf } from './trace.js';
-import { evidenceCall as call, observeEvidence, startEvidence, stopEvidence } from './evidence-observer.js';
-import { assertFamilyEvidence, declaredFamilyActors, FAMILY_INTENTS } from './scenario-evidence.js';
+import { failureClassOf, lastTrace, persistTrace } from './trace.js';
+import {
+    evidenceCall as call,
+    observeEvidence,
+    startEvidence,
+    stopEvidence,
+} from './evidence-observer.js';
+import {
+    assertActionEvidence,
+    assertFamilyEvidence,
+    declaredFamilyActors,
+    FAMILY_INTENTS,
+    realCells,
+} from './scenario-evidence.js';
 import type { CoverageStatus, FamilyEvidence, RecordedAction } from './scenario-evidence.js';
+import {
+    assertTypingContinuation,
+    assertSourcePreservation,
+    assertGapContinuation,
+    assertGapRefusal,
+    assertUnrelatedContinuation,
+    assertContinuationHistory,
+    requireContinuity,
+    typingCursor,
+    nodeSize,
+    outsideShape,
+} from './continuity-evidence.js';
+import {
+    assertEffectivePresentation,
+    observeNativePresentation,
+    observeWebPresentation,
+} from './presentation-semantics.js';
+import type { PresentationCheck } from './presentation-semantics.js';
 
 export const SCHEDULES_PER_TOPOLOGY = 100;
 export const CORPUS_PRESETS: readonly SchemaPreset[] = ['prosemirror', 'tiptap'];
@@ -752,6 +782,44 @@ function buildCorpus(): readonly CorpusSchedule[] {
 
 export const CONVERGENCE_CORPUS: readonly CorpusSchedule[] = buildCorpus();
 
+export type ContinuationProof =
+    'typing' | 'structure' | 'history' | 'partition' | 'unrelated-web' | 'web-gap';
+export interface ContinuationSlot {
+    readonly key: string;
+    readonly schedule: CorpusSchedule;
+    readonly topology: ConvergenceTopology;
+    readonly preset: SchemaPreset;
+    readonly baseFamily: string;
+    readonly actor: number;
+    readonly actorKind: PeerKind;
+    readonly proof: ContinuationProof;
+    readonly required: boolean | null;
+    readonly status: CoverageStatus;
+}
+
+export function continuationRequirements(
+    schedules: readonly CorpusSchedule[] = CONVERGENCE_CORPUS,
+): ContinuationSlot[] {
+    return schedules.flatMap((schedule) =>
+        schedule.kinds.slice(0, schedule.participants).flatMap((actorKind, actor) => {
+            const proofs: ContinuationProof[] = ['typing', 'structure', 'history', 'partition'];
+            if (actorKind !== NATIVE_PEER_KIND) proofs.push('unrelated-web', 'web-gap');
+            return proofs.map((proof) => ({
+                key: `${schedule.name} :: ${actor} :: ${proof}`,
+                schedule,
+                topology: schedule.topology,
+                preset: schedule.preset,
+                baseFamily: schedule.scenario.name,
+                actor,
+                actorKind,
+                proof,
+                required: proof === 'web-gap' ? null : true,
+                status: 'unexercised' as const,
+            }));
+        }),
+    );
+}
+
 export interface ScheduleOutcome {
     readonly peers: readonly Peer[];
     readonly geometry: SettledGeometry;
@@ -917,7 +985,18 @@ async function authorTable(peer: Peer, table: Record<string, unknown>): Promise<
     await call(peer, 'command', { type: 'insertNode', node: table });
 }
 
-export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOutcome> {
+export interface SettledSetup {
+    readonly participants: readonly Peer[];
+    readonly judge: Peer;
+    readonly reference?: Peer;
+    readonly baseline: ScheduleOutcome;
+}
+
+export async function runSchedule(
+    schedule: CorpusSchedule,
+    settled?: (setup: SettledSetup) => Promise<void>,
+    options: { readonly webReference?: boolean } = {},
+): Promise<ScheduleOutcome> {
     let outcome: ScheduleOutcome | null = null;
     let started: readonly Peer[] = [];
     let nativeRepairs = NO_REPAIR_WRITES;
@@ -928,11 +1007,11 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
     };
     try {
         await withPeers(
-            schedule.kinds as PeerKind[],
+            [...schedule.kinds, ...(options.webReference ? [schedule.preset] : [])],
             async (peers) => {
                 started = peers;
                 const participants = peers.slice(0, schedule.participants);
-                const judge = peerAt(peers, peers.length - 1);
+                const judge = peerAt(peers, schedule.kinds.length - 1);
                 const author = peerAt(participants, 0);
                 const fixture = (schedule.scenario.table ?? corpusTable)(schedule.preset);
                 await authorTable(author, fixture);
@@ -1019,6 +1098,15 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
                         failures: evidenceFailures,
                     },
                 };
+                if (settled)
+                    await settled({
+                        participants,
+                        judge,
+                        baseline: outcome,
+                        ...(options.webReference
+                            ? { reference: peerAt(peers, peers.length - 1) }
+                            : {}),
+                    });
             },
             { ...tableFixture(schedule.preset), [PARTICIPANT_COUNT_KEY]: schedule.participants },
             schedule.seed,
@@ -1047,4 +1135,555 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
         throw new Error(`the schedule ${schedule.name} produced no outcome`);
     }
     return outcome;
+}
+
+export interface ContinuationCheckpoint {
+    readonly boundary: string;
+    readonly raw: { passed: boolean; failure?: string };
+    readonly presentation: {
+        passed: boolean;
+        comparisons: PresentationCheck[];
+        failures: string[];
+    };
+    readonly nativeAutonomousRepairWrites: number;
+    readonly observations: EffectiveDocument[];
+    readonly observationFailures: string[];
+    readonly drain: { passed: boolean; failure?: string; rounds: number; emitted: number };
+    readonly remoteBoundaries: ContinuationRemoteBoundary[];
+}
+
+export interface ContinuationRemoteBoundary {
+    actor: number;
+    kind: PeerKind;
+    bytes: string;
+    passes: number;
+    autonomous: number;
+    pending: boolean;
+}
+
+export interface ContinuationResult {
+    readonly slot: ContinuationSlot;
+    required: boolean | null;
+    status: CoverageStatus;
+    disposition: 'edited' | 'refused' | 'no-gap' | 'unreached';
+    baseline?: Omit<ScheduleOutcome, 'peers'>;
+    checkpoints: ContinuationCheckpoint[];
+    actions: RecordedAction[];
+    failures: string[];
+    dependencies: {
+        prerequisite: string;
+        dependent: string;
+        recipient: number;
+        pending: boolean;
+    }[];
+    gap?: { observed: true; positions: number[] };
+    partition?: { rounds: number; emitted: number; remoteBoundaries: ContinuationRemoteBoundary[] };
+    tracePath?: string;
+    refusalEmitted?: number;
+}
+
+function continuationScheduler(
+    peers: readonly Peer[],
+    seed: number,
+    boundaries: ContinuationRemoteBoundary[],
+) {
+    return createScheduler([...peers], seed, null, async (peer, bytes) => {
+        const state = await snapshot(peer);
+        boundaries.push({
+            actor: peers.indexOf(peer),
+            kind: peerKindOf(peer),
+            bytes,
+            passes: state.normalizationPassesAfterLastAction,
+            autonomous: state.autonomousRepairWrites,
+            pending: state.pendingDependencies,
+        });
+    });
+}
+
+async function continuationCheckpoint(
+    setup: SettledSetup,
+    boundary: string,
+    seed: number,
+    drain = true,
+): Promise<ContinuationCheckpoint> {
+    const participants = [...setup.participants];
+    const checked: ContinuationCheckpoint = {
+        boundary,
+        raw: { passed: false },
+        presentation: { passed: false, comparisons: [], failures: [] },
+        nativeAutonomousRepairWrites: 0,
+        observations: [],
+        observationFailures: [],
+        drain: { passed: true, rounds: 0, emitted: 0 },
+        remoteBoundaries: [],
+    };
+    if (drain) {
+        const scheduler = continuationScheduler(participants, seed, checked.remoteBoundaries);
+        try {
+            await scheduler.drain();
+        } catch (error) {
+            checked.drain.passed = false;
+            checked.drain.failure = String(error);
+        }
+        Object.assign(checked.drain, scheduler.drainStats());
+    }
+    try {
+        await assertConverged(participants);
+        checked.raw.passed = true;
+    } catch (error) {
+        checked.raw.failure = String(error);
+    }
+    const autonomous = await nativeRepairWrites(participants);
+    for (const peer of participants) {
+        try {
+            checked.observations.push(await observeEvidence(peer));
+        } catch (error) {
+            checked.observationFailures.push(String(error));
+        }
+    }
+    try {
+        const native = participants.filter((peer) => peerKindOf(peer) === NATIVE_PEER_KIND);
+        const web = participants.filter((peer) => peerKindOf(peer) !== NATIVE_PEER_KIND);
+        if (native.length === 0) {
+            await seedFrom(participants[0]!, [setup.judge]);
+            native.push(setup.judge);
+        }
+        if (setup.reference) {
+            await seedFrom(participants[0]!, [setup.reference]);
+            web.push(setup.reference);
+        }
+        const nativeViews: EffectiveDocument[] = [];
+        for (const peer of native) nativeViews.push(await observeNativePresentation(peer));
+        for (const view of nativeViews.slice(1))
+            checked.presentation.comparisons.push(
+                assertEffectivePresentation(nativeViews[0]!, view),
+            );
+        for (const peer of web) {
+            const view = await observeWebPresentation(peer);
+            for (const expected of nativeViews)
+                checked.presentation.comparisons.push(assertEffectivePresentation(expected, view));
+        }
+        requireContinuity(
+            web.length > 0 || nativeViews.length > 1,
+            'independent presentation observation',
+        );
+        const fallback = checked.presentation.comparisons
+            .flatMap((check) => check.tables)
+            .filter((table) => table.kind === 'overlap-fallback');
+        for (const table of fallback)
+            requireContinuity(
+                checked.presentation.comparisons.some((check) =>
+                    check.tables.some(
+                        (other) =>
+                            other.source === table.source &&
+                            other.kind === 'overlap-fallback' &&
+                            other.evidence === 'live-overlap',
+                    ),
+                ),
+                'fresh live overlap evidence',
+            );
+        checked.presentation.passed = true;
+    } catch (error) {
+        checked.presentation.failures.push(String(error));
+    }
+    return { ...checked, nativeAutonomousRepairWrites: autonomous };
+}
+
+export function continuationPassed(result: ContinuationResult): boolean {
+    const minimumActions: Record<ContinuationProof, number> = {
+        typing: 1,
+        structure: 1,
+        history: 3,
+        partition: 2,
+        'unrelated-web': 1,
+        'web-gap': 1,
+    };
+    if (
+        result.required === false &&
+        (result.slot.proof !== 'web-gap' ||
+            result.gap?.positions.length !== 0 ||
+            result.disposition !== 'no-gap')
+    )
+        return false;
+    if (result.required === true && result.actions.length < minimumActions[result.slot.proof])
+        return false;
+    if (
+        result.slot.proof === 'web-gap' &&
+        (!result.gap || result.required !== result.gap.positions.length > 0)
+    )
+        return false;
+    if (
+        result.disposition === 'refused' &&
+        (result.slot.proof !== 'web-gap' || result.refusalEmitted !== 0)
+    )
+        return false;
+    const safeRemote = (boundary: ContinuationRemoteBoundary) =>
+        boundary.kind !== NATIVE_PEER_KIND || (boundary.passes === 0 && boundary.autonomous === 0);
+    if (
+        result.slot.proof === 'partition' &&
+        result.required &&
+        (!result.dependencies.some((entry) => entry.pending) ||
+            !result.partition ||
+            result.partition.rounds > 100 ||
+            result.partition.emitted > 10000 ||
+            !result.partition.remoteBoundaries.every(safeRemote))
+    )
+        return false;
+    return (
+        result.required !== null &&
+        (result.required === false || result.status === 'proven') &&
+        result.baseline?.evidence.status === 'proven' &&
+        result.baseline.rawConvergence.passed &&
+        result.checkpoints.length >= (result.required === false ? 1 : 2) &&
+        result.checkpoints.every(
+            (checkpoint) =>
+                checkpoint.raw.passed &&
+                checkpoint.presentation.passed &&
+                checkpoint.drain.passed &&
+                checkpoint.nativeAutonomousRepairWrites === 0 &&
+                checkpoint.drain.rounds <= 100 &&
+                checkpoint.drain.emitted <= 10000 &&
+                checkpoint.remoteBoundaries.every(safeRemote) &&
+                checkpoint.observationFailures.length === 0,
+        )
+    );
+}
+
+export function continuationCoverage(
+    required: readonly ContinuationSlot[],
+    results: readonly ContinuationResult[],
+): ContinuationSlot[] {
+    const found = new Map(results.map((result) => [result.slot.key, result]));
+    requireContinuity(found.size === results.length, 'duplicate continuation result');
+    const keys = new Set(required.map((slot) => slot.key));
+    requireContinuity(
+        results.every((result) => keys.has(result.slot.key)),
+        'unknown continuation result',
+    );
+    return required.map((slot) => {
+        const result = found.get(slot.key);
+        return {
+            ...slot,
+            required: result ? result.required : slot.required,
+            status: result?.status ?? 'unexercised',
+        };
+    });
+}
+
+export async function runContinuation(slot: ContinuationSlot): Promise<ContinuationResult> {
+    const result: ContinuationResult = {
+        slot,
+        required: slot.required,
+        status: 'unexercised',
+        disposition: 'unreached',
+        checkpoints: [],
+        actions: [],
+        failures: [],
+        dependencies: [],
+    };
+    const schedule = slot.schedule;
+    const baseline = await runSchedule(
+        schedule,
+        async (setup) => {
+            const { peers: _closedLater, ...baseline } = setup.baseline;
+            result.baseline = baseline;
+            const actor = peerAt(setup.participants, slot.actor);
+            const checkpoint = async (boundary: string, drain = true) => {
+                const checked = await continuationCheckpoint(setup, boundary, schedule.seed, drain);
+                result.checkpoints.push(checked);
+                return checked;
+            };
+            const initial = await checkpoint('baseline', false);
+            if (!initial.raw.passed) {
+                result.failures.push('TBL21 CONTINUITY setup raw convergence');
+                return;
+            }
+            const capture = startEvidence(setup.participants);
+            result.actions = capture.actions;
+            try {
+                const sourceView = await observeEvidence(actor);
+                if (slot.proof === 'web-gap') {
+                    const gaps = sourceView.tables.flatMap((table) =>
+                        table.cells
+                            .filter((cell) => cell.source === null)
+                            .map((cell) => ({ table, cell })),
+                    );
+                    result.gap = {
+                        observed: true,
+                        positions: gaps.map(({ cell }) => cell.position),
+                    };
+                    result.required = gaps.length > 0;
+                    if (!gaps.length) {
+                        result.status = 'proven';
+                        result.disposition = 'no-gap';
+                        return;
+                    }
+                    const { table, cell } = gaps[0]!;
+                    await call(actor, 'command', {
+                        type: 'insertText',
+                        text: 'gap-',
+                        at: typingCursor(cell, slot.actorKind),
+                    });
+                    const action = capture.actions.at(-1)!;
+                    if (action.reply['documentChanged'] === false) {
+                        const emitted = await flushDocumentEvents(actor);
+                        result.refusalEmitted = emitted.length;
+                        if (emitted.length) {
+                            const scheduler = continuationScheduler(
+                                setup.participants,
+                                schedule.seed,
+                                [],
+                            );
+                            for (const event of emitted) scheduler.enqueue(slot.actor, event);
+                            await scheduler.drain();
+                        }
+                    }
+                    const final = await checkpoint('gap-edit');
+                    if (action.reply['documentChanged'] === false) {
+                        assertGapRefusal(action, result.refusalEmitted!);
+                        result.disposition = 'refused';
+                    } else {
+                        assertGapContinuation(
+                            action,
+                            {
+                                actor: slot.actor,
+                                tableSource: table.source,
+                                position: cell.position,
+                                text: 'gap-',
+                            },
+                            final.observations,
+                        );
+                        result.disposition = 'edited';
+                    }
+                    result.status = 'proven';
+                    return;
+                }
+                if (slot.proof === 'unrelated-web') {
+                    let state = await snapshot(actor);
+                    let display = state.displayJson as JsonNode;
+                    let index =
+                        display.content?.findIndex((node) => node.type === 'paragraph') ?? -1;
+                    if (index < 0) {
+                        await call(actor, 'command', { type: 'appendParagraph' });
+                        const insertion = capture.actions.at(-1)!;
+                        requireContinuity(
+                            insertion.reply['documentChanged'] === true,
+                            'outside paragraph insertion applied',
+                        );
+                        const expected = structuredClone(insertion.rawBefore) as JsonNode;
+                        expected.content = [...(expected.content ?? []), { type: 'paragraph' }];
+                        requireContinuity(
+                            JSON.stringify(outsideShape(insertion.rawAfter as JsonNode)) ===
+                                JSON.stringify(outsideShape(expected)),
+                            'outside paragraph is a top-level sibling',
+                        );
+                        assertSourcePreservation(
+                            insertion.before,
+                            insertion.after,
+                            new Map(),
+                            true,
+                        );
+                        const inserted = await checkpoint('outside-paragraph');
+                        for (const view of inserted.observations)
+                            assertSourcePreservation(insertion.before, view, new Map(), true);
+                        state = await snapshot(actor);
+                        display = state.displayJson as JsonNode;
+                        index = (display.content?.length ?? 0) - 1;
+                    }
+                    requireContinuity(
+                        display.content?.[index]?.type === 'paragraph',
+                        'actual outside paragraph',
+                    );
+                    const at =
+                        1 +
+                        display
+                            .content!.slice(0, index)
+                            .reduce(
+                                (position, node) => position + nodeSize(node, slot.actorKind),
+                                0,
+                            );
+                    await call(actor, 'command', { type: 'insertText', text: 'outside-', at });
+                    const action = capture.actions.at(-1)!;
+                    const final = await checkpoint('outside-typed');
+                    const raw: JsonNode[] = [];
+                    for (const peer of setup.participants)
+                        raw.push((await snapshot(peer)).documentJson as JsonNode);
+                    assertUnrelatedContinuation(
+                        action,
+                        { actor: slot.actor, index, text: 'outside-' },
+                        raw,
+                        final.observations,
+                    );
+                    result.status = 'proven';
+                    result.disposition = 'edited';
+                    return;
+                }
+                const candidates = realCells(sourceView).filter((cell) => {
+                    try {
+                        typingCursor(cell, slot.actorKind);
+                        return true;
+                    } catch {
+                        return false;
+                    }
+                });
+                const target =
+                    slot.proof === 'structure' || slot.proof === 'history'
+                        ? candidates.at(-1)
+                        : candidates[0];
+                requireContinuity(target?.sourceId, 'real source target unavailable');
+                const sourceId = target.sourceId;
+                const freshTarget = async () => {
+                    const view = await observeEvidence(actor);
+                    const cell = realCells(view).find((cell) => cell.sourceId === sourceId);
+                    requireContinuity(cell, 'fresh source target unavailable');
+                    return cell;
+                };
+                const type = async (text: string) => {
+                    const cell = await freshTarget();
+                    await call(actor, 'command', {
+                        type: 'insertText',
+                        text,
+                        at: typingCursor(cell, slot.actorKind),
+                    });
+                    const action = capture.actions.at(-1)!;
+                    assertTypingContinuation(action, { actor: slot.actor, sourceId, text }, [
+                        action.after,
+                    ]);
+                    return action;
+                };
+                if (slot.proof === 'typing') {
+                    const action = await type('continuation-');
+                    const final = await checkpoint('typed');
+                    assertTypingContinuation(
+                        action,
+                        { actor: slot.actor, sourceId, text: 'continuation-' },
+                        final.observations,
+                    );
+                } else if (slot.proof === 'structure' || slot.proof === 'history') {
+                    // Stock Yjs history uses a 500ms capture interval; expire it without changing its configuration.
+                    if (slot.proof === 'history' && slot.actorKind !== NATIVE_PEER_KIND)
+                        await new Promise((resolve) => setTimeout(resolve, 510));
+                    const cell = await freshTarget();
+                    await addRowAfter(actor, cell.position + 1);
+                    const action = capture.actions.at(-1)!;
+                    assertActionEvidence(action, {
+                        actor: slot.actor,
+                        operation: 'addRow',
+                        source: cell.source!,
+                    });
+                    const acted = await checkpoint('structural-action');
+                    for (const view of acted.observations)
+                        assertSourcePreservation(action.after, view, new Map(), true);
+                    if (slot.proof === 'history') {
+                        await call(actor, 'undo', {});
+                        await checkpoint('undo');
+                        await call(actor, 'redo', {});
+                        const redone = capture.actions.at(-1)!;
+                        const final = await checkpoint('redo');
+                        assertContinuationHistory(capture.actions, slot.actor);
+                        for (const view of final.observations)
+                            assertSourcePreservation(redone.after, view, new Map(), true);
+                    }
+                } else if (slot.proof === 'partition') {
+                    const boundaries: ContinuationRemoteBoundary[] = [];
+                    const scheduler = continuationScheduler(
+                        setup.participants,
+                        schedule.seed,
+                        boundaries,
+                    );
+                    for (let other = 0; other < setup.participants.length; other += 1)
+                        if (other !== slot.actor) scheduler.partition(slot.actor, other, true);
+                    await type('first-');
+                    let emitted = (await scheduler.collect()).emitted;
+                    const prerequisite = [...scheduler.pending()];
+                    requireContinuity(prerequisite.length > 0, 'partition prerequisite update');
+                    const second = await type('second-');
+                    emitted += (await scheduler.collect()).emitted;
+                    const dependent = scheduler
+                        .pending()
+                        .filter((message) => !prerequisite.includes(message));
+                    requireContinuity(dependent.length > 0, 'partition dependent update');
+                    for (const message of dependent) {
+                        requireContinuity(
+                            scheduler.isPartitioned(slot.actor, message.recipient),
+                            'partition retained',
+                        );
+                        scheduler.partition(slot.actor, message.recipient, false);
+                        await scheduler.deliver(message);
+                        const state = await snapshot(peerAt(setup.participants, message.recipient));
+                        const first = prerequisite.find(
+                            (queued) => queued.recipient === message.recipient,
+                        );
+                        requireContinuity(first, 'withheld prerequisite recipient');
+                        result.dependencies.push({
+                            prerequisite: first.event.bytesBase64,
+                            dependent: message.event.bytesBase64,
+                            recipient: message.recipient,
+                            pending: state.pendingDependencies,
+                        });
+                        if (
+                            peerKindOf(peerAt(setup.participants, message.recipient)) ===
+                            NATIVE_PEER_KIND
+                        )
+                            requireContinuity(
+                                state.normalizationPassesAfterLastAction === 0 &&
+                                    state.autonomousRepairWrites === 0,
+                                'remote boundary normalization',
+                            );
+                    }
+                    for (const message of prerequisite) {
+                        scheduler.partition(slot.actor, message.recipient, false);
+                        await scheduler.deliver(message);
+                    }
+                    await scheduler.drain();
+                    const stats = scheduler.drainStats();
+                    result.partition = {
+                        ...stats,
+                        emitted: stats.emitted + emitted,
+                        remoteBoundaries: boundaries,
+                    };
+                    const final = await checkpoint('reconnected');
+                    requireContinuity(
+                        result.dependencies.some((entry) => entry.pending),
+                        'withheld dependency was exercised',
+                    );
+                    assertTypingContinuation(
+                        second,
+                        { actor: slot.actor, sourceId, text: 'second-' },
+                        final.observations,
+                    );
+                } else throw new Error(`TBL21 CONTINUITY unimplemented ${slot.proof}`);
+                result.status = 'proven';
+                result.disposition = 'edited';
+            } catch (error) {
+                result.failures.push(String(error));
+                result.status = capture.actions.length ? 'exercised-unproven' : 'unexercised';
+                await checkpoint('failure-drain');
+            } finally {
+                stopEvidence(setup.participants);
+            }
+        },
+        { webReference: schedule.topology === TOPOLOGY_NATIVE_NATIVE },
+    );
+    if (!result.baseline) {
+        const { peers: _closed, ...failed } = baseline;
+        result.baseline = failed;
+        result.failures.push(...failed.evidence.failures);
+    }
+    if (!continuationPassed(result))
+        result.tracePath = persistTrace({
+            ...lastTrace(),
+            failureClass: 'CONTINUITY',
+            failureMessage: JSON.stringify({
+                key: slot.key,
+                failures: result.failures,
+                checkpoints: result.checkpoints.map(({ boundary, raw, presentation, drain }) => ({
+                    boundary,
+                    raw,
+                    presentation,
+                    drain,
+                })),
+            }),
+        });
+    return result;
 }

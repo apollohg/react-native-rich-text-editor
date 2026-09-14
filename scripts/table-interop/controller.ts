@@ -308,9 +308,11 @@ export async function awarenessPeers(peer: Peer): Promise<AwarenessPeerProjectio
 
 class ControllerAccess implements SchedulerAccess {
     private readonly peers: Peer[];
+    private readonly boundary?: (peer: Peer, updateBase64: string) => Promise<void>;
 
-    constructor(peers: Peer[]) {
+    constructor(peers: Peer[], boundary?: (peer: Peer, updateBase64: string) => Promise<void>) {
         this.peers = peers;
+        this.boundary = boundary;
     }
 
     peerCount(): number {
@@ -326,7 +328,9 @@ class ControllerAccess implements SchedulerAccess {
     }
 
     async deliver(recipient: number, updateBase64: string): Promise<void> {
-        await performRequest(this.peerAt(recipient), 'applyUpdate', { updateBase64 }, 'delivery');
+        const peer = this.peerAt(recipient);
+        await performRequest(peer, 'applyUpdate', { updateBase64 }, 'delivery');
+        await this.boundary?.(peer, updateBase64);
     }
 
     async flush(peer: number): Promise<FlushResult> {
@@ -365,9 +369,10 @@ export function createScheduler(
     peers: Peer[],
     seed: number = DEFAULT_EXCHANGE_SEED,
     observer: DeliveryObserver | null = null,
+    boundary?: (peer: Peer, updateBase64: string) => Promise<void>,
 ): DeliveryScheduler {
     const tracing = deliveryObserver();
-    return new DeliveryScheduler(new ControllerAccess(peers), {
+    return new DeliveryScheduler(new ControllerAccess(peers, boundary), {
         seed,
         observer: {
             onDelivery(record: DeliveryRecord, message: ScheduledMessage): void {
