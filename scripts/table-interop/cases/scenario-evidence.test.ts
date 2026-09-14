@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 import { CONVERGENCE_CORPUS, CORPUS_SCENARIOS, runSchedule, scenarioCoverage } from '../corpus.js';
 import { call, withPeers, tableFixture, snapshot, flushDocumentEvents } from '../controller.js';
 import { observeEvidence } from '../evidence-observer.js';
+import type { FamilyEvidence } from '../scenario-evidence.js';
+import type { JsonNode } from '../peer-protocol.js';
 import {
     assertActionEvidence,
     assertHistoryEvidence,
@@ -294,6 +296,84 @@ test('TBL12 widths follow surviving contribution counts, including repeated span
     assert.equal(resolveWidthContributions([100, 140]), 140);
     assert.equal(resolveWidthContributions([100, 100, 140]), 100);
     assert.equal(resolveWidthContributions([100, null, 140, 140, 200]), 140);
+});
+async function capturedFamily(index: number): Promise<FamilyEvidence> {
+    const base = CONVERGENCE_CORPUS.find(
+        (schedule) => schedule.scenario === CORPUS_SCENARIOS[index],
+    )!;
+    const capture: { value?: FamilyEvidence } = {};
+    const result = await runSchedule({
+        ...base,
+        scenario: {
+            ...base.scenario,
+            proves(evidence) {
+                capture.value = evidence.boundaries;
+                base.scenario.proves!(evidence);
+            },
+        },
+    });
+    assert.equal(result.rawConvergence.passed, true);
+    assert.equal(result.evidence.status, 'proven', result.evidence.failures.join('\n'));
+    assert.ok(capture.value);
+    return capture.value;
+}
+test('TBL12 erased settled resize contributions cannot prove any width family', async () => {
+    for (const family of [7, 10, 11]) {
+        const evidence = await capturedFamily(family);
+        for (const table of evidence.settled.tables) {
+            table.widths = Array.from({ length: table.columns }, () => null);
+            for (const cell of table.cells)
+                if (cell.source !== null) cell.node.attrs = { ...cell.node.attrs, colwidth: null };
+        }
+        assert.throws(
+            () => assertFamilyEvidence(FAMILY_INTENTS[family]!, evidence),
+            /WIDTH_SURVIVING_CONTRIBUTION/,
+        );
+    }
+});
+test('TBL13 unrelated attribute mutation cannot stand in for the native row undo', async () => {
+    const evidence = await capturedFamily(12);
+    const undo = evidence.actions.find((action) => action.operation === 'undo')!;
+    undo.rawAfter = {
+        ...(structuredClone(undo.rawBefore) as JsonNode),
+        attrs: { canary: 'not-the-row' },
+    };
+    undo.after = structuredClone(undo.before);
+    evidence.settled = structuredClone(undo.before);
+    assert.throws(() => assertFamilyEvidence(FAMILY_INTENTS[12]!, evidence), /HISTORY_ROW_UNDO/);
+});
+test('TBL12 either authored concurrent winner is permitted on its actual sources', async () => {
+    const evidence = await capturedFamily(10);
+    for (const width of [180, 220]) {
+        for (const table of evidence.settled.tables) {
+            table.widths = [width, null];
+            for (const cell of table.cells)
+                if (cell.column === 0) cell.node.attrs = { ...cell.node.attrs, colwidth: [width] };
+        }
+        assertFamilyEvidence(FAMILY_INTENTS[10]!, evidence);
+    }
+});
+test('TBL12 authored widths moved onto the wrong sources fail despite consistent resolution', async () => {
+    const evidence = await capturedFamily(11);
+    for (const table of evidence.settled.tables) {
+        table.widths = [220, 180];
+        for (const cell of table.cells)
+            cell.node.attrs = { ...cell.node.attrs, colwidth: [cell.column === 0 ? 220 : 180] };
+    }
+    assert.throws(
+        () => assertFamilyEvidence(FAMILY_INTENTS[11]!, evidence),
+        /WIDTH_SURVIVING_CONTRIBUTION/,
+    );
+});
+test('TBL13 unrelated attribute mutation cannot stand in for remote-gap row redo', async () => {
+    const evidence = await capturedFamily(8);
+    const redo = evidence.actions.find((action) => action.operation === 'redo')!;
+    redo.rawAfter = {
+        ...(structuredClone(redo.rawBefore) as JsonNode),
+        attrs: { canary: 'not-the-row' },
+    };
+    redo.after = structuredClone(redo.before);
+    assert.throws(() => assertFamilyEvidence(FAMILY_INTENTS[8]!, evidence), /HISTORY_ROW_REDO/);
 });
 test('TBL10 structural proof requires valid native target and intended insertion boundary', () => {
     const e = typing();

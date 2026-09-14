@@ -448,6 +448,126 @@ export function declaredFamilyActors(
     const editor = actorFor(intent.steps[0]!.actor, evidence);
     return intent.steps.map((step) => actorFor(step.actor, evidence, editor));
 }
+function assertSurvivingWidths(e: FamilyEvidence): void {
+    const authored = new Map<string, unknown[]>();
+    for (const action of e.actions.filter((action) => action.operation === 'resize')) {
+        const column = action.target?.column;
+        requireEvidence(typeof column === 'number', 'WIDTH_TARGET');
+        const table = tableFor(action.before, action.target!.source!);
+        for (const cell of table.cells.filter((cell) => cell.source !== null)) {
+            requireEvidence(cell.column !== null && cell.colspan !== null, 'WIDTH_GEOMETRY');
+            if (column < cell.column || column >= cell.column + cell.colspan) continue;
+            requireEvidence(cell.sourceId, 'WIDTH_SOURCE_IDENTITY');
+            const after = realCells(action.after).find(
+                (candidate) => candidate.sourceId === cell.sourceId,
+            );
+            const widths = after?.node.attrs?.['colwidth'];
+            requireEvidence(
+                Array.isArray(widths) && widths[column - cell.column] === action.width,
+                'WIDTH_AUTHORED_CONTRIBUTION',
+            );
+            const permitted = authored.get(cell.sourceId) ?? [];
+            permitted.push(widths);
+            authored.set(cell.sourceId, permitted);
+        }
+    }
+    const settled = realCells(e.settled);
+    for (const [identity, permitted] of authored) {
+        const surviving = settled.filter((cell) => cell.sourceId === identity);
+        requireEvidence(surviving.length === 1, 'WIDTH_SURVIVING_CONTRIBUTION');
+        const widths = JSON.stringify(surviving[0]!.node.attrs?.['colwidth']);
+        requireEvidence(
+            permitted.some((value) => JSON.stringify(value) === widths),
+            'WIDTH_SURVIVING_CONTRIBUTION',
+        );
+    }
+}
+function rawTable(document: unknown, source: string): JsonNode {
+    let node = document as JsonNode;
+    if (node.type === 'table') return node;
+    for (const index of source.split('.')) node = node.content?.[Number(index)]!;
+    requireEvidence(node?.type === 'table', 'HISTORY_TABLE');
+    return node;
+}
+function assertRepairHistoryFootprint(e: FamilyEvidence): void {
+    const insertion = e.actions[0]!;
+    requireEvidence(insertion.operation === 'addRow' && insertion.target, 'HISTORY_ROW_ACTION');
+    const before = tableFor(insertion.before, insertion.target.source!);
+    const inserted = insertion.after.tables.find((table) => table.source === before.source)!;
+    const initialRows = before.node.content?.length ?? 0;
+    const rowIndex =
+        Number(insertion.target.source!.split('.').at(-2)) +
+        Number(insertion.target.node.attrs?.['rowspan'] ?? 1);
+    requireEvidence(Number.isInteger(rowIndex), 'HISTORY_ROW_BOUNDARY');
+    const row = inserted.node.content?.[rowIndex as number];
+    requireEvidence(row, 'HISTORY_ROW_CREATED');
+    const insertedCells = inserted.cells.filter((cell) =>
+        cell.source?.startsWith(`${before.source}.${rowIndex}.`),
+    );
+    const originalIds = new Set(realCells(insertion.before).map((cell) => cell.sourceId));
+    requireEvidence(
+        insertedCells.length > 0 &&
+            insertedCells.every((cell) => cell.sourceId && !originalIds.has(cell.sourceId)),
+        'HISTORY_ROW_CREATED',
+    );
+    const insertedIds = new Set(insertedCells.map((cell) => cell.sourceId));
+    for (const typing of e.actions.filter((action) => action.operation === 'insertText'))
+        requireEvidence(
+            typing.target?.sourceId && !insertedIds.has(typing.target.sourceId),
+            'HISTORY_ROW_REMOTE_DEPENDENCY',
+        );
+    for (const action of e.actions.filter(
+        (action) => action.operation === 'undo' || action.operation === 'redo',
+    )) {
+        const table = action.after.tables.find((table) => table.source === before.source)!;
+        const expectedRows = initialRows + (action.operation === 'redo' ? 1 : 0);
+        const invariant = action.operation === 'undo' ? 'HISTORY_ROW_UNDO' : 'HISTORY_ROW_REDO';
+        const priorRows = initialRows + (action.operation === 'undo' ? 1 : 0);
+        equal(
+            action.before.tables.find((table) => table.source === before.source)?.node.content
+                ?.length,
+            priorRows,
+            invariant,
+        );
+        equal(rawTable(action.rawBefore, before.source).content?.length, priorRows, invariant);
+        equal(table?.node.content?.length, expectedRows, invariant);
+        equal(rawTable(action.rawAfter, before.source).content?.length, expectedRows, invariant);
+        if (action.operation === 'undo') {
+            requireEvidence(
+                insertedCells.every((cell) =>
+                    realCells(action.before).some(
+                        (candidate) => candidate.sourceId === cell.sourceId,
+                    ),
+                ),
+                invariant,
+            );
+            requireEvidence(
+                !realCells(action.after).some((cell) => insertedIds.has(cell.sourceId)),
+                invariant,
+            );
+        } else {
+            equal(
+                canonicalDocumentShape(table.node.content?.[rowIndex as number]),
+                canonicalDocumentShape(row),
+                invariant,
+            );
+        }
+    }
+    const final = e.settled.tables.find((table) => table.source === before.source)!;
+    const redone = e.actions.at(-1)!.operation === 'redo';
+    equal(final?.node.content?.length, initialRows + (redone ? 1 : 0), 'HISTORY_ROW_SETTLED');
+    if (redone)
+        equal(
+            canonicalDocumentShape(final.node.content?.[rowIndex as number]),
+            canonicalDocumentShape(row),
+            'HISTORY_ROW_SETTLED',
+        );
+    else
+        requireEvidence(
+            !realCells(e.settled).some((cell) => insertedIds.has(cell.sourceId)),
+            'HISTORY_ROW_SETTLED',
+        );
+}
 export function assertFamilyEvidence(intent: FamilyIntent, e: FamilyEvidence): void {
     equal(e.actions.length, intent.steps.length, 'MISSING_ACTION');
     const editor = actorFor(intent.steps[0]!.actor, e);
@@ -520,6 +640,7 @@ export function assertFamilyEvidence(intent: FamilyIntent, e: FamilyEvidence): v
             ],
         });
     }
+    if (intent.history === 'remote-repair') assertRepairHistoryFootprint(e);
     if (intent.dependency) {
         requireEvidence(
             e.deliveries.some((delivery) => delivery.pendingAfter),
@@ -592,6 +713,7 @@ export function assertFamilyEvidence(intent: FamilyIntent, e: FamilyEvidence): v
             );
     }
     if (intent.steps.some((step) => step.operation === 'resize')) {
+        assertSurvivingWidths(e);
         for (const table of e.settled.tables) {
             requireEvidence(table.widths !== null, 'WIDTH_OBSERVATION');
             const resolved: (number | null)[] = [];
