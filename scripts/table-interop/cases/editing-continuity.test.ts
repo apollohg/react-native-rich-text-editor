@@ -12,7 +12,11 @@ import type { RecordedAction } from '../scenario-evidence.js';
 
 const modelSchema = new Schema({
     nodes: basicSchema.spec.nodes.append(
-        tableNodes({ tableGroup: 'block', cellContent: 'block+', cellAttributes: {} }),
+        tableNodes({
+            tableGroup: 'block',
+            cellContent: 'block+',
+            cellAttributes: {},
+        }),
     ),
     marks: basicSchema.spec.marks,
 });
@@ -577,6 +581,16 @@ test('gap proof requires new attributable content at the declared live gap and s
         ...typed(),
         before,
         target: null,
+        kind: 'prosemirror' as const,
+        reply: {
+            documentChanged: true,
+            textTarget: {
+                requestedPosition: 4,
+                beforeCellPosition: 2,
+                afterCellPosition: 2,
+                sourceId: 'new',
+            },
+        },
         text: 'gap-',
         after: structuredClone(before),
     };
@@ -595,6 +609,12 @@ test('gap proof requires new attributable content at the declared live gap and s
     });
     const intent = { actor: 0, tableSource: '0', position: 2, text: 'gap-' };
     evidence.assertGapContinuation(action, intent, observed(action.after));
+    const unmapped = structuredClone(action);
+    Reflect.deleteProperty(unmapped.reply, 'textTarget');
+    assert.throws(
+        () => evidence.assertGapContinuation(unmapped, intent, observed(action.after)),
+        /CONTINUITY/,
+    );
     for (const mutate of [
         (changed: typeof action) => {
             changed.reply.documentChanged = false;
@@ -745,6 +765,102 @@ test('history evidence rejects applied:false and successful-but-skipped undo or 
                 0,
             ),
         /REDO_EFFECT/,
+    );
+});
+
+test('history normalization is native-only and action kinds stay coupled', () => {
+    const change = {
+        ...typed(),
+        kind: 'prosemirror' as PeerKind,
+        operation: 'addRow',
+        rawBefore: { rows: 2 },
+        rawAfter: { rows: 3 },
+    };
+    const undo = {
+        ...change,
+        operation: 'undo',
+        reply: { applied: true },
+        passes: 1,
+        rawBefore: { rows: 3 },
+        rawAfter: { rows: 2 },
+    };
+    const redo = {
+        ...change,
+        operation: 'redo',
+        reply: { applied: true },
+        passes: 0,
+        rawBefore: { rows: 2 },
+        rawAfter: { rows: 3 },
+    };
+    evidence.assertContinuationHistory([change, undo, redo], 0);
+    assert.throws(
+        () => evidence.assertContinuationHistory([change, { ...undo, kind: 'rust' }, redo], 0),
+        /CONTINUITY/,
+    );
+    assert.throws(
+        () =>
+            evidence.assertContinuationHistory(
+                [change, undo, redo].map((action) => ({
+                    ...action,
+                    kind: 'rust',
+                })),
+                0,
+            ),
+        /HISTORY_NORMALIZATION/,
+    );
+    assert.throws(
+        () =>
+            evidence.assertContinuationHistory(
+                [change, { ...undo, reply: { applied: false } }, redo],
+                0,
+            ),
+        /HISTORY_APPLIED/,
+    );
+    assert.throws(
+        () =>
+            evidence.assertContinuationHistory(
+                [change, { ...undo, rawAfter: undo.rawBefore }, redo],
+                0,
+            ),
+        /UNDO_EFFECT/,
+    );
+});
+
+test('structural selection stays in an outer table when the last observed source is nested', () => {
+    const view = document();
+    const nested = structuredClone(view.tables[0]!);
+    nested.parentCell = view.tables[0]!.cells[0]!.source;
+    nested.source = '0.0.0.1';
+    nested.cells.forEach((cell, index) => {
+        cell.sourceId = `nested-${index}`;
+        cell.source = `${nested.source}.0.${index}`;
+    });
+    view.tables.push(nested);
+    const selected = evidence.continuationTarget(view, 'rust', 'structure');
+    assert.equal(selected.sourceId, view.tables[0]!.cells.at(-1)!.sourceId);
+    assert.equal(evidence.continuationTarget(view, 'rust', 'history').sourceId, selected.sourceId);
+});
+
+test('generic nested-family structural continuation edits the outer source successfully', async () => {
+    const slot = corpus
+        .continuationRequirements()
+        .find(
+            (slot) =>
+                slot.topology === 'native/native' &&
+                slot.baseFamily.includes('nested irregular') &&
+                slot.proof === 'structure',
+        )!;
+    const result = await corpus.runContinuation(slot);
+    assert.equal(
+        corpus.continuationPassed(result),
+        true,
+        JSON.stringify({ failures: result.failures, trace: result.tracePath }),
+    );
+    assert.ok(
+        result.actions[0]!.before.tables.filter((table) => table.parentCell === null).some(
+            (table) =>
+                table.cells.some((cell) => cell.sourceId === result.actions[0]!.target?.sourceId),
+        ),
     );
 });
 

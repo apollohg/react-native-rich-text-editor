@@ -24,7 +24,14 @@ import {
 } from './convergence-report.js';
 import type { ConvergenceTopology, SettledGeometry } from './convergence-report.js';
 import { NATIVE_PEER_KIND } from './peer-protocol.js';
-import type { Peer, PeerKind, EffectiveDocument, JsonNode } from './peer-protocol.js';
+import type {
+    Peer,
+    PeerKind,
+    EffectiveDocument,
+    EffectiveCell,
+    EffectiveTable,
+    JsonNode,
+} from './peer-protocol.js';
 import { nextRandom } from './scheduler.js';
 import {
     CELL_NODE,
@@ -67,6 +74,7 @@ import {
     typingCursor,
     nodeSize,
     outsideShape,
+    continuationTarget,
 } from './continuity-evidence.js';
 import {
     assertEffectivePresentation,
@@ -1211,7 +1219,7 @@ function continuationScheduler(
     });
 }
 
-async function continuationCheckpoint(
+export async function continuationCheckpoint(
     setup: SettledSetup,
     boundary: string,
     seed: number,
@@ -1384,7 +1392,27 @@ export function continuationCoverage(
     });
 }
 
-export async function runContinuation(slot: ContinuationSlot): Promise<ContinuationResult> {
+export interface ContinuationOptions {
+    setup?: (
+        slot: ContinuationSlot,
+        body: (setup: SettledSetup) => Promise<void>,
+    ) => Promise<ScheduleOutcome>;
+    target?: (view: EffectiveDocument, slot: ContinuationSlot) => EffectiveCell;
+    gaps?: (
+        view: EffectiveDocument,
+        slot: ContinuationSlot,
+    ) => { table: EffectiveTable; cell: EffectiveCell }[];
+    structuralEvidence?: (
+        action: RecordedAction,
+        intent: { actor: number; source: string },
+        settled: readonly ContinuationObservation[],
+    ) => void;
+}
+
+export async function runContinuation(
+    slot: ContinuationSlot,
+    options: ContinuationOptions = {},
+): Promise<ContinuationResult> {
     const result: ContinuationResult = {
         slot,
         required: slot.required,
@@ -1396,8 +1424,13 @@ export async function runContinuation(slot: ContinuationSlot): Promise<Continuat
         dependencies: [],
     };
     const schedule = slot.schedule;
-    const baseline = await runSchedule(
-        schedule,
+    const setupRunner = options.setup ?? ((candidate, body) =>
+        runSchedule(candidate.schedule, body, {
+            webReference: candidate.topology === TOPOLOGY_NATIVE_NATIVE,
+        }));
+    const structuralEvidence = options.structuralEvidence ?? assertStructuralContinuation;
+    const baseline = await setupRunner(
+        slot,
         async (setup) => {
             const { peers: _closedLater, ...baseline } = setup.baseline;
             result.baseline = baseline;
@@ -1417,11 +1450,12 @@ export async function runContinuation(slot: ContinuationSlot): Promise<Continuat
             try {
                 const sourceView = await observeEvidence(actor);
                 if (slot.proof === 'web-gap') {
-                    const gaps = sourceView.tables.flatMap((table) =>
-                        table.cells
-                            .filter((cell) => cell.source === null)
-                            .map((cell) => ({ table, cell })),
-                    );
+                    const gaps = options.gaps?.(sourceView, slot) ??
+                        sourceView.tables.flatMap((table) =>
+                            table.cells
+                                .filter((cell) => cell.source === null)
+                                .map((cell) => ({ table, cell })),
+                        );
                     result.gap = {
                         observed: true,
                         positions: gaps.map(({ cell }) => cell.position),
@@ -1545,18 +1579,8 @@ export async function runContinuation(slot: ContinuationSlot): Promise<Continuat
                     result.disposition = 'edited';
                     return;
                 }
-                const candidates = realCells(sourceView).filter((cell) => {
-                    try {
-                        typingCursor(cell, slot.actorKind);
-                        return true;
-                    } catch {
-                        return false;
-                    }
-                });
-                const target =
-                    slot.proof === 'structure' || slot.proof === 'history'
-                        ? candidates.at(-1)
-                        : candidates[0];
+                const target = options.target?.(sourceView, slot) ??
+                    continuationTarget(sourceView, slot.actorKind, slot.proof);
                 requireContinuity(target?.sourceId, 'real source target unavailable');
                 const sourceId = target.sourceId;
                 const freshTarget = async () => {
@@ -1594,11 +1618,11 @@ export async function runContinuation(slot: ContinuationSlot): Promise<Continuat
                     await addRowAfter(actor, cell.position + 1);
                     const action = capture.actions.at(-1)!;
                     const intent = { actor: slot.actor, source: cell.source! };
-                    assertStructuralContinuation(action, intent, [
+                    structuralEvidence(action, intent, [
                         { kind: action.kind, document: action.after },
                     ]);
                     const acted = await checkpoint('structural-action');
-                    assertStructuralContinuation(action, intent, acted.observations);
+                    structuralEvidence(action, intent, acted.observations);
                     if (slot.proof === 'history') {
                         await call(actor, 'undo', {});
                         const undone = capture.actions.at(-1)!;
@@ -1721,7 +1745,6 @@ export async function runContinuation(slot: ContinuationSlot): Promise<Continuat
                 stopEvidence(setup.participants);
             }
         },
-        { webReference: schedule.topology === TOPOLOGY_NATIVE_NATIVE },
     );
     if (!result.baseline) {
         const { peers: _closed, ...failed } = baseline;

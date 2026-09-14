@@ -288,6 +288,7 @@ export function assertActionEvidence(e: ActionEvidence, intent: ActionIntent): v
     }
 }
 export interface HistoryEvidence {
+    kind?: PeerKind;
     before: unknown;
     acted: unknown;
     undone: unknown;
@@ -298,7 +299,7 @@ export interface HistoryEvidence {
 }
 export function assertHistoryEvidence(e: HistoryEvidence): void {
     requireEvidence(e.undo['applied'] === true && e.redo['applied'] === true, 'HISTORY_APPLIED');
-    equal(e.passes, [0, 0], 'HISTORY_NORMALIZATION');
+    if (e.kind === undefined || e.kind === 'rust') equal(e.passes, [0, 0], 'HISTORY_NORMALIZATION');
     assert.notDeepEqual(e.before, e.acted, 'TBL21 EVIDENCE ACTION_EFFECT');
     equal(e.undone, e.before, 'UNDO_EFFECT');
     equal(e.redone, e.acted, 'REDO_EFFECT');

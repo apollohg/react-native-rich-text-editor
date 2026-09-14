@@ -23,7 +23,12 @@ export function requireContinuity(value: unknown, detail: string): asserts value
 export function assertContinuationHistory(actions: readonly RecordedAction[], actor: number): void {
     requireContinuity(
         actions.length === 3 &&
-            actions.every((action) => action.actor === actor && !action.observationFailure),
+            actions.every(
+                (action) =>
+                    action.actor === actor &&
+                    action.kind === actions[0]!.kind &&
+                    !action.observationFailure,
+            ),
         'history action boundaries',
     );
     const [action, undo, redo] = actions;
@@ -32,6 +37,7 @@ export function assertContinuationHistory(actions: readonly RecordedAction[], ac
         'history operations',
     );
     assertHistoryEvidence({
+        kind: action!.kind,
         before: canonicalDocumentShape(action!.rawBefore),
         acted: canonicalDocumentShape(action!.rawAfter),
         undone: canonicalDocumentShape(undo!.rawAfter),
@@ -40,6 +46,31 @@ export function assertContinuationHistory(actions: readonly RecordedAction[], ac
         redo: redo!.reply,
         passes: [undo!.passes, redo!.passes],
     });
+}
+
+export function continuationTarget(
+    document: EffectiveDocument,
+    kind: PeerKind,
+    proof: string,
+): EffectiveCell {
+    const structural = proof === 'structure' || proof === 'history';
+    const cells = structural
+        ? document.tables
+              .filter((table) => table.parentCell === null)
+              .flatMap((table) => table.cells.filter((cell) => cell.source !== null))
+        : realCells(document);
+    const candidates = cells.filter((cell) => {
+        if (structural) return true;
+        try {
+            typingCursor(cell, kind);
+            return true;
+        } catch {
+            return false;
+        }
+    });
+    const target = structural ? candidates.at(-1) : candidates[0];
+    requireContinuity(target?.sourceId, 'real source target unavailable');
+    return target;
 }
 
 const EMPTY_CONTAINER_TYPES = new Set([
@@ -290,9 +321,26 @@ export function assertGapContinuation(
         .find((table) => table.source === intent.tableSource)
         ?.cells.find((cell) => cell.position === intent.position && cell.source === null);
     requireContinuity(gap, 'declared display-only gap');
+    const mapped = action.reply['textTarget'];
+    requireContinuity(
+        action.kind !== 'rust' && typeof mapped === 'object' && mapped !== null,
+        'gap mapped web target',
+    );
+    const target = mapped as Record<string, unknown>;
+    requireContinuity(
+        target['beforeCellPosition'] === intent.position &&
+            target['requestedPosition'] === typingCursor(gap, action.kind),
+        'gap mapped requested target',
+    );
+    requireContinuity(
+        typeof target['afterCellPosition'] === 'number' && typeof target['sourceId'] === 'string',
+        'gap mapped source identity',
+    );
+    const position = target['afterCellPosition'];
+    const sourceId = target['sourceId'];
     const materialized = action.after.tables
         .find((table) => table.source === intent.tableSource)
-        ?.cells.find((cell) => cell.position === intent.position && cell.sourceId);
+        ?.cells.find((cell) => cell.position === position && cell.sourceId === sourceId);
     requireContinuity(
         materialized?.sourceId &&
             !realCells(action.before).some((cell) => cell.sourceId === materialized.sourceId),

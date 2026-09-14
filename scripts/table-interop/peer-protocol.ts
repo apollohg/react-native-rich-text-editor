@@ -165,3 +165,9 @@ export function parseReplyValue(parsed: unknown): PeerReply {
         events: events.map((event) => parseEvent(event)),
     };
 }
+export interface TextTargetEvidence {
+    requestedPosition: number;
+    beforeCellPosition: number;
+    afterCellPosition: number;
+    sourceId: string;
+}

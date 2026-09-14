@@ -48,6 +48,7 @@ import {
 } from '@tiptap/y-tiptap';
 import type { PeerReply, Request, UpdateEvent, WebPeerHandler } from '../peer-protocol.js';
 import { observePresentation } from './presentation-observer.js';
+import { observeTextTarget } from './text-target.js';
 import type { JsonNode } from '../peer-protocol.js';
 
 const REMOTE_ORIGIN = 'tableInteropRemoteUpdate';
@@ -690,16 +691,25 @@ class WebPeerRuntime {
         }
         const anchor = payload['at'];
         const head = payload['head'];
-        const command = {
+        const command: Record<string, unknown> = {
             ...requireRecord(payload['command'], 'payload.command'),
             ...(anchor === undefined ? {} : { at: anchor }),
             ...(head === undefined ? {} : { head }),
         };
         const editor = this.requireEditor();
+        const before = editor.view.state.doc;
+        let textTarget: ReturnType<typeof observeTextTarget>;
         const changed = await this.runRequestedOperation(() => {
             applyCommand(editor, command);
+            if (command['type'] === INSERT_TEXT_COMMAND)
+                textTarget = observeTextTarget(
+                    before,
+                    command['at'],
+                    editor.view.state.selection,
+                    this.syncState().mapping,
+                );
         });
-        return { type: 'transaction', documentChanged: changed };
+        return { type: 'transaction', documentChanged: changed, ...(textTarget ? { textTarget } : {}) };
     }
 
     async history(direction: 'undo' | 'redo'): Promise<Record<string, unknown>> {
