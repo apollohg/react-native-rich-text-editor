@@ -164,6 +164,14 @@ test('node sizing matches basic-schema containers and leaf atoms', () => {
     assert.equal(evidence.nodeSize(astral, 'tiptap'), 4);
 });
 
+test('node sizing rejects unknown empty nodes for every peer coordinate model', () => {
+    for (const kind of ['rust', 'prosemirror', 'tiptap'] as const) {
+        for (const node of [{ type: 'unknown_atom' }, { type: 'unknown_atom', content: [] }]) {
+            assert.throws(() => evidence.nodeSize(node, kind), /unsupported empty node/);
+        }
+    }
+});
+
 function rowInsertion(): RecordedAction {
     const before = rowDocument();
     const after = structuredClone(before);

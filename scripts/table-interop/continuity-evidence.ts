@@ -63,7 +63,7 @@ export function nodeSize(node: JsonNode, kind: PeerKind): number {
     if (node.type === 'text')
         return kind === 'rust' ? [...(node.text ?? '')].length : (node.text ?? '').length;
     if (LEAF_TYPES.has(node.type)) return 1;
-    if (node.content)
+    if (node.content?.length)
         return 2 + node.content.reduce((size, child) => size + nodeSize(child, kind), 0);
     requireContinuity(EMPTY_CONTAINER_TYPES.has(node.type), `unsupported empty node ${node.type}`);
     return 2;
