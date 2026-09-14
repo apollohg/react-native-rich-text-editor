@@ -57,6 +57,8 @@ import type { CoverageStatus, FamilyEvidence, RecordedAction } from './scenario-
 import {
     assertTypingContinuation,
     assertSourcePreservation,
+    assertStructuralContinuation,
+    type ContinuationObservation,
     assertGapContinuation,
     assertGapRefusal,
     assertUnrelatedContinuation,
@@ -1146,9 +1148,14 @@ export interface ContinuationCheckpoint {
         failures: string[];
     };
     readonly nativeAutonomousRepairWrites: number;
-    readonly observations: EffectiveDocument[];
+    readonly observations: ContinuationObservation[];
     readonly observationFailures: string[];
-    readonly drain: { passed: boolean; failure?: string; rounds: number; emitted: number };
+    readonly drain: {
+        passed: boolean;
+        failure?: string;
+        rounds: number;
+        emitted: number;
+    };
     readonly remoteBoundaries: ContinuationRemoteBoundary[];
 }
 
@@ -1177,7 +1184,11 @@ export interface ContinuationResult {
         pending: boolean;
     }[];
     gap?: { observed: true; positions: number[] };
-    partition?: { rounds: number; emitted: number; remoteBoundaries: ContinuationRemoteBoundary[] };
+    partition?: {
+        rounds: number;
+        emitted: number;
+        remoteBoundaries: ContinuationRemoteBoundary[];
+    };
     tracePath?: string;
     refusalEmitted?: number;
 }
@@ -1236,7 +1247,10 @@ async function continuationCheckpoint(
     const autonomous = await nativeRepairWrites(participants);
     for (const peer of participants) {
         try {
-            checked.observations.push(await observeEvidence(peer));
+            checked.observations.push({
+                kind: peerKindOf(peer),
+                document: await observeEvidence(peer),
+            });
         } catch (error) {
             checked.observationFailures.push(String(error));
         }
@@ -1464,7 +1478,9 @@ export async function runContinuation(slot: ContinuationSlot): Promise<Continuat
                     let index =
                         display.content?.findIndex((node) => node.type === 'paragraph') ?? -1;
                     if (index < 0) {
-                        await call(actor, 'command', { type: 'appendParagraph' });
+                        await call(actor, 'command', {
+                            type: 'appendParagraph',
+                        });
                         const insertion = capture.actions.at(-1)!;
                         requireContinuity(
                             insertion.reply['documentChanged'] === true,
@@ -1482,10 +1498,17 @@ export async function runContinuation(slot: ContinuationSlot): Promise<Continuat
                             insertion.after,
                             new Map(),
                             true,
+                            { before: insertion.kind, after: insertion.kind },
                         );
                         const inserted = await checkpoint('outside-paragraph');
                         for (const view of inserted.observations)
-                            assertSourcePreservation(insertion.before, view, new Map(), true);
+                            assertSourcePreservation(
+                                insertion.before,
+                                view.document,
+                                new Map(),
+                                true,
+                                { before: insertion.kind, after: view.kind },
+                            );
                         state = await snapshot(actor);
                         display = state.displayJson as JsonNode;
                         index = (display.content?.length ?? 0) - 1;
@@ -1502,7 +1525,11 @@ export async function runContinuation(slot: ContinuationSlot): Promise<Continuat
                                 (position, node) => position + nodeSize(node, slot.actorKind),
                                 0,
                             );
-                    await call(actor, 'command', { type: 'insertText', text: 'outside-', at });
+                    await call(actor, 'command', {
+                        type: 'insertText',
+                        text: 'outside-',
+                        at,
+                    });
                     const action = capture.actions.at(-1)!;
                     const final = await checkpoint('outside-typed');
                     const raw: JsonNode[] = [];
@@ -1547,7 +1574,7 @@ export async function runContinuation(slot: ContinuationSlot): Promise<Continuat
                     });
                     const action = capture.actions.at(-1)!;
                     assertTypingContinuation(action, { actor: slot.actor, sourceId, text }, [
-                        action.after,
+                        { kind: action.kind, document: action.after },
                     ]);
                     return action;
                 };
@@ -1566,23 +1593,54 @@ export async function runContinuation(slot: ContinuationSlot): Promise<Continuat
                     const cell = await freshTarget();
                     await addRowAfter(actor, cell.position + 1);
                     const action = capture.actions.at(-1)!;
-                    assertActionEvidence(action, {
-                        actor: slot.actor,
-                        operation: 'addRow',
-                        source: cell.source!,
-                    });
+                    const intent = { actor: slot.actor, source: cell.source! };
+                    assertStructuralContinuation(action, intent, [
+                        { kind: action.kind, document: action.after },
+                    ]);
                     const acted = await checkpoint('structural-action');
-                    for (const view of acted.observations)
-                        assertSourcePreservation(action.after, view, new Map(), true);
+                    assertStructuralContinuation(action, intent, acted.observations);
                     if (slot.proof === 'history') {
                         await call(actor, 'undo', {});
-                        await checkpoint('undo');
+                        const undone = capture.actions.at(-1)!;
+                        const undoState = await checkpoint('undo');
+                        for (const view of [
+                            { kind: undone.kind, document: undone.after },
+                            ...undoState.observations,
+                        ])
+                            assertSourcePreservation(
+                                action.before,
+                                view.document,
+                                new Map(),
+                                true,
+                                { before: action.kind, after: view.kind },
+                            );
                         await call(actor, 'redo', {});
                         const redone = capture.actions.at(-1)!;
                         const final = await checkpoint('redo');
                         assertContinuationHistory(capture.actions, slot.actor);
-                        for (const view of final.observations)
-                            assertSourcePreservation(redone.after, view, new Map(), true);
+                        for (const view of [
+                            { kind: redone.kind, document: redone.after },
+                            ...final.observations,
+                        ]) {
+                            const coordinates = {
+                                before: action.kind,
+                                after: view.kind,
+                            };
+                            assertSourcePreservation(
+                                action.before,
+                                view.document,
+                                new Map(),
+                                true,
+                                coordinates,
+                            );
+                            assertSourcePreservation(
+                                redone.after,
+                                view.document,
+                                new Map(),
+                                true,
+                                coordinates,
+                            );
+                        }
                     }
                 } else if (slot.proof === 'partition') {
                     const boundaries: ContinuationRemoteBoundary[] = [];
