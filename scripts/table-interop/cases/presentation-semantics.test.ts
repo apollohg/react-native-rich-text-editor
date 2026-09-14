@@ -149,6 +149,7 @@ function overlapPair(): [EffectiveDocument, EffectiveDocument] {
             },
         ],
     };
+    w.widths = null;
     for (const c of w.cells) c.row = c.column = c.rowspan = c.colspan = null;
     return [native, web];
 }
@@ -158,6 +159,22 @@ test('overlap checker accepts independently declared evidence', () => {
     ]);
 });
 const overlapControls: [string, (n: EffectiveTable, w: EffectiveTable) => void, RegExp][] = [
+    ...(['row', 'column', 'rowspan', 'colspan'] as const).map(
+        (field): [string, (n: EffectiveTable, w: EffectiveTable) => void, RegExp] => [
+            `populated unavailable ${field}`,
+            (_, w) => {
+                w.cells[0]![field] = 1;
+            },
+            /unavailable logical geometry must be null/,
+        ],
+    ),
+    [
+        'populated unavailable widths',
+        (_, w) => {
+            w.widths = [];
+        },
+        /unavailable logical geometry must be null/,
+    ],
     [
         'absent evidence',
         (_, w) => {

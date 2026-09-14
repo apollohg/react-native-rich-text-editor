@@ -50,6 +50,13 @@ export function overlapWitness(boxes: CellBox[]): [CellBox, CellBox] | null {
 export function validateOverlapEvidence(table: EffectiveTable): void {
     if (table.overlap?.kind !== 'web-overlap' || table.overlap.logicalGeometry !== 'unavailable')
         throw new Error(`missing live overlap evidence for ${table.source}`);
+    if (
+        table.widths !== null ||
+        table.cells.some((cell) =>
+            [cell.row, cell.column, cell.rowspan, cell.colspan].some((value) => value !== null),
+        )
+    )
+        throw new Error('unavailable logical geometry must be null');
     const boxes = table.overlap.boxes;
     if (
         boxes.length !== 2 ||
