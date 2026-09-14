@@ -190,6 +190,14 @@ impl YrsDocumentEngine {
                     )
                 })?;
             }
+        }
+        // Seeding can compact structs whose live history metadata prevented merging.
+        let seeded_candidate_encoded =
+            encode_candidate_state_bounded(&candidate_doc, &self.resource_limits)
+                .map_err(|error| history_operation_error(request_id, error))?;
+        {
+            let mut txn =
+                candidate_doc.transact_mut_with(TransactionOrigin::RemoteSync.as_yrs_origin());
             txn.apply_update(candidate_update).map_err(|error| {
                 yrs_engine::OperationError::document_invalid(
                     request_id,
@@ -235,7 +243,9 @@ impl YrsDocumentEngine {
         let candidate_encoded =
             encode_candidate_state_bounded(&candidate_doc, &self.resource_limits)
                 .map_err(|error| history_operation_error(request_id, error))?;
-        if candidate_encoded == current_encoded {
+        let unchanged = candidate_encoded == seeded_candidate_encoded;
+        drop(seeded_candidate_encoded);
+        if unchanged {
             return Ok(self.seal_remote_outcome(
                 request_id,
                 PreparedDocumentOutcome::Unchanged,
