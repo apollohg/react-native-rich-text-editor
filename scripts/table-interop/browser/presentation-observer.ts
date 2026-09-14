@@ -1,6 +1,8 @@
 import * as Y from 'yjs';
 import type { Node as PMNode } from 'prosemirror-model';
 import { TableMap } from 'prosemirror-tables';
+import type { EditorView } from 'prosemirror-view';
+import { overlapWitness } from '../presentation-overlap.js';
 import type {
     EffectiveCell,
     EffectiveDocument,
@@ -50,6 +52,7 @@ export function observePresentation(
     mapping: Mapping,
     document: PMNode,
     rawJson: JsonNode,
+    view?: EditorView,
 ): EffectiveDocument {
     const raw: RawNode[] = [];
     function readRaw(
@@ -197,9 +200,10 @@ export function observePresentation(
             fail('AMBIGUOUS_SOURCE_MAPPING', `table ${source.path} repeats a live owner`);
         usedTables.add(owner);
         const map = TableMap.get(owner.node);
+        const collision = map.problems?.some((problem) => problem.type === 'collision') ?? false;
         if (
             map.problems?.some(
-                (problem) => problem.type !== 'colwidth mismatch' && problem.type !== 'missing',
+                (problem) => !['colwidth mismatch', 'missing', 'collision'].includes(problem.type),
             )
         )
             fail(
@@ -212,12 +216,56 @@ export function observePresentation(
                 repairedWidths.set(problem.pos, problem.colwidth);
         const widths: (number | null)[] = Array(map.width).fill(null);
         const cells: EffectiveCell[] = [];
-        for (const liveCell of liveCells.filter((entry) => entry.table === owner)) {
+        const boxes = [];
+        const ownedCells = liveCells.filter((entry) => entry.table === owner);
+        if (collision && ownedCells.length > 31_250)
+            fail('UNSUPPORTED_OBSERVATION', 'overlap measurement cell budget exceeded');
+        for (const liveCell of ownedCells) {
             const offset = liveCell.position - owner.position - 1;
-            const rectangle = map.findCell(offset);
+            const rectangle = collision ? null : map.findCell(offset);
             const sourceCell = reverseCells.get(liveCell);
+            if (collision && sourceCell) {
+                const element = view?.nodeDOM(liveCell.position) as EditorView['dom'] | null;
+                const tableElement = view?.nodeDOM(owner.position) as EditorView['dom'] | null;
+                if (
+                    element?.nodeType !== 1 ||
+                    !['TD', 'TH'].includes(element.tagName) ||
+                    tableElement?.nodeType !== 1 ||
+                    element.closest('table') !==
+                        (tableElement.matches('table')
+                            ? tableElement
+                            : tableElement.querySelector('table'))
+                )
+                    fail(
+                        'UNSUPPORTED_OBSERVATION',
+                        `overlap DOM attribution unavailable for ${sourceCell.path}`,
+                    );
+                const { left, top, right, bottom } = element.getBoundingClientRect();
+                if (
+                    ![left, top, right, bottom].every(Number.isFinite) ||
+                    right <= left ||
+                    bottom <= top
+                )
+                    fail(
+                        'UNSUPPORTED_OBSERVATION',
+                        `overlap DOM box must be finite and positive for ${sourceCell.path}`,
+                    );
+                boxes.push({
+                    source: sourceCell.path,
+                    position: liveCell.position,
+                    tableSource: source.path,
+                    left,
+                    top,
+                    right,
+                    bottom,
+                });
+            }
             const colwidth = repairedWidths.get(offset) ?? liveCell.node.attrs.colwidth;
-            for (let column = rectangle.left; column < rectangle.right; column++) {
+            for (
+                let column = rectangle?.left ?? 0;
+                rectangle && column < rectangle.right;
+                column++
+            ) {
                 const width = colwidth?.[column - rectangle.left];
                 if (typeof width === 'number' && width > 0) widths[column] = width;
             }
@@ -234,18 +282,33 @@ export function observePresentation(
                       }
                     : {}),
                 position: liveCell.position,
-                row: rectangle.top,
-                column: rectangle.left,
-                rowspan: rectangle.bottom - rectangle.top,
-                colspan: rectangle.right - rectangle.left,
+                row: rectangle?.top ?? null,
+                column: rectangle?.left ?? null,
+                rowspan: rectangle ? rectangle.bottom - rectangle.top : null,
+                colspan: rectangle ? rectangle.right - rectangle.left : null,
                 node: liveCell.node.toJSON() as JsonNode,
             });
         }
+        const witness = collision ? overlapWitness(boxes) : null;
+        if (collision && !witness)
+            fail(
+                'UNSUPPORTED_OBSERVATION',
+                `live table ${source.path} collision has no measured overlap intersection`,
+            );
         const parent = source.cellAncestors.at(-1);
         const liveParent = owner.cellAncestors.at(-1);
         if ((parent && cellMap.get(parent)) !== liveParent)
             fail('AMBIGUOUS_SOURCE_MAPPING', `table ${source.path} changed cell ancestry`);
         tables.push({
+            ...(witness
+                ? {
+                      overlap: {
+                          kind: 'web-overlap' as const,
+                          logicalGeometry: 'unavailable' as const,
+                          boxes: witness,
+                      },
+                  }
+                : {}),
             source: source.path,
             parentCell: parent?.path ?? null,
             pathWithinCell: liveParent ? owner.path.slice(liveParent.path.length + 1) : owner.path,
@@ -253,7 +316,7 @@ export function observePresentation(
             node: owner.node.toJSON() as JsonNode,
             rows: map.height,
             columns: map.width,
-            widths,
+            widths: collision ? null : widths,
             cells,
         });
     }

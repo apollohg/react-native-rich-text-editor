@@ -763,6 +763,7 @@ class WebPeerRuntime {
                     mapping,
                     this.requireEditor().view.state.doc,
                     this.requireEditor().documentJson() as JsonNode,
+                    this.requireEditor().view,
                 ),
             };
         } catch (error) {

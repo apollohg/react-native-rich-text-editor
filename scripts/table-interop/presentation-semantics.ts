@@ -13,6 +13,7 @@ export type {
     EffectiveDocument,
 } from './peer-protocol.js';
 import { tableSchemaOf } from './table-schema.js';
+import { validateFallback, validateOverlapEvidence } from './presentation-overlap.js';
 
 export type PresentationFailure =
     | 'PRESENTATION_MISMATCH'
@@ -100,6 +101,8 @@ function same(a: unknown, b: unknown, reason: string): void {
         );
 }
 function resolvedCellWidths(cell: EffectiveCell, table: EffectiveTable): number[] | null {
+    if (cell.column === null || cell.colspan === null || table.widths === null)
+        fail('UNSUPPORTED_OBSERVATION', 'logical cell geometry unavailable');
     const widths = table.widths
         .slice(cell.column, cell.column + cell.colspan)
         .map((width) => width ?? 0);
@@ -122,21 +125,27 @@ function emptyGap(
         return false;
     const value = semantic(cell.node, defaults, true);
     return (
-        equal(value, { type: 'table_cell', content: [{ type: 'paragraph' }] }) ||
-        equal(value, { type: 'tableCell', content: [{ type: 'paragraph' }] })
+        equal(value, {
+            type: 'table_cell',
+            content: [{ type: 'paragraph' }],
+        }) || equal(value, { type: 'tableCell', content: [{ type: 'paragraph' }] })
     );
 }
-function geometry(cell: EffectiveCell): number[] {
+function geometry(cell: EffectiveCell): (number | null)[] {
     return [cell.row, cell.column, cell.rowspan, cell.colspan];
 }
 
-function meaningfulGaps(
-    table: EffectiveTable,
-    declared: AttributeDefaults,
-): Map<number, unknown> {
+function meaningfulGaps(table: EffectiveTable, declared: AttributeDefaults): Map<number, unknown> {
     const result = new Map<number, unknown>();
     for (const cell of table.cells) {
         if (cell.source !== null || emptyGap(cell, table, declared)) continue;
+        if (
+            cell.row === null ||
+            cell.column === null ||
+            cell.rowspan === null ||
+            cell.colspan === null
+        )
+            fail('UNACCOUNTED_CONTENT', 'meaningful synthetic region has unavailable geometry');
         if (
             (cell.node.attrs?.colspan ?? 1) !== cell.colspan ||
             (cell.node.attrs?.rowspan ?? 1) !== cell.rowspan ||
@@ -156,6 +165,7 @@ function validateGrid(table: EffectiveTable): void {
         !Number.isInteger(table.columns) ||
         table.rows < 0 ||
         table.columns < 0 ||
+        table.widths === null ||
         table.widths.length !== table.columns
     )
         fail('UNSUPPORTED_OBSERVATION', `invalid extent for ${table.source}`);
@@ -188,11 +198,22 @@ function validateGrid(table: EffectiveTable): void {
     }
 }
 
+export interface PresentationCheck {
+    tables: (
+        | { source: string; kind: 'exact' }
+        | {
+              source: string;
+              kind: 'overlap-fallback';
+              evidence: 'native-equality' | 'live-overlap';
+          }
+    )[];
+}
 export function assertEffectivePresentation(
     expected: EffectiveDocument,
     actual: EffectiveDocument,
     declared: AttributeDefaults = defaults,
-): void {
+): PresentationCheck {
+    const checked: PresentationCheck = { tables: [] };
     const actualTables = new Map<string, EffectiveTable>();
     for (const table of actual.tables) {
         if (actualTables.has(table.source))
@@ -211,10 +232,59 @@ export function assertEffectivePresentation(
                 fail('UNACCOUNTED_CONTENT', `duplicated cell ${cell.source}`);
             bySource.set(cell.source, cell);
         }
-        validateGrid(wanted);
-        validateGrid(observed);
-        const wantedGaps = meaningfulGaps(wanted, declared);
-        const observedGaps = meaningfulGaps(observed, declared);
+        const exceptional = wanted.overlap !== undefined || observed.overlap !== undefined;
+        const mixed =
+            exceptional &&
+            (wanted.overlap?.kind === 'web-overlap' || observed.overlap?.kind === 'web-overlap');
+        if (exceptional) {
+            for (const view of [wanted, observed]) {
+                try {
+                    if (view.overlap?.kind === 'native-fallback') {
+                        validateGrid(view);
+                        validateFallback(view);
+                        const sources = new Map(view.cells.map((cell) => [cell.source, cell]));
+                        for (const [r, row] of (view.node.content ?? []).entries())
+                            for (const [c, raw] of (row.content ?? []).entries()) {
+                                const projected = sources.get(`${view.source}.${r}.${c}`)!;
+                                same(
+                                    semantic(raw, declared),
+                                    semantic(projected.node, declared),
+                                    `native source content/header/attributes ${projected.source}`,
+                                );
+                            }
+                    } else validateOverlapEvidence(view);
+                } catch (error) {
+                    fail('PRESENTATION_MISMATCH', String(error));
+                }
+            }
+            if (
+                wanted.overlap?.kind !== 'native-fallback' &&
+                observed.overlap?.kind !== 'native-fallback'
+            )
+                fail('UNSUPPORTED_OBSERVATION', 'overlap requires native fallback');
+        } else {
+            validateGrid(wanted);
+            validateGrid(observed);
+        }
+        const exceptionalGaps = (view: EffectiveTable) => {
+            for (const c of view.cells.filter((c) => c.source === null)) {
+                const value = semantic(c.node, declared, true);
+                if (
+                    !equal(value, {
+                        type: 'table_cell',
+                        content: [{ type: 'paragraph' }],
+                    }) &&
+                    !equal(value, {
+                        type: 'tableCell',
+                        content: [{ type: 'paragraph' }],
+                    })
+                )
+                    fail('UNACCOUNTED_CONTENT', `meaningful synthetic regions in ${view.source}`);
+            }
+            return new Map<number, unknown>();
+        };
+        const wantedGaps = mixed ? exceptionalGaps(wanted) : meaningfulGaps(wanted, declared);
+        const observedGaps = mixed ? exceptionalGaps(observed) : meaningfulGaps(observed, declared);
         if (
             wantedGaps.size !== observedGaps.size ||
             [...wantedGaps].some(
@@ -223,18 +293,27 @@ export function assertEffectivePresentation(
         )
             fail('UNACCOUNTED_CONTENT', `meaningful synthetic regions differ in ${wanted.source}`);
         const real = wanted.cells.filter((cell) => cell.source !== null);
+        if (new Set(real.map((cell) => cell.source)).size !== real.length)
+            fail('UNACCOUNTED_CONTENT', `duplicated cell in ${wanted.source}`);
         if (bySource.size !== real.length)
             fail('UNACCOUNTED_CONTENT', `real cell count differs in ${wanted.source}`);
+        if (mixed)
+            same(
+                real.map((cell) => cell.source),
+                observed.cells.filter((cell) => cell.source !== null).map((cell) => cell.source),
+                `real source order ${wanted.source}`,
+            );
         same(
             [wanted.parentCell, wanted.pathWithinCell],
             [observed.parentCell, observed.pathWithinCell],
             `table nesting ${wanted.source}`,
         );
-        same(
-            [wanted.rows, wanted.columns, wanted.widths],
-            [observed.rows, observed.columns, observed.widths],
-            `table geometry ${wanted.source}`,
-        );
+        if (!mixed)
+            same(
+                [wanted.rows, wanted.columns, wanted.widths],
+                [observed.rows, observed.columns, observed.widths],
+                `table geometry ${wanted.source}`,
+            );
         same(
             semantic(wanted.node, declared),
             semantic(observed.node, declared),
@@ -248,12 +327,13 @@ export function assertEffectivePresentation(
         for (const cell of real) {
             const live = bySource.get(cell.source!);
             if (!live) fail('UNACCOUNTED_CONTENT', `missing source ${cell.source}`);
-            same(geometry(cell), geometry(live), `placement/spans ${cell.source}`);
+            if (!mixed) same(geometry(cell), geometry(live), `placement/spans ${cell.source}`);
             same(
                 semantic(cell.node, declared, true),
                 semantic(live.node, declared, true),
                 `content/header/attributes ${cell.source}`,
             );
+            if (mixed) continue;
             for (const span of ['colspan', 'rowspan'] as const) {
                 const actualSpan = live.node.attrs?.[span] ?? 1;
                 if (actualSpan !== (cell.node.attrs?.[span] ?? 1) && actualSpan !== live[span])
@@ -270,7 +350,17 @@ export function assertEffectivePresentation(
             )
                 fail('PRESENTATION_MISMATCH', `unexplained colwidth attributes for ${cell.source}`);
         }
+        checked.tables.push(
+            exceptional
+                ? {
+                      source: wanted.source,
+                      kind: 'overlap-fallback',
+                      evidence: mixed ? 'live-overlap' : 'native-equality',
+                  }
+                : { source: wanted.source, kind: 'exact' },
+        );
     }
+    return checked;
 }
 
 function nodeSize(node: JsonNode): number {
@@ -308,7 +398,10 @@ export async function observeNativePresentation(peer: Peer): Promise<EffectiveDo
                 table: node,
             });
             const { rows, columns, widths, slots } = projection;
-            if (projection.compatibilityDiagnostic != null)
+            if (
+                projection.compatibilityDiagnostic != null &&
+                projection.compatibilityDiagnostic !== 'overlapping-reference-cells'
+            )
                 fail(
                     'UNSUPPORTED_OBSERVATION',
                     `native compatibility fallback for ${source}: ${projection.compatibilityDiagnostic}`,
@@ -369,6 +462,14 @@ export async function observeNativePresentation(peer: Peer): Promise<EffectiveDo
                 });
             }
             tables.push({
+                ...(projection.compatibilityDiagnostic === 'overlapping-reference-cells'
+                    ? {
+                          overlap: {
+                              kind: 'native-fallback' as const,
+                              reason: 'overlapping-reference-cells' as const,
+                          },
+                      }
+                    : {}),
                 source,
                 parentCell,
                 pathWithinCell: within,

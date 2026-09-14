@@ -27,8 +27,36 @@ import type {
     EffectiveTable,
 } from '../presentation-semantics.js';
 import { observePresentation } from '../browser/presentation-observer.js';
+import { overlapWitness, validateFallback } from '../presentation-overlap.js';
 
-const paragraph = { type: 'paragraph', content: [{ type: 'text', text: 'same' }] };
+const paragraph = {
+    type: 'paragraph',
+    content: [{ type: 'text', text: 'same' }],
+};
+test('overlap witness near the end of a tall table stays within observation budget', () => {
+    const boxes = Array.from({ length: 3000 }, (_, i) => ({
+        source: String(i),
+        position: i,
+        tableSource: '0',
+        left: 0,
+        right: 20,
+        top: i * 20,
+        bottom: i * 20 + 10,
+    }));
+    boxes.push({
+        ...boxes.at(-1)!,
+        source: 'last',
+        position: 3000,
+        top: 59985,
+        bottom: 60000,
+    });
+    assert.deepEqual(
+        overlapWitness(boxes)
+            ?.map((b) => b.source)
+            .sort(),
+        ['2999', 'last'],
+    );
+});
 const cell = (options: Parameters<typeof rawCell>[0] = {}): semantics.JsonNode =>
     rawCell(options) as semantics.JsonNode;
 function real(
@@ -65,6 +93,328 @@ function fixture(cells: EffectiveCell[], rows = 2, columns = 2): EffectiveDocume
         ],
     };
 }
+function overlapPair(): [EffectiveDocument, EffectiveDocument] {
+    const native = fixture(
+        [
+            real('0.0.0', 0, 0, { node: cell({ text: 'a' }) }),
+            real('0.0.1', 0, 1, {
+                rowspan: 2,
+                node: cell({ text: 'b', rowspan: 2 }),
+            }),
+            real('0.1.0', 1, 2, {
+                rowspan: 2,
+                colspan: 2,
+                node: cell({ text: 'c', colspan: 2, rowspan: 3 }),
+            }),
+        ],
+        3,
+        4,
+    );
+    const n = native.tables[0]!;
+    n.cells.forEach((c, i) => {
+        c.position = 2 + i * 5;
+    });
+    n.node = table([
+        row(n.cells.slice(0, 2).map((c) => c.node)),
+        row([n.cells[2]!.node]),
+        row([]),
+    ]) as semantics.JsonNode;
+    n.overlap = {
+        kind: 'native-fallback',
+        reason: 'overlapping-reference-cells',
+    };
+    const web = structuredClone(native);
+    const w = web.tables[0]!;
+    w.overlap = {
+        kind: 'web-overlap',
+        logicalGeometry: 'unavailable',
+        boxes: [
+            {
+                source: '0.0.1',
+                tableSource: '0',
+                position: 7,
+                left: 10,
+                top: 0,
+                right: 20,
+                bottom: 20,
+            },
+            {
+                source: '0.1.0',
+                tableSource: '0',
+                position: 12,
+                left: 0,
+                top: 10,
+                right: 20,
+                bottom: 30,
+            },
+        ],
+    };
+    for (const c of w.cells) c.row = c.column = c.rowspan = c.colspan = null;
+    return [native, web];
+}
+test('overlap checker accepts independently declared evidence', () => {
+    assert.deepEqual(semantics.assertEffectivePresentation(...overlapPair()).tables, [
+        { source: '0', kind: 'overlap-fallback', evidence: 'live-overlap' },
+    ]);
+});
+const overlapControls: [string, (n: EffectiveTable, w: EffectiveTable) => void, RegExp][] = [
+    [
+        'absent evidence',
+        (_, w) => {
+            delete w.overlap;
+        },
+        /overlap evidence/,
+    ],
+    [
+        'duplicate witness',
+        (_, w) => {
+            if (w.overlap?.kind === 'web-overlap') w.overlap.boxes[1] = { ...w.overlap.boxes[0]! };
+        },
+        /distinct/,
+    ],
+    [
+        'wrong owner',
+        (_, w) => {
+            if (w.overlap?.kind === 'web-overlap') w.overlap.boxes[0]!.tableSource = 'other';
+        },
+        /attribution/,
+    ],
+    [
+        'unknown source',
+        (_, w) => {
+            if (w.overlap?.kind === 'web-overlap') w.overlap.boxes[0]!.source = 'missing';
+        },
+        /attribution/,
+    ],
+    [
+        'nonintersection',
+        (_, w) => {
+            if (w.overlap?.kind === 'web-overlap') w.overlap.boxes[1]!.left = 20;
+        },
+        /positive|intersection/,
+    ],
+    [
+        'nonfinite box',
+        (_, w) => {
+            if (w.overlap?.kind === 'web-overlap') w.overlap.boxes[0]!.left = NaN;
+        },
+        /positive/,
+    ],
+    [
+        'native overlap',
+        (n) => {
+            n.cells[2]!.column = 1;
+        },
+        /overlapping content/,
+    ],
+    [
+        'wrong fallback',
+        (n) => {
+            n.cells[2]!.column = 0;
+            n.cells[2]!.colspan = 1;
+        },
+        /fallback geometry/,
+    ],
+    [
+        'other diagnostic',
+        (n) => {
+            n.overlap = {
+                kind: 'native-fallback',
+                reason: 'unsupported-default',
+            } as any;
+        },
+        /diagnostic/,
+    ],
+    [
+        'lost cell',
+        (_, w) => {
+            w.cells.pop();
+        },
+        /cell count|attribution/,
+    ],
+    [
+        'duplicate cell',
+        (_, w) => {
+            w.cells.push(w.cells[0]!);
+        },
+        /duplicated cell/,
+    ],
+    [
+        'changed content',
+        (_, w) => {
+            w.cells[0]!.node.content = [{ type: 'paragraph' }];
+        },
+        /content\/header\/attributes/,
+    ],
+    [
+        'changed header',
+        (_, w) => {
+            w.cells[0]!.node.type = 'table_header';
+        },
+        /content\/header\/attributes/,
+    ],
+    [
+        'changed opaque attribute',
+        (_, w) => {
+            w.cells[0]!.node.attrs!.payload = {
+                type: 'table',
+                content: ['secret'],
+            };
+        },
+        /content\/header\/attributes/,
+    ],
+    [
+        'native lost content',
+        (n) => {
+            n.cells[0]!.node = cell({ text: 'bad' });
+        },
+        /source content|content\/header\/attributes/,
+    ],
+    [
+        'native wrong widths',
+        (n) => {
+            n.widths![0] = 100;
+        },
+        /fallback geometry\/widths/,
+    ],
+    [
+        'ordinary falsely labelled',
+        (n, w) => {
+            const regular = fixture([real('0.0.0', 0, 0), real('0.0.1', 0, 1)], 1, 2).tables[0]!;
+            regular.node = table([row(regular.cells.map((c) => c.node))]) as semantics.JsonNode;
+            Object.assign(n, regular);
+            w.cells = structuredClone(n.cells);
+            w.cells.forEach((c, i) => {
+                c.position = i;
+            });
+            w.overlap = {
+                kind: 'web-overlap',
+                logicalGeometry: 'unavailable',
+                boxes: [
+                    {
+                        source: '0.0.0',
+                        tableSource: '0',
+                        position: 0,
+                        left: 0,
+                        top: 0,
+                        right: 20,
+                        bottom: 20,
+                    },
+                    {
+                        source: '0.0.1',
+                        tableSource: '0',
+                        position: 1,
+                        left: 10,
+                        top: 0,
+                        right: 30,
+                        bottom: 20,
+                    },
+                ],
+            };
+            w.node = structuredClone(n.node);
+            n.overlap = {
+                kind: 'native-fallback',
+                reason: 'overlapping-reference-cells',
+            };
+        },
+        /regular table/,
+    ],
+    [
+        'meaningful scaffold',
+        (_, w) => {
+            w.cells.push({ ...w.cells[0]!, source: null });
+        },
+        /meaningful synthetic/,
+    ],
+    [
+        'table attributes',
+        (_, w) => {
+            w.node.attrs = { title: 'changed' };
+        },
+        /table attributes/,
+    ],
+    [
+        'row attributes',
+        (_, w) => {
+            w.node.content![0]!.attrs = { title: 'changed' };
+        },
+        /row attributes/,
+    ],
+];
+for (const [name, mutate, reason] of overlapControls)
+    test(`overlap rejects ${name}`, () => {
+        const [n, w] = overlapPair();
+        mutate(n.tables[0]!, w.tables[0]!);
+        assert.throws(() => semantics.assertEffectivePresentation(n, w), reason);
+    });
+test('overlap remains scoped to nested table alongside exact regular tables', () => {
+    const [native, web] = overlapPair();
+    const nestedSource = '0.0.0.1';
+    for (const doc of [native, web]) {
+        const nested = doc.tables[0]!;
+        nested.source = nestedSource;
+        nested.parentCell = '0.0.0';
+        nested.pathWithinCell = '1';
+        for (const c of nested.cells) c.source = nestedSource + c.source!.slice(1);
+        if (nested.overlap?.kind === 'web-overlap')
+            for (const box of nested.overlap.boxes) {
+                box.source = nestedSource + box.source.slice(1);
+                box.tableSource = nestedSource;
+            }
+        const parent = fixture([real('0.0.0', 0, 0)], 1, 1).tables[0]!;
+        parent.cells[0]!.node.content!.push(nested.node);
+        doc.tables.unshift(parent);
+        const unrelated = structuredClone(parent);
+        unrelated.source = '1';
+        unrelated.pathWithinCell = '1';
+        unrelated.cells[0]!.source = '1.0.0';
+        unrelated.cells[0]!.node.content!.pop();
+        doc.tables.push(unrelated);
+    }
+    assert.deepEqual(semantics.assertEffectivePresentation(native, web).tables, [
+        { source: '0', kind: 'exact' },
+        {
+            source: nestedSource,
+            kind: 'overlap-fallback',
+            evidence: 'live-overlap',
+        },
+        { source: '1', kind: 'exact' },
+    ]);
+    web.tables[2]!.cells[0]!.column = 1;
+    assert.throws(() => semantics.assertEffectivePresentation(native, web), /invalid rectangle/);
+});
+test('overlap native equality is explicitly distinct from live evidence', () => {
+    const [native] = overlapPair();
+    assert.deepEqual(
+        semantics.assertEffectivePresentation(native, structuredClone(native)).tables,
+        [
+            {
+                source: '0',
+                kind: 'overlap-fallback',
+                evidence: 'native-equality',
+            },
+        ],
+    );
+});
+test('overlap fallback widths count repeated rowspan contributions independently', () => {
+    const [doc] = overlapPair();
+    const n = doc.tables[0]!;
+    n.cells[0]!.node.attrs!.colwidth = [100];
+    n.cells[1]!.node.attrs!.colwidth = [110];
+    n.cells[2]!.node.attrs!.colwidth = [200, 220];
+    const d = real('0.2.0', 2, 0, {
+        node: cell({ text: 'd', colwidth: [140] }),
+    });
+    const e = real('0.2.1', 2, 1, {
+        node: cell({ text: 'e', colwidth: [150] }),
+    });
+    n.cells.push(d, e);
+    n.node.content![2]!.content = [d.node, e.node];
+    n.widths = [140, 110, 200, 220];
+    validateFallback(n);
+    n.widths[1] = 150;
+    assert.throws(() => validateFallback(n), /fallback geometry\/widths/);
+});
 const fixtures: [string, EffectiveDocument][] = [
     ['regular', fixture([real('a', 0, 0), real('b', 0, 1), real('c', 1, 0), real('d', 1, 1)])],
     ['missing-slot', fixture([real('a', 0, 0), real('b', 0, 1), real('c', 1, 0)])],
@@ -230,7 +580,7 @@ const mutations: [string, (table: EffectiveTable) => void, string][] = [
     [
         'resolved width',
         (t) => {
-            t.widths[0] = 180;
+            t.widths![0] = 180;
         },
         'PRESENTATION_MISMATCH',
     ],
@@ -448,33 +798,176 @@ function presetNode(value: unknown, preset: string): unknown {
     };
 }
 for (const preset of ['prosemirror', 'tiptap'] as const) {
-    test(`TBL-21-P ${preset} detects the unsupported one-pass TableMap boundary`, async () => {
-        const selectedSchema = preset === 'tiptap' ? tiptapSchema : schema;
+    test(`TBL-21-P ${preset} measures nested overlap without waiving surrounding tables`, async () => {
+        const inner = table([
+            row([cell({ text: 'a' }), cell({ text: 'b', rowspan: 2 })]),
+            row([cell({ text: 'c', colspan: 2, rowspan: 3 })]),
+            row([]),
+        ]);
+        const outerCell = cell({ text: 'parent' });
+        outerCell.content!.push(inner as semantics.JsonNode);
         const authored = prosemirrorJSONToYDoc(
-            selectedSchema,
-            presetNode({ type: 'doc', content: [table([
-                row([cell({ text: 'a' }), cell({ text: 'b', rowspan: 2 })]),
-                row([cell({ text: 'c', colspan: 2, rowspan: 3 })]),
-                row([]),
-            ])] }, preset),
+            preset === 'tiptap' ? tiptapSchema : schema,
+            presetNode(
+                {
+                    type: 'doc',
+                    content: [
+                        table([row([outerCell])]),
+                        table([row([cell({ text: 'unrelated' })])]),
+                    ],
+                },
+                preset,
+            ),
             'prosemirror',
         );
         try {
             const updateBase64 = Buffer.from(Y.encodeStateAsUpdate(authored)).toString('base64');
-            await withPeers([preset, 'rust'], async ([web, native]) => {
-                await call(native, 'applyUpdate', { updateBase64 });
-                await call(web, 'applyUpdate', { updateBase64 });
-                await exchangeUntilIdle([native, web]);
-                await assertConverged([native, web]);
-                await assert.rejects(() => semantics.observeNativePresentation(native), {
-                    code: 'UNSUPPORTED_OBSERVATION',
-                    message: /overlapping-reference-cells/,
-                });
-                await assert.rejects(() => semantics.observeWebPresentation(web), {
-                    code: 'UNSUPPORTED_OBSERVATION',
-                    message: /collision/,
-                });
-            }, tableFixture(preset));
+            await withPeers(
+                [preset, 'rust'],
+                async ([web, native]) => {
+                    await call(native, 'applyUpdate', { updateBase64 });
+                    await call(web, 'applyUpdate', { updateBase64 });
+                    await exchangeUntilIdle([native, web]);
+                    await assertConverged([native, web]);
+                    const observed = await semantics.observeWebPresentation(web);
+                    assert.deepEqual(
+                        semantics.assertEffectivePresentation(
+                            await semantics.observeNativePresentation(native),
+                            observed,
+                        ).tables,
+                        [
+                            { source: '0', kind: 'exact' },
+                            {
+                                source: '0.0.0.1',
+                                kind: 'overlap-fallback',
+                                evidence: 'live-overlap',
+                            },
+                            { source: '1', kind: 'exact' },
+                        ],
+                    );
+                    assert.equal(observed.tables[0]!.overlap, undefined);
+                    const nested = observed.tables[1]!;
+                    assert.ok(nested.overlap?.kind === 'web-overlap');
+                    assert.ok(
+                        nested.overlap.boxes.every((box) => box.tableSource === nested.source),
+                    );
+                },
+                tableFixture(preset),
+            );
+        } finally {
+            authored.destroy();
+        }
+    });
+    test(`TBL-21-P ${preset} verifies overlap fallback`, async () => {
+        const selectedSchema = preset === 'tiptap' ? tiptapSchema : schema;
+        const authored = prosemirrorJSONToYDoc(
+            selectedSchema,
+            presetNode(
+                {
+                    type: 'doc',
+                    content: [
+                        table([
+                            row([cell({ text: 'a' }), cell({ text: 'b', rowspan: 2 })]),
+                            row([cell({ text: 'c', colspan: 2, rowspan: 3 })]),
+                            row([]),
+                        ]),
+                    ],
+                },
+                preset,
+            ),
+            'prosemirror',
+        );
+        try {
+            const updateBase64 = Buffer.from(Y.encodeStateAsUpdate(authored)).toString('base64');
+            await withPeers(
+                [preset, 'rust'],
+                async ([web, native]) => {
+                    await call(native, 'applyUpdate', { updateBase64 });
+                    await call(web, 'applyUpdate', { updateBase64 });
+                    await exchangeUntilIdle([native, web]);
+                    await assertConverged([native, web]);
+                    const beforeObservation = [await snapshot(native), await snapshot(web)];
+                    const nativeView = await semantics.observeNativePresentation(native);
+                    const webView = await semantics.observeWebPresentation(web);
+                    const checked = semantics.assertEffectivePresentation(nativeView, webView);
+                    assert.deepEqual(checked.tables, [
+                        {
+                            source: '0',
+                            kind: 'overlap-fallback',
+                            evidence: 'live-overlap',
+                        },
+                    ]);
+                    assert.deepEqual(
+                        [await snapshot(native), await snapshot(web)],
+                        beforeObservation,
+                    );
+                    assert.equal((await flushDocumentEvents(native)).length, 0);
+                    assert.equal((await flushDocumentEvents(web)).length, 0);
+                    assert.equal(webView.tables[0]!.widths, null);
+                    assert.ok(
+                        webView.tables[0]!.cells.every(
+                            (c) =>
+                                c.row === null &&
+                                c.column === null &&
+                                c.rowspan === null &&
+                                c.colspan === null,
+                        ),
+                    );
+                    const target = nativeView.tables[0]!.cells.find((c) => c.source === '0.0.0')!;
+                    const typed = await call(native, 'command', {
+                        type: 'insertText',
+                        text: 'typed-',
+                        at: target.rawPosition! + 2,
+                    });
+                    assert.equal(typed.documentChanged, true);
+                    assert.equal((await snapshot(native)).normalizationPassesAfterLastAction, 0);
+                    await exchangeUntilIdle([native, web]);
+                    await assertConverged([native, web]);
+                    const freshNative = await semantics.observeNativePresentation(native);
+                    const freshWeb = await semantics.observeWebPresentation(web);
+                    assert.equal(
+                        freshNative.tables[0]!.cells.find((c) => c.source === target.source)!.node
+                            .content![0]!.content![0]!.text,
+                        'typed-a',
+                    );
+                    assert.deepEqual(
+                        semantics.assertEffectivePresentation(freshNative, freshWeb).tables,
+                        [
+                            {
+                                source: '0',
+                                kind: 'overlap-fallback',
+                                evidence: 'live-overlap',
+                            },
+                        ],
+                    );
+                    const beforeStructure = await snapshot(native);
+                    const structure = await call(native, 'command', {
+                        type: 'addTableRow',
+                        side: 'after',
+                        at: target.rawPosition! + 2,
+                    });
+                    const afterStructure = await snapshot(native);
+                    if (structure.documentChanged === true) {
+                        assert.equal(
+                            (afterStructure.documentJson as semantics.JsonNode).content![0]!
+                                .content!.length,
+                            (beforeStructure.documentJson as semantics.JsonNode).content![0]!
+                                .content!.length + 1,
+                        );
+                    } else {
+                        assert.equal(structure.type, 'notApplicable');
+                        assert.deepEqual(afterStructure.documentJson, beforeStructure.documentJson);
+                        assert.equal((await flushDocumentEvents(native)).length, 0);
+                    }
+                    await exchangeUntilIdle([native, web]);
+                    await assertConverged([native, web]);
+                    semantics.assertEffectivePresentation(
+                        await semantics.observeNativePresentation(native),
+                        await semantics.observeWebPresentation(web),
+                    );
+                },
+                tableFixture(preset),
+            );
         } finally {
             authored.destroy();
         }

@@ -10,7 +10,7 @@ import {
     withPeers,
 } from '../controller.js';
 import type { Peer } from '../peer-protocol.js';
-import { observeNativePresentation } from '../presentation-semantics.js';
+import { assertEffectivePresentation, observeNativePresentation } from '../presentation-semantics.js';
 import {
     convergenceScalarsPassed,
     createConvergenceReport,
@@ -106,7 +106,7 @@ test('TBL-11 synthetic header records retain schema defaults and never own sourc
     }, tableFixture('prosemirror'));
 });
 
-test('TBL-11 unsupported reference geometry retains admitted content but cannot pass presentation', async () => {
+test('TBL-11 overlap fallback retains content and exposes native equality separately', async () => {
     await withPeers(['rust'] as const, async ([native]) => {
         const fixture = table([
             row([cell({ text: 'same' }), cell({ rowspan: 2, text: 'same' })]),
@@ -118,7 +118,10 @@ test('TBL-11 unsupported reference geometry retains admitted content but cannot 
         const projected = await call(native, 'projectTable', { schema: TABLE_SCHEMA, table: fixture });
         assert.equal(projected.compatibilityDiagnostic, 'overlapping-reference-cells');
         assert.equal(new Set((projected.slots as unknown[]).filter((slot) => slot !== null)).size, 3);
-        await assert.rejects(() => observeNativePresentation(native), { code: 'UNSUPPORTED_OBSERVATION' });
+        const observed = await observeNativePresentation(native);
+        assert.deepEqual(observed.tables[0]!.overlap, { kind: 'native-fallback', reason: 'overlapping-reference-cells' });
+        assert.deepEqual(assertEffectivePresentation(observed, await observeNativePresentation(native)).tables,
+            [{ source: '0', kind: 'overlap-fallback', evidence: 'native-equality' }]);
         assert.deepEqual((await snapshot(native)).documentJson, before.documentJson);
     }, tableFixture('prosemirror'));
 });

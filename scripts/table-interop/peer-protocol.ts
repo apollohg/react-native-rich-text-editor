@@ -15,13 +15,20 @@ export interface EffectiveCell {
     rawPosition?: number;
     // Wrapper start on this peer's current surface, not a text cursor.
     position: number;
-    row: number;
-    column: number;
-    rowspan: number;
-    colspan: number;
+    row: number | null;
+    column: number | null;
+    rowspan: number | null;
+    colspan: number | null;
     node: JsonNode;
 }
 export interface EffectiveTable {
+    overlap?:
+        | { kind: 'native-fallback'; reason: 'overlapping-reference-cells' }
+        | {
+              kind: 'web-overlap';
+              logicalGeometry: 'unavailable';
+              boxes: CellBox[];
+          };
     source: string;
     parentCell: string | null;
     pathWithinCell: string;
@@ -29,8 +36,17 @@ export interface EffectiveTable {
     node: JsonNode;
     rows: number;
     columns: number;
-    widths: (number | null)[];
+    widths: (number | null)[] | null;
     cells: EffectiveCell[];
+}
+export interface CellBox {
+    source: string;
+    position: number;
+    tableSource: string;
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
 }
 export interface EffectiveDocument {
     tables: EffectiveTable[];
