@@ -47,6 +47,8 @@ import {
     yXmlFragmentToProsemirrorJSON as tiptapXmlFragmentToProsemirrorJSON,
 } from '@tiptap/y-tiptap';
 import type { PeerReply, Request, UpdateEvent, WebPeerHandler } from '../peer-protocol.js';
+import { observePresentation } from './presentation-observer.js';
+import type { JsonNode } from '../peer-protocol.js';
 
 const REMOTE_ORIGIN = 'tableInteropRemoteUpdate';
 const EDITOR_ELEMENT_ID = 'editor';
@@ -749,6 +751,28 @@ class WebPeerRuntime {
         };
     }
 
+    observePresentation(): Record<string, unknown> {
+        const { type, mapping } = this.syncState();
+        if (this.hasPendingDependencies()) {
+            throw new PeerOperationError('UNSUPPORTED_OBSERVATION', 'pending shared dependencies');
+        }
+        try {
+            return {
+                ...observePresentation(
+                    type,
+                    mapping,
+                    this.requireEditor().view.state.doc,
+                    this.requireEditor().documentJson() as JsonNode,
+                ),
+            };
+        } catch (error) {
+            if (error instanceof Error && 'code' in error) {
+                throw new PeerOperationError(String(error.code), error.message);
+            }
+            throw error;
+        }
+    }
+
     flushEvents(): UpdateEvent[] {
         return this.pendingEvents.splice(0, this.pendingEvents.length);
     }
@@ -906,6 +930,8 @@ async function dispatch(
         }
         case 'snapshot':
             return requireRuntime().snapshot();
+        case 'observePresentation':
+            return requireRuntime().observePresentation();
         case 'stateVector':
             return requireRuntime().stateVector();
         case 'stateDiff':

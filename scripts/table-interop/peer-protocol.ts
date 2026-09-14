@@ -1,4 +1,40 @@
 export const NATIVE_PEER_KIND = 'rust';
+export interface JsonNode {
+    type: string;
+    attrs?: Record<string, unknown>;
+    content?: JsonNode[];
+    marks?: JsonNode[];
+    text?: string;
+    [key: string]: unknown;
+}
+export interface EffectiveCell {
+    // Raw JSON path in this observation; null denotes a display-only gap.
+    source: string | null;
+    // Stable Y cell type identity, independent of its content items.
+    sourceId?: string;
+    rawPosition?: number;
+    // Wrapper start on this peer's current surface, not a text cursor.
+    position: number;
+    row: number;
+    column: number;
+    rowspan: number;
+    colspan: number;
+    node: JsonNode;
+}
+export interface EffectiveTable {
+    source: string;
+    parentCell: string | null;
+    pathWithinCell: string;
+    position: number;
+    node: JsonNode;
+    rows: number;
+    columns: number;
+    widths: (number | null)[];
+    cells: EffectiveCell[];
+}
+export interface EffectiveDocument {
+    tables: EffectiveTable[];
+}
 export const WEB_PEER_KINDS = ['prosemirror', 'tiptap'] as const;
 export type PeerKind = typeof NATIVE_PEER_KIND | (typeof WEB_PEER_KINDS)[number];
 export type TableCommand =
@@ -19,7 +55,7 @@ export type Request = {
     id: string;
     operation: 'initialize' | 'command' | 'undo' | 'redo' | 'applyUpdate'
         | 'drain' | 'snapshot' | 'stateVector' | 'stateDiff' | 'projectTable' | 'normalizeTable'
-        | 'repairTableDuringRemoteWindow'
+        | 'repairTableDuringRemoteWindow' | 'observePresentation'
         | 'setAwareness' | 'applyAwareness' | 'shutdown';
     payload: Record<string, unknown>;
 };
