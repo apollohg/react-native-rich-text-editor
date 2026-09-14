@@ -450,6 +450,104 @@ test('TBL21 evidence failure leaves successful raw convergence visible', async (
     assert.match(result.evidence!.failures.join(' '), /MISSING_ACTION/);
     assert.ok(scenarioCoverage(base, result).every((slot) => slot.status === 'exercised-unproven'));
 });
+for (const seed of [1895585723, 4119034467])
+    test(`TBL21 web dependency insertion preserves equivalent empty source run seed ${seed}`, async () => {
+        const schedule = CONVERGENCE_CORPUS.find((schedule) => schedule.seed === seed)!;
+        assert.equal(schedule.preset, 'prosemirror');
+        assert.equal(schedule.scenario, CORPUS_SCENARIOS[3]);
+        const result = await runSchedule(schedule);
+        assert.equal(result.rawConvergence.passed, true);
+        assert.equal(result.evidence.status, 'proven', result.evidence.failures.join('\n'));
+        const insertion = result.evidence.actions[1]!;
+        const before = insertion.before.tables[0]!.cells.find(
+            (cell) => cell.row === 1 && cell.column === 1,
+        )!;
+        const surviving = insertion.after.tables[0]!.cells.find(
+            (cell) => cell.sourceId === before.sourceId,
+        )!;
+        assert.equal(surviving.column, 1);
+        assert.equal(insertion.after.tables[0]!.columns, 3);
+    });
+test('TBL21 web equivalent insertion run compares complete cell meaning', async (t) => {
+    const schedule = CONVERGENCE_CORPUS.find((schedule) => schedule.seed === 1895585723)!;
+    const result = await runSchedule(schedule);
+    assert.equal(result.evidence.status, 'proven', result.evidence.failures.join('\n'));
+    const insertion = result.evidence.actions[1]!;
+    const identity = insertion.before.tables[0]!.cells.find(
+        (cell) => cell.row === 1 && cell.column === 1,
+    )!.sourceId;
+    const intent = { actor: 0, operation: 'addColumn', source: '0.0.0' };
+    for (const [name, mutate] of [
+        [
+            'attribute',
+            (node: JsonNode) => {
+                node.attrs = { ...node.attrs, opaque: { value: 7 } };
+            },
+        ],
+        [
+            'null attribute',
+            (node: JsonNode) => {
+                node.attrs = { ...node.attrs, opaque: null };
+            },
+        ],
+        [
+            'header',
+            (node: JsonNode) => {
+                node.type = 'table_header';
+            },
+        ],
+        [
+            'mark',
+            (node: JsonNode) => {
+                node.content![0]!.marks = [{ type: 'strong' }];
+            },
+        ],
+        [
+            'nonempty content',
+            (node: JsonNode) => {
+                node.content![0]!.content = [{ type: 'text', text: 'distinct' }];
+            },
+        ],
+        [
+            'atom',
+            (node: JsonNode) => {
+                node.content![0]!.content = [{ type: 'image', attrs: { src: 'distinct.png' } }];
+            },
+        ],
+        [
+            'span',
+            (node: JsonNode) => {
+                node.attrs = { ...node.attrs, colspan: 2 };
+            },
+        ],
+        [
+            'width',
+            (node: JsonNode) => {
+                node.attrs = { ...node.attrs, colwidth: [120] };
+            },
+        ],
+    ] as const)
+        await t.test(name, () => {
+            const changed = structuredClone(insertion);
+            for (const document of [changed.before, changed.after])
+                mutate(document.tables[0]!.cells.find((cell) => cell.sourceId === identity)!.node);
+            assert.throws(() => assertActionEvidence(changed, intent), /INSERTION_FOOTPRINT/);
+        });
+    await t.test('native identities retain strict movement', () => {
+        assert.throws(
+            () =>
+                assertActionEvidence({ ...insertion, kind: 'rust', targetGridValid: true }, intent),
+            /INSERTION_FOOTPRINT/,
+        );
+    });
+    await t.test('selected source retains strict movement', () => {
+        const changed = structuredClone(insertion);
+        changed.after.tables[0]!.cells.find(
+            (cell) => cell.sourceId === changed.target!.sourceId,
+        )!.column = 1;
+        assert.throws(() => assertActionEvidence(changed, intent), /INSERTION_FOOTPRINT/);
+    });
+});
 test('TBL21 native source identities survive shifted paths and duplicate text without observer writes', async () => {
     await withPeers(
         ['rust'],

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { isDeepStrictEqual } from 'node:util';
 import { canonicalDocumentShape } from './assertions.js';
 import type {
     EffectiveCell,
@@ -129,6 +130,50 @@ function preserveStructuralPayload(
     }
     equal(before.node.attrs ?? {}, after.node.attrs ?? {}, 'PRESERVATION_TABLE_ATTRIBUTES');
 }
+// The stock binding can retain equal prefix nodes when publishing an insertion.
+function equivalentWebInsertionRun(
+    before: EffectiveTable,
+    after: EffectiveTable,
+    cell: EffectiveCell,
+    boundary: number,
+): boolean {
+    if (cell.column === null || cell.column < boundary || cell.rowspan !== 1 || cell.colspan !== 1)
+        return false;
+    const at = (table: EffectiveTable, column: number) =>
+        table.cells.find(
+            (candidate) =>
+                candidate.source !== null &&
+                candidate.row === cell.row &&
+                candidate.column === column,
+        );
+    const equivalent = (candidate: EffectiveCell | undefined) =>
+        candidate?.rowspan === 1 &&
+        candidate.colspan === 1 &&
+        isDeepStrictEqual(candidate.node, cell.node);
+    const original: EffectiveCell[] = [];
+    let end = boundary;
+    while (end < before.columns && equivalent(at(before, end))) original.push(at(before, end++)!);
+    if (cell.column >= end) return false;
+    const observed: EffectiveCell[] = [];
+    for (let column = boundary; column <= end; column++) {
+        const candidate = at(after, column);
+        if (!equivalent(candidate)) return false;
+        observed.push(candidate!);
+    }
+    const originalIds = original.map((candidate) => candidate.sourceId);
+    const beforeIds = new Set(before.cells.map((candidate) => candidate.sourceId));
+    return (
+        originalIds.every(Boolean) &&
+        observed.every((candidate) => candidate.sourceId) &&
+        observed.filter((candidate) => !beforeIds.has(candidate.sourceId)).length === 1 &&
+        isDeepStrictEqual(
+            observed
+                .filter((candidate) => beforeIds.has(candidate.sourceId))
+                .map((candidate) => candidate.sourceId),
+            originalIds,
+        )
+    );
+}
 export function assertActionEvidence(e: ActionEvidence, intent: ActionIntent): void {
     equal([e.actor, e.operation], [intent.actor, intent.operation], 'ACTOR_COMMAND');
     requireEvidence(e.target?.source !== null && e.target?.source === intent.source, 'TARGET');
@@ -222,11 +267,16 @@ export function assertActionEvidence(e: ActionEvidence, intent: ActionIntent): v
                 surviving && cell[axis] !== null && cell[span] !== null,
                 'INSERTION_IDENTITY',
             );
-            equal(
-                surviving[axis],
-                cell[axis] >= boundary ? cell[axis] + 1 : cell[axis],
-                'INSERTION_FOOTPRINT',
-            );
+            const expectedPosition = cell[axis] >= boundary ? cell[axis] + 1 : cell[axis];
+            const equivalentRun =
+                surviving[axis] !== expectedPosition &&
+                e.kind !== 'rust' &&
+                intent.operation === 'addColumn' &&
+                cell.sourceId !== e.target.sourceId &&
+                cell.sourceId !== e.head?.sourceId &&
+                surviving.row === cell.row &&
+                equivalentWebInsertionRun(before, after, cell, boundary);
+            if (!equivalentRun) equal(surviving[axis], expectedPosition, 'INSERTION_FOOTPRINT');
             equal(
                 surviving[span],
                 cell[axis] < boundary && cell[axis] + cell[span] > boundary
