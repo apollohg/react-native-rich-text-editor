@@ -7,6 +7,7 @@ pub(crate) mod mutation_guard;
 #[allow(dead_code)]
 pub(crate) mod normalize;
 pub(crate) mod projection;
+pub(crate) mod reference_grid;
 pub(crate) mod roles;
 pub(crate) mod selection;
 pub(crate) mod types;

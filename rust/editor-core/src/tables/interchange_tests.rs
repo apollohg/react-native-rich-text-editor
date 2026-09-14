@@ -201,6 +201,33 @@ fn a_column_group_carries_no_model_state() {
 }
 
 #[test]
+fn copying_a_header_gap_preserves_its_reference_role() {
+    let document = document_with(vec![table(vec![
+        row(vec![header_cell("a")]),
+        row(vec![cell("b"), cell("c")]),
+    ])]);
+    let index = TableProjectionIndex::derive_or_fallback(&document, &schema(), &limits());
+    let projected = index.table_at(0).expect("the fixture projects");
+    let fragment = table_clipboard_fragment(
+        &document,
+        &Selection::cell(projected.cells[0].source_pos, projected.cells[1].source_pos),
+        &index,
+        &schema(),
+    )
+    .expect("the rectangle copies");
+    assert_eq!(
+        fragment.children()[0]
+            .child(0)
+            .unwrap()
+            .child(0)
+            .unwrap()
+            .node_type(),
+        HEADER_CELL_NODE
+    );
+    assert_eq!(fragment.children()[0].child(0).unwrap().child_count(), 2);
+}
+
+#[test]
 fn copying_a_rectangle_over_a_projected_hole_mints_a_cell_only_in_the_copy() {
     let document = document_with(vec![table(vec![
         row(vec![cell("a"), cell("b")]),

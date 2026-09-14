@@ -128,6 +128,28 @@ test('TBL-21-P permits empty display-only gap grouping and declared defaults', (
     semantics.assertEffectivePresentation(expected, actual);
 });
 
+const headerGap = fixture([
+    real('a', 0, 1),
+    real('gap', 0, 0, {
+        source: null,
+        node: { type: 'table_header', attrs: { background: 'ivory' }, content: [{ type: 'paragraph' }] },
+    }),
+], 1, 2);
+test('TBL-21-P compares independently represented meaningful synthetic semantics', () => {
+    semantics.assertEffectivePresentation(headerGap, structuredClone(headerGap));
+});
+for (const [name, mutate] of [
+    ['header', (node: semantics.JsonNode) => { node.type = 'table_cell'; }],
+    ['default', (node: semantics.JsonNode) => { node.attrs!.background = 'red'; }],
+    ['payload', (node: semantics.JsonNode) => { node.content![0]!.content = [{ type: 'text', text: 'unexpected' }]; }],
+] as const) {
+    test(`TBL-21-P rejects changed synthetic ${name}`, () => {
+        const actual = structuredClone(headerGap);
+        mutate(actual.tables[0]!.cells[1]!.node);
+        assert.throws(() => semantics.assertEffectivePresentation(headerGap, actual));
+    });
+}
+
 const rich = fixture(
     [
         real('a', 0, 0, {
@@ -481,7 +503,7 @@ for (const preset of ['prosemirror', 'tiptap'] as const) {
             );
         });
     }
-    test(`TBL-21-P ${preset} concurrent-merges diagnostic: raw convergence still leaves incompatible placement`, async () => {
+    test(`TBL-21-P ${preset} concurrent-merges preserves stock placement after raw convergence`, async () => {
         await withPeers(
             [preset, preset, 'rust'],
             async ([horizontal, vertical, native]) => {
@@ -514,10 +536,8 @@ for (const preset of ['prosemirror', 'tiptap'] as const) {
                 const expected = await semantics.observeNativePresentation(native);
                 for (const web of [horizontal, vertical]) {
                     const actual = await semantics.observeWebPresentation(web);
-                    assert.throws(() => semantics.assertEffectivePresentation(expected, actual), {
-                        code: 'PRESENTATION_MISMATCH',
-                    });
-                    assert.equal(expected.tables[0]!.cells[0]!.column, 0);
+                    semantics.assertEffectivePresentation(expected, actual);
+                    assert.equal(expected.tables[0]!.cells[0]!.column, 1);
                     assert.equal(
                         actual.tables[0]!.cells.find(
                             (c) => c.source === expected.tables[0]!.cells[0]!.source,
@@ -536,13 +556,14 @@ for (const preset of ['prosemirror', 'tiptap'] as const) {
         'overlong-rowspan',
         'inconsistent-width',
         'nested',
+        'header-gap',
     ] as const) {
-        test(`TBL-21-P live ${preset} ${name} ${name === 'collision' || name === 'nested' ? 'diagnostic detects product geometry mismatch' : 'preserves attributable cells through remote repair'}`, async () => {
+        test(`TBL-21-P live ${preset} ${name} preserves attributable cells through remote repair`, async () => {
             await withPeers(
                 ['rust', preset],
                 async ([native, web]) => {
                     const regular = table([
-                        row([cell({ text: 'same' }), cell({ text: 'same' })]),
+                        row([cell({ text: 'same', header: name === 'header-gap' }), cell({ text: 'same', header: name === 'header-gap' })]),
                         row([cell({ text: 'same' }), cell({ text: 'same' })]),
                     ]);
                     const selectedSchema = preset === 'tiptap' ? tiptapSchema : schema;
@@ -560,6 +581,7 @@ for (const preset of ['prosemirror', 'tiptap'] as const) {
                     const firstRow = rawTable.get(0) as Y.XmlElement;
                     const secondRow = rawTable.get(1) as Y.XmlElement;
                     authored.transact(() => {
+                        if (name === 'header-gap') firstRow.delete(1, 1);
                         if (
                             name === 'missing-slot' ||
                             name === 'collision' ||
@@ -616,7 +638,7 @@ for (const preset of ['prosemirror', 'tiptap'] as const) {
                     const before = await snapshot(web);
                     const observed = await semantics.observeWebPresentation(web);
                     const expected = await semantics.observeNativePresentation(native);
-                    const nativeRectangles = expected.tables[0]!.cells.map((c) => [
+                    const nativeRectangles = expected.tables[0]!.cells.filter((c) => c.source !== null).map((c) => [
                         c.row,
                         c.column,
                         c.rowspan,
@@ -627,8 +649,10 @@ for (const preset of ['prosemirror', 'tiptap'] as const) {
                             ? [
                                   [0, 0, 1, 1],
                                   [0, 1, 2, 1],
-                                  [1, 2, 1, 2],
+                                  [1, 3, 1, 1],
                               ]
+                            : name === 'header-gap'
+                              ? [[0, 1, 1, 1], [1, 0, 1, 1], [1, 1, 1, 1]]
                             : name === 'overlong-rowspan'
                               ? [
                                     [0, 0, 2, 1],
@@ -680,11 +704,9 @@ for (const preset of ['prosemirror', 'tiptap'] as const) {
                             ),
                     );
                     if (name === 'collision') {
-                        assert.throws(
-                            () => semantics.assertEffectivePresentation(expected, observed),
-                            { code: 'PRESENTATION_MISMATCH' },
-                        );
-                        assert.equal(expected.tables[0]!.cells[2]!.column, 2);
+                        semantics.assertEffectivePresentation(expected, observed);
+                        assert.equal(expected.tables[0]!.cells[2]!.column, 3);
+                        assert.equal(expected.tables[0]!.cells[2]!.colspan, 1);
                         assert.equal(
                             observed.tables[0]!.cells.find(
                                 (c) => c.source === expected.tables[0]!.cells[2]!.source,
@@ -698,11 +720,8 @@ for (const preset of ['prosemirror', 'tiptap'] as const) {
                             1,
                         );
                     } else if (name === 'nested') {
-                        assert.throws(
-                            () => semantics.assertEffectivePresentation(expected, observed),
-                            { code: 'PRESENTATION_MISMATCH' },
-                        );
-                        assert.equal(expected.tables[1]!.cells[0]!.column, 0);
+                        semantics.assertEffectivePresentation(expected, observed);
+                        assert.equal(expected.tables[1]!.cells[0]!.column, 1);
                         assert.equal(
                             observed.tables[1]!.cells.find(
                                 (c) => c.source === expected.tables[1]!.cells[0]!.source,

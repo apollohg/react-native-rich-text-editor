@@ -120,7 +120,7 @@ function emptyGap(
         (cell.node.attrs?.rowspan ?? 1) !== cell.rowspan
     )
         return false;
-    const value = semantic(cell.node, declared, true);
+    const value = semantic(cell.node, defaults, true);
     return (
         equal(value, { type: 'table_cell', content: [{ type: 'paragraph' }] }) ||
         equal(value, { type: 'tableCell', content: [{ type: 'paragraph' }] })
@@ -128,6 +128,27 @@ function emptyGap(
 }
 function geometry(cell: EffectiveCell): number[] {
     return [cell.row, cell.column, cell.rowspan, cell.colspan];
+}
+
+function meaningfulGaps(
+    table: EffectiveTable,
+    declared: AttributeDefaults,
+): Map<number, unknown> {
+    const result = new Map<number, unknown>();
+    for (const cell of table.cells) {
+        if (cell.source !== null || emptyGap(cell, table, declared)) continue;
+        if (
+            (cell.node.attrs?.colspan ?? 1) !== cell.colspan ||
+            (cell.node.attrs?.rowspan ?? 1) !== cell.rowspan ||
+            (cell.node.attrs?.colwidth != null &&
+                !equal(cell.node.attrs.colwidth, resolvedCellWidths(cell, table)))
+        )
+            fail('UNACCOUNTED_CONTENT', `unexplained synthetic geometry at ${cell.position}`);
+        for (let row = cell.row; row < cell.row + cell.rowspan; row++)
+            for (let column = cell.column; column < cell.column + cell.colspan; column++)
+                result.set(row * table.columns + column, semantic(cell.node, declared, true));
+    }
+    return result;
 }
 function validateGrid(table: EffectiveTable): void {
     if (
@@ -185,15 +206,22 @@ export function assertEffectivePresentation(
         if (!observed) fail('UNACCOUNTED_CONTENT', `missing table ${wanted.source}`);
         const bySource = new Map<string, EffectiveCell>();
         for (const cell of observed.cells) {
-            if (cell.source === null) {
-                if (!emptyGap(cell, observed, declared))
-                    fail('UNACCOUNTED_CONTENT', `meaningful unmapped cell at ${cell.position}`);
-                continue;
-            }
+            if (cell.source === null) continue;
             if (bySource.has(cell.source))
                 fail('UNACCOUNTED_CONTENT', `duplicated cell ${cell.source}`);
             bySource.set(cell.source, cell);
         }
+        validateGrid(wanted);
+        validateGrid(observed);
+        const wantedGaps = meaningfulGaps(wanted, declared);
+        const observedGaps = meaningfulGaps(observed, declared);
+        if (
+            wantedGaps.size !== observedGaps.size ||
+            [...wantedGaps].some(
+                ([slot, value]) => !observedGaps.has(slot) || !equal(value, observedGaps.get(slot)),
+            )
+        )
+            fail('UNACCOUNTED_CONTENT', `meaningful synthetic regions differ in ${wanted.source}`);
         const real = wanted.cells.filter((cell) => cell.source !== null);
         if (bySource.size !== real.length)
             fail('UNACCOUNTED_CONTENT', `real cell count differs in ${wanted.source}`);
@@ -242,8 +270,6 @@ export function assertEffectivePresentation(
             )
                 fail('PRESENTATION_MISMATCH', `unexplained colwidth attributes for ${cell.source}`);
         }
-        validateGrid(wanted);
-        validateGrid(observed);
     }
 }
 
@@ -282,6 +308,11 @@ export async function observeNativePresentation(peer: Peer): Promise<EffectiveDo
                 table: node,
             });
             const { rows, columns, widths, slots } = projection;
+            if (projection.compatibilityDiagnostic != null)
+                fail(
+                    'UNSUPPORTED_OBSERVATION',
+                    `native compatibility fallback for ${source}: ${projection.compatibilityDiagnostic}`,
+                );
             if (
                 typeof rows !== 'number' ||
                 typeof columns !== 'number' ||
@@ -318,6 +349,24 @@ export async function observeNativePresentation(peer: Peer): Promise<EffectiveDo
                     offset += nodeSize(cell);
                 }
                 rowPosition += nodeSize(row);
+            }
+            if (!Array.isArray(projection.synthetic))
+                fail(
+                    'UNSUPPORTED_OBSERVATION',
+                    `native projection lacks synthetic semantics for ${source}`,
+                );
+            for (const region of projection.synthetic as Record<string, unknown>[]) {
+                if (!region.node || typeof region.node !== 'object')
+                    fail('UNSUPPORTED_OBSERVATION', `invalid synthetic semantics for ${source}`);
+                cells.push({
+                    source: null,
+                    position: -1,
+                    row: region.row as number,
+                    column: region.column as number,
+                    rowspan: region.rowspan as number,
+                    colspan: region.colspan as number,
+                    node: region.node as JsonNode,
+                });
             }
             tables.push({
                 source,

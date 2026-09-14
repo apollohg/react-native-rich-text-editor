@@ -30,6 +30,13 @@ impl ColumnWidthResolver {
             .map(|candidate| candidate.map(|(value, _)| value))
             .collect())
     }
+
+    pub(crate) fn has_unconfirmed(&self, rows: usize) -> bool {
+        self.candidates
+            .iter()
+            .flatten()
+            .any(|(_, count)| *count < rows)
+    }
 }
 
 #[rustfmt::skip]

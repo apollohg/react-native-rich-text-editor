@@ -67,6 +67,17 @@ pub(crate) fn table_clipboard_fragment(
     )
     .ok_or(InterchangeFailure::UnreadableGrid)?;
     let roles = target.roles().clone();
+    let projected = projection_index
+        .table_at(rect.table_pos)
+        .ok_or(InterchangeFailure::UnreadableGrid)?;
+    let mut synthetic = std::collections::BTreeMap::new();
+    for region in &projected.synthetic {
+        for row in region.rect.row..region.rect.row + region.rect.rowspan {
+            for column in region.rect.column..region.rect.column + region.rect.colspan {
+                synthetic.insert((row, column), region);
+            }
+        }
+    }
 
     let mut rows = Vec::new();
     for row in rect.top..rect.bottom {
@@ -77,10 +88,32 @@ pub(crate) fn table_clipboard_fragment(
                     cells.push(effective_cell(node, &cell.rect)?);
                 }
                 Some(_) => continue,
-                None => cells.push(
-                    fresh_cell_node(schema, &roles.cell)
-                        .ok_or(InterchangeFailure::UnreadableGrid)?,
-                ),
+                None => {
+                    if let Some(region) = synthetic.get(&(row, column)) {
+                        let top = region.rect.row.max(rect.top);
+                        let left = region.rect.column.max(rect.left);
+                        if row == top && column == left {
+                            cells.push(effective_cell(
+                                &region.node,
+                                &CellRect {
+                                    row: top,
+                                    column: left,
+                                    rowspan: (region.rect.row + region.rect.rowspan)
+                                        .min(rect.bottom)
+                                        - top,
+                                    colspan: (region.rect.column + region.rect.colspan)
+                                        .min(rect.right)
+                                        - left,
+                                },
+                            )?);
+                        }
+                    } else {
+                        cells.push(
+                            fresh_cell_node(schema, &roles.cell)
+                                .ok_or(InterchangeFailure::UnreadableGrid)?,
+                        );
+                    }
+                }
             }
         }
         let row_node = target

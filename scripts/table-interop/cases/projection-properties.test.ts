@@ -10,6 +10,7 @@ import {
     withPeers,
 } from '../controller.js';
 import type { Peer } from '../peer-protocol.js';
+import { observeNativePresentation } from '../presentation-semantics.js';
 import {
     convergenceScalarsPassed,
     createConvergenceReport,
@@ -84,6 +85,43 @@ const PROJECTION_CASES: ProjectionCase[] = [
         ]),
     },
 ];
+
+test('TBL-11 synthetic header records retain schema defaults and never own source slots', async () => {
+    await withPeers(['rust'] as const, async ([native]) => {
+        const schema = structuredClone(TABLE_SCHEMA);
+        const header = (schema.nodes as { name: string; attrs: Record<string, unknown> }[]).find((node) => node.name === 'table_header')!;
+        Object.assign(header.attrs!, { background: { default: 'ivory' } });
+        const projected = await call(native, 'projectTable', {
+            schema,
+            table: table([row([cell({ header: true, text: 'same' })]), row([cell({ text: 'same' }), cell({ text: 'same' })])]),
+        });
+        assert.equal(projected.compatibilityDiagnostic, null);
+        const gaps = projected.synthetic as { row: number; column: number; node: { type: string; attrs: Record<string, unknown> } }[];
+        assert.equal(gaps.length, 1);
+        assert.equal(gaps[0]!.row, 0);
+        assert.equal(gaps[0]!.column, 0);
+        assert.equal(gaps[0]!.node.type, 'table_header');
+        assert.equal(gaps[0]!.node.attrs.background, 'ivory');
+        assert.equal((projected.slots as unknown[])[0], null);
+    }, tableFixture('prosemirror'));
+});
+
+test('TBL-11 unsupported reference geometry retains admitted content but cannot pass presentation', async () => {
+    await withPeers(['rust'] as const, async ([native]) => {
+        const fixture = table([
+            row([cell({ text: 'same' }), cell({ rowspan: 2, text: 'same' })]),
+            row([cell({ colspan: 2, rowspan: 3, text: '😀same' })]),
+            row([]),
+        ]);
+        await call(native, 'command', { type: 'insertContentJson', json: { type: 'doc', content: [fixture] } });
+        const before = await snapshot(native);
+        const projected = await call(native, 'projectTable', { schema: TABLE_SCHEMA, table: fixture });
+        assert.equal(projected.compatibilityDiagnostic, 'overlapping-reference-cells');
+        assert.equal(new Set((projected.slots as unknown[]).filter((slot) => slot !== null)).size, 3);
+        await assert.rejects(() => observeNativePresentation(native), { code: 'UNSUPPORTED_OBSERVATION' });
+        assert.deepEqual((await snapshot(native)).documentJson, before.documentJson);
+    }, tableFixture('prosemirror'));
+});
 
 async function projectionOf(peer: Peer, tableJson: Record<string, unknown>): Promise<{
     rows: number;

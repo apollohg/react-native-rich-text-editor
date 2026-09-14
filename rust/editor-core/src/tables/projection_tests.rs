@@ -103,6 +103,163 @@ fn empty_table_node() -> Node {
 }
 
 #[test]
+fn reference_collision_keeps_source_but_shrinks_effective_span() {
+    let projected = project(table(vec![
+        row(vec![plain_cell(), spanning_cell(1, 2)]),
+        row(vec![spanning_cell(2, 1)]),
+    ]));
+    assert_eq!(projected.cells.len(), 3);
+    assert_eq!(projected.cells[2].rect, rect(1, 3, 1, 1));
+    assert!(projected.irregular);
+    assert_eq!(
+        projected.slots,
+        vec![Some(0), Some(1), None, None, None, Some(1), None, Some(2)]
+    );
+    assert_eq!(
+        projected.synthetic.len(),
+        4,
+        "three generated gaps and one remaining hole"
+    );
+    assert_eq!(projected.compatibility_diagnostic, None);
+}
+
+#[test]
+fn reference_fallback_retains_sources_and_shared_budget_accounting() {
+    let document = document_with(table(vec![
+        row(vec![plain_cell(), spanning_cell(1, 2)]),
+        row(vec![spanning_cell(2, 3)]),
+        row(vec![]),
+    ]));
+    let node = document.root().child(0).unwrap();
+    let before = node.clone();
+    let mut budget = TableGridBudget::new(16);
+    let projected = project_table(node, 0, &schema(), &mut budget).unwrap();
+    assert_eq!(
+        projected.compatibility_diagnostic,
+        Some("overlapping-reference-cells")
+    );
+    assert_eq!(projected.cells.len(), 3);
+    assert_eq!(node, &before);
+    let regular = document_with(table(vec![row(vec![plain_cell(); 4])]));
+    project_table(regular.root().child(0).unwrap(), 0, &schema(), &mut budget).unwrap();
+    assert_eq!(
+        project_table(&empty_table_node(), 0, &schema(), &mut budget),
+        Err(TableError::GridLimit {
+            limit: 16,
+            actual: 17
+        })
+    );
+}
+
+#[test]
+fn reference_virtual_growth_limit_falls_back_without_rejecting_raw_content() {
+    let projected = project_with_limit(
+        table(vec![
+            row(vec![plain_cell(), spanning_cell(1, 2)]),
+            row(vec![spanning_cell(2, 3)]),
+            row(vec![]),
+        ]),
+        12,
+    )
+    .unwrap();
+    assert_eq!(
+        projected.compatibility_diagnostic,
+        Some("virtual-grid-limit")
+    );
+    assert_eq!(projected.cells.len(), 3);
+}
+
+#[test]
+fn reference_concurrent_merge_inserts_a_leading_gap() {
+    let projected = project(table(vec![
+        row(vec![spanning_cell(2, 2)]),
+        row(vec![plain_cell()]),
+    ]));
+    assert_eq!(projected.columns, 3);
+    assert_eq!(rects(&projected), vec![rect(0, 1, 2, 2), rect(1, 0, 1, 1)]);
+    assert!(projected.irregular);
+}
+
+#[test]
+fn reference_short_first_row_inserts_a_leading_gap() {
+    let projected = project(table(vec![
+        row(vec![plain_cell()]),
+        row(vec![plain_cell(), plain_cell()]),
+    ]));
+    assert_eq!(
+        rects(&projected),
+        vec![rect(0, 1, 1, 1), rect(1, 0, 1, 1), rect(1, 1, 1, 1)]
+    );
+}
+
+#[test]
+fn reference_header_gaps_use_schema_defaults_without_copying_source_payload() {
+    let base = schema();
+    let mut nodes: Vec<_> = base.all_nodes().cloned().collect();
+    for node in &mut nodes {
+        if node.name == HEADER_CELL_NODE {
+            node.attrs.insert(
+                "background".into(),
+                crate::schema::AttrSpec {
+                    default: Some(json!("ivory")),
+                    has_default: true,
+                    ..Default::default()
+                },
+            );
+            node.attrs.insert(
+                "opaque".into(),
+                crate::schema::AttrSpec {
+                    default: Some(Value::Null),
+                    has_default: true,
+                    ..Default::default()
+                },
+            );
+        }
+        if node.name == PARAGRAPH_NODE {
+            node.attrs.insert(
+                "tone".into(),
+                crate::schema::AttrSpec {
+                    default: Some(json!("calm")),
+                    has_default: true,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+    let schema = Schema::new(nodes, base.all_marks().cloned().collect());
+    let mut header = plain_cell();
+    header["type"] = json!(HEADER_CELL_NODE);
+    header["attrs"]["opaque"] = json!({"type": "table_cell", "payload": ["😀", 7]});
+    let document = from_prosemirror_json(
+        &json!({"type": "doc", "content": [table(vec![
+            row(vec![header]), row(vec![plain_cell(), plain_cell()]),
+        ])]}),
+        &schema,
+        UnknownTypeMode::Preserve,
+    )
+    .unwrap();
+    let before = document.root().clone();
+    let projected = project_table(
+        document.root().child(0).unwrap(),
+        0,
+        &schema,
+        &mut TableGridBudget::new(64),
+    )
+    .unwrap();
+    assert_eq!(projected.compatibility_diagnostic, None);
+    let gap = &projected.synthetic[0];
+    assert_eq!(gap.rect, rect(0, 0, 1, 1));
+    assert_eq!(gap.node.node_type(), HEADER_CELL_NODE);
+    assert_eq!(gap.node.attrs().get("background"), Some(&json!("ivory")));
+    assert_eq!(gap.node.attrs().get("opaque"), Some(&Value::Null));
+    assert_eq!(
+        gap.node.child(0).unwrap().attrs().get("tone"),
+        Some(&json!("calm"))
+    );
+    assert_eq!(document.root(), &before);
+}
+
+#[test]
 fn a_regular_grid_projects_unchanged() {
     let projected = project(table(vec![
         row(vec![plain_cell(), plain_cell(), plain_cell()]),
@@ -225,7 +382,7 @@ fn a_wide_cell_anchors_at_the_first_column_its_whole_rectangle_fits() {
 }
 
 #[test]
-fn a_rectangle_that_straddles_an_owned_column_shifts_right_and_flags_the_grid() {
+fn a_collision_uses_reference_span_replacement_and_flags_the_raw_grid() {
     let projected = project(table(vec![
         row(vec![plain_cell(), spanning_cell(1, 2)]),
         row(vec![spanning_cell(2, 1)]),
@@ -237,26 +394,17 @@ fn a_rectangle_that_straddles_an_owned_column_shifts_right_and_flags_the_grid() 
         vec![
             rect(0, 0, SINGLE_SPAN, SINGLE_SPAN),
             rect(0, 1, 2, SINGLE_SPAN),
-            rect(1, 2, SINGLE_SPAN, 2),
+            rect(1, 3, SINGLE_SPAN, SINGLE_SPAN),
         ],
-        "a free anchor column is abandoned only when the rest of the rectangle collides"
+        "reference additions precede the span-adjusted source cell"
     );
     assert_eq!(
         projected.columns, 4,
-        "shifting the rectangle right grows the grid past the raw extent"
+        "reference additions grow the virtual grid past the raw extent"
     );
     assert_eq!(
         projected.slots,
-        vec![
-            Some(0),
-            Some(1),
-            None,
-            None,
-            None,
-            Some(1),
-            Some(2),
-            Some(2),
-        ]
+        vec![Some(0), Some(1), None, None, None, Some(1), None, Some(2),]
     );
 }
 
@@ -305,8 +453,8 @@ fn an_overlong_rowspan_is_clamped_only_in_the_projection() {
     assert_eq!(
         rects(&projected),
         vec![
-            rect(0, 0, 2, SINGLE_SPAN),
-            rect(1, 1, SINGLE_SPAN, SINGLE_SPAN),
+            rect(0, 1, 2, SINGLE_SPAN),
+            rect(1, 0, SINGLE_SPAN, SINGLE_SPAN),
         ]
     );
     assert!(projected.irregular);

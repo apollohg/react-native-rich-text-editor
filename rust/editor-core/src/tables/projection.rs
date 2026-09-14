@@ -40,6 +40,14 @@ pub(crate) struct ProjectedTable {
     pub slots: Vec<Option<usize>>,
     pub widths: Vec<Option<u32>>,
     pub irregular: bool,
+    pub synthetic: Vec<SyntheticRegion>,
+    pub compatibility_diagnostic: Option<&'static str>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SyntheticRegion {
+    pub rect: CellRect,
+    pub node: Node,
 }
 
 pub(crate) struct TableGridBudget {
@@ -73,13 +81,40 @@ impl TableGridBudget {
         Ok(())
     }
 
-    fn spend(&mut self, steps: usize) -> Result<(), TableError> {
+    pub(crate) fn spend(&mut self, steps: usize) -> Result<(), TableError> {
         self.work = self.work.checked_sub(steps).ok_or(TableError::WorkLimit)?;
         Ok(())
+    }
+
+    pub(crate) fn admits_virtual(&self, slots: usize, raw_charge: usize) -> bool {
+        self.admits(slots.saturating_sub(raw_charge)).is_ok()
     }
 }
 
 pub(crate) fn project_table(
+    table: &Node,
+    table_pos: u32,
+    schema: &Schema,
+    budget: &mut TableGridBudget,
+) -> Result<ProjectedTable, TableError> {
+    let charged_before = budget.charged;
+    let mut raw = raw_table_grid(table, table_pos, schema, budget)?;
+    let raw_charge = budget.charged - charged_before;
+    match crate::tables::reference_grid::project_reference(table, schema, &raw, budget, raw_charge)
+    {
+        Ok(projected) => {
+            budget.charge(projected.slots.len().saturating_sub(raw_charge))?;
+            Ok(projected)
+        }
+        Err(crate::tables::reference_grid::ReferenceFailure::Unsupported(reason)) => {
+            raw.compatibility_diagnostic = Some(reason);
+            Ok(raw)
+        }
+        Err(crate::tables::reference_grid::ReferenceFailure::Unsafe(error)) => Err(error),
+    }
+}
+
+pub(crate) fn raw_table_grid(
     table: &Node,
     table_pos: u32,
     schema: &Schema,
@@ -271,6 +306,8 @@ impl Placement {
             slots,
             widths: self.widths.finish(self.columns as usize)?,
             irregular,
+            synthetic: Vec::new(),
+            compatibility_diagnostic: None,
         })
     }
 }

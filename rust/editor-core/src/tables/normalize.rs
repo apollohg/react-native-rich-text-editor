@@ -6,13 +6,13 @@ use serde_json::Value;
 
 use crate::boundary::ResourceLimits;
 use crate::command_planner::{
-    apply_operations, default_attrs, prove_structural_diff, structural_diff_bounded,
-    structural_diff_range, SemanticOperation, StructuralDiff,
+    apply_operations, prove_structural_diff, structural_diff_bounded, structural_diff_range,
+    SemanticOperation, StructuralDiff,
 };
 use crate::model::{Document, Fragment, Node};
 use crate::schema::Schema;
 use crate::tables::projection::{
-    column_width, project_table, span_attribute, CellRect, ProjectedTable, TableGridBudget,
+    column_width, raw_table_grid, span_attribute, CellRect, ProjectedTable, TableGridBudget,
 };
 use crate::tables::roles::{TableRoles, TABLE_CELL_COLWIDTH_ATTR, TABLE_CELL_ROWSPAN_ATTR};
 use crate::tables::types::TableError;
@@ -194,7 +194,7 @@ fn locate_outer_table(
     let table = document
         .node_at(&path)
         .ok_or(NormalizationFailure::MissingTarget)?;
-    let projected = project_table(
+    let projected = raw_table_grid(
         table,
         table_pos,
         schema,
@@ -582,27 +582,7 @@ fn row_start_position(
 }
 
 fn filler_cell(row: &Node, schema: &Schema) -> Result<Node, NormalizationFailure> {
-    let roles = TableRoles::resolve(schema)
-        .map_err(NormalizationFailure::Shape)?
-        .ok_or(NormalizationFailure::MissingTarget)?;
-    let cell_type = row
-        .content()
-        .and_then(|content| {
-            content
-                .iter()
-                .find(|child| {
-                    child.node_type() == roles.cell || child.node_type() == roles.header_cell
-                })
-                .map(|child| child.node_type().to_string())
-        })
-        .unwrap_or_else(|| roles.cell.clone());
-    let block = crate::tables::commands::default_text_block_node(schema)
-        .ok_or(NormalizationFailure::Unplannable)?;
-    Ok(Node::element(
-        cell_type.clone(),
-        default_attrs(schema, &cell_type).ok_or(NormalizationFailure::Unplannable)?,
-        Fragment::from(vec![block]),
-    ))
+    crate::tables::reference_grid::filler_cell(row, schema).ok_or(NormalizationFailure::Unplannable)
 }
 
 fn advance(position: u32, amount: u32) -> Result<u32, NormalizationFailure> {

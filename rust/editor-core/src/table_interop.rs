@@ -847,10 +847,10 @@ fn project_table_payload(payload: serde_json::Value) -> Result<serde_json::Value
         &mut TableGridBudget::new(limits.max_table_grid_slots),
     )
     .map_err(|error| peer_error("TABLE_PROJECTION_FAILED", error.to_string()))?;
-    Ok(projected_table_json(&projected))
+    Ok(projected_table_json(&projected, &schema))
 }
 
-fn projected_table_json(projected: &ProjectedTable) -> serde_json::Value {
+fn projected_table_json(projected: &ProjectedTable, schema: &Schema) -> serde_json::Value {
     let anchors: Vec<Option<u32>> = projected
         .slots
         .iter()
@@ -865,7 +865,30 @@ fn projected_table_json(projected: &ProjectedTable) -> serde_json::Value {
         "widths": projected.widths,
         "irregular": projected.irregular,
         "slots": anchors,
+        "compatibilityDiagnostic": projected.compatibility_diagnostic,
+        "synthetic": projected.synthetic.iter().map(|region| serde_json::json!({
+            "row": region.rect.row,
+            "column": region.rect.column,
+            "rowspan": region.rect.rowspan,
+            "colspan": region.rect.colspan,
+            "node": synthetic_node_json(&region.node, schema),
+        })).collect::<Vec<_>>(),
     })
+}
+
+fn synthetic_node_json(node: &crate::model::Node, schema: &Schema) -> serde_json::Value {
+    let mut value = crate::serialize::json_out::node_to_json(node, schema);
+    let mut pending = vec![(node, &mut value)];
+    while let Some((node, json)) = pending.pop() {
+        json["attrs"] = serde_json::json!(node.attrs());
+        if let (Some(content), Some(children)) = (
+            node.content(),
+            json.get_mut("content").and_then(serde_json::Value::as_array_mut),
+        ) {
+            pending.extend(content.iter().zip(children.iter_mut()));
+        }
+    }
+    value
 }
 
 fn parse_payload<T: serde::de::DeserializeOwned>(
