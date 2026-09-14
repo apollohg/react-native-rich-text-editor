@@ -121,11 +121,11 @@ test('one native normalization pass agrees with prosemirror-tables 1.8.5', async
     );
 });
 
-test('the spec sanctioned divergences are pinned, not hidden', async (context) => {
+test('TBL-10 raw action normalization retains its distinct collision and empty-table outcomes', async (context) => {
     await withPeers(
         ['rust', 'prosemirror'] as const,
         async ([engine, web]) => {
-            await context.test('a collision shifts right natively and overlaps in the reference', async () => {
+            await context.test('raw native normalization retains the colliding span while reference normalization trims it', async () => {
                 const fixture = table([
                     row([cell({ text: 'a' }), cell({ rowspan: 2, text: 'b' })]),
                     row([cell({ colspan: 2, text: 'c' })]),
@@ -170,11 +170,11 @@ test('the spec sanctioned divergences are pinned, not hidden', async (context) =
                 assert.notDeepEqual(
                     canonical(native['table']),
                     canonical(reference['table']),
-                    'TBL-11 mandates shift-right placement, so this fixture must diverge',
+                    'TBL-10 retains the raw action-normalization outcome; revised TBL-11 display projection is tested separately',
                 );
             });
 
-            await context.test('a zero size table survives natively and is deleted by the reference', async () => {
+            await context.test('raw native normalization retains an empty table while reference normalization deletes it', async () => {
                 const fixture = table([row([]), row([])]);
                 const native = await nativeNormalization(engine, fixture);
                 const reference = await referenceNormalization(web, fixture);
