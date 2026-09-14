@@ -302,6 +302,7 @@ pub(crate) fn project_reference(
     }
     let first = additions.iter().position(|count| *count != 0);
     let last = additions.iter().rposition(|count| *count != 0);
+    let mut proven_defaults = Vec::new();
     for (row, &count) in additions.iter().enumerate() {
         if count == 0 {
             continue;
@@ -311,6 +312,7 @@ pub(crate) fn project_reference(
         let row_node = table.child(row).ok_or(TableError::InvalidStructure)?;
         let node = filler_cell(row_node, schema)
             .ok_or(ReferenceFailure::Unsupported("unsupported-gap-default"))?;
+        prove_reference_default(node.node_type(), schema, budget, &mut proven_defaults)?;
         let cell = VirtualCell::new(&node, None, budget)?;
         let mut inserted = Vec::new();
         inserted
@@ -329,7 +331,15 @@ pub(crate) fn project_reference(
         }
     }
     let mapped = compute_map(&rows, &cells, budget, raw_charge)?;
-    materialize(schema, raw, raw_irregular, cells, mapped, budget)
+    materialize(
+        schema,
+        raw,
+        raw_irregular,
+        cells,
+        mapped,
+        budget,
+        proven_defaults,
+    )
 }
 
 fn materialize(
@@ -339,6 +349,7 @@ fn materialize(
     cells: Vec<VirtualCell>,
     mapped: ReferenceMap,
     budget: &mut TableGridBudget,
+    mut proven_defaults: Vec<String>,
 ) -> Result<ProjectedTable> {
     let mut projected = raw.clone();
     projected.columns = u32::try_from(mapped.columns).map_err(|_| TableError::Allocation)?;
@@ -398,6 +409,9 @@ fn materialize(
         }
     }
     let roles = TableRoles::resolve(schema)?.ok_or(TableError::InvalidStructure)?;
+    if mapped.slots.iter().any(Option::is_none) {
+        prove_reference_default(&roles.cell, schema, budget, &mut proven_defaults)?;
+    }
     for (slot, owner) in mapped.slots.iter().enumerate() {
         if owner.is_some() {
             continue;
@@ -424,6 +438,77 @@ fn default_cell(cell_type: &str, schema: &Schema) -> Option<Node> {
         default_attrs(schema, cell_type)?,
         Fragment::from(vec![block]),
     ))
+}
+
+fn single_symbol(source: &str) -> bool {
+    !source.is_empty()
+        && source
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+fn prove_reference_default(
+    cell_type: &str,
+    schema: &Schema,
+    budget: &mut TableGridBudget,
+    proven: &mut Vec<String>,
+) -> Result<()> {
+    if proven.iter().any(|name| name == cell_type) {
+        return Ok(());
+    }
+    let unsupported = || ReferenceFailure::Unsupported("unsupported-gap-default");
+    let cell = schema.node(cell_type).ok_or_else(unsupported)?;
+    let source = cell.content.source();
+    budget.spend(source.len())?;
+    let symbol = source.strip_suffix('+').unwrap_or(source).trim();
+    if !single_symbol(symbol) {
+        return Err(unsupported());
+    }
+    let preferred = schema.preferred_text_block().ok_or_else(unsupported)?;
+    let named = schema.node(symbol);
+    let mut selected = None;
+    for candidate in schema.all_nodes() {
+        budget.spend(1)?;
+        let matches = named.map_or_else(
+            || schema.node_matches_symbol(&candidate.name, symbol),
+            |named| named.name == candidate.name,
+        );
+        if !matches {
+            continue;
+        }
+        budget.spend(candidate.attrs.len())?;
+        if matches!(candidate.role, crate::schema::NodeRole::Text)
+            || candidate.attrs.values().any(|attr| !attr.has_default)
+        {
+            continue;
+        }
+        if named.is_none()
+            && candidate
+                .name
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_digit)
+        {
+            return Err(unsupported());
+        }
+        selected.get_or_insert(candidate);
+    }
+    let selected = selected.ok_or_else(unsupported)?;
+    if selected.name != preferred.name || selected.is_void {
+        return Err(unsupported());
+    }
+    // This bounded subset proves both fillBefore's first choice and its empty content.
+    let content = selected.content.source();
+    budget.spend(content.len())?;
+    if !content.is_empty()
+        && !content
+            .strip_suffix('*')
+            .is_some_and(|symbol| single_symbol(symbol.trim()))
+    {
+        return Err(unsupported());
+    }
+    proven.push(cell_type.to_owned());
+    Ok(())
 }
 
 pub(crate) fn filler_cell(row: &Node, schema: &Schema) -> Option<Node> {

@@ -193,6 +193,75 @@ fn reference_short_first_row_inserts_a_leading_gap() {
 }
 
 #[test]
+fn reference_custom_default_ordering_requires_an_explicit_fallback() {
+    for (content, heading_first, heading_name, supported) in [
+        ("(heading | paragraph)+", false, "heading", false),
+        ("block+", true, "heading", false),
+        ("block+", false, "heading", true),
+        ("paragraph+", true, "heading", true),
+        ("block+", false, "1", false),
+    ] {
+        let base = schema();
+        let mut nodes: Vec<_> = base.all_nodes().cloned().collect();
+        let mut heading = base.node(PARAGRAPH_NODE).unwrap().clone();
+        heading.name = heading_name.into();
+        nodes.insert(if heading_first { 1 } else { 2 }, heading);
+        for node in &mut nodes {
+            if node.name == CELL_NODE || node.name == HEADER_CELL_NODE {
+                node.content = crate::schema::content_rule::ContentRule::parse(content).unwrap();
+            }
+        }
+        let schema = Schema::new(nodes, base.all_marks().cloned().collect());
+        assert!(crate::tables::TableRoles::resolve(&schema)
+            .unwrap()
+            .is_some());
+        let document = from_prosemirror_json(
+            &json!({"type": "doc", "content": [table(vec![
+                row(vec![crate::tables::normalize_tests::cell("a")]),
+                row(vec![crate::tables::normalize_tests::cell("b"), crate::tables::normalize_tests::cell("c")]),
+            ])]}),
+            &schema,
+            UnknownTypeMode::Preserve,
+        )
+        .unwrap();
+        let before = document.root().clone();
+        let projected = project_table(
+            document.root().child(0).unwrap(),
+            0,
+            &schema,
+            &mut TableGridBudget::new(256),
+        )
+        .unwrap();
+        assert_eq!(
+            projected.compatibility_diagnostic,
+            (!supported).then_some("unsupported-gap-default"),
+            "{content}, heading_first={heading_first}, heading_name={heading_name}"
+        );
+        assert_eq!(projected.cells.len(), 3);
+        if supported {
+            assert_eq!(
+                projected.synthetic[0].node.child(0).unwrap().node_type(),
+                PARAGRAPH_NODE
+            );
+        } else {
+            assert!(projected.synthetic.is_empty());
+        }
+        assert_eq!(document.root(), &before);
+        let operations = crate::tables::normalize::normalize_outer_table(
+            &document,
+            0,
+            &schema,
+            &crate::boundary::ResourceLimits::default(),
+        )
+        .unwrap();
+        assert!(
+            matches!(&operations[0], crate::command_planner::SemanticOperation::ReplaceRange { content, .. }
+            if content.children()[0].child(0).unwrap().node_type() == PARAGRAPH_NODE)
+        );
+    }
+}
+
+#[test]
 fn reference_header_gaps_use_schema_defaults_without_copying_source_payload() {
     let base = schema();
     let mut nodes: Vec<_> = base.all_nodes().cloned().collect();

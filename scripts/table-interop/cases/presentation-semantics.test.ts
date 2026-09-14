@@ -448,6 +448,37 @@ function presetNode(value: unknown, preset: string): unknown {
     };
 }
 for (const preset of ['prosemirror', 'tiptap'] as const) {
+    test(`TBL-21-P ${preset} detects the unsupported one-pass TableMap boundary`, async () => {
+        const selectedSchema = preset === 'tiptap' ? tiptapSchema : schema;
+        const authored = prosemirrorJSONToYDoc(
+            selectedSchema,
+            presetNode({ type: 'doc', content: [table([
+                row([cell({ text: 'a' }), cell({ text: 'b', rowspan: 2 })]),
+                row([cell({ text: 'c', colspan: 2, rowspan: 3 })]),
+                row([]),
+            ])] }, preset),
+            'prosemirror',
+        );
+        try {
+            const updateBase64 = Buffer.from(Y.encodeStateAsUpdate(authored)).toString('base64');
+            await withPeers([preset, 'rust'], async ([web, native]) => {
+                await call(native, 'applyUpdate', { updateBase64 });
+                await call(web, 'applyUpdate', { updateBase64 });
+                await exchangeUntilIdle([native, web]);
+                await assertConverged([native, web]);
+                await assert.rejects(() => semantics.observeNativePresentation(native), {
+                    code: 'UNSUPPORTED_OBSERVATION',
+                    message: /overlapping-reference-cells/,
+                });
+                await assert.rejects(() => semantics.observeWebPresentation(web), {
+                    code: 'UNSUPPORTED_OBSERVATION',
+                    message: /collision/,
+                });
+            }, tableFixture(preset));
+        } finally {
+            authored.destroy();
+        }
+    });
     for (const placement of ['following cell', 'nested table'] as const) {
         test(`TBL-21-P ${preset} Unicode scalar native offsets before ${placement}`, async () => {
             await withPeers(
