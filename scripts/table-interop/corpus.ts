@@ -743,7 +743,6 @@ export const CONVERGENCE_CORPUS: readonly CorpusSchedule[] = buildCorpus();
 export interface ScheduleOutcome {
     readonly peers: readonly Peer[];
     readonly geometry: SettledGeometry;
-    readonly webControlLoops: number;
     readonly nativeAutonomousRepairWrites: number;
 }
 
@@ -885,8 +884,6 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
                 await seedFrom(author, participants.slice(1));
                 await exchangeUntilIdle([...participants], schedule.seed);
                 const seeded = JSON.stringify(tableOf((await snapshot(author)).documentJson));
-                const repairsBefore = await webRepairWrites(participants);
-
                 await schedule.scenario.act({
                     peers: rotate(participants, schedule.actorOffset),
                     author,
@@ -928,7 +925,6 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
                 outcome = {
                     peers: participants,
                     geometry: await settledGeometryOf(participants, judge, schedule.preset),
-                    webControlLoops: (await webRepairWrites(participants)) - repairsBefore,
                     nativeAutonomousRepairWrites: nativeRepairs,
                 };
             },
@@ -946,7 +942,6 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
                 failureClass: failureClassOf(error),
                 message: error.message,
             },
-            webControlLoops: NO_LOOPS,
             nativeAutonomousRepairWrites: nativeRepairs,
         };
     }

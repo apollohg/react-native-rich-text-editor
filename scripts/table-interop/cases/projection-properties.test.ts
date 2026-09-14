@@ -32,7 +32,6 @@ import {
 
 const DOC_NODE = 'doc';
 const TABLE_START = 0;
-const NO_LOOPS = 0;
 const NO_LOSSES = 0;
 const ONE_LOSS = 1;
 const NO_REPAIR_WRITES = 0;
@@ -215,7 +214,6 @@ test('TBL-11 unexpectedSourceCellLosses counts a source cell the projection did 
             name: 'native/native settled run projecting the faulted table',
             peers: [author, replica],
             topology: TOPOLOGY_NATIVE_NATIVE,
-            webControlLoops: NO_LOOPS,
             geometry: { kind: GEOMETRY_ADMITTED, irregular: true },
         });
         recordSourceCellCoverage(report, {

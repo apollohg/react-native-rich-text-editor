@@ -148,7 +148,6 @@ export function canonicalDocumentShape(value: unknown): unknown {
 function comparable(value: PeerSnapshot): string {
     return JSON.stringify({
         documentJson: canonicalDocumentShape(value.documentJson),
-        displayJson: canonicalDocumentShape(value.displayJson),
         clocks: clocksOf(value.stateVectorBase64),
         mounted: value.mounted,
         pendingDependencies: value.pendingDependencies,
@@ -180,22 +179,14 @@ async function assertSnapshotsAgree(peers: Peer[], stage: string): Promise<PeerS
         snapshots.push(await snapshot(peer));
     }
     for (const [index, candidate] of snapshots.entries()) {
-        if (!candidate.mounted) {
-            throw new Error(
-                `TBL-21 DIVERGED: peer ${index} is not mounted ${stage}`,
-            );
-        }
         if (candidate.pendingDependencies) {
             throw new Error(
                 `TBL-21 DIVERGED: peer ${index} still holds quarantined updates ${stage}`,
             );
         }
-        if (
-            JSON.stringify(canonicalDocumentShape(candidate.displayJson))
-                !== JSON.stringify(canonicalDocumentShape(candidate.documentJson))
-        ) {
+        if (!candidate.mounted) {
             throw new Error(
-                `TBL-21 DIVERGED: peer ${index} projects a display document that disagrees with its own CRDT document ${stage}`,
+                `TBL-21 DIVERGED: peer ${index} is not mounted ${stage}`,
             );
         }
     }

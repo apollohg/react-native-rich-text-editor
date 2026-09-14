@@ -370,19 +370,18 @@ test('TBL-21 a delivered message is recorded as a single successful attempt', as
 });
 
 const NOT_MOUNTED_FAILURE = 'TBL-21 DIVERGED: peer 0 is not mounted before the full-state exchange';
-const DISPLAY_FAILURE = 'TBL-21 DIVERGED: peer 0 projects a display document that disagrees with '
-    + 'its own CRDT document before the full-state exchange';
+const RAW_FAILURE = 'TBL-21 DIVERGED: peer 1 disagrees with peer 0 before the full-state exchange';
 const NO_REDUCTION = 0;
 
 test('TBL-21 reduction rejects a candidate that fails the same class for a different reason', async () => {
     assert.equal(
         failureClassOf(new Error(NOT_MOUNTED_FAILURE)),
-        failureClassOf(new Error(DISPLAY_FAILURE)),
-        'the failure class alone cannot tell an unseeded peer from a diverged projection',
+        failureClassOf(new Error(RAW_FAILURE)),
+        'the failure class alone cannot tell an unseeded peer from raw divergence',
     );
     assert.notEqual(
         failureSignatureOf(new Error(NOT_MOUNTED_FAILURE)),
-        failureSignatureOf(new Error(DISPLAY_FAILURE)),
+        failureSignatureOf(new Error(RAW_FAILURE)),
         'the failure signature must distinguish them',
     );
 
@@ -390,7 +389,7 @@ test('TBL-21 reduction rejects a candidate that fails the same class for a diffe
     const diverged: Trace = {
         ...trace,
         failureClass: 'DIVERGED',
-        failureMessage: DISPLAY_FAILURE,
+        failureMessage: RAW_FAILURE,
     };
     const unseeded = await reduceTrace(
         diverged,
@@ -399,12 +398,12 @@ test('TBL-21 reduction rejects a candidate that fails the same class for a diffe
     assert.equal(
         trace.records.length - unseeded.records.length,
         NO_REDUCTION,
-        'a candidate that stops seeding its peers is not a reduction of a projection divergence',
+        'a candidate that stops seeding its peers is not a reduction of raw divergence',
     );
 
     const faithful = await reduceTrace(
         diverged,
-        () => Promise.resolve(failureSignatureOf(new Error(DISPLAY_FAILURE))),
+        () => Promise.resolve(failureSignatureOf(new Error(RAW_FAILURE))),
     );
     assert.equal(
         faithful.records.length < trace.records.length,

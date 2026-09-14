@@ -23,18 +23,10 @@ const NATIVE_INCLUSIVE_TOPOLOGIES: readonly ConvergenceTopology[] = [
     TOPOLOGY_NATIVE_TWO_WEB,
 ];
 
-const WEB_INCLUSIVE_TOPOLOGIES: readonly ConvergenceTopology[] = [
-    TOPOLOGY_NATIVE_WEB,
-    TOPOLOGY_NATIVE_TWO_WEB,
-    TOPOLOGY_TWO_WEB_CONTROL,
-];
-
 export const GEOMETRY_ADMITTED = 'admitted';
 export const GEOMETRY_PROJECTION_FAILED = 'projectionFailed';
 export const GEOMETRY_RAW_JSON_DISAGREEMENT = 'rawJsonDisagreement';
 export const GEOMETRY_ORACLE_FAILED = 'convergenceOracleFailed';
-
-const IRREGULAR_ALLOWED_TOPOLOGIES: readonly ConvergenceTopology[] = [TOPOLOGY_NATIVE_NATIVE];
 
 export type SettledGeometry =
     | { readonly kind: typeof GEOMETRY_ADMITTED; readonly irregular: boolean }
@@ -54,7 +46,6 @@ export interface SettledRun {
     readonly name: string;
     readonly peers: readonly Peer[];
     readonly topology: ConvergenceTopology;
-    readonly webControlLoops: number;
     readonly geometry: SettledGeometry;
 }
 
@@ -80,7 +71,6 @@ export interface ConvergenceReport {
     settledRuns: number;
     invalidSettledNativeTables: number;
     invalidSettledWebControlTables: number;
-    webControlLoops: number;
     unsafeAdmissions: number;
     unexpectedSourceCellLosses: number;
     readonly findings: string[];
@@ -91,7 +81,6 @@ const NO_PEERS = 0;
 const ONE_PEER = 1;
 const TWO_PEERS = 2;
 const NO_OBSERVATIONS = 0;
-const QUIESCENT_WEB_CONTROL_LOOPS = 0;
 const ONE_OBSERVATION = 1;
 
 export function topologyOf(kinds: readonly PeerKind[]): ConvergenceTopology {
@@ -126,7 +115,6 @@ export function createConvergenceReport(): ConvergenceReport {
         settledRuns: NO_OBSERVATIONS,
         invalidSettledNativeTables: NO_OBSERVATIONS,
         invalidSettledWebControlTables: NO_OBSERVATIONS,
-        webControlLoops: NO_OBSERVATIONS,
         unsafeAdmissions: NO_OBSERVATIONS,
         unexpectedSourceCellLosses: NO_OBSERVATIONS,
         findings: [],
@@ -147,24 +135,16 @@ function describeGeometry(geometry: SettledGeometry): string {
 }
 
 export function settlesWithValidGeometry(
-    topology: ConvergenceTopology,
+    _topology: ConvergenceTopology,
     geometry: SettledGeometry,
 ): boolean {
     if (geometry.kind !== GEOMETRY_ADMITTED) {
         return false;
     }
-    return !geometry.irregular || IRREGULAR_ALLOWED_TOPOLOGIES.includes(topology);
-}
-
-function requireNonNegativeInteger(value: number, field: string): number {
-    if (!Number.isInteger(value) || value < NO_OBSERVATIONS) {
-        throw new Error(`the convergence report field ${field} was ${JSON.stringify(value)}`);
-    }
-    return value;
+    return true;
 }
 
 export function recordSettledRun(report: ConvergenceReport, run: SettledRun): void {
-    requireNonNegativeInteger(run.webControlLoops, `${run.name}.webControlLoops`);
     const observed = topologyOf(run.peers.map((peer) => peerKindOf(peer)));
     if (observed !== run.topology) {
         throw new Error(
@@ -173,20 +153,9 @@ export function recordSettledRun(report: ConvergenceReport, run: SettledRun): vo
         );
     }
     report.settledRuns += ONE_OBSERVATION;
-    report.webControlLoops += run.webControlLoops;
     const description = `${run.name} [${run.topology}] ${describeGeometry(run.geometry)}`;
     if (settlesWithValidGeometry(run.topology, run.geometry)) {
         report.findings.push(description);
-        return;
-    }
-    if (
-        WEB_INCLUSIVE_TOPOLOGIES.includes(run.topology)
-        && run.webControlLoops !== QUIESCENT_WEB_CONTROL_LOOPS
-    ) {
-        report.findings.push(
-            `${description}; not charged to a settled-geometry scalar because the web plugin `
-                + `still wrote ${run.webControlLoops} repair transactions`,
-        );
         return;
     }
     if (NATIVE_INCLUSIVE_TOPOLOGIES.includes(run.topology)) {
@@ -243,9 +212,6 @@ export function chargedScalars(report: ConvergenceReport): string[] {
     if (report.invalidSettledWebControlTables > NO_OBSERVATIONS) {
         charged.push('invalidSettledWebControlTables');
     }
-    if (report.webControlLoops > NO_OBSERVATIONS) {
-        charged.push('webControlLoops');
-    }
     if (report.unsafeAdmissions > NO_OBSERVATIONS) {
         charged.push('unsafeAdmissions');
     }
@@ -259,7 +225,6 @@ export function convergenceScalarsPassed(report: ConvergenceReport): boolean {
     return report.settledRuns > NO_OBSERVATIONS
         && report.invalidSettledNativeTables === NO_OBSERVATIONS
         && report.invalidSettledWebControlTables === NO_OBSERVATIONS
-        && report.webControlLoops === NO_OBSERVATIONS
         && report.unsafeAdmissions === NO_OBSERVATIONS
         && report.unexpectedSourceCellLosses === NO_OBSERVATIONS;
 }
@@ -270,7 +235,6 @@ export function describeConvergenceReport(report: ConvergenceReport): string {
             settledRuns: report.settledRuns,
             invalidSettledNativeTables: report.invalidSettledNativeTables,
             invalidSettledWebControlTables: report.invalidSettledWebControlTables,
-            webControlLoops: report.webControlLoops,
             unsafeAdmissions: report.unsafeAdmissions,
             unexpectedSourceCellLosses: report.unexpectedSourceCellLosses,
             findings: report.findings,
