@@ -1,11 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Schema } from 'prosemirror-model';
+import { schema as basicSchema } from 'prosemirror-schema-basic';
+import { tableNodes } from 'prosemirror-tables';
 import * as corpus from '../corpus.js';
 import { snapshot } from '../controller.js';
 import { TOPOLOGY_NATIVE_WEB } from '../convergence-report.js';
 import * as evidence from '../continuity-evidence.js';
 import type { EffectiveDocument, EffectiveTable, JsonNode, PeerKind } from '../peer-protocol.js';
 import type { RecordedAction } from '../scenario-evidence.js';
+
+const modelSchema = new Schema({
+    nodes: basicSchema.spec.nodes.append(
+        tableNodes({ tableGroup: 'block', cellContent: 'block+', cellAttributes: {} }),
+    ),
+    marks: basicSchema.spec.marks,
+});
 
 function observed(
     document: EffectiveDocument,
@@ -76,6 +86,83 @@ function rowDocument(): EffectiveDocument {
     layout(table);
     return { tables: [table] };
 }
+
+function modelPositionedRows(blocks: JsonNode[]): EffectiveDocument {
+    const tableNode = modelSchema.nodeFromJSON({
+        type: 'table',
+        content: blocks.map((block) => ({
+            type: 'table_row',
+            content: [{ type: 'table_cell', content: [block] }],
+        })),
+    });
+    const node = tableNode.toJSON() as JsonNode;
+    const cells: EffectiveTable['cells'] = [];
+    tableNode.descendants((child, position) => {
+        if (child.type.name !== 'table_cell') return;
+        const index = cells.length;
+        cells.push({
+            source: `0.${index}.0`,
+            sourceId: `model-cell-${index}`,
+            position: position + 1,
+            row: index,
+            column: 0,
+            rowspan: 1,
+            colspan: 1,
+            node: child.toJSON() as JsonNode,
+        });
+    });
+    node.content!.forEach((row, index) => {
+        row.attrs = { label: String(index) };
+    });
+    return {
+        tables: [
+            {
+                source: '0',
+                parentCell: null,
+                pathWithinCell: '0',
+                position: 0,
+                rows: blocks.length,
+                columns: 1,
+                widths: [null],
+                cells,
+                node,
+            },
+        ],
+    };
+}
+
+test('source preservation attributes rows using model positions after empty basic containers', () => {
+    const view = modelPositionedRows([
+        { type: 'heading', attrs: { level: 2 } },
+        { type: 'code_block' },
+        { type: 'paragraph' },
+        { type: 'paragraph', content: [{ type: 'text', text: 'after' }] },
+    ]);
+
+    assert.deepEqual(
+        view.tables[0]!.cells.map((cell) => cell.position),
+        [2, 8, 14, 20],
+    );
+    preserve(view, structuredClone(view), new Map(), false, 'prosemirror');
+});
+
+test('node sizing matches basic-schema containers and leaf atoms', () => {
+    for (const json of [
+        { type: 'heading', attrs: { level: 2 } },
+        { type: 'code_block' },
+        { type: 'paragraph' },
+        { type: 'horizontal_rule', content: [] },
+        { type: 'image', attrs: { src: 'image.png' }, content: [] },
+        { type: 'hard_break', content: [] },
+    ]) {
+        const modelNode = modelSchema.nodeFromJSON(json);
+        assert.equal(evidence.nodeSize(json, 'prosemirror'), modelNode.nodeSize, json.type);
+    }
+    const astral = { type: 'text', text: 'A😀B' };
+    assert.equal(evidence.nodeSize(astral, 'rust'), 3);
+    assert.equal(evidence.nodeSize(astral, 'prosemirror'), 4);
+    assert.equal(evidence.nodeSize(astral, 'tiptap'), 4);
+});
 
 function rowInsertion(): RecordedAction {
     const before = rowDocument();

@@ -42,23 +42,31 @@ export function assertContinuationHistory(actions: readonly RecordedAction[], ac
     });
 }
 
+const EMPTY_CONTAINER_TYPES = new Set([
+    'doc',
+    'blockquote',
+    'paragraph',
+    'heading',
+    'code_block',
+    'table',
+    'table_row',
+    'tableRow',
+    'table_cell',
+    'table_header',
+    'tableCell',
+    'tableHeader',
+]);
+
+const LEAF_TYPES = new Set(['horizontal_rule', 'image', 'hard_break']);
+
 export function nodeSize(node: JsonNode, kind: PeerKind): number {
     if (node.type === 'text')
         return kind === 'rust' ? [...(node.text ?? '')].length : (node.text ?? '').length;
+    if (LEAF_TYPES.has(node.type)) return 1;
     if (node.content)
         return 2 + node.content.reduce((size, child) => size + nodeSize(child, kind), 0);
-    return [
-        'paragraph',
-        'table',
-        'table_row',
-        'tableRow',
-        'table_cell',
-        'table_header',
-        'tableCell',
-        'tableHeader',
-    ].includes(node.type)
-        ? 2
-        : 1;
+    requireContinuity(EMPTY_CONTAINER_TYPES.has(node.type), `unsupported empty node ${node.type}`);
+    return 2;
 }
 
 function paragraphAt(
