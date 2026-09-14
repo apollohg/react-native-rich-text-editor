@@ -2,7 +2,6 @@ import { assertConverged } from './assertions.js';
 import {
     PARTICIPANT_COUNT_KEY,
     PeerError,
-    call,
     exchangeUntilIdle,
     flushDocumentEvents,
     peerKindOf,
@@ -40,6 +39,9 @@ import {
     tableSchemaOf,
 } from './table-schema.js';
 import { failureClassOf } from './trace.js';
+import { evidenceCall as call, observeEvidence, startEvidence, stopEvidence } from './evidence-observer.js';
+import { assertFamilyEvidence, declaredFamilyActors, FAMILY_INTENTS } from './scenario-evidence.js';
+import type { CoverageStatus, FamilyEvidence, RecordedAction } from './scenario-evidence.js';
 
 export const SCHEDULES_PER_TOPOLOGY = 100;
 export const CORPUS_PRESETS: readonly SchemaPreset[] = ['prosemirror', 'tiptap'];
@@ -204,6 +206,7 @@ export type ScenarioEvidence = {
     readonly settledTable: Record<string, unknown>;
     readonly seededTable: Record<string, unknown>;
     readonly fixtureTable: Record<string, unknown>;
+    readonly boundaries?: FamilyEvidence;
 };
 
 export type CorpusScenario = {
@@ -463,7 +466,7 @@ async function normalizationHistory(
     requireApplied(await call(editor, 'redo', {}), 'redo');
 }
 
-export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
+const LEGACY_SCENARIOS: readonly CorpusScenario[] = [
     {
         name: 'concurrent row and column insertion at the same boundary',
         mutatesGeometry: true,
@@ -660,6 +663,15 @@ export const CORPUS_SCENARIOS: readonly CorpusScenario[] = [
     },
 ];
 
+export const CORPUS_SCENARIOS: readonly CorpusScenario[] = LEGACY_SCENARIOS.map((scenario, index) => ({
+    ...scenario,
+    proves: (evidence: ScenarioEvidence) => {
+        if (!evidence.boundaries) throw scenarioEvidenceFailure('MISSING_ACTION boundaries');
+        assertFamilyEvidence(FAMILY_INTENTS[index]!, evidence.boundaries);
+        scenario.proves?.(evidence);
+    },
+}));
+
 export interface CorpusSchedule {
     readonly name: string;
     readonly topology: ConvergenceTopology;
@@ -744,6 +756,44 @@ export interface ScheduleOutcome {
     readonly peers: readonly Peer[];
     readonly geometry: SettledGeometry;
     readonly nativeAutonomousRepairWrites: number;
+    readonly rawConvergence: { passed: boolean; failure?: string };
+    readonly evidence: { status: CoverageStatus; actions: RecordedAction[]; failures: string[] };
+}
+
+export interface ScenarioCoverage {
+    readonly schedule: string;
+    readonly topology: ConvergenceTopology;
+    readonly preset: SchemaPreset;
+    readonly baseFamily: string;
+    readonly actor: number;
+    readonly actorKind: PeerKind;
+    readonly proof: string;
+    readonly required: true;
+    readonly status: CoverageStatus;
+}
+
+export function scenarioCoverage(
+    schedule: CorpusSchedule,
+    outcome?: ScheduleOutcome,
+): ScenarioCoverage[] {
+    const intent = FAMILY_INTENTS[CORPUS_SCENARIOS.indexOf(schedule.scenario)];
+    if (!intent) throw scenarioEvidenceFailure('unknown family coverage');
+    const actors = Array.from(
+        { length: schedule.participants },
+        (_, index) => (index + schedule.actorOffset) % schedule.participants,
+    );
+    const declared = declaredFamilyActors(intent, actors, [...schedule.kinds]);
+    return intent.steps.map((step, index) => ({
+        schedule: schedule.name,
+        topology: schedule.topology,
+        preset: schedule.preset,
+        baseFamily: schedule.scenario.name,
+        actor: declared[index]!,
+        actorKind: schedule.kinds[declared[index]!]!,
+        proof: `scenario-effect:${index}:${step.operation}`,
+        required: true,
+        status: outcome?.evidence.status ?? 'unexercised',
+    }));
 }
 
 async function projectedGeometry(
@@ -871,6 +921,11 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
     let outcome: ScheduleOutcome | null = null;
     let started: readonly Peer[] = [];
     let nativeRepairs = NO_REPAIR_WRITES;
+    let capturedActions: RecordedAction[] = [];
+    let rawConvergence: { passed: boolean; failure?: string } = {
+        passed: false,
+        failure: 'raw convergence was not reached',
+    };
     try {
         await withPeers(
             schedule.kinds as PeerKind[],
@@ -884,48 +939,85 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
                 await seedFrom(author, participants.slice(1));
                 await exchangeUntilIdle([...participants], schedule.seed);
                 const seeded = JSON.stringify(tableOf((await snapshot(author)).documentJson));
-                await schedule.scenario.act({
-                    peers: rotate(participants, schedule.actorOffset),
-                    author,
-                    anchors: cellAnchors(fixture, TABLE_START),
-                    liveAnchors: async () => cellAnchors(
-                        tableOf((await snapshot(author)).documentJson) as Record<string, unknown>,
-                        TABLE_START,
-                    ),
-                    fixture,
-                    liveTable: async () => tableOf(
-                        (await snapshot(author)).documentJson,
-                    ) as Record<string, unknown>,
-                    liveRowAnchors: async () => rowGroupedAnchors(
-                        tableOf((await snapshot(author)).documentJson) as Record<string, unknown>,
-                    ),
-                    preset: schedule.preset,
-                    seed: schedule.seed,
-                });
+                const capture = startEvidence(participants);
+                capturedActions = capture.actions;
+                const evidenceFailures: string[] = [];
+                try {
+                    await schedule.scenario.act({
+                        peers: rotate(participants, schedule.actorOffset),
+                        author,
+                        anchors: cellAnchors(fixture, TABLE_START),
+                        liveAnchors: async () =>
+                            cellAnchors(
+                                tableOf((await snapshot(author)).documentJson) as Record<
+                                    string,
+                                    unknown
+                                >,
+                                TABLE_START,
+                            ),
+                        fixture,
+                        liveTable: async () =>
+                            tableOf((await snapshot(author)).documentJson) as Record<
+                                string,
+                                unknown
+                            >,
+                        liveRowAnchors: async () =>
+                            rowGroupedAnchors(
+                                tableOf((await snapshot(author)).documentJson) as Record<
+                                    string,
+                                    unknown
+                                >,
+                            ),
+                        preset: schedule.preset,
+                        seed: schedule.seed,
+                    });
+                } catch (error) {
+                    evidenceFailures.push(String(error));
+                } finally {
+                    stopEvidence(participants);
+                }
                 await exchangeUntilIdle([...participants], schedule.seed);
 
                 const settledJson = tableOf((await snapshot(author)).documentJson);
-                const settledTable = JSON.stringify(settledJson);
-                if (schedule.scenario.proves === undefined) {
-                    if (schedule.scenario.mutatesGeometry && settledTable === seeded) {
-                        throw new Error(
-                            `the schedule ${schedule.name} left the seeded table unchanged, so it `
-                                + 'proves nothing',
-                        );
-                    }
-                } else {
+                try {
+                    if (!schedule.scenario.proves)
+                        throw scenarioEvidenceFailure('missing predicate');
                     schedule.scenario.proves({
                         settledTable: settledJson as Record<string, unknown>,
                         seededTable: JSON.parse(seeded) as Record<string, unknown>,
                         fixtureTable: fixture,
+                        boundaries: {
+                            ...capture,
+                            settled: await observeEvidence(author),
+                            author: 0,
+                            actors: rotate(participants, schedule.actorOffset).map((peer) =>
+                                participants.indexOf(peer),
+                            ),
+                            kinds: participants.map(peerKindOf),
+                        },
                     });
+                } catch (error) {
+                    evidenceFailures.push(String(error));
                 }
                 nativeRepairs = await nativeRepairWrites(participants);
-                await assertConverged([...participants]);
+                if (nativeRepairs !== 0)
+                    evidenceFailures.push(`TBL10 AUTONOMOUS_REPAIR: ${nativeRepairs}`);
+                rawConvergence = { passed: true };
+                try {
+                    await assertConverged([...participants]);
+                } catch (error) {
+                    rawConvergence = { passed: false, failure: String(error) };
+                }
                 outcome = {
                     peers: participants,
                     geometry: await settledGeometryOf(participants, judge, schedule.preset),
                     nativeAutonomousRepairWrites: nativeRepairs,
+                    rawConvergence,
+                    evidence: {
+                        status: evidenceFailures.length ? 'exercised-unproven' : 'proven',
+                        actions: capture.actions,
+                        failures: evidenceFailures,
+                    },
                 };
             },
             { ...tableFixture(schedule.preset), [PARTICIPANT_COUNT_KEY]: schedule.participants },
@@ -943,6 +1035,12 @@ export async function runSchedule(schedule: CorpusSchedule): Promise<ScheduleOut
                 message: error.message,
             },
             nativeAutonomousRepairWrites: nativeRepairs,
+            rawConvergence,
+            evidence: {
+                status: capturedActions.length ? 'exercised-unproven' : 'unexercised',
+                actions: capturedActions,
+                failures: [String(error)],
+            },
         };
     }
     if (outcome === null) {

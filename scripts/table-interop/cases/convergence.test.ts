@@ -1005,20 +1005,7 @@ test('TBL-21 a nested table is judged alongside the table that hosts it', () => 
     );
 });
 
-const SCENARIOS_WITHOUT_EVIDENCE: readonly string[] = [
-    'concurrent row and column insertion at the same boundary',
-    'concurrent merges from opposite corners',
-    'a structural action undone and redone by a peer that did not author the table',
-    'a dependent update released before its prerequisite',
-    'typing inside a cell without touching geometry',
-    'a merged cell split against a concurrent row deletion',
-    'a row inserted across a spanning cell',
-    'a native column resize concurrent with a remote row insertion',
-    'concurrent resizes of the same logical column',
-    'concurrent resizes of different logical columns',
-    'a web repair followed by a native undo',
-    'a nested irregular table under an outer structural edit',
-];
+const SCENARIOS_WITHOUT_EVIDENCE: readonly string[] = [];
 
 test('TBL-21 every scenario without evidence is a declared gap, not a default', () => {
     assert.deepEqual(
