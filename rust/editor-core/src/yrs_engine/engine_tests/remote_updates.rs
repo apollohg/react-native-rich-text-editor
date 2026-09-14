@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "remote_updates/publication.rs"]
+mod remote_publication;
+
 #[test]
 fn remote_history_admission_failure_retains_dependency_quarantine_for_retry() {
     use crate::yrs_engine::compiler::{set_atomic_failpoint_for_test, AtomicFailpoint};

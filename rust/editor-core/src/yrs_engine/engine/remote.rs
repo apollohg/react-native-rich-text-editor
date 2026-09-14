@@ -429,10 +429,15 @@ impl YrsDocumentEngine {
                 .collect::<HashSet<_>>()
         };
         let accepted_update = {
-            let current_state_vector = self.doc.transact().state_vector();
-            candidate_doc
-                .transact()
-                .encode_state_as_update_v1(&current_state_vector)
+            let current_state_vector = self.doc.transact().state_vector().encode_v1();
+            // Store deltas omit integrated suffixes beyond a client's clock hole.
+            yrs::diff_updates_v1(&candidate_encoded, &current_state_vector).map_err(|error| {
+                yrs_engine::OperationError::engine_invariant_failed(
+                    request_id,
+                    None,
+                    format!("candidate-produced incremental update cannot encode: {error}"),
+                )
+            })?
         };
         preflight_update_v1(&accepted_update, &self.resource_limits)
             .map_err(|error| history_operation_error(request_id, error))?;
