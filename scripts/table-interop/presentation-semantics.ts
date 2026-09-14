@@ -248,7 +248,8 @@ export function assertEffectivePresentation(
 }
 
 function nodeSize(node: JsonNode): number {
-    if (node.type === 'text') return (node.text ?? '').length;
+    // Native positions count Unicode scalars; live web positions count UTF-16 units.
+    if (node.type === 'text') return Array.from(node.text ?? '').length;
     if (
         !node.content?.length &&
         !['doc', 'paragraph', 'table', 'table_row', 'tableRow', ...cellTypes].includes(node.type)

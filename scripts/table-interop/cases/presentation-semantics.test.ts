@@ -426,6 +426,61 @@ function presetNode(value: unknown, preset: string): unknown {
     };
 }
 for (const preset of ['prosemirror', 'tiptap'] as const) {
+    for (const placement of ['following cell', 'nested table'] as const) {
+        test(`TBL-21-P ${preset} Unicode scalar native offsets before ${placement}`, async () => {
+            await withPeers(
+                ['rust', preset],
+                async ([native, web]) => {
+                    const first = cell({ text: '😀' });
+                    const grid =
+                        placement === 'following cell'
+                            ? table([row([first, cell({ text: 'next' })])])
+                            : table([
+                                  row([
+                                      {
+                                          ...first,
+                                          content: [
+                                              ...first.content!,
+                                              table([
+                                                  row([cell({ text: 'nested' })]),
+                                              ]) as semantics.JsonNode,
+                                          ],
+                                      },
+                                  ]),
+                              ]);
+                    const authored = prosemirrorJSONToYDoc(
+                        preset === 'tiptap' ? tiptapSchema : schema,
+                        presetNode({ type: 'doc', content: [grid] }, preset),
+                        'prosemirror',
+                    );
+                    try {
+                        const updateBase64 = Buffer.from(Y.encodeStateAsUpdate(authored)).toString(
+                            'base64',
+                        );
+                        await call(native, 'applyUpdate', { updateBase64 });
+                        await call(web, 'applyUpdate', { updateBase64 });
+                        const expected = await semantics.observeNativePresentation(native);
+                        const actual = await semantics.observeWebPresentation(web);
+                        if (placement === 'following cell') {
+                            assert.equal(expected.tables[0]!.cells[1]!.position, 7);
+                            assert.equal(expected.tables[0]!.cells[1]!.rawPosition, 7);
+                            assert.equal(actual.tables[0]!.cells[1]!.position, 8);
+                        } else {
+                            assert.equal(expected.tables[1]!.position, 6);
+                            assert.equal(expected.tables[1]!.cells[0]!.position, 8);
+                            assert.equal(expected.tables[1]!.cells[0]!.rawPosition, 8);
+                            assert.equal(actual.tables[1]!.position, 7);
+                            assert.equal(actual.tables[1]!.cells[0]!.position, 9);
+                        }
+                        semantics.assertEffectivePresentation(expected, actual);
+                    } finally {
+                        authored.destroy();
+                    }
+                },
+                tableFixture(preset),
+            );
+        });
+    }
     test(`TBL-21-P ${preset} concurrent-merges diagnostic: raw convergence still leaves incompatible placement`, async () => {
         await withPeers(
             [preset, preset, 'rust'],
