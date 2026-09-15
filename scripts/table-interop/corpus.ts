@@ -1201,6 +1201,15 @@ export interface ContinuationResult {
     refusalEmitted?: number;
 }
 
+export class ContinuationExecutionError extends Error {
+    constructor(
+        readonly result: ContinuationResult,
+        cause: unknown,
+    ) {
+        super(String(cause), { cause });
+    }
+}
+
 function continuationScheduler(
     peers: readonly Peer[],
     seed: number,
@@ -1745,7 +1754,9 @@ export async function runContinuation(
                 stopEvidence(setup.participants);
             }
         },
-    );
+    ).catch((error) => {
+        throw new ContinuationExecutionError(result, error);
+    });
     if (!result.baseline) {
         const { peers: _closed, ...failed } = baseline;
         result.baseline = failed;

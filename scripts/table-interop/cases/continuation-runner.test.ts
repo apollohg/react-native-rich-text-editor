@@ -6,6 +6,62 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { beginTrace, endTrace, recordAction } from '../trace.js';
+import { runContinuation, runSchedule } from '../corpus.js';
+
+test('escaped lifecycle failure retains already captured continuation evidence', async () => {
+    const slot = continuationRequirements().find(
+        (slot) => slot.topology === 'native/native' && slot.proof === 'typing',
+    )!;
+    let written: ContinuationResult | undefined;
+    await runner.executeContinuations(
+        [slot],
+        (candidate) =>
+            runContinuation(candidate, {
+                setup: async (candidate, body) => {
+                    await runSchedule(candidate.schedule, body, { webReference: true });
+                    throw new Error('failure after captured continuation');
+                },
+            }),
+        async (result) => {
+            written = result;
+        },
+    );
+    assert.ok(written!.actions.length > 0, 'recorded action is retained');
+    assert.ok(written!.checkpoints.length >= 2, 'recorded checkpoints are retained');
+    assert.ok(written!.baseline, 'baseline is retained');
+    assert.equal(written!.status, 'exercised-unproven');
+    assert.match(written!.failures.join(), /failure after captured continuation/);
+    assert.ok(written!.tracePath);
+});
+
+test('escaped execution uses only its own completed lifecycle trace', async () => {
+    const slots = continuationRequirements().slice(0, 3);
+    const written: ContinuationResult[] = [];
+    await runner.executeContinuations(
+        slots,
+        async (slot) => {
+            if (slot === slots[1]) throw new Error('before current lifecycle');
+            const previous = beginTrace(
+                { kinds: ['rust', 'rust'], config: {}, seed: slot.schedule.seed },
+                { node: process.version, packages: {}, rustPeerExecutable: 'test-only' },
+            );
+            recordAction(0, 'snapshot', { key: slot.key });
+            endTrace(previous, null);
+            throw new Error(`inside lifecycle ${slot.key}`);
+        },
+        async (result) => {
+            written.push(result);
+        },
+    );
+    for (const index of [0, 2]) {
+        assert.ok(written[index]!.tracePath, 'associated current trace retained');
+        const trace = JSON.parse(readFileSync(written[index]!.tracePath!, 'utf8'));
+        assert.equal(trace.records[0].payload.key, slots[index]!.key);
+        assert.equal(JSON.parse(trace.failureMessage).key, slots[index]!.key);
+    }
+    assert.equal(written[1]!.tracePath, undefined, 'no stale trace before lifecycle starts');
+});
 
 test('scoped runner declares all186 supplementary keys separately', () => {
     const result = spawnSync(

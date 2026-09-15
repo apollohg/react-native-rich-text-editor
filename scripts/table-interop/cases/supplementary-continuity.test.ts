@@ -411,6 +411,50 @@ function remoteHistory(): RecordedAction[] {
     return [action, remote, undo, redo];
 }
 
+test('remote lifetime rejects consistently corrupted redo structure and attributes', () => {
+    for (const corrupt of [
+        (row: JsonNode) => {
+            row.attrs = { label: 'wrong-redo-row' };
+        },
+        (row: JsonNode) => {
+            row.content![0]!.attrs = { label: 'wrong-redo-cell' };
+        },
+        (row: JsonNode) => {
+            row.content![0]!.content![0]!.content = [{ type: 'text', text: 'unexpected' }];
+        },
+        (row: JsonNode) => {
+            row.content!.push({ type: 'table_cell', content: [{ type: 'paragraph' }] });
+        },
+    ]) {
+        const actions = remoteHistory();
+        const redo = actions[3]!;
+        corrupt(redo.after.tables[0]!.node.content![2]!);
+        redo.rawAfter = { type: 'doc', content: [redo.after.tables[0]!.node] };
+        assert.throws(
+            () =>
+                evidence.assertNativeRemoteLifetime(
+                    actions,
+                    { actor: 0, remoteActor: 1, sourceId: 'c', text: 'remote-' },
+                    actions
+                        .slice(1)
+                        .map((action) => [{ kind: action.kind, document: action.after }]),
+                ),
+            /CONTINUITY/,
+        );
+    }
+});
+
+test('remote lifetime permits fresh authored redo identities with the declared effect', () => {
+    const actions = remoteHistory();
+    for (const cell of actions[3]!.after.tables[0]!.cells)
+        if (cell.sourceId?.startsWith('insert-')) cell.sourceId = `redo-${cell.sourceId}`;
+    evidence.assertNativeRemoteLifetime(
+        actions,
+        { actor: 0, remoteActor: 1, sourceId: 'c', text: 'remote-' },
+        actions.slice(1).map((action) => [{ kind: action.kind, document: action.after }]),
+    );
+});
+
 test('native-owned remote lifetime requires applied changing history and exactly one preserved remote payload', () => {
     const actions = remoteHistory();
     const check = (candidate: RecordedAction[]) =>

@@ -1,4 +1,9 @@
-import { continuationCheckpoint, continuationPassed, type ContinuationResult } from './corpus.js';
+import {
+    continuationCheckpoint,
+    continuationPassed,
+    ContinuationExecutionError,
+    type ContinuationResult,
+} from './corpus.js';
 import { withSupplementarySetup } from './supplementary-setup.js';
 import type { SupplementarySlot } from './supplementary-continuity.js';
 import {
@@ -118,6 +123,8 @@ export async function runNativeLifetime(slot: SupplementarySlot): Promise<Contin
         } finally {
             stopEvidence(setup.participants);
         }
+    }).catch((error) => {
+        throw new ContinuationExecutionError(result, error);
     });
     if (!continuationPassed(result))
         result.tracePath = persistTrace({

@@ -9,7 +9,7 @@ import {
 } from './continuity-evidence.js';
 import { cellText, realCells, type RecordedAction } from './scenario-evidence.js';
 import { canonicalDocumentShape } from './assertions.js';
-import type { EffectiveDocument, EffectiveTable, PeerKind } from './peer-protocol.js';
+import type { EffectiveDocument, EffectiveTable, JsonNode, PeerKind } from './peer-protocol.js';
 import type { SupplementarySlot } from './supplementary-continuity.js';
 
 export function supplementaryGaps(view: EffectiveDocument, slot: SupplementarySlot) {
@@ -168,6 +168,35 @@ export function assertCrossingRowspan(
     }
 }
 
+function nodeAtSource(document: JsonNode, source: string): JsonNode {
+    let node = document;
+    for (const part of source.split('.')) {
+        requireContinuity(/^\d+$/.test(part), 'lifetime source path');
+        const child = node.content?.[Number(part)];
+        requireContinuity(child, 'lifetime source node');
+        node = child;
+    }
+    return node;
+}
+
+function remoteHistoryEffects(action: RecordedAction, targetId: string, payload: JsonNode) {
+    const target = realCells(action.after).find((cell) => cell.sourceId === targetId)!;
+    requireContinuity(target.source, 'lifetime normalization source path');
+    const path = target.source.split('.');
+    const cellIndex = Number(path.pop());
+    const rowSource = path.join('.');
+    const undone = structuredClone(action.rawBefore) as JsonNode;
+    const redone = structuredClone(action.rawAfter) as JsonNode;
+    const originalRow = nodeAtSource(undone, rowSource);
+    requireContinuity(
+        originalRow.content && cellIndex <= originalRow.content.length,
+        'lifetime remnant original row',
+    );
+    originalRow.content.splice(cellIndex, 0, structuredClone(payload));
+    nodeAtSource(redone, rowSource).content![cellIndex] = structuredClone(payload);
+    return [undone, redone];
+}
+
 export function assertNativeRemoteLifetime(
     actions: readonly RecordedAction[],
     intent: {
@@ -196,6 +225,7 @@ export function assertNativeRemoteLifetime(
     );
     requireContinuity(intent.remoteActor !== intent.actor, 'lifetime distinct remote actor');
     const payload = realCells(remote.after).find((cell) => cell.sourceId === targetId)!.node;
+    const expectedEffects = remoteHistoryEffects(action, targetId, payload);
     for (const [index, history] of [undo, redo].entries()) {
         requireContinuity(
             history.actor === intent.actor &&
@@ -213,6 +243,12 @@ export function assertNativeRemoteLifetime(
             canonicalDocumentShape(history.rawAfter),
             'TBL21 CONTINUITY lifetime history effect',
         );
+        const expected = expectedEffects[index]!;
+        assert.deepEqual(
+            canonicalDocumentShape(history.rawAfter),
+            canonicalDocumentShape(expected),
+            'TBL21 CONTINUITY lifetime declared history effect',
+        );
         const targetTable = history.after.tables.find((table) =>
             table.cells.some((cell) => cell.sourceId === intent.sourceId),
         );
@@ -227,6 +263,17 @@ export function assertNativeRemoteLifetime(
             { kind: history.kind, document: history.after },
             ...settled[index + 1]!,
         ]) {
+            for (const original of action.before.tables) {
+                const current = view.document.tables.find(
+                    (table) => table.source === original.source,
+                );
+                requireContinuity(current, 'lifetime expected history table');
+                assert.deepEqual(
+                    canonicalDocumentShape(current.node),
+                    canonicalDocumentShape(nodeAtSource(expected, original.source)),
+                    'TBL21 CONTINUITY lifetime settled history effect',
+                );
+            }
             assertSourcePreservation(
                 action.before,
                 view.document,
