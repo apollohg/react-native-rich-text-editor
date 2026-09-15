@@ -203,11 +203,17 @@ export interface PresentationCheck {
         | { source: string; kind: 'exact' }
         | {
               source: string;
+              kind: 'ordinary-safe-overlap';
+              evidence: 'live-overlap';
+          }
+        | {
+              source: string;
               kind: 'overlap-fallback';
               evidence: 'native-equality' | 'live-overlap';
           }
     )[];
 }
+// Expected is a native observation; actual is live web or another native observation.
 export function assertEffectivePresentation(
     expected: EffectiveDocument,
     actual: EffectiveDocument,
@@ -225,6 +231,18 @@ export function assertEffectivePresentation(
     for (const wanted of expected.tables) {
         const observed = actualTables.get(wanted.source);
         if (!observed) fail('UNACCOUNTED_CONTENT', `missing table ${wanted.source}`);
+        for (const view of [wanted, observed]) {
+            const identities = new Set<string>();
+            for (const cell of view.cells) {
+                if (cell.sourceId === undefined) continue;
+                if (cell.source === null || identities.has(cell.sourceId))
+                    fail(
+                        'AMBIGUOUS_SOURCE_MAPPING',
+                        `duplicated/unattributed source identity ${cell.sourceId}`,
+                    );
+                identities.add(cell.sourceId);
+            }
+        }
         const bySource = new Map<string, EffectiveCell>();
         for (const cell of observed.cells) {
             if (cell.source === null) continue;
@@ -233,35 +251,58 @@ export function assertEffectivePresentation(
             bySource.set(cell.source, cell);
         }
         const exceptional = wanted.overlap !== undefined || observed.overlap !== undefined;
+        const ordinarySafe =
+            wanted.overlap === undefined && observed.overlap?.kind === 'web-overlap';
         const mixed =
-            exceptional &&
-            (wanted.overlap?.kind === 'web-overlap' || observed.overlap?.kind === 'web-overlap');
+            observed.overlap?.kind === 'web-overlap' &&
+            (wanted.overlap === undefined || wanted.overlap.kind === 'native-fallback');
         if (exceptional) {
+            if (
+                !mixed &&
+                !(
+                    wanted.overlap?.kind === 'native-fallback' &&
+                    observed.overlap?.kind === 'native-fallback'
+                )
+            )
+                fail(
+                    'UNSUPPORTED_OBSERVATION',
+                    'overlap evidence requires a native projection and live web overlap',
+                );
             for (const view of [wanted, observed]) {
                 try {
-                    if (view.overlap?.kind === 'native-fallback') {
+                    if (view.overlap?.kind === 'web-overlap') validateOverlapEvidence(view);
+                    else {
                         validateGrid(view);
-                        validateFallback(view);
-                        const sources = new Map(view.cells.map((cell) => [cell.source, cell]));
+                        if (view.overlap !== undefined) validateFallback(view);
+                        const real = view.cells.filter((cell) => cell.source !== null);
+                        const sources: string[] = [];
+                        let index = 0;
                         for (const [r, row] of (view.node.content ?? []).entries())
                             for (const [c, raw] of (row.content ?? []).entries()) {
-                                const projected = sources.get(`${view.source}.${r}.${c}`)!;
+                                const source = `${view.source}.${r}.${c}`;
+                                sources.push(source);
+                                const projected = real[index++];
+                                if (!projected || projected.source !== source)
+                                    fail(
+                                        'UNACCOUNTED_CONTENT',
+                                        `native source order/content ${source}`,
+                                    );
                                 same(
-                                    semantic(raw, declared),
-                                    semantic(projected.node, declared),
+                                    semantic(raw, declared, view.overlap === undefined),
+                                    semantic(projected.node, declared, view.overlap === undefined),
                                     `native source content/header/attributes ${projected.source}`,
                                 );
                             }
-                    } else validateOverlapEvidence(view);
+                        same(
+                            sources,
+                            real.map((cell) => cell.source),
+                            `native source order ${view.source}`,
+                        );
+                    }
                 } catch (error) {
                     fail('PRESENTATION_MISMATCH', String(error));
                 }
             }
-            if (
-                wanted.overlap?.kind !== 'native-fallback' &&
-                observed.overlap?.kind !== 'native-fallback'
-            )
-                fail('UNSUPPORTED_OBSERVATION', 'overlap requires native fallback');
         } else {
             validateGrid(wanted);
             validateGrid(observed);
@@ -327,6 +368,8 @@ export function assertEffectivePresentation(
         for (const cell of real) {
             const live = bySource.get(cell.source!);
             if (!live) fail('UNACCOUNTED_CONTENT', `missing source ${cell.source}`);
+            if (cell.sourceId !== undefined && live.sourceId !== undefined)
+                same(cell.sourceId, live.sourceId, `source identity ${cell.source}`);
             if (!mixed) same(geometry(cell), geometry(live), `placement/spans ${cell.source}`);
             same(
                 semantic(cell.node, declared, true),
@@ -351,13 +394,19 @@ export function assertEffectivePresentation(
                 fail('PRESENTATION_MISMATCH', `unexplained colwidth attributes for ${cell.source}`);
         }
         checked.tables.push(
-            exceptional
+            ordinarySafe
                 ? {
                       source: wanted.source,
-                      kind: 'overlap-fallback',
-                      evidence: mixed ? 'live-overlap' : 'native-equality',
+                      kind: 'ordinary-safe-overlap',
+                      evidence: 'live-overlap',
                   }
-                : { source: wanted.source, kind: 'exact' },
+                : exceptional
+                  ? {
+                        source: wanted.source,
+                        kind: 'overlap-fallback',
+                        evidence: mixed ? 'live-overlap' : 'native-equality',
+                    }
+                  : { source: wanted.source, kind: 'exact' },
         );
     }
     return checked;

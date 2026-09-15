@@ -158,6 +158,33 @@ test('overlap checker accepts independently declared evidence', () => {
         { source: '0', kind: 'overlap-fallback', evidence: 'live-overlap' },
     ]);
 });
+test('ordinary safe projection accepts independently declared live overlap', () => {
+    const [native, web] = overlapPair();
+    delete native.tables[0]!.overlap;
+    assert.deepEqual(semantics.assertEffectivePresentation(native, web).tables, [
+        {
+            source: '0',
+            kind: 'ordinary-safe-overlap',
+            evidence: 'live-overlap',
+        },
+    ]);
+});
+test('ordinary safe overlap retains source identity across effective span and position changes', () => {
+    const [native, web] = overlapPair();
+    const projected = native.tables[0]!;
+    delete projected.overlap;
+    projected.cells[2]!.node = structuredClone(projected.cells[2]!.node);
+    projected.cells[2]!.node.attrs!.rowspan = 2;
+    for (const [index, cell] of projected.cells.entries()) {
+        cell.position += 100;
+        cell.sourceId = `declared-${index}`;
+        web.tables[0]!.cells[index]!.sourceId = cell.sourceId;
+    }
+    assert.equal(
+        semantics.assertEffectivePresentation(native, web).tables[0]!.kind,
+        'ordinary-safe-overlap',
+    );
+});
 const overlapControls: [string, (n: EffectiveTable, w: EffectiveTable) => void, RegExp][] = [
     ...(['row', 'column', 'rowspan', 'colspan'] as const).map(
         (field): [string, (n: EffectiveTable, w: EffectiveTable) => void, RegExp] => [
@@ -364,42 +391,188 @@ for (const [name, mutate, reason] of overlapControls)
         mutate(n.tables[0]!, w.tables[0]!);
         assert.throws(() => semantics.assertEffectivePresentation(n, w), reason);
     });
-test('overlap remains scoped to nested table alongside exact regular tables', () => {
-    const [native, web] = overlapPair();
-    const nestedSource = '0.0.0.1';
-    for (const doc of [native, web]) {
-        const nested = doc.tables[0]!;
-        nested.source = nestedSource;
-        nested.parentCell = '0.0.0';
-        nested.pathWithinCell = '1';
-        for (const c of nested.cells) c.source = nestedSource + c.source!.slice(1);
-        if (nested.overlap?.kind === 'web-overlap')
-            for (const box of nested.overlap.boxes) {
-                box.source = nestedSource + box.source.slice(1);
-                box.tableSource = nestedSource;
-            }
-        const parent = fixture([real('0.0.0', 0, 0)], 1, 1).tables[0]!;
-        parent.cells[0]!.node.content!.push(nested.node);
-        doc.tables.unshift(parent);
-        const unrelated = structuredClone(parent);
-        unrelated.source = '1';
-        unrelated.pathWithinCell = '1';
-        unrelated.cells[0]!.source = '1.0.0';
-        unrelated.cells[0]!.node.content!.pop();
-        doc.tables.push(unrelated);
-    }
-    assert.deepEqual(semantics.assertEffectivePresentation(native, web).tables, [
-        { source: '0', kind: 'exact' },
-        {
-            source: nestedSource,
-            kind: 'overlap-fallback',
-            evidence: 'live-overlap',
+const ordinaryControls: typeof overlapControls = [
+    ...overlapControls.filter(
+        ([name]) =>
+            ![
+                'wrong fallback',
+                'native wrong widths',
+                'ordinary falsely labelled',
+                'absent evidence',
+            ].includes(name),
+    ),
+    [
+        'absent evidence',
+        (_, w) => {
+            delete w.overlap;
         },
-        { source: '1', kind: 'exact' },
-    ]);
-    web.tables[2]!.cells[0]!.column = 1;
-    assert.throws(() => semantics.assertEffectivePresentation(native, web), /invalid rectangle/);
+        /invalid extent/,
+    ],
+    [
+        'stale witness',
+        (_, w) => {
+            w.cells[1]!.position++;
+        },
+        /attribution/,
+    ],
+    [
+        'invalid extent',
+        (n) => {
+            n.columns = -1;
+        },
+        /invalid extent/,
+    ],
+    [
+        'native missing source',
+        (n) => {
+            n.cells.pop();
+        },
+        /source order/,
+    ],
+    [
+        'native duplicate source',
+        (n) => {
+            n.cells.push(n.cells[0]!);
+        },
+        /overlapping content|source order/,
+    ],
+    [
+        'native reordered sources',
+        (n) => {
+            n.cells.reverse();
+        },
+        /source order/,
+    ],
+    [
+        'web reordered sources',
+        (_, w) => {
+            w.cells.reverse();
+        },
+        /source order/,
+    ],
+    [
+        'changed marks',
+        (_, w) => {
+            w.cells[0]!.node.content![0]!.content![0]!.marks = [{ type: 'strong' }];
+        },
+        /content\/header\/attributes/,
+    ],
+    [
+        'changed atom',
+        (_, w) => {
+            w.cells[0]!.node.content![0]!.content = [{ type: 'image', attrs: { src: 'changed' } }];
+        },
+        /content\/header\/attributes/,
+    ],
+    [
+        'duplicate observed identity',
+        (_, w) => {
+            w.cells[0]!.sourceId = w.cells[1]!.sourceId = 'same-id';
+        },
+        /source identity/,
+    ],
+    [
+        'mismatched observed identity',
+        (n, w) => {
+            n.cells[0]!.sourceId = 'native-id';
+            w.cells[0]!.sourceId = 'other-id';
+        },
+        /source identity/,
+    ],
+];
+for (const [name, mutate, reason] of ordinaryControls)
+    test(`ordinary safe overlap rejects ${name}`, () => {
+        const [n, w] = overlapPair();
+        delete n.tables[0]!.overlap;
+        mutate(n.tables[0]!, w.tables[0]!);
+        assert.throws(() => semantics.assertEffectivePresentation(n, w), reason);
+    });
+test('ordinary safe overlap checks raw payload independently of both projected payloads', () => {
+    const [native, web] = overlapPair();
+    delete native.tables[0]!.overlap;
+    for (const view of [native, web]) view.tables[0]!.cells[0]!.node = cell({ text: 'changed' });
+    assert.throws(
+        () => semantics.assertEffectivePresentation(native, web),
+        /native source content/,
+    );
 });
+test('ordinary projection without live overlap retains exact comparison', () => {
+    const [native] = overlapPair();
+    delete native.tables[0]!.overlap;
+    const other = structuredClone(native);
+    assert.deepEqual(semantics.assertEffectivePresentation(native, other).tables, [
+        { source: '0', kind: 'exact' },
+    ]);
+    other.tables[0]!.widths![0] = 100;
+    assert.throws(() => semantics.assertEffectivePresentation(native, other), /table geometry/);
+    const [fallback] = overlapPair();
+    assert.throws(
+        () => semantics.assertEffectivePresentation(fallback, native),
+        /overlap evidence/,
+    );
+});
+test('web overlap cannot supply the native side of the exception', () => {
+    const [native, web] = overlapPair();
+    delete native.tables[0]!.overlap;
+    assert.throws(() => semantics.assertEffectivePresentation(web, native), /native projection/);
+    assert.throws(
+        () => semantics.assertEffectivePresentation(web, structuredClone(web)),
+        /native projection/,
+    );
+});
+for (const ordinary of [false, true])
+    test(`${ordinary ? 'ordinary safe' : 'fallback'} overlap remains scoped to nested table alongside exact regular tables`, () => {
+        const [native, web] = overlapPair();
+        if (ordinary) delete native.tables[0]!.overlap;
+        const nestedSource = '0.0.0.1';
+        for (const doc of [native, web]) {
+            const nested = doc.tables[0]!;
+            nested.source = nestedSource;
+            nested.parentCell = '0.0.0';
+            nested.pathWithinCell = '1';
+            for (const c of nested.cells) c.source = nestedSource + c.source!.slice(1);
+            if (nested.overlap?.kind === 'web-overlap')
+                for (const box of nested.overlap.boxes) {
+                    box.source = nestedSource + box.source.slice(1);
+                    box.tableSource = nestedSource;
+                }
+            const parent = fixture([real('0.0.0', 0, 0)], 1, 1).tables[0]!;
+            parent.cells[0]!.node.content!.push(nested.node);
+            doc.tables.unshift(parent);
+            const unrelated = structuredClone(parent);
+            unrelated.source = '1';
+            unrelated.pathWithinCell = '1';
+            unrelated.cells[0]!.source = '1.0.0';
+            unrelated.cells[0]!.node.content!.pop();
+            doc.tables.push(unrelated);
+        }
+        assert.deepEqual(semantics.assertEffectivePresentation(native, web).tables, [
+            { source: '0', kind: 'exact' },
+            {
+                source: nestedSource,
+                kind: ordinary ? 'ordinary-safe-overlap' : 'overlap-fallback',
+                evidence: 'live-overlap',
+            },
+            { source: '1', kind: 'exact' },
+        ]);
+        const changedParent = structuredClone(web);
+        changedParent.tables[0]!.cells[0]!.node.content![0]!.content![0]!.text = 'changed';
+        assert.throws(
+            () => semantics.assertEffectivePresentation(native, changedParent),
+            /content\/header\/attributes/,
+        );
+        const changedNesting = structuredClone(web);
+        changedNesting.tables[1]!.parentCell = 'wrong';
+        assert.throws(
+            () => semantics.assertEffectivePresentation(native, changedNesting),
+            /table nesting/,
+        );
+        web.tables[2]!.cells[0]!.column = 1;
+        assert.throws(
+            () => semantics.assertEffectivePresentation(native, web),
+            /invalid rectangle/,
+        );
+    });
 test('overlap native equality is explicitly distinct from live evidence', () => {
     const [native] = overlapPair();
     assert.deepEqual(

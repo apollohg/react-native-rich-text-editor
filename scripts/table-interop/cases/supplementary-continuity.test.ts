@@ -7,8 +7,9 @@ import type { EffectiveDocument, JsonNode } from '../peer-protocol.js';
 import * as Y from 'yjs';
 import { yXmlFragmentToProsemirrorJSON } from 'y-prosemirror';
 import * as setup from '../supplementary-setup.js';
-import { canonicalDocumentShape } from '../assertions.js';
-import { snapshot } from '../controller.js';
+import { assertConverged, canonicalDocumentShape } from '../assertions.js';
+import { call, exchangeUntilIdle, snapshot, tableFixture, withPeers } from '../controller.js';
+import { assertEffectivePresentation } from '../presentation-semantics.js';
 import { observeEvidence } from '../evidence-observer.js';
 import { realCells } from '../scenario-evidence.js';
 import { continuationPassed } from '../corpus.js';
@@ -84,6 +85,100 @@ test('named overlap presentation stays compatible after unrelated stock typing',
         }),
     );
 });
+
+for (const preset of ['prosemirror', 'tiptap'] as const)
+    test(`${preset} ordinary native projection compares independently with both web histories`, async () => {
+        const slot = supplementary
+            .supplementaryRequirements()
+            .find(
+                (slot) =>
+                    slot.preset === preset &&
+                    slot.family === 'overlap' &&
+                    slot.proof === 'unrelated-web',
+            )!;
+        await withPeers(
+            [preset, preset, 'rust'],
+            async ([author, counterpart, native]) => {
+                const peers = [author, counterpart, native];
+                const updateBase64 = setup.supplementarySeed(slot);
+                for (const peer of peers) await call(peer, 'applyUpdate', { updateBase64 });
+                await exchangeUntilIdle(peers);
+                await assertConverged(peers);
+                const initial = await observeEvidence(native);
+                const sources = new Map(
+                    realCells(initial).map((cell) => [cell.sourceId, cell.node.content]),
+                );
+                for (const web of [author, counterpart])
+                    assert.equal(
+                        assertEffectivePresentation(initial, await observeEvidence(web)).tables[0]!
+                            .kind,
+                        'overlap-fallback',
+                    );
+
+                const check = async () => {
+                    await exchangeUntilIdle(peers);
+                    await assertConverged(peers);
+                    const projected = await observeEvidence(native);
+                    assert.equal(projected.tables[0]!.overlap, undefined);
+                    for (const cell of realCells(projected).filter((cell) =>
+                        sources.has(cell.sourceId),
+                    ))
+                        assert.deepEqual(cell.node.content, sources.get(cell.sourceId));
+                    assert.equal(
+                        realCells(projected).filter((cell) => sources.has(cell.sourceId)).length,
+                        sources.size,
+                    );
+                    assert.deepEqual(
+                        assertEffectivePresentation(projected, await observeEvidence(author))
+                            .tables,
+                        [
+                            {
+                                source: '0',
+                                kind: 'ordinary-safe-overlap',
+                                evidence: 'live-overlap',
+                            },
+                        ],
+                    );
+                    const other = await observeEvidence(counterpart);
+                    assert.equal(other.tables[0]!.overlap, undefined);
+                    assert.deepEqual(assertEffectivePresentation(projected, other).tables, [
+                        { source: '0', kind: 'exact' },
+                    ]);
+                    for (const peer of peers)
+                        assert.equal((await snapshot(peer)).autonomousRepairWrites, 0);
+                };
+                assert.equal(
+                    (await call(author, 'command', { type: 'appendParagraph' })).documentChanged,
+                    true,
+                );
+                await check();
+                const display = (await snapshot(author)).displayJson as JsonNode;
+                const size = (node: JsonNode): number =>
+                    node.type === 'text'
+                        ? node.text!.length
+                        : 2 + (node.content ?? []).reduce((n, child) => n + size(child), 0);
+                const at = 1 + display.content!.slice(0, -1).reduce((n, node) => n + size(node), 0);
+                assert.equal(
+                    (
+                        await call(author, 'command', {
+                            type: 'insertText',
+                            text: 'outside-',
+                            at,
+                        })
+                    ).documentChanged,
+                    true,
+                );
+                await check();
+                for (const peer of peers)
+                    assert.equal(
+                        ((await snapshot(peer)).documentJson as JsonNode).content!.at(-1)!
+                            .content![0]!.text,
+                        'outside-',
+                    );
+            },
+            tableFixture(preset),
+        );
+    });
 
 test('overlap moved gap retains command-bound source attribution', async () => {
     const slot = supplementary
