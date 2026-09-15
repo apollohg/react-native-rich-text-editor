@@ -7,7 +7,40 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beginTrace, endTrace, recordAction } from '../trace.js';
-import { runContinuation, runSchedule } from '../corpus.js';
+import { runContinuation, runSchedule, continuationPassed, CORPUS_SCENARIOS } from '../corpus.js';
+
+test('observed gap absence cannot hide an escaped lifecycle failure', async () => {
+    const slot = continuationRequirements().find(
+        (slot) =>
+            slot.topology === 'native/web' &&
+            slot.proof === 'web-gap' &&
+            slot.schedule.scenario === CORPUS_SCENARIOS[4],
+    )!;
+    const valid = await runContinuation(slot);
+    assert.equal(valid.required, false);
+    assert.equal(continuationPassed(valid), true);
+    let written: ContinuationResult | undefined;
+    const summary = await runner.executeContinuations(
+        [slot],
+        (candidate) =>
+            runContinuation(candidate, {
+                setup: async (candidate, body) => {
+                    await runSchedule(candidate.schedule, body);
+                    throw new Error('lifecycle failure after observed gap absence');
+                },
+            }),
+        async (result) => {
+            written = result;
+        },
+    );
+    assert.equal(written!.required, false, 'independently observed absence remains known');
+    assert.equal(written!.disposition, 'no-gap');
+    assert.deepEqual(written!.gap?.positions, []);
+    assert.ok(written!.checkpoints.length > 0);
+    assert.ok(written!.tracePath);
+    assert.equal(continuationPassed(written!), false);
+    assert.equal(summary.passed, 0);
+});
 
 test('escaped lifecycle failure retains already captured continuation evidence', async () => {
     const slot = continuationRequirements().find(

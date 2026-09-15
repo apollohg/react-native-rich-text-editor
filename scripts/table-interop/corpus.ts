@@ -1321,6 +1321,7 @@ export async function continuationCheckpoint(
 }
 
 export function continuationPassed(result: ContinuationResult): boolean {
+    if (result.failures.length > 0) return false;
     const minimumActions: Record<ContinuationProof, number> = {
         typing: 1,
         structure: 1,
