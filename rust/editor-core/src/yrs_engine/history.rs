@@ -494,6 +494,11 @@ include!("history/capture.rs");
 include!("history/replay.rs");
 include!("history/deletion_filter.rs");
 
+#[cfg(feature = "table-interop")]
+mod availability_audit;
+#[cfg(feature = "table-interop")]
+pub(crate) use availability_audit::AvailabilityHistoryAudit;
+
 fn stack_units(stack: &[StackItem<HistoryMetadata>], request_id: u64) -> OperationResult<u64> {
     let mut total = 0u64;
     for item in stack {

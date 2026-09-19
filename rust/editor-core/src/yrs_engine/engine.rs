@@ -479,6 +479,20 @@ impl YrsDocumentEngine {
         self.state_revision
     }
 
+    #[cfg(feature = "table-interop")]
+    pub(crate) fn availability_history_audit(
+        &self,
+    ) -> Option<super::history::AvailabilityHistoryAudit> {
+        self.history.availability_audit()
+    }
+
+    #[cfg(feature = "table-interop")]
+    pub(crate) fn availability_history_metadata_audit(
+        &self,
+    ) -> Option<Vec<yrs::HistoryMetadataAuditItem>> {
+        self.doc.transact().store().history_metadata_audit(65_536)
+    }
+
     /// Production audit surface: the Yrs state epoch, so full before/after
     /// session audits can pin epoch stability across atomic rejections.
     #[allow(dead_code)]

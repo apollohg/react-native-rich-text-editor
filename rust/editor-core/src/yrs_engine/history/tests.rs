@@ -13,6 +13,86 @@ use super::{
     RelativeSelection, ReplayEvent, ResolvedSelection, TransactionOrigin, YrsHistory, INPUT_ORIGIN,
 };
 
+#[test]
+#[cfg(feature = "table-interop")]
+fn availability_audit_detects_capture_reset_without_stack_change() {
+    let (_doc, mut history) = compatible_history_requiring_reservation_roll(100);
+    let before = history.availability_audit().unwrap();
+    let stack_lengths = (
+        history.manager.undo_stack().len(),
+        history.manager.redo_stack().len(),
+    );
+    history.manager.reset();
+    assert_eq!(
+        stack_lengths,
+        (
+            history.manager.undo_stack().len(),
+            history.manager.redo_stack().len()
+        )
+    );
+    assert_ne!(before, history.availability_audit().unwrap());
+}
+
+#[test]
+#[cfg(feature = "table-interop")]
+fn availability_audit_freezes_shared_metadata_and_replay_state() {
+    let (_doc, mut history) = compatible_history_requiring_reservation_roll(100);
+    let before = history.availability_audit().unwrap();
+    assert_eq!(before, history.availability_audit().unwrap());
+    let metadata = history.manager.undo_stack().last().unwrap().meta();
+    let mut slots = metadata.slots();
+    slots.after = Some(HistorySnapshotSlot::initialized(history_snapshot(7)));
+    metadata.replace_slots(slots);
+    assert_ne!(before, history.availability_audit().unwrap());
+    let changed = history.availability_audit().unwrap();
+    history.replay_events.push(ReplayEvent::Boundary);
+    assert_ne!(changed, history.availability_audit().unwrap());
+}
+
+#[test]
+#[cfg(feature = "table-interop")]
+fn availability_audit_rejects_oversized_evidence() {
+    let (_doc, mut history) = compatible_history_requiring_reservation_roll(100);
+    history.replay_bytes = usize::MAX;
+    assert!(history.availability_audit().is_none());
+}
+
+#[test]
+#[cfg(feature = "table-interop")]
+fn availability_audit_freezes_callback_capture_slots_before_sealing() {
+    let (_doc, history) = compatible_history_requiring_reservation_roll(100);
+    let metadata = HistoryMetadata::capture(history_snapshot(1));
+    *history.pending_capture.lock().unwrap() = Some(metadata.clone());
+    let before = history.availability_audit().unwrap();
+    metadata.set_after(history_snapshot(2));
+    assert_ne!(before, history.availability_audit().unwrap());
+}
+
+#[test]
+#[cfg(feature = "table-interop")]
+fn availability_audit_detects_equal_value_slot_replacement() {
+    let (_doc, history) = compatible_history_requiring_reservation_roll(100);
+    let before = history.availability_audit().unwrap();
+    let metadata = history.manager.undo_stack().last().unwrap().meta();
+    let mut slots = metadata.slots();
+    let same_value = slots.after.as_ref().unwrap().get().unwrap().clone();
+    slots.after = Some(HistorySnapshotSlot::initialized(same_value));
+    metadata.replace_slots(slots);
+    assert_ne!(before, history.availability_audit().unwrap());
+}
+
+#[test]
+#[cfg(feature = "table-interop")]
+fn availability_audit_detects_equal_value_wrapper_replacement() {
+    let (_doc, mut history) = compatible_history_requiring_reservation_roll(100);
+    let before = history.availability_audit().unwrap();
+    let ReplayEvent::Recorded { metadata, .. } = &mut history.replay_events[0] else {
+        panic!("recorded event missing");
+    };
+    *metadata = metadata.shared_wrapper();
+    assert_ne!(before, history.availability_audit().unwrap());
+}
+
 fn history_snapshot(metadata_bytes: usize) -> HistorySnapshot {
     HistorySnapshot {
         relative_selection: RelativeSelection::All,

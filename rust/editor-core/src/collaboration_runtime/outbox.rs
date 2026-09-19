@@ -244,7 +244,55 @@ pub struct CollaborationOutbox {
     last_reserved_upper_bound: Option<usize>,
 }
 
+#[cfg(feature = "table-interop")]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct AvailabilityOutboxAudit {
+    ordered: VecDeque<OutboxOrderedMessage>,
+    protocol: VecDeque<OutboxProtocolReply>,
+    bytes: [usize; 3],
+    reserved: [usize; 4],
+    next_lease: Option<u64>,
+    active_lease: Option<ActiveOutboundLease>,
+    last_reserved: Option<usize>,
+}
+
 impl CollaborationOutbox {
+    #[cfg(feature = "table-interop")]
+    pub(crate) fn availability_audit(&self) -> Option<AvailabilityOutboxAudit> {
+        let bytes = self
+            .pending_bytes
+            .checked_add(self.pending_awareness_bytes)?
+            .checked_add(self.pending_protocol_bytes)?;
+        let count = self
+            .pending_ordered
+            .len()
+            .checked_add(self.pending_protocol.len())?;
+        if bytes > 16 * 1024 * 1024 || count > 65_536 {
+            return None;
+        }
+        Some(AvailabilityOutboxAudit {
+            ordered: self.pending_ordered.clone(),
+            protocol: self.pending_protocol.clone(),
+            bytes: [
+                self.pending_bytes,
+                self.pending_awareness_bytes,
+                self.pending_protocol_bytes,
+            ],
+            reserved: [
+                self.ledger.reserved_messages.load(Ordering::Relaxed),
+                self.ledger.reserved_bytes.load(Ordering::Relaxed),
+                self.ledger
+                    .reserved_non_document_messages
+                    .load(Ordering::Relaxed),
+                self.ledger
+                    .reserved_non_document_bytes
+                    .load(Ordering::Relaxed),
+            ],
+            next_lease: self.next_lease_id,
+            active_lease: self.active_lease,
+            last_reserved: self.last_reserved_upper_bound,
+        })
+    }
     fn non_document_message_limit(max_pending_messages: usize) -> usize {
         if max_pending_messages > 1 {
             max_pending_messages - 1

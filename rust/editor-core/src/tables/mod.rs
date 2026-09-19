@@ -24,7 +24,7 @@ mod interchange_tests;
 #[cfg(test)]
 mod navigation_tests;
 #[cfg(test)]
-mod normalize_tests;
+pub(crate) mod normalize_tests;
 #[cfg(test)]
 mod projection_tests;
 #[cfg(test)]

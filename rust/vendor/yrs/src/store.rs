@@ -23,6 +23,51 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::sync::Arc;
 
+#[cfg(all(test, feature = "history-audit"))]
+mod history_audit_tests {
+    use super::*;
+    use crate::{ReadTxn, Text, Transact};
+
+    #[test]
+    fn history_metadata_audit_detects_unencoded_redone_and_keep() {
+        for keep in [false, true] {
+            let doc = Doc::new();
+            let text = doc.get_or_insert_text("text");
+            text.insert(&mut doc.transact_mut(), 0, "a");
+            let encoded = doc
+                .transact()
+                .encode_state_as_update_v1(&StateVector::default());
+            let before = doc.transact().store().history_metadata_audit(16).unwrap();
+            assert_eq!(
+                before,
+                doc.transact().store().history_metadata_audit(16).unwrap()
+            );
+            assert!(doc.transact().store().history_metadata_audit(0).is_none());
+            {
+                let txn = doc.transact_mut();
+                let mut item = txn
+                    .store()
+                    .blocks
+                    .get_item(&ID::new(doc.client_id(), 0))
+                    .unwrap();
+                if keep {
+                    item.info.set_keep();
+                } else {
+                    item.redone = Some(ID::new(doc.client_id(), 0));
+                }
+            }
+            let after = doc
+                .transact()
+                .encode_state_as_update_v1(&StateVector::default());
+            assert_eq!(encoded, after);
+            assert_ne!(
+                before,
+                doc.transact().store().history_metadata_audit(16).unwrap()
+            );
+        }
+    }
+}
+
 /// Store is a core element of a document. It contains all of the information, like block store
 /// map of root types, pending updates waiting to be applied once a missing update information
 /// arrives and all subscribed callbacks.
@@ -63,7 +108,48 @@ pub struct Store {
     pub(crate) linked_by: HashMap<ItemPtr, HashSet<BranchPtr>>,
 }
 
+#[cfg(feature = "history-audit")]
+#[derive(Debug, PartialEq, Eq)]
+pub struct HistoryMetadataAuditItem {
+    pub id: ID,
+    pub len: u32,
+    pub redone: Option<ID>,
+    pub flags: u16,
+}
+
 impl Store {
+    #[cfg(feature = "history-audit")]
+    pub fn history_metadata_audit(
+        &self,
+        max_items: usize,
+    ) -> Option<Vec<HistoryMetadataAuditItem>> {
+        let mut count = 0usize;
+        for (_, blocks) in self.blocks.iter() {
+            count = count.checked_add(blocks.len())?;
+            if count > max_items {
+                return None;
+            }
+        }
+        let mut items = Vec::new();
+        items.try_reserve_exact(count).ok()?;
+        for (_, blocks) in self.blocks.iter() {
+            for block in blocks.iter() {
+                if let Some(item) = block.as_item() {
+                    if items.len() >= max_items {
+                        return None;
+                    }
+                    items.push(HistoryMetadataAuditItem {
+                        id: item.id,
+                        len: item.len,
+                        redone: item.redone,
+                        flags: item.info.into(),
+                    });
+                }
+            }
+        }
+        items.sort_by_key(|item| (item.id.client, item.id.clock));
+        Some(items)
+    }
     /// Create a new empty store in context of a given `client_id`.
     pub(crate) fn new(options: &Options) -> Self {
         Store {

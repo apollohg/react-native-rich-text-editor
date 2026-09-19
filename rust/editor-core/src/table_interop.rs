@@ -34,6 +34,71 @@ use crate::tables::projection::{project_table, ProjectedTable, TableGridBudget};
 use crate::yrs_engine::{DocumentScope, EditingLimits, ReplacementHistory, RootReplacementError};
 
 const MAX_WIRE_LINE_BYTES: usize = 96 * 1024 * 1024;
+
+#[cfg(test)]
+mod availability_tests {
+    use super::*;
+    use crate::tables::normalize_tests::{cell, cell_with, row, seeded_session, table};
+    use serde_json::{json, Value};
+
+    #[test]
+    fn availability_refusal_reports_actual_preparation_and_history_audit() {
+        let mut peer = RustPeer::new();
+        peer.session = Some(seeded_session(
+            json!({"type":"doc", "content":[table(vec![
+                row(vec![cell("a"), cell_with(1, 2, Value::Null, "b")]),
+                row(vec![cell_with(2, 3, Value::Null, "c")]), row(vec![]),
+            ])]})
+            .to_string(),
+        ));
+        peer.session
+            .as_mut()
+            .unwrap()
+            .attach_collaboration_runtime();
+        let reply = peer
+            .command(json!({"kind":"command", "at":3,
+            "command":{"type":"addTableRow", "side":"after"}}))
+            .unwrap();
+        assert_eq!(reply["availability"]["reason"], "irregular-prepared-grid");
+        assert_eq!(reply["availability"]["historyUnchanged"], true);
+        assert_eq!(reply["availability"]["historyMetadataUnchanged"], true);
+        assert_eq!(reply["availability"]["outboxUnchanged"], true);
+        assert_eq!(reply["availability"]["encodedStateUnchanged"], true);
+        assert_eq!(reply["availability"]["revisionUnchanged"], true);
+        let typing = peer.command(json!({"kind":"input", "text":"z"})).unwrap();
+        assert_eq!(typing["availability"]["reason"], Value::Null);
+        assert_eq!(typing["availability"]["encodedStateUnchanged"], false);
+        assert_eq!(typing["availability"]["historyUnchanged"], false);
+        assert_ne!(
+            reply["availability"]["requestId"],
+            typing["availability"]["requestId"]
+        );
+    }
+
+    #[test]
+    fn availability_valid_row_insertion_remains_an_edit() {
+        let mut peer = RustPeer::new();
+        peer.session = Some(seeded_session(
+            json!({"type":"doc", "content":[table(vec![
+                row(vec![cell("a"), cell("b")]), row(vec![cell("c"), cell("d")]),
+            ])]})
+            .to_string(),
+        ));
+        peer.session
+            .as_mut()
+            .unwrap()
+            .attach_collaboration_runtime();
+        let reply = peer
+            .command(json!({"kind":"command", "at":3,
+            "command":{"type":"addTableRow", "side":"after"}}))
+            .unwrap();
+        assert_eq!(reply["availability"]["reason"], Value::Null);
+        assert_eq!(reply["availability"]["observed"], true);
+        assert_eq!(reply["availability"]["encodedStateUnchanged"], false);
+        assert_eq!(reply["availability"]["historyUnchanged"], false);
+        assert_eq!(reply["availability"]["outboxUnchanged"], false);
+    }
+}
 const MAX_REQUEST_ID_BYTES: usize = 128;
 const COLLABORATION_FRAGMENT_NAME: &str = "prosemirror";
 const AWAIT_SEED_DOCUMENT_ID: &str = "table-interop-document";
@@ -382,6 +447,10 @@ impl RustPeer {
     fn command(&mut self, payload: serde_json::Value) -> Result<serde_json::Value, SessionError> {
         let mutation: LocalMutation = parse_payload(payload)?;
         reset_planned_normalization_passes();
+        crate::tables::command_context::reset_preparation_refusal();
+        let setup_revision = self.session_mut()?.engine.state_revision();
+        let setup_document_revision = self.session_mut()?.engine.revision();
+        let setup_events = self.pending_events.len();
         if let LocalMutation::Command {
             at: Some(at), head, ..
         } = &mutation
@@ -389,8 +458,34 @@ impl RustPeer {
             self.anchor_selection(*at, *head)?;
         }
         let request_id = self.next_request_id();
+        let pending_count_before = self.pending_events.len();
+        let pending_bytes_before = self.pending_events.iter().try_fold(0usize, |size, event| {
+            size.checked_add(event.get("bytesBase64")?.as_str()?.len())
+        });
+        let pending_before = (pending_count_before <= 65_536
+            && pending_bytes_before.is_some_and(|size| size <= 16 * 1024 * 1024))
+        .then(|| self.pending_events.clone());
         let session = self.session_mut()?;
         let base_document_revision = session.engine.revision();
+        let state_revision_before = session.engine.state_revision();
+        let epoch_before = session.engine.yrs_state_epoch();
+        let history_before = session.engine.availability_history_audit();
+        let history_metadata_before = session.engine.availability_history_metadata_audit();
+        let outbox_before = session
+            .collaboration_outbox()
+            .and_then(|outbox| outbox.availability_audit());
+        let outbox_count_before = session.collaboration_outbox().map(|outbox| {
+            [
+                outbox.pending_document_update_count(),
+                outbox.pending_document_update_bytes(),
+            ]
+        });
+        let encoded_before = session
+            .engine
+            .encoded_state()
+            .ok()
+            .filter(|bytes| bytes.len() <= 16 * 1024 * 1024);
+        let raw_before = session.engine.document_json();
         let envelope = local_mutation_envelope(&mutation, request_id, base_document_revision);
         let mut bridge = NativeTransactionBridge::new(session);
         let outcome = match mutation {
@@ -400,8 +495,82 @@ impl RustPeer {
         }?;
         let session = self.session_mut()?;
         let document_changed = session.engine.revision() != base_document_revision;
-        let value = parse_outcome(serialize_native_outcome(outcome, false, document_changed));
+        let unavailable = matches!(
+            outcome,
+            crate::native_transaction_bridge::NativeBridgeOutcome::NotApplicable
+        );
+        let reason = crate::tables::command_context::take_preparation_refusal(request_id)
+            .filter(|_| unavailable);
+        let mut value = parse_outcome(serialize_native_outcome(outcome, false, document_changed));
         self.capture_outbound(EventOrigin::Local, request_id)?;
+        let pending_unchanged = pending_before
+            .as_ref()
+            .is_some_and(|before| &self.pending_events == before);
+        let setup_emitted = pending_count_before.saturating_sub(setup_events);
+        let session = self.session_mut()?;
+        let history_after = session.engine.availability_history_audit();
+        let history_metadata_after = session.engine.availability_history_metadata_audit();
+        let outbox_after = session
+            .collaboration_outbox()
+            .and_then(|outbox| outbox.availability_audit());
+        let encoded_after = session
+            .engine
+            .encoded_state()
+            .ok()
+            .filter(|bytes| bytes.len() <= 16 * 1024 * 1024);
+        let observed = pending_before.is_some()
+            && history_before.is_some()
+            && history_after.is_some()
+            && history_metadata_before.is_some()
+            && history_metadata_after.is_some()
+            && outbox_before.is_some()
+            && outbox_after.is_some()
+            && encoded_before.is_some()
+            && encoded_after.is_some();
+        value["availability"] = serde_json::json!({
+            "requestId": request_id.to_string(),
+            "command": envelope,
+            "observed": observed,
+            "auditStatus": if observed { "complete" } else { "unavailable-or-over-budget" },
+            "auditLimits": { "maxComponentBytes": 16 * 1024 * 1024, "maxItems": 65_536 },
+            "reason": reason,
+            "historyUnchanged": observed && history_before == history_after
+                && history_metadata_before == history_metadata_after,
+            "historyMetadataUnchanged": observed && history_metadata_before == history_metadata_after,
+            "outboxUnchanged": observed && outbox_before == outbox_after && pending_unchanged,
+            "encodedStateUnchanged": observed && encoded_before == encoded_after,
+            "contentUnchanged": raw_before == session.engine.document_json(),
+            "revisionUnchanged": base_document_revision == session.engine.revision()
+                && state_revision_before == session.engine.state_revision()
+                && epoch_before == session.engine.yrs_state_epoch(),
+            "before": {
+                "historyCounts": history_before.as_ref().map(|audit| audit.counts()),
+                "historyMetadataItems": history_metadata_before.as_ref().map(Vec::len),
+                "outboxCountAndBytes": outbox_count_before,
+                "encodedState": encoded_before.map(|bytes| BASE64.encode(bytes)),
+                "documentRevision": base_document_revision.to_string(),
+                "stateRevision": state_revision_before.to_string(),
+                "yrsStateEpoch": epoch_before.to_string(),
+            },
+            "after": {
+                "historyCounts": history_after.as_ref().map(|audit| audit.counts()),
+                "historyMetadataItems": history_metadata_after.as_ref().map(Vec::len),
+                "outboxCountAndBytes": session.collaboration_outbox().map(|outbox|
+                    [outbox.pending_document_update_count(), outbox.pending_document_update_bytes()]),
+                "encodedState": encoded_after.map(|bytes| BASE64.encode(bytes)),
+                "documentRevision": session.engine.revision().to_string(),
+                "stateRevision": session.engine.state_revision().to_string(),
+                "yrsStateEpoch": session.engine.yrs_state_epoch().to_string(),
+            },
+            "selectionSetup": {
+                "documentRevisionBefore": setup_document_revision.to_string(),
+                "documentRevisionAfter": base_document_revision.to_string(),
+                "stateRevisionBefore": setup_revision.to_string(),
+                "stateRevisionAfter": state_revision_before.to_string(),
+                "emittedEvents": setup_emitted,
+                "events": pending_before.as_ref().map(|events| &events[setup_events..]),
+            },
+        });
         Ok(value)
     }
 
@@ -883,7 +1052,8 @@ fn synthetic_node_json(node: &crate::model::Node, schema: &Schema) -> serde_json
         json["attrs"] = serde_json::json!(node.attrs());
         if let (Some(content), Some(children)) = (
             node.content(),
-            json.get_mut("content").and_then(serde_json::Value::as_array_mut),
+            json.get_mut("content")
+                .and_then(serde_json::Value::as_array_mut),
         ) {
             pending.extend(content.iter().zip(children.iter_mut()));
         }

@@ -37,6 +37,7 @@ repository = "https://github.com/y-crdt/y-crdt/"
 default = []
 small-client = []
 sync = []
+history-audit = []
 weak = []
 
 [lib]

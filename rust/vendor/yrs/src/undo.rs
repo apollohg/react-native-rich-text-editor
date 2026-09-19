@@ -90,6 +90,17 @@ pub struct UndoManager<M> {
     state: Arc<Inner<M>>,
 }
 
+#[cfg(feature = "history-audit")]
+#[derive(Debug, PartialEq, Eq)]
+pub struct HistoryAudit<M> {
+    pub identity: usize,
+    pub last_change: u64,
+    pub undoing: bool,
+    pub redoing: bool,
+    pub undo: Vec<StackItem<M>>,
+    pub redo: Vec<StackItem<M>>,
+}
+
 #[cfg(feature = "sync")]
 type UndoFn<M> = Box<dyn FnMut(&TransactionMut, &mut Event<M>) + Send + Sync + 'static>;
 
@@ -490,6 +501,29 @@ where
     pub fn reset(&mut self) {
         let inner = Arc::get_mut(&mut self.state).unwrap();
         inner.last_change = 0;
+    }
+
+    #[cfg(feature = "history-audit")]
+    pub fn history_audit<F>(&self, freeze: impl Fn(&M) -> F) -> HistoryAudit<F> {
+        let stack = |items: &[StackItem<M>]| {
+            items
+                .iter()
+                .map(|item| StackItem {
+                    doc: item.doc.clone(),
+                    deletions: item.deletions.clone(),
+                    insertions: item.insertions.clone(),
+                    meta: freeze(&item.meta),
+                })
+                .collect()
+        };
+        HistoryAudit {
+            identity: Arc::as_ptr(&self.state) as usize,
+            last_change: self.state.last_change,
+            undoing: self.state.undoing,
+            redoing: self.state.redoing,
+            undo: stack(&self.state.undo_stack),
+            redo: stack(&self.state.redo_stack),
+        }
     }
 
     /// Are there any undo steps available?

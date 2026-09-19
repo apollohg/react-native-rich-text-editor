@@ -141,7 +141,11 @@ impl<'a> TableTarget<'a> {
         };
         let projected = index.table_at(table_pos)?.clone();
         match requirement {
-            GridRequirement::Regular if projected.irregular => return None,
+            GridRequirement::Regular if projected.irregular => {
+                #[cfg(feature = "table-interop")]
+                crate::tables::command_context::record_irregular_preparation_refusal();
+                return None;
+            }
             GridRequirement::Regular | GridRequirement::AsProjected => {}
         }
         let rect = match anchors {

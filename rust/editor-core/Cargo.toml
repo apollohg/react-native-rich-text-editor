@@ -38,7 +38,7 @@ required-features = ["cli"]
 default = []
 cli = ["uniffi/cli"]
 crdt = [] # Phase 2
-table-interop = []
+table-interop = ["yrs/history-audit"]
 
 [[example]]
 name = "table_interop_peer"

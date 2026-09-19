@@ -25,6 +25,30 @@ const TABLE_ACTION_OPERATIONS_FIELD: &str = "maxOperationsPerTransaction";
 const SINGLE_PASS: u32 = 1;
 const TRUSTED_TABLE_ACTION_ORIGIN: TransactionOrigin = TransactionOrigin::LocalCommand;
 
+#[cfg(feature = "table-interop")]
+std::thread_local! {
+    static PREPARING_REQUEST: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    static PREPARATION_REFUSAL: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(feature = "table-interop")]
+pub(crate) fn reset_preparation_refusal() {
+    PREPARING_REQUEST.set(None);
+    PREPARATION_REFUSAL.set(None);
+}
+
+#[cfg(feature = "table-interop")]
+pub(crate) fn record_irregular_preparation_refusal() {
+    if let Some(request) = PREPARING_REQUEST.get() {
+        PREPARATION_REFUSAL.set(Some(request));
+    }
+}
+
+#[cfg(feature = "table-interop")]
+pub(crate) fn take_preparation_refusal(request_id: u64) -> Option<&'static str> {
+    (PREPARATION_REFUSAL.take() == Some(request_id)).then_some("irregular-prepared-grid")
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CellAnchorPair {
     pub anchor: u32,
@@ -92,17 +116,21 @@ pub(crate) fn prepare_table_action(
     operations.extend(pre_pass);
 
     let anchors = remap_anchors(context, &candidate, &pre_map)?;
-    let outcome = action
-        .plan(
-            &TableActionCandidate {
-                document: &candidate,
-                table_pos: context.table_pos,
-                anchors,
-                selection: context.selection.map(&pre_map),
-            },
-            context.schema,
-            context.resource_limits,
-        )
+    #[cfg(feature = "table-interop")]
+    PREPARING_REQUEST.set(Some(context.request_id));
+    let planned = action.plan(
+        &TableActionCandidate {
+            document: &candidate,
+            table_pos: context.table_pos,
+            anchors,
+            selection: context.selection.map(&pre_map),
+        },
+        context.schema,
+        context.resource_limits,
+    );
+    #[cfg(feature = "table-interop")]
+    PREPARING_REQUEST.set(None);
+    let outcome = planned
         .map_err(|error| recorrelate(error, context.request_id))?
         .ok_or_else(|| action_unavailable(context, action.kind()))?;
     let (acted, _) = advance_candidate(context, &candidate, &outcome.operations)?;
