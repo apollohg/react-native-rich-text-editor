@@ -1,4 +1,64 @@
 use crate::block::{Block, BlockRange, Item, ItemContent, ItemPosition, ItemPtr, Prelim, ID};
+
+#[cfg(all(test, feature = "history-audit"))]
+thread_local! {
+    static AUDIT_ENCODINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(all(test, feature = "history-audit"))]
+mod bounded_audit_tests {
+    use super::*;
+    use crate::{Doc, Text, Transact};
+
+    #[test]
+    fn history_audit_oversize_stops_before_encoding() {
+        let doc = Doc::new();
+        doc.get_or_insert_text("text")
+            .insert(&mut doc.transact_mut(), 0, &"x".repeat(32768));
+        AUDIT_ENCODINGS.set(0);
+        assert!(doc
+            .transact()
+            .encode_state_for_history_audit(16384, 64)
+            .is_none());
+        assert_eq!(AUDIT_ENCODINGS.get(), 0);
+    }
+
+    #[test]
+    fn history_audit_item_limit_stops_before_encoding() {
+        let doc = Doc::new();
+        doc.get_or_insert_text("text")
+            .insert(&mut doc.transact_mut(), 0, "x");
+        AUDIT_ENCODINGS.set(0);
+        assert!(doc
+            .transact()
+            .encode_state_for_history_audit(16384, 0)
+            .is_none());
+        assert_eq!(AUDIT_ENCODINGS.get(), 0);
+    }
+
+    #[test]
+    fn history_audit_bounded_encoding_preserves_deletions_and_nested_payloads() {
+        use crate::{Map, MapPrelim};
+        let doc = Doc::new();
+        let text = doc.get_or_insert_text("root");
+        let map = doc.get_or_insert_map("map");
+        {
+            let mut txn = doc.transact_mut();
+            text.insert(&mut txn, 0, "deleted and retained");
+            text.remove_range(&mut txn, 0, 8);
+            map.insert(
+                &mut txn,
+                "attrs",
+                MapPrelim::from([(String::from("quoted"), crate::Any::from("\"\\\n"))]),
+            );
+        }
+        let txn = doc.transact();
+        assert_eq!(
+            txn.encode_state_for_history_audit(65536, 64).unwrap(),
+            txn.encode_state_as_update_v1(&StateVector::default())
+        );
+    }
+}
 use crate::branch::{Branch, BranchPtr};
 use crate::doc::DocAddr;
 use crate::error::{Error, UpdateError};
@@ -141,6 +201,20 @@ pub trait ReadTxn: Sized {
         self.encode_state_as_update(sv, &mut encoder);
         // check for pending data
         merge_pending_v1(encoder.to_vec(), self.store())
+    }
+
+    #[cfg(feature = "history-audit")]
+    fn encode_state_for_history_audit(
+        &self,
+        max_bytes: usize,
+        max_items: usize,
+    ) -> Option<Vec<u8>> {
+        self.store()
+            .preflight_history_encoding(max_bytes, max_items)?;
+        #[cfg(test)]
+        AUDIT_ENCODINGS.set(AUDIT_ENCODINGS.get() + 1);
+        let bytes = self.encode_state_as_update_v1(&StateVector::default());
+        (bytes.len() <= max_bytes).then_some(bytes)
     }
 
     /// Encodes the difference between remote peer state given its `state_vector` and the state

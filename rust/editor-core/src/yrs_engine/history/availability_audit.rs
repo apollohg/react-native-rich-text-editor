@@ -3,7 +3,33 @@ use super::*;
 const MAX_AUDIT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_AUDIT_ITEMS: usize = 65_536;
 
+struct RetainedIdentity(Arc<dyn std::any::Any + Send + Sync>);
+
+impl RetainedIdentity {
+    fn new<T: Send + Sync + 'static>(value: &Arc<T>) -> Self {
+        Self(value.clone())
+    }
+}
+
+impl std::fmt::Debug for RetainedIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Pointer::fmt(&Arc::as_ptr(&self.0), f)
+    }
+}
+
+impl PartialEq for RetainedIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for RetainedIdentity {}
+
 fn charge_ids(set: &IdSet, units: &mut u64, ranges: &mut usize) -> Option<()> {
+    *ranges = ranges.checked_add(set.len())?;
+    if *ranges > MAX_AUDIT_ITEMS {
+        return None;
+    }
     for (_, entries) in set.iter() {
         for range in entries {
             *ranges = ranges.checked_add(1)?;
@@ -18,9 +44,9 @@ fn charge_ids(set: &IdSet, units: &mut u64, ranges: &mut usize) -> Option<()> {
 
 #[derive(Debug, PartialEq, Eq)]
 struct FrozenMetadata {
-    wrapper_identity: Option<usize>,
-    before: Option<(usize, Option<HistorySnapshot>)>,
-    after: Option<(usize, Option<HistorySnapshot>)>,
+    wrapper_identity: Option<RetainedIdentity>,
+    before: Option<(RetainedIdentity, Option<HistorySnapshot>)>,
+    after: Option<(RetainedIdentity, Option<HistorySnapshot>)>,
 }
 
 impl FrozenMetadata {
@@ -38,16 +64,16 @@ impl FrozenMetadata {
             wrapper_identity: None,
             before: slots
                 .before
-                .map(|slot| (slot.identity(), slot.get().cloned())),
+                .map(|slot| (RetainedIdentity::new(&slot.0), slot.get().cloned())),
             after: slots
                 .after
-                .map(|slot| (slot.identity(), slot.get().cloned())),
+                .map(|slot| (RetainedIdentity::new(&slot.0), slot.get().cloned())),
         }
     }
 
     fn capture(metadata: &HistoryMetadata) -> Self {
         let mut frozen = Self::slots(metadata.slots());
-        frozen.wrapper_identity = Some(Arc::as_ptr(&metadata.0) as usize);
+        frozen.wrapper_identity = Some(RetainedIdentity::new(&metadata.0));
         frozen
     }
 }
@@ -75,11 +101,11 @@ enum FrozenEvent {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct AvailabilityHistoryAudit {
     manager: yrs::undo::HistoryAudit<FrozenMetadata>,
-    clock_identity: usize,
+    clock_identity: RetainedIdentity,
     clock_latched: Option<u64>,
-    capture: (usize, Option<FrozenMetadata>),
-    pop: (usize, Option<FrozenMetadata>),
-    popped: (usize, Option<(EventKind, FrozenMetadata)>),
+    capture: (RetainedIdentity, Option<FrozenMetadata>),
+    pop: (RetainedIdentity, Option<FrozenMetadata>),
+    popped: (RetainedIdentity, Option<(EventKind, FrozenMetadata)>),
     last_capture_millis: Option<u64>,
     last_class: Option<HistoryClass>,
     last_origin: Option<TransactionOrigin>,
@@ -116,7 +142,8 @@ impl YrsHistory {
             .undo_stack()
             .len()
             .checked_add(self.manager.redo_stack().len())?
-            .checked_add(self.replay_events.len())?;
+            .checked_add(self.replay_events.len())?
+            .checked_add(self.redone_chains.len())?;
         let bytes = self
             .epoch_baseline
             .len()
@@ -165,12 +192,20 @@ impl YrsHistory {
         if let Some((_, slots)) = self.popped.lock().ok()?.as_ref() {
             metadata_bytes = metadata_bytes.checked_add(FrozenMetadata::retained_bytes(slots)?)?;
         }
-        if units > MAX_AUDIT_ITEMS as u64 || metadata_bytes > MAX_AUDIT_BYTES {
+        let allocation_bound = self
+            .epoch_baseline
+            .len()
+            .checked_add(self.replay_bytes)?
+            .checked_add(metadata_bytes.checked_mul(4)?)?
+            .checked_add(items.checked_mul(1024)?)?
+            .checked_add(ranges.checked_mul(128)?)?
+            .checked_add(self.redone_chains.len().checked_mul(128)?)?;
+        if units > MAX_AUDIT_ITEMS as u64 || allocation_bound > MAX_AUDIT_BYTES {
             return None;
         }
         let freeze_pending = |slot: &Arc<Mutex<Option<HistoryMetadata>>>| {
             Some((
-                Arc::as_ptr(slot) as usize,
+                RetainedIdentity::new(slot),
                 slot.lock().ok()?.as_ref().map(FrozenMetadata::capture),
             ))
         };
@@ -210,12 +245,12 @@ impl YrsHistory {
             .collect();
         Some(AvailabilityHistoryAudit {
             manager: self.manager.history_audit(FrozenMetadata::capture),
-            clock_identity: Arc::as_ptr(&self.clock) as usize,
+            clock_identity: RetainedIdentity::new(&self.clock),
             clock_latched: *self.clock.latched.lock().ok()?,
             capture: freeze_pending(&self.pending_capture)?,
             pop: freeze_pending(&self.pending_pop)?,
             popped: (
-                Arc::as_ptr(&self.popped) as usize,
+                RetainedIdentity::new(&self.popped),
                 self.popped
                     .lock()
                     .ok()?

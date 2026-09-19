@@ -93,12 +93,48 @@ pub struct UndoManager<M> {
 #[cfg(feature = "history-audit")]
 #[derive(Debug, PartialEq, Eq)]
 pub struct HistoryAudit<M> {
-    pub identity: usize,
+    pub identity: HistoryAuditIdentity,
     pub last_change: u64,
     pub undoing: bool,
     pub redoing: bool,
     pub undo: Vec<StackItem<M>>,
     pub redo: Vec<StackItem<M>>,
+}
+
+#[cfg(feature = "history-audit")]
+#[derive(Debug)]
+pub struct HistoryAuditIdentity(Arc<()>);
+
+#[cfg(feature = "history-audit")]
+impl PartialEq for HistoryAuditIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+#[cfg(feature = "history-audit")]
+impl Eq for HistoryAuditIdentity {}
+
+#[cfg(all(test, feature = "history-audit"))]
+mod history_identity_tests {
+    use super::*;
+
+    #[test]
+    fn history_audit_retains_manager_identity_without_sharing_mutable_state() {
+        let mut manager = UndoManager::<()>::new();
+        let token = Arc::downgrade(&manager.state.audit_identity);
+        let audit = manager.history_audit(|_| ());
+        manager.reset();
+        assert_eq!(audit, manager.history_audit(|_| ()));
+        drop(manager);
+        assert!(token.upgrade().is_some());
+        assert_ne!(
+            audit.identity,
+            UndoManager::<()>::new().history_audit(|_| ()).identity
+        );
+        drop(audit);
+        assert!(token.upgrade().is_none());
+    }
 }
 
 #[cfg(feature = "sync")]
@@ -124,6 +160,8 @@ pub trait Meta: Default {}
 impl<M> Meta for M where M: Default {}
 
 struct Inner<M> {
+    #[cfg(feature = "history-audit")]
+    audit_identity: Arc<()>,
     docs: HashMap<Arc<str>, Doc>,
     scope: HashSet<BranchPtr>,
     options: Options<M>,
@@ -158,6 +196,8 @@ where
         let undo_stack = UndoStack(std::mem::take(&mut options.init_undo_stack));
         let redo_stack = UndoStack(std::mem::take(&mut options.init_redo_stack));
         let mut state = Arc::new(Inner {
+            #[cfg(feature = "history-audit")]
+            audit_identity: Arc::new(()),
             scope: HashSet::new(),
             options,
             undo_stack,
@@ -517,7 +557,7 @@ where
                 .collect()
         };
         HistoryAudit {
-            identity: Arc::as_ptr(&self.state) as usize,
+            identity: HistoryAuditIdentity(self.state.audit_identity.clone()),
             last_change: self.state.last_change,
             undoing: self.state.undoing,
             redoing: self.state.redoing,

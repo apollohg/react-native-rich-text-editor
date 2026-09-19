@@ -36,10 +36,87 @@ use crate::yrs_engine::{DocumentScope, EditingLimits, ReplacementHistory, RootRe
 const MAX_WIRE_LINE_BYTES: usize = 96 * 1024 * 1024;
 
 #[cfg(test)]
+thread_local! {
+    static AVAILABILITY_WORK: std::cell::Cell<[usize; 6]> = const { std::cell::Cell::new([0; 6]) };
+    static AVAILABILITY_FAILURE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn audit_work(stage: usize) {
+    let mut work = AVAILABILITY_WORK.get();
+    work[stage] += 1;
+    AVAILABILITY_WORK.set(work);
+}
+
+fn observe_component<T>(
+    enabled: bool,
+    stage: usize,
+    observe: impl FnOnce() -> Option<T>,
+) -> Option<T> {
+    if !enabled {
+        return None;
+    }
+    #[cfg(test)]
+    audit_work(stage);
+    #[cfg(test)]
+    if AVAILABILITY_FAILURE.get() == Some(stage) {
+        return None;
+    }
+    let _ = stage;
+    observe()
+}
+
+fn observe_pending(events: &[serde_json::Value]) -> Option<Vec<serde_json::Value>> {
+    if events.len() > crate::availability_audit::MAX_ITEMS {
+        return None;
+    }
+    let mut budget =
+        crate::availability_audit::JsonBudget::new(crate::availability_audit::MAX_BYTES);
+    for event in events {
+        #[cfg(test)]
+        audit_work(0);
+        budget.observe(event, 0)?;
+    }
+    Some(events.to_vec())
+}
+
+#[cfg(test)]
 mod availability_tests {
     use super::*;
     use crate::tables::normalize_tests::{cell, cell_with, row, seeded_session, table};
     use serde_json::{json, Value};
+
+    #[test]
+    fn availability_pending_limit_stops_before_traversal_and_other_observations() {
+        let mut peer = RustPeer::new();
+        peer.initialize(json!({"tables":true})).unwrap();
+        peer.pending_events = vec![json!({"bytesBase64":""}); 65_537];
+        AVAILABILITY_WORK.set([0; 6]);
+        let reply = peer
+            .command(json!({"kind":"command", "command":{"type":"deleteTable"}}))
+            .unwrap();
+        assert_eq!(reply["availability"]["observed"], false);
+        assert_eq!(AVAILABILITY_WORK.get(), [0; 6]);
+    }
+
+    #[test]
+    fn availability_failed_history_or_store_stops_later_observations() {
+        for stage in [1, 2] {
+            let mut peer = RustPeer::new();
+            peer.initialize(json!({"tables":true})).unwrap();
+            AVAILABILITY_WORK.set([0; 6]);
+            AVAILABILITY_FAILURE.set(Some(stage));
+            let reply = peer.command(json!({"kind":"command", "command":{"type":"deleteTable"}}));
+            AVAILABILITY_FAILURE.set(None);
+            let reply = reply.unwrap();
+            assert_eq!(reply["availability"]["observed"], false);
+            assert_eq!(reply["availability"]["contentUnchanged"], false);
+            assert_eq!(reply["type"], "notApplicable");
+            let mut expected = [0; 6];
+            expected[1..=stage].fill(1);
+            assert_eq!(AVAILABILITY_WORK.get(), expected);
+        }
+    }
 
     #[test]
     fn availability_refusal_reports_actual_preparation_and_history_audit() {
@@ -459,33 +536,34 @@ impl RustPeer {
         }
         let request_id = self.next_request_id();
         let pending_count_before = self.pending_events.len();
-        let pending_bytes_before = self.pending_events.iter().try_fold(0usize, |size, event| {
-            size.checked_add(event.get("bytesBase64")?.as_str()?.len())
-        });
-        let pending_before = (pending_count_before <= 65_536
-            && pending_bytes_before.is_some_and(|size| size <= 16 * 1024 * 1024))
-        .then(|| self.pending_events.clone());
+        let pending_before = observe_pending(&self.pending_events);
         let session = self.session_mut()?;
         let base_document_revision = session.engine.revision();
         let state_revision_before = session.engine.state_revision();
         let epoch_before = session.engine.yrs_state_epoch();
-        let history_before = session.engine.availability_history_audit();
-        let history_metadata_before = session.engine.availability_history_metadata_audit();
-        let outbox_before = session
-            .collaboration_outbox()
-            .and_then(|outbox| outbox.availability_audit());
+        let history_before = observe_component(pending_before.is_some(), 1, || {
+            session.engine.availability_history_audit()
+        });
+        let history_metadata_before = observe_component(history_before.is_some(), 2, || {
+            session.engine.availability_history_metadata_audit()
+        });
+        let outbox_before = observe_component(history_metadata_before.is_some(), 3, || {
+            session
+                .collaboration_outbox()
+                .and_then(|outbox| outbox.availability_audit())
+        });
         let outbox_count_before = session.collaboration_outbox().map(|outbox| {
             [
                 outbox.pending_document_update_count(),
                 outbox.pending_document_update_bytes(),
             ]
         });
-        let encoded_before = session
-            .engine
-            .encoded_state()
-            .ok()
-            .filter(|bytes| bytes.len() <= 16 * 1024 * 1024);
-        let raw_before = session.engine.document_json();
+        let encoded_before = observe_component(outbox_before.is_some(), 4, || {
+            session.engine.availability_encoded_audit()
+        });
+        let raw_before = observe_component(encoded_before.is_some(), 5, || {
+            session.engine.availability_content_audit()
+        });
         let envelope = local_mutation_envelope(&mutation, request_id, base_document_revision);
         let mut bridge = NativeTransactionBridge::new(session);
         let outcome = match mutation {
@@ -508,16 +586,23 @@ impl RustPeer {
             .is_some_and(|before| &self.pending_events == before);
         let setup_emitted = pending_count_before.saturating_sub(setup_events);
         let session = self.session_mut()?;
-        let history_after = session.engine.availability_history_audit();
-        let history_metadata_after = session.engine.availability_history_metadata_audit();
-        let outbox_after = session
-            .collaboration_outbox()
-            .and_then(|outbox| outbox.availability_audit());
-        let encoded_after = session
-            .engine
-            .encoded_state()
-            .ok()
-            .filter(|bytes| bytes.len() <= 16 * 1024 * 1024);
+        let history_after = observe_component(raw_before.is_some(), 1, || {
+            session.engine.availability_history_audit()
+        });
+        let history_metadata_after = observe_component(history_after.is_some(), 2, || {
+            session.engine.availability_history_metadata_audit()
+        });
+        let outbox_after = observe_component(history_metadata_after.is_some(), 3, || {
+            session
+                .collaboration_outbox()
+                .and_then(|outbox| outbox.availability_audit())
+        });
+        let encoded_after = observe_component(outbox_after.is_some(), 4, || {
+            session.engine.availability_encoded_audit()
+        });
+        let raw_after = observe_component(encoded_after.is_some(), 5, || {
+            session.engine.availability_content_audit()
+        });
         let observed = pending_before.is_some()
             && history_before.is_some()
             && history_after.is_some()
@@ -526,7 +611,9 @@ impl RustPeer {
             && outbox_before.is_some()
             && outbox_after.is_some()
             && encoded_before.is_some()
-            && encoded_after.is_some();
+            && encoded_after.is_some()
+            && raw_before.is_some()
+            && raw_after.is_some();
         value["availability"] = serde_json::json!({
             "requestId": request_id.to_string(),
             "command": envelope,
@@ -539,7 +626,7 @@ impl RustPeer {
             "historyMetadataUnchanged": observed && history_metadata_before == history_metadata_after,
             "outboxUnchanged": observed && outbox_before == outbox_after && pending_unchanged,
             "encodedStateUnchanged": observed && encoded_before == encoded_after,
-            "contentUnchanged": raw_before == session.engine.document_json(),
+            "contentUnchanged": observed && raw_before == raw_after,
             "revisionUnchanged": base_document_revision == session.engine.revision()
                 && state_revision_before == session.engine.state_revision()
                 && epoch_before == session.engine.yrs_state_epoch(),

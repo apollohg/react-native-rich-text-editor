@@ -93,6 +93,42 @@ fn availability_audit_detects_equal_value_wrapper_replacement() {
     assert_ne!(before, history.availability_audit().unwrap());
 }
 
+#[cfg(feature = "table-interop")]
+#[test]
+fn availability_audit_retains_replaced_metadata_allocations() {
+    let (_doc, history) = compatible_history_requiring_reservation_roll(100);
+    let slots = HistoryMetadataSlots {
+        before: Some(HistorySnapshotSlot::empty()),
+        after: None,
+    };
+    let weak_slot = Arc::downgrade(&slots.before.as_ref().unwrap().0);
+    let metadata = HistoryMetadata(Arc::new(std::sync::Mutex::new(slots)));
+    let weak_wrapper = Arc::downgrade(&metadata.0);
+    *history.pending_capture.lock().unwrap() = Some(metadata);
+    let clock_refs = Arc::strong_count(&history.clock);
+    let capture_refs = Arc::strong_count(&history.pending_capture);
+    let pop_refs = Arc::strong_count(&history.pending_pop);
+    let popped_refs = Arc::strong_count(&history.popped);
+    let before = history.availability_audit().unwrap();
+    assert_eq!(Arc::strong_count(&history.clock), clock_refs + 1);
+    assert_eq!(
+        Arc::strong_count(&history.pending_capture),
+        capture_refs + 1
+    );
+    assert_eq!(Arc::strong_count(&history.pending_pop), pop_refs + 1);
+    assert_eq!(Arc::strong_count(&history.popped), popped_refs + 1);
+    *history.pending_capture.lock().unwrap() = None;
+    assert!(weak_wrapper.upgrade().is_some());
+    assert!(weak_slot.upgrade().is_some());
+    drop(before);
+    assert_eq!(Arc::strong_count(&history.clock), clock_refs);
+    assert_eq!(Arc::strong_count(&history.pending_capture), capture_refs);
+    assert_eq!(Arc::strong_count(&history.pending_pop), pop_refs);
+    assert_eq!(Arc::strong_count(&history.popped), popped_refs);
+    assert!(weak_wrapper.upgrade().is_none());
+    assert!(weak_slot.upgrade().is_none());
+}
+
 fn history_snapshot(metadata_bytes: usize) -> HistorySnapshot {
     HistorySnapshot {
         relative_selection: RelativeSelection::All,

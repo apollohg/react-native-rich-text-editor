@@ -23,6 +23,10 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::sync::Arc;
 
+#[cfg(feature = "history-audit")]
+#[path = "store_history_audit.rs"]
+mod history_encoding_audit;
+
 #[cfg(all(test, feature = "history-audit"))]
 mod history_audit_tests {
     use super::*;
@@ -124,9 +128,11 @@ impl Store {
         max_items: usize,
     ) -> Option<Vec<HistoryMetadataAuditItem>> {
         let mut count = 0usize;
+        let mut clients = 0usize;
         for (_, blocks) in self.blocks.iter() {
+            clients = clients.checked_add(1)?;
             count = count.checked_add(blocks.len())?;
-            if count > max_items {
+            if count > max_items || clients > max_items {
                 return None;
             }
         }

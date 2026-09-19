@@ -487,6 +487,26 @@ impl YrsDocumentEngine {
     }
 
     #[cfg(feature = "table-interop")]
+    pub(crate) fn availability_content_audit(&self) -> Option<Vec<u8>> {
+        let state = self.derived_state.as_ref()?;
+        if state.canonical_artifact.serialized_len() > crate::availability_audit::MAX_BYTES {
+            return None;
+        }
+        crate::availability_audit::freeze_json(
+            state.canonical_artifact.value(),
+            crate::availability_audit::MAX_BYTES,
+        )
+    }
+
+    #[cfg(feature = "table-interop")]
+    pub(crate) fn availability_encoded_audit(&self) -> Option<Vec<u8>> {
+        self.doc.transact().encode_state_for_history_audit(
+            crate::availability_audit::MAX_BYTES,
+            crate::availability_audit::MAX_ITEMS,
+        )
+    }
+
+    #[cfg(feature = "table-interop")]
     pub(crate) fn availability_history_metadata_audit(
         &self,
     ) -> Option<Vec<yrs::HistoryMetadataAuditItem>> {

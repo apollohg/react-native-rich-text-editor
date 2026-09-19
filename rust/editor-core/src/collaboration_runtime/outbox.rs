@@ -267,7 +267,8 @@ impl CollaborationOutbox {
             .pending_ordered
             .len()
             .checked_add(self.pending_protocol.len())?;
-        if bytes > 16 * 1024 * 1024 || count > 65_536 {
+        let allocation_bound = bytes.checked_add(count.checked_mul(128)?)?;
+        if allocation_bound > 16 * 1024 * 1024 || count > 65_536 {
             return None;
         }
         Some(AvailabilityOutboxAudit {
