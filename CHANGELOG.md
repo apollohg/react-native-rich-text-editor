@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.0.6] - 2026-09-19
+
+### Fixed
+
+- Fixed an iOS Debug-build assertion crash when a rich-text viewer first appears by initialising its default Fabric props in the constructor.
+
 ## [2.0.5]
 
 ### Added
@@ -667,6 +673,7 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.0.6]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.5...2.0.6
 [2.0.5]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.4...2.0.5
 [2.0.4]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.3...2.0.4
 [2.0.3]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.2...2.0.3
