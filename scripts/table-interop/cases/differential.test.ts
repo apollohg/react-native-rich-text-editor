@@ -121,58 +121,35 @@ test('one native normalization pass agrees with prosemirror-tables 1.8.5', async
     );
 });
 
-test('TBL-10 raw action normalization retains its distinct collision and empty-table outcomes', async (context) => {
+test('TBL-10 normalization preserves ordered reference repairs and the empty-frame exception', async (context) => {
     await withPeers(
         ['rust', 'prosemirror'] as const,
         async ([engine, web]) => {
-            await context.test('raw native normalization retains the colliding span while reference normalization trims it', async () => {
-                const fixture = table([
-                    row([cell({ text: 'a' }), cell({ rowspan: 2, text: 'b' })]),
-                    row([cell({ colspan: 2, text: 'c' })]),
-                ]);
-                const projection = await call(web, 'projectTable', { table: fixture });
-                assert.ok(
-                    (projection['collisions'] as number) > NO_COLLISIONS,
-                    'this fixture only pins a divergence while the reference reports a collision',
-                );
-                const native = await nativeNormalization(engine, fixture);
-                const reference = await referenceNormalization(web, fixture);
-                assert.deepEqual(
-                    canonical(native['table']),
-                    canonical(table([
-                        row([
-                            cell({ text: 'a' }),
-                            cell({ rowspan: 2, text: 'b' }),
-                            cell(),
-                            cell(),
-                        ]),
-                        row([cell(), cell({ colspan: 2, text: 'c' })]),
-                    ])),
-                    'the colliding cell shifts right past the rowspan and keeps its own colspan',
-                );
-                const nativeGrid = await call(web, 'projectTable', {
-                    table: native['table'],
+            for (const rowspan of [1, 2, 3]) {
+                await context.test(`collision with rowspan ${rowspan} matches exactly one stock pass`, async () => {
+                    const fixture = table([
+                        row([cell({ text: 'a' }), cell({ rowspan: 2, text: 'b' })]),
+                        row([cell({ colspan: 2, rowspan, text: 'c' })]),
+                        ...(rowspan > 1 ? [row([])] : []),
+                    ]);
+                    const expected = rowspan === 1
+                        ? table([
+                            row([cell({ text: 'a' }), cell({ rowspan: 2, text: 'b' }), cell()]),
+                            row([cell(), cell(), cell({ text: 'c' })]),
+                        ])
+                        : table([
+                            row([cell({ text: 'a' }), cell({ rowspan: 2, text: 'b' }), cell()]),
+                            row([cell({ colspan: rowspan === 3 ? 2 : 1, rowspan: 2, text: 'c' }), cell(), cell()]),
+                            row([cell(), cell()]),
+                        ]);
+                    const projection = await call(web, 'projectTable', { table: fixture });
+                    assert.ok((projection['collisions'] as number) > NO_COLLISIONS);
+                    const reference = await referenceNormalization(web, fixture);
+                    assert.deepEqual(canonical(reference['table']), canonical(expected));
+                    const native = await nativeNormalization(engine, fixture);
+                    assert.deepEqual(canonical(native['table']), canonical(expected));
                 });
-                assert.equal(nativeGrid['irregular'], false);
-                assert.deepEqual(
-                    [nativeGrid['rows'], nativeGrid['columns']],
-                    [2, 4],
-                    'shifting right widens the grid rather than trimming the colliding span',
-                );
-                assert.deepEqual(
-                    canonical(reference['table']),
-                    canonical(table([
-                        row([cell({ text: 'a' }), cell({ rowspan: 2, text: 'b' }), cell()]),
-                        row([cell(), cell(), cell({ text: 'c' })]),
-                    ])),
-                    'the pinned reference overlaps the collision and trims the colliding colspan',
-                );
-                assert.notDeepEqual(
-                    canonical(native['table']),
-                    canonical(reference['table']),
-                    'TBL-10 retains the raw action-normalization outcome; revised TBL-11 display projection is tested separately',
-                );
-            });
+            }
 
             await context.test('raw native normalization retains an empty table while reference normalization deletes it', async () => {
                 const fixture = table([row([]), row([])]);

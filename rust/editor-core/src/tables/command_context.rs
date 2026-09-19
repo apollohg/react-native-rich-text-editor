@@ -107,6 +107,7 @@ pub(crate) fn prepare_table_action(
         .ok_or_else(|| action_unavailable(context, action.kind()))?;
     let (acted, _) = advance_candidate(context, &candidate, &outcome.operations)?;
     operations.extend(outcome.operations);
+    let mut selection_after = outcome.selection_after;
 
     let prepared_document = match outer_table_grid(
         &acted,
@@ -120,7 +121,8 @@ pub(crate) fn prepare_table_action(
         Some(_) => {
             let post_pass =
                 normalization_pass(context, &acted, NormalizationPhase::Post, &mut counters)?;
-            let (normalized, _) = advance_candidate(context, &acted, &post_pass)?;
+            let (normalized, post_map) = advance_candidate(context, &acted, &post_pass)?;
+            selection_after = selection_after.map(&post_map);
             operations.extend(post_pass);
             require_valid_outer_grid(context, &normalized)?;
             normalized
@@ -145,12 +147,12 @@ pub(crate) fn prepare_table_action(
         plan: AdmittedSemanticCommandPlan {
             plan: SemanticCommandPlan {
                 operations,
-                selection_after: Some(outcome.selection_after.clone()),
+                selection_after: Some(selection_after.clone()),
                 history: SemanticCommandHistory::InputBoundary,
             },
             simulated: SimulatedCommandPlan {
                 document: prepared_document,
-                selection: outcome.selection_after,
+                selection: selection_after,
             },
         },
         counters,

@@ -1315,6 +1315,47 @@ fn a_table_command_emits_exactly_one_document_update_and_a_selection_none() {
 }
 
 #[test]
+fn named_overlap_row_insertion_refuses_after_one_pass_without_publishing() {
+    let mut session = seeded_session(
+        json!({"type": "doc", "content": [table(vec![
+            row(vec![cell("a"), cell_with(1, 2, Value::Null, "b")]),
+            row(vec![cell_with(2, 3, Value::Null, "c")]), row(vec![]),
+        ])]})
+        .to_string(),
+    );
+    session_select_cell(&mut session, 0);
+    assert_eq!(drain_document_updates(&mut session), 0);
+    let before_document = session.engine.document_json().unwrap();
+    let before_state = session.engine.encoded_state().unwrap();
+    let before_revision = (session.engine.revision(), session.engine.state_revision());
+    let before_history = (session.engine.can_undo(), session.engine.can_redo());
+    crate::tables::normalize::reset_planned_normalization_passes();
+    let (engine, outbox) = session.engine_and_outbox();
+    assert!(engine
+        .apply_command_with_outbox(
+            REQUEST_ID,
+            TypedCommand::Table(TableCommand::AddTableRow {
+                side: TableEdge::After
+            }),
+            outbox
+        )
+        .unwrap()
+        .is_none());
+    assert_eq!(crate::tables::normalize::planned_normalization_passes(), 1);
+    assert_eq!(session.engine.document_json().unwrap(), before_document);
+    assert_eq!(session.engine.encoded_state().unwrap(), before_state);
+    assert_eq!(
+        (session.engine.revision(), session.engine.state_revision()),
+        before_revision
+    );
+    assert_eq!(
+        (session.engine.can_undo(), session.engine.can_redo()),
+        before_history
+    );
+    assert_eq!(drain_document_updates(&mut session), 0);
+}
+
+#[test]
 fn an_insertion_envelope_defaults_to_three_by_three_with_a_header_row() {
     let command = crate::native_transaction_bridge::table_command_envelope_for_test(
         &json!({ "type": "insertTable" }).to_string(),

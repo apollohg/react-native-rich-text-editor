@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+
+use serde_json::Value;
+
 use crate::command_planner::default_attrs;
 use crate::model::{Fragment, Node};
 use crate::schema::Schema;
@@ -240,6 +244,48 @@ pub(crate) fn project_reference(
     budget: &mut TableGridBudget,
     raw_charge: usize,
 ) -> Result<ProjectedTable> {
+    let pass = reference_pass(table, schema, raw, budget, raw_charge)?;
+    materialize(
+        schema,
+        raw,
+        pass.irregular,
+        pass.cells,
+        pass.mapped,
+        budget,
+        pass.proven_defaults,
+    )
+}
+
+pub(crate) struct ReferenceNormalization {
+    pub attrs: Vec<Option<HashMap<String, Value>>>,
+    pub additions: Vec<u32>,
+}
+
+struct ReferencePass {
+    cells: Vec<VirtualCell>,
+    mapped: ReferenceMap,
+    irregular: bool,
+    proven_defaults: Vec<String>,
+    normalization: ReferenceNormalization,
+}
+
+pub(crate) fn reference_normalization(
+    table: &Node,
+    schema: &Schema,
+    raw: &ProjectedTable,
+    budget: &mut TableGridBudget,
+    raw_charge: usize,
+) -> Result<ReferenceNormalization> {
+    Ok(reference_pass(table, schema, raw, budget, raw_charge)?.normalization)
+}
+
+fn reference_pass(
+    table: &Node,
+    schema: &Schema,
+    raw: &ProjectedTable,
+    budget: &mut TableGridBudget,
+    raw_charge: usize,
+) -> Result<ReferencePass> {
     let roles = TableRoles::resolve(schema)?.ok_or(TableError::InvalidStructure)?;
     let mut rows = Vec::new();
     let mut cells = Vec::new();
@@ -268,6 +314,8 @@ pub(crate) fn project_reference(
     }
     let map = compute_map(&rows, &cells, budget, raw_charge)?;
     let originals = cells.clone();
+    let mut attrs = Vec::new();
+    try_resize(&mut attrs, cells.len(), None)?;
     let mut additions = Vec::new();
     try_resize(&mut additions, rows.len(), 0usize)?;
     let raw_irregular = raw.irregular || !map.problems.is_empty();
@@ -286,6 +334,24 @@ pub(crate) fn project_reference(
                 cells[cell].colspan = original.colspan - count;
                 let colspan = cells[cell].colspan as usize;
                 cells[cell].widths.truncate(colspan);
+                let mut updated = original.node.attrs().clone();
+                updated.insert(TABLE_CELL_COLSPAN_ATTR.into(), cells[cell].colspan.into());
+                if original
+                    .node
+                    .attrs()
+                    .get(TABLE_CELL_COLWIDTH_ATTR)
+                    .is_some_and(Value::is_array)
+                {
+                    updated.insert(
+                        TABLE_CELL_COLWIDTH_ATTR.into(),
+                        if cells[cell].widths.iter().any(|width| *width != 0) {
+                            serde_json::json!(cells[cell].widths)
+                        } else {
+                            Value::Null
+                        },
+                    );
+                }
+                attrs[cell] = Some(updated);
             }
             Problem::Missing { row, count } => {
                 additions[row] = checked_add(additions[row], count as usize)?;
@@ -293,10 +359,19 @@ pub(crate) fn project_reference(
             Problem::Overlong { cell, rowspan } => {
                 cells[cell] = originals[cell].clone();
                 cells[cell].rowspan = rowspan;
+                let mut updated = originals[cell].node.attrs().clone();
+                updated.insert(TABLE_CELL_ROWSPAN_ATTR.into(), rowspan.into());
+                attrs[cell] = Some(updated);
             }
             Problem::Width { cell, widths } => {
                 cells[cell] = originals[cell].clone();
                 cells[cell].widths = widths;
+                let mut updated = originals[cell].node.attrs().clone();
+                updated.insert(
+                    TABLE_CELL_COLWIDTH_ATTR.into(),
+                    serde_json::json!(cells[cell].widths),
+                );
+                attrs[cell] = Some(updated);
             }
         }
     }
@@ -331,15 +406,19 @@ pub(crate) fn project_reference(
         }
     }
     let mapped = compute_map(&rows, &cells, budget, raw_charge)?;
-    materialize(
-        schema,
-        raw,
-        raw_irregular,
+    Ok(ReferencePass {
         cells,
         mapped,
-        budget,
+        irregular: raw_irregular,
         proven_defaults,
-    )
+        normalization: ReferenceNormalization {
+            attrs,
+            additions: additions
+                .into_iter()
+                .map(|count| u32::try_from(count).map_err(|_| TableError::Allocation.into()))
+                .collect::<Result<_>>()?,
+        },
+    })
 }
 
 fn materialize(

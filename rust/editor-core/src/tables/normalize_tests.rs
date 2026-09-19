@@ -156,6 +156,35 @@ fn attribute_targets(operations: &[SemanticOperation]) -> Vec<u32> {
 }
 
 #[test]
+fn collision_then_overlong_rowspan_matches_one_stock_reference_pass() {
+    let document = document_with(vec![table(vec![
+        row(vec![cell("a"), cell_with(1, 2, Value::Null, "b")]),
+        row(vec![cell_with(2, 3, Value::Null, "c")]),
+        row(vec![]),
+    ])]);
+    let gap = json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": 1, "rowspan": 1, "colwidth": null },
+        "content": [{ "type": PARAGRAPH_NODE }],
+    });
+    // Literal output of installed prosemirror-tables 1.8.5 fixTables, once.
+    let expected = document_with(vec![table(vec![
+        row(vec![
+            cell("a"),
+            cell_with(1, 2, Value::Null, "b"),
+            gap.clone(),
+        ]),
+        row(vec![
+            cell_with(2, 2, Value::Null, "c"),
+            gap.clone(),
+            gap.clone(),
+        ]),
+        row(vec![gap.clone(), gap]),
+    ])]);
+    assert_eq!(normalized(&document), expected);
+}
+
+#[test]
 fn a_valid_outer_grid_plans_no_normalization() {
     let document = document_with(vec![table(vec![
         row(vec![cell("a"), cell("b")]),
@@ -164,6 +193,73 @@ fn a_valid_outer_grid_plans_no_normalization() {
 
     assert!(!projection_of(&document, TABLE_POSITION).irregular);
     assert_eq!(normalize(&document), Vec::new());
+}
+
+#[test]
+fn collision_repairs_preserve_rich_sources_and_use_header_defaults_for_leading_gaps() {
+    let base = schema();
+    let rich = crate::schema::presets::prosemirror_schema();
+    let mut nodes: Vec<_> = base.all_nodes().cloned().collect();
+    nodes.push(rich.node("hard_break").unwrap().clone());
+    for node in &mut nodes {
+        if [TABLE_NODE, ROW_NODE, CELL_NODE, HEADER_CELL_NODE].contains(&node.name.as_str()) {
+            node.attrs.insert(
+                "opaque".into(),
+                crate::schema::AttrSpec {
+                    default: Some(Value::Null),
+                    has_default: true,
+                    ..Default::default()
+                },
+            );
+        }
+        if node.name == HEADER_CELL_NODE {
+            node.attrs.insert(
+                "background".into(),
+                crate::schema::AttrSpec {
+                    default: Some(json!("ivory")),
+                    has_default: true,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+    let schema = Schema::new(nodes, rich.all_marks().cloned().collect());
+    let mut source = header_cell("c");
+    source["attrs"]["colspan"] = json!(2);
+    source["attrs"]["background"] = json!("blue");
+    source["attrs"]["opaque"] = json!({"type": "table", "content": ["😀", 7]});
+    source["content"] = json!([
+        {"type": "paragraph", "content": [
+            {"type": "text", "text": "c😀", "marks": [{"type": "bold"}]},
+            {"type": "hard_break"}, {"type": "text", "text": "tail"}
+        ]}, {"type": "paragraph", "content": [{"type": "text", "text": "second"}]}
+    ]);
+    let mut raw = table(vec![
+        row(vec![cell("a"), cell_with(1, 2, Value::Null, "b")]),
+        row(vec![source.clone()]),
+    ]);
+    raw["attrs"] = json!({"opaque": {"owner": "table"}});
+    raw["content"][1]["attrs"] = json!({"opaque": {"owner": "row"}});
+    let parse = |table| {
+        from_prosemirror_json(
+            &json!({"type":"doc", "content":[table]}),
+            &schema,
+            UnknownTypeMode::Preserve,
+        )
+        .unwrap()
+    };
+    let document = parse(raw.clone());
+    let gap = json!({"type": CELL_NODE, "content": [{"type": PARAGRAPH_NODE}]});
+    let header_gap = json!({"type": HEADER_CELL_NODE, "content": [{"type": PARAGRAPH_NODE}]});
+    source["attrs"]["colspan"] = json!(1);
+    raw["content"][0]["content"]
+        .as_array_mut()
+        .unwrap()
+        .push(gap);
+    raw["content"][1]["content"] = json!([header_gap.clone(), header_gap, source]);
+    let operations = normalize_outer_table(&document, 0, &schema, &limits()).unwrap();
+    let actual = crate::command_planner::apply_operations(&document, &schema, &operations).unwrap();
+    assert_eq!(actual, parse(raw));
 }
 
 #[test]
@@ -544,6 +640,11 @@ fn a_valid_grid_action_runs_two_passes_that_plan_nothing() {
         }
     );
     assert_eq!(prepared.plan.plan.operations.len(), 1);
+    assert_eq!(prepared.plan.simulated.selection, Selection::cursor(5));
+    assert_eq!(
+        prepared.plan.plan.selection_after,
+        Some(Selection::cursor(5))
+    );
 }
 
 #[test]
@@ -927,6 +1028,66 @@ fn the_sealed_batch_keeps_every_cell_identity_the_whole_table_lowering_destroyed
             "normalization replaced the cell with identity {identity}",
         );
     }
+}
+
+#[test]
+fn collision_normalization_preserves_source_identities_through_the_action_batch() {
+    let mut b = cell_with(1, 2, Value::Null, "b");
+    let mut c = cell_with(2, 1, Value::Null, "c");
+    // Yjs history restores numeric attributes in its floating-point wire domain.
+    b["attrs"]["rowspan"] = json!(2.0);
+    c["attrs"]["colspan"] = json!(2.0);
+    let mut session = seeded_session(
+        json!({"type": "doc", "content": [table(vec![
+            row(vec![cell("a"), b]),
+            row(vec![c]),
+        ])]})
+        .to_string(),
+    );
+    let before = cell_identities(&session.engine.encoded_state().unwrap());
+    let before_document = session.engine.document_json().unwrap();
+    let prepared = prepared_action(
+        session.engine.document().unwrap(),
+        session.engine.revision(),
+        &typing_action(),
+        &EditingLimits::default(),
+    );
+    assert_eq!(prepared.plan.simulated.selection, Selection::cursor(9));
+    assert_eq!(
+        prepared.plan.plan.selection_after,
+        Some(Selection::cursor(9))
+    );
+    assert_eq!(
+        prepared
+            .plan
+            .simulated
+            .document
+            .node_at(&[0, 0, 1])
+            .unwrap()
+            .text_content(),
+        "za"
+    );
+    let CommandPlan::Transaction(transaction) =
+        session_table_action_plan(&session, TransactionOrigin::LocalCommand).unwrap()
+    else {
+        panic!("the bounded action produces a transaction");
+    };
+    session.engine.apply_typed_transaction(transaction).unwrap();
+    let after = cell_identities(&session.engine.encoded_state().unwrap());
+    assert_eq!(after.len(), 7);
+    for identity in before {
+        assert!(
+            after.contains(&identity),
+            "a reference repair replaced source {identity}"
+        );
+    }
+    let after_document = session.engine.document_json().unwrap();
+    reset_planned_normalization_passes();
+    assert!(session.engine.undo(REQUEST_ID).unwrap().is_some());
+    assert_eq!(session.engine.document_json().unwrap(), before_document);
+    assert!(session.engine.redo(REQUEST_ID).unwrap().is_some());
+    assert_eq!(session.engine.document_json().unwrap(), after_document);
+    assert_eq!(planned_normalization_passes(), 0);
 }
 
 const SPANNING_COLSPAN: u32 = 2;

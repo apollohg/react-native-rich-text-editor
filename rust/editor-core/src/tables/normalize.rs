@@ -1,8 +1,5 @@
 #[cfg(any(test, feature = "table-interop"))]
 use std::cell::Cell;
-use std::collections::HashMap;
-
-use serde_json::Value;
 
 use crate::boundary::ResourceLimits;
 use crate::command_planner::{
@@ -11,10 +8,9 @@ use crate::command_planner::{
 };
 use crate::model::{Document, Fragment, Node};
 use crate::schema::Schema;
-use crate::tables::projection::{
-    column_width, raw_table_grid, span_attribute, CellRect, ProjectedTable, TableGridBudget,
-};
-use crate::tables::roles::{TableRoles, TABLE_CELL_COLWIDTH_ATTR, TABLE_CELL_ROWSPAN_ATTR};
+use crate::tables::projection::{raw_table_grid, ProjectedTable, TableGridBudget};
+use crate::tables::reference_grid::{reference_normalization, ReferenceFailure};
+use crate::tables::roles::TableRoles;
 use crate::tables::types::TableError;
 use crate::yrs_engine::{OperationError, OperationResult};
 
@@ -177,6 +173,7 @@ pub(crate) fn outer_table_grid(
 struct LocatedTable {
     path: Vec<u32>,
     projected: ProjectedTable,
+    budget: TableGridBudget,
 }
 
 fn locate_outer_table(
@@ -194,14 +191,14 @@ fn locate_outer_table(
     let table = document
         .node_at(&path)
         .ok_or(NormalizationFailure::MissingTarget)?;
-    let projected = raw_table_grid(
-        table,
-        table_pos,
-        schema,
-        &mut TableGridBudget::new(limits.max_table_grid_slots),
-    )
-    .map_err(NormalizationFailure::Shape)?;
-    Ok(Some(LocatedTable { path, projected }))
+    let mut budget = TableGridBudget::new(limits.max_table_grid_slots);
+    let projected = raw_table_grid(table, table_pos, schema, &mut budget)
+        .map_err(NormalizationFailure::Shape)?;
+    Ok(Some(LocatedTable {
+        path,
+        projected,
+        budget,
+    }))
 }
 
 fn outer_table_path(
@@ -270,14 +267,37 @@ fn plan_normalization(
     schema: &Schema,
     limits: &ResourceLimits,
 ) -> Result<Vec<SemanticOperation>, NormalizationFailure> {
-    let located = locate_outer_table(document, table_pos, schema, limits)?
+    let mut located = locate_outer_table(document, table_pos, schema, limits)?
         .ok_or(NormalizationFailure::MissingTarget)?;
     let table = document
         .node_at(&located.path)
         .ok_or(NormalizationFailure::MissingTarget)?;
-    let mut operations = attribute_fixes(table, table_pos, &located.projected, schema)?;
+    if located.projected.cells.is_empty() {
+        return Ok(Vec::new());
+    }
+    let raw_charge = located.budget.charged_slots();
+    let analysis = reference_normalization(
+        table,
+        schema,
+        &located.projected,
+        &mut located.budget,
+        raw_charge,
+    )
+    .map_err(|failure| match failure {
+        ReferenceFailure::Unsafe(error) => NormalizationFailure::Shape(error),
+        ReferenceFailure::Unsupported(_) => NormalizationFailure::Unplannable,
+    })?;
+    let mut operations = Vec::new();
+    for (cell, attrs) in located.projected.cells.iter().zip(analysis.attrs) {
+        if let Some(attrs) = attrs {
+            operations.push(SemanticOperation::UpdateNodeAttrs {
+                pos: cell.source_pos,
+                attrs,
+            });
+        }
+    }
     let mut candidate = apply_planned(document, schema, &operations)?;
-    let additions = missing_cells_per_row(&located.projected)?;
+    let additions = analysis.additions;
     for (row_index, missing) in additions.iter().copied().enumerate().rev() {
         if missing == NO_MISSING_SLOTS {
             continue;
@@ -306,164 +326,6 @@ fn apply_planned(
     operations: &[SemanticOperation],
 ) -> Result<Document, NormalizationFailure> {
     apply_operations(document, schema, operations).map_err(|()| NormalizationFailure::Unplannable)
-}
-
-struct CellSource<'a> {
-    source_pos: u32,
-    node: &'a Node,
-}
-
-fn cell_sources<'a>(
-    table: &'a Node,
-    table_pos: u32,
-    roles: &TableRoles,
-) -> Result<Vec<CellSource<'a>>, NormalizationFailure> {
-    let content = table
-        .content()
-        .ok_or(NormalizationFailure::Shape(TableError::InvalidStructure))?;
-    let mut sources = Vec::new();
-    let mut row_pos = advance(table_pos, NODE_OPENING_TOKENS)?;
-    for row in content.iter() {
-        let mut cell_pos = advance(row_pos, NODE_OPENING_TOKENS)?;
-        if row.node_type() == roles.row {
-            let row_content = row
-                .content()
-                .ok_or(NormalizationFailure::Shape(TableError::InvalidStructure))?;
-            for cell in row_content.iter() {
-                if cell.node_type() == roles.cell || cell.node_type() == roles.header_cell {
-                    sources.push(CellSource {
-                        source_pos: cell_pos,
-                        node: cell,
-                    });
-                }
-                cell_pos = advance(cell_pos, cell.node_size())?;
-            }
-        }
-        row_pos = advance(row_pos, row.node_size())?;
-    }
-    Ok(sources)
-}
-
-fn attribute_fixes(
-    table: &Node,
-    table_pos: u32,
-    projected: &ProjectedTable,
-    schema: &Schema,
-) -> Result<Vec<SemanticOperation>, NormalizationFailure> {
-    let roles = TableRoles::resolve(schema)
-        .map_err(NormalizationFailure::Shape)?
-        .ok_or(NormalizationFailure::MissingTarget)?;
-    let sources = cell_sources(table, table_pos, &roles)?;
-    if sources.len() != projected.cells.len() {
-        return Err(NormalizationFailure::Unplannable);
-    }
-    let mut operations = Vec::new();
-    for (source, projected_cell) in sources.iter().zip(projected.cells.iter()) {
-        if source.source_pos != projected_cell.source_pos {
-            return Err(NormalizationFailure::Unplannable);
-        }
-        let Some(attrs) = fixed_cell_attrs(source.node, &projected_cell.rect, &projected.widths)?
-        else {
-            continue;
-        };
-        operations.push(SemanticOperation::UpdateNodeAttrs {
-            pos: source.source_pos,
-            attrs,
-        });
-    }
-    Ok(operations)
-}
-
-fn fixed_cell_attrs(
-    cell: &Node,
-    rect: &CellRect,
-    widths: &[Option<u32>],
-) -> Result<Option<HashMap<String, Value>>, NormalizationFailure> {
-    let declared_rowspan =
-        span_attribute(cell, TABLE_CELL_ROWSPAN_ATTR).map_err(NormalizationFailure::Shape)?;
-    let resolved_widths = resolved_colwidth(cell, rect, widths)?;
-    if declared_rowspan == rect.rowspan && resolved_widths.is_none() {
-        return Ok(None);
-    }
-    let mut attrs = cell.attrs().clone();
-    if declared_rowspan != rect.rowspan {
-        attrs.insert(
-            TABLE_CELL_ROWSPAN_ATTR.to_string(),
-            Value::from(rect.rowspan),
-        );
-    }
-    if let Some(resolved_widths) = resolved_widths {
-        attrs.insert(
-            TABLE_CELL_COLWIDTH_ATTR.to_string(),
-            Value::Array(resolved_widths),
-        );
-    }
-    Ok(Some(attrs))
-}
-
-fn resolved_colwidth(
-    cell: &Node,
-    rect: &CellRect,
-    widths: &[Option<u32>],
-) -> Result<Option<Vec<Value>>, NormalizationFailure> {
-    let mut updated: Option<Vec<Value>> = None;
-    for offset in 0..rect.colspan {
-        let column = advance(rect.column, offset)? as usize;
-        let Some(resolved) = widths.get(column).copied().flatten() else {
-            continue;
-        };
-        let declared = column_width(cell, offset).map_err(NormalizationFailure::Shape)?;
-        if declared == resolved {
-            continue;
-        }
-        let fresh = match updated {
-            Some(ref mut fresh) => fresh,
-            None => updated.insert(fresh_colwidth(cell, rect.colspan)?),
-        };
-        let slot = fresh
-            .get_mut(offset as usize)
-            .ok_or(NormalizationFailure::Unplannable)?;
-        *slot = Value::from(resolved);
-    }
-    Ok(updated)
-}
-
-fn fresh_colwidth(cell: &Node, colspan: u32) -> Result<Vec<Value>, NormalizationFailure> {
-    let length = colspan as usize;
-    let mut fresh = Vec::new();
-    fresh
-        .try_reserve_exact(length)
-        .map_err(|_| NormalizationFailure::Shape(TableError::Allocation))?;
-    for offset in 0..colspan {
-        let declared = column_width(cell, offset).map_err(NormalizationFailure::Shape)?;
-        fresh.push(Value::from(declared));
-    }
-    Ok(fresh)
-}
-
-fn missing_cells_per_row(projected: &ProjectedTable) -> Result<Vec<u32>, NormalizationFailure> {
-    let mut missing = Vec::new();
-    missing
-        .try_reserve_exact(projected.rows as usize)
-        .map_err(|_| NormalizationFailure::Shape(TableError::Allocation))?;
-    for row in 0..projected.rows {
-        let mut count = NO_MISSING_SLOTS;
-        for column in 0..projected.columns {
-            let index = (row as usize)
-                .checked_mul(projected.columns as usize)
-                .and_then(|offset| offset.checked_add(column as usize))
-                .ok_or(NormalizationFailure::Shape(TableError::Allocation))?;
-            let slot = projected
-                .slots
-                .get(index)
-                .ok_or(NormalizationFailure::Shape(TableError::Allocation))?;
-            if slot.is_none() {
-                count = count.saturating_add(1);
-            }
-        }
-        missing.push(count);
-    }
-    Ok(missing)
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -252,11 +252,34 @@ fn reference_custom_default_ordering_requires_an_explicit_fallback() {
             0,
             &schema,
             &crate::boundary::ResourceLimits::default(),
+        );
+        if supported {
+            assert!(
+                matches!(&operations.unwrap()[0], crate::command_planner::SemanticOperation::ReplaceRange { content, .. }
+                if content.children()[0].child(0).unwrap().node_type() == PARAGRAPH_NODE)
+            );
+        } else {
+            assert!(
+                operations.is_err(),
+                "unproven reference defaults cannot be persisted"
+            );
+        }
+        let regular = from_prosemirror_json(
+            &json!({"type": "doc", "content": [table(vec![row(vec![plain_cell()])])]}),
+            &schema,
+            UnknownTypeMode::Preserve,
         )
         .unwrap();
         assert!(
-            matches!(&operations[0], crate::command_planner::SemanticOperation::ReplaceRange { content, .. }
-            if content.children()[0].child(0).unwrap().node_type() == PARAGRAPH_NODE)
+            crate::tables::normalize::normalize_outer_table(
+                &regular,
+                0,
+                &schema,
+                &crate::boundary::ResourceLimits::default(),
+            )
+            .unwrap()
+            .is_empty(),
+            "a valid table does not require gap default proof"
         );
     }
 }

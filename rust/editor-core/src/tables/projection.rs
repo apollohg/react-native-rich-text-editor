@@ -86,6 +86,10 @@ impl TableGridBudget {
         Ok(())
     }
 
+    pub(crate) fn charged_slots(&self) -> usize {
+        self.charged
+    }
+
     pub(crate) fn admits_virtual(&self, slots: usize, raw_charge: usize) -> bool {
         self.admits(slots.saturating_sub(raw_charge)).is_ok()
     }
