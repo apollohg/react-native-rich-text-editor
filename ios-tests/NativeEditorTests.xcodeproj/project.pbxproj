@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F392D51A9C424063B3A80C01 /* PreparedProseViewerComponentViewTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = F392D51A9C424063B3A80C02 /* PreparedProseViewerComponentViewTests.mm */; settings = {COMPILER_FLAGS = "-fcxx-modules"; }; };
 		04EE505BFE519AE7D3E38252 /* PreparedProseLayoutTests+FabricRelease.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2902C6167572AD01B250C8 /* PreparedProseLayoutTests+FabricRelease.swift */; };
 		074C9228BF8596BF4E787652 /* RenderBridgeTests+ImageAdmission.swift in Sources */ = {isa = PBXBuildFile; fileRef = 064125B308972D0D9E7C3022 /* RenderBridgeTests+ImageAdmission.swift */; };
 		075424303171E31CB0FB5971 /* RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D514F4A4442129867A82DE /* RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift */; };
@@ -214,6 +215,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		F392D51A9C424063B3A80C02 /* PreparedProseViewerComponentViewTests.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PreparedProseViewerComponentViewTests.mm; sourceTree = "<group>"; };
 		064125B308972D0D9E7C3022 /* RenderBridgeTests+ImageAdmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RenderBridgeTests+ImageAdmission.swift"; sourceTree = "<group>"; };
 		06F86AE85C62B4D81ED463F7 /* RichTextEditorViewTests+UpdatesLifecycleTests+EnvelopeAdmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RichTextEditorViewTests+UpdatesLifecycleTests+EnvelopeAdmission.swift"; sourceTree = "<group>"; };
 		073AA28E404CB1E78224E266 /* PreparedProseInstrumentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedProseInstrumentation.swift; sourceTree = "<group>"; };
@@ -668,6 +670,7 @@
 				ED2902C6167572AD01B250C8 /* PreparedProseLayoutTests+FabricRelease.swift */,
 				6D62C060B0406A801E2D0477 /* PreparedProseLayoutTests+FabricConcurrency.swift */,
 				A422F102189B585DC0C5522A /* PreparedProseLayoutTests+FabricContracts.swift */,
+				F392D51A9C424063B3A80C02 /* PreparedProseViewerComponentViewTests.mm */,
 				ADA5DD5AC11E2ADA3A1418B9 /* PreparedProseLayoutTests+CacheOwnership.swift */,
 				0EFA8A680C8F4919611EBF8C /* PreparedProseLayoutTests+MountReuse.swift */,
 				A9E68AB8AF2A9E120669649C /* PreparedProseLayoutTests+MeasurementAdmission.swift */,
@@ -1136,6 +1139,7 @@
 				04EE505BFE519AE7D3E38252 /* PreparedProseLayoutTests+FabricRelease.swift in Sources */,
 				0E4158E6AA5867BB5342935A /* PreparedProseLayoutTests+FabricConcurrency.swift in Sources */,
 				650F0837C67FBEA7ED007342 /* PreparedProseLayoutTests+FabricContracts.swift in Sources */,
+				F392D51A9C424063B3A80C01 /* PreparedProseViewerComponentViewTests.mm in Sources */,
 				233E2B96950D7E243841C7F2 /* PreparedProseLayoutTests+CacheOwnership.swift in Sources */,
 				3B0676768415F2DCB74C4BC4 /* PreparedProseLayoutTests+MountReuse.swift in Sources */,
 				541E908C5062A3E622501637 /* PreparedProseLayoutTests+MeasurementAdmission.swift in Sources */,
