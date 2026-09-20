@@ -1,4 +1,4 @@
-import { continuationPassed, continuationRequirements } from './corpus.js';
+import { continuationPassed, continuationRequirements, textHistoryRequirements } from './corpus.js';
 import { executeContinuations } from './continuation-runner.js';
 import { open, readFile, readdir, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -11,8 +11,17 @@ import {
 
 const args = process.argv.slice(2);
 const supplementary = args[0] === '--supplementary';
-if (supplementary) args.shift();
-const slots = supplementary ? supplementaryRequirements() : continuationRequirements();
+const textHistory = args[0] === '--text-history';
+if (supplementary || textHistory) args.shift();
+const slots = textHistory
+    ? textHistoryRequirements(
+          supplementaryRequirements().filter(
+              (slot) => slot.family === 'overlap' && slot.proof === 'history',
+          ),
+      )
+    : supplementary
+      ? supplementaryRequirements()
+      : continuationRequirements();
 if (args[0] === '--manifest') {
     console.log(
         JSON.stringify(
@@ -27,6 +36,7 @@ if (args[0] === '--manifest') {
                     proof,
                     required,
                     status,
+                    companionOf,
                 }) => ({
                     key,
                     topology,
@@ -37,6 +47,7 @@ if (args[0] === '--manifest') {
                     proof,
                     required,
                     status,
+                    ...(companionOf ? { companionOf } : {}),
                 }),
             ),
         ),
@@ -100,7 +111,9 @@ if (args[0] === '--manifest') {
         let failed = 0;
         const summary = await executeContinuations(
             selected,
-            supplementary ? (slot) => runSupplementary(slot as SupplementarySlot) : undefined,
+            supplementary || textHistory
+                ? (slot) => runSupplementary(slot as SupplementarySlot)
+                : undefined,
             async (result) => {
                 await file.write(JSON.stringify(result) + '\n');
                 executed += 1;

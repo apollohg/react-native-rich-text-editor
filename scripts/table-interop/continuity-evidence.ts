@@ -123,7 +123,7 @@ export function typingCursor(cell: EffectiveCell, kind: PeerKind): number {
     return cell.position + paragraph.offset;
 }
 
-function typedNode(node: JsonNode, text: string): JsonNode {
+export function typedNode(node: JsonNode, text: string): JsonNode {
     const result = structuredClone(node);
     const paragraph = paragraphAt(result, 'rust');
     requireContinuity(paragraph, 'intended paragraph unavailable');

@@ -83,6 +83,14 @@ import {
 } from './presentation-semantics.js';
 import type { PresentationCheck } from './presentation-semantics.js';
 
+import {
+    assertTextHistoryBoundary,
+    assertTextHistoryState,
+    textHistoryIntent,
+    type TextHistoryIntent,
+    type TextHistoryObservation,
+} from './text-history-evidence.js';
+
 export const SCHEDULES_PER_TOPOLOGY = 100;
 export const CORPUS_PRESETS: readonly SchemaPreset[] = ['prosemirror', 'tiptap'];
 export const CORPUS_BASE_SEED = 0x7ab1_c0f5;
@@ -793,7 +801,13 @@ function buildCorpus(): readonly CorpusSchedule[] {
 export const CONVERGENCE_CORPUS: readonly CorpusSchedule[] = buildCorpus();
 
 export type ContinuationProof =
-    'typing' | 'structure' | 'history' | 'partition' | 'unrelated-web' | 'web-gap';
+    | 'typing'
+    | 'structure'
+    | 'history'
+    | 'text-history'
+    | 'partition'
+    | 'unrelated-web'
+    | 'web-gap';
 export interface ContinuationSlot {
     readonly key: string;
     readonly schedule: CorpusSchedule;
@@ -805,6 +819,28 @@ export interface ContinuationSlot {
     readonly proof: ContinuationProof;
     readonly required: boolean | null;
     readonly status: CoverageStatus;
+    readonly companionOf?: string;
+}
+
+export function textHistoryRequirements<T extends ContinuationSlot>(origins: readonly T[]): T[] {
+    requireContinuity(
+        new Set(origins.map((slot) => slot.key)).size === origins.length,
+        'duplicate history declaration',
+    );
+    return origins.map((slot) => {
+        requireContinuity(
+            slot.proof === 'history' && !slot.companionOf,
+            'original history obligation required',
+        );
+        return {
+            ...slot,
+            key: `${slot.key} :: text-history`,
+            companionOf: slot.key,
+            proof: 'text-history',
+            required: true,
+            status: 'unexercised',
+        };
+    });
 }
 
 export function continuationRequirements(
@@ -1148,6 +1184,7 @@ export async function runSchedule(
 }
 
 export interface ContinuationCheckpoint {
+    textHistoryObservations?: TextHistoryObservation[];
     readonly boundary: string;
     readonly raw: { passed: boolean; failure?: string };
     readonly presentation: {
@@ -1177,6 +1214,7 @@ export interface ContinuationRemoteBoundary {
 }
 
 export interface ContinuationResult {
+    textHistory?: TextHistoryIntent;
     readonly slot: ContinuationSlot;
     required: boolean | null;
     status: CoverageStatus;
@@ -1233,6 +1271,7 @@ export async function continuationCheckpoint(
     boundary: string,
     seed: number,
     drain = true,
+    captureRaw = false,
 ): Promise<ContinuationCheckpoint> {
     const participants = [...setup.participants];
     const checked: ContinuationCheckpoint = {
@@ -1264,10 +1303,18 @@ export async function continuationCheckpoint(
     const autonomous = await nativeRepairWrites(participants);
     for (const peer of participants) {
         try {
-            checked.observations.push({
+            const observed = {
                 kind: peerKindOf(peer),
                 document: await observeEvidence(peer),
-            });
+            };
+            checked.observations.push(observed);
+            if (captureRaw) {
+                checked.textHistoryObservations ??= [];
+                checked.textHistoryObservations.push({
+                    ...observed,
+                    raw: (await snapshot(peer)).documentJson as JsonNode,
+                });
+            }
         } catch (error) {
             checked.observationFailures.push(String(error));
         }
@@ -1322,10 +1369,58 @@ export async function continuationCheckpoint(
 
 export function continuationPassed(result: ContinuationResult): boolean {
     if (result.failures.length > 0) return false;
+    if (result.slot.proof === 'text-history') {
+        try {
+            requireContinuity(
+                result.slot.companionOf &&
+                    result.slot.key === `${result.slot.companionOf} :: text-history`,
+                'text-history companion key',
+            );
+            requireContinuity(
+                result.required === true &&
+                    result.disposition === 'edited' &&
+                    result.actions.length === 3 &&
+                    result.textHistory,
+                'text-history complete evidence',
+            );
+            requireContinuity(
+                result.textHistory.actor === result.slot.actor &&
+                    result.textHistory.kind === result.slot.actorKind,
+                'text-history intended actor',
+            );
+            requireContinuity(
+                result.checkpoints.map((checkpoint) => checkpoint.boundary).join(',') ===
+                    'baseline,typed,undo,redo',
+                'text-history checkpoints',
+            );
+            for (const checkpoint of result.checkpoints)
+                requireContinuity(
+                    checkpoint.textHistoryObservations?.length ===
+                        result.slot.schedule.participants &&
+                        checkpoint.textHistoryObservations.every(
+                            (view, index) => view.kind === result.slot.schedule.kinds[index],
+                        ),
+                    'text-history participant observations',
+                );
+            for (const observed of result.checkpoints[0]!.textHistoryObservations!)
+                assertTextHistoryState(result.textHistory, observed, false);
+            result.actions.forEach((action, index) =>
+                assertTextHistoryBoundary(
+                    action,
+                    result.textHistory!,
+                    index,
+                    result.checkpoints[index + 1]!.textHistoryObservations ?? [],
+                ),
+            );
+        } catch {
+            return false;
+        }
+    }
     const minimumActions: Record<ContinuationProof, number> = {
         typing: 1,
         structure: 1,
         history: 3,
+        'text-history': 3,
         partition: 2,
         'unrelated-web': 1,
         'web-gap': 1,
@@ -1388,12 +1483,33 @@ export function continuationCoverage(
     const found = new Map(results.map((result) => [result.slot.key, result]));
     requireContinuity(found.size === results.length, 'duplicate continuation result');
     const keys = new Set(required.map((slot) => slot.key));
+    requireContinuity(keys.size === required.length, 'duplicate continuation declaration');
     requireContinuity(
         results.every((result) => keys.has(result.slot.key)),
         'unknown continuation result',
     );
     return required.map((slot) => {
         const result = found.get(slot.key);
+        if (result && slot.proof === 'text-history')
+            requireContinuity(
+                [
+                    'key',
+                    'companionOf',
+                    'actor',
+                    'actorKind',
+                    'preset',
+                    'topology',
+                    'baseFamily',
+                    'proof',
+                ].every(
+                    (field) =>
+                        result.slot[field as keyof ContinuationSlot] ===
+                        slot[field as keyof ContinuationSlot],
+                ) &&
+                    result.slot.schedule.name === slot.schedule.name &&
+                    result.slot.schedule.seed === slot.schedule.seed,
+                'text-history declaration mismatch',
+            );
         return {
             ...slot,
             required: result ? result.required : slot.required,
@@ -1446,7 +1562,13 @@ export async function runContinuation(
             result.baseline = baseline;
             const actor = peerAt(setup.participants, slot.actor);
             const checkpoint = async (boundary: string, drain = true) => {
-                const checked = await continuationCheckpoint(setup, boundary, schedule.seed, drain);
+                const checked = await continuationCheckpoint(
+                    setup,
+                    boundary,
+                    schedule.seed,
+                    drain,
+                    slot.proof === 'text-history',
+                );
                 result.checkpoints.push(checked);
                 return checked;
             };
@@ -1612,7 +1734,40 @@ export async function runContinuation(
                     ]);
                     return action;
                 };
-                if (slot.proof === 'typing') {
+                if (slot.proof === 'text-history') {
+                    const intent = textHistoryIntent(
+                        sourceView,
+                        (await snapshot(actor)).documentJson as JsonNode,
+                        {
+                            actor: slot.actor,
+                            kind: slot.actorKind,
+                            sourceId,
+                            text: `text-history-${schedule.seed}-${slot.actor}-`,
+                        },
+                    );
+                    result.textHistory = intent;
+                    if (slot.actorKind !== NATIVE_PEER_KIND)
+                        await new Promise((resolve) => setTimeout(resolve, 510));
+                    for (const [index, boundary] of ['typed', 'undo', 'redo'].entries()) {
+                        if (index === 0) await type(intent.text);
+                        else await call(actor, index === 1 ? 'undo' : 'redo', {});
+                        const action = capture.actions.at(-1)!;
+                        assertTextHistoryBoundary(action, intent, index, [
+                            {
+                                kind: action.kind,
+                                document: action.after,
+                                raw: action.rawAfter as JsonNode,
+                            },
+                        ]);
+                        const settled = await checkpoint(boundary);
+                        assertTextHistoryBoundary(
+                            action,
+                            intent,
+                            index,
+                            settled.textHistoryObservations ?? [],
+                        );
+                    }
+                } else if (slot.proof === 'typing') {
                     const action = await type('continuation-');
                     const final = await checkpoint('typed');
                     assertTypingContinuation(
