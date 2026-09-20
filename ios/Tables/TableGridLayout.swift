@@ -109,8 +109,9 @@ final class TableGridLayout {
         }
         func contentHeight(_ cell: TableGridCell, _ inner: CGFloat) -> CGFloat? {
             let pixels = inner * displayScale
-            guard pixels.isFinite, pixels >= 0, pixels <= CGFloat(Int.max) else { return nil }
-            let innerWidthPixels = Int(pixels.rounded())
+            let roundedPixels = pixels.rounded()
+            guard roundedPixels.isFinite, roundedPixels >= 0,
+                  let innerWidthPixels = Int(exactly: roundedPixels) else { return nil }
             let measuredWidth = CGFloat(innerWidthPixels) / displayScale
             let key = TableCellMeasurementKey(documentOwner: record.documentOwner, contentKey: cell.contentKey,
                                               innerWidthPixels: innerWidthPixels, themeDigest: themeDigest,

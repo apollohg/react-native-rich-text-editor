@@ -78,4 +78,50 @@ class TableGridLayoutTest {
         assertEquals(TableLayoutFailure.INVALID_ATTRIBUTES, result.failure)
         assertEquals(18f, result.contentHeight)
     }
+
+    @Test fun `horizontal span keeps synthetic gap anchor free and processes later single row minimum`() {
+        val cells = listOf(
+            TableGridCell(10, 0, 0, rowspan = 2, contentKey = "span"),
+            TableGridCell(20, 0, 1, colspan = 2, contentKey = "wide"),
+            TableGridCell(30, 1, 2, contentKey = "later")
+        )
+        val result = TableGridLayout().layout(record(columns = 3, rows = 2, widths = listOf(80f, 80f, 80f), cells = cells), 240f, TableStyle(), false) { cell, _ ->
+            when (cell.sourcePosition) {
+                10 -> 102f
+                20 -> 20f
+                else -> 60f
+            }
+        }
+
+        assertEquals(160f, result.rectangles[20]?.width)
+        assertEquals(listOf(0f, 38f, 120f), result.rowOffsets)
+        assertEquals(cells.size, result.rectangles.size)
+        assertEquals(cells.map { it.sourcePosition }.toSet(), result.rectangles.keys)
+        assertEquals(listOf(10, 20, 30), result.sourceOrder)
+    }
+
+    @Test fun `warm layouts reuse measurements and dependency changes invalidate only their keys`() {
+        val grid = TableGridLayout(cache = TableCellMeasurementCache())
+        var cells = listOf(TableGridCell(10, 0, 0, contentKey = "a"), TableGridCell(20, 1, 0, contentKey = "b"))
+        var calls = 0
+        fun layout(width: Float = 100f, theme: String = "theme", fontRevision: Long = 1L): TableLayoutResult =
+            grid.layout(record(columns = 1, rows = 2, widths = listOf(width), cells = cells), width, TableStyle(), false, theme, fontRevision) { _, _ ->
+                calls += 1
+                20f
+            }
+
+        val first = layout()
+        val warm = layout()
+        assertEquals(first.rectangles, warm.rectangles)
+        assertEquals(2, calls)
+        cells = listOf(TableGridCell(10, 0, 0, contentKey = "a", attachmentRevision = 1), cells[1])
+        layout()
+        assertEquals(3, calls)
+        layout(theme = "new-theme")
+        assertEquals(5, calls)
+        layout(fontRevision = 2)
+        assertEquals(7, calls)
+        layout(width = 120f)
+        assertEquals(9, calls)
+    }
 }

@@ -118,4 +118,85 @@ final class TableGridLayoutTests: XCTestCase {
         XCTAssertEqual(result.failure, TableRenderFailure.invalidAttributes)
         XCTAssertEqual(result.contentSize.height, 18)
     }
+
+    func testHorizontalSpanKeepsSyntheticGapAnchorFreeAndProcessesLaterSingleRowMinimum() {
+        let cells = [
+            TableGridCell(sourcePosition: 10, row: 0, column: 0, rowspan: 2, contentKey: "span"),
+            TableGridCell(sourcePosition: 20, row: 0, column: 1, colspan: 2, contentKey: "wide"),
+            TableGridCell(sourcePosition: 30, row: 1, column: 2, contentKey: "later")
+        ]
+        let result = TableGridLayout().layout(record: record(columns: 3, rows: 2, widths: [80, 80, 80], cells: cells), viewportWidth: 240,
+                                              style: TableStyle(), direction: .leftToRight) { cell, _ in
+            switch cell.sourcePosition {
+            case 10: return 102
+            case 20: return 20
+            default: return 60
+            }
+        }
+
+        XCTAssertEqual(result.rectangles[20]?.width, 160)
+        XCTAssertEqual(result.rowOffsets, [0, 38, 120])
+        XCTAssertEqual(result.rectangles.count, cells.count)
+        XCTAssertEqual(Set(result.rectangles.keys), Set(cells.map(\.sourcePosition)))
+        XCTAssertEqual(result.sourceOrder, [10, 20, 30])
+    }
+
+    func testWarmLayoutsReuseMeasurementsAndDependencyChangesInvalidateOnlyTheirKeys() {
+        let cache = TableCellMeasurementCache()
+        let grid = TableGridLayout(cache: cache)
+        var cells = [
+            TableGridCell(sourcePosition: 10, row: 0, column: 0, contentKey: "a"),
+            TableGridCell(sourcePosition: 20, row: 1, column: 0, contentKey: "b")
+        ]
+        var calls = 0
+        func layout(width: CGFloat = 100, theme: String = "theme", fontRevision: Int = 1) -> TableLayoutResult {
+            grid.layout(record: record(columns: 1, rows: 2, widths: [width], cells: cells), viewportWidth: width,
+                        style: TableStyle(), direction: .leftToRight, themeDigest: theme,
+                        fontEnvironmentRevision: fontRevision) { _, _ in
+                calls += 1
+                return 20
+            }
+        }
+
+        let first = layout()
+        let warm = layout()
+        XCTAssertEqual(first.rectangles, warm.rectangles)
+        XCTAssertEqual(calls, 2)
+
+        cells[0] = TableGridCell(sourcePosition: 10, row: 0, column: 0, contentKey: "a", attachmentRevision: 1)
+        _ = layout()
+        XCTAssertEqual(calls, 3)
+        _ = layout(theme: "new-theme")
+        XCTAssertEqual(calls, 5)
+        _ = layout(fontRevision: 2)
+        XCTAssertEqual(calls, 7)
+        _ = layout(width: 120)
+        XCTAssertEqual(calls, 9)
+    }
+
+    func testCacheMetadataStaysBoundedAcrossRepeatedWarmHitsAndChurn() {
+        let cache = TableCellMeasurementCache(capacity: 2)
+        let hot = TableCellMeasurementKey(documentOwner: "owner", contentKey: "hot", innerWidthPixels: 80,
+                                          themeDigest: "theme", fontEnvironmentRevision: 1, textScale: 1,
+                                          attachmentRevision: 0)
+        cache.insert(20, for: hot)
+        for index in 0..<1_000 {
+            XCTAssertEqual(cache.value(for: hot), 20)
+            cache.insert(20, for: TableCellMeasurementKey(documentOwner: "owner", contentKey: "cold-\(index)", innerWidthPixels: 80,
+                                                           themeDigest: "theme", fontEnvironmentRevision: 1, textScale: 1,
+                                                           attachmentRevision: 0))
+        }
+        XCTAssertEqual(cache.value(for: hot), 20)
+        XCTAssertLessThanOrEqual(cache.metadataCount, 2)
+    }
+
+    func testPixelWidthAtIntMaximumFallsBackWithoutTrapping() {
+        let result = TableGridLayout().layout(record: record(columns: 1, widths: [CGFloat(Int.max)],
+                                                              cells: [TableGridCell(sourcePosition: 1, row: 0, column: 0, contentKey: "cell")]),
+                                              viewportWidth: CGFloat(Int.max), style: TableStyle(cellPadding: 0, borderWidth: 0),
+                                              direction: .leftToRight) { _, _ in 10 }
+        XCTAssertEqual(result.failure, .invalidAttributes)
+        XCTAssertTrue(result.contentSize.width.isFinite)
+        XCTAssertTrue(result.contentSize.height.isFinite)
+    }
 }
