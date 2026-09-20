@@ -440,6 +440,12 @@ function stockLimitation(action: RecordedAction, target: EffectiveCell): void {
         canonicalDocumentShape(action.availabilityBoundary!.before.displayJson),
         'stock independent live display boundary',
     );
+    requireEvidence(action.availabilityBoundary!.after.displayJson, 'stock observed after display');
+    assert.deepEqual(
+        canonicalDocumentShape(action.availabilityBoundary!.after.displayJson),
+        canonicalDocumentShape(observed.document),
+        'stock unchanged full display after error',
+    );
     const versions = action.availabilityBoundary!.versions;
     for (const [name, version] of Object.entries({
         'prosemirror-tables': '1.8.5',

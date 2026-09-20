@@ -165,6 +165,7 @@ test('availability proves actual malformed refusals and limitations with fail-cl
         const expected =
             actorKind === 'rust' ? 'verified-native-refusal' : 'verified-stock-limitation';
         assert.equal(evidence.assertUnavailableAction(action, slot, initial), expected);
+        assert.equal(evidence.availabilityVerified(result), true);
         const reject = (change: (copy: typeof action) => void) => {
             const copy = structuredClone(action);
             change(copy);
@@ -273,6 +274,23 @@ test('availability proves actual malformed refusals and limitations with fail-cl
                 delete copy.availabilityBoundary!.after.queuedEvents;
             });
         } else {
+            assert.ok(action.availabilityBoundary?.after.displayJson);
+            const saved = JSON.parse(JSON.stringify(result)) as typeof result;
+            saved.actions[0]!.availabilityBoundary!.after.displayJson = {
+                type: 'doc',
+                content: [],
+            };
+            assert.equal(evidence.availabilityVerified(saved), false);
+            reject((copy) => {
+                copy.availabilityBoundary!.after.displayJson = { type: 'doc', content: [] };
+            });
+            reject((copy) => {
+                copy.availabilityBoundary!.after.displayJson = null;
+            });
+            reject((copy) => {
+                const display = copy.availabilityBoundary!.after.displayJson!;
+                (display.content as Record<string, unknown>[]).push({ type: 'paragraph' });
+            });
             reject((copy) => {
                 delete copy.stockRowInsertion;
             });
