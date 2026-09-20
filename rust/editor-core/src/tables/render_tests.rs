@@ -1,4 +1,6 @@
 use serde_json::json;
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 use crate::boundary::ResourceLimits;
 use crate::render::incremental::render_blocks;
@@ -8,6 +10,63 @@ use crate::tables::tests::{tabled_schema, PROSEMIRROR_TABLE_NAMES};
 
 fn cell(text: &str) -> serde_json::Value {
     json!({ "type": "table_cell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": text }] }] })
+}
+
+#[test]
+fn attribute_pool_collision_keeps_canonical_key_and_exact_json() {
+    let schema = tabled_schema(PROSEMIRROR_TABLE_NAMES);
+    let document = fixture("collision");
+    let index = Arc::new(
+        crate::tables::admission::TableProjectionIndex::derive_or_fallback(
+            &document,
+            &schema,
+            &ResourceLimits::default(),
+        ),
+    );
+    let table = document.root().child(0).unwrap();
+    let mut original = crate::tables::render::TableRenderContext::new(Arc::clone(&index), &schema);
+    let expected =
+        crate::tables::render::generate_table(table, &schema, 0, &mut original, false).unwrap();
+    let json = original.attributes[&expected.attrs_key].clone();
+    let digest = format!("{:x}", Sha256::digest(json.as_bytes()));
+    assert_eq!(expected.attrs_key, digest);
+
+    let mut context = crate::tables::render::TableRenderContext::new(index, &schema);
+    context
+        .attributes
+        .insert(digest, Arc::from("{\"different\":true}"));
+    let record =
+        crate::tables::render::generate_table(table, &schema, 0, &mut context, false).unwrap();
+
+    assert_eq!(record.attrs_key.len(), 64);
+    assert!(record
+        .attrs_key
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+    assert_eq!(
+        context.attributes[&record.attrs_key].as_ref(),
+        json.as_ref()
+    );
+    assert_ne!(record.attrs_key, expected.attrs_key);
+    assert_eq!(
+        context.attributes[&expected.attrs_key].as_ref(),
+        "{\"different\":true}"
+    );
+
+    let duplicate = fixture("collision");
+    let reused = crate::tables::render::generate_table(
+        duplicate.root().child(0).unwrap(),
+        &schema,
+        0,
+        &mut context,
+        false,
+    )
+    .unwrap();
+    assert_eq!(reused.attrs_key, record.attrs_key);
+    assert_eq!(
+        context.attributes[&reused.attrs_key].as_ref(),
+        json.as_ref()
+    );
 }
 
 #[test]

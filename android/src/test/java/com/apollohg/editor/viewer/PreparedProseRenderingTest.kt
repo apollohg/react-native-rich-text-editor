@@ -10,6 +10,7 @@ import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
 import com.apollohg.editor.ProseViewerConfiguration
 import com.apollohg.editor.ProseViewerSource
+import uniffi.editor_core.FfiViewerElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -26,9 +27,18 @@ class PreparedProseRenderingTest {
     fun `compiler backed nested tables retain flat records`() {
         val source = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]}]}]}]}]}"""
         val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"class":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
-        val outer = compileSource(source, config).blocks.single().table
+        val document = compileSource(source, config)
+        val outer = document.blocks.single().table
         assertNotNull(outer)
         assertEquals(1, requireNotNull(outer).cells.size)
+        val nestedId = requireNotNull(outer.cells.first().elements.filterIsInstance<FfiViewerElement.Table>().singleOrNull()).tableId
+        val nested = requireNotNull(document.tableRecords[nestedId])
+        assertEquals(1, nested.cells.size)
+        assertEquals(
+            listOf("nested"),
+            nested.cells.first().elements.filterIsInstance<FfiViewerElement.TextRun>().map { it.text }
+        )
+        assertEquals(1, document.copy().tableRecords[nestedId]?.cells?.size)
     }
 
     @Test

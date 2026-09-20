@@ -162,7 +162,9 @@ extension PreparedProseLayoutRegistry {
             blocks: blocks,
             isEmpty: collapse ? blocks.isEmpty : false,
             retainedBytes: compiledDocument.retainedBytes,
-            trailingEmptyTextBlockCount: compiledDocument.trailingEmptyTextBlockCount
+            trailingEmptyTextBlockCount: compiledDocument.trailingEmptyTextBlockCount,
+            tableAttributes: compiledDocument.tableAttributes,
+            tableRecords: compiledDocument.tableRecords
         )
     }
 

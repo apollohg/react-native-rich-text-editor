@@ -86,7 +86,8 @@ internal data class ViewerDocument(
     val isEmpty: Boolean,
     val retainedBytes: Long,
     val trailingEmptyTextBlockCount: Int = 0,
-    val tableAttributes: Map<String, JSONObject> = emptyMap()
+    val tableAttributes: Map<String, JSONObject> = emptyMap(),
+    val tableRecords: Map<String, FfiViewerTable> = emptyMap()
 )
 
 internal data class ProseViewerRequest(
@@ -466,7 +467,8 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
             isEmpty = compiled.isEmpty(),
             retainedBytes = compiled.retainedBytesDecimal().toLongOrNull() ?: 0,
             trailingEmptyTextBlockCount = compiled.trailingEmptyTextBlockCount().toInt(),
-            tableAttributes = tableAttributes
+            tableAttributes = tableAttributes,
+            tableRecords = tableRecords
         )
     } finally {
         result.destroy()

@@ -266,15 +266,17 @@ impl TableRenderContext {
         let json = attrs_json(node, cell);
         #[cfg(test)]
         ATTRIBUTE_SERIALIZED_BYTES.set(ATTRIBUTE_SERIALIZED_BYTES.get() + json.len());
-        let digest = format!("{:x}", Sha256::digest(json.as_bytes()));
-        let mut key = digest.clone();
+        let mut digest: [u8; 32] = Sha256::digest(json.as_bytes()).into();
+        let mut key = attribute_key(&digest);
         let mut collision = 0usize;
         while let Some(existing) = self.attributes.get(&key) {
             if existing.as_ref() == json {
                 break;
             }
             collision += 1;
-            key = format!("{digest}-{collision}");
+            debug_assert!(collision <= self.attributes.len());
+            increment_attribute_key(&mut digest);
+            key = attribute_key(&digest);
         }
         self.attributes
             .entry(key.clone())
@@ -358,6 +360,20 @@ impl TableRenderContext {
             }
         }
         true
+    }
+}
+
+fn attribute_key(digest: &[u8; 32]) -> String {
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn increment_attribute_key(digest: &mut [u8; 32]) {
+    for byte in digest.iter_mut().rev() {
+        let (next, overflow) = byte.overflowing_add(1);
+        *byte = next;
+        if !overflow {
+            break;
+        }
     }
 }
 

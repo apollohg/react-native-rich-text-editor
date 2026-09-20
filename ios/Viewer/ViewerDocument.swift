@@ -315,6 +315,7 @@ struct ViewerBlock: Hashable {
 /// output remains semantic/theme independent.
 struct ViewerDocument {
     let tableAttributes: [String: [String: Any]]
+    let tableRecords: [String: FfiViewerTable]
     let semanticKey: String
     let blocks: [ViewerBlock]
     let isEmpty: Bool
@@ -336,6 +337,7 @@ struct ViewerDocument {
 
     init(semanticKey: String, paragraphs: [ViewerParagraph], isEmpty: Bool, retainedBytes: Int) {
         tableAttributes = [:]
+        tableRecords = [:]
         self.semanticKey = semanticKey
         blocks = paragraphs.map {
             ViewerBlock(
@@ -360,9 +362,11 @@ struct ViewerDocument {
         retainedBytes: Int,
         trailingEmptyTextBlockCount: Int = 0,
         preparedTheme: PreparedProseTheme? = nil,
-        tableAttributes: [String: [String: Any]] = [:]
+        tableAttributes: [String: [String: Any]] = [:],
+        tableRecords: [String: FfiViewerTable] = [:]
     ) {
         self.tableAttributes = tableAttributes
+        self.tableRecords = tableRecords
         self.semanticKey = semanticKey
         self.blocks = blocks
         self.isEmpty = isEmpty
@@ -386,6 +390,7 @@ struct ViewerDocument {
             throw ProseViewerError.hostContract(message: "The compiler returned invalid semantic table references.")
         }
         tableAttributes = pool
+        self.tableRecords = tableRecords
         semanticKey = compiled.semanticKey()
         isEmpty = compiled.isEmpty()
         retainedBytes = Int(compiled.retainedBytesDecimal()) ?? 0
@@ -578,7 +583,8 @@ struct ViewerDocument {
             retainedBytes: retainedBytes,
             trailingEmptyTextBlockCount: trailingEmptyTextBlockCount,
             preparedTheme: theme,
-            tableAttributes: tableAttributes
+            tableAttributes: tableAttributes,
+            tableRecords: tableRecords
         )
     }
 

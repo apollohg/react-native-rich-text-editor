@@ -9,6 +9,20 @@ final class PreparedProseRenderingTests: XCTestCase {
             let outer = try XCTUnwrap(document.blocks.first?.table)
             XCTAssertEqual(outer.cells.count, 1)
             XCTAssertFalse(document.tableAttributes.isEmpty)
+            let nestedID = try XCTUnwrap(outer.cells.first?.elements.compactMap { element -> String? in
+                if case let .table(tableID) = element { return tableID }
+                return nil
+            }.first)
+            let nested = try XCTUnwrap(document.tableRecords[nestedID])
+            XCTAssertEqual(nested.cells.count, 1)
+            XCTAssertEqual(nested.cells.first?.elements.compactMap { element -> String? in
+                if case let .textRun(text, _) = element { return text }
+                return nil
+            }, ["nested"])
+            XCTAssertEqual(
+                document.withPreparedTheme(PreparedProseTheme.resolve(themeJSON: nil)).tableRecords[nestedID]?.cells.count,
+                1
+            )
         }
     }
 
