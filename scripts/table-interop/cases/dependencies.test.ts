@@ -188,7 +188,7 @@ test('TBL-21 a symmetrically stranded pair is rejected by the convergence oracle
 
         await assert.rejects(
             assertConverged([first, second]),
-            /TBL-21 DIVERGED: peer 0 is not mounted/,
+            /TBL-21 DIVERGED: peer 0 still holds quarantined updates before the full-state exchange/,
         );
 
         const complete = await updateFrom(source, EMPTY_STATE_VECTOR_BASE64);

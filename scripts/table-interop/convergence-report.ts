@@ -1,6 +1,39 @@
 import { peerKindOf } from './controller.js';
 import { NATIVE_PEER_KIND, WEB_PEER_KINDS } from './peer-protocol.js';
 import type { Peer, PeerKind } from './peer-protocol.js';
+import type { ScheduleOutcome } from './corpus.js';
+
+export function scheduleProofPassed(result: Omit<ScheduleOutcome, 'peers'>): boolean {
+    return result.geometry.kind === GEOMETRY_ADMITTED
+        && result.rawConvergence?.passed === true
+        && result.evidence?.status === 'proven'
+        && result.evidence.failures.length === 0
+        && result.evidence.actions.length > 0
+        && result.nativeAutonomousRepairWrites === 0;
+}
+
+export type CoreGateResult = {
+    plumbingPassed: boolean;
+    differentialPassed: boolean;
+    projectionPassed: boolean;
+    rawConvergencePassed: boolean;
+    presentationPassed: boolean;
+    continuityPassed: boolean;
+    coverageComplete: boolean;
+    nativeAutonomousRepairWrites: number;
+    unsafeAdmissions: number;
+    nonQuiescentRuns: number;
+    unexpectedSourceCellLosses: number;
+};
+
+export function coreGatePassed(result: CoreGateResult): boolean {
+    return result.plumbingPassed === true && result.differentialPassed === true
+        && result.projectionPassed === true && result.rawConvergencePassed === true
+        && result.presentationPassed === true && result.continuityPassed === true
+        && result.coverageComplete === true && result.nativeAutonomousRepairWrites === 0
+        && result.unsafeAdmissions === 0 && result.nonQuiescentRuns === 0
+        && result.unexpectedSourceCellLosses === 0;
+}
 
 export const TOPOLOGY_NATIVE_NATIVE = 'native/native';
 export const TOPOLOGY_NATIVE_WEB = 'native/web';

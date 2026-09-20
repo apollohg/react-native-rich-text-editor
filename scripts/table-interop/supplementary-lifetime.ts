@@ -42,6 +42,7 @@ export async function runNativeLifetime(slot: SupplementarySlot): Promise<Contin
                 boundary,
                 slot.schedule.seed,
                 drain,
+                true,
             );
             result.checkpoints.push(checked);
             return checked;

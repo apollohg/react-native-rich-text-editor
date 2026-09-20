@@ -1221,6 +1221,7 @@ export async function runSchedule(
 }
 
 export interface ContinuationCheckpoint {
+    displayRawDifferences?: number;
     textHistoryObservations?: TextHistoryObservation[];
     readonly boundary: string;
     readonly raw: { passed: boolean; failure?: string };
@@ -1314,6 +1315,7 @@ export async function continuationCheckpoint(
 ): Promise<ContinuationCheckpoint> {
     const participants = [...setup.participants];
     const checked: ContinuationCheckpoint = {
+        displayRawDifferences: 0,
         boundary,
         raw: { passed: false },
         presentation: { passed: false, comparisons: [], failures: [] },
@@ -1348,10 +1350,12 @@ export async function continuationCheckpoint(
             };
             checked.observations.push(observed);
             if (captureRaw) {
+                const state = await snapshot(peer);
+                checked.displayRawDifferences! += Number(JSON.stringify(state.documentJson) !== JSON.stringify(state.displayJson));
                 checked.textHistoryObservations ??= [];
                 checked.textHistoryObservations.push({
                     ...observed,
-                    raw: (await snapshot(peer)).documentJson as JsonNode,
+                    raw: state.documentJson as JsonNode,
                 });
             }
         } catch (error) {
@@ -1645,7 +1649,7 @@ export async function runContinuation(
                     boundary,
                     schedule.seed,
                     drain,
-                    ['text-history', 'structure', 'history'].includes(slot.proof),
+                    true,
                 );
                 result.checkpoints.push(checked);
                 return checked;

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { appendEvidence, baseProof, runBaseSchedule } from '../checkpoint-evidence.js';
 import * as Y from 'yjs';
 import {
     EMPTY_STATE_VECTOR_BASE64,
@@ -41,7 +42,6 @@ import type {
     ConvergenceReport,
     ConvergenceTopology,
     SettledGeometry,
-    SettledRun,
 } from '../convergence-report.js';
 import {
     CONVERGENCE_CORPUS,
@@ -212,12 +212,6 @@ test('TBL-21-R a deletion applied by full-state exchange fails stability', async
 const suiteReport = createConvergenceReport();
 const chargedTopologies = new Set<ConvergenceTopology>();
 const attemptedRuns: ConvergenceTopology[] = [];
-
-function chargeCorpusRun(run: SettledRun): void {
-    attemptedRuns.push(run.topology);
-    recordSettledRun(suiteReport, run);
-    chargedTopologies.add(run.topology);
-}
 
 function webCell(text: string): Record<string, unknown> {
     return {
@@ -818,6 +812,9 @@ test('TBL-10 native admission separates unsafe table input from admissible irreg
             admitted: observed.admitted,
             detail: observed.detail,
         });
+        appendEvidence(process.env['TABLE_CHECKPOINT_SAFETY'], {
+            kind: 'admission', name: mutation.name, classification: mutation.classification, ...observed,
+        });
         assert.equal(
             observed.admitted,
             mutation.classification === ADMISSIBLE_IRREGULAR_INPUT,
@@ -1020,20 +1017,19 @@ test('TBL-21 every scenario without evidence is a declared gap, not a default', 
 
 test('TBL-21 the seeded schedule corpus runs every topology and preset', async () => {
     const startedAt = Date.now();
+    const failures: string[] = [];
     for (const schedule of CONVERGENCE_CORPUS) {
-        const outcome = await runSchedule(schedule);
-        assert.equal(
-            outcome.nativeAutonomousRepairWrites,
-            NO_FAILURES,
-            `TBL-10 forbids an autonomous native repair; ${schedule.name} wrote `
-                + `${outcome.nativeAutonomousRepairWrites}`,
-        );
-        chargeCorpusRun({
+        const result = await runBaseSchedule(schedule, (outcome) => recordSettledRun(suiteReport, {
             name: schedule.name,
             peers: outcome.peers,
             topology: schedule.topology,
             geometry: outcome.geometry,
-        });
+        }));
+        appendEvidence(process.env['TABLE_CHECKPOINT_BASE'], result);
+        const proof = baseProof(result);
+        if (!proof.passed) failures.push(JSON.stringify({ name: schedule.name, proof, outcome: result.outcome }));
+        attemptedRuns.push(schedule.topology);
+        chargedTopologies.add(schedule.topology);
     }
     process.stdout.write(
         `corpus wall time ${Date.now() - startedAt}ms over ${CONVERGENCE_CORPUS.length} schedules\n`,
@@ -1046,6 +1042,7 @@ test('TBL-21 the seeded schedule corpus runs every topology and preset', async (
             `${topology} did not run ${SCHEDULES_PER_TOPOLOGY} schedules`,
         );
     }
+    assert.deepEqual(failures, [], 'base R/P/scenario-effect proof');
 });
 
 test('TBL-21 the convergence corpus passes the settled-geometry gate', () => {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { appendEvidence } from '../checkpoint-evidence.js';
 import {
     call,
     exchangeUntilIdle,
@@ -222,6 +223,7 @@ test('TBL-11 projection is deterministic, finitely bounded, rectangular and loss
                 projectedSlots: first.slots,
             };
             recordSourceCellCoverage(report, coverage);
+            appendEvidence(process.env['TABLE_CHECKPOINT_SAFETY'], { kind: 'source-coverage', ...coverage });
             assert.deepEqual(
                 lostSourceCells(coverage),
                 [],
