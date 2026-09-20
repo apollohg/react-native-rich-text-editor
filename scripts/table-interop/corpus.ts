@@ -1,4 +1,5 @@
 import { assertConverged } from './assertions.js';
+import assert from 'node:assert/strict';
 import {
     PARTICIPANT_COUNT_KEY,
     PeerError,
@@ -58,6 +59,7 @@ import {
     assertFamilyEvidence,
     declaredFamilyActors,
     FAMILY_INTENTS,
+    cellText,
     realCells,
 } from './scenario-evidence.js';
 import type { CoverageStatus, FamilyEvidence, RecordedAction } from './scenario-evidence.js';
@@ -820,6 +822,9 @@ export interface ContinuationSlot {
     readonly required: boolean | null;
     readonly status: CoverageStatus;
     readonly companionOf?: string;
+    readonly textHistoryTarget?:
+        | { readonly kind: 'cell-text'; readonly text: string }
+        | { readonly kind: 'first-typable-source' };
 }
 
 export function textHistoryRequirements<T extends ContinuationSlot>(origins: readonly T[]): T[] {
@@ -836,11 +841,42 @@ export function textHistoryRequirements<T extends ContinuationSlot>(origins: rea
             ...slot,
             key: `${slot.key} :: text-history`,
             companionOf: slot.key,
+            textHistoryTarget:
+                'target' in slot
+                    ? { kind: 'cell-text' as const, text: String(slot.target) }
+                    : { kind: 'first-typable-source' as const },
             proof: 'text-history',
             required: true,
             status: 'unexercised',
         };
     });
+}
+
+function declaredTextHistoryTarget(
+    slot: ContinuationSlot,
+    before: EffectiveDocument,
+): EffectiveCell {
+    const policy = slot.textHistoryTarget;
+    requireContinuity(policy, 'text-history target policy');
+    requireContinuity(
+        !('target' in slot) || (policy.kind === 'cell-text' && policy.text === slot.target),
+        'text-history supplementary target policy',
+    );
+    let target: EffectiveCell | undefined;
+    if (policy.kind === 'cell-text') {
+        const matches = realCells(before).filter((cell) => cellText(cell.node) === policy.text);
+        requireContinuity(matches.length === 1, 'unique declared text-history target');
+        target = matches[0];
+    } else {
+        requireContinuity(policy.kind === 'first-typable-source', 'text-history target policy');
+        target = continuationTarget(before, slot.actorKind, 'text-history');
+    }
+    requireContinuity(
+        target?.sourceId &&
+            realCells(before).filter((cell) => cell.sourceId === target.sourceId).length === 1,
+        'unique declared text-history source',
+    );
+    return target;
 }
 
 export function continuationRequirements(
@@ -1404,6 +1440,29 @@ export function continuationPassed(result: ContinuationResult): boolean {
                 );
             for (const observed of result.checkpoints[0]!.textHistoryObservations!)
                 assertTextHistoryState(result.textHistory, observed, false);
+            const initial = result.checkpoints[0]!.textHistoryObservations![result.slot.actor];
+            requireContinuity(
+                initial &&
+                    initial.kind === result.slot.actorKind &&
+                    result.slot.preset === result.slot.schedule.preset &&
+                    result.slot.topology === result.slot.schedule.topology,
+                'text-history declared actor/setup',
+            );
+            const target = declaredTextHistoryTarget(result.slot, initial.document);
+            requireContinuity(
+                target.sourceId === result.textHistory.sourceId,
+                'text-history declared target',
+            );
+            assert.deepEqual(
+                result.textHistory.before,
+                initial.document,
+                'text-history actor baseline',
+            );
+            assert.deepEqual(
+                result.textHistory.rawBefore,
+                initial.raw,
+                'text-history actor raw baseline',
+            );
             result.actions.forEach((action, index) =>
                 assertTextHistoryBoundary(
                     action,
@@ -1490,30 +1549,24 @@ export function continuationCoverage(
     );
     return required.map((slot) => {
         const result = found.get(slot.key);
-        if (result && slot.proof === 'text-history')
-            requireContinuity(
-                [
-                    'key',
-                    'companionOf',
-                    'actor',
-                    'actorKind',
-                    'preset',
-                    'topology',
-                    'baseFamily',
-                    'proof',
-                ].every(
-                    (field) =>
-                        result.slot[field as keyof ContinuationSlot] ===
-                        slot[field as keyof ContinuationSlot],
-                ) &&
-                    result.slot.schedule.name === slot.schedule.name &&
-                    result.slot.schedule.seed === slot.schedule.seed,
+        if (result && slot.proof === 'text-history') {
+            const declaration = ({ status: _status, ...fields }: ContinuationSlot) =>
+                JSON.parse(JSON.stringify(fields));
+            assert.deepEqual(
+                declaration(result.slot),
+                declaration(slot),
                 'text-history declaration mismatch',
             );
+        }
         return {
             ...slot,
             required: result ? result.required : slot.required,
-            status: result?.status ?? 'unexercised',
+            status:
+                result?.status === 'proven' &&
+                slot.proof === 'text-history' &&
+                !continuationPassed(result)
+                    ? 'exercised-unproven'
+                    : result?.status ?? 'unexercised',
         };
     });
 }
@@ -1711,8 +1764,14 @@ export async function runContinuation(
                     result.disposition = 'edited';
                     return;
                 }
-                const target = options.target?.(sourceView, slot) ??
-                    continuationTarget(sourceView, slot.actorKind, slot.proof);
+                const target =
+                    slot.proof === 'text-history'
+                        ? declaredTextHistoryTarget(
+                              slot,
+                              initial.textHistoryObservations![slot.actor]!.document,
+                          )
+                        : options.target?.(sourceView, slot) ??
+                          continuationTarget(sourceView, slot.actorKind, slot.proof);
                 requireContinuity(target?.sourceId, 'real source target unavailable');
                 const sourceId = target.sourceId;
                 const freshTarget = async () => {

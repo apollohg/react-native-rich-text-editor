@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as corpus from '../corpus.js';
-import { supplementaryRequirements } from '../supplementary-continuity.js';
+import { supplementaryFixture, supplementaryRequirements } from '../supplementary-continuity.js';
 import * as evidence from '../text-history-evidence.js';
 import type { EffectiveDocument, JsonNode } from '../peer-protocol.js';
 import type { RecordedAction } from '../scenario-evidence.js';
@@ -55,15 +55,16 @@ const raw = (view: EffectiveDocument): JsonNode => ({
     content: view.tables.filter((table) => table.parentCell === null).map((table) => table.node),
 });
 
-function history(before = fixture()) {
+function history(before = fixture(), targetIndex = 0) {
     const intent = evidence.textHistoryIntent(before, raw(before), {
         actor: 0,
         kind: 'rust',
-        sourceId: 'source-0',
+        sourceId: before.tables[0]!.cells[targetIndex]!.sourceId!,
         text: 'unique-marker-',
     });
     const typed = structuredClone(before);
-    typed.tables[0]!.cells[0]!.node.content![0]!.content![0]!.text = 'unique-marker-original';
+    const text = typed.tables[0]!.cells[targetIndex]!.node.content![0]!.content![0]!;
+    text.text = `unique-marker-${text.text}`;
     const actions = ['insertText', 'undo', 'redo'].map(
         (operation, index): RecordedAction => ({
             actor: 0,
@@ -73,7 +74,7 @@ function history(before = fixture()) {
             after: index === 1 ? before : typed,
             rawBefore: raw(index === 1 ? typed : before),
             rawAfter: raw(index === 1 ? before : typed),
-            target: operation === 'insertText' ? before.tables[0]!.cells[0]! : null,
+            target: operation === 'insertText' ? before.tables[0]!.cells[targetIndex]! : null,
             head: null,
             text: operation === 'insertText' ? 'unique-marker-' : undefined,
             reply: operation === 'insertText' ? { documentChanged: true } : { applied: true },
@@ -285,14 +286,41 @@ test('text-history companions are additive and retain exact originating obligati
     );
 });
 
-test('text-history result acceptance requires complete matching evidence and every checkpoint', () => {
+function malformedBaseline(): EffectiveDocument {
+    const node = supplementaryFixture('overlap', 'prosemirror').content![0]!;
+    return {
+        tables: [{
+            source: '0',
+            parentCell: null,
+            pathWithinCell: '0',
+            position: 0,
+            rows: 3,
+            columns: 4,
+            widths: [null, null, null, null],
+            node,
+            overlap: { kind: 'native-fallback', reason: 'overlapping-reference-cells' },
+            cells: [
+                { source: '0.0.0', position: 2, row: 0, column: 0, rowspan: 1, colspan: 1 },
+                { source: '0.0.1', position: 7, row: 0, column: 1, rowspan: 2, colspan: 1 },
+                { source: '0.1.0', position: 14, row: 1, column: 2, rowspan: 2, colspan: 2 },
+            ].map((cell, index) => ({
+                ...cell,
+                sourceId: `source-${index}`,
+                node: node.content![index === 2 ? 1 : 0]!.content![index === 2 ? 0 : index]!,
+            })),
+        }],
+    };
+}
+
+function acceptedResult(targetIndex = 0) {
     const slot = corpus.textHistoryRequirements(
         supplementaryRequirements().filter(
             (slot) =>
                 slot.family === 'overlap' && slot.proof === 'history' && slot.actorKind === 'rust',
         ),
     )[0]!;
-    const { intent, actions } = history();
+    const before = malformedBaseline();
+    const { intent, actions } = history(before, targetIndex);
     const result = {
         slot,
         required: true,
@@ -334,6 +362,12 @@ test('text-history result acceptance requires complete matching evidence and eve
             { length: slot.schedule.participants },
             () => structuredClone(checkpoint.textHistoryObservations![0]!),
         );
+    return result;
+}
+
+test('text-history result acceptance requires complete matching evidence and every checkpoint', () => {
+    const result = acceptedResult();
+    const slot = result.slot;
     assert.equal(corpus.continuationPassed(result), true);
     for (const mutate of [
         (r: corpus.ContinuationResult) => {
@@ -389,6 +423,99 @@ test('text-history result acceptance requires complete matching evidence and eve
     assert.throws(() => corpus.continuationCoverage([slot, slot], []), /duplicate/);
     const wrong = { ...result, slot: { ...slot, companionOf: 'wrong' } };
     assert.throws(() => corpus.continuationCoverage([slot], [wrong]), /mismatch/);
+});
+
+test('coverage binds every serializable execution declaration field', () => {
+    const result = acceptedResult();
+    const required = JSON.parse(JSON.stringify(result.slot)) as corpus.ContinuationSlot;
+    assert.equal(corpus.continuationCoverage([required], [result])[0]!.status, 'proven');
+    const changes = [
+        { target: 'b' },
+        { target: undefined },
+        { family: 'crossing-rowspan' },
+        { history: 'remote' },
+        { remoteActor: 1 },
+        { gapRow: 2 },
+        { required: false },
+        { textHistoryTarget: { kind: 'first-typable-source' } },
+        ...['participants', 'kinds', 'preset', 'topology', 'actorOffset', 'scenario'].map(
+            (field) => ({
+                schedule: {
+                    ...result.slot.schedule,
+                    [field]: field === 'participants' ? 3
+                        : field === 'kinds' ? ['rust', 'tiptap'] : 'changed',
+                },
+            }),
+        ),
+    ];
+    for (const change of changes) {
+        const candidate = {
+            ...result, slot: { ...result.slot, ...change },
+        } as corpus.ContinuationResult;
+        assert.throws(
+            () => corpus.continuationCoverage([required], [candidate]),
+            /mismatch/,
+            JSON.stringify(change),
+        );
+    }
+    assert.throws(() => corpus.continuationCoverage([required], [result, result]), /duplicate/);
+    assert.equal(corpus.continuationCoverage([required], [])[0]!.status, 'unexercised');
+});
+
+test('acceptance rejects self-consistent history in a different cell on the unchanged baseline', () => {
+    const correct = acceptedResult();
+    const wrong = acceptedResult(1);
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(wrong.slot)),
+        JSON.parse(JSON.stringify(correct.slot)),
+    );
+    assert.deepEqual(wrong.checkpoints[0], correct.checkpoints[0]);
+    wrong.actions.forEach((action, index) =>
+        evidence.assertTextHistoryBoundary(
+            action, wrong.textHistory!, index,
+            wrong.checkpoints[index + 1]!.textHistoryObservations!,
+        ),
+    );
+    assert.equal(corpus.continuationPassed(wrong), false);
+    assert.notEqual(corpus.continuationCoverage([correct.slot], [wrong])[0]!.status, 'proven');
+});
+
+test('declared source resolution fails closed for absent and ambiguous targets', () => {
+    for (const mutation of [
+        'missing-policy', 'missing-target', 'contradictory-policy', 'ambiguous',
+        'missing-source', 'duplicate-source', 'missing-actor',
+    ]) {
+        const result = acceptedResult();
+        if (mutation === 'missing-policy') Reflect.deleteProperty(result.slot, 'textHistoryTarget');
+        if (mutation === 'missing-target') Object.assign(result.slot, {
+            target: 'absent', textHistoryTarget: { kind: 'cell-text', text: 'absent' },
+        });
+        if (mutation === 'contradictory-policy') Object.assign(result.slot, {
+            textHistoryTarget: { kind: 'cell-text', text: 'b' },
+        });
+        const baseline = result.checkpoints[0]!.textHistoryObservations![0]!.document;
+        if (mutation === 'ambiguous')
+            baseline.tables[0]!.cells[1]!.node.content![0]!.content![0]!.text = 'a';
+        if (mutation === 'missing-source') delete baseline.tables[0]!.cells[0]!.sourceId;
+        if (mutation === 'duplicate-source')
+            baseline.tables[0]!.cells[1]!.sourceId = baseline.tables[0]!.cells[0]!.sourceId;
+        if (mutation === 'missing-actor') result.checkpoints[0]!.textHistoryObservations!.pop();
+        assert.equal(corpus.continuationPassed(result), false, mutation);
+    }
+});
+
+test('selected base companions declare and verify first typable source independently', () => {
+    const original = corpus.continuationRequirements().find(
+        (slot) => slot.proof === 'history' && slot.actor === 0 &&
+            slot.topology === 'native/native' && slot.preset === 'prosemirror',
+    )!;
+    const slot = corpus.textHistoryRequirements([original])[0]!;
+    assert.deepEqual(slot.textHistoryTarget, { kind: 'first-typable-source' });
+    assert.equal('textHistoryTarget' in original, false);
+    const correct = { ...acceptedResult(), slot };
+    const wrong = { ...acceptedResult(1), slot };
+    assert.equal(corpus.continuationPassed(correct), true);
+    assert.equal(corpus.continuationPassed(wrong), false);
 });
 
 test('scoped runner separately declares all18 text-history companions', () => {
