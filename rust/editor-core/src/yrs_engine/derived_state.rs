@@ -472,8 +472,7 @@ impl DerivedStateCache {
                 .unwrap_or_else(Selection::all);
             operation_result_to_relative(txn, fragment, &selection, schema)
         });
-        let table_projection_index =
-            TableProjectionIndex::derive_or_fallback(&document, schema, resource_limits);
+        let table_projection_index = render_blocks.table_projection_index.as_ref().clone();
         let resolved_selection = resolve_selection(
             txn,
             fragment,
@@ -646,8 +645,7 @@ impl DerivedStateCache {
             return None;
         }
 
-        let table_projection_index =
-            TableProjectionIndex::derive_or_fallback(&document, schema, resource_limits);
+        let table_projection_index = render_blocks.table_projection_index.as_ref().clone();
         let (relative_selection, resolved_selection, legacy_selection) =
             if let Some(finalized) = finalized_selection {
                 record_prewrite_selection_proof_install();

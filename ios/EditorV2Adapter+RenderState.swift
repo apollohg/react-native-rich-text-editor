@@ -58,6 +58,22 @@ extension EditorV2Adapter {
 
     @discardableResult
     private func adopt(_ snapshot: AtomicRenderSnapshot, strippingViewSelection: Bool) -> EditorV2DerivedUpdate? {
+        var candidate = snapshot.renderObject["renderBlocks"] as? [[[String: Any]]]
+        if candidate == nil, let patch = snapshot.renderObject["renderPatch"] as? [String: Any] {
+            if let retained = cachedSemanticRenderBlocks,
+               let base = patch["baseDocumentVersion"] as? String, UInt64(base) == cachedAtomicRenderDocumentRevision,
+               let start = Self.uint32Field(patch, "startIndex"), let delete = Self.uint32Field(patch, "deleteCount"),
+               let inserted = patch["renderBlocks"] as? [[[String: Any]]],
+               UInt64(start) + UInt64(delete) <= UInt64(retained.count) {
+                candidate = retained
+                candidate!.replaceSubrange(Int(start)..<(Int(start) + Int(delete)), with: inserted)
+            } else if snapshot.renderObject["tableAttributes"] != nil || snapshot.renderObject["tableRecords"] != nil || !cachedTableAttributes.isEmpty || !cachedTableRecords.isEmpty {
+                return nil
+            }
+        }
+        if let candidate, !Self.validSemanticRenderElements(candidate.joined().map { $0 as Any }, tableAttributes: snapshot.tableAttributes, tableRecords: snapshot.tableRecords) {
+            return nil
+        }
         guard let updateJSON = Self.viewUpdate(
             from: snapshot,
             strippingViewSelection: strippingViewSelection
@@ -72,6 +88,9 @@ extension EditorV2Adapter {
         cachedViewUpdateJSON = updateJSON
         cachedAtomicRenderJSON = snapshot.atomicRenderJSON
         cachedAtomicRenderDocumentRevision = snapshot.documentRevision
+        cachedSemanticRenderBlocks = candidate
+        cachedTableAttributes = snapshot.tableAttributes
+        cachedTableRecords = snapshot.tableRecords
         if let epoch = snapshot.positionEpoch {
             positionEpoch = epoch
         }

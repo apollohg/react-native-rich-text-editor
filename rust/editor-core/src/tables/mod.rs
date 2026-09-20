@@ -8,6 +8,7 @@ pub(crate) mod mutation_guard;
 pub(crate) mod normalize;
 pub(crate) mod projection;
 pub(crate) mod reference_grid;
+pub(crate) mod render;
 pub(crate) mod roles;
 pub(crate) mod selection;
 pub(crate) mod types;
@@ -27,6 +28,8 @@ mod navigation_tests;
 pub(crate) mod normalize_tests;
 #[cfg(test)]
 mod projection_tests;
+#[cfg(test)]
+mod render_tests;
 #[cfg(test)]
 mod selection_tests;
 #[cfg(test)]

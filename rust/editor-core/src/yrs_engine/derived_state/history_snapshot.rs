@@ -706,12 +706,11 @@ impl DerivedStateCache {
         ) {
             return Ok(None);
         }
-        let table_projection_index =
-            crate::tables::admission::TableProjectionIndex::derive_or_fallback(
-                &snapshot.document,
-                schema,
-                &snapshot.resource_limits,
-            );
+        let table_projection_index = snapshot
+            .render_blocks
+            .table_projection_index
+            .as_ref()
+            .clone();
         let Some(relative_selection) = history_selection_to_relative(
             txn,
             fragment,

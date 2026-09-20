@@ -3,6 +3,17 @@ import UIKit
 import XCTest
 
 final class PreparedProseRenderingTests: XCTestCase {
+    func testCompilerBackedNestedTablesRetainFlatRecords() throws {
+        let source = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]}]}]}]}]}"#
+        try withCompiledDocument(source: .json(source), configJSON: Self.tableConfig) { document in
+            let outer = try XCTUnwrap(document.blocks.first?.table)
+            XCTAssertEqual(outer.cells.count, 1)
+            XCTAssertFalse(document.tableAttributes.isEmpty)
+        }
+    }
+
+    private static let tableConfig = #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"class":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"#
+
     func testVersionedMentionHonorsLineHeightAndStrikeDecoration() throws {
         let source = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"mention","attrs":{"label":"Jay"}}]}]}"#
         try withCompiledDocument(source: .json(source), configJSON: Fixture.customConfig) { document in

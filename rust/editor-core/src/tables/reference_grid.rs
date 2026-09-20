@@ -6,7 +6,8 @@ use crate::command_planner::default_attrs;
 use crate::model::{Fragment, Node};
 use crate::schema::Schema;
 use crate::tables::projection::{
-    column_width, span_attribute, CellRect, ProjectedTable, SyntheticRegion, TableGridBudget,
+    column_width, span_attribute, CellRect, ProjectedTable, SyntheticGeometry, SyntheticRegion,
+    TableGridBudget,
 };
 use crate::tables::roles::{
     TableRoles, TABLE_CELL_COLSPAN_ATTR, TABLE_CELL_COLWIDTH_ATTR, TABLE_CELL_ROWSPAN_ATTR,
@@ -52,25 +53,6 @@ impl VirtualCell {
             rowspan: span_attribute(node, TABLE_CELL_ROWSPAN_ATTR)?,
             widths,
         })
-    }
-
-    fn effective_node(&self) -> Node {
-        let mut attrs = self.node.attrs().clone();
-        attrs.insert(TABLE_CELL_COLSPAN_ATTR.into(), self.colspan.into());
-        attrs.insert(TABLE_CELL_ROWSPAN_ATTR.into(), self.rowspan.into());
-        attrs.insert(
-            TABLE_CELL_COLWIDTH_ATTR.into(),
-            if self.widths.iter().any(|width| *width != 0) {
-                serde_json::json!(self.widths)
-            } else {
-                serde_json::Value::Null
-            },
-        );
-        Node::element(
-            self.node.node_type().into(),
-            attrs,
-            self.node.content().cloned().unwrap_or_else(Fragment::empty),
-        )
     }
 }
 
@@ -378,6 +360,7 @@ fn reference_pass(
     let first = additions.iter().position(|count| *count != 0);
     let last = additions.iter().rposition(|count| *count != 0);
     let mut proven_defaults = Vec::new();
+    let mut filler_defaults: HashMap<String, Node> = HashMap::new();
     for (row, &count) in additions.iter().enumerate() {
         if count == 0 {
             continue;
@@ -385,8 +368,16 @@ fn reference_pass(
         admit_virtual(budget, checked_add(cells.len(), count)?, raw_charge)?;
         budget.spend(count)?;
         let row_node = table.child(row).ok_or(TableError::InvalidStructure)?;
-        let node = filler_cell(row_node, schema)
-            .ok_or(ReferenceFailure::Unsupported("unsupported-gap-default"))?;
+        let cell_type = filler_cell_type(row_node, &roles);
+        let node = match filler_defaults.get(cell_type) {
+            Some(node) => node.clone(),
+            None => {
+                let node = default_cell(cell_type, schema)
+                    .ok_or(ReferenceFailure::Unsupported("unsupported-gap-default"))?;
+                filler_defaults.insert(cell_type.to_owned(), node.clone());
+                node
+            }
+        };
         prove_reference_default(node.node_type(), schema, budget, &mut proven_defaults)?;
         let cell = VirtualCell::new(&node, None, budget)?;
         let mut inserted = Vec::new();
@@ -447,6 +438,7 @@ fn materialize(
             covered[*index] += 1;
         }
     }
+    let mut synthetic_defaults: HashMap<String, Node> = HashMap::new();
     for (index, cell) in cells.iter().enumerate() {
         if covered[index] != extent(cell.rowspan as usize, cell.colspan as usize)? {
             return Err(ReferenceFailure::Unsupported("overlapping-reference-cells"));
@@ -483,7 +475,15 @@ fn materialize(
         } else {
             projected.synthetic.push(SyntheticRegion {
                 rect,
-                node: cell.effective_node(),
+                node: synthetic_defaults
+                    .entry(cell.node.node_type().into())
+                    .or_insert_with(|| cell.node.clone())
+                    .clone(),
+                geometry: Some(SyntheticGeometry {
+                    colspan: cell.colspan,
+                    rowspan: cell.rowspan,
+                    widths: cell.widths.clone(),
+                }),
             });
         }
     }
@@ -496,6 +496,15 @@ fn materialize(
             continue;
         }
         budget.spend(1)?;
+        let default = match synthetic_defaults.get(&roles.cell) {
+            Some(node) => node.clone(),
+            None => {
+                let node = default_cell(&roles.cell, schema)
+                    .ok_or(ReferenceFailure::Unsupported("unsupported-gap-default"))?;
+                synthetic_defaults.insert(roles.cell.clone(), node.clone());
+                node
+            }
+        };
         projected.synthetic.push(SyntheticRegion {
             rect: CellRect {
                 row: (slot / mapped.columns) as u32,
@@ -503,20 +512,27 @@ fn materialize(
                 rowspan: 1,
                 colspan: 1,
             },
-            node: default_cell(&roles.cell, schema)
-                .ok_or(ReferenceFailure::Unsupported("unsupported-gap-default"))?,
+            node: default,
+            geometry: None,
         });
     }
     Ok(projected)
 }
 
 fn default_cell(cell_type: &str, schema: &Schema) -> Option<Node> {
+    #[cfg(test)]
+    DEFAULT_CELL_CONSTRUCTIONS.set(DEFAULT_CELL_CONSTRUCTIONS.get() + 1);
     let block = crate::tables::commands::default_text_block_node(schema)?;
     Some(Node::element(
         cell_type.into(),
         default_attrs(schema, cell_type)?,
         Fragment::from(vec![block]),
     ))
+}
+
+#[cfg(test)]
+std::thread_local! {
+    pub(crate) static DEFAULT_CELL_CONSTRUCTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn single_symbol(source: &str) -> bool {
@@ -592,14 +608,16 @@ fn prove_reference_default(
 
 pub(crate) fn filler_cell(row: &Node, schema: &Schema) -> Option<Node> {
     let roles = TableRoles::resolve(schema).ok()??;
-    let cell_type = row
-        .content()
+    default_cell(filler_cell_type(row, &roles), schema)
+}
+
+fn filler_cell_type<'a>(row: &'a Node, roles: &'a TableRoles) -> &'a str {
+    row.content()
         .and_then(|content| {
             content.iter().find(|child| {
                 child.node_type() == roles.cell || child.node_type() == roles.header_cell
             })
         })
         .map(Node::node_type)
-        .unwrap_or(&roles.cell);
-    default_cell(cell_type, schema)
+        .unwrap_or(&roles.cell)
 }

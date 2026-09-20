@@ -1127,7 +1127,7 @@ fn projected_table_json(projected: &ProjectedTable, schema: &Schema) -> serde_js
             "column": region.rect.column,
             "rowspan": region.rect.rowspan,
             "colspan": region.rect.colspan,
-            "node": synthetic_node_json(&region.node, schema),
+            "node": synthetic_node_json(&region.effective_node(), schema),
         })).collect::<Vec<_>>(),
     })
 }

@@ -37,6 +37,9 @@ internal fun EditorV2Adapter.invalidateCachedAtomicState(selection: IntArray?) {
     cachedHistoryState = null
     cachedViewUpdateJson = null
     cachedAtomicRenderJson = null
+    cachedSemanticRenderBlocks = null
+    cachedTableAttributes = emptyMap()
+    cachedTableRecords = emptyMap()
     cachedAtomicRenderDocumentRevision = null
 }
 
@@ -84,6 +87,9 @@ internal fun EditorV2Adapter.ensureSelection(anchor: Int, head: Int): SelectionS
             cachedActiveState = null
             cachedViewUpdateJson = null
             cachedAtomicRenderJson = null
+            cachedSemanticRenderBlocks = null
+            cachedTableAttributes = emptyMap()
+            cachedTableRecords = emptyMap()
             cachedAtomicRenderDocumentRevision = null
             SelectionSyncOutcome.Ok
         }

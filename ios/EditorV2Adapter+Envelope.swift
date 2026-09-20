@@ -138,6 +138,9 @@ extension EditorV2Adapter {
     }
 
     func releaseNativeOwner() {
+        cachedSemanticRenderBlocks = nil
+        cachedTableAttributes = [:]
+        cachedTableRecords = [:]
         guard let ownerId = nativeOwnerId else { return }
         nativeOwnerId = nil
         nativeOwnerToken = nil

@@ -7,6 +7,25 @@ fn local_config() -> String {
     .to_string()
 }
 
+fn table_config() -> String {
+    serde_json::json!({
+        "schema": {
+            "nodes": [
+                {"name": "doc", "content": "block+", "role": "doc"},
+                {"name": "paragraph", "content": "inline*", "group": "block", "role": "textBlock"},
+                {"name": "text", "content": "", "group": "inline", "role": "text"},
+                {"name": "table", "content": "table_row+", "group": "block", "role": "block", "tableRole": "table", "attrs": {"class": {"default": null}}},
+                {"name": "table_row", "content": "(table_cell | table_header)*", "role": "block", "tableRole": "row"},
+                {"name": "table_cell", "content": "block+", "role": "block", "tableRole": "cell", "attrs": {"class": {"default": null}, "colspan": {"type": "number", "default": 1, "min": 1}, "rowspan": {"type": "number", "default": 1, "min": 1}, "colwidth": {"default": null}}},
+                {"name": "table_header", "content": "block+", "role": "block", "tableRole": "header_cell", "attrs": {"class": {"default": null}, "colspan": {"type": "number", "default": 1, "min": 1}, "rowspan": {"type": "number", "default": 1, "min": 1}, "colwidth": {"default": null}}}
+            ],
+            "marks": []
+        },
+        "initialization": {"type": "localEmpty"}
+    })
+    .to_string()
+}
+
 fn mention_config() -> String {
     serde_json::json!({
         "schema": {
@@ -92,6 +111,87 @@ fn compile_json_with(
         images_enabled,
         mention_prefix: None,
     })
+}
+
+fn nested_table_document(nested_text: &str, nested_table_class: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "table",
+            "attrs": {"class": "shared-table"},
+            "content": [{
+                "type": "table_row",
+                "content": [{
+                    "type": "table_cell",
+                    "attrs": {"class": "outer-cell"},
+                    "content": [{
+                        "type": "table",
+                        "attrs": {"class": nested_table_class},
+                        "content": [{
+                            "type": "table_row",
+                            "content": [{
+                                "type": "table_cell",
+                                "attrs": {"class": "nested-cell"},
+                                "content": [{
+                                    "type": "paragraph",
+                                    "content": [{"type": "text", "text": nested_text}]
+                                }]
+                            }]
+                        }]
+                    }]
+                }]
+            }]
+        }]
+    })
+}
+
+#[test]
+fn nested_tables_compile_to_ordered_flat_records_and_affect_the_semantic_key() {
+    let compile = |nested_text, nested_table_class| {
+        compile_json_with(
+            nested_table_document(nested_text, nested_table_class),
+            table_config(),
+            true,
+        )
+        .value
+        .expect("nested table compiles")
+    };
+    let first = compile("first", "shared-table");
+    let same = compile("first", "shared-table");
+    let changed = compile("changed", "shared-table");
+    let unshared = compile("first", "other--table");
+
+    let root_table_id = first
+        .elements()
+        .into_iter()
+        .find_map(|element| match element {
+            FfiViewerElement::Table { table_id } => Some(table_id),
+            _ => None,
+        })
+        .expect("root has a table reference");
+    let records = first.table_records();
+    assert_eq!(records.len(), 2);
+    assert!(records
+        .windows(2)
+        .all(|pair| pair[0].table_pos < pair[1].table_pos));
+    assert_eq!(root_table_id, format!("t{}", records[0].table_pos));
+    assert_eq!(records[0].attrs_key, records[1].attrs_key);
+    assert_eq!(
+        first.table_attributes().get(&records[0].attrs_key),
+        Some(&"{\"class\":\"shared-table\"}".to_owned())
+    );
+    assert!(records[0].cells[0].elements.iter().any(|element| matches!(
+        element,
+        FfiViewerElement::Table { table_id }
+            if table_id == &format!("t{}", records[1].table_pos)
+    )));
+    assert_eq!(first.semantic_key(), same.semantic_key());
+    assert_ne!(first.semantic_key(), changed.semantic_key());
+    assert!(
+        first.retained_bytes_decimal().parse::<usize>().unwrap()
+            < unshared.retained_bytes_decimal().parse::<usize>().unwrap(),
+        "the shared attrs payload is retained once"
+    );
 }
 
 #[test]

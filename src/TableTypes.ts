@@ -1,4 +1,63 @@
+import type { RenderElement } from './NativeEditorTypes';
+
 export type TableRole = 'table' | 'row' | 'cell' | 'header_cell';
+
+export type TableRenderFailure =
+    | 'gridLimit'
+    | 'workLimit'
+    | 'allocation'
+    | 'invalidStructure'
+    | 'invalidAttributes';
+export type TableCompatibilityDiagnostic =
+    | 'virtual-grid-limit'
+    | 'empty-reference-surface'
+    | 'unsupported-row-role'
+    | 'unsupported-cell-role'
+    | 'ambiguous-source-map'
+    | 'unsupported-gap-default'
+    | 'overlapping-reference-cells'
+    | 'unmapped-reference-cell'
+    | 'nonrectangular-reference-cell'
+    | 'zero-span-after-reference-pass';
+
+export interface TableRenderRegion {
+    row: number;
+    column: number;
+    rowspan: number;
+    colspan: number;
+    header: boolean;
+    attrsKey: string;
+}
+
+export interface TableRenderCell extends TableRenderRegion {
+    sourcePos: number;
+    sourceEnd: number;
+    contentKey: string;
+    elements: RenderElement[];
+}
+
+export interface TableRenderRow {
+    sourcePos: number;
+    sourceEnd: number;
+    attrsKey: string;
+}
+
+export interface TableRenderRecord {
+    tablePos: number;
+    sourceEnd: number;
+    rows: number;
+    columns: number;
+    columnWidths: Array<number | null>;
+    direction: 'ltr' | 'rtl' | null;
+    irregular: boolean;
+    readOnlyDescendants: boolean;
+    attrsKey: string;
+    sourceRows: TableRenderRow[];
+    cells: TableRenderCell[];
+    syntheticRegions: TableRenderRegion[];
+    failure: TableRenderFailure | null;
+    compatibilityDiagnostic: TableCompatibilityDiagnostic | null;
+}
 
 export type TableNamingPreset = 'prosemirror' | 'tiptap';
 

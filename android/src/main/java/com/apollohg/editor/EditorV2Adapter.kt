@@ -59,6 +59,9 @@ internal class EditorV2Adapter private constructor(
     internal var cachedHistoryState: JSONObject? = null
     internal var cachedViewUpdateJson: String? = null
     internal var cachedAtomicRenderJson: String? = null
+    internal var cachedSemanticRenderBlocks: List<List<Any?>>? = null
+    internal var cachedTableAttributes: Map<String, JSONObject> = emptyMap()
+    internal var cachedTableRecords: Map<String, JSONObject> = emptyMap()
     internal var cachedAtomicRenderDocumentRevision: ULong? = null
     internal var renderUpdateCallCountForTesting = 0
         internal set
@@ -113,6 +116,9 @@ internal class EditorV2Adapter private constructor(
         nativeOwnerToken = null
         positionEpoch = null
         destroyed = true
+        cachedSemanticRenderBlocks = null
+        cachedTableAttributes = emptyMap()
+        cachedTableRecords = emptyMap()
         val error = backend.destroy(editorId) ?: return null
         if (error.code == "ENGINE_DESTROYED" || error.code == "ENGINE_DESTROYING") return null
         return error

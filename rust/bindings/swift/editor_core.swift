@@ -527,6 +527,10 @@ public protocol ViewerCompiledDocumentProtocol: AnyObject, Sendable {
 
     func semanticKey()  -> String
 
+    func tableAttributes()  -> [String: String]
+
+    func tableRecords()  -> [FfiViewerTable]
+
     func trailingEmptyTextBlockCount()  -> UInt32
 
 }
@@ -613,6 +617,20 @@ open func retainedBytesDecimal() -> String  {
 open func semanticKey() -> String  {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_editor_core_fn_method_viewercompileddocument_semantic_key(self.uniffiClonePointer(),$0
+    )
+})
+}
+
+open func tableAttributes() -> [String: String]  {
+    return try!  FfiConverterDictionaryStringString.lift(try! rustCall() {
+    uniffi_editor_core_fn_method_viewercompileddocument_table_attributes(self.uniffiClonePointer(),$0
+    )
+})
+}
+
+open func tableRecords() -> [FfiViewerTable]  {
+    return try!  FfiConverterSequenceTypeFfiViewerTable.lift(try! rustCall() {
+    uniffi_editor_core_fn_method_viewercompileddocument_table_records(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -1454,11 +1472,493 @@ public func FfiConverterTypeFfiViewerMark_lower(_ value: FfiViewerMark) -> RustB
     return FfiConverterTypeFfiViewerMark.lower(value)
 }
 
+
+public struct FfiViewerTable {
+    public var tablePos: UInt32
+    public var sourceEnd: UInt32
+    public var rows: UInt32
+    public var columns: UInt32
+    public var columnWidths: [UInt32?]
+    public var direction: String?
+    public var irregular: Bool
+    public var readOnlyDescendants: Bool
+    public var attrsKey: String
+    public var sourceRows: [TableRenderRow]
+    public var cells: [FfiViewerTableCell]
+    public var syntheticRegions: [TableRenderSyntheticRegion]
+    public var failure: TableRenderFailure?
+    public var compatibilityDiagnostic: TableCompatibilityDiagnostic?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(tablePos: UInt32, sourceEnd: UInt32, rows: UInt32, columns: UInt32, columnWidths: [UInt32?], direction: String?, irregular: Bool, readOnlyDescendants: Bool, attrsKey: String, sourceRows: [TableRenderRow], cells: [FfiViewerTableCell], syntheticRegions: [TableRenderSyntheticRegion], failure: TableRenderFailure?, compatibilityDiagnostic: TableCompatibilityDiagnostic?) {
+        self.tablePos = tablePos
+        self.sourceEnd = sourceEnd
+        self.rows = rows
+        self.columns = columns
+        self.columnWidths = columnWidths
+        self.direction = direction
+        self.irregular = irregular
+        self.readOnlyDescendants = readOnlyDescendants
+        self.attrsKey = attrsKey
+        self.sourceRows = sourceRows
+        self.cells = cells
+        self.syntheticRegions = syntheticRegions
+        self.failure = failure
+        self.compatibilityDiagnostic = compatibilityDiagnostic
+    }
+}
+
+#if compiler(>=6)
+extension FfiViewerTable: Sendable {}
+#endif
+
+
+extension FfiViewerTable: Equatable, Hashable {
+    public static func ==(lhs: FfiViewerTable, rhs: FfiViewerTable) -> Bool {
+        if lhs.tablePos != rhs.tablePos {
+            return false
+        }
+        if lhs.sourceEnd != rhs.sourceEnd {
+            return false
+        }
+        if lhs.rows != rhs.rows {
+            return false
+        }
+        if lhs.columns != rhs.columns {
+            return false
+        }
+        if lhs.columnWidths != rhs.columnWidths {
+            return false
+        }
+        if lhs.direction != rhs.direction {
+            return false
+        }
+        if lhs.irregular != rhs.irregular {
+            return false
+        }
+        if lhs.readOnlyDescendants != rhs.readOnlyDescendants {
+            return false
+        }
+        if lhs.attrsKey != rhs.attrsKey {
+            return false
+        }
+        if lhs.sourceRows != rhs.sourceRows {
+            return false
+        }
+        if lhs.cells != rhs.cells {
+            return false
+        }
+        if lhs.syntheticRegions != rhs.syntheticRegions {
+            return false
+        }
+        if lhs.failure != rhs.failure {
+            return false
+        }
+        if lhs.compatibilityDiagnostic != rhs.compatibilityDiagnostic {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(tablePos)
+        hasher.combine(sourceEnd)
+        hasher.combine(rows)
+        hasher.combine(columns)
+        hasher.combine(columnWidths)
+        hasher.combine(direction)
+        hasher.combine(irregular)
+        hasher.combine(readOnlyDescendants)
+        hasher.combine(attrsKey)
+        hasher.combine(sourceRows)
+        hasher.combine(cells)
+        hasher.combine(syntheticRegions)
+        hasher.combine(failure)
+        hasher.combine(compatibilityDiagnostic)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiViewerTable: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiViewerTable {
+        return
+            try FfiViewerTable(
+                tablePos: FfiConverterUInt32.read(from: &buf),
+                sourceEnd: FfiConverterUInt32.read(from: &buf),
+                rows: FfiConverterUInt32.read(from: &buf),
+                columns: FfiConverterUInt32.read(from: &buf),
+                columnWidths: FfiConverterSequenceOptionUInt32.read(from: &buf),
+                direction: FfiConverterOptionString.read(from: &buf),
+                irregular: FfiConverterBool.read(from: &buf),
+                readOnlyDescendants: FfiConverterBool.read(from: &buf),
+                attrsKey: FfiConverterString.read(from: &buf),
+                sourceRows: FfiConverterSequenceTypeTableRenderRow.read(from: &buf),
+                cells: FfiConverterSequenceTypeFfiViewerTableCell.read(from: &buf),
+                syntheticRegions: FfiConverterSequenceTypeTableRenderSyntheticRegion.read(from: &buf),
+                failure: FfiConverterOptionTypeTableRenderFailure.read(from: &buf),
+                compatibilityDiagnostic: FfiConverterOptionTypeTableCompatibilityDiagnostic.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiViewerTable, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.tablePos, into: &buf)
+        FfiConverterUInt32.write(value.sourceEnd, into: &buf)
+        FfiConverterUInt32.write(value.rows, into: &buf)
+        FfiConverterUInt32.write(value.columns, into: &buf)
+        FfiConverterSequenceOptionUInt32.write(value.columnWidths, into: &buf)
+        FfiConverterOptionString.write(value.direction, into: &buf)
+        FfiConverterBool.write(value.irregular, into: &buf)
+        FfiConverterBool.write(value.readOnlyDescendants, into: &buf)
+        FfiConverterString.write(value.attrsKey, into: &buf)
+        FfiConverterSequenceTypeTableRenderRow.write(value.sourceRows, into: &buf)
+        FfiConverterSequenceTypeFfiViewerTableCell.write(value.cells, into: &buf)
+        FfiConverterSequenceTypeTableRenderSyntheticRegion.write(value.syntheticRegions, into: &buf)
+        FfiConverterOptionTypeTableRenderFailure.write(value.failure, into: &buf)
+        FfiConverterOptionTypeTableCompatibilityDiagnostic.write(value.compatibilityDiagnostic, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiViewerTable_lift(_ buf: RustBuffer) throws -> FfiViewerTable {
+    return try FfiConverterTypeFfiViewerTable.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiViewerTable_lower(_ value: FfiViewerTable) -> RustBuffer {
+    return FfiConverterTypeFfiViewerTable.lower(value)
+}
+
+
+public struct FfiViewerTableCell {
+    public var sourcePos: UInt32
+    public var sourceEnd: UInt32
+    public var row: UInt32
+    public var column: UInt32
+    public var rowspan: UInt32
+    public var colspan: UInt32
+    public var header: Bool
+    public var attrsKey: String
+    public var contentKey: String
+    public var elements: [FfiViewerElement]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sourcePos: UInt32, sourceEnd: UInt32, row: UInt32, column: UInt32, rowspan: UInt32, colspan: UInt32, header: Bool, attrsKey: String, contentKey: String, elements: [FfiViewerElement]) {
+        self.sourcePos = sourcePos
+        self.sourceEnd = sourceEnd
+        self.row = row
+        self.column = column
+        self.rowspan = rowspan
+        self.colspan = colspan
+        self.header = header
+        self.attrsKey = attrsKey
+        self.contentKey = contentKey
+        self.elements = elements
+    }
+}
+
+#if compiler(>=6)
+extension FfiViewerTableCell: Sendable {}
+#endif
+
+
+extension FfiViewerTableCell: Equatable, Hashable {
+    public static func ==(lhs: FfiViewerTableCell, rhs: FfiViewerTableCell) -> Bool {
+        if lhs.sourcePos != rhs.sourcePos {
+            return false
+        }
+        if lhs.sourceEnd != rhs.sourceEnd {
+            return false
+        }
+        if lhs.row != rhs.row {
+            return false
+        }
+        if lhs.column != rhs.column {
+            return false
+        }
+        if lhs.rowspan != rhs.rowspan {
+            return false
+        }
+        if lhs.colspan != rhs.colspan {
+            return false
+        }
+        if lhs.header != rhs.header {
+            return false
+        }
+        if lhs.attrsKey != rhs.attrsKey {
+            return false
+        }
+        if lhs.contentKey != rhs.contentKey {
+            return false
+        }
+        if lhs.elements != rhs.elements {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(sourcePos)
+        hasher.combine(sourceEnd)
+        hasher.combine(row)
+        hasher.combine(column)
+        hasher.combine(rowspan)
+        hasher.combine(colspan)
+        hasher.combine(header)
+        hasher.combine(attrsKey)
+        hasher.combine(contentKey)
+        hasher.combine(elements)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiViewerTableCell: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiViewerTableCell {
+        return
+            try FfiViewerTableCell(
+                sourcePos: FfiConverterUInt32.read(from: &buf),
+                sourceEnd: FfiConverterUInt32.read(from: &buf),
+                row: FfiConverterUInt32.read(from: &buf),
+                column: FfiConverterUInt32.read(from: &buf),
+                rowspan: FfiConverterUInt32.read(from: &buf),
+                colspan: FfiConverterUInt32.read(from: &buf),
+                header: FfiConverterBool.read(from: &buf),
+                attrsKey: FfiConverterString.read(from: &buf),
+                contentKey: FfiConverterString.read(from: &buf),
+                elements: FfiConverterSequenceTypeFfiViewerElement.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiViewerTableCell, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.sourcePos, into: &buf)
+        FfiConverterUInt32.write(value.sourceEnd, into: &buf)
+        FfiConverterUInt32.write(value.row, into: &buf)
+        FfiConverterUInt32.write(value.column, into: &buf)
+        FfiConverterUInt32.write(value.rowspan, into: &buf)
+        FfiConverterUInt32.write(value.colspan, into: &buf)
+        FfiConverterBool.write(value.header, into: &buf)
+        FfiConverterString.write(value.attrsKey, into: &buf)
+        FfiConverterString.write(value.contentKey, into: &buf)
+        FfiConverterSequenceTypeFfiViewerElement.write(value.elements, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiViewerTableCell_lift(_ buf: RustBuffer) throws -> FfiViewerTableCell {
+    return try FfiConverterTypeFfiViewerTableCell.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiViewerTableCell_lower(_ value: FfiViewerTableCell) -> RustBuffer {
+    return FfiConverterTypeFfiViewerTableCell.lower(value)
+}
+
+
+public struct TableRenderRow {
+    public var sourcePos: UInt32
+    public var sourceEnd: UInt32
+    public var attrsKey: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sourcePos: UInt32, sourceEnd: UInt32, attrsKey: String) {
+        self.sourcePos = sourcePos
+        self.sourceEnd = sourceEnd
+        self.attrsKey = attrsKey
+    }
+}
+
+#if compiler(>=6)
+extension TableRenderRow: Sendable {}
+#endif
+
+
+extension TableRenderRow: Equatable, Hashable {
+    public static func ==(lhs: TableRenderRow, rhs: TableRenderRow) -> Bool {
+        if lhs.sourcePos != rhs.sourcePos {
+            return false
+        }
+        if lhs.sourceEnd != rhs.sourceEnd {
+            return false
+        }
+        if lhs.attrsKey != rhs.attrsKey {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(sourcePos)
+        hasher.combine(sourceEnd)
+        hasher.combine(attrsKey)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableRenderRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableRenderRow {
+        return
+            try TableRenderRow(
+                sourcePos: FfiConverterUInt32.read(from: &buf),
+                sourceEnd: FfiConverterUInt32.read(from: &buf),
+                attrsKey: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableRenderRow, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.sourcePos, into: &buf)
+        FfiConverterUInt32.write(value.sourceEnd, into: &buf)
+        FfiConverterString.write(value.attrsKey, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableRenderRow_lift(_ buf: RustBuffer) throws -> TableRenderRow {
+    return try FfiConverterTypeTableRenderRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableRenderRow_lower(_ value: TableRenderRow) -> RustBuffer {
+    return FfiConverterTypeTableRenderRow.lower(value)
+}
+
+
+public struct TableRenderSyntheticRegion {
+    public var row: UInt32
+    public var column: UInt32
+    public var rowspan: UInt32
+    public var colspan: UInt32
+    public var header: Bool
+    public var attrsKey: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(row: UInt32, column: UInt32, rowspan: UInt32, colspan: UInt32, header: Bool, attrsKey: String) {
+        self.row = row
+        self.column = column
+        self.rowspan = rowspan
+        self.colspan = colspan
+        self.header = header
+        self.attrsKey = attrsKey
+    }
+}
+
+#if compiler(>=6)
+extension TableRenderSyntheticRegion: Sendable {}
+#endif
+
+
+extension TableRenderSyntheticRegion: Equatable, Hashable {
+    public static func ==(lhs: TableRenderSyntheticRegion, rhs: TableRenderSyntheticRegion) -> Bool {
+        if lhs.row != rhs.row {
+            return false
+        }
+        if lhs.column != rhs.column {
+            return false
+        }
+        if lhs.rowspan != rhs.rowspan {
+            return false
+        }
+        if lhs.colspan != rhs.colspan {
+            return false
+        }
+        if lhs.header != rhs.header {
+            return false
+        }
+        if lhs.attrsKey != rhs.attrsKey {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(row)
+        hasher.combine(column)
+        hasher.combine(rowspan)
+        hasher.combine(colspan)
+        hasher.combine(header)
+        hasher.combine(attrsKey)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableRenderSyntheticRegion: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableRenderSyntheticRegion {
+        return
+            try TableRenderSyntheticRegion(
+                row: FfiConverterUInt32.read(from: &buf),
+                column: FfiConverterUInt32.read(from: &buf),
+                rowspan: FfiConverterUInt32.read(from: &buf),
+                colspan: FfiConverterUInt32.read(from: &buf),
+                header: FfiConverterBool.read(from: &buf),
+                attrsKey: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TableRenderSyntheticRegion, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.row, into: &buf)
+        FfiConverterUInt32.write(value.column, into: &buf)
+        FfiConverterUInt32.write(value.rowspan, into: &buf)
+        FfiConverterUInt32.write(value.colspan, into: &buf)
+        FfiConverterBool.write(value.header, into: &buf)
+        FfiConverterString.write(value.attrsKey, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableRenderSyntheticRegion_lift(_ buf: RustBuffer) throws -> TableRenderSyntheticRegion {
+    return try FfiConverterTypeTableRenderSyntheticRegion.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableRenderSyntheticRegion_lower(_ value: TableRenderSyntheticRegion) -> RustBuffer {
+    return FfiConverterTypeTableRenderSyntheticRegion.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum FfiViewerElement {
 
+    case table(tableId: String
+    )
     case textRun(text: String, marks: [FfiViewerMark]
     )
     case inlineAtom(nodeType: String, docPos: UInt32, attrsJson: String, label: String
@@ -1485,19 +1985,22 @@ public struct FfiConverterTypeFfiViewerElement: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        case 1: return .textRun(text: try FfiConverterString.read(from: &buf), marks: try FfiConverterSequenceTypeFfiViewerMark.read(from: &buf)
+        case 1: return .table(tableId: try FfiConverterString.read(from: &buf)
         )
 
-        case 2: return .inlineAtom(nodeType: try FfiConverterString.read(from: &buf), docPos: try FfiConverterUInt32.read(from: &buf), attrsJson: try FfiConverterString.read(from: &buf), label: try FfiConverterString.read(from: &buf)
+        case 2: return .textRun(text: try FfiConverterString.read(from: &buf), marks: try FfiConverterSequenceTypeFfiViewerMark.read(from: &buf)
         )
 
-        case 3: return .blockAtom(nodeType: try FfiConverterString.read(from: &buf), docPos: try FfiConverterUInt32.read(from: &buf), attrsJson: try FfiConverterString.read(from: &buf), label: try FfiConverterString.read(from: &buf)
+        case 3: return .inlineAtom(nodeType: try FfiConverterString.read(from: &buf), docPos: try FfiConverterUInt32.read(from: &buf), attrsJson: try FfiConverterString.read(from: &buf), label: try FfiConverterString.read(from: &buf)
         )
 
-        case 4: return .blockStart(nodeType: try FfiConverterString.read(from: &buf), language: try FfiConverterOptionString.read(from: &buf), depth: try FfiConverterUInt16.read(from: &buf), listContextJson: try FfiConverterOptionString.read(from: &buf)
+        case 4: return .blockAtom(nodeType: try FfiConverterString.read(from: &buf), docPos: try FfiConverterUInt32.read(from: &buf), attrsJson: try FfiConverterString.read(from: &buf), label: try FfiConverterString.read(from: &buf)
         )
 
-        case 5: return .blockEnd
+        case 5: return .blockStart(nodeType: try FfiConverterString.read(from: &buf), language: try FfiConverterOptionString.read(from: &buf), depth: try FfiConverterUInt16.read(from: &buf), listContextJson: try FfiConverterOptionString.read(from: &buf)
+        )
+
+        case 6: return .blockEnd
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1507,21 +2010,18 @@ public struct FfiConverterTypeFfiViewerElement: FfiConverterRustBuffer {
         switch value {
 
 
-        case let .textRun(text,marks):
+        case let .table(tableId):
             writeInt(&buf, Int32(1))
+            FfiConverterString.write(tableId, into: &buf)
+
+
+        case let .textRun(text,marks):
+            writeInt(&buf, Int32(2))
             FfiConverterString.write(text, into: &buf)
             FfiConverterSequenceTypeFfiViewerMark.write(marks, into: &buf)
 
 
         case let .inlineAtom(nodeType,docPos,attrsJson,label):
-            writeInt(&buf, Int32(2))
-            FfiConverterString.write(nodeType, into: &buf)
-            FfiConverterUInt32.write(docPos, into: &buf)
-            FfiConverterString.write(attrsJson, into: &buf)
-            FfiConverterString.write(label, into: &buf)
-
-
-        case let .blockAtom(nodeType,docPos,attrsJson,label):
             writeInt(&buf, Int32(3))
             FfiConverterString.write(nodeType, into: &buf)
             FfiConverterUInt32.write(docPos, into: &buf)
@@ -1529,8 +2029,16 @@ public struct FfiConverterTypeFfiViewerElement: FfiConverterRustBuffer {
             FfiConverterString.write(label, into: &buf)
 
 
-        case let .blockStart(nodeType,language,depth,listContextJson):
+        case let .blockAtom(nodeType,docPos,attrsJson,label):
             writeInt(&buf, Int32(4))
+            FfiConverterString.write(nodeType, into: &buf)
+            FfiConverterUInt32.write(docPos, into: &buf)
+            FfiConverterString.write(attrsJson, into: &buf)
+            FfiConverterString.write(label, into: &buf)
+
+
+        case let .blockStart(nodeType,language,depth,listContextJson):
+            writeInt(&buf, Int32(5))
             FfiConverterString.write(nodeType, into: &buf)
             FfiConverterOptionString.write(language, into: &buf)
             FfiConverterUInt16.write(depth, into: &buf)
@@ -1538,7 +2046,7 @@ public struct FfiConverterTypeFfiViewerElement: FfiConverterRustBuffer {
 
 
         case .blockEnd:
-            writeInt(&buf, Int32(5))
+            writeInt(&buf, Int32(6))
 
         }
     }
@@ -1631,6 +2139,223 @@ public func FfiConverterTypeFfiViewerSourceKind_lower(_ value: FfiViewerSourceKi
 
 
 extension FfiViewerSourceKind: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum TableCompatibilityDiagnostic {
+
+    case virtualGridLimit
+    case emptyReferenceSurface
+    case unsupportedRowRole
+    case unsupportedCellRole
+    case ambiguousSourceMap
+    case unsupportedGapDefault
+    case overlappingReferenceCells
+    case unmappedReferenceCell
+    case nonrectangularReferenceCell
+    case zeroSpanAfterReferencePass
+}
+
+
+#if compiler(>=6)
+extension TableCompatibilityDiagnostic: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableCompatibilityDiagnostic: FfiConverterRustBuffer {
+    typealias SwiftType = TableCompatibilityDiagnostic
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableCompatibilityDiagnostic {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .virtualGridLimit
+
+        case 2: return .emptyReferenceSurface
+
+        case 3: return .unsupportedRowRole
+
+        case 4: return .unsupportedCellRole
+
+        case 5: return .ambiguousSourceMap
+
+        case 6: return .unsupportedGapDefault
+
+        case 7: return .overlappingReferenceCells
+
+        case 8: return .unmappedReferenceCell
+
+        case 9: return .nonrectangularReferenceCell
+
+        case 10: return .zeroSpanAfterReferencePass
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TableCompatibilityDiagnostic, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .virtualGridLimit:
+            writeInt(&buf, Int32(1))
+
+
+        case .emptyReferenceSurface:
+            writeInt(&buf, Int32(2))
+
+
+        case .unsupportedRowRole:
+            writeInt(&buf, Int32(3))
+
+
+        case .unsupportedCellRole:
+            writeInt(&buf, Int32(4))
+
+
+        case .ambiguousSourceMap:
+            writeInt(&buf, Int32(5))
+
+
+        case .unsupportedGapDefault:
+            writeInt(&buf, Int32(6))
+
+
+        case .overlappingReferenceCells:
+            writeInt(&buf, Int32(7))
+
+
+        case .unmappedReferenceCell:
+            writeInt(&buf, Int32(8))
+
+
+        case .nonrectangularReferenceCell:
+            writeInt(&buf, Int32(9))
+
+
+        case .zeroSpanAfterReferencePass:
+            writeInt(&buf, Int32(10))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableCompatibilityDiagnostic_lift(_ buf: RustBuffer) throws -> TableCompatibilityDiagnostic {
+    return try FfiConverterTypeTableCompatibilityDiagnostic.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableCompatibilityDiagnostic_lower(_ value: TableCompatibilityDiagnostic) -> RustBuffer {
+    return FfiConverterTypeTableCompatibilityDiagnostic.lower(value)
+}
+
+
+extension TableCompatibilityDiagnostic: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum TableRenderFailure {
+
+    case gridLimit
+    case workLimit
+    case allocation
+    case invalidStructure
+    case invalidAttributes
+}
+
+
+#if compiler(>=6)
+extension TableRenderFailure: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTableRenderFailure: FfiConverterRustBuffer {
+    typealias SwiftType = TableRenderFailure
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TableRenderFailure {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .gridLimit
+
+        case 2: return .workLimit
+
+        case 3: return .allocation
+
+        case 4: return .invalidStructure
+
+        case 5: return .invalidAttributes
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TableRenderFailure, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .gridLimit:
+            writeInt(&buf, Int32(1))
+
+
+        case .workLimit:
+            writeInt(&buf, Int32(2))
+
+
+        case .allocation:
+            writeInt(&buf, Int32(3))
+
+
+        case .invalidStructure:
+            writeInt(&buf, Int32(4))
+
+
+        case .invalidAttributes:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableRenderFailure_lift(_ buf: RustBuffer) throws -> TableRenderFailure {
+    return try FfiConverterTypeTableRenderFailure.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTableRenderFailure_lower(_ value: TableRenderFailure) -> RustBuffer {
+    return FfiConverterTypeTableRenderFailure.lower(value)
+}
+
+
+extension TableRenderFailure: Equatable, Hashable {}
 
 
 
@@ -1832,6 +2557,54 @@ fileprivate struct FfiConverterOptionTypeFfiSnapshotExport: FfiConverterRustBuff
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeTableCompatibilityDiagnostic: FfiConverterRustBuffer {
+    typealias SwiftType = TableCompatibilityDiagnostic?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeTableCompatibilityDiagnostic.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeTableCompatibilityDiagnostic.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeTableRenderFailure: FfiConverterRustBuffer {
+    typealias SwiftType = TableRenderFailure?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeTableRenderFailure.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeTableRenderFailure.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiViewerMark: FfiConverterRustBuffer {
     typealias SwiftType = [FfiViewerMark]
 
@@ -1849,6 +2622,106 @@ fileprivate struct FfiConverterSequenceTypeFfiViewerMark: FfiConverterRustBuffer
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFfiViewerMark.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiViewerTable: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiViewerTable]
+
+    public static func write(_ value: [FfiViewerTable], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiViewerTable.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiViewerTable] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiViewerTable]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiViewerTable.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiViewerTableCell: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiViewerTableCell]
+
+    public static func write(_ value: [FfiViewerTableCell], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiViewerTableCell.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiViewerTableCell] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiViewerTableCell]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiViewerTableCell.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTableRenderRow: FfiConverterRustBuffer {
+    typealias SwiftType = [TableRenderRow]
+
+    public static func write(_ value: [TableRenderRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTableRenderRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TableRenderRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TableRenderRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTableRenderRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTableRenderSyntheticRegion: FfiConverterRustBuffer {
+    typealias SwiftType = [TableRenderSyntheticRegion]
+
+    public static func write(_ value: [TableRenderSyntheticRegion], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTableRenderSyntheticRegion.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TableRenderSyntheticRegion] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TableRenderSyntheticRegion]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTableRenderSyntheticRegion.read(from: &buf))
         }
         return seq
     }
@@ -1876,6 +2749,57 @@ fileprivate struct FfiConverterSequenceTypeFfiViewerElement: FfiConverterRustBuf
             seq.append(try FfiConverterTypeFfiViewerElement.read(from: &buf))
         }
         return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceOptionUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = [UInt32?]
+
+    public static func write(_ value: [UInt32?], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterOptionUInt32.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UInt32?] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UInt32?]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterOptionUInt32.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryStringString: FfiConverterRustBuffer {
+    public static func write(_ value: [String: String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterString.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: String] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: String]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterString.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
     }
 }
 /**
@@ -2363,6 +3287,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_editor_core_checksum_method_viewercompileddocument_semantic_key() != 2241) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_editor_core_checksum_method_viewercompileddocument_table_attributes() != 60903) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_editor_core_checksum_method_viewercompileddocument_table_records() != 27911) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_editor_core_checksum_method_viewercompileddocument_trailing_empty_text_block_count() != 11698) {

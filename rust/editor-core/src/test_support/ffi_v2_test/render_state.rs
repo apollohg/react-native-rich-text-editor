@@ -21,6 +21,64 @@ const FIXTURE_MULTI_BLOCK: &str = r#"{"type":"doc","content":[{"type":"paragraph
 const ORDERED_LIST_START_MISSING: &str = r#"{"type":"doc","content":[{"type":"orderedList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}"#;
 const ORDERED_LIST_START_NULL: &str = r#"{"type":"doc","content":[{"type":"orderedList","attrs":{"start":null},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}"#;
 
+#[test]
+fn semantic_table_render_read_is_session_pure_and_matches_viewer_flat_records() {
+    let schema_json = crate::tables::tests::tabled_schema_json(crate::tables::tests::PROSEMIRROR_TABLE_NAMES);
+    let schema = crate::schema::Schema::from_json(&schema_json).unwrap();
+    let source = json!({ "type": "doc", "content": [{
+        "type": "table", "content": [{ "type": "table_row", "content": [
+            { "type": "table_header", "attrs": { "colspan": 2 }, "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "header" }] }] },
+            { "type": "table_cell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "body" }] }] }
+        ] }]
+    }] });
+    let source_engine = YrsDocumentEngine::new(YrsEngineConfig {
+        schema,
+        fragment_name: FRAGMENT_NAME.into(),
+        initialization_mode: InitializationMode::LocalEmpty,
+        resource_limits: ResourceLimits::default(),
+        editing_limits: EditingLimits::default(),
+        max_length: None,
+        scope: Some(DocumentScope { document_id: DOCUMENT_ID.into(), lineage_id: LINEAGE_ID.into() }),
+    }).unwrap();
+    let mut source_engine = source_engine;
+    source_engine.import_json(&source.to_string(), TransactionOrigin::DocumentImport).unwrap();
+    let snapshot = source_engine.export_snapshot().unwrap();
+    let mut config = room_config(Some(&snapshot));
+    config["schema"] = schema_json.clone();
+    let id = create_handle_with_state(config, Some(snapshot.encoded_state));
+    let state_before = state_of(&id);
+    let outbox_before = crate::native_bridge_test_support::outbox_pending(id.parse().unwrap()).unwrap();
+    assert_eq!(outbox_before, Some((0, 0)));
+
+    let editor = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    let repeated = ok_json(&v2_render::editor_v2_render_update(id.clone(), None, None));
+    assert_eq!(editor, repeated);
+    assert_eq!(state_of(&id), state_before, "render reads must not mutate document or history state");
+    assert_eq!(crate::native_bridge_test_support::outbox_pending(id.parse().unwrap()).unwrap(), outbox_before,
+        "render reads must not enqueue outgoing document updates");
+
+    let viewer = crate::viewer::viewer_compile(crate::viewer::FfiViewerCompileRequest {
+        source_kind: crate::viewer::FfiViewerSourceKind::Json,
+        source: source.to_string(),
+        config_json: json!({ "schema": schema_json, "initialization": { "type": "localEmpty" } }).to_string(),
+        images_enabled: true,
+        mention_prefix: None,
+    }).value.unwrap();
+    let editor_records = editor["tableRecords"].as_object().unwrap();
+    let viewer_records = viewer.table_records();
+    assert_eq!(editor_records.len(), viewer_records.len());
+    assert_eq!(editor["tableAttributes"].as_object().unwrap().len(), viewer.table_attributes().len());
+    let root_id = editor["renderBlocks"][0][0]["tableId"].as_str().unwrap();
+    assert_eq!(root_id, viewer.elements().iter().find_map(|element| match element {
+        crate::viewer::FfiViewerElement::Table { table_id } => Some(table_id.as_str()), _ => None,
+    }).unwrap());
+    let record = &viewer_records[0];
+    assert_eq!(editor_records[root_id]["tablePos"], json!(record.table_pos));
+    assert_eq!(editor_records[root_id]["sourceEnd"], json!(record.source_end));
+    assert_eq!(editor_records[root_id]["cells"].as_array().unwrap().len(), record.cells.len());
+    destroy_handle(&id);
+}
+
 fn ordered_list_document_with_start(start: Value, labels: &[&str]) -> String {
     let items = labels
         .iter()

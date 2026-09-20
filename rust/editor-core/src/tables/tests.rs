@@ -68,7 +68,7 @@ fn schema_json(nodes: Vec<serde_json::Value>) -> serde_json::Value {
     json!({ "nodes": nodes, "marks": [] })
 }
 
-fn tabled_schema_json(names: [&str; 4]) -> serde_json::Value {
+pub(crate) fn tabled_schema_json(names: [&str; 4]) -> serde_json::Value {
     let [_, _, cell, header] = names;
     let mut nodes = base_nodes();
     nodes.extend(table_nodes(names, &format!("({cell} | {header})*")));

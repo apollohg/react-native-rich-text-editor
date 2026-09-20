@@ -8,7 +8,25 @@ internal fun EditorV2Adapter.adopt(
     stripViewSelection: Boolean,
     engineOwnedSelection: Boolean,
     resolvedPositionEpoch: String? = snapshot.positionEpoch
-): String {
+): String? {
+    fun blocks(value: JSONArray): List<List<Any?>> = (0 until value.length()).map { index ->
+        val block = value.getJSONArray(index)
+        (0 until block.length()).map { block.opt(it) }
+    }
+    var candidate = snapshot.renderObject.optJSONArray("renderBlocks")?.let(::blocks)
+    if (candidate == null) {
+        val patch = snapshot.renderObject.optJSONObject("renderPatch") ?: return null
+        val retained = cachedSemanticRenderBlocks
+        val start = patch.optLong("startIndex", -1)
+        val delete = patch.optLong("deleteCount", -1)
+        if (retained != null && patch.optString("baseDocumentVersion").toULongOrNull() == cachedAtomicRenderDocumentRevision &&
+            start >= 0 && delete >= 0 && start + delete <= retained.size) {
+            candidate = retained.take(start.toInt()) + blocks(patch.getJSONArray("renderBlocks")) + retained.drop((start + delete).toInt())
+        } else if (snapshot.renderObject.has("tableAttributes") || snapshot.renderObject.has("tableRecords") || cachedTableAttributes.isNotEmpty() || cachedTableRecords.isNotEmpty()) {
+            return null
+        }
+    }
+    if (candidate != null && !validSemanticRenderElements(candidate.flatten(), snapshot.tableAttributes, snapshot.tableRecords)) return null
     val update = JSONObject(snapshot.viewUpdateJson)
     if (stripViewSelection) update.remove("selection")
     val updateJson = update.toString()
@@ -23,6 +41,9 @@ internal fun EditorV2Adapter.adopt(
     cachedViewUpdateJson = updateJson
     cachedAtomicRenderJson = snapshot.atomicRenderJson
     cachedAtomicRenderDocumentRevision = snapshot.documentRevision
+    cachedSemanticRenderBlocks = candidate
+    cachedTableAttributes = snapshot.tableAttributes
+    cachedTableRecords = snapshot.tableRecords
     if (resolvedPositionEpoch != null) positionEpoch = resolvedPositionEpoch
     return updateJson
 }
@@ -77,7 +98,7 @@ internal fun EditorV2Adapter.refreshInternal(
             snapshot,
             stripViewSelection = stripViewSelection,
             engineOwnedSelection = mirrorSelection == null
-        )
+        ) ?: return null
         if (controlledPropSnapshot) snapshot.atomicRenderJson else viewUpdateJson
     }
 }

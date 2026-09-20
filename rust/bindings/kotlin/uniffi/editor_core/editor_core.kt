@@ -802,6 +802,10 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is
 // rather `InterfaceTooLargeException`, caused by too many methods
@@ -903,6 +907,10 @@ fun uniffi_editor_core_checksum_method_viewercompileddocument_retained_bytes_dec
 ): Short
 fun uniffi_editor_core_checksum_method_viewercompileddocument_semantic_key(
 ): Short
+fun uniffi_editor_core_checksum_method_viewercompileddocument_table_attributes(
+): Short
+fun uniffi_editor_core_checksum_method_viewercompileddocument_table_records(
+): Short
 fun uniffi_editor_core_checksum_method_viewercompileddocument_trailing_empty_text_block_count(
 ): Short
 fun ffi_editor_core_uniffi_contract_version(
@@ -967,6 +975,10 @@ fun uniffi_editor_core_fn_method_viewercompileddocument_preferred_text_block_nam
 fun uniffi_editor_core_fn_method_viewercompileddocument_retained_bytes_decimal(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_method_viewercompileddocument_semantic_key(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+fun uniffi_editor_core_fn_method_viewercompileddocument_table_attributes(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+fun uniffi_editor_core_fn_method_viewercompileddocument_table_records(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_method_viewercompileddocument_trailing_empty_text_block_count(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus,
 ): Int
@@ -1299,6 +1311,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_editor_core_checksum_method_viewercompileddocument_semantic_key() != 2241.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_editor_core_checksum_method_viewercompileddocument_table_attributes() != 60903.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_editor_core_checksum_method_viewercompileddocument_table_records() != 27911.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_editor_core_checksum_method_viewercompileddocument_trailing_empty_text_block_count() != 11698.toShort()) {
@@ -1703,6 +1721,10 @@ public interface ViewerCompiledDocumentInterface {
 
     fun `semanticKey`(): kotlin.String
 
+    fun `tableAttributes`(): Map<kotlin.String, kotlin.String>
+
+    fun `tableRecords`(): List<FfiViewerTable>
+
     fun `trailingEmptyTextBlockCount`(): kotlin.UInt
 
     companion object
@@ -1843,6 +1865,30 @@ open class ViewerCompiledDocument: Disposable, AutoCloseable, ViewerCompiledDocu
     callWithPointer {
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_editor_core_fn_method_viewercompileddocument_semantic_key(
+        it, _status)
+}
+    }
+    )
+    }
+
+
+    override fun `tableAttributes`(): Map<kotlin.String, kotlin.String> {
+            return FfiConverterMapStringString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_editor_core_fn_method_viewercompileddocument_table_attributes(
+        it, _status)
+}
+    }
+    )
+    }
+
+
+    override fun `tableRecords`(): List<FfiViewerTable> {
+            return FfiConverterSequenceTypeFfiViewerTable.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_editor_core_fn_method_viewercompileddocument_table_records(
         it, _status)
 }
     }
@@ -2282,7 +2328,240 @@ public object FfiConverterTypeFfiViewerMark: FfiConverterRustBuffer<FfiViewerMar
 
 
 
+data class FfiViewerTable (
+    var `tablePos`: kotlin.UInt,
+    var `sourceEnd`: kotlin.UInt,
+    var `rows`: kotlin.UInt,
+    var `columns`: kotlin.UInt,
+    var `columnWidths`: List<kotlin.UInt?>,
+    var `direction`: kotlin.String?,
+    var `irregular`: kotlin.Boolean,
+    var `readOnlyDescendants`: kotlin.Boolean,
+    var `attrsKey`: kotlin.String,
+    var `sourceRows`: List<TableRenderRow>,
+    var `cells`: List<FfiViewerTableCell>,
+    var `syntheticRegions`: List<TableRenderSyntheticRegion>,
+    var `failure`: TableRenderFailure?,
+    var `compatibilityDiagnostic`: TableCompatibilityDiagnostic?
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiViewerTable: FfiConverterRustBuffer<FfiViewerTable> {
+    override fun read(buf: ByteBuffer): FfiViewerTable {
+        return FfiViewerTable(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterSequenceOptionalUInt.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeTableRenderRow.read(buf),
+            FfiConverterSequenceTypeFfiViewerTableCell.read(buf),
+            FfiConverterSequenceTypeTableRenderSyntheticRegion.read(buf),
+            FfiConverterOptionalTypeTableRenderFailure.read(buf),
+            FfiConverterOptionalTypeTableCompatibilityDiagnostic.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiViewerTable) = (
+            FfiConverterUInt.allocationSize(value.`tablePos`) +
+            FfiConverterUInt.allocationSize(value.`sourceEnd`) +
+            FfiConverterUInt.allocationSize(value.`rows`) +
+            FfiConverterUInt.allocationSize(value.`columns`) +
+            FfiConverterSequenceOptionalUInt.allocationSize(value.`columnWidths`) +
+            FfiConverterOptionalString.allocationSize(value.`direction`) +
+            FfiConverterBoolean.allocationSize(value.`irregular`) +
+            FfiConverterBoolean.allocationSize(value.`readOnlyDescendants`) +
+            FfiConverterString.allocationSize(value.`attrsKey`) +
+            FfiConverterSequenceTypeTableRenderRow.allocationSize(value.`sourceRows`) +
+            FfiConverterSequenceTypeFfiViewerTableCell.allocationSize(value.`cells`) +
+            FfiConverterSequenceTypeTableRenderSyntheticRegion.allocationSize(value.`syntheticRegions`) +
+            FfiConverterOptionalTypeTableRenderFailure.allocationSize(value.`failure`) +
+            FfiConverterOptionalTypeTableCompatibilityDiagnostic.allocationSize(value.`compatibilityDiagnostic`)
+    )
+
+    override fun write(value: FfiViewerTable, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`tablePos`, buf)
+            FfiConverterUInt.write(value.`sourceEnd`, buf)
+            FfiConverterUInt.write(value.`rows`, buf)
+            FfiConverterUInt.write(value.`columns`, buf)
+            FfiConverterSequenceOptionalUInt.write(value.`columnWidths`, buf)
+            FfiConverterOptionalString.write(value.`direction`, buf)
+            FfiConverterBoolean.write(value.`irregular`, buf)
+            FfiConverterBoolean.write(value.`readOnlyDescendants`, buf)
+            FfiConverterString.write(value.`attrsKey`, buf)
+            FfiConverterSequenceTypeTableRenderRow.write(value.`sourceRows`, buf)
+            FfiConverterSequenceTypeFfiViewerTableCell.write(value.`cells`, buf)
+            FfiConverterSequenceTypeTableRenderSyntheticRegion.write(value.`syntheticRegions`, buf)
+            FfiConverterOptionalTypeTableRenderFailure.write(value.`failure`, buf)
+            FfiConverterOptionalTypeTableCompatibilityDiagnostic.write(value.`compatibilityDiagnostic`, buf)
+    }
+}
+
+
+
+data class FfiViewerTableCell (
+    var `sourcePos`: kotlin.UInt,
+    var `sourceEnd`: kotlin.UInt,
+    var `row`: kotlin.UInt,
+    var `column`: kotlin.UInt,
+    var `rowspan`: kotlin.UInt,
+    var `colspan`: kotlin.UInt,
+    var `header`: kotlin.Boolean,
+    var `attrsKey`: kotlin.String,
+    var `contentKey`: kotlin.String,
+    var `elements`: List<FfiViewerElement>
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiViewerTableCell: FfiConverterRustBuffer<FfiViewerTableCell> {
+    override fun read(buf: ByteBuffer): FfiViewerTableCell {
+        return FfiViewerTableCell(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeFfiViewerElement.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiViewerTableCell) = (
+            FfiConverterUInt.allocationSize(value.`sourcePos`) +
+            FfiConverterUInt.allocationSize(value.`sourceEnd`) +
+            FfiConverterUInt.allocationSize(value.`row`) +
+            FfiConverterUInt.allocationSize(value.`column`) +
+            FfiConverterUInt.allocationSize(value.`rowspan`) +
+            FfiConverterUInt.allocationSize(value.`colspan`) +
+            FfiConverterBoolean.allocationSize(value.`header`) +
+            FfiConverterString.allocationSize(value.`attrsKey`) +
+            FfiConverterString.allocationSize(value.`contentKey`) +
+            FfiConverterSequenceTypeFfiViewerElement.allocationSize(value.`elements`)
+    )
+
+    override fun write(value: FfiViewerTableCell, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`sourcePos`, buf)
+            FfiConverterUInt.write(value.`sourceEnd`, buf)
+            FfiConverterUInt.write(value.`row`, buf)
+            FfiConverterUInt.write(value.`column`, buf)
+            FfiConverterUInt.write(value.`rowspan`, buf)
+            FfiConverterUInt.write(value.`colspan`, buf)
+            FfiConverterBoolean.write(value.`header`, buf)
+            FfiConverterString.write(value.`attrsKey`, buf)
+            FfiConverterString.write(value.`contentKey`, buf)
+            FfiConverterSequenceTypeFfiViewerElement.write(value.`elements`, buf)
+    }
+}
+
+
+
+data class TableRenderRow (
+    var `sourcePos`: kotlin.UInt,
+    var `sourceEnd`: kotlin.UInt,
+    var `attrsKey`: kotlin.String
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTableRenderRow: FfiConverterRustBuffer<TableRenderRow> {
+    override fun read(buf: ByteBuffer): TableRenderRow {
+        return TableRenderRow(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TableRenderRow) = (
+            FfiConverterUInt.allocationSize(value.`sourcePos`) +
+            FfiConverterUInt.allocationSize(value.`sourceEnd`) +
+            FfiConverterString.allocationSize(value.`attrsKey`)
+    )
+
+    override fun write(value: TableRenderRow, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`sourcePos`, buf)
+            FfiConverterUInt.write(value.`sourceEnd`, buf)
+            FfiConverterString.write(value.`attrsKey`, buf)
+    }
+}
+
+
+
+data class TableRenderSyntheticRegion (
+    var `row`: kotlin.UInt,
+    var `column`: kotlin.UInt,
+    var `rowspan`: kotlin.UInt,
+    var `colspan`: kotlin.UInt,
+    var `header`: kotlin.Boolean,
+    var `attrsKey`: kotlin.String
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTableRenderSyntheticRegion: FfiConverterRustBuffer<TableRenderSyntheticRegion> {
+    override fun read(buf: ByteBuffer): TableRenderSyntheticRegion {
+        return TableRenderSyntheticRegion(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TableRenderSyntheticRegion) = (
+            FfiConverterUInt.allocationSize(value.`row`) +
+            FfiConverterUInt.allocationSize(value.`column`) +
+            FfiConverterUInt.allocationSize(value.`rowspan`) +
+            FfiConverterUInt.allocationSize(value.`colspan`) +
+            FfiConverterBoolean.allocationSize(value.`header`) +
+            FfiConverterString.allocationSize(value.`attrsKey`)
+    )
+
+    override fun write(value: TableRenderSyntheticRegion, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`row`, buf)
+            FfiConverterUInt.write(value.`column`, buf)
+            FfiConverterUInt.write(value.`rowspan`, buf)
+            FfiConverterUInt.write(value.`colspan`, buf)
+            FfiConverterBoolean.write(value.`header`, buf)
+            FfiConverterString.write(value.`attrsKey`, buf)
+    }
+}
+
+
+
 sealed class FfiViewerElement {
+
+    data class Table(
+        val `tableId`: kotlin.String) : FfiViewerElement() {
+        companion object
+    }
 
     data class TextRun(
         val `text`: kotlin.String,
@@ -2328,34 +2607,44 @@ sealed class FfiViewerElement {
 public object FfiConverterTypeFfiViewerElement : FfiConverterRustBuffer<FfiViewerElement>{
     override fun read(buf: ByteBuffer): FfiViewerElement {
         return when(buf.getInt()) {
-            1 -> FfiViewerElement.TextRun(
+            1 -> FfiViewerElement.Table(
+                FfiConverterString.read(buf),
+                )
+            2 -> FfiViewerElement.TextRun(
                 FfiConverterString.read(buf),
                 FfiConverterSequenceTypeFfiViewerMark.read(buf),
                 )
-            2 -> FfiViewerElement.InlineAtom(
+            3 -> FfiViewerElement.InlineAtom(
                 FfiConverterString.read(buf),
                 FfiConverterUInt.read(buf),
                 FfiConverterString.read(buf),
                 FfiConverterString.read(buf),
                 )
-            3 -> FfiViewerElement.BlockAtom(
+            4 -> FfiViewerElement.BlockAtom(
                 FfiConverterString.read(buf),
                 FfiConverterUInt.read(buf),
                 FfiConverterString.read(buf),
                 FfiConverterString.read(buf),
                 )
-            4 -> FfiViewerElement.BlockStart(
+            5 -> FfiViewerElement.BlockStart(
                 FfiConverterString.read(buf),
                 FfiConverterOptionalString.read(buf),
                 FfiConverterUShort.read(buf),
                 FfiConverterOptionalString.read(buf),
                 )
-            5 -> FfiViewerElement.BlockEnd
+            6 -> FfiViewerElement.BlockEnd
             else -> throw RuntimeException("invalid enum value, something is very wrong!!")
         }
     }
 
     override fun allocationSize(value: FfiViewerElement) = when(value) {
+        is FfiViewerElement.Table -> {
+            // Add the size for the Int that specifies the variant plus the size needed for all fields
+            (
+                4UL
+                + FfiConverterString.allocationSize(value.`tableId`)
+            )
+        }
         is FfiViewerElement.TextRun -> {
             // Add the size for the Int that specifies the variant plus the size needed for all fields
             (
@@ -2404,21 +2693,18 @@ public object FfiConverterTypeFfiViewerElement : FfiConverterRustBuffer<FfiViewe
 
     override fun write(value: FfiViewerElement, buf: ByteBuffer) {
         when(value) {
-            is FfiViewerElement.TextRun -> {
+            is FfiViewerElement.Table -> {
                 buf.putInt(1)
+                FfiConverterString.write(value.`tableId`, buf)
+                Unit
+            }
+            is FfiViewerElement.TextRun -> {
+                buf.putInt(2)
                 FfiConverterString.write(value.`text`, buf)
                 FfiConverterSequenceTypeFfiViewerMark.write(value.`marks`, buf)
                 Unit
             }
             is FfiViewerElement.InlineAtom -> {
-                buf.putInt(2)
-                FfiConverterString.write(value.`nodeType`, buf)
-                FfiConverterUInt.write(value.`docPos`, buf)
-                FfiConverterString.write(value.`attrsJson`, buf)
-                FfiConverterString.write(value.`label`, buf)
-                Unit
-            }
-            is FfiViewerElement.BlockAtom -> {
                 buf.putInt(3)
                 FfiConverterString.write(value.`nodeType`, buf)
                 FfiConverterUInt.write(value.`docPos`, buf)
@@ -2426,8 +2712,16 @@ public object FfiConverterTypeFfiViewerElement : FfiConverterRustBuffer<FfiViewe
                 FfiConverterString.write(value.`label`, buf)
                 Unit
             }
-            is FfiViewerElement.BlockStart -> {
+            is FfiViewerElement.BlockAtom -> {
                 buf.putInt(4)
+                FfiConverterString.write(value.`nodeType`, buf)
+                FfiConverterUInt.write(value.`docPos`, buf)
+                FfiConverterString.write(value.`attrsJson`, buf)
+                FfiConverterString.write(value.`label`, buf)
+                Unit
+            }
+            is FfiViewerElement.BlockStart -> {
+                buf.putInt(5)
                 FfiConverterString.write(value.`nodeType`, buf)
                 FfiConverterOptionalString.write(value.`language`, buf)
                 FfiConverterUShort.write(value.`depth`, buf)
@@ -2435,7 +2729,7 @@ public object FfiConverterTypeFfiViewerElement : FfiConverterRustBuffer<FfiViewe
                 Unit
             }
             is FfiViewerElement.BlockEnd -> {
-                buf.putInt(5)
+                buf.putInt(6)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -2468,6 +2762,77 @@ public object FfiConverterTypeFfiViewerSourceKind: FfiConverterRustBuffer<FfiVie
     override fun allocationSize(value: FfiViewerSourceKind) = 4UL
 
     override fun write(value: FfiViewerSourceKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class TableCompatibilityDiagnostic {
+
+    VIRTUAL_GRID_LIMIT,
+    EMPTY_REFERENCE_SURFACE,
+    UNSUPPORTED_ROW_ROLE,
+    UNSUPPORTED_CELL_ROLE,
+    AMBIGUOUS_SOURCE_MAP,
+    UNSUPPORTED_GAP_DEFAULT,
+    OVERLAPPING_REFERENCE_CELLS,
+    UNMAPPED_REFERENCE_CELL,
+    NONRECTANGULAR_REFERENCE_CELL,
+    ZERO_SPAN_AFTER_REFERENCE_PASS;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTableCompatibilityDiagnostic: FfiConverterRustBuffer<TableCompatibilityDiagnostic> {
+    override fun read(buf: ByteBuffer) = try {
+        TableCompatibilityDiagnostic.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: TableCompatibilityDiagnostic) = 4UL
+
+    override fun write(value: TableCompatibilityDiagnostic, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
+
+enum class TableRenderFailure {
+
+    GRID_LIMIT,
+    WORK_LIMIT,
+    ALLOCATION,
+    INVALID_STRUCTURE,
+    INVALID_ATTRIBUTES;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTableRenderFailure: FfiConverterRustBuffer<TableRenderFailure> {
+    override fun read(buf: ByteBuffer) = try {
+        TableRenderFailure.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: TableRenderFailure) = 4UL
+
+    override fun write(value: TableRenderFailure, buf: ByteBuffer) {
         buf.putInt(value.ordinal + 1)
     }
 }
@@ -2736,6 +3101,70 @@ public object FfiConverterOptionalTypeFfiSnapshotExport: FfiConverterRustBuffer<
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeTableCompatibilityDiagnostic: FfiConverterRustBuffer<TableCompatibilityDiagnostic?> {
+    override fun read(buf: ByteBuffer): TableCompatibilityDiagnostic? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeTableCompatibilityDiagnostic.read(buf)
+    }
+
+    override fun allocationSize(value: TableCompatibilityDiagnostic?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeTableCompatibilityDiagnostic.allocationSize(value)
+        }
+    }
+
+    override fun write(value: TableCompatibilityDiagnostic?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeTableCompatibilityDiagnostic.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeTableRenderFailure: FfiConverterRustBuffer<TableRenderFailure?> {
+    override fun read(buf: ByteBuffer): TableRenderFailure? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeTableRenderFailure.read(buf)
+    }
+
+    override fun allocationSize(value: TableRenderFailure?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeTableRenderFailure.allocationSize(value)
+        }
+    }
+
+    override fun write(value: TableRenderFailure?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeTableRenderFailure.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeFfiViewerMark: FfiConverterRustBuffer<List<FfiViewerMark>> {
     override fun read(buf: ByteBuffer): List<FfiViewerMark> {
         val len = buf.getInt()
@@ -2764,6 +3193,118 @@ public object FfiConverterSequenceTypeFfiViewerMark: FfiConverterRustBuffer<List
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeFfiViewerTable: FfiConverterRustBuffer<List<FfiViewerTable>> {
+    override fun read(buf: ByteBuffer): List<FfiViewerTable> {
+        val len = buf.getInt()
+        return List<FfiViewerTable>(len) {
+            FfiConverterTypeFfiViewerTable.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiViewerTable>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiViewerTable.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiViewerTable>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiViewerTable.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiViewerTableCell: FfiConverterRustBuffer<List<FfiViewerTableCell>> {
+    override fun read(buf: ByteBuffer): List<FfiViewerTableCell> {
+        val len = buf.getInt()
+        return List<FfiViewerTableCell>(len) {
+            FfiConverterTypeFfiViewerTableCell.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiViewerTableCell>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiViewerTableCell.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiViewerTableCell>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiViewerTableCell.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeTableRenderRow: FfiConverterRustBuffer<List<TableRenderRow>> {
+    override fun read(buf: ByteBuffer): List<TableRenderRow> {
+        val len = buf.getInt()
+        return List<TableRenderRow>(len) {
+            FfiConverterTypeTableRenderRow.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<TableRenderRow>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeTableRenderRow.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<TableRenderRow>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeTableRenderRow.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeTableRenderSyntheticRegion: FfiConverterRustBuffer<List<TableRenderSyntheticRegion>> {
+    override fun read(buf: ByteBuffer): List<TableRenderSyntheticRegion> {
+        val len = buf.getInt()
+        return List<TableRenderSyntheticRegion>(len) {
+            FfiConverterTypeTableRenderSyntheticRegion.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<TableRenderSyntheticRegion>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeTableRenderSyntheticRegion.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<TableRenderSyntheticRegion>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeTableRenderSyntheticRegion.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeFfiViewerElement: FfiConverterRustBuffer<List<FfiViewerElement>> {
     override fun read(buf: ByteBuffer): List<FfiViewerElement> {
         val len = buf.getInt()
@@ -2782,6 +3323,73 @@ public object FfiConverterSequenceTypeFfiViewerElement: FfiConverterRustBuffer<L
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeFfiViewerElement.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceOptionalUInt: FfiConverterRustBuffer<List<kotlin.UInt?>> {
+    override fun read(buf: ByteBuffer): List<kotlin.UInt?> {
+        val len = buf.getInt()
+        return List<kotlin.UInt?>(len) {
+            FfiConverterOptionalUInt.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.UInt?>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterOptionalUInt.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.UInt?>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterOptionalUInt.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.String, kotlin.String>> {
+    override fun read(buf: ByteBuffer): Map<kotlin.String, kotlin.String> {
+        val len = buf.getInt()
+        return buildMap<kotlin.String, kotlin.String>(len) {
+            repeat(len) {
+                val k = FfiConverterString.read(buf)
+                val v = FfiConverterString.read(buf)
+                this[k] = v
+            }
+        }
+    }
+
+    override fun allocationSize(value: Map<kotlin.String, kotlin.String>): ULong {
+        val spaceForMapSize = 4UL
+        val spaceForChildren = value.map { (k, v) ->
+            FfiConverterString.allocationSize(k) +
+            FfiConverterString.allocationSize(v)
+        }.sum()
+        return spaceForMapSize + spaceForChildren
+    }
+
+    override fun write(value: Map<kotlin.String, kotlin.String>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        // The parens on `(k, v)` here ensure we're calling the right method,
+        // which is important for compatibility with older android devices.
+        // Ref https://blog.danlew.net/2017/03/16/kotlin-puzzler-whose-line-is-it-anyways/
+        value.forEach { (k, v) ->
+            FfiConverterString.write(k, buf)
+            FfiConverterString.write(v, buf)
         }
     }
 }

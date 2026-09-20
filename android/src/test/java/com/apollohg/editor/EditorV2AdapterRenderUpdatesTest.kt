@@ -17,6 +17,49 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
     @Test
+    fun `semantic table admission rejects malformed patches atomically`() {
+        val adapter = makeAdapter()
+        val attrsKey = "a".repeat(64)
+        val snapshot = JSONObject(atomicRenderSnapshot("base", "1"))
+        val table = JSONObject("""{
+            "tablePos":0,"sourceEnd":10,"rows":1,"columns":1,"columnWidths":[null],
+            "direction":null,"irregular":false,"readOnlyDescendants":false,"attrsKey":"$attrsKey",
+            "sourceRows":[{"sourcePos":1,"sourceEnd":9,"attrsKey":"$attrsKey"}],
+            "syntheticRegions":[],"failure":null,"compatibilityDiagnostic":null,
+            "cells":[{"sourcePos":2,"sourceEnd":8,"row":0,"column":0,"rowspan":1,"colspan":1,
+                "header":false,"attrsKey":"$attrsKey","contentKey":"same",
+                "elements":[{"type":"textRun","text":"base","marks":[]}]}]
+        }""")
+        fun blocks(value: JSONObject) = org.json.JSONArray().put(org.json.JSONArray().put(JSONObject().put("type", "table").put("tableId", "t0")))
+        snapshot.put("renderBlocks", blocks(table))
+        snapshot.put("tableAttributes", JSONObject().put(attrsKey, "{}"))
+        snapshot.put("tableRecords", JSONObject().put("t0", table))
+        assertNotNull(adoptExternalRender(adapter, snapshot.toString()))
+        val retainedNoop = JSONObject(snapshot.toString()).put("renderBlocks", JSONObject.NULL).put("renderPatch", JSONObject().put("baseDocumentVersion", "1")
+            .put("startIndex", 0).put("deleteCount", 0).put("renderBlocks", org.json.JSONArray()))
+        assertNotNull(adoptExternalRender(adapter, retainedNoop.toString()))
+        val baseline = adapter.baseDocumentRevision
+        val baselineJson = adapter.cachedAtomicRenderJson
+        val missingRetainedReference = JSONObject(snapshot.toString()).put("renderBlocks", JSONObject.NULL)
+            .put("tableAttributes", JSONObject()).put("renderPatch", JSONObject().put("baseDocumentVersion", "1")
+                .put("startIndex", 0).put("deleteCount", 0).put("renderBlocks", org.json.JSONArray()))
+        assertNull(adoptExternalRender(adapter, missingRetainedReference.toString()))
+        assertEquals(baselineJson, adapter.cachedAtomicRenderJson)
+        for (field in listOf("failure", "compatibilityDiagnostic", "columns", "attrsJson")) {
+            val changed = JSONObject(table.toString()).put(field, when (field) {
+                "columns" -> 0
+                "attrsJson" -> "{\"width\":1e309}"
+                else -> "unknown"
+            })
+            val patch = JSONObject(snapshot.toString()).put("renderBlocks", JSONObject.NULL).put("tableRecords", JSONObject().put("t0", changed)).put("renderPatch",
+                JSONObject().put("baseDocumentVersion", "1").put("startIndex", 0).put("deleteCount", 1).put("renderBlocks", blocks(changed)))
+            assertNull(adoptExternalRender(adapter, patch.toString()))
+            assertEquals(baseline, adapter.baseDocumentRevision)
+            assertEquals(baselineJson, adapter.cachedAtomicRenderJson)
+        }
+    }
+
+    @Test
     fun `atomic render validation accepts an exclusive render patch`() {
         val adapter = makeAdapter()
         val snapshot = JSONObject(atomicRenderSnapshot("base", "1"))

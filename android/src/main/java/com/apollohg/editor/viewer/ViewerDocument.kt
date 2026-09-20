@@ -7,6 +7,8 @@ import java.security.MessageDigest
 import org.json.JSONObject
 import uniffi.editor_core.FfiViewerCompileRequest
 import uniffi.editor_core.FfiViewerElement
+import uniffi.editor_core.FfiViewerTable
+import com.apollohg.editor.parseTableAttributes
 import uniffi.editor_core.FfiViewerMark
 import uniffi.editor_core.FfiViewerSourceKind
 import uniffi.editor_core.viewerCompile
@@ -73,7 +75,8 @@ internal data class ViewerBlock(
     val outermostListItemIsLast: Boolean = false,
     val isBlockAtom: Boolean = false,
     val containers: List<ViewerContainerAncestor> = emptyList(),
-    val language: String? = null
+    val language: String? = null,
+    val table: FfiViewerTable? = null
 )
 
 /** Semantic positions live only in [ViewerInline.Atom], never in Android drawing spans. */
@@ -82,7 +85,8 @@ internal data class ViewerDocument(
     val blocks: List<ViewerBlock>,
     val isEmpty: Boolean,
     val retainedBytes: Long,
-    val trailingEmptyTextBlockCount: Int = 0
+    val trailingEmptyTextBlockCount: Int = 0,
+    val tableAttributes: Map<String, JSONObject> = emptyMap()
 )
 
 internal data class ProseViewerRequest(
@@ -137,6 +141,62 @@ internal data class ProseViewerRequest(
 }
 
 internal typealias DocumentCompiler = (ProseViewerRequest) -> ViewerDocument
+
+private fun validViewerTables(elements: List<FfiViewerElement>, tableRecords: Map<String, FfiViewerTable>, pool: Map<String, JSONObject>): Boolean {
+    data class Pending(val element: FfiViewerElement, val depth: Int, val start: Long, val end: Long)
+    val pending = java.util.ArrayDeque<Pending>()
+    elements.forEach { pending.add(Pending(it, 0, 0, 0xffff_ffffL)) }
+    var records = 0L
+    var slots = 0L
+    val referenced = mutableSetOf<String>()
+    while (pending.isNotEmpty()) {
+        val entry = pending.removeLast()
+        if (++records + pending.size > 7_000_000 || entry.depth > 1024) return false
+        val tableId = (entry.element as? FfiViewerElement.Table)?.tableId ?: continue
+        if (!referenced.add(tableId)) return false
+        val table = tableRecords[tableId] ?: return false
+        val rows = table.rows.toLong()
+        val columns = table.columns.toLong()
+        if (rows > 4_000_000 || columns > 4_000_000) return false
+        slots += rows * columns
+        if (slots > 4_000_000 || table.tablePos.toLong() < entry.start || table.sourceEnd.toLong() > entry.end ||
+            table.sourceEnd <= table.tablePos || table.columnWidths.size.toLong() != columns ||
+            table.columnWidths.any { it == 0u } || table.direction !in listOf(null, "ltr", "rtl") ||
+            table.readOnlyDescendants != (entry.depth > 0) || !pool.containsKey(table.attrsKey)) return false
+        if (table.failure != null) {
+            if (rows != 0L || columns != 0L || table.cells.isNotEmpty() || table.sourceRows.isNotEmpty() ||
+                table.syntheticRegions.isNotEmpty() || table.compatibilityDiagnostic != null) return false
+            continue
+        }
+        records += table.cells.size + table.sourceRows.size + table.syntheticRegions.size
+        if (records > 7_000_000) return false
+        var previous = table.tablePos.toLong() + 1
+        for (row in table.sourceRows) {
+            if (row.sourcePos.toLong() < previous || row.sourceEnd <= row.sourcePos || row.sourceEnd >= table.sourceEnd || !pool.containsKey(row.attrsKey)) return false
+            previous = row.sourceEnd.toLong()
+        }
+        val occupied = mutableSetOf<Long>()
+        fun region(row: UInt, column: UInt, rowspan: UInt, colspan: UInt, key: String): Boolean {
+            if (rowspan == 0u || colspan == 0u || row.toLong() + rowspan.toLong() > rows || column.toLong() + colspan.toLong() > columns || !pool.containsKey(key)) return false
+            for (r in row.toLong() until row.toLong() + rowspan.toLong()) for (c in column.toLong() until column.toLong() + colspan.toLong()) {
+                if (!occupied.add(r * columns + c)) return false
+            }
+            return true
+        }
+        previous = table.tablePos.toLong() + 1
+        var rowIndex = 0
+        for (cell in table.cells) {
+            if (!region(cell.row, cell.column, cell.rowspan, cell.colspan, cell.attrsKey) || cell.sourcePos.toLong() < previous || cell.sourceEnd <= cell.sourcePos || cell.contentKey.isEmpty()) return false
+            while (rowIndex < table.sourceRows.size && table.sourceRows[rowIndex].sourceEnd <= cell.sourcePos) rowIndex++
+            val row = table.sourceRows.getOrNull(rowIndex) ?: return false
+            if (row.sourcePos >= cell.sourcePos || row.sourceEnd <= cell.sourceEnd) return false
+            previous = cell.sourceEnd.toLong()
+            cell.elements.forEach { pending.add(Pending(it, entry.depth + 1, cell.sourcePos.toLong() + 1, cell.sourceEnd.toLong() - 1)) }
+        }
+        for (gap in table.syntheticRegions) if (!region(gap.row, gap.column, gap.rowspan, gap.colspan, gap.attrsKey)) return false
+    }
+    return referenced == tableRecords.keys
+}
 
 internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
     val result = viewerCompile(
@@ -207,7 +267,8 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
             depth: Int,
             inlines: List<ViewerInline>,
             ancestors: List<Builder>,
-            isBlockAtom: Boolean = false
+            isBlockAtom: Boolean = false,
+            table: FfiViewerTable? = null
         ) {
             val itemAncestors = listItemAncestors(ancestors)
             rendered += ViewerBlock(
@@ -218,6 +279,7 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
                 listItemBoundary = null,
                 inlines = inlines,
                 isBlockAtom = isBlockAtom,
+                table = table,
                 language = ancestors.lastOrNull()?.language,
                 containers = ancestors.filter {
                     it.nodeType in CONTAINER_BLOCKS &&
@@ -237,8 +299,21 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
             }
         }
 
-        compiled.elements().forEach { element ->
+        val compiledElements = compiled.elements()
+        val tableRecords = mutableMapOf<String, FfiViewerTable>()
+        for (record in compiled.tableRecords()) {
+            val previous = tableRecords.put("t${record.tablePos}", record)
+            if (previous != null) {
+                throw ProseViewerError.compiler("viewer", "INVALID_TABLE_RECORD", "The compiler returned duplicate semantic table records.")
+            }
+        }
+        val tableAttributes = parseTableAttributes(JSONObject(compiled.tableAttributes()))
+        if (tableAttributes == null || !validViewerTables(compiledElements, tableRecords, tableAttributes)) {
+            throw ProseViewerError.compiler("viewer", "INVALID_TABLE_RECORD", "The compiler returned an invalid semantic record.")
+        }
+        compiledElements.forEach { element ->
             when (element) {
+                is FfiViewerElement.Table -> appendLeaf("table", stack.lastOrNull()?.depth ?: 0, emptyList(), stack, true, tableRecords[element.tableId] ?: throw ProseViewerError.compiler("viewer", "INVALID_TABLE_RECORD", "The compiler returned a dangling semantic table reference."))
                 is FfiViewerElement.BlockStart -> {
                     val context = listContext(element.listContextJson)
                     if (context?.isFirst == true) {
@@ -390,7 +465,8 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
             blocks = fallback,
             isEmpty = compiled.isEmpty(),
             retainedBytes = compiled.retainedBytesDecimal().toLongOrNull() ?: 0,
-            trailingEmptyTextBlockCount = compiled.trailingEmptyTextBlockCount().toInt()
+            trailingEmptyTextBlockCount = compiled.trailingEmptyTextBlockCount().toInt(),
+            tableAttributes = tableAttributes
         )
     } finally {
         result.destroy()

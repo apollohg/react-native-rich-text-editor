@@ -23,6 +23,15 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class PreparedProseRenderingTest {
     @Test
+    fun `compiler backed nested tables retain flat records`() {
+        val source = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]}]}]}]}]}"""
+        val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"class":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
+        val outer = compileSource(source, config).blocks.single().table
+        assertNotNull(outer)
+        assertEquals(1, requireNotNull(outer).cells.size)
+    }
+
+    @Test
     fun `fixed density compiler edge fixture has exact nested bidi geometry`() {
         val document = compile(Fixture.finalAndroidEdge)
         val first = prepare(document)

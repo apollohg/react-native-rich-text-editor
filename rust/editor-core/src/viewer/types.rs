@@ -25,6 +25,9 @@ pub struct FfiViewerMark {
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum FfiViewerElement {
+    Table {
+        table_id: String,
+    },
     TextRun {
         text: String,
         marks: Vec<FfiViewerMark>,
@@ -50,10 +53,44 @@ pub enum FfiViewerElement {
     BlockEnd,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiViewerTableCell {
+    pub source_pos: u32,
+    pub source_end: u32,
+    pub row: u32,
+    pub column: u32,
+    pub rowspan: u32,
+    pub colspan: u32,
+    pub header: bool,
+    pub attrs_key: String,
+    pub content_key: String,
+    pub elements: Vec<FfiViewerElement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiViewerTable {
+    pub table_pos: u32,
+    pub source_end: u32,
+    pub rows: u32,
+    pub columns: u32,
+    pub column_widths: Vec<Option<u32>>,
+    pub direction: Option<String>,
+    pub irregular: bool,
+    pub read_only_descendants: bool,
+    pub attrs_key: String,
+    pub source_rows: Vec<crate::tables::render::TableRenderRow>,
+    pub cells: Vec<FfiViewerTableCell>,
+    pub synthetic_regions: Vec<crate::tables::render::TableRenderSyntheticRegion>,
+    pub failure: Option<crate::tables::render::TableRenderFailure>,
+    pub compatibility_diagnostic: Option<crate::tables::render::TableCompatibilityDiagnostic>,
+}
+
 #[derive(uniffi::Object)]
 pub struct ViewerCompiledDocument {
+    pub(crate) table_attributes: std::collections::HashMap<String, String>,
     pub(crate) semantic_key: String,
     pub(crate) elements: Vec<FfiViewerElement>,
+    pub(crate) table_records: Vec<FfiViewerTable>,
     pub(crate) is_empty: bool,
     pub(crate) preferred_text_block_name: String,
     pub(crate) trailing_empty_text_block_count: u32,
@@ -62,12 +99,20 @@ pub struct ViewerCompiledDocument {
 
 #[uniffi::export]
 impl ViewerCompiledDocument {
+    pub fn table_attributes(&self) -> std::collections::HashMap<String, String> {
+        self.table_attributes.clone()
+    }
+
     pub fn semantic_key(&self) -> String {
         self.semantic_key.clone()
     }
 
     pub fn elements(&self) -> Vec<FfiViewerElement> {
         self.elements.clone()
+    }
+
+    pub fn table_records(&self) -> Vec<FfiViewerTable> {
+        self.table_records.clone()
     }
 
     pub fn is_empty(&self) -> bool {

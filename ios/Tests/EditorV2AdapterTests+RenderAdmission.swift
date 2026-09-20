@@ -2,6 +2,60 @@ import UIKit
 import XCTest
 
 extension EditorV2AdapterTests {
+    func testSemanticTableAdmissionRetainsSnapshotOnMalformedPatch() throws {
+        let adapter = makeAdapter()
+        let attrsKey = String(repeating: "a", count: 64)
+        _ = adapter.setContentHtml("<p>base</p>")
+        let raw = try XCTUnwrap(editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value)
+        let table: [String: Any] = [
+            "tablePos": 0, "sourceEnd": 10, "rows": 1, "columns": 1,
+            "columnWidths": [NSNull()], "direction": NSNull(), "irregular": false,
+            "readOnlyDescendants": false, "attrsKey": attrsKey,
+            "sourceRows": [["sourcePos": 1, "sourceEnd": 9, "attrsKey": attrsKey]],
+            "syntheticRegions": [], "failure": NSNull(), "compatibilityDiagnostic": NSNull(),
+            "cells": [["sourcePos": 2, "sourceEnd": 8, "row": 0, "column": 0,
+                       "rowspan": 1, "colspan": 1, "header": false, "attrsKey": attrsKey,
+                       "contentKey": "same", "elements": [["type": "textRun", "text": "base", "marks": []]]]]
+        ]
+        let valid = mutatedObjectJSON(raw) {
+            $0["renderBlocks"] = [[ ["type": "table", "tableId": "t0"] ]]
+            $0["tableAttributes"] = [attrsKey: "{}"]
+            $0["tableRecords"] = ["t0": table]
+        }
+        let pool = try XCTUnwrap(EditorV2Adapter.parseTableAttributes([attrsKey: "{}"]))
+        XCTAssertTrue(EditorV2Adapter.validSemanticRenderElements([["type": "table", "tableId": "t0"]], tableAttributes: pool, tableRecords: ["t0": table]))
+        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(valid))
+        XCTAssertNotNil(adapter.adoptExternalRender(valid))
+        let retainedNoop = mutatedObjectJSON(valid) {
+            $0["renderBlocks"] = NSNull()
+            $0["renderPatch"] = ["baseDocumentVersion": $0["documentVersion"]!, "startIndex": 0,
+                "deleteCount": 0, "renderBlocks": []]
+        }
+        XCTAssertNotNil(adapter.adoptExternalRender(retainedNoop))
+        let baseline = adapter.cacheStateForTesting
+        let missingRetainedReference = mutatedObjectJSON(valid) {
+            $0["renderBlocks"] = NSNull()
+            $0["tableAttributes"] = [String: String]()
+            $0["renderPatch"] = ["baseDocumentVersion": $0["documentVersion"]!, "startIndex": 0,
+                "deleteCount": 0, "renderBlocks": []]
+        }
+        XCTAssertNil(adapter.adoptExternalRender(missingRetainedReference))
+        XCTAssertEqual(adapter.cacheStateForTesting, baseline)
+        for invalid in ["failure", "compatibilityDiagnostic", "columns", "attrsJson"] {
+            var changed = table
+            changed[invalid] = invalid == "columns" ? 0 : invalid == "attrsJson" ? "{\"width\":1e309}" : "unknown"
+            let patch = mutatedObjectJSON(raw) { object in
+                object["renderBlocks"] = NSNull()
+                object["tableAttributes"] = [attrsKey: "{}"]
+                object["tableRecords"] = ["t0": changed]
+                object["renderPatch"] = ["baseDocumentVersion": object["documentVersion"]!, "startIndex": 0,
+                    "deleteCount": 1, "renderBlocks": [[ ["type": "table", "tableId": "t0"] ]]]
+            }
+            XCTAssertNil(adapter.adoptExternalRender(patch), invalid)
+            XCTAssertEqual(adapter.cacheStateForTesting, baseline, invalid)
+        }
+    }
+
     func testRevisionMismatchRefusesSelectionRelativeInputWithoutReplay() {
         let adapter = makeAdapter()
         _ = adapter.setContentHtml("<p>base</p>")

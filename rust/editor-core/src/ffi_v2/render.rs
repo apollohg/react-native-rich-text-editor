@@ -146,6 +146,10 @@ fn pause_render_snapshot_for_test(_: &str) {}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AtomicRenderSnapshot {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    table_attributes: Option<std::collections::BTreeMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    table_records: Option<std::collections::BTreeMap<String, Value>>,
     render_blocks: Value,
     render_patch: Value,
     selection: Value,
@@ -379,6 +383,13 @@ fn render_snapshot_json(
     let document_is_empty = crate::editor_state::document_is_empty(document, &schema);
 
     let document_version = engine.revision();
+    let mut table_records = std::collections::BTreeMap::new();
+    // Patches carry the complete current table pool, including retained blocks.
+    let _ = serialize_render_blocks(
+        &current_render_blocks.materialize(),
+        &atom_ids,
+        &mut table_records,
+    );
     let (render_blocks, render_patch) = match previous_native_render {
         Some(previous) if previous.document_revision == document_version => (
             Value::Null,
@@ -390,6 +401,7 @@ fn render_snapshot_json(
                 },
                 &atom_ids,
                 previous.document_revision,
+                &mut table_records,
             ),
         ),
         Some(previous) if previous.document_revision < document_version => {
@@ -399,7 +411,12 @@ fn render_snapshot_json(
             {
                 crate::render::incremental::CachedRenderTransitionUpdate::Patch(patch) => (
                     Value::Null,
-                    serialize_render_patch(&patch, &atom_ids, previous.document_revision),
+                    serialize_render_patch(
+                        &patch,
+                        &atom_ids,
+                        previous.document_revision,
+                        &mut table_records,
+                    ),
                 ),
                 crate::render::incremental::CachedRenderTransitionUpdate::None => (
                     Value::Null,
@@ -411,19 +428,33 @@ fn render_snapshot_json(
                         },
                         &atom_ids,
                         previous.document_revision,
+                        &mut table_records,
                     ),
                 ),
-                crate::render::incremental::CachedRenderTransitionUpdate::Full(blocks) => {
-                    (serialize_render_blocks(&blocks, &atom_ids), Value::Null)
-                }
+                crate::render::incremental::CachedRenderTransitionUpdate::Full(blocks) => (
+                    serialize_render_blocks(&blocks, &atom_ids, &mut table_records),
+                    Value::Null,
+                ),
             }
         }
         _ => (
-            serialize_render_blocks(&current_render_blocks.materialize(), &atom_ids),
+            serialize_render_blocks(
+                &current_render_blocks.materialize(),
+                &atom_ids,
+                &mut table_records,
+            ),
             Value::Null,
         ),
     };
     let mut snapshot = AtomicRenderSnapshot {
+        table_attributes: (!current_render_blocks.table_attributes.is_empty()).then(|| {
+            current_render_blocks
+                .table_attributes
+                .iter()
+                .map(|(key, json)| (key.clone(), json.to_string()))
+                .collect()
+        }),
+        table_records: (!table_records.is_empty()).then_some(table_records),
         render_blocks,
         render_patch,
         selection: selection_value,
@@ -492,13 +523,60 @@ pub fn editor_v2_scalar_to_doc(editor_id: String, scalar: u32) -> FfiJsonResult 
     }))
 }
 
+#[cfg(test)]
+pub(crate) fn serialize_render_cache_for_test(
+    cache: &crate::render::incremental::CachedRenderBlocks,
+) -> String {
+    let attributes: std::collections::BTreeMap<_, _> = cache
+        .table_attributes
+        .iter()
+        .map(|(key, json)| (key, json.as_ref()))
+        .collect();
+    let mut records = std::collections::BTreeMap::new();
+    serde_json::json!({"renderBlocks": serialize_render_blocks(&cache.materialize(), &HashMap::new(), &mut records), "tableAttributes": attributes, "tableRecords": records}).to_string()
+}
+
 fn serialize_render_elements(
     elements: &[crate::render::RenderElement],
     atom_ids: &HashMap<u32, String>,
+    table_records: &mut std::collections::BTreeMap<String, Value>,
 ) -> serde_json::Value {
     let items: Vec<serde_json::Value> = elements
         .iter()
         .map(|el| match el {
+            crate::render::RenderElement::Table { table } => stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
+                let table_id = format!("t{}", table.table_pos);
+                let record = serde_json::json!({
+                        "tablePos": table.table_pos,
+                        "sourceEnd": table.source_end,
+                        "rows": table.rows,
+                        "columns": table.columns,
+                        "columnWidths": table.column_widths,
+                        "direction": table.direction,
+                        "irregular": table.irregular,
+                        "readOnlyDescendants": table.read_only_descendants,
+                        "attrsKey": table.attrs_key,
+                        "sourceRows": table.source_rows,
+                        "syntheticRegions": table.synthetic_regions,
+                        "failure": table.failure,
+                        "compatibilityDiagnostic": table.compatibility_diagnostic,
+                        "cells": table.cells.iter().map(|cell| serde_json::json!({
+                            "sourcePos": cell.source_pos,
+                            "sourceEnd": cell.source_end,
+                            "row": cell.row,
+                            "column": cell.column,
+                            "rowspan": cell.rowspan,
+                            "colspan": cell.colspan,
+                            "header": cell.header,
+                            "attrsKey": cell.attrs_key,
+                            "contentKey": cell.content_key,
+                            "elements": serialize_render_elements(&cell.elements, atom_ids, table_records),
+                        })).collect::<Vec<_>>()
+                })
+                ;
+                table_records.insert(table_id.clone(), record);
+                serde_json::json!({"type": "table", "tableId": table_id})
+            }),
             crate::render::RenderElement::TextRun { text, marks } => {
                 serde_json::json!({
                     "type": "textRun",
@@ -686,11 +764,12 @@ fn serialize_render_mark(mark: &crate::render::RenderMark) -> serde_json::Value 
 fn serialize_render_blocks(
     blocks: &[Vec<crate::render::RenderElement>],
     atom_ids: &HashMap<u32, String>,
+    table_records: &mut std::collections::BTreeMap<String, Value>,
 ) -> serde_json::Value {
     serde_json::Value::Array(
         blocks
             .iter()
-            .map(|block| serialize_render_elements(block, atom_ids))
+            .map(|block| serialize_render_elements(block, atom_ids, table_records))
             .collect(),
     )
 }
@@ -699,12 +778,13 @@ fn serialize_render_patch(
     patch: &crate::render::incremental::RenderBlocksPatch,
     atom_ids: &HashMap<u32, String>,
     base_document_version: u64,
+    table_records: &mut std::collections::BTreeMap<String, Value>,
 ) -> Value {
     serde_json::json!({
         "baseDocumentVersion": decimal_u64(base_document_version),
         "startIndex": patch.start_index,
         "deleteCount": patch.delete_count,
-        "renderBlocks": serialize_render_blocks(&patch.blocks, atom_ids),
+        "renderBlocks": serialize_render_blocks(&patch.blocks, atom_ids, table_records),
     })
 }
 

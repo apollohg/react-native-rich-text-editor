@@ -44,12 +44,12 @@ export class NativeEditorLocalAwarenessSelectionValue {
 
     constructor(
         readonly anchor: number,
-        readonly head: number
-    ) {
-    }
+        readonly head: number,
+    ) {}
 }
 
-export type NativeEditorLocalAwarenessSelection = NativeEditorLocalAwarenessSelectionValue;
+export type NativeEditorLocalAwarenessSelection =
+    NativeEditorLocalAwarenessSelectionValue;
 
 /** What this client publishes to other peers in one awareness update. */
 export interface NativeEditorLocalAwarenessIntent {
@@ -104,6 +104,7 @@ export type RenderMark = string | RenderMarkWithAttrs;
 /** One piece of the flattened render stream the engine produces for a document. */
 export interface RenderElement {
     type:
+        | 'table'
         | 'textRun'
         | 'blockStart'
         | 'blockEnd'
@@ -122,6 +123,7 @@ export interface RenderElement {
     mentionTheme?: SerializedEditorMentionTheme;
     listContext?: ListContext;
     language?: string;
+    tableId?: string;
 }
 
 /**
@@ -172,16 +174,19 @@ export type NativeEditorAtomicRenderPayload =
     | { renderBlocks: RenderElement[][]; renderPatch: null }
     | { renderBlocks: null; renderPatch: RenderBlocksPatch };
 
-export type NativeEditorAtomicRenderSnapshotShape = NativeEditorAtomicRenderPayload & {
-    selection: Selection;
-    activeState: ActiveState;
-    historyState: HistoryState;
-    documentVersion: string;
-    stateRevision: string;
-    scalarLength: number;
-    /** The core's own answer for whether the document holds no content. */
-    documentIsEmpty: boolean;
-};
+export type NativeEditorAtomicRenderSnapshotShape =
+    NativeEditorAtomicRenderPayload & {
+        tableAttributes?: Record<string, string>;
+        tableRecords?: Record<string, import('./TableTypes').TableRenderRecord>;
+        selection: Selection;
+        activeState: ActiveState;
+        historyState: HistoryState;
+        documentVersion: string;
+        stateRevision: string;
+        scalarLength: number;
+        /** The core's own answer for whether the document holds no content. */
+        documentIsEmpty: boolean;
+    };
 
 /** A recursively immutable view of the value frozen by renderUpdate(). */
 export type NativeEditorAtomicRenderSnapshot =

@@ -55,6 +55,7 @@ impl ProjectionFailure {
 pub(crate) struct TableProjectionIndex {
     tables: BTreeMap<u32, ProjectedTable>,
     projection_failure: Option<ProjectionFailure>,
+    exact_failure: Option<TableError>,
 }
 
 impl TableProjectionIndex {
@@ -62,13 +63,15 @@ impl TableProjectionIndex {
         Self {
             tables: BTreeMap::new(),
             projection_failure: None,
+            exact_failure: None,
         }
     }
 
-    fn fallback(failure: ProjectionFailure) -> Self {
+    fn fallback(error: TableError) -> Self {
         Self {
             tables: BTreeMap::new(),
-            projection_failure: Some(failure),
+            projection_failure: Some(ProjectionFailure::of(&error)),
+            exact_failure: Some(error),
         }
     }
 
@@ -79,13 +82,15 @@ impl TableProjectionIndex {
     ) -> Self {
         #[cfg(test)]
         record_projection_derivation();
-        validate_table_shapes(document, schema, limits)
-            .unwrap_or_else(|error| Self::fallback(ProjectionFailure::of(&error)))
+        validate_table_shapes(document, schema, limits).unwrap_or_else(Self::fallback)
     }
 }
 
 #[allow(dead_code)]
 impl TableProjectionIndex {
+    pub(crate) fn exact_failure(&self) -> Option<&TableError> {
+        self.exact_failure.as_ref()
+    }
     pub(crate) fn table_at(&self, position: u32) -> Option<&ProjectedTable> {
         self.tables.get(&position)
     }

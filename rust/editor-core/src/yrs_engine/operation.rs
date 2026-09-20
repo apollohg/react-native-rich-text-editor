@@ -443,6 +443,7 @@ fn string_bytes(value: &str) -> usize {
 
 fn render_element_bytes(element: &RenderElement) -> usize {
     let payload = match element {
+        RenderElement::Table { table } => table.retained_bytes(render_element_bytes),
         RenderElement::TextRun { text, marks } => {
             marks
                 .iter()

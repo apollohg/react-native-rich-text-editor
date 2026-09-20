@@ -239,15 +239,149 @@ private fun validRenderElement(value: Any?): Boolean {
     }
 }
 
-private fun validRenderBlocks(value: Any?): Boolean {
-    val blocks = value as? JSONArray ?: return false
-    return (0 until blocks.length()).all { blockIndex ->
-        val block = blocks.opt(blockIndex) as? JSONArray ?: return@all false
-        (0 until block.length()).all { validRenderElement(block.opt(it)) }
+internal fun parseTableAttributes(value: Any?): Map<String, JSONObject>? {
+    val raw = if (value == null) JSONObject() else value as? JSONObject ?: return null
+    val pool = mutableMapOf<String, JSONObject>()
+    val unique = mutableSetOf<String>()
+    var bytes = 0L
+    var entries = 0
+    for (key in raw.keys()) {
+        val json = raw.opt(key) as? String ?: return null
+        entries++
+        bytes += json.toByteArray(Charsets.UTF_8).size
+        if (!Regex("^[0-9a-f]{64}$").matches(key) || entries > 7_000_000 || !unique.add(json) || bytes > 192L * 1024 * 1024) return null
+        val root = try { JSONObject(json) } catch (_: Exception) { return null }
+        val pending = java.util.ArrayDeque<Pair<Any, Int>>()
+        pending.add(root to 0)
+        var work = 0
+        while (pending.isNotEmpty()) {
+            val (item, depth) = pending.removeLast()
+            if (++work > json.length || depth > 1024) return null
+            when (item) {
+                is Number -> if (!item.toDouble().isFinite()) return null
+                is JSONObject -> item.keys().forEach { pending.add(item.get(it) to depth + 1) }
+                is JSONArray -> for (index in 0 until item.length()) pending.add(item.get(index) to depth + 1)
+            }
+        }
+        pool[key] = root
     }
+    return pool.toMap()
 }
 
-private fun validRenderPatch(value: Any?): Boolean {
+internal fun validSemanticRenderElements(elements: List<Any?>, tableAttributes: Map<String, JSONObject> = emptyMap(), tableRecords: Map<String, JSONObject> = emptyMap(), requireCompletePool: Boolean = true): Boolean {
+    data class Pending(val value: Any?, val depth: Int, val start: Long, val end: Long)
+    val pending = java.util.ArrayDeque<Pending>()
+    elements.forEach { pending.add(Pending(it, 0, 0, 0xffff_ffffL)) }
+    var nodes = 0L
+    var gridSlots = 0L
+    val referenced = mutableSetOf<String>()
+    val referencedAttributes = mutableSetOf<String>()
+    fun number(value: JSONObject, key: String): Long? {
+        val raw = value.opt(key) as? Number ?: return null
+        val double = raw.toDouble()
+        return if (double.isFinite() && double >= 0 && double <= 0xffff_ffffL && double == double.toLong().toDouble()) double.toLong() else null
+    }
+    fun attrs(value: Any?): Boolean {
+        if (value !is String || !tableAttributes.containsKey(value)) return false
+        referencedAttributes.add(value)
+        return true
+    }
+    val failureCodes = setOf("gridLimit", "workLimit", "allocation", "invalidStructure", "invalidAttributes")
+    val diagnostics = setOf("virtual-grid-limit", "empty-reference-surface", "unsupported-row-role", "unsupported-cell-role", "ambiguous-source-map", "unsupported-gap-default", "overlapping-reference-cells", "unmapped-reference-cell", "nonrectangular-reference-cell", "zero-span-after-reference-pass")
+    while (pending.isNotEmpty()) {
+        val entry = pending.removeLast()
+        if (++nodes + pending.size > 7_000_000 || entry.depth > 1024) return false
+        val element = entry.value as? JSONObject ?: return false
+        if (element.opt("type") != "table") {
+            if (!validRenderElement(element)) return false
+            if (element.has("docPos")) {
+                val pos = number(element, "docPos") ?: return false
+                if (pos < entry.start || pos >= entry.end) return false
+            }
+            continue
+        }
+        if (!exactKeys(element, setOf("type", "tableId"))) return false
+        val tableId = element.opt("tableId") as? String ?: return false
+        if (!Regex("^t(?:0|[1-9][0-9]*)$").matches(tableId) || !referenced.add(tableId)) return false
+        val table = tableRecords[tableId] ?: return false
+        if (!exactKeys(table, setOf("tablePos", "sourceEnd", "rows", "columns", "columnWidths", "direction", "irregular", "readOnlyDescendants", "attrsKey", "sourceRows", "cells", "syntheticRegions", "failure", "compatibilityDiagnostic"))) return false
+        val pos = number(table, "tablePos") ?: return false
+        if (tableId != "t$pos") return false
+        val end = number(table, "sourceEnd") ?: return false
+        val rows = number(table, "rows") ?: return false
+        val columns = number(table, "columns") ?: return false
+        val widths = table.optJSONArray("columnWidths") ?: return false
+        val sourceRows = table.optJSONArray("sourceRows") ?: return false
+        val cells = table.optJSONArray("cells") ?: return false
+        val synthetic = table.optJSONArray("syntheticRegions") ?: return false
+        val failure = table.opt("failure")
+        val diagnostic = table.opt("compatibilityDiagnostic")
+        if (pos < entry.start || end > entry.end || end <= pos || widths.length().toLong() != columns ||
+            table.opt("direction") !in setOf(JSONObject.NULL, "ltr", "rtl") || exactBool(table.opt("irregular")) == null ||
+            exactBool(table.opt("readOnlyDescendants")) != (entry.depth > 0) || !attrs(table.opt("attrsKey")) ||
+            (failure !== JSONObject.NULL && failure !in failureCodes) || (diagnostic !== JSONObject.NULL && diagnostic !in diagnostics)) return false
+        if (rows > 4_000_000 || columns > 4_000_000) return false
+        gridSlots += rows * columns
+        if (gridSlots > 4_000_000) return false
+        for (index in 0 until widths.length()) {
+            val width = widths.opt(index)
+            if (width !== JSONObject.NULL && (width !is Number || !width.toDouble().isFinite() || width.toDouble() <= 0 || width.toDouble() > 0xffff_ffffL || width.toDouble() != width.toLong().toDouble())) return false
+        }
+        if (failure !== JSONObject.NULL) {
+            if (rows != 0L || columns != 0L || cells.length() != 0 || sourceRows.length() != 0 || synthetic.length() != 0 || diagnostic !== JSONObject.NULL) return false
+            continue
+        }
+        nodes += sourceRows.length() + cells.length() + synthetic.length()
+        if (nodes > 7_000_000) return false
+        var rowEnd = pos + 1
+        for (index in 0 until sourceRows.length()) {
+            val row = sourceRows.optJSONObject(index) ?: return false
+            val start = number(row, "sourcePos") ?: return false
+            val finish = number(row, "sourceEnd") ?: return false
+            if (!exactKeys(row, setOf("sourcePos", "sourceEnd", "attrsKey")) || start < rowEnd || finish <= start || finish >= end || !attrs(row.opt("attrsKey"))) return false
+            rowEnd = finish
+        }
+        val occupied = HashSet<Long>()
+        var cellEnd = pos + 1
+        var sourceRowIndex = 0
+        for ((isSynthetic, regions) in listOf(false to cells, true to synthetic)) {
+            for (index in 0 until regions.length()) {
+                val region = regions.optJSONObject(index) ?: return false
+                val keys = setOf("row", "column", "rowspan", "colspan", "header", "attrsKey") + if (isSynthetic) emptySet() else setOf("sourcePos", "sourceEnd", "contentKey", "elements")
+                val row = number(region, "row") ?: return false
+                val column = number(region, "column") ?: return false
+                val rowspan = number(region, "rowspan") ?: return false
+                val colspan = number(region, "colspan") ?: return false
+                if (!exactKeys(region, keys) || rowspan == 0L || colspan == 0L || row + rowspan > rows || column + colspan > columns || exactBool(region.opt("header")) == null || !attrs(region.opt("attrsKey"))) return false
+                for (r in row until row + rowspan) for (c in column until column + colspan) if (!occupied.add(r * columns + c)) return false
+                if (isSynthetic) continue
+                val start = number(region, "sourcePos") ?: return false
+                val finish = number(region, "sourceEnd") ?: return false
+                val key = region.opt("contentKey") as? String ?: return false
+                val children = region.optJSONArray("elements") ?: return false
+                if (start < cellEnd || finish <= start || key.isEmpty()) return false
+                while (sourceRowIndex < sourceRows.length() && number(sourceRows.getJSONObject(sourceRowIndex), "sourceEnd")!! <= start) sourceRowIndex++
+                val sourceRow = sourceRows.optJSONObject(sourceRowIndex) ?: return false
+                if (number(sourceRow, "sourcePos")!! >= start || number(sourceRow, "sourceEnd")!! <= finish) return false
+                cellEnd = finish
+                for (child in 0 until children.length()) pending.add(Pending(children.opt(child), entry.depth + 1, start + 1, finish - 1))
+            }
+        }
+    }
+    return !requireCompletePool || (referenced == tableRecords.keys && referencedAttributes == tableAttributes.keys)
+}
+
+private fun validRenderBlocks(value: Any?, tableAttributes: Map<String, JSONObject> = emptyMap(), tableRecords: Map<String, JSONObject> = emptyMap(), requireCompletePool: Boolean = true): Boolean {
+    val blocks = value as? JSONArray ?: return false
+    val elements = mutableListOf<Any?>()
+    for (blockIndex in 0 until blocks.length()) {
+        val block = blocks.opt(blockIndex) as? JSONArray ?: return false
+        for (index in 0 until block.length()) elements.add(block.opt(index))
+    }
+    return validSemanticRenderElements(elements, tableAttributes, tableRecords, requireCompletePool)
+}
+
+private fun validRenderPatch(value: Any?, tableAttributes: Map<String, JSONObject> = emptyMap(), tableRecords: Map<String, JSONObject> = emptyMap()): Boolean {
     if (value === JSONObject.NULL) return true
     val patch = value as? JSONObject ?: return false
     return exactKeys(
@@ -256,7 +390,17 @@ private fun validRenderPatch(value: Any?): Boolean {
     ) &&
         canonicalV2U64(patch.opt("baseDocumentVersion") as? String) != null &&
         scalarField(patch, "startIndex") != null && scalarField(patch, "deleteCount") != null &&
-        validRenderBlocks(patch.opt("renderBlocks"))
+        validRenderBlocks(patch.opt("renderBlocks"), tableAttributes, tableRecords, false)
+}
+
+internal fun parseTableRecords(value: Any?): Map<String, JSONObject>? {
+    val raw = if (value == null) JSONObject() else value as? JSONObject ?: return null
+    val records = mutableMapOf<String, JSONObject>()
+    raw.keys().forEach { id ->
+        if (id.isEmpty()) return null
+        records[id] = raw.optJSONObject(id) ?: return null
+    }
+    return records.toMap()
 }
 
 private fun validBooleanRecord(value: Any?): Boolean {
@@ -325,6 +469,9 @@ private fun validSelection(value: Any?): Boolean {
 }
 
 internal data class AtomicRenderSnapshot(
+    val renderObject: JSONObject,
+    val tableAttributes: Map<String, JSONObject>,
+    val tableRecords: Map<String, JSONObject>,
     /** Original validated wire payload for controlled-prop delivery. */
     val atomicRenderJson: String,
     val viewUpdateJson: String,
@@ -359,13 +506,15 @@ internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
             )
         val renderBlocks = jsonObject.opt("renderBlocks")
         val renderPatch = jsonObject.opt("renderPatch")
+        val tableAttributes = parseTableAttributes(jsonObject.opt("tableAttributes")) ?: return null
+        val tableRecords = parseTableRecords(jsonObject.opt("tableRecords")) ?: return null
         val validRenderPayload =
-            (validRenderBlocks(renderBlocks) && renderPatch === JSONObject.NULL) ||
+            (validRenderBlocks(renderBlocks, tableAttributes, tableRecords) && renderPatch === JSONObject.NULL) ||
                 (
                     renderBlocks === JSONObject.NULL && renderPatch is JSONObject &&
-                        validRenderPatch(renderPatch)
+                        validRenderPatch(renderPatch, tableAttributes, tableRecords)
                     )
-        if (!onlyKeys(jsonObject, requiredKeys + "positionEpoch") ||
+        if (!onlyKeys(jsonObject, requiredKeys + setOf("positionEpoch", "tableAttributes", "tableRecords")) ||
             requiredKeys.any { !jsonObject.has(it) } ||
             !validRenderPayload ||
             !validSelection(jsonObject.opt("selection")) ||
@@ -394,6 +543,9 @@ internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
         val atomicRenderJson = jsonObject.toString()
         jsonObject.remove("scalarLength")
         AtomicRenderSnapshot(
+            jsonObject,
+            tableAttributes,
+            tableRecords,
             atomicRenderJson,
             jsonObject.toString(),
             revision,

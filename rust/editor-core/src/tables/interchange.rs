@@ -94,7 +94,7 @@ pub(crate) fn table_clipboard_fragment(
                         let left = region.rect.column.max(rect.left);
                         if row == top && column == left {
                             cells.push(effective_cell(
-                                &region.node,
+                                &region.effective_node(),
                                 &CellRect {
                                     row: top,
                                     column: left,

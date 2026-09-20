@@ -48,6 +48,41 @@ pub(crate) struct ProjectedTable {
 pub(crate) struct SyntheticRegion {
     pub rect: CellRect,
     pub node: Node,
+    pub geometry: Option<SyntheticGeometry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SyntheticGeometry {
+    pub colspan: u32,
+    pub rowspan: u32,
+    pub widths: Vec<u32>,
+}
+
+impl SyntheticRegion {
+    pub(crate) fn effective_node(&self) -> Node {
+        let Some(geometry) = &self.geometry else {
+            return self.node.clone();
+        };
+        let mut attrs = crate::boundary::clone_json_object_stack_safe(self.node.attrs());
+        attrs.insert(TABLE_CELL_COLSPAN_ATTR.into(), geometry.colspan.into());
+        attrs.insert(TABLE_CELL_ROWSPAN_ATTR.into(), geometry.rowspan.into());
+        attrs.insert(
+            TABLE_CELL_COLWIDTH_ATTR.into(),
+            if geometry.widths.iter().any(|width| *width != 0) {
+                serde_json::json!(geometry.widths)
+            } else {
+                Value::Null
+            },
+        );
+        Node::element(
+            self.node.node_type().into(),
+            attrs,
+            self.node
+                .content()
+                .cloned()
+                .unwrap_or_else(crate::model::Fragment::empty),
+        )
+    }
 }
 
 pub(crate) struct TableGridBudget {

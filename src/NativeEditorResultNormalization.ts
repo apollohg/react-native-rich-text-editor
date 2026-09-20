@@ -13,7 +13,9 @@ import {
 import { type RenderElement, type RenderMark } from './NativeEditorTypes';
 import { type NativeEditorPeerInfo } from './NativeEditorCollaborationTransport';
 
-export function isPlainRecord(value: unknown): value is Record<string, unknown> {
+export function isPlainRecord(
+    value: unknown,
+): value is Record<string, unknown> {
     return value != null && typeof value === 'object' && !Array.isArray(value);
 }
 
@@ -25,7 +27,7 @@ export function isPlainRecord(value: unknown): value is Record<string, unknown> 
  */
 export function normalizeNativeEditorV2Result<T>(
     raw: unknown,
-    normalizeValue: (value: unknown) => T | null
+    normalizeValue: (value: unknown) => T | null,
 ): NativeEditorResult<T> | null {
     if (!isPlainRecord(raw)) {
         return null;
@@ -66,7 +68,9 @@ export function parseNativeEditorV2JsonValue(value: unknown): unknown | null {
  * Validate a direct binary result value. JSON number arrays are rejected on
  * purpose: the frozen v2 contract moves bytes as bytes.
  */
-export function normalizeNativeEditorV2Bytes(value: unknown): Uint8Array | null {
+export function normalizeNativeEditorV2Bytes(
+    value: unknown,
+): Uint8Array | null {
     if (value instanceof Uint8Array) {
         return value;
     }
@@ -92,13 +96,15 @@ export function normalizeNativeEditorV2Unit(value: unknown): true | null {
  * V2 never accepts numeric compatibility values: JavaScript numbers cannot
  * represent the complete Rust u64 domain.
  */
-export function normalizeNativeEditorV2DecimalId(value: unknown): string | null {
+export function normalizeNativeEditorV2DecimalId(
+    value: unknown,
+): string | null {
     return normalizeNativeEditorV2U64(value);
 }
 
 export function normalizeRevisionField(
     record: Record<string, unknown>,
-    field: string
+    field: string,
 ): string | null {
     return normalizeNativeEditorV2DecimalId(record[field]);
 }
@@ -114,7 +120,10 @@ export function nativeEditorV2U32(value: unknown): number | null {
 }
 
 /** Require one exact JavaScript/platform u32 value at the v2 boundary. */
-export function requireNativeEditorV2U32(value: unknown, field: string): number {
+export function requireNativeEditorV2U32(
+    value: unknown,
+    field: string,
+): number {
     const normalized = nativeEditorV2U32(value);
 
     if (normalized == null) {
@@ -128,7 +137,11 @@ export function optionalBoolean(value: unknown): boolean | null {
     return typeof value === 'boolean' ? value : null;
 }
 
-export const V2_DOCUMENT_STATES = [ 'LocalReady', 'AwaitRemote', 'RoomReady' ] as const;
+export const V2_DOCUMENT_STATES = [
+    'LocalReady',
+    'AwaitRemote',
+    'RoomReady',
+] as const;
 
 /**
  * Readiness of the engine document. `AwaitRemote` is a room document still
@@ -151,7 +164,7 @@ export const V2_TRANSPORT_STATES = [
 /** Raw transport lifecycle. `YjsTransportStatus` is the friendlier projection of it. */
 export type NativeEditorTransportState = (typeof V2_TRANSPORT_STATES)[number];
 
-export const V2_RENDER_STATES = [ 'Loading', 'Ready' ] as const;
+export const V2_RENDER_STATES = ['Loading', 'Ready'] as const;
 
 /** Whether the engine has a render snapshot to draw. */
 export type NativeEditorRenderState = (typeof V2_RENDER_STATES)[number];
@@ -167,8 +180,12 @@ export const V2_DOCUMENT_ORIGINS = [
 
 export type NativeEditorDocumentOrigin = (typeof V2_DOCUMENT_ORIGINS)[number];
 
-export function whitelisted<T extends string>(value: unknown, allowed: readonly T[]): T | null {
-    return typeof value === 'string' && (allowed as readonly string[]).includes(value)
+export function whitelisted<T extends string>(
+    value: unknown,
+    allowed: readonly T[],
+): T | null {
+    return typeof value === 'string' &&
+        (allowed as readonly string[]).includes(value)
         ? (value as T)
         : null;
 }
@@ -189,19 +206,26 @@ export interface NativeEditorState {
 }
 
 export function normalizeNativeEditorV2StateValue(
-    value: unknown
+    value: unknown,
 ): NativeEditorState | null {
-    const parsed = typeof value === 'string' ? parseNativeEditorV2JsonValue(value) : value;
+    const parsed =
+        typeof value === 'string' ? parseNativeEditorV2JsonValue(value) : value;
 
     if (!isPlainRecord(parsed)) {
         return null;
     }
 
     const documentState = whitelisted(parsed.documentState, V2_DOCUMENT_STATES);
-    const transportState = whitelisted(parsed.transportState, V2_TRANSPORT_STATES);
+    const transportState = whitelisted(
+        parsed.transportState,
+        V2_TRANSPORT_STATES,
+    );
     const renderState = whitelisted(parsed.renderState, V2_RENDER_STATES);
     const documentRevision = normalizeRevisionField(parsed, 'documentRevision');
-    const documentOrigin = whitelisted(parsed.documentOrigin, V2_DOCUMENT_ORIGINS);
+    const documentOrigin = whitelisted(
+        parsed.documentOrigin,
+        V2_DOCUMENT_ORIGINS,
+    );
     const stateRevision = normalizeRevisionField(parsed, 'stateRevision');
     const canUndo = optionalBoolean(parsed.canUndo);
     const canRedo = optionalBoolean(parsed.canRedo);
@@ -244,7 +268,7 @@ export type NativeEditorMutationOutcome =
     | { type: 'replacement'; changed: boolean; documentRevision: string };
 
 export function normalizeNativeEditorV2MutationOutcomeValue(
-    value: unknown
+    value: unknown,
 ): NativeEditorMutationOutcome | null {
     const parsed = parseNativeEditorV2JsonValue(value);
 
@@ -258,7 +282,10 @@ export function normalizeNativeEditorV2MutationOutcomeValue(
 
     if (parsed.type === 'replacement') {
         const changed = optionalBoolean(parsed.changed);
-        const documentRevision = normalizeRevisionField(parsed, 'documentRevision');
+        const documentRevision = normalizeRevisionField(
+            parsed,
+            'documentRevision',
+        );
 
         if (changed == null || documentRevision == null) {
             return null;
@@ -269,7 +296,10 @@ export function normalizeNativeEditorV2MutationOutcomeValue(
 
     if (parsed.type === 'transaction') {
         const changed = optionalBoolean(parsed.changed);
-        const documentRevision = normalizeRevisionField(parsed, 'documentRevision');
+        const documentRevision = normalizeRevisionField(
+            parsed,
+            'documentRevision',
+        );
         const stateRevision = normalizeRevisionField(parsed, 'stateRevision');
         const canUndo = optionalBoolean(parsed.canUndo);
         const canRedo = optionalBoolean(parsed.canRedo);
@@ -303,7 +333,7 @@ export interface NativeEditorCommitInfo {
 }
 
 export function normalizeNativeEditorV2CommitValue(
-    value: unknown
+    value: unknown,
 ): NativeEditorCommitInfo | null {
     const parsed = parseNativeEditorV2JsonValue(value);
 
@@ -321,7 +351,9 @@ export function normalizeNativeEditorV2CommitValue(
     return { changed, documentRevision };
 }
 
-export function normalizeNativeEditorV2ChangedValue(value: unknown): boolean | null {
+export function normalizeNativeEditorV2ChangedValue(
+    value: unknown,
+): boolean | null {
     const parsed = parseNativeEditorV2JsonValue(value);
 
     if (!isPlainRecord(parsed)) {
@@ -331,7 +363,9 @@ export function normalizeNativeEditorV2ChangedValue(value: unknown): boolean | n
     return optionalBoolean(parsed.changed);
 }
 
-export function normalizeNativeEditorV2HtmlValue(value: unknown): string | null {
+export function normalizeNativeEditorV2HtmlValue(
+    value: unknown,
+): string | null {
     const parsed = parseNativeEditorV2JsonValue(value);
 
     if (!isPlainRecord(parsed) || typeof parsed.html !== 'string') {
@@ -342,6 +376,7 @@ export function normalizeNativeEditorV2HtmlValue(value: unknown): string | null 
 }
 
 export const RENDER_ELEMENT_TYPES = new Set<RenderElement['type']>([
+    'table',
     'textRun',
     'blockStart',
     'blockEnd',
@@ -353,10 +388,10 @@ export const RENDER_ELEMENT_TYPES = new Set<RenderElement['type']>([
 
 export function hasExactOwnKeys(
     record: Record<string, unknown>,
-    expected: readonly string[]
+    expected: readonly string[],
 ): boolean {
     const actual = Object.keys(record).sort();
-    const sortedExpected = [ ...expected ].sort();
+    const sortedExpected = [...expected].sort();
 
     return (
         actual.length === sortedExpected.length &&
@@ -366,21 +401,27 @@ export function hasExactOwnKeys(
 
 export function hasOnlyOwnKeys(
     record: Record<string, unknown>,
-    allowed: readonly string[]
+    allowed: readonly string[],
 ): boolean {
     const allowedKeys = new Set(allowed);
 
-    return Object.keys(record).every(key => allowedKeys.has(key));
+    return Object.keys(record).every((key) => allowedKeys.has(key));
 }
 
-export function booleanRecord(value: unknown): value is Record<string, boolean> {
+export function booleanRecord(
+    value: unknown,
+): value is Record<string, boolean> {
     return (
-        isPlainRecord(value) && Object.values(value).every(entry => typeof entry === 'boolean')
+        isPlainRecord(value) &&
+        Object.values(value).every((entry) => typeof entry === 'boolean')
     );
 }
 
 export function stringArray(value: unknown): value is string[] {
-    return Array.isArray(value) && value.every(entry => typeof entry === 'string');
+    return (
+        Array.isArray(value) &&
+        value.every((entry) => typeof entry === 'string')
+    );
 }
 
 export function validJsonValue(value: unknown): boolean {
@@ -412,8 +453,11 @@ export function validRenderMark(value: unknown): value is RenderMark {
     );
 }
 
-export function normalizeNativeEditorV2PeersValue(value: unknown): NativeEditorPeerInfo[] | null {
-    const parsed = typeof value === 'string' ? parseNativeEditorV2JsonValue(value) : value;
+export function normalizeNativeEditorV2PeersValue(
+    value: unknown,
+): NativeEditorPeerInfo[] | null {
+    const parsed =
+        typeof value === 'string' ? parseNativeEditorV2JsonValue(value) : value;
 
     if (!isPlainRecord(parsed) || !Array.isArray(parsed.peers)) {
         return null;
@@ -457,12 +501,17 @@ export function normalizeNativeEditorV2PeersValue(value: unknown): NativeEditorP
 
         let cellRectangle: NativeEditorPeerInfo['cellRectangle'] = null;
 
-        if (rawPeer.cellRectangle !== null && rawPeer.cellRectangle !== undefined) {
+        if (
+            rawPeer.cellRectangle !== null &&
+            rawPeer.cellRectangle !== undefined
+        ) {
             if (!isPlainRecord(rawPeer.cellRectangle)) {
                 return null;
             }
 
-            const anchorCell = nativeEditorV2U32(rawPeer.cellRectangle.anchorCell);
+            const anchorCell = nativeEditorV2U32(
+                rawPeer.cellRectangle.anchorCell,
+            );
             const headCell = nativeEditorV2U32(rawPeer.cellRectangle.headCell);
 
             if (anchorCell == null || headCell == null) {
@@ -476,7 +525,7 @@ export function normalizeNativeEditorV2PeersValue(value: unknown): NativeEditorP
             clientId,
             clock,
             isLocal,
-            state: (rawPeer.state) ?? null,
+            state: rawPeer.state ?? null,
             cursor,
             cellRectangle,
         });
@@ -532,7 +581,9 @@ export function destroyedHandleError(): NativeEditorNonRetryableError {
     });
 }
 
-export function invalidV2RequestError(message: string): NativeEditorEngineBoundaryError {
+export function invalidV2RequestError(
+    message: string,
+): NativeEditorEngineBoundaryError {
     return new NativeEditorEngineBoundaryError({
         domain: 'boundary',
         code: 'CONFIG_INVALID',
@@ -553,7 +604,7 @@ export function invalidV2RequestError(message: string): NativeEditorEngineBounda
  */
 export function unwrapNativeEditorV2Result<T>(
     raw: unknown,
-    normalizeValue: (value: unknown) => T | null
+    normalizeValue: (value: unknown) => T | null,
 ): T {
     const result = normalizeNativeEditorV2Result(raw, normalizeValue);
 
@@ -563,7 +614,7 @@ export function unwrapNativeEditorV2Result<T>(
         if (__DEV__) {
             console.error(
                 'NativeEditorBridge: native module returned a record this boundary rejected',
-                describeRejectedV2Record(raw)
+                describeRejectedV2Record(raw),
             );
         }
 
@@ -581,7 +632,9 @@ export function requireV2DecimalId(value: string, field: string): string {
     const normalized = normalizeNativeEditorV2DecimalId(value);
 
     if (normalized == null) {
-        throw invalidV2RequestError(`NativeEditorBridge: invalid ${field} for v2 request`);
+        throw invalidV2RequestError(
+            `NativeEditorBridge: invalid ${field} for v2 request`,
+        );
     }
 
     return normalized;
@@ -591,7 +644,9 @@ export function requireV2Bytes(value: unknown, field: string): Uint8Array {
     const normalized = normalizeNativeEditorV2Bytes(value);
 
     if (normalized == null) {
-        throw invalidV2RequestError(`NativeEditorBridge: invalid ${field} for v2 request`);
+        throw invalidV2RequestError(
+            `NativeEditorBridge: invalid ${field} for v2 request`,
+        );
     }
 
     return normalized;

@@ -14,6 +14,9 @@ extension EditorV2Adapter {
     }
 
     struct AtomicRenderSnapshot {
+        let renderObject: [String: Any]
+        let tableAttributes: [String: [String: Any]]
+        let tableRecords: [String: [String: Any]]
         let atomicRenderJSON: String
         let viewUpdateJSON: String
         let documentRevision: UInt64
@@ -246,15 +249,141 @@ extension EditorV2Adapter {
         }
     }
 
-    private static func isValidRenderBlocks(_ value: Any) -> Bool {
-        guard let blocks = value as? [Any] else { return false }
-        return blocks.allSatisfy { block in
-            guard let elements = block as? [Any] else { return false }
-            return elements.allSatisfy(isValidRenderElement)
+    static func parseTableAttributes(_ value: Any?) -> [String: [String: Any]]? {
+        guard let raw = (value ?? [String: String]()) as? [String: String] else { return nil }
+        var pool: [String: [String: Any]] = [:]
+        var unique = Set<String>()
+        var bytes = 0
+        var entries = 0
+        for (key, json) in raw {
+            entries += 1
+            bytes += json.utf8.count
+            guard key.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+                  entries <= 7_000_000, unique.insert(json).inserted, bytes <= 192 * 1024 * 1024,
+                  let data = json.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return nil }
+            var pending: [(Any, Int)] = [(object, 0)]
+            var work = 0
+            while let (item, depth) = pending.popLast() {
+                work += 1
+                if work > json.utf8.count || depth > 1024 { return nil }
+                if let number = item as? NSNumber, !number.doubleValue.isFinite { return nil }
+                if let object = item as? [String: Any] { pending.append(contentsOf: object.values.map { ($0, depth + 1) }) }
+                else if let array = item as? [Any] { pending.append(contentsOf: array.map { ($0, depth + 1) }) }
+            }
+            pool[key] = object
         }
+        return pool
     }
 
-    private static func isValidRenderPatch(_ value: Any) -> Bool {
+    static func validSemanticRenderElements(_ values: [Any], tableAttributes: [String: [String: Any]] = [:], tableRecords: [String: [String: Any]] = [:], requireCompletePool: Bool = true) -> Bool {
+        var pending = values.map { (value: $0, depth: 0, start: UInt64(0), end: UInt64(UInt32.max)) }
+        var nodes = 0
+        var slots: UInt64 = 0
+        var referenced = Set<String>()
+        var referencedAttributes = Set<String>()
+        func number(_ object: [String: Any], _ key: String) -> UInt64? {
+            uint32Field(object, key).map(UInt64.init)
+        }
+        func attrs(_ value: Any?) -> Bool {
+            guard let key = value as? String else { return false }
+            guard tableAttributes[key] != nil else { return false }
+            referencedAttributes.insert(key)
+            return true
+        }
+        let failures: Set<String> = ["gridLimit", "workLimit", "allocation", "invalidStructure", "invalidAttributes"]
+        let diagnostics: Set<String> = ["virtual-grid-limit", "empty-reference-surface", "unsupported-row-role", "unsupported-cell-role", "ambiguous-source-map", "unsupported-gap-default", "overlapping-reference-cells", "unmapped-reference-cell", "nonrectangular-reference-cell", "zero-span-after-reference-pass"]
+        while let entry = pending.popLast() {
+            nodes += 1
+            guard nodes + pending.count <= 7_000_000, entry.depth <= 1024,
+                  let element = entry.value as? [String: Any] else { return false }
+            if element["type"] as? String != "table" {
+                guard isValidRenderElement(element) else { return false }
+                if element["docPos"] != nil {
+                    guard let pos = number(element, "docPos"), pos >= entry.start, pos < entry.end else { return false }
+                }
+                continue
+            }
+            guard Set(element.keys) == ["type", "tableId"], let tableId = element["tableId"] as? String,
+                  tableId.range(of: "^t(?:0|[1-9][0-9]*)$", options: .regularExpression) != nil,
+                  referenced.insert(tableId).inserted, let table = tableRecords[tableId],
+                  Set(table.keys) == ["tablePos", "sourceEnd", "rows", "columns", "columnWidths", "direction", "irregular", "readOnlyDescendants", "attrsKey", "sourceRows", "cells", "syntheticRegions", "failure", "compatibilityDiagnostic"],
+                  let pos = number(table, "tablePos"), tableId == "t\(pos)", let end = number(table, "sourceEnd"),
+                  let rows = number(table, "rows"), let columns = number(table, "columns"),
+                  let widths = table["columnWidths"] as? [Any], let sourceRows = table["sourceRows"] as? [[String: Any]],
+                  let cells = table["cells"] as? [[String: Any]], let synthetic = table["syntheticRegions"] as? [[String: Any]],
+                  pos >= entry.start, end <= entry.end, end > pos, UInt64(widths.count) == columns,
+                  table["direction"] is NSNull || ["ltr", "rtl"].contains(table["direction"] as? String ?? ""),
+                  exactBool(table["irregular"]) != nil, exactBool(table["readOnlyDescendants"]) == (entry.depth > 0),
+                  attrs(table["attrsKey"]),
+                  table["failure"] is NSNull || failures.contains(table["failure"] as? String ?? ""),
+                  table["compatibilityDiagnostic"] is NSNull || diagnostics.contains(table["compatibilityDiagnostic"] as? String ?? "")
+            else { return false }
+            if rows > 4_000_000 || columns > 4_000_000 { return false }
+            slots += rows * columns
+            if slots > 4_000_000 { return false }
+            for width in widths where !(width is NSNull) {
+                guard let value = v2ExactUInt32(width as? NSNumber), value > 0 else { return false }
+            }
+            if !(table["failure"] is NSNull) {
+                if rows != 0 || columns != 0 || !cells.isEmpty || !sourceRows.isEmpty || !synthetic.isEmpty || !(table["compatibilityDiagnostic"] is NSNull) { return false }
+                continue
+            }
+            nodes += sourceRows.count + cells.count + synthetic.count
+            if nodes > 7_000_000 { return false }
+            var rowEnd = pos + 1
+            for row in sourceRows {
+                guard Set(row.keys) == ["sourcePos", "sourceEnd", "attrsKey"],
+                      let start = number(row, "sourcePos"), let finish = number(row, "sourceEnd"),
+                      start >= rowEnd, finish > start, finish < end, attrs(row["attrsKey"])
+                else { return false }
+                rowEnd = finish
+            }
+            var occupied = Set<UInt64>()
+            var cellEnd = pos + 1
+            var sourceRowIndex = 0
+            for (isSynthetic, regions) in [(false, cells), (true, synthetic)] {
+                for region in regions {
+                    var keys: Set<String> = ["row", "column", "rowspan", "colspan", "header", "attrsKey"]
+                    if !isSynthetic { keys.formUnion(["sourcePos", "sourceEnd", "contentKey", "elements"]) }
+                    guard Set(region.keys) == keys, let row = number(region, "row"), let column = number(region, "column"),
+                          let rowspan = number(region, "rowspan"), let colspan = number(region, "colspan"),
+                          rowspan > 0, colspan > 0, row + rowspan <= rows, column + colspan <= columns,
+                          exactBool(region["header"]) != nil, attrs(region["attrsKey"])
+                    else { return false }
+                    for r in row..<(row + rowspan) {
+                        for c in column..<(column + colspan) {
+                            if !occupied.insert(r * columns + c).inserted { return false }
+                        }
+                    }
+                    if isSynthetic { continue }
+                    guard let start = number(region, "sourcePos"), let finish = number(region, "sourceEnd"),
+                          let key = region["contentKey"] as? String, let elements = region["elements"] as? [Any],
+                          start >= cellEnd, finish > start, !key.isEmpty
+                    else { return false }
+                    while sourceRowIndex < sourceRows.count, number(sourceRows[sourceRowIndex], "sourceEnd")! <= start { sourceRowIndex += 1 }
+                    guard sourceRowIndex < sourceRows.count, number(sourceRows[sourceRowIndex], "sourcePos")! < start,
+                          number(sourceRows[sourceRowIndex], "sourceEnd")! > finish else { return false }
+                    cellEnd = finish
+                    pending.append(contentsOf: elements.map { ($0, entry.depth + 1, start + 1, finish - 1) })
+                }
+            }
+        }
+        return !requireCompletePool || (referenced == Set(tableRecords.keys) && referencedAttributes == Set(tableAttributes.keys))
+    }
+
+    private static func isValidRenderBlocks(_ value: Any, tableAttributes: [String: [String: Any]] = [:], tableRecords: [String: [String: Any]] = [:], requireCompletePool: Bool = true) -> Bool {
+        guard let blocks = value as? [Any] else { return false }
+        var elements: [Any] = []
+        for block in blocks {
+            guard let values = block as? [Any] else { return false }
+            elements.append(contentsOf: values)
+        }
+        return validSemanticRenderElements(elements, tableAttributes: tableAttributes, tableRecords: tableRecords, requireCompletePool: requireCompletePool)
+    }
+
+    private static func isValidRenderPatch(_ value: Any, tableAttributes: [String: [String: Any]] = [:], tableRecords: [String: [String: Any]] = [:]) -> Bool {
         if value is NSNull { return true }
         guard let object = value as? [String: Any],
               Set(object.keys) == [
@@ -267,11 +396,21 @@ extension EditorV2Adapter {
               uint32Field(object, "startIndex") != nil,
               uint32Field(object, "deleteCount") != nil,
               let renderBlocks = object["renderBlocks"],
-              isValidRenderBlocks(renderBlocks)
+              isValidRenderBlocks(renderBlocks, tableAttributes: tableAttributes, tableRecords: tableRecords, requireCompletePool: false)
         else {
             return false
         }
         return true
+    }
+
+    static func parseTableRecords(_ value: Any?) -> [String: [String: Any]]? {
+        guard let raw = (value ?? [String: Any]()) as? [String: Any] else { return nil }
+        var records: [String: [String: Any]] = [:]
+        for (id, value) in raw {
+            guard !id.isEmpty, let record = value as? [String: Any] else { return nil }
+            records[id] = record
+        }
+        return records
     }
 
     private static func isBooleanRecord(_ value: Any?) -> Bool {
@@ -355,12 +494,14 @@ extension EditorV2Adapter {
     static func parseAtomicRenderSnapshot(_ json: String) -> AtomicRenderSnapshot? {
         guard let data = json.data(using: .utf8),
               var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(object.keys).isSubset(of: atomicRenderSnapshotKeys.union(["positionEpoch"])),
+              Set(object.keys).isSubset(of: atomicRenderSnapshotKeys.union(["positionEpoch", "tableAttributes", "tableRecords"])),
               atomicRenderSnapshotKeys.isSubset(of: Set(object.keys)),
               let renderBlocks = object["renderBlocks"],
               let renderPatch = object["renderPatch"],
-              (isValidRenderBlocks(renderBlocks) && renderPatch is NSNull)
-                || (renderBlocks is NSNull && !(renderPatch is NSNull) && isValidRenderPatch(renderPatch)),
+              let tableAttributes = parseTableAttributes(object["tableAttributes"]),
+              let tableRecords = parseTableRecords(object["tableRecords"]),
+              (isValidRenderBlocks(renderBlocks, tableAttributes: tableAttributes, tableRecords: tableRecords) && renderPatch is NSNull)
+                || (renderBlocks is NSNull && !(renderPatch is NSNull) && isValidRenderPatch(renderPatch, tableAttributes: tableAttributes, tableRecords: tableRecords)),
               let selectionValue = object["selection"],
               isValidSelection(selectionValue),
               let activeState = object["activeState"] as? [String: Any],
@@ -404,6 +545,9 @@ extension EditorV2Adapter {
             return nil
         }
         return AtomicRenderSnapshot(
+            renderObject: object,
+            tableAttributes: tableAttributes,
+            tableRecords: tableRecords,
             atomicRenderJSON: atomicRenderJSON,
             viewUpdateJSON: viewUpdateJSON,
             documentRevision: documentRevision,

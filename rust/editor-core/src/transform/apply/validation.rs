@@ -378,6 +378,7 @@ fn validate_ordered_list_start(node: &Node) -> BoundaryResult<()> {
     match crate::render::ordered_list_start(node) {
         Ok(start) if (MIN_ORDERED_LIST_START..=MAX_ORDERED_LIST_START).contains(&start) => Ok(()),
         Ok(_)
+        | Err(GenerateError::RenderPreparationFailed)
         | Err(GenerateError::OrderedListStartOutOfRange)
         | Err(GenerateError::ListItemCountOutOfRange)
         | Err(GenerateError::OrderedListIndexOverflow) => Err(BoundaryError::new(

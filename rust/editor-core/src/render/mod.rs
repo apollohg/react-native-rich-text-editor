@@ -67,6 +67,9 @@ impl Drop for RenderMark {
 /// attributed strings (NSAttributedString / SpannableStringBuilder).
 #[derive(Debug, PartialEq)]
 pub enum RenderElement {
+    Table {
+        table: crate::tables::render::TableRenderRecord,
+    },
     /// A run of text with applied mark names.
     TextRun {
         text: String,
@@ -113,6 +116,9 @@ pub enum RenderElement {
 impl Clone for RenderElement {
     fn clone(&self) -> Self {
         match self {
+            Self::Table { table } => Self::Table {
+                table: table.clone(),
+            },
             Self::TextRun { text, marks } => Self::TextRun {
                 text: text.clone(),
                 marks: marks.clone(),
@@ -180,6 +186,15 @@ impl Clone for RenderElement {
 impl RenderElement {
     pub(crate) fn drain_json_payloads(&mut self) {
         match self {
+            Self::Table { table } => {
+                for cell in &mut table.cells {
+                    if let Some(elements) = std::sync::Arc::get_mut(&mut cell.elements) {
+                        for element in elements {
+                            element.drain_json_payloads();
+                        }
+                    }
+                }
+            }
             Self::TextRun { marks, .. } => marks.clear(),
             Self::VoidInline { attrs, .. } | Self::VoidBlock { attrs, .. } => {
                 crate::boundary::drop_json_object_values_stack_safe(attrs);
@@ -220,8 +235,9 @@ pub(crate) fn rendered_text(document: &Document, schema: &Schema) -> String {
         *started_block = true;
     };
 
-    for element in &elements {
+    for element in crate::tables::render::source_elements(&elements) {
         match element {
+            RenderElement::Table { .. } => unreachable!("source traversal expands tables"),
             RenderElement::BlockStart {
                 node_type,
                 list_context,

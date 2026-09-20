@@ -247,6 +247,7 @@ struct ViewerStyleAncestor: Hashable {
 }
 
 struct ViewerBlock: Hashable {
+    let table: FfiViewerTable?
     let styleAncestors: [ViewerStyleAncestor]
     let language: String?
     let isBlockAtom: Bool
@@ -272,8 +273,10 @@ struct ViewerBlock: Hashable {
         inlines: [ViewerInline],
         isBlockAtom: Bool = false,
         styleAncestors: [ViewerStyleAncestor] = [],
-        language: String? = nil
+        language: String? = nil,
+        table: FfiViewerTable? = nil
     ) {
+        self.table = table
         self.language = language
         self.styleAncestors = styleAncestors
         self.isBlockAtom = isBlockAtom
@@ -301,7 +304,8 @@ struct ViewerBlock: Hashable {
             inlines: inlines,
             isBlockAtom: isBlockAtom,
             styleAncestors: styleAncestors,
-            language: language
+            language: language,
+            table: table
         )
     }
 }
@@ -310,6 +314,7 @@ struct ViewerBlock: Hashable {
 /// prepared theme is attached only to the measurement copy; cached compiler
 /// output remains semantic/theme independent.
 struct ViewerDocument {
+    let tableAttributes: [String: [String: Any]]
     let semanticKey: String
     let blocks: [ViewerBlock]
     let isEmpty: Bool
@@ -330,6 +335,7 @@ struct ViewerDocument {
     }
 
     init(semanticKey: String, paragraphs: [ViewerParagraph], isEmpty: Bool, retainedBytes: Int) {
+        tableAttributes = [:]
         self.semanticKey = semanticKey
         blocks = paragraphs.map {
             ViewerBlock(
@@ -353,8 +359,10 @@ struct ViewerDocument {
         isEmpty: Bool,
         retainedBytes: Int,
         trailingEmptyTextBlockCount: Int = 0,
-        preparedTheme: PreparedProseTheme? = nil
+        preparedTheme: PreparedProseTheme? = nil,
+        tableAttributes: [String: [String: Any]] = [:]
     ) {
+        self.tableAttributes = tableAttributes
         self.semanticKey = semanticKey
         self.blocks = blocks
         self.isEmpty = isEmpty
@@ -364,6 +372,20 @@ struct ViewerDocument {
     }
 
     init(compiled: ViewerCompiledDocument) throws {
+        let elements = compiled.elements()
+        var tableRecords: [String: FfiViewerTable] = [:]
+        for record in compiled.tableRecords() {
+            let id = "t\(record.tablePos)"
+            guard tableRecords[id] == nil else {
+                throw ProseViewerError.hostContract(message: "The compiler returned duplicate semantic table records.")
+            }
+            tableRecords[id] = record
+        }
+        guard let pool = EditorV2Adapter.parseTableAttributes(compiled.tableAttributes()),
+              Self.validTables(elements, records: tableRecords, pool: pool) else {
+            throw ProseViewerError.hostContract(message: "The compiler returned invalid semantic table references.")
+        }
+        tableAttributes = pool
         semanticKey = compiled.semanticKey()
         isEmpty = compiled.isEmpty()
         retainedBytes = Int(compiled.retainedBytesDecimal()) ?? 0
@@ -390,8 +412,15 @@ struct ViewerDocument {
         var listItemDepthByIdentity: [Int: UInt16] = [:]
         var nextListItemIdentity = 0
         let preferredTextBlockName = compiled.preferredTextBlockName()
-        for element in compiled.elements() {
+        for element in elements {
             switch element {
+            case let .table(tableId):
+                guard let table = tableRecords[tableId] else {
+                    throw ProseViewerError.hostContract(message: "The compiler returned a dangling semantic table reference.")
+                }
+                rendered.append(ViewerBlock(nodeType: "table", depth: stack.last?.depth ?? 0,
+                    inBlockquote: stack.contains { $0.nodeType == "blockquote" },
+                    listContext: stack.last?.listContext, listItemBoundary: nil, inlines: [], isBlockAtom: true, table: table))
             case let .blockStart(nodeType: nodeType, language: language, depth: depth, listContextJson: listContextJSON):
                 let listContext = Self.listContext(from: listContextJSON)
                 let parentIdentity = stack.last?.styleIdentity ?? -1
@@ -548,8 +577,68 @@ struct ViewerDocument {
             isEmpty: isEmpty,
             retainedBytes: retainedBytes,
             trailingEmptyTextBlockCount: trailingEmptyTextBlockCount,
-            preparedTheme: theme
+            preparedTheme: theme,
+            tableAttributes: tableAttributes
         )
+    }
+
+    private static func validTables(_ elements: [FfiViewerElement], records: [String: FfiViewerTable], pool: [String: [String: Any]]) -> Bool {
+        var pending = elements.map { ($0, 0, UInt64(0), UInt64(UInt32.max)) }
+        var nodeCount = 0
+        var slots: UInt64 = 0
+        var referenced = Set<String>()
+        while let (element, depth, start, end) = pending.popLast() {
+            nodeCount += 1
+            if nodeCount + pending.count > 7_000_000 || depth > 1024 { return false }
+            guard case let .table(tableId) = element else { continue }
+            guard referenced.insert(tableId).inserted, let table = records[tableId] else { return false }
+            let rows = UInt64(table.rows), columns = UInt64(table.columns)
+            if rows > 4_000_000 || columns > 4_000_000 { return false }
+            slots += rows * columns
+            if slots > 4_000_000 || UInt64(table.tablePos) < start || UInt64(table.sourceEnd) > end ||
+                table.sourceEnd <= table.tablePos || UInt64(table.columnWidths.count) != columns ||
+                table.columnWidths.contains(where: { $0 == 0 }) || ![nil, "ltr", "rtl"].contains(table.direction) ||
+                table.readOnlyDescendants != (depth > 0) || pool[table.attrsKey] == nil { return false }
+            if table.failure != nil {
+                if rows != 0 || columns != 0 || !table.cells.isEmpty || !table.sourceRows.isEmpty ||
+                    !table.syntheticRegions.isEmpty || table.compatibilityDiagnostic != nil { return false }
+                continue
+            }
+            nodeCount += table.sourceRows.count + table.cells.count + table.syntheticRegions.count
+            if nodeCount > 7_000_000 { return false }
+            var previous = UInt64(table.tablePos) + 1
+            for row in table.sourceRows {
+                if UInt64(row.sourcePos) < previous || row.sourceEnd <= row.sourcePos || row.sourceEnd >= table.sourceEnd || pool[row.attrsKey] == nil { return false }
+                previous = UInt64(row.sourceEnd)
+            }
+            var occupied = Set<UInt64>()
+            func region(_ row: UInt32, _ column: UInt32, _ rowspan: UInt32, _ colspan: UInt32, _ key: String) -> Bool {
+                if rowspan == 0 || colspan == 0 || UInt64(row) + UInt64(rowspan) > rows || UInt64(column) + UInt64(colspan) > columns || pool[key] == nil { return false }
+                for r in UInt64(row)..<(UInt64(row) + UInt64(rowspan)) {
+                    for c in UInt64(column)..<(UInt64(column) + UInt64(colspan)) {
+                        if !occupied.insert(r * columns + c).inserted { return false }
+                    }
+                }
+                return true
+            }
+            previous = UInt64(table.tablePos) + 1
+            var rowIndex = 0
+            for cell in table.cells {
+                if !region(cell.row, cell.column, cell.rowspan, cell.colspan, cell.attrsKey) || UInt64(cell.sourcePos) < previous || cell.sourceEnd <= cell.sourcePos || cell.contentKey.isEmpty { return false }
+                while rowIndex < table.sourceRows.count, table.sourceRows[rowIndex].sourceEnd <= cell.sourcePos { rowIndex += 1 }
+                guard rowIndex < table.sourceRows.count else { return false }
+                let row = table.sourceRows[rowIndex]
+                if row.sourcePos >= cell.sourcePos || row.sourceEnd <= cell.sourceEnd { return false }
+                previous = UInt64(cell.sourceEnd)
+                for child in cell.elements {
+                    pending.append((child, depth + 1, UInt64(cell.sourcePos) + 1, UInt64(cell.sourceEnd) - 1))
+                }
+            }
+            for gap in table.syntheticRegions {
+                if !region(gap.row, gap.column, gap.rowspan, gap.colspan, gap.attrsKey) { return false }
+            }
+        }
+        return referenced == Set(records.keys)
     }
 
     private static func listContext(from json: String?) -> ViewerListContext? {

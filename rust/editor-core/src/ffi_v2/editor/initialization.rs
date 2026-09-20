@@ -54,6 +54,7 @@ fn resolve_configured_create_schema(
 pub(crate) struct ResolvedLocalDocument {
     pub document: crate::model::Document,
     pub schema: crate::schema::Schema,
+    pub resource_limits: ResourceLimits,
 }
 
 pub(crate) fn resolve_local_document(
@@ -117,7 +118,7 @@ pub(crate) fn resolve_local_document(
         }
     };
 
-    Ok(ResolvedLocalDocument { document, schema })
+    Ok(ResolvedLocalDocument { document, schema, resource_limits: config.resource_limits })
 }
 
 fn resolve_local_empty_document(config_json: &str) -> Result<ResolvedLocalDocument, SessionError> {
@@ -134,7 +135,7 @@ fn resolve_local_empty_document(config_json: &str) -> Result<ResolvedLocalDocume
     )
     .map_err(SessionError::from)?;
 
-    Ok(ResolvedLocalDocument { document, schema })
+    Ok(ResolvedLocalDocument { document, schema, resource_limits: config.resource_limits })
 }
 
 fn resolve_local_config(

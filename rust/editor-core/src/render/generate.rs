@@ -8,6 +8,7 @@ use crate::schema::{NodeRole, Schema};
 /// Failure while deriving a flat render sequence before emitting any output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GenerateError {
+    RenderPreparationFailed,
     OrderedListStartOutOfRange,
     ListItemCountOutOfRange,
     OrderedListIndexOverflow,
@@ -32,13 +33,14 @@ fn render_marks(node: &Node) -> Vec<RenderMark> {
 /// `ListContext` to their list-item children.
 #[allow(dead_code)]
 pub fn generate(doc: &Document, schema: &Schema) -> Result<Vec<RenderElement>, GenerateError> {
-    let mut elements = Vec::new();
-    // Position starts at 0 (inside the doc root's open tag).
-    // The root doc node itself is not emitted; we walk its children.
-    let root = doc.root();
-    let mut pos: u32 = 0; // position within doc content (after root open tag)
-    walk_children(root, schema, &mut elements, &mut pos, 0, None)?;
-    Ok(elements)
+    crate::render::incremental::try_render_blocks(doc, schema)
+        .map(|blocks| crate::render::incremental::flatten_render_blocks(&blocks))
+        .map_err(|error| match error {
+            crate::render::incremental::CachedRenderError::InvalidOrderedListStart => {
+                GenerateError::OrderedListStartOutOfRange
+            }
+            _ => GenerateError::RenderPreparationFailed,
+        })
 }
 
 /// Walk the children of `parent`, emitting render elements.

@@ -149,8 +149,9 @@ fn rendered_text(document: &Document, schema: &Schema) -> String {
         *started_block = true;
     };
 
-    for element in elements {
+    for element in crate::tables::render::source_elements(&elements) {
         match element {
+            RenderElement::Table { .. } => unreachable!("source traversal expands tables"),
             RenderElement::BlockStart {
                 node_type,
                 list_context,

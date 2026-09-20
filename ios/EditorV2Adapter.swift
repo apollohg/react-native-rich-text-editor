@@ -76,6 +76,9 @@ final class EditorV2Adapter {
     var cachedViewUpdateJSON: String?
     var cachedAtomicRenderJSON: String?
     var cachedAtomicRenderDocumentRevision: UInt64?
+    var cachedSemanticRenderBlocks: [[[String: Any]]]?
+    var cachedTableAttributes: [String: [String: Any]] = [:]
+    var cachedTableRecords: [String: [String: Any]] = [:]
     /// Diagnostics: structured notes for adapter-path failures
     /// (mismatch refreshes, derivation failures) that never surface as
     /// autonomous error events.
@@ -363,6 +366,9 @@ final class EditorV2Adapter {
             "selection": selection,
             "activeState": cachedActiveState ?? NSNull(),
             "historyState": history,
+            "tableAttributes": cachedTableAttributes,
+            "tableRecords": cachedTableRecords,
+            "semanticRenderBlocks": cachedSemanticRenderBlocks ?? NSNull(),
             "viewUpdateJSON": cachedViewUpdateJSON ?? NSNull()
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
