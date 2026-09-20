@@ -149,11 +149,13 @@ final class TableGridLayoutTests: XCTestCase {
             TableGridCell(sourcePosition: 20, row: 1, column: 0, contentKey: "b")
         ]
         var calls = 0
+        var measuredPositions: [Int] = []
         func layout(width: CGFloat = 100, theme: String = "theme", fontRevision: Int = 1) -> TableLayoutResult {
             grid.layout(record: record(columns: 1, rows: 2, widths: [width], cells: cells), viewportWidth: width,
                         style: TableStyle(), direction: .leftToRight, themeDigest: theme,
-                        fontEnvironmentRevision: fontRevision) { _, _ in
+                        fontEnvironmentRevision: fontRevision) { cell, _ in
                 calls += 1
+                measuredPositions.append(cell.sourcePosition)
                 return 20
             }
         }
@@ -166,12 +168,20 @@ final class TableGridLayoutTests: XCTestCase {
         cells[0] = TableGridCell(sourcePosition: 10, row: 0, column: 0, contentKey: "a", attachmentRevision: 1)
         _ = layout()
         XCTAssertEqual(calls, 3)
+        XCTAssertEqual(measuredPositions.last, 10)
+
+        cells[0] = TableGridCell(sourcePosition: 10, row: 0, column: 0, contentKey: "updated", attachmentRevision: 1)
+        let contentChanged = layout()
+        XCTAssertEqual(calls, 4)
+        XCTAssertEqual(measuredPositions.last, 10)
+        XCTAssertEqual(contentChanged.rectangles, layout().rectangles)
+        XCTAssertEqual(calls, 4)
         _ = layout(theme: "new-theme")
-        XCTAssertEqual(calls, 5)
+        XCTAssertEqual(calls, 6)
         _ = layout(fontRevision: 2)
-        XCTAssertEqual(calls, 7)
+        XCTAssertEqual(calls, 8)
         _ = layout(width: 120)
-        XCTAssertEqual(calls, 9)
+        XCTAssertEqual(calls, 10)
     }
 
     func testCacheMetadataStaysBoundedAcrossRepeatedWarmHitsAndChurn() {
@@ -191,7 +201,7 @@ final class TableGridLayoutTests: XCTestCase {
     }
 
     func testPixelWidthAtIntMaximumFallsBackWithoutTrapping() {
-        let result = TableGridLayout().layout(record: record(columns: 1, widths: [CGFloat(Int.max)],
+        let result = TableGridLayout(displayScale: 1).layout(record: record(columns: 1, widths: [CGFloat(Int.max)],
                                                               cells: [TableGridCell(sourcePosition: 1, row: 0, column: 0, contentKey: "cell")]),
                                               viewportWidth: CGFloat(Int.max), style: TableStyle(cellPadding: 0, borderWidth: 0),
                                               direction: .leftToRight) { _, _ in 10 }

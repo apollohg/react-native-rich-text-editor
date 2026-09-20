@@ -104,9 +104,11 @@ class TableGridLayoutTest {
         val grid = TableGridLayout(cache = TableCellMeasurementCache())
         var cells = listOf(TableGridCell(10, 0, 0, contentKey = "a"), TableGridCell(20, 1, 0, contentKey = "b"))
         var calls = 0
+        val measuredPositions = mutableListOf<Int>()
         fun layout(width: Float = 100f, theme: String = "theme", fontRevision: Long = 1L): TableLayoutResult =
-            grid.layout(record(columns = 1, rows = 2, widths = listOf(width), cells = cells), width, TableStyle(), false, theme, fontRevision) { _, _ ->
+            grid.layout(record(columns = 1, rows = 2, widths = listOf(width), cells = cells), width, TableStyle(), false, theme, fontRevision) { cell, _ ->
                 calls += 1
+                measuredPositions += cell.sourcePosition
                 20f
             }
 
@@ -117,11 +119,18 @@ class TableGridLayoutTest {
         cells = listOf(TableGridCell(10, 0, 0, contentKey = "a", attachmentRevision = 1), cells[1])
         layout()
         assertEquals(3, calls)
+        assertEquals(10, measuredPositions.last())
+        cells = listOf(TableGridCell(10, 0, 0, contentKey = "updated", attachmentRevision = 1), cells[1])
+        val contentChanged = layout()
+        assertEquals(4, calls)
+        assertEquals(10, measuredPositions.last())
+        assertEquals(contentChanged.rectangles, layout().rectangles)
+        assertEquals(4, calls)
         layout(theme = "new-theme")
-        assertEquals(5, calls)
+        assertEquals(6, calls)
         layout(fontRevision = 2)
-        assertEquals(7, calls)
+        assertEquals(8, calls)
         layout(width = 120f)
-        assertEquals(9, calls)
+        assertEquals(10, calls)
     }
 }
