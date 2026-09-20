@@ -49,6 +49,7 @@ import {
 import type { PeerReply, Request, UpdateEvent, WebPeerHandler } from '../peer-protocol.js';
 import { observePresentation } from './presentation-observer.js';
 import { observeTextTarget } from './text-target.js';
+import { observeRowInsertion, type RowInsertionObservation } from './row-insertion-observer.js';
 import type { JsonNode } from '../peer-protocol.js';
 
 const REMOTE_ORIGIN = 'tableInteropRemoteUpdate';
@@ -301,7 +302,7 @@ function anchorSelection(editor: MountedEditor, command: Record<string, unknown>
     editor.view.dispatch(state.tr.setSelection(selection));
 }
 
-function applyCommand(editor: MountedEditor, command: Record<string, unknown>): void {
+function applyCommand(editor: MountedEditor, command: Record<string, unknown>, observe?: () => void): void {
     anchorSelection(editor, command);
     const type = command['type'];
     if (type === 'appendParagraph') {
@@ -334,6 +335,7 @@ function applyCommand(editor: MountedEditor, command: Record<string, unknown>): 
                 `table command ${JSON.stringify(name)} is not served by the web peer`,
             );
         }
+        observe?.();
         if (!tableCommand(editor.view.state, editor.view.dispatch, editor.view)) {
             throw new PeerOperationError(
                 CONFIG_INVALID,
@@ -682,6 +684,7 @@ class WebPeerRuntime {
     }
 
     async command(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+        this.rowInsertion = null;
         const mutationKind = requireString(payload['kind'], 'payload.kind');
         if (mutationKind !== 'command') {
             throw new PeerOperationError(
@@ -700,7 +703,14 @@ class WebPeerRuntime {
         const before = editor.view.state.doc;
         let textTarget: ReturnType<typeof observeTextTarget>;
         const changed = await this.runRequestedOperation(() => {
-            applyCommand(editor, command);
+            applyCommand(editor, command, () => {
+                if (command['name'] !== 'addRowAfter') return;
+                try {
+                    this.rowInsertion = observeRowInsertion(editor.view.state, command);
+                } catch (error) {
+                    this.rowInsertion = { observationFailure: String(error) };
+                }
+            });
             if (command['type'] === INSERT_TEXT_COMMAND)
                 textTarget = observeTextTarget(
                     before,
@@ -711,6 +721,8 @@ class WebPeerRuntime {
         });
         return { type: 'transaction', documentChanged: changed, ...(textTarget ? { textTarget } : {}) };
     }
+
+    private rowInsertion: RowInsertionObservation | { observationFailure: string } | null = null;
 
     async history(direction: 'undo' | 'redo'): Promise<Record<string, unknown>> {
         const editor = this.requireEditor();
@@ -764,6 +776,7 @@ class WebPeerRuntime {
             mounted: this.editor !== null,
             pendingDependencies: this.hasPendingDependencies(),
             displayJson: this.editor === null ? null : this.editor.view.state.doc.toJSON(),
+            rowInsertion: this.rowInsertion,
             documentRevision: this.documentRevision.toString(),
             normalizationPassesAfterLastAction: this.counter.passes,
             autonomousRepairWrites: this.autonomousRepairWrites,

@@ -1,6 +1,8 @@
 import {
     continuationCoverage,
     continuationPassed,
+    structuralAvailabilityOutcome,
+    type StructuralAvailabilityOutcome,
     runContinuation,
     ContinuationExecutionError,
     type ContinuationResult,
@@ -25,6 +27,8 @@ export async function executeContinuations(
         throw new Error('duplicate continuation declaration');
     const coverage: ContinuationSlot[] = [];
     let passed = 0;
+    let successfulEdits = 0, appliedStructuralHistory = 0, appliedTextHistory = 0;
+    const availabilityOutcomes: Record<StructuralAvailabilityOutcome, number> = { 'successful-edit': 0, 'verified-native-refusal': 0, 'verified-stock-limitation': 0, 'unexplained-failure': 0, 'missing-evidence': 0 };
     for (const slot of slots) {
         let result: ContinuationResult;
         const previousTrace = completedTrace();
@@ -56,12 +60,22 @@ export async function executeContinuations(
         }
         coverage.push(...continuationCoverage([slot], [result]));
         if (continuationPassed(result)) passed += 1;
+        if (['structure', 'history'].includes(slot.proof)) availabilityOutcomes[structuralAvailabilityOutcome(result)]++;
+        if (continuationPassed(result) && result.disposition === 'edited') {
+            successfulEdits++;
+            if (slot.proof === 'history') appliedStructuralHistory++;
+            if (slot.proof === 'text-history') appliedTextHistory++;
+        }
         await write(result);
     }
     return {
         declared: slots.length,
         executed: coverage.length,
         passed,
+        successfulEdits,
+        appliedStructuralHistory,
+        appliedTextHistory,
+        availabilityOutcomes,
         coverage,
     };
 }

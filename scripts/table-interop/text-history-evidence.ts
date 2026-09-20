@@ -37,7 +37,7 @@ function atSource(raw: JsonNode, source: string): JsonNode {
     return node;
 }
 
-function rawView(view: EffectiveDocument, raw: JsonNode): EffectiveDocument {
+export function rawView(view: EffectiveDocument, raw: JsonNode): EffectiveDocument {
     const result = structuredClone(view);
     const sources = new Set(realCells(result).map((cell) => cell.source));
     function visit(node: JsonNode, source: string): void {

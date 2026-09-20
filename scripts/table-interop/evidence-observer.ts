@@ -1,5 +1,7 @@
 import * as Y from 'yjs';
-import { call, EMPTY_STATE_VECTOR_BASE64, peerKindOf, snapshot } from './controller.js';
+import { call, EMPTY_STATE_VECTOR_BASE64, peerKindOf, snapshot, PeerError } from './controller.js';
+import type { RowInsertionObservation } from './browser/row-insertion-observer.js';
+import { dependencyManifest } from './trace.js';
 import { observeNativePresentation, observeWebPresentation } from './presentation-semantics.js';
 import type { EffectiveCell, EffectiveDocument, JsonNode, Peer, Request } from './peer-protocol.js';
 import type { RecordedAction, RecordedDelivery } from './scenario-evidence.js';
@@ -123,6 +125,9 @@ export async function evidenceCall(
         }
     };
     const before = await observe();
+    const structural = operation === 'command' && ['addTableRow', 'tableCommand'].includes(String(payload['type']));
+    const encoded = async () => String((await call(peer, 'stateDiff', { stateVectorBase64: EMPTY_STATE_VECTOR_BASE64 }))['updateBase64']);
+    const encodedBefore = structural ? await encoded() : '';
     let reply: Record<string, unknown> = {};
     let rejected: unknown;
     try {
@@ -131,6 +136,7 @@ export async function evidenceCall(
         rejected = error;
     }
     const afterState = await snapshot(peer);
+    const encodedAfter = structural ? await encoded() : '';
     const after = await observe();
     let targetGridValid: boolean | undefined;
     const target = targetAt(before, payload['at'], peerKindOf(peer) === 'rust');
@@ -157,6 +163,10 @@ export async function evidenceCall(
         }
     }
     active.capture.actions.push({
+        request: { operation, payload: structuredClone(payload) },
+        ...(structural ? { availabilityBoundary: { before: beforeState, after: afterState, encodedBefore, encodedAfter, versions: dependencyManifest('').packages } } : {}),
+        ...(rejected !== undefined ? { commandError: { code: rejected instanceof PeerError ? rejected.code : 'UNSUPPORTED_ERROR', message: rejected instanceof PeerError ? rejected.detail : String(rejected) } } : {}),
+        ...(afterState.rowInsertion ? { stockRowInsertion: afterState.rowInsertion as RowInsertionObservation } : {}),
         actor: active.actor,
         kind: peerKindOf(peer),
         operation: commandName(operation, payload),

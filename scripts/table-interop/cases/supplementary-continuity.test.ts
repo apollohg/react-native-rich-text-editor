@@ -15,7 +15,7 @@ import { realCells } from '../scenario-evidence.js';
 import { continuationPassed } from '../corpus.js';
 import { assertGapContinuation } from '../continuity-evidence.js';
 
-test('named overlap native structural action applies to its declared source', async () => {
+test('named overlap native structural action has verified availability at its declared source', async () => {
     const slot = supplementary
         .supplementaryRequirements()
         .find(
@@ -27,6 +27,8 @@ test('named overlap native structural action applies to its declared source', as
                 slot.proof === 'structure',
         )!;
     const result = await supplementary.runSupplementary(slot);
+    assert.equal(result.availability, 'verified-native-refusal');
+    assert.equal(result.actions[0]!.reply['type'], 'notApplicable');
     assert.equal(
         continuationPassed(result),
         true,
@@ -38,7 +40,7 @@ test('named overlap native structural action applies to its declared source', as
     );
 });
 
-test('named overlap stock structural action applies to its declared source', async () => {
+test('named overlap stock structural action has verified availability at its declared source', async () => {
     const slot = supplementary
         .supplementaryRequirements()
         .find(
@@ -50,6 +52,8 @@ test('named overlap stock structural action applies to its declared source', asy
                 slot.proof === 'structure',
         )!;
     const result = await supplementary.runSupplementary(slot);
+    assert.equal(result.availability, 'verified-stock-limitation');
+    assert.ok(result.actions[0]!.commandError);
     assert.equal(
         continuationPassed(result),
         true,

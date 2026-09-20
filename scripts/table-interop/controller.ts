@@ -26,6 +26,9 @@ import {
 import type { Trace } from './trace.js';
 
 export interface PeerSnapshot {
+    rowInsertion?: unknown;
+    stateRevision?: string;
+    queuedEvents?: UpdateEvent[];
     documentJson: Record<string, unknown> | null;
     displayJson: Record<string, unknown> | null;
     documentRevision: string;
@@ -61,11 +64,13 @@ const RECORDED_ACTIONS: readonly Request['operation'][] = ['command', 'undo', 'r
 
 export class PeerError extends Error {
     readonly code: string;
+    readonly detail: string;
 
     constructor(operation: string, code: string, message: string) {
         super(`peer rejected ${operation} with ${code}: ${message}`);
         this.name = 'PeerError';
         this.code = code;
+        this.detail = message;
     }
 }
 
@@ -186,6 +191,9 @@ export async function snapshot(peer: Peer): Promise<PeerSnapshot> {
         'snapshot.normalizationPassesAfterLastAction',
     );
     const captured: PeerSnapshot = {
+        rowInsertion: value['rowInsertion'],
+        ...(record.kind === NATIVE_PEER_KIND ? { stateRevision: requireString(value['stateRevision'], 'snapshot.stateRevision') } : {}),
+        queuedEvents: structuredClone(record.events),
         documentJson,
         displayJson,
         documentRevision: requireString(value['documentRevision'], 'snapshot.documentRevision'),

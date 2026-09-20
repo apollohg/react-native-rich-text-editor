@@ -63,6 +63,7 @@ import {
     realCells,
 } from './scenario-evidence.js';
 import type { CoverageStatus, FamilyEvidence, RecordedAction } from './scenario-evidence.js';
+import { assertUnavailableAction, assertSuccessfulStructuralResult, availabilityVerified, type UnavailableOutcome } from './availability-evidence.js';
 import {
     assertTypingContinuation,
     assertSourcePreservation,
@@ -1227,6 +1228,7 @@ export interface ContinuationCheckpoint {
         passed: boolean;
         comparisons: PresentationCheck[];
         failures: string[];
+        views?: { native: EffectiveDocument[]; web: EffectiveDocument[] };
     };
     readonly nativeAutonomousRepairWrites: number;
     readonly observations: ContinuationObservation[];
@@ -1250,11 +1252,12 @@ export interface ContinuationRemoteBoundary {
 }
 
 export interface ContinuationResult {
+    availability?: UnavailableOutcome;
     textHistory?: TextHistoryIntent;
     readonly slot: ContinuationSlot;
     required: boolean | null;
     status: CoverageStatus;
-    disposition: 'edited' | 'refused' | 'no-gap' | 'unreached';
+    disposition: 'edited' | 'refused' | 'limited' | 'no-gap' | 'unreached';
     baseline?: Omit<ScheduleOutcome, 'peers'>;
     checkpoints: ContinuationCheckpoint[];
     actions: RecordedAction[];
@@ -1368,12 +1371,14 @@ export async function continuationCheckpoint(
         }
         const nativeViews: EffectiveDocument[] = [];
         for (const peer of native) nativeViews.push(await observeNativePresentation(peer));
+        if (captureRaw) checked.presentation.views = { native: nativeViews, web: [] };
         for (const view of nativeViews.slice(1))
             checked.presentation.comparisons.push(
                 assertEffectivePresentation(nativeViews[0]!, view),
             );
         for (const peer of web) {
             const view = await observeWebPresentation(peer);
+            checked.presentation.views?.web.push(view);
             for (const expected of nativeViews)
                 checked.presentation.comparisons.push(assertEffectivePresentation(expected, view));
         }
@@ -1405,6 +1410,8 @@ export async function continuationCheckpoint(
 
 export function continuationPassed(result: ContinuationResult): boolean {
     if (result.failures.length > 0) return false;
+    if (result.availability || result.disposition === 'limited')
+        return result.slot.proof === 'structure' && result.status === 'proven' && availabilityVerified(result);
     if (result.slot.proof === 'text-history') {
         try {
             requireContinuity(
@@ -1535,6 +1542,22 @@ export function continuationPassed(result: ContinuationResult): boolean {
     );
 }
 
+export type StructuralAvailabilityOutcome = 'successful-edit' | UnavailableOutcome | 'unexplained-failure' | 'missing-evidence';
+
+export function structuralAvailabilityOutcome(result: ContinuationResult): StructuralAvailabilityOutcome {
+    requireContinuity(['structure', 'history'].includes(result.slot.proof), 'structural availability outcome scope');
+    if (result.failures.length) return 'unexplained-failure';
+    if (availabilityVerified(result)) return result.availability!;
+    if (!result.actions.length || !result.checkpoints.length) return 'missing-evidence';
+    if (result.disposition === 'edited' && continuationPassed(result)) {
+        try {
+            assertSuccessfulStructuralResult(result);
+            return 'successful-edit';
+        } catch { return 'unexplained-failure'; }
+    }
+    return result.checkpoints.some(checkpoint => !checkpoint.raw.passed || !checkpoint.presentation.passed || !checkpoint.drain.passed || checkpoint.nativeAutonomousRepairWrites > 0) ? 'unexplained-failure' : 'missing-evidence';
+}
+
 export function continuationCoverage(
     required: readonly ContinuationSlot[],
     results: readonly ContinuationResult[],
@@ -1549,13 +1572,11 @@ export function continuationCoverage(
     );
     return required.map((slot) => {
         const result = found.get(slot.key);
-        if (result && slot.proof === 'text-history') {
-            const declaration = ({ status: _status, ...fields }: ContinuationSlot) =>
-                JSON.parse(JSON.stringify(fields));
+        if (result && (slot.proof === 'text-history' || result.availability)) {
             assert.deepEqual(
-                declaration(result.slot),
-                declaration(slot),
-                'text-history declaration mismatch',
+                continuationDeclaration(result.slot),
+                continuationDeclaration(slot),
+                slot.proof === 'text-history' ? 'text-history declaration mismatch' : 'availability declaration mismatch',
             );
         }
         return {
@@ -1563,12 +1584,16 @@ export function continuationCoverage(
             required: result ? result.required : slot.required,
             status:
                 result?.status === 'proven' &&
-                slot.proof === 'text-history' &&
+                (slot.proof === 'text-history' || result.availability) &&
                 !continuationPassed(result)
                     ? 'exercised-unproven'
                     : result?.status ?? 'unexercised',
         };
     });
+}
+
+export function continuationDeclaration({ status: _status, ...fields }: ContinuationSlot): unknown {
+    return JSON.parse(JSON.stringify(fields));
 }
 
 export interface ContinuationOptions {
@@ -1620,7 +1645,7 @@ export async function runContinuation(
                     boundary,
                     schedule.seed,
                     drain,
-                    slot.proof === 'text-history',
+                    ['text-history', 'structure', 'history'].includes(slot.proof),
                 );
                 result.checkpoints.push(checked);
                 return checked;
@@ -1839,8 +1864,26 @@ export async function runContinuation(
                     if (slot.proof === 'history' && slot.actorKind !== NATIVE_PEER_KIND)
                         await new Promise((resolve) => setTimeout(resolve, 510));
                     const cell = await freshTarget();
-                    await addRowAfter(actor, cell.position + 1);
+                    let commandFailure: unknown;
+                    try {
+                        await addRowAfter(actor, cell.position + 1);
+                    } catch (error) {
+                        commandFailure = error;
+                    }
                     const action = capture.actions.at(-1)!;
+                    if (commandFailure !== undefined || action?.reply['type'] === 'notApplicable') {
+                        await checkpoint('unavailable-action');
+                        try {
+                            result.availability = assertUnavailableAction(action, slot, initial.textHistoryObservations![slot.actor]!);
+                            result.disposition = result.availability === 'verified-native-refusal' ? 'refused' : 'limited';
+                            requireContinuity(availabilityVerified(result), 'availability settled result');
+                        } catch (evidenceError) {
+                            if (commandFailure !== undefined) result.failures.push(String(commandFailure));
+                            throw evidenceError;
+                        }
+                        result.status = slot.proof === 'structure' ? 'proven' : 'exercised-unproven';
+                        return;
+                    }
                     const intent = { actor: slot.actor, source: cell.source! };
                     structuralEvidence(action, intent, [
                         { kind: action.kind, document: action.after },
@@ -1977,12 +2020,14 @@ export async function runContinuation(
         result.baseline = failed;
         result.failures.push(...failed.evidence.failures);
     }
-    if (!continuationPassed(result))
+    if (!continuationPassed(result) || result.availability)
         result.tracePath = persistTrace({
             ...lastTrace(),
             failureClass: 'CONTINUITY',
             failureMessage: JSON.stringify({
                 key: slot.key,
+                availability: result.availability,
+                attempts: result.actions.filter(action => action.commandError || action.reply['availability']).map(action => ({ request: action.request, error: action.commandError, nativeAudit: action.reply['availability'], stockObservation: action.stockRowInsertion })),
                 failures: result.failures,
                 checkpoints: result.checkpoints.map(({ boundary, raw, presentation, drain }) => ({
                     boundary,

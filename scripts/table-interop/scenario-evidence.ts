@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { isDeepStrictEqual } from 'node:util';
 import { canonicalDocumentShape } from './assertions.js';
+import type { RowInsertionObservation } from './browser/row-insertion-observer.js';
+import type { PeerSnapshot } from './controller.js';
 import type {
     EffectiveCell,
     EffectiveDocument,
@@ -443,6 +445,10 @@ export const FAMILY_INTENTS: readonly FamilyIntent[] = [
     { steps: [step('addRow', 'second', 'd')], preserve: ['x', 'y', 'z', 'b', 'c', 'd'] },
 ];
 export interface RecordedAction extends ActionEvidence {
+    request?: { operation: string; payload: Record<string, unknown> };
+    commandError?: { code: string; message: string };
+    stockRowInsertion?: RowInsertionObservation;
+    availabilityBoundary?: { before: PeerSnapshot; after: PeerSnapshot; encodedBefore: string; encodedAfter: string; versions: Record<string, string> };
     head: EffectiveCell | null;
     rawBefore: unknown;
     rawAfter: unknown;
