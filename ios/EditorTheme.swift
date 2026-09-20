@@ -413,6 +413,7 @@ struct EditorTheme {
     var backgroundColor: UIColor?
     var borderRadius: CGFloat?
     var contentInsets: EditorContentInsets?
+    var table: TableStyle?
 
     static func from(json: String?) -> EditorTheme? {
         guard let json, !json.isEmpty,
@@ -480,6 +481,18 @@ struct EditorTheme {
         borderRadius = EditorTheme.cgFloat(dictionary["borderRadius"])
         if let contentInsets = dictionary["contentInsets"] as? [String: Any] {
             self.contentInsets = EditorContentInsets(dictionary: contentInsets)
+        }
+        if let table = dictionary["table"] as? [String: Any] {
+            let style = TableStyle(
+                minColumnWidth: EditorTheme.cgFloat(table["minColumnWidth"]) ?? 80,
+                cellPadding: EditorTheme.cgFloat(table["cellPadding"]) ?? 8,
+                borderWidth: EditorTheme.cgFloat(table["borderWidth"]) ?? 1,
+                borderColor: EditorTheme.color(from: table["borderColor"]) ?? EditorTheme.color(from: "#D1D5DB")!,
+                headerBackgroundColor: EditorTheme.color(from: table["headerBackgroundColor"]) ?? EditorTheme.color(from: "#F3F4F6")!,
+                selectionColor: EditorTheme.color(from: table["selectionColor"]) ?? EditorTheme.color(from: "#3B82F633")!,
+                resizeHandleColor: EditorTheme.color(from: table["resizeHandleColor"]) ?? EditorTheme.color(from: "#3B82F6")!
+            )
+            self.table = style.isValid ? style : nil
         }
     }
 

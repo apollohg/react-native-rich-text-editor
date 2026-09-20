@@ -1,6 +1,20 @@
 import { serializeEditorTheme } from '../EditorTheme';
 
 describe('EditorTheme serialization', () => {
+    it('normalizes table presentation defaults and overrides', () => {
+        expect(JSON.parse(serializeEditorTheme({ table: { minColumnWidth: 96, borderColor: '#123456' } })!)).toEqual({
+            version: 1,
+            table: {
+                minColumnWidth: 96,
+                cellPadding: 8,
+                borderWidth: 1,
+                borderColor: '#123456ff',
+                headerBackgroundColor: '#f3f4f6ff',
+                selectionColor: '#3b82f633',
+                resizeHandleColor: '#3b82f6ff',
+            },
+        });
+    });
     it('serializes flat per-level heading styles', () => {
         expect(
             JSON.parse(

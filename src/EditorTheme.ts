@@ -12,6 +12,7 @@ export type {
     EditorHorizontalRuleTheme,
     EditorBlockquoteTheme,
     EditorCodeBlockTheme,
+    EditorTableTheme,
 } from './EditorStyleSheetTypes';
 
 /**

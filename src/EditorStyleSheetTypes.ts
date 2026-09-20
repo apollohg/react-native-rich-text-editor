@@ -115,6 +115,16 @@ export interface EditorHorizontalRuleStyle extends EditorBorderStyle, EditorMarg
 
 export interface EditorMentionStyle extends EditorInlineStyle, EditorBorderStyle, EditorPaddingStyle {}
 
+export interface EditorTableTheme {
+    minColumnWidth?: number;
+    cellPadding?: number;
+    borderWidth?: number;
+    borderColor?: string;
+    headerBackgroundColor?: string;
+    selectionColor?: string;
+    resizeHandleColor?: string;
+}
+
 export interface EditorStyleMap {
     content: EditorSurfaceStyle;
     text: EditorTypographyStyle;
@@ -158,6 +168,7 @@ export type EditorTheme = {
 } & {
     rules?: readonly EditorStyleRule[];
     toolbar?: EditorToolbarTheme;
+    table?: EditorTableTheme;
 };
 
 export type EditorLinkTheme = EditorInlineStyle;
@@ -178,6 +189,7 @@ export interface NormalizedEditorTheme {
         style: NormalizedEditorStyle;
     }[];
     toolbar?: EditorToolbarTheme;
+    table?: Required<EditorTableTheme>;
 }
 
 type ExactStyle<T, Shape> = T extends false | null | undefined
@@ -230,5 +242,7 @@ export type ExactEditorTheme<T> = {
             ? ExactStyle<T[K], EditorStyleMap[K]>
             : K extends 'toolbar'
                 ? EditorToolbarTheme
+                : K extends 'table'
+                    ? EditorTableTheme
                 : never;
 };

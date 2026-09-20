@@ -26,7 +26,7 @@ Pod::Spec.new do |s|
   s.dependency 'SVGgh', '~> 1.12.1'
 
   # Swift source files (including generated UniFFI bindings).
-  s.source_files = ['ios/*.swift', 'ios/Viewer/**/*.{swift,h,mm}', 'common/cpp/**/*.{h,cpp}']
+  s.source_files = ['ios/*.swift', 'ios/Viewer/**/*.{swift,h,mm}', 'ios/Tables/**/*.swift', 'common/cpp/**/*.{h,cpp}']
   # These Objective-C++/C++ Fabric implementation headers import React C++
   # headers. Keeping them private prevents Swift's umbrella module from
   # importing them while preserving their availability to this pod's sources.

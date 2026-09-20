@@ -493,6 +493,7 @@ data class EditorTheme(
     val backgroundColor: Int? = null,
     val borderRadius: Float? = null,
     val contentInsets: EditorContentInsets? = null,
+    val table: com.apollohg.editor.tables.TableStyle? = null,
     val styleSheet: EditorStyleSheet? = null
 ) {
     companion object {
@@ -532,7 +533,18 @@ data class EditorTheme(
                 placeholderColor = parseColor(root.optNullableString("placeholderColor")),
                 backgroundColor = parseColor(root.optNullableString("backgroundColor")),
                 borderRadius = root.optNullableFloat("borderRadius"),
-                contentInsets = EditorContentInsets.fromJson(root.optJSONObject("contentInsets"))
+                contentInsets = EditorContentInsets.fromJson(root.optJSONObject("contentInsets")),
+                table = root.optJSONObject("table")?.let { table ->
+                    com.apollohg.editor.tables.TableStyle(
+                        minColumnWidth = table.optNullableFloat("minColumnWidth") ?: 80f,
+                        cellPadding = table.optNullableFloat("cellPadding") ?: 8f,
+                        borderWidth = table.optNullableFloat("borderWidth") ?: 1f,
+                        borderColor = parseColor(table.optNullableString("borderColor")) ?: android.graphics.Color.rgb(0xD1, 0xD5, 0xDB),
+                        headerBackgroundColor = parseColor(table.optNullableString("headerBackgroundColor")) ?: android.graphics.Color.rgb(0xF3, 0xF4, 0xF6),
+                        selectionColor = parseColor(table.optNullableString("selectionColor")) ?: android.graphics.Color.argb(0x33, 0x3B, 0x82, 0xF6),
+                        resizeHandleColor = parseColor(table.optNullableString("resizeHandleColor")) ?: android.graphics.Color.rgb(0x3B, 0x82, 0xF6)
+                    ).takeIf { it.isValid() }
+                }
             )
         }
     }
