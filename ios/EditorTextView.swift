@@ -174,6 +174,9 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     var recoveringRenderPatchBaseMismatch = false
     var currentTopLevelChildMetadata: [TopLevelChildMetadata]?
     var tableCellPositionMap: TableCellPositionMap?
+    var tableCellInputAuthority: (() -> Bool)?
+    var onProjectedUpdate: ((String, Bool) -> Bool)?
+    var onAuthoritativeRenderApplied: ((String) -> Void)?
     var renderAppearanceRevision: UInt64 = 1
     var lastAppliedRenderAppearanceRevision: UInt64 = 0
 

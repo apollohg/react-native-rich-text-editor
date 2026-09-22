@@ -333,6 +333,14 @@ extension EditorTextView {
         else {
             return nil
         }
+        if tableCellPositionMap != nil {
+            let localStart = PositionBridge.utf16OffsetToScalar(cursorUtf16Offset, in: self)
+            let localEnd = PositionBridge.utf16OffsetToScalar(cursorUtf16Offset + 1, in: self)
+            guard let mapped = inputScalarRange(fromLocal: localStart, toLocal: localEnd),
+                  mapped.from == cursorScalar
+            else { return nil }
+            return mapped
+        }
         return (from: cursorScalar, to: cursorScalar + 1)
     }
 
@@ -385,7 +393,7 @@ extension EditorTextView {
             in: self
         )
         guard attachmentEndScalar > 0 else { return nil }
-        return (from: attachmentEndScalar - 1, to: attachmentEndScalar)
+        return inputScalarRange(fromLocal: attachmentEndScalar - 1, toLocal: attachmentEndScalar)
     }
 
     private func handleListDepthKeyCommand(outdent: Bool) {
@@ -456,6 +464,7 @@ extension EditorTextView {
         flushPendingNativeTextMutation: Bool = true,
         _ action: () -> Void
     ) {
+        guard isAuthorizedForTableCellInput() else { return }
         if flushPendingNativeTextMutation, interceptedInputDepth == 0 {
             guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
         }

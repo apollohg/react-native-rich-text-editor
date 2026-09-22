@@ -1,6 +1,55 @@
 import XCTest
 
 final class TableCellPositionMapTests: XCTestCase {
+    private func attachmentInput(editorId: UInt64) throws -> EditorTextView {
+        let view = EditorTextView(frame: .zero, textContainer: nil)
+        view.bindEditor(id: editorId)
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let text = NSMutableAttributedString(string: "\u{FFFC}\n\u{200B}")
+        text.addAttributes([
+            .attachment: NSTextAttachment(),
+            RenderBridgeAttributes.voidNodeType: "horizontal_rule"
+        ], range: NSRange(location: 0, length: 1))
+        _ = view.applyAttributedRender(text, usedPatch: false, positionCacheUpdate: .invalidate)
+        view.tableCellPositionMap = TableCellPositionMap(
+            binding: .init(cellSourcePosition: 2, documentRevision: adapter.baseDocumentRevision, positionEpoch: try XCTUnwrap(adapter.positionEpoch)),
+            segments: [.init(localScalarRange: 0..<4, globalScalarStart: 10)]
+        )
+        return view
+    }
+
+    func testTrailingAttachmentDeletionUsesCellGlobalCoordinates() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let view = try attachmentInput(editorId: editorId)
+        let range = try XCTUnwrap(view.trailingVoidBlockDeleteRangeForBackwardDelete(cursorUtf16Offset: 3))
+        XCTAssertEqual(range.from, 10)
+        XCTAssertEqual(range.to, 11)
+        let adjacent = try XCTUnwrap(view.adjacentVoidBlockDeleteRangeForBackwardDelete(cursorUtf16Offset: 0, cursorScalar: 10))
+        XCTAssertEqual(adjacent.from, 10)
+        XCTAssertEqual(adjacent.to, 11)
+        XCTAssertNil(view.adjacentVoidBlockDeleteRangeForBackwardDelete(cursorUtf16Offset: 0, cursorScalar: 11))
+    }
+
+    func testAttachmentDeletionRejectsUnmappedEndAndStaleEpoch() throws {
+        let editorId = makeV2Editor()
+        defer { destroyV2Editor(id: editorId) }
+        let view = try attachmentInput(editorId: editorId)
+        let binding = try XCTUnwrap(view.tableCellPositionMap?.binding)
+        view.tableCellPositionMap = TableCellPositionMap(
+            binding: binding,
+            segments: [.init(localScalarRange: 0..<1, globalScalarStart: 10)]
+        )
+        XCTAssertNil(view.adjacentVoidBlockDeleteRangeForBackwardDelete(cursorUtf16Offset: 0, cursorScalar: 10))
+        XCTAssertNil(view.trailingVoidBlockDeleteRangeForBackwardDelete(cursorUtf16Offset: 3))
+        view.tableCellPositionMap = TableCellPositionMap(
+            binding: .init(cellSourcePosition: binding.cellSourcePosition, documentRevision: binding.documentRevision, positionEpoch: binding.positionEpoch + 1),
+            segments: [.init(localScalarRange: 0..<4, globalScalarStart: 10)]
+        )
+        XCTAssertNil(view.adjacentVoidBlockDeleteRangeForBackwardDelete(cursorUtf16Offset: 0, cursorScalar: 10))
+        XCTAssertNil(view.trailingVoidBlockDeleteRangeForBackwardDelete(cursorUtf16Offset: 3))
+    }
+
     private func map(_ segments: [TableCellPositionMap.Segment]) -> TableCellPositionMap {
         TableCellPositionMap(
             binding: .init(cellSourcePosition: 2, documentRevision: 4, positionEpoch: 9),

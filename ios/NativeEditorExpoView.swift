@@ -199,6 +199,9 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
     required init(appContext: AppContext? = nil) {
         richTextView = RichTextEditorView(frame: .zero)
         super.init(appContext: appContext)
+        richTextView.tableCellBindingAuthority = { [weak self] adapter in
+            self?.ownsDelegatedTableCellBinding(adapter) ?? false
+        }
         richTextView.imageLoadOwner = imageLoadOwner
         richTextView.onHeightMayChange = { [weak self] measuredHeight in
             guard let self, self.heightBehavior == .autoGrow else { return }

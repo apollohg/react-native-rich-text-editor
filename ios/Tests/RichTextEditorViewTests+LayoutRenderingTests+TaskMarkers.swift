@@ -2,6 +2,46 @@ import ExpoModulesCore
 import XCTest
 
 extension RichTextEditorViewTests {
+    func testProjectedTaskMarkerTargetsMappedItem() throws {
+        try assertProjectedTaskMarker(stale: false)
+    }
+
+    func testProjectedTaskMarkerRejectsStaleMapping() throws {
+        try assertProjectedTaskMarker(stale: true)
+    }
+
+    private func assertProjectedTaskMarker(stale: Bool) throws {
+        let editorId = makeV2Editor(configJson: #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"taskList","content":"listItem+","group":"block","role":"list"},{"name":"listItem","content":"paragraph block*","role":"listItem","attrs":{"checked":{"default":false}}},{"name":"text","group":"inline","role":"text"}],"marks":[]},"initialization":{"type":"localEmpty"}}"#)
+        defer { destroyV2Editor(id: editorId) }
+        let view = EditorTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        view.bindEditor(id: editorId)
+        let document = #"{"type":"doc","content":[{"type":"taskList","content":[{"type":"listItem","attrs":{"checked":false},"content":[{"type":"paragraph","content":[{"type":"text","text":"First"}]}]},{"type":"listItem","attrs":{"checked":false},"content":[{"type":"paragraph","content":[{"type":"text","text":"Target"}]}]}]}]}"#
+        XCTAssertTrue(view.applyUpdateJSON(EditorV2Shadow.setJson(id: editorId, json: document)))
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let projected = RenderBridge.renderElements(
+            fromJSON: taskListJSON(items: [(text: "Target", checked: false)]),
+            baseFont: view.baseFont,
+            textColor: view.baseTextColor
+        )
+        _ = view.applyAttributedRender(projected, usedPatch: false, positionCacheUpdate: .invalidate)
+        let epoch = try XCTUnwrap(adapter.positionEpoch)
+        view.tableCellPositionMap = TableCellPositionMap(
+            binding: .init(cellSourcePosition: 11, documentRevision: adapter.baseDocumentRevision, positionEpoch: stale ? epoch + 1 : epoch),
+            segments: [.init(localScalarRange: 0..<9, globalScalarStart: 8)]
+        )
+        view.layoutManager.ensureLayout(for: view.textContainer)
+        let marker = taskMarkerTightRect(forCharacterIndex: 0, in: view)
+        let point = CGPoint(x: marker.midX, y: marker.midY)
+        XCTAssertTrue(view.hasTaskListMarker(at: point))
+        XCTAssertEqual(view.toggleTaskListMarker(at: point), !stale)
+        let data = try XCTUnwrap(EditorV2Shadow.getJson(id: editorId).data(using: .utf8))
+        let result = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let content = try XCTUnwrap(result["content"] as? [[String: Any]])
+        let items = try XCTUnwrap(content.first?["content"] as? [[String: Any]])
+        XCTAssertEqual((items[0]["attrs"] as? [String: Any])?["checked"] as? Bool ?? false, false)
+        XCTAssertEqual((items[1]["attrs"] as? [String: Any])?["checked"] as? Bool ?? false, !stale)
+    }
+
     func testTaskMarkerTap_togglesCheckedStateAfterScrolling() throws {
         try assertTaskMarkerToggles(afterScrolling: true)
     }

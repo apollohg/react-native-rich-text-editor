@@ -200,7 +200,8 @@ final class RenderBridge {
         baseFont: UIFont,
         textColor: UIColor,
         theme: EditorTheme? = nil,
-        atomConfiguration: AtomRenderConfiguration? = nil
+        atomConfiguration: AtomRenderConfiguration? = nil,
+        blockRangeObserver: ((Int, NSRange) -> Void)? = nil
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         var blockStack: [BlockContext] = []
@@ -428,7 +429,8 @@ final class RenderBridge {
                     listContext: listContext,
                     topLevelChildIndex: topLevelChildIndex,
                     markerPending: isListItemContainer,
-                    language: element["language"] as? String
+                    language: element["language"] as? String,
+                    sourceElementIndex: elementIndex
                 )
                 let nestedListItemContainer =
                     isListItemContainer && (theme?.list?.itemSpacing != nil)
@@ -545,6 +547,9 @@ final class RenderBridge {
                         if let spacing {
                             pendingTrailingParagraphSpacing = (pendingTrailingParagraphSpacing ?? 0) + spacing
                         }
+                    }
+                    if let sourceElementIndex = endedBlock.sourceElementIndex {
+                        blockRangeObserver?(sourceElementIndex, NSRange(location: endedBlock.styleStart, length: result.length - endedBlock.styleStart))
                     }
                 }
 

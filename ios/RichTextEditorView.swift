@@ -117,6 +117,7 @@ final class RichTextEditorView: UIView {
     let textView: EditorTextView
     private lazy var tableInputCoordinator = EditorTableInputCoordinator()
     private lazy var tableSurface = EditorTableSurface(inputCoordinator: tableInputCoordinator)
+    var tableCellBindingAuthority: ((EditorV2Adapter) -> Bool)?
 
     var activeTextInput: EditorTextView {
         switch tableInputCoordinator.phase {
@@ -217,6 +218,7 @@ final class RichTextEditorView: UIView {
     var editorId: UInt64 = 0 {
         didSet {
             guard oldValue != editorId else { return }
+            invalidateTableCellBinding()
             textView.discardTransientNativeInputForEditorRebind()
             if editorId != 0 {
                 let initialUpdateJSON = initialUpdateJSONForNextEditorBind
@@ -239,6 +241,115 @@ final class RichTextEditorView: UIView {
         guard editorId != id else { return }
         initialUpdateJSONForNextEditorBind = initialUpdateJSON
         editorId = id
+    }
+
+    @discardableResult
+    func bindTableCell(tableID: String, cellIndex: UInt32, contentRect: CGRect, selection: [String: Any]? = nil) -> Bool {
+        guard editorId != 0,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              hasTableCellBindingAuthority(adapter),
+              let mappings = adapter.cachedTableInputMappings,
+              let mapping = mappings.tables[tableID],
+              let table = adapter.cachedTableRecords[tableID],
+              let epoch = adapter.positionEpoch,
+              let projection = EditorTableInputCoordinator.projection(
+                cellIndex: cellIndex,
+                table: table,
+                mapping: mapping,
+                documentRevision: adapter.baseDocumentRevision,
+                positionEpoch: epoch,
+                baseFont: textView.baseFont,
+                textColor: textView.baseTextColor,
+                theme: textView.theme,
+                atomConfiguration: textView.atomRenderConfiguration
+              )
+        else { return false }
+        if let selection, !selectionFitsTableCell(selection, map: projection.positionMap) {
+            return false
+        }
+
+        tableInputCoordinator.copyInputTraits(from: textView)
+        guard tableInputCoordinator.bind(
+            projection.target,
+            text: projection.text,
+            positionMap: projection.positionMap,
+            editorId: editorId,
+            tableID: tableID,
+            cellIndex: cellIndex,
+            inputAuthority: { [weak self, weak adapter] in
+                guard let self,
+                      let adapter,
+                      adapter.editorId == String(self.editorId)
+                else { return false }
+                return self.hasTableCellBindingAuthority(adapter)
+            }
+        ) else { return false }
+        tableInputCoordinator.cellInput.onProjectedUpdate = { [weak self] updateJSON, notifyDelegate in
+            self?.applyActiveTableCellUpdate(updateJSON, notifyDelegate: notifyDelegate) ?? false
+        }
+        tableSurface.placeActiveInput(in: contentRect)
+        return true
+    }
+
+    private var isApplyingActiveTableCellUpdate = false
+
+    func invalidateTableCellBinding() {
+        tableSurface.hideActiveInput()
+        _ = tableInputCoordinator.invalidateBinding()
+    }
+
+    private func hasTableCellBindingAuthority(_ adapter: EditorV2Adapter) -> Bool {
+        textView.ownsNativeBinding(adapter) || tableCellBindingAuthority?(adapter) == true
+    }
+
+    private func applyActiveTableCellUpdate(_ updateJSON: String, notifyDelegate: Bool) -> Bool {
+        isApplyingActiveTableCellUpdate = true
+        defer { isApplyingActiveTableCellUpdate = false }
+        return textView.applyUpdateJSON(updateJSON, notifyDelegate: notifyDelegate)
+    }
+
+    private func selectionFitsTableCell(_ selection: [String: Any], map: TableCellPositionMap) -> Bool {
+        let start: UInt32
+        let end: UInt32
+        switch selection["type"] as? String {
+        case "text":
+            guard let anchor = v2ExactUInt32(selection["anchorScalar"] as? NSNumber),
+                  let head = v2ExactUInt32(selection["headScalar"] as? NSNumber)
+            else { return false }
+            start = min(anchor, head)
+            end = max(anchor, head)
+        case "node":
+            guard let position = v2ExactUInt32(selection["posScalar"] as? NSNumber), position < UInt32.max else { return false }
+            start = position
+            end = position + 1
+        default:
+            return false
+        }
+        guard let localStart = map.localScalar(forGlobalScalar: start),
+              let localEnd = map.localScalar(forGlobalScalar: end),
+              let range = map.globalScalarRange(fromLocalScalar: localStart, toLocalScalar: localEnd)
+        else { return false }
+        return range.from == start && range.to == end
+    }
+
+    private func refreshActiveTableCell(after updateJSON: String) {
+        guard let tableID = tableInputCoordinator.activeTableID,
+              let cellIndex = tableInputCoordinator.activeCellIndex
+        else { return }
+        guard isApplyingActiveTableCellUpdate else {
+            invalidateTableCellBinding()
+            return
+        }
+        let frame = tableInputCoordinator.cellInput.frame
+        guard let data = updateJSON.data(using: .utf8),
+              let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let selection = update["selection"] as? [String: Any],
+              bindTableCell(tableID: tableID, cellIndex: cellIndex, contentRect: frame, selection: selection)
+        else {
+            invalidateTableCellBinding()
+            return
+        }
+        _ = tableInputCoordinator.cellInput.applySelectionFromJSON(selection)
     }
 
     // MARK: - Initialization
@@ -283,6 +394,9 @@ final class RichTextEditorView: UIView {
         }
         textView.onSelectionOrContentMayChange = { [weak self] in
             self?.scheduleRefreshOverlaysIfNeeded()
+        }
+        textView.onAuthoritativeRenderApplied = { [weak self] updateJSON in
+            self?.refreshActiveTableCell(after: updateJSON)
         }
         addSubview(textView)
         addSubview(tableSurface)

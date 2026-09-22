@@ -69,7 +69,8 @@ extension EditorTextView {
             return false
         }
 
-        let scalar = PositionBridge.utf16OffsetToScalar(paragraphStart, in: self)
+        let localScalar = PositionBridge.utf16OffsetToScalar(paragraphStart, in: self)
+        guard let scalar = inputScalar(atLocalScalar: localScalar) else { return false }
         performInterceptedInput {
             toggleTaskItemCheckedAtSelectionScalarInRust(anchor: scalar, head: scalar)
         }

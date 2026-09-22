@@ -269,6 +269,9 @@ extension EditorTextView {
     /// - Parameter updateJSON: The JSON string from editor_insert_text, etc.
     @discardableResult
     func applyUpdateJSON(_ updateJSON: String, notifyDelegate: Bool = true) -> Bool {
+        if let onProjectedUpdate {
+            return onProjectedUpdate(updateJSON, notifyDelegate)
+        }
         ensureInternalTextViewDelegate()
         let totalStartedAt = DispatchTime.now().uptimeNanoseconds
         let parseStartedAt = totalStartedAt
@@ -498,6 +501,7 @@ extension EditorTextView {
         if notifyDelegate {
             editorDelegate?.editorTextView(self, didReceiveUpdate: updateJSON)
         }
+        onAuthoritativeRenderApplied?(updateJSON)
         return true
     }
 

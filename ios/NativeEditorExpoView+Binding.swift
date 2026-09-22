@@ -119,6 +119,15 @@ extension NativeEditorExpoView {
         return autonomousOwner || richTextView.textView.ownsNativeBinding(adapter)
     }
 
+    func ownsDelegatedTableCellBinding(_ adapter: EditorV2Adapter) -> Bool {
+        guard richTextView.editorId != 0,
+              v2CanonicalUInt64String(adapter.editorId) == String(richTextView.editorId),
+              autonomousErrorBindingAdapter === adapter,
+              let token = autonomousErrorBindingToken
+        else { return false }
+        return adapter.isNativeBindingOwner(token: token)
+    }
+
     func claimNativeOwnershipAndCatchUp(editorId: UInt64) {
         guard window != nil, richTextView.editorId == editorId else { return }
         ensureAutonomousErrorBinding()
@@ -169,6 +178,7 @@ extension NativeEditorExpoView {
     }
 
     func clearAutonomousErrorBinding() {
+        richTextView.invalidateTableCellBinding()
         autonomousErrorBindingGeneration &+= 1
         pendingAutonomousErrors.removeAll()
         if let adapter = autonomousErrorBindingAdapter,
