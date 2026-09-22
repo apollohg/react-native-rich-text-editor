@@ -1,4 +1,30 @@
 impl CachedRenderBlocks {
+    pub(crate) fn visit_table_records<'a>(
+        &'a self,
+        output: &mut Vec<&'a crate::tables::render::TableRenderRecord>,
+    ) {
+        let mut pending: Vec<&[RenderElement]> = self
+            .blocks
+            .iter()
+            .rev()
+            .map(|block| block.elements.as_slice())
+            .collect();
+        while let Some(elements) = pending.pop() {
+            for element in elements.iter().rev() {
+                if let RenderElement::Table { table } = element {
+                    output.push(table);
+                    pending.extend(
+                        table
+                            .cells
+                            .iter()
+                            .rev()
+                            .map(|cell| cell.elements.as_slice()),
+                    );
+                }
+            }
+        }
+    }
+
     pub(crate) fn build(
         document: &Document,
         schema: &Schema,

@@ -178,6 +178,7 @@ export type NativeEditorAtomicRenderSnapshotShape =
     NativeEditorAtomicRenderPayload & {
         tableAttributes?: Record<string, string>;
         tableRecords?: Record<string, import('./TableTypes').TableRenderRecord>;
+        tableInputMappings?: import('./TableTypes').TableInputMappings;
         selection: Selection;
         activeState: ActiveState;
         historyState: HistoryState;

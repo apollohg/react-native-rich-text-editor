@@ -403,6 +403,146 @@ internal fun parseTableRecords(value: Any?): Map<String, JSONObject>? {
     return records.toMap()
 }
 
+private fun parseTableInputExtent(value: Any?, scalarLength: Int): TableInputExtent? {
+    val extent = value as? JSONObject ?: return null
+    val start = scalarField(extent, "scalarStart") ?: return null
+    val end = scalarField(extent, "scalarEnd") ?: return null
+    if (!exactKeys(extent, setOf("scalarStart", "scalarEnd")) || start > end || end > scalarLength) return null
+    return TableInputExtent(start, end)
+}
+
+private fun validCompleteTablePool(
+    tableAttributes: Map<String, JSONObject>,
+    tableRecords: Map<String, JSONObject>
+): Boolean {
+    val roots = tableRecords.mapNotNull { (id, record) ->
+        if (exactBool(record.opt("readOnlyDescendants")) == false) JSONObject().put("type", "table").put("tableId", id) else null
+    }
+    return roots.isNotEmpty() && validSemanticRenderElements(roots, tableAttributes, tableRecords)
+}
+
+internal fun parseTableInputMappings(
+    value: Any?,
+    tableAttributes: Map<String, JSONObject>,
+    tableRecords: Map<String, JSONObject>,
+    scalarLength: Int
+): TableInputMappings? {
+    val root = value as? JSONObject ?: return null
+    if (!validCompleteTablePool(tableAttributes, tableRecords) ||
+        !exactKeys(root, setOf("version", "tables")) || scalarField(root, "version") != 1
+    ) return null
+    val rawTables = root.optJSONObject("tables") ?: return null
+    if (rawTables.keys().asSequence().toSet() != tableRecords.keys) return null
+    val tables = mutableMapOf<String, TableInputTable>()
+    for ((tableId, record) in tableRecords) {
+        val rawTable = rawTables.optJSONObject(tableId) ?: return null
+        val rawCells = rawTable.optJSONArray("cells") ?: return null
+        val recordCells = record.optJSONArray("cells") ?: return null
+        if (!exactKeys(rawTable, setOf("extent", "cells")) || rawCells.length() != recordCells.length()) return null
+        val extent = if (rawTable.isNull("extent")) null else parseTableInputExtent(rawTable.opt("extent"), scalarLength) ?: return null
+        val cells = mutableListOf<TableInputCell>()
+        var observedTableExtent: TableInputExtent? = null
+        for (index in 0 until rawCells.length()) {
+            val rawCell = rawCells.optJSONObject(index) ?: return null
+            val recordCell = recordCells.optJSONObject(index) ?: return null
+            val cellIndex = scalarField(rawCell, "cellIndex") ?: return null
+            val sourcePos = scalarField(rawCell, "sourcePos") ?: return null
+            val sourceEnd = scalarField(rawCell, "sourceEnd") ?: return null
+            val rawBlocks = rawCell.optJSONArray("blocks") ?: return null
+            val rawExcluded = rawCell.optJSONArray("excluded") ?: return null
+            val elements = recordCell.optJSONArray("elements") ?: return null
+            if (!exactKeys(rawCell, setOf("cellIndex", "sourcePos", "sourceEnd", "blocks", "excluded")) ||
+                cellIndex != index || sourcePos != scalarField(recordCell, "sourcePos") ||
+                sourceEnd != scalarField(recordCell, "sourceEnd") || sourcePos >= sourceEnd
+            ) return null
+            val expectedExcluded = (0 until elements.length()).mapNotNull { elementIndex ->
+                val element = elements.optJSONObject(elementIndex)
+                if (element?.opt("type") == "table") (element.opt("tableId") as? String)?.let { elementIndex to it } else null
+            }
+            if (rawExcluded.length() != expectedExcluded.size) return null
+            val blocks = mutableListOf<TableInputBlock>()
+            for (blockIndex in 0 until rawBlocks.length()) {
+                val rawBlock = rawBlocks.optJSONObject(blockIndex) ?: return null
+                val elementIndex = scalarField(rawBlock, "elementIndex") ?: return null
+                val docStart = scalarField(rawBlock, "docStart") ?: return null
+                val docEnd = scalarField(rawBlock, "docEnd") ?: return null
+                val scalarStart = scalarField(rawBlock, "scalarStart") ?: return null
+                val contentScalarStart = scalarField(rawBlock, "contentScalarStart") ?: return null
+                val scalarEnd = scalarField(rawBlock, "scalarEnd") ?: return null
+                val breakScalarEnd = scalarField(rawBlock, "breakScalarEnd") ?: return null
+                val isVoid = exactBool(rawBlock.opt("void")) ?: return null
+                if (!exactKeys(rawBlock, setOf("elementIndex", "docStart", "docEnd", "scalarStart", "contentScalarStart", "scalarEnd", "breakScalarEnd", "void")) ||
+                    elementIndex >= elements.length() ||
+                    docStart <= sourcePos || docStart > docEnd || docEnd >= sourceEnd ||
+                    scalarStart > contentScalarStart || contentScalarStart > scalarEnd || scalarEnd > breakScalarEnd ||
+                    breakScalarEnd > scalarLength || breakScalarEnd - scalarEnd > 1 ||
+                    (blockIndex > 0 && blocks.last().elementIndex >= elementIndex)
+                ) return null
+                val element = elements.optJSONObject(elementIndex) ?: return null
+                if (isVoid) {
+                    if (element.opt("type") !in setOf("voidBlock", "opaqueBlockAtom") || docStart != docEnd || scalarField(element, "docPos") != docStart) return null
+                } else if (element.opt("type") != "blockStart") return null
+                blocks.add(TableInputBlock(elementIndex, docStart, docEnd, scalarStart, contentScalarStart, scalarEnd, breakScalarEnd, isVoid))
+            }
+            val excluded = mutableListOf<TableInputExcluded>()
+            for (excludedIndex in 0 until rawExcluded.length()) {
+                val rawExcludedEntry = rawExcluded.optJSONObject(excludedIndex) ?: return null
+                val elementIndex = scalarField(rawExcludedEntry, "elementIndex") ?: return null
+                val nestedId = rawExcludedEntry.opt("tableId") as? String ?: return null
+                val nestedRecord = tableRecords[nestedId] ?: return null
+                val nestedStart = scalarField(nestedRecord, "tablePos") ?: return null
+                val nestedEnd = scalarField(nestedRecord, "sourceEnd") ?: return null
+                if (!exactKeys(rawExcludedEntry, setOf("elementIndex", "tableId", "extent")) ||
+                    elementIndex != expectedExcluded[excludedIndex].first || nestedId != expectedExcluded[excludedIndex].second ||
+                    nestedStart <= sourcePos || nestedStart >= nestedEnd || nestedEnd >= sourceEnd
+                ) return null
+                val nestedExtent = if (rawExcludedEntry.isNull("extent")) null else parseTableInputExtent(rawExcludedEntry.opt("extent"), scalarLength) ?: return null
+                excluded.add(TableInputExcluded(elementIndex, nestedId, nestedExtent))
+            }
+            data class Ordered(val index: Int, val docStart: Int, val docEnd: Int, val scalarStart: Int?, val scalarEnd: Int?, val breakEnd: Int?)
+            val ordered = blocks.map { Ordered(it.elementIndex, it.docStart, it.docEnd, it.scalarStart, it.scalarEnd, it.breakScalarEnd) } +
+                excluded.map { item ->
+                    val nested = tableRecords.getValue(item.tableId)
+                    Ordered(item.elementIndex, scalarField(nested, "tablePos")!!, scalarField(nested, "sourceEnd")!!, item.extent?.scalarStart, item.extent?.scalarEnd, item.extent?.scalarEnd)
+                }
+            val sourceOrdered = ordered.sortedBy { it.index }
+            for ((previous, next) in sourceOrdered.zipWithNext()) {
+                if (previous.index >= next.index || previous.docEnd > next.docStart ||
+                    (previous.breakEnd != null && next.scalarStart != null && previous.breakEnd > next.scalarStart)
+                ) return null
+            }
+            var cellExtent: TableInputExtent? = null
+            var cellBreakEnd: Int? = null
+            for (part in sourceOrdered) {
+                val start = part.scalarStart ?: continue
+                val end = part.scalarEnd ?: continue
+                if (cellBreakEnd != null && cellBreakEnd > start) return null
+                cellExtent = TableInputExtent(cellExtent?.scalarStart ?: start, end)
+                cellBreakEnd = part.breakEnd
+            }
+            if (cellExtent != null) {
+                if ((cellBreakEnd ?: 0) > cellExtent.scalarEnd ||
+                    (observedTableExtent != null && observedTableExtent.scalarEnd > cellExtent.scalarStart)
+                ) return null
+                observedTableExtent = TableInputExtent(observedTableExtent?.scalarStart ?: cellExtent.scalarStart, cellExtent.scalarEnd)
+            }
+            cells.add(TableInputCell(cellIndex, sourcePos, sourceEnd, blocks, excluded))
+        }
+        if (record.isNull("failure") && observedTableExtent != extent) return null
+        tables[tableId] = TableInputTable(extent, cells)
+    }
+    if (tables.values.any { table -> table.cells.any { cell -> cell.excluded.any { it.extent != tables[it.tableId]?.extent } } }) return null
+    val rootExtents = tableRecords.mapNotNull { (tableId, record) ->
+        if (exactBool(record.opt("readOnlyDescendants")) == false) {
+            val sourcePos = scalarField(record, "tablePos")
+            val extent = tables[tableId]?.extent
+            if (sourcePos != null && extent != null) sourcePos to extent else null
+        } else null
+    }.sortedBy { it.first }
+    for ((previous, next) in rootExtents.zipWithNext()) if (previous.second.scalarEnd > next.second.scalarStart) return null
+    return TableInputMappings(tables)
+}
+
 private fun validBooleanRecord(value: Any?): Boolean {
     val jsonObject = value as? JSONObject ?: return false
     val iterator = jsonObject.keys()
@@ -472,6 +612,7 @@ internal data class AtomicRenderSnapshot(
     val renderObject: JSONObject,
     val tableAttributes: Map<String, JSONObject>,
     val tableRecords: Map<String, JSONObject>,
+    val tableInputMappings: TableInputMappings?,
     /** Original validated wire payload for controlled-prop delivery. */
     val atomicRenderJson: String,
     val viewUpdateJson: String,
@@ -483,6 +624,28 @@ internal data class AtomicRenderSnapshot(
     val historyState: JSONObject,
     val positionEpoch: String?
 )
+
+internal data class TableInputExtent(val scalarStart: Int, val scalarEnd: Int)
+internal data class TableInputBlock(
+    val elementIndex: Int,
+    val docStart: Int,
+    val docEnd: Int,
+    val scalarStart: Int,
+    val contentScalarStart: Int,
+    val scalarEnd: Int,
+    val breakScalarEnd: Int,
+    val isVoid: Boolean
+)
+internal data class TableInputExcluded(val elementIndex: Int, val tableId: String, val extent: TableInputExtent?)
+internal data class TableInputCell(
+    val cellIndex: Int,
+    val sourcePos: Int,
+    val sourceEnd: Int,
+    val blocks: List<TableInputBlock>,
+    val excluded: List<TableInputExcluded>
+)
+internal data class TableInputTable(val extent: TableInputExtent?, val cells: List<TableInputCell>)
+internal data class TableInputMappings(val tables: Map<String, TableInputTable>)
 
 internal data class PinnedAtomicRenderSnapshot(
     val snapshot: AtomicRenderSnapshot,
@@ -514,7 +677,7 @@ internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
                     renderBlocks === JSONObject.NULL && renderPatch is JSONObject &&
                         validRenderPatch(renderPatch, tableAttributes, tableRecords)
                     )
-        if (!onlyKeys(jsonObject, requiredKeys + setOf("positionEpoch", "tableAttributes", "tableRecords")) ||
+        if (!onlyKeys(jsonObject, requiredKeys + setOf("positionEpoch", "tableAttributes", "tableRecords", "tableInputMappings")) ||
             requiredKeys.any { !jsonObject.has(it) } ||
             !validRenderPayload ||
             !validSelection(jsonObject.opt("selection")) ||
@@ -533,6 +696,11 @@ internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
         val revision = ulongField(jsonObject, "documentVersion") ?: return null
         val state = ulongField(jsonObject, "stateRevision") ?: return null
         val scalarLength = scalarField(jsonObject, "scalarLength") ?: return null
+        val tableInputMappings = if (jsonObject.has("tableInputMappings")) {
+            parseTableInputMappings(jsonObject.opt("tableInputMappings"), tableAttributes, tableRecords, scalarLength) ?: return null
+        } else {
+            null
+        }
         val scalarSelection = scalarSelection(jsonObject.opt("selection"))
         val positionEpoch = if (jsonObject.has("positionEpoch")) {
             canonicalV2U64(jsonObject.opt("positionEpoch") as? String) ?: return null
@@ -546,6 +714,7 @@ internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
             jsonObject,
             tableAttributes,
             tableRecords,
+            tableInputMappings,
             atomicRenderJson,
             jsonObject.toString(),
             revision,

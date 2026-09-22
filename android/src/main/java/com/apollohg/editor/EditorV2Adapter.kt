@@ -62,6 +62,7 @@ internal class EditorV2Adapter private constructor(
     internal var cachedSemanticRenderBlocks: List<List<Any?>>? = null
     internal var cachedTableAttributes: Map<String, JSONObject> = emptyMap()
     internal var cachedTableRecords: Map<String, JSONObject> = emptyMap()
+    internal var cachedTableInputMappings: TableInputMappings? = null
     internal var cachedAtomicRenderDocumentRevision: ULong? = null
     internal var renderUpdateCallCountForTesting = 0
         internal set
@@ -119,6 +120,7 @@ internal class EditorV2Adapter private constructor(
         cachedSemanticRenderBlocks = null
         cachedTableAttributes = emptyMap()
         cachedTableRecords = emptyMap()
+        cachedTableInputMappings = null
         val error = backend.destroy(editorId) ?: return null
         if (error.code == "ENGINE_DESTROYED" || error.code == "ENGINE_DESTROYING") return null
         return error
@@ -222,6 +224,7 @@ internal class EditorV2Adapter private constructor(
                 nativeOwnerToken = token
                 nativeOwnerId = token.toString()
                 positionEpoch = null
+                cachedTableInputMappings = null
             }
         }
         releasedOwner?.let { backend.releaseNativeBinding(editorId, it) }
@@ -232,6 +235,7 @@ internal class EditorV2Adapter private constructor(
             if (nativeOwnerToken != token) return
             nativeOwnerToken = null
             positionEpoch = null
+            cachedTableInputMappings = null
             nativeOwnerId.also { nativeOwnerId = null }
         }
         releasedOwner?.let { backend.releaseNativeBinding(editorId, it) }
@@ -423,6 +427,7 @@ internal class EditorV2Adapter private constructor(
     internal fun recoverNativeRender(): String? {
         val ownerId = synchronized(this) {
             positionEpoch = null
+            cachedTableInputMappings = null
             nativeOwnerId
         }
         ownerId?.let { backend.releaseNativeBinding(editorId, it) }

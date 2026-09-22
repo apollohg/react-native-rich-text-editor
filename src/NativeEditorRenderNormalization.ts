@@ -26,6 +26,7 @@ import {
     normalizeNativeEditorV2Bytes,
 } from './NativeEditorResultNormalization';
 import { validEditorMentionTheme } from './EditorMentionThemeValidation';
+import { normalizeTableInputMappings } from './TableInputMappingValidation';
 
 export function validListContext(value: unknown): value is ListContext {
     if (!isPlainRecord(value)) {
@@ -714,6 +715,12 @@ export function normalizeNativeEditorV2RenderUpdateValue(
             ...(Object.prototype.hasOwnProperty.call(parsed, 'tableRecords')
                 ? ['tableRecords']
                 : []),
+            ...(Object.prototype.hasOwnProperty.call(
+                parsed,
+                'tableInputMappings',
+            )
+                ? ['tableInputMappings']
+                : []),
         ])
     ) {
         return null;
@@ -765,6 +772,32 @@ export function normalizeNativeEditorV2RenderUpdateValue(
 
     let renderPayload: NativeEditorAtomicRenderPayload;
 
+    const hasInputMappings = Object.prototype.hasOwnProperty.call(
+        parsed,
+        'tableInputMappings',
+    );
+    let tableInputMappings;
+    if (hasInputMappings) {
+        if (!isPlainRecord(tableRecords)) return null;
+        const roots = Object.entries(tableRecords).flatMap(
+            ([tableId, record]) =>
+                isPlainRecord(record) && record.readOnlyDescendants === false
+                    ? [{ type: 'table', tableId }]
+                    : [],
+        );
+        if (
+            roots.length === 0 ||
+            !validRenderElements(roots, tableAttributes, tableRecords)
+        )
+            return null;
+        tableInputMappings = normalizeTableInputMappings(
+            parsed.tableInputMappings,
+            normalizedTableRecords,
+            scalarLength,
+        );
+        if (tableInputMappings === null) return null;
+    }
+
     if (renderBlocks == null) {
         if (parsed.renderBlocks !== null || renderPatch == null) {
             return null;
@@ -785,6 +818,7 @@ export function normalizeNativeEditorV2RenderUpdateValue(
         ...(parsed.tableRecords === undefined
             ? {}
             : { tableRecords: normalizedTableRecords }),
+        ...(tableInputMappings === undefined ? {} : { tableInputMappings }),
         selection,
         activeState,
         historyState,

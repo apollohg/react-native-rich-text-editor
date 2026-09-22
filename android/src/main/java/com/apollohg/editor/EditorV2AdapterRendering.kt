@@ -44,6 +44,7 @@ internal fun EditorV2Adapter.adopt(
     cachedSemanticRenderBlocks = candidate
     cachedTableAttributes = snapshot.tableAttributes
     cachedTableRecords = snapshot.tableRecords
+    cachedTableInputMappings = snapshot.tableInputMappings
     if (resolvedPositionEpoch != null) positionEpoch = resolvedPositionEpoch
     return updateJson
 }

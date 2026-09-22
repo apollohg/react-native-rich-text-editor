@@ -2,6 +2,235 @@ import UIKit
 import XCTest
 
 extension EditorV2AdapterTests {
+    func testTableInputMappingIsRetainedInAtomicAndViewSnapshots() throws {
+        let adapter = makeAdapter()
+        let snapshot = try tableInputMappingSnapshot()
+
+        XCTAssertNotNil(adapter.adoptExternalRender(snapshot))
+        XCTAssertEqual(adapter.cachedTableInputMappings?.tables["t0"]?.cells.count, 1)
+        let atomic = try XCTUnwrap(adapter.atomicRenderJSON(matchingDocumentRevision: 1))
+        XCTAssertNotNil(parseObject(atomic)["tableInputMappings"])
+        XCTAssertNotNil(parseObject(try XCTUnwrap(adapter.cachedViewUpdateJSON))["tableInputMappings"])
+    }
+
+    func testTableInputMappingRejectsOrphansAndInvalidCoordinatesAtomically() throws {
+        let adapter = makeAdapter()
+        let valid = try tableInputMappingSnapshot()
+        XCTAssertNotNil(adapter.adoptExternalRender(valid))
+        let baseline = adapter.cacheStateForTesting
+
+        for mutate in [
+            { (mapping: inout [String: Any]) in mapping["tables"] = [:] },
+            { (mapping: inout [String: Any]) in
+                var tables = mapping["tables"] as! [String: Any]
+                var table = tables["t0"] as! [String: Any]
+                var cells = table["cells"] as! [[String: Any]]
+                cells[0]["sourceEnd"] = 7
+                table["cells"] = cells
+                tables["t0"] = table
+                mapping["tables"] = tables
+            },
+            { (mapping: inout [String: Any]) in
+                var tables = mapping["tables"] as! [String: Any]
+                var table = tables["t0"] as! [String: Any]
+                var cells = table["cells"] as! [[String: Any]]
+                var blocks = cells[0]["blocks"] as! [[String: Any]]
+                blocks[0]["scalarEnd"] = 5
+                cells[0]["blocks"] = blocks
+                table["cells"] = cells
+                tables["t0"] = table
+                mapping["tables"] = tables
+            },
+            { (mapping: inout [String: Any]) in
+                var tables = mapping["tables"] as! [String: Any]
+                var table = tables["t0"] as! [String: Any]
+                table["extent"] = ["scalarStart": -1, "scalarEnd": 4]
+                tables["t0"] = table
+                mapping["tables"] = tables
+            }
+        ] {
+            let malformed = mutatedObjectJSON(valid) { object in
+                var mapping = object["tableInputMappings"] as! [String: Any]
+                mutate(&mapping)
+                object["tableInputMappings"] = mapping
+            }
+            XCTAssertNil(adapter.adoptExternalRender(malformed))
+            XCTAssertEqual(adapter.cacheStateForTesting, baseline)
+        }
+    }
+
+    func testMissingTableInputMappingAndOwnerReleaseClearCachedMapping() throws {
+        let adapter = makeAdapter()
+        XCTAssertNotNil(adapter.adoptExternalRender(try tableInputMappingSnapshot()))
+        XCTAssertNotNil(adapter.cachedTableInputMappings)
+
+        let legacy = mutatedObjectJSON(try tableInputMappingSnapshot()) { $0.removeValue(forKey: "tableInputMappings") }
+        XCTAssertNotNil(adapter.adoptExternalRender(legacy))
+        XCTAssertNil(adapter.cachedTableInputMappings)
+
+        let owner = UUID()
+        adapter.claimNativeBindingIfUnowned(token: owner)
+        XCTAssertNil(adapter.cachedTableInputMappings)
+        let native = mutatedObjectJSON(try tableInputMappingSnapshot()) { $0["positionEpoch"] = "1" }
+        XCTAssertNotNil(adapter.adoptExternalRender(native))
+        adapter.releaseNativeBindingOwner(token: owner)
+        XCTAssertNil(adapter.cachedTableInputMappings)
+    }
+
+    func testFailedNativeRecoveryClearsTableInputMapping() throws {
+        let adapter = makeAdapter()
+        adapter.claimNativeBindingIfUnowned(token: UUID())
+        let native = mutatedObjectJSON(try tableInputMappingSnapshot()) { $0["positionEpoch"] = "1" }
+        XCTAssertNotNil(adapter.adoptExternalRender(native))
+        XCTAssertNotNil(adapter.cachedTableInputMappings)
+        XCTAssertNil(editorV2Destroy(editorId: adapter.editorId).error)
+
+        XCTAssertNil(adapter.recoverNativeRender())
+        XCTAssertNil(adapter.cachedTableInputMappings)
+    }
+
+    func testFailedExternalPositionPinClearsTableInputMapping() throws {
+        let adapter = makeAdapter()
+        adapter.claimNativeBindingIfUnowned(token: UUID())
+        let stale = mutatedObjectJSON(try tableInputMappingSnapshot()) { $0["documentVersion"] = "999" }
+
+        XCTAssertNil(adapter.adoptExternalRender(stale))
+        XCTAssertNil(adapter.cachedTableInputMappings)
+    }
+
+    func testTableInputMappingAllowsSparseListBlockMappingWithZeroLeafSibling() throws {
+        let adapter = makeAdapter()
+        let snapshot = try tableInputMappingSnapshot()
+        let valid = mutatedObjectJSON(snapshot) { object in
+            var records = object["tableRecords"] as! [String: Any]
+            var table = records["t0"] as! [String: Any]
+            var cells = table["cells"] as! [[String: Any]]
+            var first = cells[0]
+            first["sourceEnd"] = 14
+            first["elements"] = [
+                ["type": "blockStart", "nodeType": "customList", "depth": 0],
+                ["type": "blockStart", "nodeType": "item", "depth": 1,
+                 "listContext": ["ordered": false, "index": 1, "total": 1, "start": 1, "isFirst": true, "isLast": true]],
+                ["type": "blockStart", "nodeType": "paragraph", "depth": 2],
+                ["type": "textRun", "text": "base", "marks": []],
+                ["type": "blockEnd"], ["type": "blockEnd"], ["type": "blockEnd"]
+            ]
+            cells[0] = first
+            var zeroLeaf = first
+            zeroLeaf["sourcePos"] = 14
+            zeroLeaf["sourceEnd"] = 16
+            zeroLeaf["column"] = 1
+            zeroLeaf["contentKey"] = "zero-leaf"
+            zeroLeaf["elements"] = []
+            cells.append(zeroLeaf)
+            table["sourceEnd"] = 18
+            table["columns"] = 2
+            table["columnWidths"] = [NSNull(), NSNull()]
+            table["sourceRows"] = [["sourcePos": 1, "sourceEnd": 17, "attrsKey": String(repeating: "a", count: 64)]]
+            table["cells"] = cells
+            records["t0"] = table
+            object["tableRecords"] = records
+
+            var mapping = object["tableInputMappings"] as! [String: Any]
+            var tables = mapping["tables"] as! [String: Any]
+            var mappedTable = tables["t0"] as! [String: Any]
+            var mappedCells = mappedTable["cells"] as! [[String: Any]]
+            mappedTable["extent"] = ["scalarStart": 0, "scalarEnd": 6]
+            mappedCells[0]["sourceEnd"] = 14
+            mappedCells[0]["blocks"] = [["elementIndex": 2, "docStart": 6, "docEnd": 10,
+                "scalarStart": 0, "contentScalarStart": 2, "scalarEnd": 6,
+                "breakScalarEnd": 6, "void": false]]
+            mappedCells.append(["cellIndex": 1, "sourcePos": 14, "sourceEnd": 16, "blocks": [], "excluded": []])
+            mappedTable["cells"] = mappedCells
+            tables["t0"] = mappedTable
+            mapping["tables"] = tables
+            object["tableInputMappings"] = mapping
+            object["scalarLength"] = 6
+        }
+        XCTAssertNotNil(adapter.adoptExternalRender(valid))
+    }
+
+    func testTableInputMappingRequiresNestedTableExclusionWithMatchingExtent() throws {
+        let adapter = makeAdapter()
+        let snapshot = try tableInputMappingSnapshot()
+        let valid = mutatedObjectJSON(snapshot) { object in
+            let attrsKey = String(repeating: "a", count: 64)
+            var records = object["tableRecords"] as! [String: Any]
+            var outer = records["t0"] as! [String: Any]
+            var cells = outer["cells"] as! [[String: Any]]
+            var cell = cells[0]
+            var elements = cell["elements"] as! [[String: Any]]
+            cell["sourceEnd"] = 12
+            elements.append(["type": "table", "tableId": "t9"])
+            cell["elements"] = elements
+            cells[0] = cell
+            outer["cells"] = cells
+            outer["sourceEnd"] = 14
+            outer["sourceRows"] = [["sourcePos": 1, "sourceEnd": 13, "attrsKey": attrsKey]]
+            records["t0"] = outer
+            records["t9"] = [
+                "tablePos": 9, "sourceEnd": 11, "rows": 0, "columns": 0, "columnWidths": [],
+                "direction": NSNull(), "irregular": false, "readOnlyDescendants": true, "attrsKey": attrsKey,
+                "sourceRows": [], "cells": [], "syntheticRegions": [], "failure": "invalidStructure", "compatibilityDiagnostic": NSNull()
+            ]
+            object["tableRecords"] = records
+            var mapping = object["tableInputMappings"] as! [String: Any]
+            var tables = mapping["tables"] as! [String: Any]
+            var outerMapping = tables["t0"] as! [String: Any]
+            var mappedCells = outerMapping["cells"] as! [[String: Any]]
+            mappedCells[0]["sourceEnd"] = 12
+            mappedCells[0]["excluded"] = [["elementIndex": 3, "tableId": "t9", "extent": NSNull()]]
+            outerMapping["cells"] = mappedCells
+            tables["t0"] = outerMapping
+            tables["t9"] = ["extent": NSNull(), "cells": []]
+            mapping["tables"] = tables
+            object["tableInputMappings"] = mapping
+        }
+        XCTAssertNotNil(adapter.adoptExternalRender(valid))
+        let missingExclusion = mutatedObjectJSON(valid) { object in
+            var mapping = object["tableInputMappings"] as! [String: Any]
+            var tables = mapping["tables"] as! [String: Any]
+            var outer = tables["t0"] as! [String: Any]
+            var cells = outer["cells"] as! [[String: Any]]
+            cells[0]["excluded"] = []
+            outer["cells"] = cells
+            tables["t0"] = outer
+            mapping["tables"] = tables
+            object["tableInputMappings"] = mapping
+        }
+        XCTAssertNil(adapter.adoptExternalRender(missingExclusion))
+    }
+
+    private func tableInputMappingSnapshot() throws -> String {
+        let adapter = makeAdapter()
+        _ = adapter.setContentHtml("<p>base</p>")
+        let raw = try XCTUnwrap(editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value)
+        let attrsKey = String(repeating: "a", count: 64)
+        let table: [String: Any] = [
+            "tablePos": 0, "sourceEnd": 12, "rows": 1, "columns": 1,
+            "columnWidths": [NSNull()], "direction": NSNull(), "irregular": false,
+            "readOnlyDescendants": false, "attrsKey": attrsKey,
+            "sourceRows": [["sourcePos": 1, "sourceEnd": 11, "attrsKey": attrsKey]],
+            "syntheticRegions": [], "failure": NSNull(), "compatibilityDiagnostic": NSNull(),
+            "cells": [["sourcePos": 2, "sourceEnd": 10, "row": 0, "column": 0,
+                "rowspan": 1, "colspan": 1, "header": false, "attrsKey": attrsKey,
+                "contentKey": "cell", "elements": [["type": "blockStart", "nodeType": "paragraph", "depth": 0], ["type": "textRun", "text": "base", "marks": []], ["type": "blockEnd"]]]]
+        ]
+        return mutatedObjectJSON(raw) { object in
+            object["renderBlocks"] = [[ ["type": "table", "tableId": "t0"] ]]
+            object["tableAttributes"] = [attrsKey: "{}"]
+            object["tableRecords"] = ["t0": table]
+            object["scalarLength"] = 4
+            object["tableInputMappings"] = ["version": 1, "tables": ["t0": [
+                "extent": ["scalarStart": 0, "scalarEnd": 4],
+                "cells": [["cellIndex": 0, "sourcePos": 2, "sourceEnd": 10,
+                    "blocks": [["elementIndex": 0, "docStart": 4, "docEnd": 8,
+                        "scalarStart": 0, "contentScalarStart": 0, "scalarEnd": 4,
+                        "breakScalarEnd": 4, "void": false]], "excluded": []]]
+            ]]]
+        }
+    }
+
     func testSemanticTableAdmissionRetainsSnapshotOnMalformedPatch() throws {
         let adapter = makeAdapter()
         let attrsKey = String(repeating: "a", count: 64)

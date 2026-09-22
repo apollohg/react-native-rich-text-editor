@@ -17,6 +17,84 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
     @Test
+    fun `table input mapping survives atomic and view snapshot adoption`() {
+        val adapter = makeAdapter()
+        val snapshot = tableInputMappingSnapshot()
+
+        assertNotNull(adoptExternalRender(adapter, snapshot.toString()))
+        assertEquals(1, adapter.cachedTableInputMappings?.tables?.get("t0")?.cells?.size)
+        assertTrue(JSONObject(requireNotNull(adapter.cachedAtomicRenderJson)).has("tableInputMappings"))
+        assertTrue(JSONObject(requireNotNull(adapter.cachedViewUpdateJson)).has("tableInputMappings"))
+    }
+
+    @Test
+    fun `table input mapping rejects malformed associations atomically`() {
+        val adapter = makeAdapter()
+        val valid = tableInputMappingSnapshot()
+        assertNotNull(adoptExternalRender(adapter, valid.toString()))
+        val baseline = adapter.cachedAtomicRenderJson
+
+        val orphaned = JSONObject(valid.toString())
+        orphaned.getJSONObject("tableInputMappings").put("tables", JSONObject())
+        assertNull(adoptExternalRender(adapter, orphaned.toString()))
+        assertEquals(baseline, adapter.cachedAtomicRenderJson)
+
+        val invalidCoordinates = JSONObject(valid.toString())
+        val block = invalidCoordinates.getJSONObject("tableInputMappings").getJSONObject("tables")
+            .getJSONObject("t0").getJSONArray("cells").getJSONObject(0).getJSONArray("blocks").getJSONObject(0)
+        block.put("scalarEnd", 5)
+        assertNull(adoptExternalRender(adapter, invalidCoordinates.toString()))
+        assertEquals(baseline, adapter.cachedAtomicRenderJson)
+    }
+
+    @Test
+    fun `legacy and release clear cached table input mapping`() {
+        val adapter = makeAdapter()
+        assertNotNull(adoptExternalRender(adapter, tableInputMappingSnapshot().toString()))
+        assertNotNull(adapter.cachedTableInputMappings)
+
+        val legacy = tableInputMappingSnapshot()
+        legacy.remove("tableInputMappings")
+        assertNotNull(adoptExternalRender(adapter, legacy.toString()))
+        assertNull(adapter.cachedTableInputMappings)
+
+        adapter.claimNativeBindingIfUnowned(1L)
+        assertNull(adapter.cachedTableInputMappings)
+        val native = tableInputMappingSnapshot().put("positionEpoch", "1")
+        assertNotNull(adoptExternalRender(adapter, native.toString()))
+        assertNotNull(adapter.cachedTableInputMappings)
+        adapter.releaseNativeBindingOwner(1L)
+        assertNull(adapter.cachedTableInputMappings)
+    }
+
+    private fun tableInputMappingSnapshot(): JSONObject {
+        val attrsKey = "a".repeat(64)
+        val table = JSONObject("""{
+            "tablePos":0,"sourceEnd":12,"rows":1,"columns":1,"columnWidths":[null],
+            "direction":null,"irregular":false,"readOnlyDescendants":false,"attrsKey":"$attrsKey",
+            "sourceRows":[{"sourcePos":1,"sourceEnd":11,"attrsKey":"$attrsKey"}],
+            "syntheticRegions":[],"failure":null,"compatibilityDiagnostic":null,
+            "cells":[{"sourcePos":2,"sourceEnd":10,"row":0,"column":0,"rowspan":1,"colspan":1,
+                "header":false,"attrsKey":"$attrsKey","contentKey":"cell","elements":[
+                    {"type":"blockStart","nodeType":"paragraph","depth":0},
+                    {"type":"textRun","text":"base","marks":[]},{"type":"blockEnd"}]}]
+        }""")
+        return JSONObject(atomicRenderSnapshot("base", "1"))
+            .put("renderBlocks", org.json.JSONArray().put(org.json.JSONArray().put(JSONObject().put("type", "table").put("tableId", "t0"))))
+            .put("tableAttributes", JSONObject().put(attrsKey, "{}"))
+            .put("tableRecords", JSONObject().put("t0", table))
+            .put("scalarLength", 4)
+            .put("tableInputMappings", JSONObject().put("version", 1).put("tables", JSONObject().put("t0",
+                JSONObject().put("extent", JSONObject().put("scalarStart", 0).put("scalarEnd", 4)).put("cells",
+                    org.json.JSONArray().put(JSONObject().put("cellIndex", 0).put("sourcePos", 2).put("sourceEnd", 10)
+                        .put("blocks", org.json.JSONArray().put(JSONObject().put("elementIndex", 0).put("docStart", 4).put("docEnd", 8)
+                            .put("scalarStart", 0).put("contentScalarStart", 0).put("scalarEnd", 4).put("breakScalarEnd", 4).put("void", false)))
+                        .put("excluded", org.json.JSONArray()))
+                )
+            )))
+    }
+
+    @Test
     fun `semantic table admission rejects malformed patches atomically`() {
         val adapter = makeAdapter()
         val attrsKey = "a".repeat(64)

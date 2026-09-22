@@ -17,6 +17,7 @@ extension EditorV2Adapter {
         let renderObject: [String: Any]
         let tableAttributes: [String: [String: Any]]
         let tableRecords: [String: [String: Any]]
+        let tableInputMappings: TableInputMappings?
         let atomicRenderJSON: String
         let viewUpdateJSON: String
         let documentRevision: UInt64
@@ -27,6 +28,45 @@ extension EditorV2Adapter {
         let historyState: (canUndo: Bool, canRedo: Bool)
         let documentIsEmpty: Bool
         let positionEpoch: UInt64?
+    }
+
+    struct TableInputExtent: Equatable {
+        let scalarStart: UInt32
+        let scalarEnd: UInt32
+    }
+
+    struct TableInputBlock: Equatable {
+        let elementIndex: UInt32
+        let docStart: UInt32
+        let docEnd: UInt32
+        let scalarStart: UInt32
+        let contentScalarStart: UInt32
+        let scalarEnd: UInt32
+        let breakScalarEnd: UInt32
+        let isVoid: Bool
+    }
+
+    struct TableInputExcluded: Equatable {
+        let elementIndex: UInt32
+        let tableID: String
+        let extent: TableInputExtent?
+    }
+
+    struct TableInputCell: Equatable {
+        let cellIndex: UInt32
+        let sourcePos: UInt32
+        let sourceEnd: UInt32
+        let blocks: [TableInputBlock]
+        let excluded: [TableInputExcluded]
+    }
+
+    struct TableInputTable: Equatable {
+        let extent: TableInputExtent?
+        let cells: [TableInputCell]
+    }
+
+    struct TableInputMappings: Equatable {
+        let tables: [String: TableInputTable]
     }
 
     static func exactBool(_ value: Any?) -> Bool? {
@@ -413,6 +453,167 @@ extension EditorV2Adapter {
         return records
     }
 
+    private static func parseTableInputExtent(_ value: Any, scalarLength: UInt32) -> TableInputExtent? {
+        guard let object = value as? [String: Any], Set(object.keys) == ["scalarStart", "scalarEnd"],
+              let scalarStart = uint32Field(object, "scalarStart"),
+              let scalarEnd = uint32Field(object, "scalarEnd"),
+              scalarStart <= scalarEnd, scalarEnd <= scalarLength
+        else { return nil }
+        return TableInputExtent(scalarStart: scalarStart, scalarEnd: scalarEnd)
+    }
+
+    private static func hasValidCompleteTablePool(
+        _ tableAttributes: [String: [String: Any]],
+        _ tableRecords: [String: [String: Any]]
+    ) -> Bool {
+        let roots: [[String: Any]] = tableRecords.compactMap { id, record in
+            exactBool(record["readOnlyDescendants"]) == false ? ["type": "table", "tableId": id] : nil
+        }
+        return !roots.isEmpty && validSemanticRenderElements(
+            roots, tableAttributes: tableAttributes, tableRecords: tableRecords
+        )
+    }
+
+    static func parseTableInputMappings(
+        _ value: Any,
+        tableAttributes: [String: [String: Any]],
+        tableRecords: [String: [String: Any]],
+        scalarLength: UInt32
+    ) -> TableInputMappings? {
+        guard hasValidCompleteTablePool(tableAttributes, tableRecords),
+              let root = value as? [String: Any], Set(root.keys) == ["version", "tables"],
+              uint32Field(root, "version") == 1,
+              let rawTables = root["tables"] as? [String: Any],
+              Set(rawTables.keys) == Set(tableRecords.keys)
+        else { return nil }
+
+        var tables: [String: TableInputTable] = [:]
+        for (tableID, record) in tableRecords {
+            guard let rawTable = rawTables[tableID] as? [String: Any],
+                  Set(rawTable.keys) == ["extent", "cells"],
+                  let rawCells = rawTable["cells"] as? [[String: Any]],
+                  let recordCells = record["cells"] as? [[String: Any]],
+                  rawCells.count == recordCells.count
+            else { return nil }
+            let extent: TableInputExtent?
+            if rawTable["extent"] is NSNull {
+                extent = nil
+            } else {
+                guard let rawExtent = rawTable["extent"], let parsed = parseTableInputExtent(rawExtent, scalarLength: scalarLength) else { return nil }
+                extent = parsed
+            }
+            var cells: [TableInputCell] = []
+            var observedTableExtent: TableInputExtent?
+            for (index, rawCell) in rawCells.enumerated() {
+                guard Set(rawCell.keys) == ["cellIndex", "sourcePos", "sourceEnd", "blocks", "excluded"],
+                      let cellIndex = uint32Field(rawCell, "cellIndex"), cellIndex == UInt32(index),
+                      let sourcePos = uint32Field(rawCell, "sourcePos"),
+                      let sourceEnd = uint32Field(rawCell, "sourceEnd"),
+                      sourcePos == uint32Field(recordCells[index], "sourcePos"),
+                      sourceEnd == uint32Field(recordCells[index], "sourceEnd"), sourcePos < sourceEnd,
+                      let rawBlocks = rawCell["blocks"] as? [[String: Any]],
+                      let rawExcluded = rawCell["excluded"] as? [[String: Any]],
+                      let elements = recordCells[index]["elements"] as? [[String: Any]]
+                else { return nil }
+
+                let expectedExcluded = elements.enumerated().compactMap { offset, element -> (Int, String)? in
+                    guard element["type"] as? String == "table", let tableID = element["tableId"] as? String else { return nil }
+                    return (offset, tableID)
+                }
+                guard rawExcluded.count == expectedExcluded.count else { return nil }
+
+                var blocks: [TableInputBlock] = []
+                for (blockIndex, rawBlock) in rawBlocks.enumerated() {
+                    guard Set(rawBlock.keys) == ["elementIndex", "docStart", "docEnd", "scalarStart", "contentScalarStart", "scalarEnd", "breakScalarEnd", "void"],
+                          let elementIndex = uint32Field(rawBlock, "elementIndex"), Int(elementIndex) < elements.count,
+                          let docStart = uint32Field(rawBlock, "docStart"), let docEnd = uint32Field(rawBlock, "docEnd"),
+                          let scalarStart = uint32Field(rawBlock, "scalarStart"), let contentScalarStart = uint32Field(rawBlock, "contentScalarStart"),
+                          let scalarEnd = uint32Field(rawBlock, "scalarEnd"), let breakScalarEnd = uint32Field(rawBlock, "breakScalarEnd"),
+                          let isVoid = exactBool(rawBlock["void"]),
+                          sourcePos < docStart, docStart <= docEnd, docEnd < sourceEnd,
+                          scalarStart <= contentScalarStart, contentScalarStart <= scalarEnd, scalarEnd <= breakScalarEnd,
+                          breakScalarEnd <= scalarLength, breakScalarEnd - scalarEnd <= 1,
+                          (blockIndex == 0 || blocks.last!.elementIndex < elementIndex)
+                    else { return nil }
+                    let element = elements[Int(elementIndex)]
+                    if isVoid {
+                        guard ["voidBlock", "opaqueBlockAtom"].contains(element["type"] as? String ?? ""),
+                              docStart == docEnd, uint32Field(element, "docPos") == docStart else { return nil }
+                    } else if element["type"] as? String != "blockStart" {
+                        return nil
+                    }
+                    blocks.append(.init(elementIndex: elementIndex, docStart: docStart, docEnd: docEnd,
+                                        scalarStart: scalarStart, contentScalarStart: contentScalarStart,
+                                        scalarEnd: scalarEnd, breakScalarEnd: breakScalarEnd, isVoid: isVoid))
+                }
+
+                var excluded: [TableInputExcluded] = []
+                for (excludedIndex, rawExcludedEntry) in rawExcluded.enumerated() {
+                    guard Set(rawExcludedEntry.keys) == ["elementIndex", "tableId", "extent"],
+                          let elementIndex = uint32Field(rawExcludedEntry, "elementIndex"), elementIndex == UInt32(expectedExcluded[excludedIndex].0),
+                          let nestedID = rawExcludedEntry["tableId"] as? String, nestedID == expectedExcluded[excludedIndex].1,
+                          let nestedRecord = tableRecords[nestedID],
+                          let nestedStart = uint32Field(nestedRecord, "tablePos"), let nestedEnd = uint32Field(nestedRecord, "sourceEnd"),
+                          sourcePos < nestedStart, nestedStart < nestedEnd, nestedEnd < sourceEnd
+                    else { return nil }
+                    let nestedExtent: TableInputExtent?
+                    if rawExcludedEntry["extent"] is NSNull {
+                        nestedExtent = nil
+                    } else {
+                        guard let rawExtent = rawExcludedEntry["extent"], let parsed = parseTableInputExtent(rawExtent, scalarLength: scalarLength) else { return nil }
+                        nestedExtent = parsed
+                    }
+                    excluded.append(.init(elementIndex: elementIndex, tableID: nestedID, extent: nestedExtent))
+                }
+
+                let ordered = blocks.map { (index: $0.elementIndex, docStart: $0.docStart, docEnd: $0.docEnd, scalarStart: Optional($0.scalarStart), scalarEnd: Optional($0.scalarEnd), breakEnd: Optional($0.breakScalarEnd)) }
+                    + excluded.map { excluded in
+                        let nested = tableRecords[excluded.tableID]!
+                        return (index: excluded.elementIndex, docStart: uint32Field(nested, "tablePos")!, docEnd: uint32Field(nested, "sourceEnd")!, scalarStart: excluded.extent?.scalarStart, scalarEnd: excluded.extent?.scalarEnd, breakEnd: excluded.extent?.scalarEnd)
+                    }
+                let sourceOrdered = ordered.sorted { $0.index < $1.index }
+                for pair in zip(sourceOrdered, sourceOrdered.dropFirst()) {
+                    guard pair.0.index < pair.1.index, pair.0.docEnd <= pair.1.docStart else { return nil }
+                    if let previousEnd = pair.0.breakEnd, let nextStart = pair.1.scalarStart {
+                        guard previousEnd <= nextStart else { return nil }
+                    }
+                }
+                var cellExtent: TableInputExtent?
+                var cellBreakEnd: UInt32?
+                for part in sourceOrdered {
+                    guard let start = part.scalarStart, let end = part.scalarEnd else { continue }
+                    if let cellBreakEnd { guard cellBreakEnd <= start else { return nil } }
+                    cellExtent = .init(scalarStart: cellExtent?.scalarStart ?? start, scalarEnd: end)
+                    cellBreakEnd = part.breakEnd
+                }
+                if let cellExtent {
+                    guard (cellBreakEnd ?? 0) <= cellExtent.scalarEnd else { return nil }
+                    if let previous = observedTableExtent { guard previous.scalarEnd <= cellExtent.scalarStart else { return nil } }
+                    observedTableExtent = .init(scalarStart: observedTableExtent?.scalarStart ?? cellExtent.scalarStart, scalarEnd: cellExtent.scalarEnd)
+                }
+                cells.append(.init(cellIndex: cellIndex, sourcePos: sourcePos, sourceEnd: sourceEnd, blocks: blocks, excluded: excluded))
+            }
+            if record["failure"] is NSNull, observedTableExtent != extent { return nil }
+            tables[tableID] = .init(extent: extent, cells: cells)
+        }
+        for table in tables.values {
+            for cell in table.cells {
+                for excluded in cell.excluded {
+                    guard tables[excluded.tableID]?.extent == excluded.extent else { return nil }
+                }
+            }
+        }
+        let rootExtents = tableRecords.compactMap { tableID, record -> (UInt32, TableInputExtent)? in
+            guard exactBool(record["readOnlyDescendants"]) == false,
+                  let sourcePos = uint32Field(record, "tablePos"), let extent = tables[tableID]?.extent else { return nil }
+            return (sourcePos, extent)
+        }.sorted { $0.0 < $1.0 }
+        for pair in zip(rootExtents, rootExtents.dropFirst()) {
+            guard pair.0.1.scalarEnd <= pair.1.1.scalarStart else { return nil }
+        }
+        return TableInputMappings(tables: tables)
+    }
+
     private static func isBooleanRecord(_ value: Any?) -> Bool {
         guard let object = value as? [String: Any] else { return false }
         return object.values.allSatisfy { exactBool($0) != nil }
@@ -494,7 +695,7 @@ extension EditorV2Adapter {
     static func parseAtomicRenderSnapshot(_ json: String) -> AtomicRenderSnapshot? {
         guard let data = json.data(using: .utf8),
               var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(object.keys).isSubset(of: atomicRenderSnapshotKeys.union(["positionEpoch", "tableAttributes", "tableRecords"])),
+              Set(object.keys).isSubset(of: atomicRenderSnapshotKeys.union(["positionEpoch", "tableAttributes", "tableRecords", "tableInputMappings"])),
               atomicRenderSnapshotKeys.isSubset(of: Set(object.keys)),
               let renderBlocks = object["renderBlocks"],
               let renderPatch = object["renderPatch"],
@@ -516,6 +717,19 @@ extension EditorV2Adapter {
               let documentIsEmpty = exactBool(object["documentIsEmpty"])
         else {
             return nil
+        }
+
+        let tableInputMappings: TableInputMappings?
+        if let rawTableInputMappings = object["tableInputMappings"] {
+            guard let parsed = parseTableInputMappings(
+                rawTableInputMappings,
+                tableAttributes: tableAttributes,
+                tableRecords: tableRecords,
+                scalarLength: scalarLength
+            ) else { return nil }
+            tableInputMappings = parsed
+        } else {
+            tableInputMappings = nil
         }
 
         let selection = scalarSelection(from: selectionValue)
@@ -548,6 +762,7 @@ extension EditorV2Adapter {
             renderObject: object,
             tableAttributes: tableAttributes,
             tableRecords: tableRecords,
+            tableInputMappings: tableInputMappings,
             atomicRenderJSON: atomicRenderJSON,
             viewUpdateJSON: viewUpdateJSON,
             documentRevision: documentRevision,

@@ -91,6 +91,7 @@ extension EditorV2Adapter {
         cachedSemanticRenderBlocks = candidate
         cachedTableAttributes = snapshot.tableAttributes
         cachedTableRecords = snapshot.tableRecords
+        cachedTableInputMappings = snapshot.tableInputMappings
         if let epoch = snapshot.positionEpoch {
             positionEpoch = epoch
         }
@@ -197,6 +198,7 @@ extension EditorV2Adapter {
             return nil
         }
         if snapshot.positionEpoch == nil, !pinCurrentPositionEpoch(snapshot.documentRevision) {
+            cachedTableInputMappings = nil
             return nil
         }
         return adopted.updateJSON
@@ -287,6 +289,7 @@ extension EditorV2Adapter {
     func recoverNativeRender() -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
+        cachedTableInputMappings = nil
         if let ownerId = nativeOwnerId {
             positionEpoch = nil
             _ = editorV2ReleaseNativeBinding(editorId: editorId, ownerId: String(ownerId))

@@ -59,6 +59,44 @@ export interface TableRenderRecord {
     compatibilityDiagnostic: TableCompatibilityDiagnostic | null;
 }
 
+export interface TableInputExtent {
+    scalarStart: number;
+    scalarEnd: number;
+}
+
+export interface TableInputBlock extends TableInputExtent {
+    elementIndex: number;
+    docStart: number;
+    docEnd: number;
+    contentScalarStart: number;
+    breakScalarEnd: number;
+    void: boolean;
+}
+
+export interface TableInputCell {
+    cellIndex: number;
+    sourcePos: number;
+    sourceEnd: number;
+    blocks: TableInputBlock[];
+    excluded: Array<{
+        elementIndex: number;
+        tableId: string;
+        extent: TableInputExtent | null;
+    }>;
+}
+
+/** Coordinates belong to the enclosing atomic snapshot, not cached cell content. */
+export interface TableInputMappings {
+    version: 1;
+    tables: Record<
+        string,
+        {
+            extent: TableInputExtent | null;
+            cells: TableInputCell[];
+        }
+    >;
+}
+
 export type TableNamingPreset = 'prosemirror' | 'tiptap';
 
 export interface TableNodeNames {

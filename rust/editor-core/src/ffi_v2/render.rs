@@ -150,6 +150,8 @@ struct AtomicRenderSnapshot {
     table_attributes: Option<std::collections::BTreeMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     table_records: Option<std::collections::BTreeMap<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    table_input_mappings: Option<Value>,
     render_blocks: Value,
     render_patch: Value,
     selection: Value,
@@ -383,6 +385,12 @@ fn render_snapshot_json(
     let document_is_empty = crate::editor_state::document_is_empty(document, &schema);
 
     let document_version = engine.revision();
+    let table_input_mappings = super::table_input_mapping::derive(
+        document,
+        position_map,
+        &current_render_blocks,
+    )
+    .map_err(|message| SessionError::from(YrsEngineError::new("ENGINE_INVARIANT_FAILED", message)))?;
     let mut table_records = std::collections::BTreeMap::new();
     // Patches carry the complete current table pool, including retained blocks.
     let _ = serialize_render_blocks(
@@ -455,6 +463,7 @@ fn render_snapshot_json(
                 .collect()
         }),
         table_records: (!table_records.is_empty()).then_some(table_records),
+        table_input_mappings,
         render_blocks,
         render_patch,
         selection: selection_value,
