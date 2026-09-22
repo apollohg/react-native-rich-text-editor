@@ -115,6 +115,21 @@ final class RichTextEditorView: UIView {
 
     /// The editor text view that handles input interception.
     let textView: EditorTextView
+    private lazy var tableInputCoordinator = EditorTableInputCoordinator()
+    private lazy var tableSurface = EditorTableSurface(inputCoordinator: tableInputCoordinator)
+
+    var activeTextInput: EditorTextView {
+        switch tableInputCoordinator.phase {
+        case .inactive:
+            return textView
+        case .bound, .composing:
+            return tableInputCoordinator.cellInput
+        }
+    }
+
+    var hasPendingCompositionForExternalRefresh: Bool {
+        activeTextInput.hasPendingCompositionForExternalRefresh
+    }
     private let defaultImageLoadOwner = RenderImageLoadOwner(policy: .default)
     var imageLoadOwner: RenderImageLoadOwner {
         get { textView.imageLoadOwner ?? defaultImageLoadOwner }
@@ -270,6 +285,7 @@ final class RichTextEditorView: UIView {
             self?.scheduleRefreshOverlaysIfNeeded()
         }
         addSubview(textView)
+        addSubview(tableSurface)
         addSubview(remoteSelectionOverlayView)
         addSubview(taskListMarkerTapOverlayView)
         // Image touches must stay inside the scroll view's gesture hierarchy.
@@ -776,6 +792,9 @@ final class RichTextEditorView: UIView {
         let managedFrame = bounds
         if textView.frame != managedFrame {
             textView.frame = managedFrame
+        }
+        if tableSurface.frame != managedFrame {
+            tableSurface.frame = managedFrame
         }
         if remoteSelectionOverlayView.frame != managedFrame {
             remoteSelectionOverlayView.frame = managedFrame

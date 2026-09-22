@@ -124,19 +124,19 @@ extension EditorTextView {
         } ?? false
     }
 
-    func scalarRange(forUtf16Range range: NSRange) -> (from: UInt32, to: UInt32) {
+    func scalarRange(forUtf16Range range: NSRange) -> (from: UInt32, to: UInt32)? {
         let start = PositionBridge.utf16OffsetToScalar(range.location, in: self)
         let end = PositionBridge.utf16OffsetToScalar(NSMaxRange(range), in: self)
-        return (from: min(start, end), to: max(start, end))
+        return inputScalarRange(fromLocal: start, toLocal: end)
     }
 
     func scalarRange(
         forUtf16Range range: NSRange,
         in storage: NSAttributedString
-    ) -> (from: UInt32, to: UInt32) {
+    ) -> (from: UInt32, to: UInt32)? {
         let start = PositionBridge.utf16OffsetToScalar(range.location, in: storage)
         let end = PositionBridge.utf16OffsetToScalar(NSMaxRange(range), in: storage)
-        return (from: min(start, end), to: max(start, end))
+        return inputScalarRange(fromLocal: start, toLocal: end)
     }
 
     /// UITextViewDelegate hook for user-driven selection updates.
@@ -342,6 +342,13 @@ extension EditorTextView {
     func currentLogicalScalarSelection() -> (anchor: UInt32, head: UInt32)? {
         guard let range = selectedTextRange else { return nil }
         let scalarRange = PositionBridge.textRangeToScalarRange(range, in: self)
+        if tableCellPositionMap != nil {
+            guard let mapped = inputScalarRange(
+                fromLocal: scalarRange.from,
+                toLocal: scalarRange.to
+            ) else { return nil }
+            return (anchor: mapped.from, head: mapped.to)
+        }
         if let logicalSelectionScalarRange,
            min(logicalSelectionScalarRange.anchor, logicalSelectionScalarRange.head) == scalarRange.from,
            max(logicalSelectionScalarRange.anchor, logicalSelectionScalarRange.head) == scalarRange.to {
@@ -369,6 +376,53 @@ extension EditorTextView {
 
     func currentScalarSelection() -> (anchor: UInt32, head: UInt32)? {
         currentLogicalScalarSelection()
+    }
+
+    func inputScalar(atLocalScalar localScalar: UInt32) -> UInt32? {
+        guard let map = tableCellPositionMap else { return localScalar }
+        guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              adapter.baseDocumentRevision == map.binding.documentRevision,
+              adapter.positionEpoch == map.binding.positionEpoch
+        else { return nil }
+        return map.globalScalar(
+            forLocalScalar: localScalar,
+            currentRevision: adapter.baseDocumentRevision,
+            currentEpoch: adapter.positionEpoch
+        )
+    }
+
+    func inputScalarRange(fromLocal: UInt32, toLocal: UInt32) -> (from: UInt32, to: UInt32)? {
+        guard fromLocal <= toLocal else { return nil }
+        guard let map = tableCellPositionMap else { return (fromLocal, toLocal) }
+        guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              adapter.baseDocumentRevision == map.binding.documentRevision,
+              adapter.positionEpoch == map.binding.positionEpoch,
+              let start = map.globalScalar(
+                  forLocalScalar: fromLocal,
+                  currentRevision: adapter.baseDocumentRevision,
+                  currentEpoch: adapter.positionEpoch
+              ),
+              let end = map.globalScalar(
+                  forLocalScalar: toLocal,
+                  currentRevision: adapter.baseDocumentRevision,
+                  currentEpoch: adapter.positionEpoch
+              )
+        else { return nil }
+        var local = fromLocal
+        var global = start
+        while local < toLocal {
+            guard map.globalScalar(
+                forLocalScalar: local,
+                currentRevision: adapter.baseDocumentRevision,
+                currentEpoch: adapter.positionEpoch
+            ) == global,
+            local < UInt32.max,
+            global < UInt32.max
+            else { return nil }
+            local += 1
+            global += 1
+        }
+        return global == end ? (start, end) : nil
     }
 
     /// Apply a selection from a parsed JSON selection object.

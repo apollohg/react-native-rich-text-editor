@@ -173,6 +173,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     var currentRenderBlocksDocumentVersion: UInt64?
     var recoveringRenderPatchBaseMismatch = false
     var currentTopLevelChildMetadata: [TopLevelChildMetadata]?
+    var tableCellPositionMap: TableCellPositionMap?
     var renderAppearanceRevision: UInt64 = 1
     var lastAppliedRenderAppearanceRevision: UInt64 = 0
 
@@ -587,18 +588,18 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             return
         }
 
-        let scalarPos = PositionBridge.cursorScalarOffset(in: self)
+        guard let scalarPos = currentLogicalScalarSelection()?.head else { return }
         Self.inputLog.debug(
             "[insertText] text=\(self.preview(text), privacy: .public) scalarPos=\(scalarPos) selection=\(self.selectionSummary(), privacy: .public) textState=\(self.textSnapshotSummary(), privacy: .public)"
         )
 
         if let selectedRange = selectedTextRange, !selectedRange.isEmpty {
-            let range = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
+            guard let range = currentLogicalScalarSelection() else { return }
             performInterceptedInput {
                 let updateJSON = EditorV2Shadow.replaceTextScalar(
                     id: editorId,
-                    scalarFrom: range.from,
-                    scalarTo: range.to,
+                    scalarFrom: range.anchor,
+                    scalarTo: range.head,
                     text: text
                 )
                 applyUpdateJSON(updateJSON)
@@ -670,17 +671,16 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         )
 
         if !selectedRange.isEmpty {
-            let range = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
+            guard let range = currentLogicalScalarSelection() else { return }
             performInterceptedInput {
-                deleteScalarRangeInRust(from: range.from, to: range.to)
+                deleteScalarRangeInRust(from: range.anchor, to: range.head)
             }
         } else {
             // Cursor: delete one grapheme cluster backward. The engine's caret
             // is the authority — in an empty block UIKit's own caret is parked
             // ahead of the block placeholder for autocapitalization and does
             // not address the same position.
-            let cursorPos = currentLogicalScalarSelection()?.head
-                ?? PositionBridge.cursorScalarOffset(in: self)
+            guard let cursorPos = currentLogicalScalarSelection()?.head else { return }
             if cursorPos == 0 {
                 performInterceptedInput {
                     deleteBackwardAtSelectionScalarInRust(anchor: cursorPos, head: cursorPos)
@@ -736,7 +736,8 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             // We need to figure out how many scalars the previous grapheme occupies.
             // Use UITextView's tokenizer to find the previous grapheme boundary.
             guard let prevPos = position(from: selectedRange.start, offset: -1) else { return }
-            let prevScalar = PositionBridge.textViewToScalar(prevPos, in: self)
+            let prevLocalScalar = PositionBridge.textViewToScalar(prevPos, in: self)
+            guard let prevScalar = inputScalar(atLocalScalar: prevLocalScalar) else { return }
 
             performInterceptedInput {
                 if prevScalar < cursorPos {
@@ -783,7 +784,11 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             return
         }
 
-        let scalarRange = PositionBridge.textRangeToScalarRange(range, in: self)
+        let localScalarRange = PositionBridge.textRangeToScalarRange(range, in: self)
+        guard let scalarRange = inputScalarRange(
+            fromLocal: localScalarRange.from,
+            toLocal: localScalarRange.to
+        ) else { return }
         let replacementStartUtf16 = replacementUtf16Range.location
         let replacementEndUtf16 = NSMaxRange(replacementUtf16Range)
         let preservesAcceptedSpace = textStorage.string == lastAuthorizedText

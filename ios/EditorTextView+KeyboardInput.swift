@@ -521,15 +521,15 @@ extension EditorTextView {
     /// Handle return key press as a block split operation.
     private func handleReturnKey() {
         if let selectedRange = selectedTextRange, !selectedRange.isEmpty {
-            let range = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
+            guard let range = currentLogicalScalarSelection() else { return }
             let updateJSON = EditorV2Shadow.deleteAndSplitScalar(
                 id: editorId,
-                scalarFrom: range.from,
-                scalarTo: range.to
+                scalarFrom: range.anchor,
+                scalarTo: range.head
             )
             applyUpdateJSON(updateJSON)
         } else {
-            let scalarPos = PositionBridge.cursorScalarOffset(in: self)
+            guard let scalarPos = currentLogicalScalarSelection()?.head else { return }
             splitBlockInRust(at: scalarPos)
         }
     }
@@ -539,8 +539,9 @@ extension EditorTextView {
         replacing replacementRange: UITextRange? = nil
     ) -> Bool {
         guard text == "\n" || text == "\r" else { return false }
-        let scalarRange = replacementRange.map {
-            PositionBridge.textRangeToScalarRange($0, in: self)
+        let scalarRange = replacementRange.flatMap {
+            let localRange = PositionBridge.textRangeToScalarRange($0, in: self)
+            return inputScalarRange(fromLocal: localRange.from, toLocal: localRange.to)
         }
         guard commitActiveMarkedTextBeforeReturn() else { return true }
         performInterceptedInput {
@@ -587,22 +588,25 @@ extension EditorTextView {
 
     private func syncCurrentUIKitSelectionToRust() {
         guard editorId != 0, let range = selectedTextRange else { return }
-        let anchor = PositionBridge.textViewToScalar(range.start, in: self)
-        let head = PositionBridge.textViewToScalar(range.end, in: self)
+        let localAnchor = PositionBridge.textViewToScalar(range.start, in: self)
+        let localHead = PositionBridge.textViewToScalar(range.end, in: self)
+        guard let anchor = inputScalar(atLocalScalar: localAnchor),
+              let head = inputScalar(atLocalScalar: localHead)
+        else { return }
         EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: anchor, scalarHead: head)
     }
 
     /// Paste plain text through Rust.
     func pastePlainText(_ text: String) {
         if let selectedRange = selectedTextRange, !selectedRange.isEmpty {
-            let range = PositionBridge.textRangeToScalarRange(selectedRange, in: self)
+            guard let range = currentLogicalScalarSelection() else { return }
             Self.inputLog.debug(
-                "[rust.pastePlainText.replace] text=\(self.preview(text), privacy: .public) scalar=\(range.from)-\(range.to) selection=\(self.selectionSummary(), privacy: .public)"
+                "[rust.pastePlainText.replace] text=\(self.preview(text), privacy: .public) scalar=\(range.anchor)-\(range.head) selection=\(self.selectionSummary(), privacy: .public)"
             )
             let updateJSON = EditorV2Shadow.replaceTextScalar(
                 id: editorId,
-                scalarFrom: range.from,
-                scalarTo: range.to,
+                scalarFrom: range.anchor,
+                scalarTo: range.head,
                 text: text
             )
             applyUpdateJSON(updateJSON)
@@ -610,7 +614,8 @@ extension EditorTextView {
             Self.inputLog.debug(
                 "[rust.pastePlainText.insert] text=\(self.preview(text), privacy: .public) selection=\(self.selectionSummary(), privacy: .public)"
             )
-            insertTextInRust(text, at: PositionBridge.cursorScalarOffset(in: self))
+            guard let scalarPos = currentLogicalScalarSelection()?.head else { return }
+            insertTextInRust(text, at: scalarPos)
         }
     }
 

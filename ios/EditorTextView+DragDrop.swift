@@ -22,6 +22,7 @@ extension EditorTextView {
         _ textDraggableView: UIView & UITextDraggable,
         itemsForDrag dragRequest: UITextDragRequest
     ) -> [UIDragItem] {
+        guard tableCellPositionMap == nil else { return dragRequest.suggestedItems }
         let requestedRange = PositionBridge.textRangeToScalarRange(
             dragRequest.dragRange,
             in: self

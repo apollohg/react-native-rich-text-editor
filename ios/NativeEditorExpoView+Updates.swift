@@ -90,22 +90,22 @@ extension NativeEditorExpoView {
     }
 
     func beginExternalTextComposition(sessionId: String) -> String {
-        richTextView.textView.beginExternalTextComposition(sessionId: sessionId)
+        richTextView.activeTextInput.beginExternalTextComposition(sessionId: sessionId)
     }
 
     func updateExternalTextComposition(sessionId: String, text: String) -> String {
-        richTextView.textView.updateExternalTextComposition(sessionId: sessionId, text: text)
+        richTextView.activeTextInput.updateExternalTextComposition(sessionId: sessionId, text: text)
     }
 
     func commitExternalTextComposition(sessionId: String, finalText: String) -> String {
-        richTextView.textView.commitExternalTextComposition(
+        richTextView.activeTextInput.commitExternalTextComposition(
             sessionId: sessionId,
             finalText: finalText
         )
     }
 
     func cancelExternalTextComposition(sessionId: String, cause: String) -> String {
-        richTextView.textView.cancelExternalTextComposition(sessionId: sessionId, cause: cause)
+        richTextView.activeTextInput.cancelExternalTextComposition(sessionId: sessionId, cause: cause)
     }
 
     private func reportRejectedEditorUpdateEnvelope(
@@ -124,7 +124,7 @@ extension NativeEditorExpoView {
     func applyRemoteCommitRefresh() {
         // Preparing an external update commits a live composition. The commit
         // re-bases the adapter itself, so leave the half-typed word alone.
-        guard !richTextView.textView.hasPendingCompositionForExternalRefresh else { return }
+        guard !richTextView.hasPendingCompositionForExternalRefresh else { return }
         let boundEditorId = richTextView.editorId
         guard boundEditorId != 0,
               let adapter = EditorV2Registry.adapter(forLegacyId: boundEditorId),
@@ -135,7 +135,7 @@ extension NativeEditorExpoView {
         let autonomousOwner = autonomousErrorBindingAdapter === adapter
             && autonomousErrorBindingToken.map { adapter.isNativeBindingOwner(token: $0) } == true
         guard autonomousOwner || richTextView.textView.ownsNativeBinding(adapter) else { return }
-        let preflight = richTextView.textView.prepareForExternalEditorUpdateResult()
+        let preflight = richTextView.activeTextInput.prepareForExternalEditorUpdateResult()
         guard preflight.ready else { return }
         guard let update = preflight.adoptedUpdateJSON
             ?? adapter.refreshFromRustState(mirrorSelection: nil)
@@ -213,7 +213,7 @@ extension NativeEditorExpoView {
         if isSupersededEditorUpdate(updateJson) {
             return .applied
         }
-        let preflight = richTextView.textView.prepareForExternalEditorUpdateResult()
+        let preflight = richTextView.activeTextInput.prepareForExternalEditorUpdateResult()
         guard preflight.ready else {
             return .retryableDeferred
         }

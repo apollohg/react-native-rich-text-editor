@@ -125,7 +125,7 @@ extension EditorTextView {
             location: prefix,
             length: authorizedEnd - prefix
         )
-        let selectedScalarRange = targetSelectionUtf16Range.map { range in
+        let selectedScalarRange = targetSelectionUtf16Range.flatMap { range in
             scalarRange(
                 forUtf16Range: range,
                 in: authorizedStorageApplying(
@@ -142,9 +142,22 @@ extension EditorTextView {
             } == true
         let capturedAfterBlur = canAdoptNativeTextMutationAfterBlur()
 
+        let localMutationStart = PositionBridge.utf16OffsetToScalar(
+            prefix,
+            in: lastAuthorizedAttributedTextStorage
+        )
+        let localMutationEnd = PositionBridge.utf16OffsetToScalar(
+            authorizedEnd,
+            in: lastAuthorizedAttributedTextStorage
+        )
+        guard let mutationRange = inputScalarRange(
+            fromLocal: localMutationStart,
+            toLocal: localMutationEnd
+        ) else { return nil }
+
         return NativeTextMutation(
-            from: PositionBridge.utf16OffsetToScalar(prefix, in: lastAuthorizedAttributedTextStorage),
-            to: PositionBridge.utf16OffsetToScalar(authorizedEnd, in: lastAuthorizedAttributedTextStorage),
+            from: mutationRange.from,
+            to: mutationRange.to,
             authorizedReplacementUtf16Range: authorizedReplacementUtf16Range,
             replacementText: replacementText,
             resultingText: currentText,
@@ -276,7 +289,7 @@ extension EditorTextView {
             selectionRangeForConversion = currentSelectionUtf16Range
         }
         let selectedScalarRange = shouldUseCurrentSelection
-            ? selectionRangeForConversion.map {
+            ? selectionRangeForConversion.flatMap {
                 scalarRange(forUtf16Range: $0, in: selectionConversionStorage)
             }
             : nil
