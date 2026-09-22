@@ -767,6 +767,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
         val boundInteractions = mutableListOf<PreparedProseInteraction>()
         val boundAtoms = mutableListOf<PreparedViewerAtom>()
         document.blocks.forEachIndexed { index, current ->
+            replayInlineFontDiagnostics(current, theme, warningSemanticGeneration)
             val localBlock = local.blocks[index]
             val sourceAtoms = if (current.isBlockAtom) {
                 emptyList()
@@ -929,6 +930,18 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             }
         }
         return result
+    }
+
+    private fun replayInlineFontDiagnostics(
+        block: ViewerBlock,
+        theme: PreparedProseTheme,
+        warningSemanticGeneration: String
+    ) {
+        val base = theme.paintFor(block)
+        val ancestors = block.containers.map { it.nodeType } + block.nodeType
+        block.inlines.filterIsInstance<ViewerInline.Text>().forEach { inline ->
+            markSpans(inline.marks, base, theme, warningSemanticGeneration, ancestors)
+        }
     }
 
     private data class BlockResult(

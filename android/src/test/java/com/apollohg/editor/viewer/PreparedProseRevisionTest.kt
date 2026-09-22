@@ -15,6 +15,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -515,6 +516,59 @@ class PreparedProseRevisionTest {
     }
 
     @Test
+    fun `table shape hit replays missing inline font diagnostics for each semantic generation`() {
+        ViewerFontEnvironment.resetFamilyRegistryForTesting()
+        ViewerFontEnvironment.resetMissingWarningsForTesting()
+        try {
+            val family = "missing-cell-mark-${System.nanoTime()}"
+            ViewerFontEnvironment.setPlatformFamilyResolverForTesting { false }
+            val configuration = ProseViewerConfiguration(tableFontMarkConfig())
+            fun request(before: String) = ProseViewerRequest(
+                ProseViewerSource.Json(
+                    """{"type":"doc","content":[
+                        {"type":"paragraph","content":[{"type":"text","text":"$before"}]},
+                        {"type":"table","content":[{"type":"table_row","content":[
+                            {"type":"table_cell","content":[{"type":"paragraph","content":[
+                                {"type":"text","text":"marked","marks":[{"type":"font","attrs":{"fontFamily":"$family"}}]}
+                            ]}]}
+                        ]}]}
+                    ]}""".trimIndent()
+                ),
+                configuration
+            )
+            val preparations = mutableListOf<Int>()
+            val engine = StaticLayoutAndroidProseLayoutEngine().apply {
+                tableCellPreparationObserver = preparations::add
+            }
+            val registry = PreparedProseLayoutRegistry(compiler = ::compileWithRust, layoutEngine = engine)
+            val initialRequest = request("before")
+            val initial = registry.measure(initialRequest, 320, 1f)
+            val initialCell = requireNotNull(
+                initial.blocks.single { it.tableSurface != null }.tableSurface
+            ).cells.single().content
+            assertFalse(ViewerFontEnvironment.warnOnceForMissingFamily(family, initialRequest.semanticGenerationIdentity))
+
+            val replacementRequest = request("unrelated prose ".repeat(40))
+            val replacement = registry.measure(replacementRequest, 320, 1f)
+            val replacementCell = requireNotNull(
+                replacement.blocks.single { it.tableSurface != null }.tableSurface
+            ).cells.single().content
+
+            assertEquals(1, preparations.size)
+            assertSame(initialCell.cellShape, replacementCell.cellShape)
+            assertEquals(
+                "marked",
+                replacementCell.blocks.flatMap { it.fragments }.mapNotNull { it.layout?.text }
+                    .joinToString("")
+            )
+            assertFalse(ViewerFontEnvironment.warnOnceForMissingFamily(family, replacementRequest.semanticGenerationIdentity))
+        } finally {
+            ViewerFontEnvironment.resetMissingWarningsForTesting()
+            ViewerFontEnvironment.resetFamilyRegistryForTesting()
+        }
+    }
+
+    @Test
     fun themeFamiliesUseOneSemanticWarningAcrossStylesAndLayoutRevisions() {
         ViewerFontEnvironment.resetFamilyRegistryForTesting()
         ViewerFontEnvironment.resetMissingWarningsForTesting()
@@ -705,4 +759,16 @@ class PreparedProseRevisionTest {
         assertFalse(state.beginSemanticGeneration("resource"))
         assertFalse(state.recordResourceFailure(0))
     }
+
+    private fun tableFontMarkConfig(): String =
+        """{"schema":{"nodes":[
+            {"name":"doc","content":"block+","role":"doc"},
+            {"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},
+            {"name":"text","content":"","group":"inline","role":"text"},
+            {"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"class":{"default":null}}},
+            {"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},
+            {"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},
+            {"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}
+        ],"marks":[{"name":"font","attrs":{"fontFamily":{}}}]},"initialization":{"type":"localEmpty"}}"""
+            .trimIndent()
 }
