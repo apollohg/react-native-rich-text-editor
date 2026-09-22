@@ -15,6 +15,7 @@
 #include <react/renderer/core/ConcreteComponentDescriptor.h>
 
 #include <cmath>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -25,6 +26,8 @@
 using namespace facebook::react;
 
 namespace {
+
+std::atomic<uint64_t> NextViewerAtomPresentationSequence{0};
 
 NSString *StringFromStdString(const std::string &value) {
   return [[NSString alloc] initWithBytes:value.data()
@@ -170,12 +173,17 @@ int64_t ComponentTagFromState(
   BOOL _hasReceivedUsableLayoutMetrics;
   NSString *_reportedErrorGeneration;
   NSString *_installedMeasurementIdentity;
+  NSString *_lastAtomProjection;
   NSString *_ownedGeneration;
   NSString *_ownedSemanticGeneration;
   int64_t _ownedSurfaceId;
   int64_t _ownedComponentTag;
   uint64_t _ownedLeaseHandle;
   BOOL _hasOwnedSurface;
+  BOOL _atomDispatchSuspended;
+#if DEBUG
+  void (^_atomEventSink)(NSDictionary<NSString *, id> *event);
+#endif
   id _codeHighlightingObserver;
   id _codeHighlightingFailureObserver;
   id _imageMetadataObserver;
@@ -196,12 +204,15 @@ int64_t ComponentTagFromState(
 {
   if (self = [super initWithFrame:frame]) {
     _drawingView = [PREPPreparedProseDrawingView new];
+    __weak PREPPreparedProseViewerComponentView *weakSelf = self;
     _drawingView.interactionDelegate = self;
+    _drawingView.onTableGeometryChanged = ^{
+      [weakSelf emitAtomLayout];
+    };
     _drawingView.backgroundColor = UIColor.clearColor;
     _drawingView.isAccessibilityElement = NO;
     self.isAccessibilityElement = NO;
     [self addSubview:_drawingView];
-    __weak PREPPreparedProseViewerComponentView *weakSelf = self;
     _codeHighlightingObserver = [[NSNotificationCenter defaultCenter]
         addObserverForName:PREPPreparedProseDrawingView.codeHighlightingDidResolve
                     object:_drawingView queue:NSOperationQueue.mainQueue
@@ -338,6 +349,7 @@ int64_t ComponentTagFromState(
 - (void)updateLayoutMetrics:(const LayoutMetrics &)layoutMetrics
             oldLayoutMetrics:(const LayoutMetrics &)oldLayoutMetrics
 {
+  _atomDispatchSuspended = YES;
   [super updateLayoutMetrics:layoutMetrics oldLayoutMetrics:oldLayoutMetrics];
   _layoutMetrics = layoutMetrics;
   _drawingView.frame = RCTCGRectFromRect(layoutMetrics.getContentFrame());
@@ -395,6 +407,7 @@ int64_t ComponentTagFromState(
   _hasReceivedUsableLayoutMetrics = NO;
   _reportedErrorGeneration = nil;
   _installedMeasurementIdentity = nil;
+  _lastAtomProjection = nil;
   _ownedGeneration = nil;
   _ownedSemanticGeneration = nil;
   _ownedLeaseHandle = 0;
@@ -402,6 +415,7 @@ int64_t ComponentTagFromState(
 
 - (void)beginNewGenerationTerminatingCurrentLease:(BOOL)terminal
 {
+  _atomDispatchSuspended = YES;
   // Ordinary props/state revisions are committed by
   // installMeasuredArtifactIfAttached, where the registry can atomically
   // permit G2 before retiring G1's pending work. Releasing here would let a
@@ -485,7 +499,16 @@ int64_t ComponentTagFromState(
 
 - (void)emitAtomLayout
 {
-  if (!_viewerProps || !_eventEmitter) return;
+  if (_atomDispatchSuspended || !_viewerProps || !_eventEmitter || !_viewerState || !_hasOwnedSurface ||
+      !_ownedGeneration || _ownedLeaseHandle == 0 ||
+      LeaseHandle(_viewerState) != _ownedLeaseHandle ||
+      SurfaceIdFromState(_viewerState) != _ownedSurfaceId ||
+      ComponentTagFromState(_viewerState) != _ownedComponentTag) return;
+  if (![[PREPPreparedProseLayoutRegistry sharedRegistry]
+          isFabricLeaseActiveSurfaceId:_ownedSurfaceId
+                          componentTag:_ownedComponentTag
+                    generationIdentity:_ownedGeneration
+                        leaseHandle:_ownedLeaseHandle]) return;
   NSString *themeJSON = OptionalStringFromStdString(_viewerProps->themeJson);
   NSData *data = [themeJSON dataUsingEncoding:NSUTF8StringEncoding];
   if (!data) return;
@@ -496,14 +519,45 @@ int64_t ComponentTagFromState(
   NSString *generation = atoms[@"generation"];
   NSString *revision = atoms[@"revision"];
   if (![generation isKindOfClass:[NSString class]] || ![revision isKindOfClass:[NSString class]]) return;
+  NSString *atomJSON = [_drawingView atomLayoutsJSONWithOrigin:_drawingView.frame.origin];
+  NSString *projection = [NSString stringWithFormat:@"%@\u0000%@\u0000%@\u0000%.17g",
+      generation, revision, atomJSON, _drawingView.bounds.size.width];
+  if ([_lastAtomProjection isEqualToString:projection]) return;
+  uint64_t previous = NextViewerAtomPresentationSequence.load(std::memory_order_relaxed);
+  while (previous != std::numeric_limits<uint64_t>::max() &&
+         !NextViewerAtomPresentationSequence.compare_exchange_weak(
+             previous, previous + 1, std::memory_order_relaxed)) {
+  }
+  if (previous == std::numeric_limits<uint64_t>::max()) return;
+  NSString *envelope = [NSString stringWithFormat:
+      @"{\"format\":\"viewer-atoms-v2\",\"presentationSequence\":\"%llu\",\"atoms\":%@}",
+      static_cast<unsigned long long>(previous + 1), atomJSON];
   const auto emitter = std::static_pointer_cast<const PreparedProseViewerEventEmitter>(_eventEmitter);
+#if DEBUG
+  if (_atomEventSink) {
+    _atomEventSink(@{
+      @"generation": generation,
+      @"revision": revision,
+      @"layoutWidth": @(_drawingView.bounds.size.width),
+      @"atomsJson": envelope,
+    });
+  }
+#endif
   emitter->onAtomLayout({
       .generation = std::string(generation.UTF8String),
       .revision = std::string(revision.UTF8String),
       .layoutWidth = _drawingView.bounds.size.width,
-      .atomsJson = std::string([_drawingView atomLayoutsJSONWithOrigin:_drawingView.frame.origin].UTF8String),
+      .atomsJson = std::string(envelope.UTF8String),
   });
+  _lastAtomProjection = projection;
 }
+
+#if DEBUG
+- (void)prep_setAtomEventSink:(void (^)(NSDictionary<NSString *, id> *event))sink
+{
+  _atomEventSink = [sink copy];
+}
+#endif
 
 - (void)installMeasuredArtifactIfAttached
 {
@@ -573,6 +627,7 @@ int64_t ComponentTagFromState(
       [_ownedGeneration isEqualToString:generation] &&
       _ownedLeaseHandle == leaseHandle &&
       [_installedMeasurementIdentity isEqualToString:measurementIdentityString]) {
+    _atomDispatchSuspended = NO;
     [self emitAtomLayout];
     return;
   }
@@ -656,6 +711,7 @@ int64_t ComponentTagFromState(
                                   policyJSON:OptionalStringFromStdString(props.imagePolicyJson)];
   [_drawingView updateConfiguredImagesForVisibleWindow];
   _installedMeasurementIdentity = measurementIdentityString;
+  _atomDispatchSuspended = NO;
   [self emitAtomLayout];
   if (!_drawingView.errorCode) {
     return;

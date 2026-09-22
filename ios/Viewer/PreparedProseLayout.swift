@@ -205,17 +205,23 @@ struct PreparedProseAtomSlot {
 
 final class PreparedProseBlock {
     let atomSlot: PreparedProseAtomSlot?
+    let imageAttachment: ViewerImageAttachment?
+    let tableBounds: CGRect?
     let fragments: [PreparedProseFragment]
     let bounds: CGRect
+    let tableSurface: ViewerTableSurface?
 
-    init(fragments: [PreparedProseFragment], bounds: CGRect, atomSlot: PreparedProseAtomSlot? = nil) {
+    init(fragments: [PreparedProseFragment], bounds: CGRect, atomSlot: PreparedProseAtomSlot? = nil, imageAttachment: ViewerImageAttachment? = nil, tableSurface: ViewerTableSurface? = nil, tableBounds: CGRect? = nil) {
         self.atomSlot = atomSlot
+        self.imageAttachment = imageAttachment
+        self.tableBounds = tableBounds
         self.fragments = fragments
         self.bounds = bounds
+        self.tableSurface = tableSurface
     }
 
     var estimatedRetainedBytes: Int {
-        160 + fragments.reduce(0) { $0 + $1.estimatedRetainedBytes } + (atomSlot?.estimatedRetainedBytes ?? 0)
+        160 + fragments.reduce(0) { $0 + $1.estimatedRetainedBytes } + (atomSlot?.estimatedRetainedBytes ?? 0) + (tableSurface?.retainedBytes ?? 0)
     }
 
     /// Compatibility initializer retained for test seams.
@@ -236,10 +242,23 @@ struct PreparedProseInteraction: Hashable {
     let docPos: UInt32?
     let label: String
     let attrsJSON: String?
+    /// Local prepared-block index, retained so mounted traversal never infers source order from paint bounds.
+    let sourceBlockIndex: Int?
+
+    init(kind: Kind, rects: [CGRect], href: String?, visibleText: String, docPos: UInt32?, label: String, attrsJSON: String?, sourceBlockIndex: Int? = nil) {
+        self.kind = kind
+        self.rects = rects
+        self.href = href
+        self.visibleText = visibleText
+        self.docPos = docPos
+        self.label = label
+        self.attrsJSON = attrsJSON
+        self.sourceBlockIndex = sourceBlockIndex
+    }
 
     var estimatedRetainedBytes: Int {
         144 + rects.count * 64 + (href?.utf8.count ?? 0) * 2 + visibleText.utf8.count * 2
-            + label.utf8.count * 2 + (attrsJSON?.utf8.count ?? 0)
+            + label.utf8.count * 2 + (attrsJSON?.utf8.count ?? 0) + (sourceBlockIndex == nil ? 0 : 8)
     }
 }
 
@@ -252,21 +271,23 @@ struct PreparedProseAccessibilityNode: Hashable {
     let role: Role
     let label: String
     let rects: [CGRect]
+    let sourceBlockIndex: Int?
 
-    init(interactionIndex: Int?, role: Role, label: String, bounds: CGRect) {
-        self.init(interactionIndex: interactionIndex, role: role, label: label, rects: [bounds])
+    init(interactionIndex: Int?, role: Role, label: String, bounds: CGRect, sourceBlockIndex: Int? = nil) {
+        self.init(interactionIndex: interactionIndex, role: role, label: label, rects: [bounds], sourceBlockIndex: sourceBlockIndex)
     }
 
-    init(interactionIndex: Int?, role: Role, label: String, rects: [CGRect]) {
+    init(interactionIndex: Int?, role: Role, label: String, rects: [CGRect], sourceBlockIndex: Int? = nil) {
         self.interactionIndex = interactionIndex
         self.role = role
         self.label = label
         self.rects = rects
+        self.sourceBlockIndex = sourceBlockIndex
     }
 
     var bounds: CGRect { rects.reduce(.null) { $0.union($1) } }
 
-    var estimatedRetainedBytes: Int { 96 + rects.count * 64 + label.utf8.count * 2 }
+    var estimatedRetainedBytes: Int { 96 + rects.count * 64 + label.utf8.count * 2 + (sourceBlockIndex == nil ? 0 : 8) }
 }
 
 public final class PreparedProseLayout: NSObject {
@@ -281,7 +302,9 @@ public final class PreparedProseLayout: NSObject {
     let accessibilityNodes: [PreparedProseAccessibilityNode]
     let imageAttachments: [ViewerImageAttachment]
     let retainedBytes: Int
+    let cellShapeCatalogRetainedBytes: Int
     let error: ProseViewerError?
+    let cellShape: PreparedCellShape?
 
     init(
         key: ProseLayoutKey,
@@ -294,7 +317,8 @@ public final class PreparedProseLayout: NSObject {
         error: ProseViewerError? = nil,
         decorations: [PreparedProseFragment] = [],
         highlightingRequest: PreparedViewerHighlightingRequest? = nil,
-        highlightingResolved: Bool = false
+        highlightingResolved: Bool = false,
+        cellShape: PreparedCellShape? = nil
     ) {
         self.highlightingRequest = highlightingRequest
         self.highlightingResolved = highlightingResolved
@@ -310,11 +334,55 @@ public final class PreparedProseLayout: NSObject {
         self.imageAttachments = imageAttachments
         self.retainedBytes = retainedBytes
         self.error = error
+        self.cellShape = cellShape
+        self.cellShapeCatalogRetainedBytes = PreparedProseLayout.shapeCatalogRetainedBytes(
+            cellShape: cellShape,
+            blocks: blocks
+        )
         super.init()
+    }
+
+    func withCellShape(_ shape: PreparedCellShape) -> PreparedProseLayout {
+        PreparedProseLayout(
+            key: key,
+            size: size,
+            blocks: blocks,
+            interactions: interactions,
+            accessibilityNodes: accessibilityNodes,
+            imageAttachments: imageAttachments,
+            retainedBytes: retainedBytes,
+            error: error,
+            decorations: decorations,
+            highlightingRequest: highlightingRequest,
+            highlightingResolved: highlightingResolved,
+            cellShape: shape
+        )
     }
 
     static func error(key: ProseLayoutKey, width: CGFloat, error: ProseViewerError) -> PreparedProseLayout {
         PreparedProseLayout(key: key, size: CGSize(width: width, height: 0), blocks: [], retainedBytes: 0, error: error)
+    }
+
+    private static func shapeCatalogRetainedBytes(
+        cellShape: PreparedCellShape?,
+        blocks: [PreparedProseBlock]
+    ) -> Int {
+        var shapes: [ObjectIdentifier: PreparedCellShape] = [:]
+        func collect(_ shape: PreparedCellShape?) {
+            guard let shape else { return }
+            shapes[ObjectIdentifier(shape)] = shape
+        }
+        func visit(_ layout: PreparedProseLayout) {
+            collect(layout.cellShape)
+            for block in layout.blocks {
+                for cell in block.tableSurface?.cells ?? [] { visit(cell.content) }
+            }
+        }
+        collect(cellShape)
+        for block in blocks {
+            for cell in block.tableSurface?.cells ?? [] { visit(cell.content) }
+        }
+        return shapes.values.reduce(0) { $0 + $1.catalogRetainedBytes }
     }
 }
 

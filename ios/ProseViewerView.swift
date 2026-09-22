@@ -50,7 +50,10 @@ public final class ProseViewerView: UIView {
                 ownedLayout?.retainedBytes ?? 0,
                 attachmentRevisions.retainedPublicationBytesForTesting
             ),
-            drawingView.retainedImagePixelsBytesForTesting
+            PreparedProseDrawingView.saturatingAdd(
+                drawingView.retainedImagePixelsBytesForTesting,
+                drawingView.tablePresentationRetainedBytesForTesting
+            )
         )
     }
 

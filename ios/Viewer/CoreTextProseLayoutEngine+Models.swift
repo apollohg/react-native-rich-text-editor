@@ -1,4 +1,5 @@
 import CoreText
+import CryptoKit
 import UIKit
 
 enum PreparedProseInteractionGeometry {
@@ -106,6 +107,8 @@ struct PreparedViewerAtoms {
 /// Theme parsing is deliberately outside the drawing path. A registry stores
 /// this value once per generation and every width-specific artifact reuses it.
 struct PreparedProseTheme {
+    let tableStyle: TableStyle
+    let cellShapeStyleDigest: String
     var codeHighlighting: NativeCodeHighlightConfiguration?
     let styleSheet: EditorStyleSheet?
     let viewerAtoms: PreparedViewerAtoms?
@@ -115,7 +118,7 @@ struct PreparedProseTheme {
     let headings: [String: PreparedTextPaint]
     let blockquote: PreparedTextPaint
     let code: PreparedTextPaint
-    let contentInsets: UIEdgeInsets
+    var contentInsets: UIEdgeInsets
     let listIndent: CGFloat
     let listBaseIndentMultiplier: CGFloat
     let listItemSpacing: CGFloat
@@ -197,7 +200,18 @@ struct PreparedProseTheme {
             )
         }
         let listItemSpacing = theme.list?.itemSpacing ?? 4
+        var cellShapeTheme: [String: Any] = [:]
+        if let data = themeJSON?.data(using: .utf8),
+           let values = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            cellShapeTheme = values
+        }
+        cellShapeTheme.removeValue(forKey: "viewerAtoms")
+        let styleData = (try? JSONSerialization.data(withJSONObject: cellShapeTheme, options: [.sortedKeys]))
+            ?? Data((themeJSON ?? "").utf8)
+        let cellShapeStyleDigest = SHA256.hash(data: styleData).map { String(format: "%02x", $0) }.joined()
         return PreparedProseTheme(
+            tableStyle: TableStyle(theme: theme) ?? TableStyle(),
+            cellShapeStyleDigest: cellShapeStyleDigest,
             styleSheet: theme.styleSheet,
             viewerAtoms: PreparedViewerAtoms.resolve(themeJSON),
             fontScale: resolvedScale,

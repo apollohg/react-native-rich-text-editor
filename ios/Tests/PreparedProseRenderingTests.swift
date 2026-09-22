@@ -23,6 +23,11 @@ final class PreparedProseRenderingTests: XCTestCase {
                 document.withPreparedTheme(PreparedProseTheme.resolve(themeJSON: nil)).tableRecords[nestedID]?.cells.count,
                 1
             )
+
+            let cellDocument = try document.cellDocument(for: try XCTUnwrap(outer.cells.first))
+            XCTAssertEqual(cellDocument.blocks.map(\.nodeType), ["table"])
+            XCTAssertEqual(cellDocument.blocks.first?.table?.tablePos, nested.tablePos)
+            XCTAssertEqual(cellDocument.tableRecords[nestedID]?.cells.count, 1)
         }
     }
 

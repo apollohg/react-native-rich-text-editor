@@ -322,6 +322,7 @@ struct ViewerDocument {
     let retainedBytes: Int
     let trailingEmptyTextBlockCount: Int
     let preparedTheme: PreparedProseTheme?
+    let preferredTextBlockName: String
 
     var paragraphs: [ViewerParagraph] {
         blocks.compactMap { block in
@@ -353,6 +354,7 @@ struct ViewerDocument {
         self.retainedBytes = retainedBytes
         trailingEmptyTextBlockCount = 0
         preparedTheme = nil
+        preferredTextBlockName = "paragraph"
     }
 
     init(
@@ -363,7 +365,8 @@ struct ViewerDocument {
         trailingEmptyTextBlockCount: Int = 0,
         preparedTheme: PreparedProseTheme? = nil,
         tableAttributes: [String: [String: Any]] = [:],
-        tableRecords: [String: FfiViewerTable] = [:]
+        tableRecords: [String: FfiViewerTable] = [:],
+        preferredTextBlockName: String = "paragraph"
     ) {
         self.tableAttributes = tableAttributes
         self.tableRecords = tableRecords
@@ -373,6 +376,7 @@ struct ViewerDocument {
         self.retainedBytes = retainedBytes
         self.trailingEmptyTextBlockCount = trailingEmptyTextBlockCount
         self.preparedTheme = preparedTheme
+        self.preferredTextBlockName = preferredTextBlockName
     }
 
     init(compiled: ViewerCompiledDocument) throws {
@@ -389,6 +393,7 @@ struct ViewerDocument {
               Self.validTables(elements, records: tableRecords, pool: pool) else {
             throw ProseViewerError.hostContract(message: "The compiler returned invalid semantic table references.")
         }
+        try Self.validateAdmittedAttachments(elements: elements, tableRecords: tableRecords)
         tableAttributes = pool
         self.tableRecords = tableRecords
         semanticKey = compiled.semanticKey()
@@ -396,7 +401,21 @@ struct ViewerDocument {
         retainedBytes = Int(compiled.retainedBytesDecimal()) ?? 0
         trailingEmptyTextBlockCount = Int(compiled.trailingEmptyTextBlockCount())
         preparedTheme = nil
+        preferredTextBlockName = compiled.preferredTextBlockName()
+        blocks = try Self.lowerElements(
+            elements,
+            preferredTextBlockName: preferredTextBlockName,
+            tableRecords: tableRecords,
+            isEmpty: isEmpty
+        )
+    }
 
+    private static func lowerElements(
+        _ elements: [FfiViewerElement],
+        preferredTextBlockName: String,
+        tableRecords: [String: FfiViewerTable],
+        isEmpty: Bool
+    ) throws -> [ViewerBlock] {
         struct Builder {
             let language: String?
             let styleIdentity: Int
@@ -416,16 +435,51 @@ struct ViewerDocument {
         var renderableLeavesByListItem: [Int: [Int]] = [:]
         var listItemDepthByIdentity: [Int: UInt16] = [:]
         var nextListItemIdentity = 0
-        let preferredTextBlockName = compiled.preferredTextBlockName()
+        func appendRenderableLeaf(
+            nodeType: String,
+            inlines: [ViewerInline],
+            isBlockAtom: Bool,
+            table: FfiViewerTable? = nil
+        ) {
+            let listContext = stack.reversed().compactMap(\.listContext).first
+            let listItemIdentity = stack.reversed().compactMap(\.listItemIdentity).first
+            let listItemAncestors = stack.compactMap { builder -> ViewerListItemAncestor? in
+                guard let identity = builder.listItemIdentity, let context = builder.listContext else { return nil }
+                return ViewerListItemAncestor(identity: identity, context: context)
+            }
+            let outermostListItem = stack.first { $0.listItemIdentity != nil }
+            rendered.append(ViewerBlock(
+                nodeType: nodeType,
+                depth: stack.last?.depth ?? 0,
+                inBlockquote: stack.contains { $0.nodeType == "blockquote" },
+                listContext: listContext,
+                listItemBoundary: nil,
+                listItemAncestors: listItemAncestors,
+                outermostListItemIdentity: outermostListItem?.listItemIdentity,
+                outermostListItemIsLast: outermostListItem?.listContext?.isLast ?? false,
+                inlines: inlines,
+                isBlockAtom: isBlockAtom,
+                styleAncestors: stack.flatMap { builder -> [ViewerStyleAncestor] in
+                    var values: [ViewerStyleAncestor] = []
+                    if let identity = builder.listStyleIdentity, let context = builder.listContext {
+                        values.append(ViewerStyleAncestor(identity: identity, nodeType: context.kind == "task" ? "taskList" : context.ordered ? "orderedList" : "bulletList"))
+                    }
+                    values.append(ViewerStyleAncestor(identity: builder.styleIdentity, nodeType: builder.nodeType))
+                    return values
+                },
+                table: table
+            ))
+            if let listItemIdentity {
+                renderableLeavesByListItem[listItemIdentity, default: []].append(rendered.count - 1)
+            }
+        }
         for element in elements {
             switch element {
             case let .table(tableId):
                 guard let table = tableRecords[tableId] else {
                     throw ProseViewerError.hostContract(message: "The compiler returned a dangling semantic table reference.")
                 }
-                rendered.append(ViewerBlock(nodeType: "table", depth: stack.last?.depth ?? 0,
-                    inBlockquote: stack.contains { $0.nodeType == "blockquote" },
-                    listContext: stack.last?.listContext, listItemBoundary: nil, inlines: [], isBlockAtom: true, table: table))
+                appendRenderableLeaf(nodeType: "table", inlines: [], isBlockAtom: true, table: table)
             case let .blockStart(nodeType: nodeType, language: language, depth: depth, listContextJson: listContextJSON):
                 let listContext = Self.listContext(from: listContextJSON)
                 let parentIdentity = stack.last?.styleIdentity ?? -1
@@ -464,40 +518,11 @@ struct ViewerDocument {
                     .atom(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJson, label: label)
                 )
             case let .blockAtom(nodeType: nodeType, docPos: docPos, attrsJson: attrsJson, label: label):
-                let listContext = stack.reversed().compactMap(\.listContext).first
-                let listItemIdentity = stack.reversed().compactMap(\.listItemIdentity).first
-                let listItemAncestors = stack.compactMap { builder -> ViewerListItemAncestor? in
-                    guard let identity = builder.listItemIdentity,
-                          let context = builder.listContext
-                    else { return nil }
-                    return ViewerListItemAncestor(identity: identity, context: context)
-                }
-                let outermostListItem = stack.first { $0.listItemIdentity != nil }
-                rendered.append(
-                    ViewerBlock(
-                        nodeType: nodeType,
-                        depth: stack.last?.depth ?? 0,
-                        inBlockquote: stack.contains { $0.nodeType == "blockquote" },
-                        listContext: listContext,
-                        listItemBoundary: nil,
-                        listItemAncestors: listItemAncestors,
-                        outermostListItemIdentity: outermostListItem?.listItemIdentity,
-                        outermostListItemIsLast: outermostListItem?.listContext?.isLast ?? false,
-                        inlines: [.atom(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJson, label: label)],
-                        isBlockAtom: true,
-                        styleAncestors: stack.flatMap { builder -> [ViewerStyleAncestor] in
-                            var values: [ViewerStyleAncestor] = []
-                            if let identity = builder.listStyleIdentity, let context = builder.listContext {
-                                values.append(ViewerStyleAncestor(identity: identity, nodeType: context.kind == "task" ? "taskList" : context.ordered ? "orderedList" : "bulletList"))
-                            }
-                            values.append(ViewerStyleAncestor(identity: builder.styleIdentity, nodeType: builder.nodeType))
-                            return values
-                        }
-                    )
+                appendRenderableLeaf(
+                    nodeType: nodeType,
+                    inlines: [.atom(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJson, label: label)],
+                    isBlockAtom: true
                 )
-                if let listItemIdentity {
-                    renderableLeavesByListItem[listItemIdentity, default: []].append(rendered.count - 1)
-                }
             case .blockEnd:
                 guard let builder = stack.popLast() else { continue }
                 if builder.listContext?.isLast == true { listStyleGroups.removeValue(forKey: builder.listParentIdentity) }
@@ -570,9 +595,59 @@ struct ViewerDocument {
                 message: "The document exceeds the maximum admitted image attachment count."
             )
         }
-        blocks = rendered.isEmpty && !isEmpty
+        return rendered.isEmpty && !isEmpty
             ? [ViewerBlock(nodeType: "paragraph", depth: 0, inBlockquote: false, listContext: nil, listItemBoundary: nil, inlines: [.text(text: "", marks: [])])]
             : rendered
+    }
+
+    private static func validateAdmittedAttachments(
+        elements: [FfiViewerElement],
+        tableRecords: [String: FfiViewerTable]
+    ) throws {
+        var count = 0
+        func countAttachments(in elements: [FfiViewerElement]) throws {
+            for element in elements {
+                guard case let .blockAtom(nodeType, docPos, attrsJSON, _) = element,
+                      ViewerImageAttachment.sourceAndDeclaredSize(
+                        nodeType: nodeType,
+                        docPos: docPos,
+                        attrsJSON: attrsJSON
+                      ) != nil
+                else { continue }
+                count += 1
+                guard count <= ViewerImageAttachment.maximumAdmittedAttachments else {
+                    throw ProseViewerError.compiler(
+                        domain: "viewer",
+                        code: "ATTACHMENT_LIMIT_EXCEEDED",
+                        message: "The document exceeds the maximum admitted image attachment count."
+                    )
+                }
+            }
+        }
+
+        try countAttachments(in: elements)
+        for table in tableRecords.values {
+            for cell in table.cells {
+                try countAttachments(in: cell.elements)
+            }
+        }
+    }
+
+    func cellDocument(for cell: FfiViewerTableCell) throws -> ViewerDocument {
+        ViewerDocument(
+            semanticKey: "\(semanticKey):\(cell.sourcePos):\(cell.contentKey)",
+            blocks: try Self.lowerElements(
+                cell.elements,
+                preferredTextBlockName: preferredTextBlockName,
+                tableRecords: tableRecords,
+                isEmpty: cell.elements.isEmpty
+            ),
+            isEmpty: cell.elements.isEmpty,
+            retainedBytes: 0,
+            tableAttributes: tableAttributes,
+            tableRecords: tableRecords,
+            preferredTextBlockName: preferredTextBlockName
+        )
     }
 
     func withPreparedTheme(_ theme: PreparedProseTheme) -> ViewerDocument {
@@ -584,7 +659,8 @@ struct ViewerDocument {
             trailingEmptyTextBlockCount: trailingEmptyTextBlockCount,
             preparedTheme: theme,
             tableAttributes: tableAttributes,
-            tableRecords: tableRecords
+            tableRecords: tableRecords,
+            preferredTextBlockName: preferredTextBlockName
         )
     }
 

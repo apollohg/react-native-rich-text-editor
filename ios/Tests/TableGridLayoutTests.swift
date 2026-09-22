@@ -1,6 +1,66 @@
 import XCTest
 
 final class TableGridLayoutTests: XCTestCase {
+    func testViewerSurfaceRetainsOnePreparedCellPerSourceAnchor() {
+        let cells = [
+            TableGridCell(sourcePosition: 10, row: 0, column: 0, contentKey: "a"),
+            TableGridCell(sourcePosition: 20, row: 0, column: 1, contentKey: "b")
+        ]
+        let record = TableGridRecord(documentOwner: "viewer", columns: 2, rows: 1,
+                                     columnWidths: [nil, nil], cells: cells)
+        let surface = ViewerTableSurface(
+            identity: "t1",
+            record: record,
+            viewportWidth: 160,
+            style: TableStyle(),
+            direction: .leftToRight
+        ) { cell, width in
+            return PreparedProseLayout.error(
+                key: ProseLayoutKey(semanticKey: cell.contentKey, widthPixels: Int(width), themeDigest: "", nativeFontRevision: 0,
+                                    fontEnvironmentRevision: 0, displayScale: 1, attachmentRevision: 0,
+                                    generationIdentity: "test", semanticGenerationIdentity: "test"),
+                width: width,
+                error: .layout(message: "test")
+            )
+        }
+
+        XCTAssertEqual(surface.cells.map(\.sourcePosition), [10, 20])
+        XCTAssertEqual(surface.cells.count, 2)
+        XCTAssertTrue(surface.bounds.height.isFinite)
+        XCTAssertEqual(surface.visibleCells(in: surface.bounds).count, 2)
+    }
+
+    func testViewerSurfaceMeasuresEqualContentOncePerSourceAndKeepsSourceArtifacts() {
+        let cells = [
+            TableGridCell(sourcePosition: 10, row: 0, column: 0, contentKey: "same"),
+            TableGridCell(sourcePosition: 20, row: 0, column: 1, contentKey: "same")
+        ]
+        var preparedSources: [Int] = []
+        var preparedContentKeys: [String] = []
+        let surface = ViewerTableSurface(
+            identity: "t1",
+            record: TableGridRecord(documentOwner: "viewer", columns: 2, rows: 1, columnWidths: [nil, nil], cells: cells),
+            viewportWidth: 160,
+            style: TableStyle(),
+            direction: .leftToRight
+        ) { cell, width in
+            preparedSources.append(cell.sourcePosition)
+            preparedContentKeys.append(cell.contentKey)
+            return PreparedProseLayout.error(
+                key: ProseLayoutKey(semanticKey: "\(cell.sourcePosition)", widthPixels: Int(width), themeDigest: "", nativeFontRevision: 0,
+                                    fontEnvironmentRevision: 0, displayScale: 1, attachmentRevision: 0,
+                                    generationIdentity: "test", semanticGenerationIdentity: "test"),
+                width: width,
+                error: .layout(message: "test")
+            )
+        }
+
+        XCTAssertEqual(surface.cells.map(\.sourcePosition), [10, 20])
+        XCTAssertNotEqual(surface.cells[0].content.key.semanticKey, surface.cells[1].content.key.semanticKey)
+        XCTAssertEqual(preparedSources, [10, 20])
+        XCTAssertEqual(preparedContentKeys, ["same", "same"])
+    }
+
     private func record(
         columns: Int = 2,
         rows: Int = 1,

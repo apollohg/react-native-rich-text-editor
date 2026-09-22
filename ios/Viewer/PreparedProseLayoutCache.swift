@@ -11,6 +11,7 @@ final class PreparedProseLayoutCache {
     }
 
     private let condition = NSCondition()
+    private let cellShapeCatalog = PreparedCellShapeCatalog()
     private var completed: [ProseLayoutKey: PreparedProseLayout] = [:]
     /// Accesses append a generation token instead of moving an existing array
     /// element. Stale tokens are ignored at eviction time and periodically
@@ -78,6 +79,22 @@ final class PreparedProseLayoutCache {
         shouldCreateFabricLease: (() -> Bool)? = nil,
         build: () throws -> PreparedProseLayout
     ) throws -> PreparedProseLayout {
+        try value(
+            for: key,
+            fabricSurface: fabricSurface,
+            fabricLeaseHandle: fabricLeaseHandle,
+            shouldCreateFabricLease: shouldCreateFabricLease,
+            buildWithContext: { _ in try build() }
+        )
+    }
+
+    func value(
+        for key: ProseLayoutKey,
+        fabricSurface: FabricSurfaceToken? = nil,
+        fabricLeaseHandle: UInt64? = nil,
+        shouldCreateFabricLease: (() -> Bool)? = nil,
+        buildWithContext: (PreparedCellShapeBuildContext) throws -> PreparedProseLayout
+    ) throws -> PreparedProseLayout {
         precondition(fabricSurface == nil || fabricLeaseHandle != nil)
         let lookupStarted = PreparedProseInstrumentation.now()
         condition.lock()
@@ -132,10 +149,11 @@ final class PreparedProseLayoutCache {
         }
         let preparation = Preparation()
         inFlight[key] = preparation
+        let cellShapeContext = cellShapeCatalog.newBuildContext()
         condition.unlock()
         PreparedProseInstrumentation.cacheLookup(lookupStarted, hit: false)
 
-        let result = Result(catching: build)
+        let result = Result { try buildWithContext(cellShapeContext) }
 
         condition.lock()
         if case let .success(layout) = result {
@@ -163,6 +181,7 @@ final class PreparedProseLayoutCache {
         inFlight.removeValue(forKey: key)
         condition.broadcast()
         condition.unlock()
+        cellShapeContext.close()
         return try result.get()
     }
 
@@ -424,6 +443,9 @@ final class PreparedProseLayoutCache {
         defer { condition.unlock() }
         return accessOrder.count
     }
+
+    var cellShapeCatalogCountForTesting: Int { cellShapeCatalog.countForTesting }
+    var cellShapeCatalogRetainedBytesForTesting: Int { cellShapeCatalog.retainedBytesForTesting }
 
     private func createPendingLeaseLocked(
         _ layout: PreparedProseLayout,
@@ -710,6 +732,15 @@ final class PreparedProseLayoutCache {
                 ownership.mountedReferences >= 0 && ownership.directReferences >= 0,
             "Prepared prose ownership references must not underflow."
         )
+        let previouslyLive = previous.completedReferences + previous.pendingReferences
+            + previous.mountedReferences + previous.directReferences > 0
+        let nowLive = ownership.completedReferences + ownership.pendingReferences
+            + ownership.mountedReferences + ownership.directReferences > 0
+        if !previouslyLive && nowLive {
+            cellShapeCatalog.retainParent(layout)
+        } else if previouslyLive && !nowLive {
+            cellShapeCatalog.releaseParent(layout)
+        }
         applyOwnershipContributionDelta(from: previous, to: ownership)
         if ownership.completedReferences + ownership.pendingReferences + ownership.mountedReferences + ownership.directReferences == 0 {
             ownershipByIdentifier.removeValue(forKey: identifier)
@@ -731,7 +762,7 @@ final class PreparedProseLayoutCache {
     }
 
     private func applyOwnershipContributionDelta(from previous: LayoutOwnership, to next: LayoutOwnership) {
-        let bytes = next.layout.retainedBytes
+        let bytes = next.layout.retainedBytes + next.layout.cellShapeCatalogRetainedBytes
         retainedBytes += contribution(next, bytes: bytes, kind: .retained) - contribution(previous, bytes: bytes, kind: .retained)
         budgetedRetainedBytes += contribution(next, bytes: bytes, kind: .budgeted) - contribution(previous, bytes: bytes, kind: .budgeted)
         unmountedRetainedBytes += contribution(next, bytes: bytes, kind: .unmounted) - contribution(previous, bytes: bytes, kind: .unmounted)

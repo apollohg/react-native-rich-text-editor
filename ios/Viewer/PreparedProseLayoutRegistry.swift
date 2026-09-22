@@ -7,6 +7,7 @@ import UIKit
 public final class PreparedProseLayoutRegistry: NSObject {
     typealias DocumentCompiler = (ProseViewerRequest) throws -> ViewerDocument
     typealias LayoutPreparation = (ViewerDocument, ProseLayoutKey, CGFloat, CGFloat) throws -> PreparedProseLayout
+    typealias CellShapeLayoutPreparation = (ViewerDocument, ProseLayoutKey, CGFloat, CGFloat, PreparedCellShapeBuildContext?) throws -> PreparedProseLayout
 
     @objc public static var sharedRegistry: PreparedProseLayoutRegistry { shared }
     static let shared = PreparedProseLayoutRegistry()
@@ -64,6 +65,7 @@ public final class PreparedProseLayoutRegistry: NSObject {
     let layoutCache: PreparedProseLayoutCache
     private let compile: DocumentCompiler
     let prepare: LayoutPreparation
+    let prepareWithCellShapeContext: CellShapeLayoutPreparation?
     private(set) var layoutPreparationCount = 0
 
     // XCTest-only lock-step hook for the mount-miss/measure ownership race.
@@ -80,6 +82,8 @@ public final class PreparedProseLayoutRegistry: NSObject {
         return compiledRetainedBytes
     }
     var layoutRetainedBytesForTesting: Int { layoutCache.retainedBytesForTesting }
+    var cellShapeCatalogCountForTesting: Int { layoutCache.cellShapeCatalogCountForTesting }
+    var cellShapeCatalogRetainedBytesForTesting: Int { layoutCache.cellShapeCatalogRetainedBytesForTesting }
     var oversizedLeaseCountForTesting: Int { layoutCache.oversizedLeaseCountForTesting }
     var pendingFabricLeaseCountForTesting: Int { layoutCache.pendingLeaseCountForTesting }
     var mountedFabricLeaseCountForTesting: Int { layoutCache.mountedLeaseCountForTesting }
@@ -114,7 +118,7 @@ public final class PreparedProseLayoutRegistry: NSObject {
     }
 
     override convenience init() {
-        self.init(compile: Self.compileWithRust, prepare: Self.prepareWithCoreText)
+        self.init(compile: Self.compileWithRust, prepare: Self.prepareWithCoreText, prepareWithCellShapeContext: Self.prepareWithCoreText)
     }
 
     init(
@@ -124,10 +128,12 @@ public final class PreparedProseLayoutRegistry: NSObject {
         themeByteBudget: Int = 512 * 1024,
         themeEntryBudget: Int = 128,
         compile: @escaping DocumentCompiler,
-        prepare: @escaping LayoutPreparation = PreparedProseLayoutRegistry.prepareWithCoreText
+        prepare: @escaping LayoutPreparation = PreparedProseLayoutRegistry.prepareWithCoreText,
+        prepareWithCellShapeContext: CellShapeLayoutPreparation? = nil
     ) {
         self.compile = compile
         self.prepare = prepare
+        self.prepareWithCellShapeContext = prepareWithCellShapeContext
         layoutCache = PreparedProseLayoutCache(byteBudget: byteBudget)
         self.compiledByteBudget = compiledByteBudget
         self.compilationFailureBudget = compilationFailureBudget
@@ -143,6 +149,19 @@ public final class PreparedProseLayoutRegistry: NSObject {
     }
 
     deinit { NotificationCenter.default.removeObserver(self) }
+
+    private func preparedLayout(
+        _ document: ViewerDocument,
+        _ key: ProseLayoutKey,
+        _ width: CGFloat,
+        _ scale: CGFloat,
+        _ cellShapeContext: PreparedCellShapeBuildContext
+    ) throws -> PreparedProseLayout {
+        if let prepareWithCellShapeContext {
+            return try prepareWithCellShapeContext(document, key, width, scale, cellShapeContext)
+        }
+        return try prepare(document, key, width, scale)
+    }
 
     func compileDocument(request: ProseViewerRequest) throws -> ViewerDocument {
         let cacheKey = request.compiledCacheKey
@@ -284,7 +303,7 @@ public final class PreparedProseLayoutRegistry: NSObject {
                     guard let ownedGeneration else { return true }
                     return self.isFabricLeaseActive(ownedGeneration)
                 },
-                build: {
+                buildWithContext: { cellShapeContext in
                     let layoutStarted = PreparedProseInstrumentation.now()
                     self.lock.lock()
                     self.layoutPreparationCount += 1
@@ -295,10 +314,10 @@ public final class PreparedProseLayoutRegistry: NSObject {
                             prepared = Result {
                                 if let imageMeasurementState {
                                     return try FabricAttachmentSidecars.withMeasurementState(imageMeasurementState) {
-                                        try self.prepare(document, key, canonicalWidth, scale)
+                                        try self.preparedLayout(document, key, canonicalWidth, scale, cellShapeContext)
                                     }
                                 }
-                                return try self.prepare(document, key, canonicalWidth, scale)
+                                return try self.preparedLayout(document, key, canonicalWidth, scale, cellShapeContext)
                             }
                         }
                         let artifact = try prepared.get()

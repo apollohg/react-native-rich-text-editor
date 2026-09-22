@@ -7,6 +7,58 @@ let preparedAtomAttribute = NSAttributedString.Key("PREPPreparedAtom")
 let preparedStrikeAttribute = NSAttributedString.Key("PREPPreparedStrike")
 
 final class CoreTextProseLayoutEngine {
+    var tableCellPreparationObserver: ((Int) -> Void)?
+    var tableCellShapeBuildObserver: ((Int) -> Void)?
+    var tableCellBindingObserver: ((Int) -> Void)?
+
+    final class HighlightingScope {
+        let configuration: NativeCodeHighlightConfiguration
+        let generation: String
+        private var identifiers: [String: Int] = [:]
+        private(set) var blocks: [NativeCodeHighlightBlock] = []
+
+        init(configuration: NativeCodeHighlightConfiguration, generation: String) {
+            self.configuration = configuration
+            self.generation = generation
+        }
+
+        func preassign(document: ViewerDocument) {
+            for (index, block) in document.blocks.enumerated() {
+                register(document: document, index: index, block: block)
+                guard let table = block.table else { continue }
+                for cell in table.cells.sorted(by: { $0.sourcePos < $1.sourcePos }) {
+                    guard let child = try? document.cellDocument(for: cell) else { continue }
+                    preassign(document: child)
+                }
+            }
+        }
+
+        func start(document: ViewerDocument, index: Int, block: ViewerBlock) -> Int? {
+            guard EditorStyleSheet.element(block.nodeType) == "codeBlock" else { return nil }
+            return identifiers[identifier(document: document, index: index)]
+        }
+
+        private func register(document: ViewerDocument, index: Int, block: ViewerBlock) {
+            guard EditorStyleSheet.element(block.nodeType) == "codeBlock" else { return }
+            let identifier = identifier(document: document, index: index)
+            guard identifiers[identifier] == nil else { return }
+            let text = block.inlines.compactMap { inline -> String? in
+                if case let .text(value, _) = inline { return value }
+                return nil
+            }.joined()
+            let start = blocks.count
+            identifiers[identifier] = start
+            blocks.append(NativeCodeHighlightBlock(start: start, text: text, language: block.language))
+        }
+
+        private func identifier(document: ViewerDocument, index: Int) -> String {
+            "\(document.semanticKey):\(index)"
+        }
+
+        var request: PreparedViewerHighlightingRequest {
+            PreparedViewerHighlightingRequest(configuration: configuration, generation: generation, blocks: blocks)
+        }
+    }
     /// UIFont and CTFont are toll-free bridged. Recreating a system font from
     /// UIFont.fontName is not equivalent on current iOS releases: private
     /// .SFUI names are not valid public Core Text PostScript names.
@@ -19,7 +71,10 @@ final class CoreTextProseLayoutEngine {
         key: ProseLayoutKey,
         widthPoints: CGFloat,
         displayScale: CGFloat,
-        semanticGenerationIdentity: String? = nil
+        semanticGenerationIdentity: String? = nil,
+        cellMode: Bool = false,
+        highlightingScope: HighlightingScope? = nil,
+        cellShapeContext: PreparedCellShapeBuildContext? = nil
     ) throws -> PreparedProseLayout {
         // This context is deliberately passed separately from the layout key's
         // revision-sensitive generation identity. A replacement layout for an
@@ -34,17 +89,12 @@ final class CoreTextProseLayoutEngine {
         }
 
         let theme = document.preparedTheme ?? PreparedProseTheme.resolve(themeJSON: nil)
-        let highlightingRequest = theme.codeHighlighting.map { configuration in
-            PreparedViewerHighlightingRequest(configuration: configuration, generation: key.semanticGenerationIdentity, blocks: document.blocks.enumerated().compactMap { index, block in
-                guard EditorStyleSheet.element(block.nodeType) == "codeBlock" else { return nil }
-                let text = block.inlines.compactMap { inline -> String? in
-                    if case let .text(text, _) = inline { return text }
-                    return nil
-                }.joined()
-                return NativeCodeHighlightBlock(start: index, text: text, language: block.language)
-            })
+        let ownsHighlightingScope = highlightingScope == nil
+        let scope = highlightingScope ?? theme.codeHighlighting.map { HighlightingScope(configuration: $0, generation: key.semanticGenerationIdentity) }
+        if ownsHighlightingScope {
+            scope?.preassign(document: document)
         }
-        let highlighting = highlightingRequest.flatMap { PreparedViewerHighlightingStore.result(for: $0.generation) }
+        let highlighting = scope.flatMap { PreparedViewerHighlightingStore.result(for: $0.generation) }
         var cursorY = theme.contentInsets.top
         var blocks: [PreparedProseBlock] = []
         var containerBounds: [Int: CGRect] = [:]
@@ -100,9 +150,132 @@ final class CoreTextProseLayoutEngine {
             let top = opening.reduce(CGFloat.zero) { $0 + (theme.styleSheet?.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets.top ?? 0) }
             let bottom = closing.reduce(CGFloat.zero) { $0 + (theme.styleSheet?.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets.bottom ?? 0) }
             cursorY += top
+            if let table = block.table {
+                var cellTheme = theme
+                cellTheme.contentInsets = .zero
+                let tableBox = theme.styleSheet?.box(block.nodeType, ancestors: block.styleAncestors.map(\.nodeType)) ?? EditorStyleBox()
+                let placement = listPlacement(block: block, listMarker: listMarker, theme: theme, sheet: theme.styleSheet, paint: theme.paint(for: block), box: tableBox, omitBottomMargin: omitBottomMargin, disappearingListItemIdentities: disappearingListItemIdentities)
+                let tableAncestors = block.styleAncestors.reduce(UIEdgeInsets.zero) {
+                    $0.adding(theme.styleSheet?.box($1.nodeType, ancestors: block.ancestors(before: $1)).outerInsets ?? .zero)
+                }
+                let tableX = theme.contentInsets.left + tableAncestors.left + tableBox.margin.left + placement.listInset + placement.quoteInset + tableBox.inset.left
+                let tableWidth = max(1, canonicalWidth - theme.contentInsets.left - theme.contentInsets.right
+                    - tableAncestors.left - tableAncestors.right - tableBox.margin.left - tableBox.margin.right - tableBox.inset.left - tableBox.inset.right - placement.listInset - placement.quoteInset)
+                let record = TableGridRecord(table: table, documentOwner: document.semanticKey)
+                let cellsByPosition = Dictionary(uniqueKeysWithValues: table.cells.map { (Int($0.sourcePos), $0) })
+                let surface = ViewerTableSurface(
+                    identity: "t\(table.tablePos)",
+                    record: record,
+                    viewportWidth: tableWidth,
+                    style: theme.tableStyle,
+                    direction: table.direction == "rtl" ? .rightToLeft : (table.direction == "ltr" ? .leftToRight : UIView.userInterfaceLayoutDirection(for: .unspecified) == .rightToLeft ? .rightToLeft : .leftToRight),
+                    displayScale: displayScale,
+                    themeDigest: key.themeDigest,
+                    fontEnvironmentRevision: Int(key.fontEnvironmentRevision),
+                    textScale: theme.fontScale,
+                    sourceTable: table,
+                    sourceAttributes: document.tableAttributes
+                ) { cell, cellWidth in
+                    guard let source = cellsByPosition[cell.sourcePosition],
+                          let child = try? document.cellDocument(for: source).withPreparedTheme(cellTheme)
+                    else {
+                        return .error(key: key, width: cellWidth, error: .layout(message: "Invalid table cell."))
+                    }
+                    do {
+                        guard let cellWidthPixels = ProseLayoutMetrics.widthPixels(widthPoints: cellWidth, scale: displayScale) else {
+                            return .error(key: key, width: cellWidth, error: .hostContract(message: "A finite positive table cell width is required."))
+                        }
+                        let cellKey = ProseLayoutKey(
+                            semanticKey: child.semanticKey,
+                            widthPixels: cellWidthPixels,
+                            themeDigest: key.themeDigest,
+                            nativeFontRevision: key.nativeFontRevision,
+                            fontEnvironmentRevision: key.fontEnvironmentRevision,
+                            displayScale: displayScale,
+                            attachmentRevision: key.attachmentRevision,
+                            generationIdentity: key.generationIdentity,
+                            semanticGenerationIdentity: key.semanticGenerationIdentity
+                        )
+                        let build = {
+                            self.tableCellPreparationObserver?(cell.sourcePosition)
+                            self.tableCellShapeBuildObserver?(cell.sourcePosition)
+                            let prepared = try self.prepare(
+                                document: child,
+                                key: cellKey,
+                                widthPoints: cellWidth,
+                                displayScale: displayScale,
+                                semanticGenerationIdentity: warningSemanticGeneration,
+                                cellMode: true,
+                                highlightingScope: scope,
+                                cellShapeContext: cellShapeContext
+                            )
+                            self.tableCellBindingObserver?(cell.sourcePosition)
+                            return prepared
+                        }
+                        guard let cellShapeContext, theme.codeHighlighting == nil else { return try build() }
+                        let shapeKey = preparedCellShapeKey(
+                            contentKey: cell.contentKey,
+                            document: child,
+                            widthPixels: cellWidthPixels,
+                            theme: cellTheme,
+                            key: cellKey
+                        )
+                        return try cellShapeContext.resolve(shapeKey, build: build) { shape in
+                            let bound = self.bindCellShape(
+                                shape,
+                                document: child,
+                                key: cellKey,
+                                widthPoints: cellWidth,
+                                displayScale: displayScale,
+                                theme: cellTheme,
+                                warningSemanticGeneration: warningSemanticGeneration,
+                                context: cellShapeContext
+                            )
+                            if bound != nil { self.tableCellBindingObserver?(cell.sourcePosition) }
+                            return bound
+                        }
+                    } catch let error as ProseViewerError {
+                        return .error(key: key, width: cellWidth, error: error)
+                    } catch {
+                        return .error(key: key, width: cellWidth, error: .layout(message: "Table cell preparation failed."))
+                    }
+                }
+                let bounds = CGRect(x: tableX, y: cursorY + tableBox.margin.top, width: surface.bounds.width, height: surface.bounds.height)
+                if let error = surface.preparationError {
+                    return .error(key: key, width: canonicalWidth, error: error)
+                }
+                var fragments: [PreparedProseFragment] = []
+                if let marker = placement.marker {
+                    let markerHeight = marker.ascent + marker.descent
+                    let markerTop = bounds.midY - markerHeight / 2
+                    let markerX = tableX - placement.markerGutter
+                    fragments.append(.init(kind: .marker, line: marker.line, origin: CGPoint(x: markerX, y: markerTop + marker.ascent), bounds: CGRect(x: markerX, y: markerTop, width: marker.width, height: markerHeight), color: placement.markerColor.cgColor, label: marker.label, checked: marker.checked, styleBox: placement.checkbox))
+                }
+                let blockBounds = fragments.reduce(bounds) { $0.union($1.bounds) }
+                let tableBlock = PreparedProseBlock(fragments: fragments, bounds: blockBounds, tableSurface: surface, tableBounds: bounds)
+                blocks.append(tableBlock)
+                if !cellMode {
+                    let childAttachments = surface.parentImageAttachments(offset: imageAttachments.count, tableOrigin: bounds.origin)
+                    guard imageAttachments.count + childAttachments.count <= ViewerImageAttachment.maximumAdmittedAttachments else {
+                        return .error(key: key, width: canonicalWidth, error: .layout(message: "The table exceeds the maximum admitted image attachment count."))
+                    }
+                    imageAttachments.append(contentsOf: childAttachments)
+                    retainedBytes += childAttachments.count * 128
+                }
+                if let sheet = theme.styleSheet {
+                    for (depth, ancestor) in block.styleAncestors.enumerated() {
+                        let ancestorBox = sheet.box(ancestor.nodeType, ancestors: block.ancestors(before: ancestor))
+                        containerBounds[ancestor.identity] = containerBounds[ancestor.identity].map { $0.union(bounds) } ?? bounds
+                        containerStyles[ancestor.identity] = (ancestorBox, depth)
+                    }
+                }
+                cursorY = bounds.maxY + bottom + placement.itemSpacing
+                retainedBytes += tableBlock.estimatedRetainedBytes
+                continue
+            }
             let prepared = prepareBlock(
                 block,
-                highlighting: highlighting?.ranges[index] ?? [],
+                highlighting: scope.flatMap { $0.start(document: document, index: index, block: block) }.flatMap { highlighting?.ranges[$0] } ?? [],
                 attachmentOrdinal: imageAttachments.count,
                 listMarker: listMarker,
                 theme: theme,
@@ -113,6 +286,7 @@ final class CoreTextProseLayoutEngine {
                 displayScale: displayScale,
                 warningSemanticGeneration: warningSemanticGeneration
             )
+            let preparedBlockIndex = blocks.count
             blocks.append(prepared.block)
             let interactionIndexOffset = interactions.count
             accessibilityNodes.append(contentsOf: prepared.accessibilityNodes.map { node in
@@ -120,10 +294,22 @@ final class CoreTextProseLayoutEngine {
                     interactionIndex: node.interactionIndex.map { interactionIndexOffset + $0 },
                     role: node.role,
                     label: node.label,
-                    rects: node.rects
+                    rects: node.rects,
+                    sourceBlockIndex: preparedBlockIndex
                 )
             })
-            interactions.append(contentsOf: prepared.interactions)
+            interactions.append(contentsOf: prepared.interactions.map {
+                PreparedProseInteraction(
+                    kind: $0.kind,
+                    rects: $0.rects,
+                    href: $0.href,
+                    visibleText: $0.visibleText,
+                    docPos: $0.docPos,
+                    label: $0.label,
+                    attrsJSON: $0.attrsJSON,
+                    sourceBlockIndex: preparedBlockIndex
+                )
+            })
             if let attachment = prepared.attachment { imageAttachments.append(attachment) }
             if let sheet = theme.styleSheet {
                 var outerLeft: CGFloat = 0
@@ -151,15 +337,19 @@ final class CoreTextProseLayoutEngine {
             retainedBytes += prepared.retainedBytes
         }
         let renderedBottom = blocks.map(\.bounds.maxY).max() ?? cursorY
+        if !cellMode, imageAttachments.count > ViewerImageAttachment.maximumAdmittedAttachments {
+            return .error(key: key, width: canonicalWidth, error: .layout(message: "The document exceeds the maximum admitted image attachment count."))
+        }
         cursorY = (theme.styleSheet == nil ? renderedBottom : max(cursorY, renderedBottom)) + theme.contentInsets.bottom
         var decorations = containerBounds.keys.sorted { (containerStyles[$0]?.1 ?? 0) < (containerStyles[$1]?.1 ?? 0) }.compactMap { identity -> PreparedProseFragment? in
             guard let bounds = containerBounds[identity], let style = containerStyles[identity]?.0 else { return nil }
             return PreparedProseFragment(kind: .background, bounds: bounds, styleBox: style)
         }
-        if let sheet = theme.styleSheet {
+        if let sheet = theme.styleSheet, !cellMode {
             decorations.insert(PreparedProseFragment(kind: .background, bounds: CGRect(x: 0, y: 0, width: canonicalWidth, height: cursorY), styleBox: sheet.box("content")), at: 0)
         }
-        retainedBytes += decorations.count * 512 + (highlightingRequest?.retainedBytes ?? 0) + (highlighting?.retainedBytes ?? 0)
+        let highlightingRequest = cellMode ? nil : scope?.request
+        retainedBytes += decorations.count * 512 + (highlightingRequest?.retainedBytes ?? 0) + (cellMode ? 0 : highlighting?.retainedBytes ?? 0)
         let pixelHeight = ceil(cursorY * displayScale)
         retainedBytes += interactions.reduce(0) { $0 + $1.estimatedRetainedBytes }
             + accessibilityNodes.reduce(0) { $0 + $1.estimatedRetainedBytes }
@@ -179,6 +369,241 @@ final class CoreTextProseLayoutEngine {
         )
     }
 
+    /// Reuses local Core Text geometry while rebuilding source-qualified cell metadata.
+    private func bindCellShape(
+        _ shape: PreparedCellShape,
+        document: ViewerDocument,
+        key: ProseLayoutKey,
+        widthPoints: CGFloat,
+        displayScale: CGFloat,
+        theme: PreparedProseTheme,
+        warningSemanticGeneration: String,
+        context: PreparedCellShapeBuildContext
+    ) -> PreparedProseLayout? {
+        let local = shape.localLayout
+        guard local.error == nil, local.blocks.count == document.blocks.count else { return nil }
+        replayInlineFontWarnings(
+            in: document,
+            theme: theme,
+            semanticGeneration: warningSemanticGeneration
+        )
+        var blocks: [PreparedProseBlock] = []
+        var interactions: [PreparedProseInteraction] = []
+        var accessibility: [PreparedProseAccessibilityNode] = []
+        var interactionIndexes: [Int: Int] = [:]
+
+        for (index, current) in document.blocks.enumerated() {
+            let localBlock = local.blocks[index]
+            var atomSlot = localBlock.atomSlot
+            if let slot = localBlock.atomSlot {
+                guard current.isBlockAtom,
+                      case let .some(.atom(nodeType, docPos, attrsJSON, _)) = current.inlines.first,
+                      nodeType == slot.nodeType
+                else { return nil }
+                atomSlot = PreparedProseAtomSlot(nodeType: nodeType, docPos: docPos, attrsJSON: attrsJSON, bounds: slot.bounds)
+            } else if current.isBlockAtom,
+                      case let .some(.atom(nodeType, _, _, _)) = current.inlines.first,
+                      theme.viewerAtoms?.nodeTypes.contains(nodeType) == true {
+                return nil
+            }
+
+            var tableSurface: ViewerTableSurface?
+            if let table = current.table {
+                guard let cachedSurface = localBlock.tableSurface,
+                      let tableBounds = localBlock.tableBounds,
+                      let bound = bindTableSurface(
+                        table,
+                        document: document,
+                        cachedSurface: cachedSurface,
+                        tableBounds: tableBounds,
+                        key: key,
+                        displayScale: displayScale,
+                        theme: theme,
+                        warningSemanticGeneration: warningSemanticGeneration,
+                        context: context
+                      )
+                else { return nil }
+                tableSurface = bound
+            } else if localBlock.tableSurface != nil {
+                return nil
+            }
+
+            var imageAttachment: ViewerImageAttachment?
+            if let cachedImage = localBlock.imageAttachment {
+                guard let currentImage = ViewerImageAttachment.sourceAndDeclaredSize(in: current) else { return nil }
+                imageAttachment = ViewerImageAttachment(
+                    ordinal: cachedImage.ordinal,
+                    id: currentImage.id,
+                    source: currentImage.source,
+                    bounds: cachedImage.bounds,
+                    declaredSize: currentImage.declaredSize
+                )
+            } else if current.nodeType == "image" {
+                return nil
+            }
+
+            let currentInteractions = semanticBindings(for: current)
+            let localInteractionIndexes = local.interactions.indices.filter { local.interactions[$0].sourceBlockIndex == index }
+            let localInteractions = localInteractionIndexes.map { local.interactions[$0] }
+            guard currentInteractions.count == localInteractions.count else { return nil }
+            for (localIndex, pair) in zip(localInteractionIndexes, zip(localInteractions, currentInteractions)) {
+                let (prepared, currentInteraction) = pair
+                guard prepared.kind == currentInteraction.kind,
+                      prepared.href == currentInteraction.href,
+                      prepared.visibleText == currentInteraction.visibleText
+                else { return nil }
+                interactionIndexes[localIndex] = interactions.count
+                interactions.append(PreparedProseInteraction(
+                    kind: prepared.kind,
+                    rects: prepared.rects,
+                    href: prepared.href,
+                    visibleText: prepared.visibleText,
+                    docPos: currentInteraction.docPos,
+                    label: currentInteraction.label,
+                    attrsJSON: currentInteraction.attrsJSON,
+                    sourceBlockIndex: index
+                ))
+            }
+            for node in local.accessibilityNodes where node.sourceBlockIndex == index {
+                accessibility.append(PreparedProseAccessibilityNode(
+                    interactionIndex: node.interactionIndex.flatMap { interactionIndexes[$0] },
+                    role: node.role,
+                    label: node.label,
+                    rects: node.rects,
+                    sourceBlockIndex: index
+                ))
+            }
+            blocks.append(PreparedProseBlock(
+                fragments: localBlock.fragments,
+                bounds: localBlock.bounds,
+                atomSlot: atomSlot,
+                imageAttachment: imageAttachment,
+                tableSurface: tableSurface,
+                tableBounds: localBlock.tableBounds
+            ))
+        }
+
+        guard interactions.count == local.interactions.count else { return nil }
+        return PreparedProseLayout(
+            key: key,
+            size: local.size,
+            blocks: blocks,
+            interactions: interactions,
+            accessibilityNodes: accessibility,
+            imageAttachments: blocks.compactMap(\.imageAttachment),
+            retainedBytes: local.retainedBytes,
+            decorations: local.decorations,
+            highlightingRequest: nil,
+            highlightingResolved: local.highlightingResolved
+        )
+    }
+
+    private func bindTableSurface(
+        _ table: FfiViewerTable,
+        document: ViewerDocument,
+        cachedSurface: ViewerTableSurface,
+        tableBounds: CGRect,
+        key: ProseLayoutKey,
+        displayScale: CGFloat,
+        theme: PreparedProseTheme,
+        warningSemanticGeneration: String,
+        context: PreparedCellShapeBuildContext
+    ) -> ViewerTableSurface? {
+        let cellsByPosition = Dictionary(uniqueKeysWithValues: table.cells.map { (Int($0.sourcePos), $0) })
+        var childTheme = theme
+        childTheme.contentInsets = .zero
+        let surface = ViewerTableSurface(
+            identity: "t\(table.tablePos)",
+            record: TableGridRecord(table: table, documentOwner: document.semanticKey),
+            viewportWidth: cachedSurface.hostViewportWidth,
+            style: cachedSurface.style,
+            direction: cachedSurface.direction,
+            displayScale: displayScale,
+            themeDigest: key.themeDigest,
+            fontEnvironmentRevision: Int(key.fontEnvironmentRevision),
+            textScale: theme.fontScale,
+            sourceTable: table,
+            sourceAttributes: document.tableAttributes
+        ) { cell, cellWidth in
+            guard let source = cellsByPosition[cell.sourcePosition],
+                  let child = try? document.cellDocument(for: source).withPreparedTheme(childTheme),
+                  let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: cellWidth, scale: displayScale)
+            else { return .error(key: key, width: cellWidth, error: .layout(message: "Invalid table cell.")) }
+            let childKey = ProseLayoutKey(
+                semanticKey: child.semanticKey,
+                widthPixels: widthPixels,
+                themeDigest: key.themeDigest,
+                nativeFontRevision: key.nativeFontRevision,
+                fontEnvironmentRevision: key.fontEnvironmentRevision,
+                displayScale: displayScale,
+                attachmentRevision: key.attachmentRevision,
+                generationIdentity: key.generationIdentity,
+                semanticGenerationIdentity: key.semanticGenerationIdentity
+            )
+            let shapeKey = preparedCellShapeKey(contentKey: cell.contentKey, document: child, widthPixels: widthPixels, theme: childTheme, key: childKey)
+            do {
+                return try context.resolve(shapeKey, build: {
+                    self.tableCellPreparationObserver?(cell.sourcePosition)
+                    self.tableCellShapeBuildObserver?(cell.sourcePosition)
+                    let prepared = try self.prepare(document: child, key: childKey, widthPoints: cellWidth, displayScale: displayScale, semanticGenerationIdentity: warningSemanticGeneration, cellMode: true, highlightingScope: nil, cellShapeContext: context)
+                    self.tableCellBindingObserver?(cell.sourcePosition)
+                    return prepared
+                }) { nestedShape in
+                    let bound = self.bindCellShape(nestedShape, document: child, key: childKey, widthPoints: cellWidth, displayScale: displayScale, theme: childTheme, warningSemanticGeneration: warningSemanticGeneration, context: context)
+                    if bound != nil { self.tableCellBindingObserver?(cell.sourcePosition) }
+                    return bound
+                }
+            } catch {
+                return .error(key: childKey, width: cellWidth, error: .layout(message: "Table cell preparation failed."))
+            }
+        }
+        guard abs(surface.bounds.width - tableBounds.width) <= 1,
+              abs(surface.bounds.height - tableBounds.height) <= 1,
+              surface.preparationError == nil
+        else { return nil }
+        return surface
+    }
+
+    private func semanticBindings(for block: ViewerBlock) -> [PreparedProseInteraction] {
+        var result: [PreparedProseInteraction] = []
+        for inline in block.inlines {
+            switch inline {
+            case let .text(text, marks):
+                guard let href = href(in: marks), !text.isEmpty else { continue }
+                if let previous = result.last, previous.kind == .link, previous.href == href {
+                    result[result.count - 1] = PreparedProseInteraction(kind: .link, rects: [], href: href, visibleText: previous.visibleText + text, docPos: nil, label: previous.label + text, attrsJSON: nil)
+                } else {
+                    result.append(PreparedProseInteraction(kind: .link, rects: [], href: href, visibleText: text, docPos: nil, label: text, attrsJSON: nil))
+                }
+            case let .atom(nodeType, docPos, attrsJSON, label):
+                guard nodeType == "mention" else { continue }
+                result.append(PreparedProseInteraction(kind: .mention, rects: [], href: nil, visibleText: label, docPos: docPos, label: label, attrsJSON: attrsJSON))
+            }
+        }
+        return result
+    }
+
+    private func replayInlineFontWarnings(
+        in document: ViewerDocument,
+        theme: PreparedProseTheme,
+        semanticGeneration: String
+    ) {
+        for block in document.blocks {
+            let paint = theme.paint(for: block)
+            let ancestors = block.styleAncestors.map(\.nodeType) + [block.nodeType]
+            for inline in block.inlines {
+                guard case let .text(_, marks) = inline else { continue }
+                _ = attributes(
+                    for: marks,
+                    paint: paint,
+                    theme: theme,
+                    warningSemanticGeneration: semanticGeneration,
+                    ancestors: ancestors
+                )
+            }
+        }
+    }
+
     private func listItemAncestors(_ block: ViewerBlock) -> [ViewerListItemAncestor] {
         if !block.listItemAncestors.isEmpty {
             return block.listItemAncestors
@@ -196,6 +621,65 @@ final class CoreTextProseLayoutEngine {
         let attachment: ViewerImageAttachment?
         let nextY: CGFloat
         let retainedBytes: Int
+    }
+
+    private struct ListPlacement {
+        let marker: PreparedListMarker?
+        let markerGutter: CGFloat
+        let listInset: CGFloat
+        let quoteInset: CGFloat
+        let markerColor: UIColor
+        let checkbox: EditorStyleBox?
+        let itemSpacing: CGFloat
+    }
+
+    private func listPlacement(
+        block: ViewerBlock,
+        listMarker: PreparedListMarker?,
+        theme: PreparedProseTheme,
+        sheet: EditorStyleSheet?,
+        paint: PreparedTextPaint,
+        box: EditorStyleBox,
+        omitBottomMargin: Bool,
+        disappearingListItemIdentities: Set<Int>
+    ) -> ListPlacement {
+        let listDepth = block.listContext == nil ? 0 : (block.listItemBoundary.map { Int($0.nestingDepth) } ?? max(0, Int(block.depth) - 1))
+        let fallbackMarkerNestingDepth = max(0, block.listItemAncestors.count - 1)
+        let measured = listMarker ?? block.listContext.map { makeListMarker($0, nestingDepth: fallbackMarkerNestingDepth, paint: paint, theme: theme, ancestors: block.markerStyleAncestors) }
+        let marker = block.listItemBoundary.map { $0.isFirstRenderableLeaf ? measured : nil } ?? measured
+        let listName = block.listContext.map { $0.kind == "task" ? "taskList" : $0.ordered ? "orderedList" : "bulletList" } ?? "bulletList"
+        let values = sheet?[listName] ?? [:]
+        let indent = EditorTheme.cgFloat(values["indent"]) ?? theme.listIndent
+        let multiplier = EditorTheme.cgFloat(values["baseIndentMultiplier"]) ?? theme.listBaseIndentMultiplier
+        let base = block.listContext == nil ? 0 : max(0, indent * multiplier)
+        let nested = block.listContext == nil ? 0 : max(0, indent * CGFloat(listDepth))
+        var contextual: CGFloat = 0
+        if let sheet, block.listContext != nil {
+            let lists = block.styleAncestors.filter { ["bulletList", "orderedList", "taskList"].contains(EditorStyleSheet.element($0.nodeType)) }
+            for (depth, ancestor) in lists.enumerated() {
+                let baseValues = sheet[ancestor.nodeType]
+                let resolved = sheet.resolvedValues(ancestor.nodeType, ancestors: block.ancestors(before: ancestor))
+                let baseIndent = EditorTheme.cgFloat(baseValues["indent"]) ?? theme.listIndent
+                let resolvedIndent = EditorTheme.cgFloat(resolved["indent"]) ?? theme.listIndent
+                let baseMultiplier = depth == 0 ? EditorTheme.cgFloat(baseValues["baseIndentMultiplier"]) ?? theme.listBaseIndentMultiplier : 1
+                let resolvedMultiplier = depth == 0 ? EditorTheme.cgFloat(resolved["baseIndentMultiplier"]) ?? theme.listBaseIndentMultiplier : 1
+                contextual += max(0, resolvedIndent * resolvedMultiplier) - max(0, baseIndent * baseMultiplier)
+            }
+        }
+        let markerValues = sheet?.resolvedValues("listMarker", ancestors: block.markerStyleAncestors) ?? [:]
+        let color = EditorTheme.color(from: markerValues["color"]) ?? theme.listMarkerColor
+        let checkbox = block.listContext.flatMap { $0.kind == "task" ? sheet?.checkbox(checked: $0.checked, ancestors: block.markerStyleAncestors) : nil }
+        let gap = checkbox?.number("gap", fallback: 8) ?? EditorTheme.cgFloat(markerValues["gap"]) ?? theme.listMarkerGap
+        let gutter = measured.map { max(gap, $0.width + gap) } ?? 0
+        let spacing: CGFloat
+        if sheet != nil { spacing = omitBottomMargin ? 0 : box.margin.bottom } else if block.listContext == nil { spacing = paint.spacingAfter } else {
+            spacing = listItemAncestors(block).reduce(CGFloat.zero) { result, ancestor in
+                if disappearingListItemIdentities.contains(ancestor.identity) { return result + (ancestor.context.isLast ? theme.listSpacingAfter : theme.listItemSpacing) }
+                if ancestor.identity == block.listItemBoundary?.identity, block.listItemBoundary?.isFinalRenderableLeaf == true { return result + theme.listItemSpacing }
+                return result
+            }
+        }
+        return ListPlacement(marker: marker, markerGutter: gutter, listInset: base + nested + contextual + gutter, quoteInset: block.inBlockquote ? theme.quoteBorderWidth + theme.quoteMarkerGap + theme.quoteIndent : 0, markerColor: color, checkbox: checkbox, itemSpacing: spacing)
     }
 
     private func prepareBlock(
@@ -218,65 +702,16 @@ final class CoreTextProseLayoutEngine {
         let contentX = theme.contentInsets.left + ancestors.left + box.margin.left
         let contentWidth = max(1, width - theme.contentInsets.left - theme.contentInsets.right - ancestors.left - ancestors.right - box.margin.left - box.margin.right)
         let paint = theme.paint(for: block)
-        let listDepth = block.listContext == nil
-            ? 0
-            : (block.listItemBoundary.map { Int($0.nestingDepth) } ?? max(0, Int(block.depth) - 1))
-        let fallbackMarkerNestingDepth = max(0, block.listItemAncestors.count - 1)
-        let measuredListMarker = listMarker ?? block.listContext.map {
-            makeListMarker($0, nestingDepth: fallbackMarkerNestingDepth, paint: paint, theme: theme, ancestors: block.markerStyleAncestors)
-        }
-        let marker = block.listItemBoundary.map { $0.isFirstRenderableLeaf ? measuredListMarker : nil } ?? measuredListMarker
-        // The marker gutter is an independently measured column. In particular,
-        // baseIndentMultiplier == 0 must not permit text to overlap a scaled
-        // ordered marker or task box. `measuredListMarker` stays item-scoped,
-        // which keeps paragraph/code/atom descendants aligned.
-        let listName = block.listContext.map { $0.kind == "task" ? "taskList" : $0.ordered ? "orderedList" : "bulletList" } ?? "bulletList"
-        let listValues = sheet?[listName] ?? [:]
-        let listIndent = EditorTheme.cgFloat(listValues["indent"]) ?? theme.listIndent
-        let baseMultiplier = EditorTheme.cgFloat(listValues["baseIndentMultiplier"]) ?? theme.listBaseIndentMultiplier
-        let listBaseIndent = block.listContext == nil ? 0 : max(0, listIndent * baseMultiplier)
-        let nestedListIndent = block.listContext == nil ? 0 : max(0, listIndent * CGFloat(listDepth))
-        // Keep the mixed-list baseline and add each container's contextual change.
-        var contextualListIndent: CGFloat = 0
-        if let sheet, block.listContext != nil {
-            let lists = block.styleAncestors.filter { ["bulletList", "orderedList", "taskList"].contains(EditorStyleSheet.element($0.nodeType)) }
-            for (depth, ancestor) in lists.enumerated() {
-                let base = sheet[ancestor.nodeType]
-                let resolved = sheet.resolvedValues(ancestor.nodeType, ancestors: block.ancestors(before: ancestor))
-                let baseIndent = EditorTheme.cgFloat(base["indent"]) ?? theme.listIndent
-                let resolvedIndent = EditorTheme.cgFloat(resolved["indent"]) ?? theme.listIndent
-                let baseMultiplier = depth == 0 ? EditorTheme.cgFloat(base["baseIndentMultiplier"]) ?? theme.listBaseIndentMultiplier : 1
-                let resolvedMultiplier = depth == 0 ? EditorTheme.cgFloat(resolved["baseIndentMultiplier"]) ?? theme.listBaseIndentMultiplier : 1
-                contextualListIndent += max(0, resolvedIndent * resolvedMultiplier) - max(0, baseIndent * baseMultiplier)
-            }
-        }
-        let markerValues = sheet?.resolvedValues("listMarker", ancestors: block.markerStyleAncestors) ?? [:]
-        let markerColor = EditorTheme.color(from: markerValues["color"]) ?? theme.listMarkerColor
-        let checkbox = block.listContext.flatMap { $0.kind == "task" ? sheet?.checkbox(checked: $0.checked, ancestors: block.markerStyleAncestors) : nil }
-        let markerGap = checkbox?.number("gap", fallback: 8) ?? EditorTheme.cgFloat(markerValues["gap"]) ?? theme.listMarkerGap
-        let markerGutter = measuredListMarker.map { max(markerGap, $0.width + markerGap) } ?? 0
-        let listInset = listBaseIndent + nestedListIndent + contextualListIndent + markerGutter
-        let quoteInset = block.inBlockquote ? theme.quoteBorderWidth + theme.quoteMarkerGap + theme.quoteIndent : 0
+        let placement = listPlacement(block: block, listMarker: listMarker, theme: theme, sheet: sheet, paint: paint, box: box, omitBottomMargin: omitBottomMargin, disappearingListItemIdentities: disappearingListItemIdentities)
+        let marker = placement.marker
+        let markerGutter = placement.markerGutter
+        let listInset = placement.listInset
+        let quoteInset = placement.quoteInset
+        let markerColor = placement.markerColor
+        let checkbox = placement.checkbox
         let codeInset = block.nodeType == "codeBlock" ? theme.codePaddingHorizontal : 0
         let textX = contentX + listInset + quoteInset + codeInset + box.inset.left
-        let itemSpacing: CGFloat
-        if sheet != nil {
-            itemSpacing = omitBottomMargin ? 0 : box.margin.bottom
-        } else if block.listContext == nil {
-            itemSpacing = paint.spacingAfter
-        } else {
-            let boundarySpacing = listItemAncestors(block).reduce(CGFloat.zero) { spacing, ancestor in
-                if disappearingListItemIdentities.contains(ancestor.identity) {
-                    return spacing + (ancestor.context.isLast ? theme.listSpacingAfter : theme.listItemSpacing)
-                }
-                if ancestor.identity == block.listItemBoundary?.identity,
-                   block.listItemBoundary?.isFinalRenderableLeaf == true {
-                    return spacing + theme.listItemSpacing
-                }
-                return spacing
-            }
-            itemSpacing = boundarySpacing
-        }
+        let itemSpacing = placement.itemSpacing
         if block.isBlockAtom, let atoms = theme.viewerAtoms,
            atoms.nodeTypes.contains(block.nodeType),
            case let .atom(nodeType, docPos, attrsJSON, _)? = block.inlines.first {
@@ -330,12 +765,12 @@ final class CoreTextProseLayoutEngine {
             let imageWidth = sheet == nil ? availableImageWidth : min(availableImageWidth, image.declaredSize?.width ?? availableImageWidth)
             let provisionalHeight = max(44, min(240, imageWidth * 0.56))
             let declared = image.declaredSize
-            let resolvedSize = declared ?? ViewerImageIntrinsicStore.shared.size(for: image.id)
+            let resolvedSize = declared ?? ViewerImageIntrinsicStore.shared.size(for: image.id, source: image.source)
             let height = resolvedSize.map { imageWidth * $0.height / max(1, $0.width) } ?? provisionalHeight
             let bounds = CGRect(x: textX - box.inset.left, y: cursorY, width: imageWidth + box.inset.left + box.inset.right, height: height + box.inset.top + box.inset.bottom)
             let attachment = ViewerImageAttachment(ordinal: attachmentOrdinal, id: image.id, source: image.source, bounds: bounds, declaredSize: declared)
             let fragments = [PreparedProseFragment(kind: .image, bounds: bounds, color: UIColor.systemGray5.cgColor, styleBox: sheet == nil ? nil : box)]
-            let prepared = PreparedProseBlock(fragments: fragments, bounds: bounds)
+            let prepared = PreparedProseBlock(fragments: fragments, bounds: bounds, imageAttachment: attachment)
             let imageLabel = block.inlines.compactMap { inline -> String? in
                 guard case let .atom("image", _, attrsJSON, _) = inline else { return nil }
                 let alt = jsonDictionary(attrsJSON)["alt"] as? String

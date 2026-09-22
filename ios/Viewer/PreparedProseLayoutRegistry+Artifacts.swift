@@ -164,7 +164,8 @@ extension PreparedProseLayoutRegistry {
             retainedBytes: compiledDocument.retainedBytes,
             trailingEmptyTextBlockCount: compiledDocument.trailingEmptyTextBlockCount,
             tableAttributes: compiledDocument.tableAttributes,
-            tableRecords: compiledDocument.tableRecords
+            tableRecords: compiledDocument.tableRecords,
+            preferredTextBlockName: compiledDocument.preferredTextBlockName
         )
     }
 
@@ -350,6 +351,23 @@ extension PreparedProseLayoutRegistry {
             widthPoints: widthPoints,
             displayScale: scale,
             semanticGenerationIdentity: key.semanticGenerationIdentity
+        )
+    }
+
+    static func prepareWithCoreText(
+        document: ViewerDocument,
+        key: ProseLayoutKey,
+        widthPoints: CGFloat,
+        scale: CGFloat,
+        cellShapeContext: PreparedCellShapeBuildContext?
+    ) throws -> PreparedProseLayout {
+        try CoreTextProseLayoutEngine().prepare(
+            document: document,
+            key: key,
+            widthPoints: widthPoints,
+            displayScale: scale,
+            semanticGenerationIdentity: key.semanticGenerationIdentity,
+            cellShapeContext: cellShapeContext
         )
     }
 

@@ -42,6 +42,20 @@ extension PreparedProseLayoutRegistry {
         return isFabricLeaseActiveLocked(generation)
     }
 
+    @objc(isFabricLeaseActiveSurfaceId:componentTag:generationIdentity:leaseHandle:)
+    func isFabricLeaseActive(
+        surfaceId: Int64,
+        componentTag: Int64,
+        generationIdentity: String,
+        leaseHandle: UInt64
+    ) -> Bool {
+        isFabricLeaseActive(.init(
+            surface: .init(surfaceId: surfaceId, componentTag: componentTag),
+            generationIdentity: generationIdentity,
+            leaseHandle: leaseHandle
+        ))
+    }
+
     /// Caller must hold `compiledCondition`.
     func isFabricLeaseActiveLocked(_ generation: FabricGenerationToken) -> Bool {
         guard generation.leaseHandle != 0,

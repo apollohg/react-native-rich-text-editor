@@ -56,13 +56,34 @@ public final class PreparedProseDrawingView: UIView {
     }
     internal var preparedSurfaceRetainedBytesForTesting: Int {
         Self.saturatingAdd(
-            Self.saturatingAdd(layout?.retainedBytes ?? 0, imageRevisions.retainedPublicationBytesForTesting),
-            retainedImagePixelsBytesForTesting
+            Self.saturatingAdd(
+                layout?.retainedBytes ?? 0,
+                imageRevisions.retainedPublicationBytesForTesting
+            ),
+            Self.saturatingAdd(
+                retainedImagePixelsBytesForTesting,
+                tablePresentationOwner.retainedBytes
+            )
+        )
+    }
+    internal var tablePresentationRetainedBytesForTesting: Int {
+        tablePresentationOwner.retainedBytes
+    }
+    internal var imageRevisionForTesting: UInt64 { imageRevisions.revision }
+    internal var imageRevisionStateForTesting: ViewerAttachmentRevisionState { imageRevisions }
+    private func updateSidecarInstrumentation() {
+        PreparedProseInstrumentation.retained(
+            .sidecars,
+            scope: "drawing-\(ObjectIdentifier(self))",
+            bytes: Self.saturatingAdd(
+                imageRevisions.retainedPublicationBytesForTesting,
+                tablePresentationOwner.retainedBytes
+            )
         )
     }
     @objc public static let imageMetadataDidResolve = Notification.Name("com.apollohg.editor.viewer.imageMetadataDidResolve")
     @objc public static let imageResourceDidFail = Notification.Name("com.apollohg.editor.viewer.imageResourceDidFail")
-    private lazy var imagePipeline = ViewerImagePipeline(policy: .default)
+    private let imagePipeline: ViewerImagePipeline
     private var imageRevisions = ViewerAttachmentRevisionState()
     private var imageGeneration = ""
     private var imageConfiguration: (enabled: Bool, policy: ImageLoadingPolicy) = (false, .default)
@@ -71,11 +92,19 @@ public final class PreparedProseDrawingView: UIView {
     var layout: PreparedProseLayout? {
         didSet {
             guard oldValue !== layout else { return }
-            PreparedProseInstrumentation.retained(.sidecars, scope: "drawing-\(ObjectIdentifier(self))", bytes: imageRevisions.retainedPublicationBytesForTesting)
+            tablePresentationOwner = ViewerTablePresentationOwner()
+            updateSidecarInstrumentation()
             invalidateAccessibilityNodes()
             setNeedsDisplay()
         }
     }
+    private var tablePresentationOwner = ViewerTablePresentationOwner()
+    fileprivate var accessibilityPresentationGeneration = 0
+    /// Geometry-only hook reserved for the following atom/event transport phase.
+    @objc public var onTableGeometryChanged: (() -> Void)?
+    var onMountedTableCellsDrawnForTesting: ((Int) -> Void)?
+    var onTableChromeDrawnForTesting: ((Int) -> Void)?
+    var onTableRichFragmentDrawnForTesting: (() -> Void)?
 
     @objc public func install(layout: PreparedProseLayout?) {
         guard self.layout !== layout else { return }
@@ -149,7 +178,22 @@ public final class PreparedProseDrawingView: UIView {
             onVisibleRectChange?(nil)
             return
         }
-        let retainedIDs = imagePipeline.updateVisibleRect(visible, attachments: layout.imageAttachments)
+        let attachments: [ViewerImageAttachment] = ViewerTablePresentation.project(
+            layout: layout,
+            owner: tablePresentationOwner,
+            viewport: .known(visible)
+        ).images.compactMap { image in
+            let bounds = image.bounds.intersection(image.clip)
+            guard !bounds.isNull, !bounds.isEmpty else { return nil }
+            return ViewerImageAttachment(
+                ordinal: image.attachment.ordinal,
+                id: image.attachment.id,
+                source: image.attachment.source,
+                bounds: bounds,
+                declaredSize: image.attachment.declaredSize
+            )
+        }
+        let retainedIDs = imagePipeline.updateVisibleRect(visible, attachments: attachments)
         onVisibleRectChange?(visible)
         guard imagePixels.keys.contains(where: { !retainedIDs.contains($0) }) else { return }
         imagePixels = imagePixels.filter { retainedIDs.contains($0.key) }
@@ -159,6 +203,36 @@ public final class PreparedProseDrawingView: UIView {
         imageGeneration = ""
         imagePipeline.cancel()
         imagePixels = [:]
+    }
+
+    /// Mounted-only offset seam. Host direction and gestures are deliberately
+    /// not inferred here.
+    @objc(setTableLogicalOffset:sourceIdentity:)
+    public func setTableLogicalOffset(_ offset: CGFloat, sourceIdentity: String) {
+        guard let layout,
+              let surface = ViewerTablePresentation.project(
+                layout: layout,
+                owner: tablePresentationOwner,
+                viewport: .unknown
+              ).cells.first(where: { $0.surface.identity == sourceIdentity })?.surface
+        else { return }
+        tablePresentationOwner.setLogicalOffset(offset, for: surface)
+        updateSidecarInstrumentation()
+        updateConfiguredImagesForVisibleWindow()
+        invalidateAccessibilityNodes()
+        onTableGeometryChanged?()
+        setNeedsDisplay()
+    }
+
+    private func presentationSnapshot(viewport: ViewerTablePresentationViewport = .unknown) -> ViewerTablePresentationSnapshot? {
+        layout.map { ViewerTablePresentation.project(layout: $0, owner: tablePresentationOwner, viewport: viewport) }
+    }
+
+    private func presentationViewport() -> ViewerTablePresentationViewport {
+        guard window != nil else { return .unknown }
+        guard !isHidden, alpha > 0 else { return .known(.zero) }
+        guard let visible = configuredVisibleRect() else { return .known(.zero) }
+        return .known(visible)
     }
 
     /// A semantic prop replacement starts a new source-qualified publication
@@ -173,19 +247,43 @@ public final class PreparedProseDrawingView: UIView {
     @objc public var errorMessage: String? { layout?.error?.message }
 
     @objc public func atomLayoutsJSON(origin: CGPoint) -> String {
-        let atoms: [[String: Any]] = layout?.blocks.compactMap { block in
-            guard let atom = block.atomSlot else { return nil }
-            return [
+        guard let layout else { return "[]" }
+        let snapshot = ViewerTablePresentation.project(
+            layout: layout,
+            owner: tablePresentationOwner,
+            viewport: presentationViewport()
+        )
+        let mountedLayouts = Set(snapshot.mountedCells.map { ObjectIdentifier($0.content) })
+        let atoms: [[String: Any]] = snapshot.atoms.map { presented in
+            let atom = presented.atom
+            var value: [String: Any] = [
                 "nodeType": atom.nodeType,
                 "docPos": atom.docPos,
                 "attrsJson": atom.attrsJSON,
-                "x": atom.bounds.minX + origin.x,
-                "y": atom.bounds.minY + origin.y,
+                "x": presented.bounds.minX + origin.x,
+                "y": presented.bounds.minY + origin.y,
                 "width": atom.bounds.width,
                 "height": atom.bounds.height
             ]
-        } ?? []
-        guard let data = try? JSONSerialization.data(withJSONObject: atoms) else { return "[]" }
+            guard presented.layout !== layout else { return value }
+            let rawClip = presented.clip
+            let clip = [rawClip.minX, rawClip.minY, rawClip.width, rawClip.height]
+                .allSatisfy(\.isFinite)
+                ? rawClip
+                : CGRect(x: presented.bounds.minX, y: presented.bounds.minY, width: 0, height: 0)
+            let translatedClip = clip.offsetBy(dx: origin.x, dy: origin.y)
+            value["presentation"] = [
+                "clip": [
+                    "x": translatedClip.minX,
+                    "y": translatedClip.minY,
+                    "width": max(0, translatedClip.width),
+                    "height": max(0, translatedClip.height)
+                ],
+                "candidate": mountedLayouts.contains(ObjectIdentifier(presented.layout))
+            ]
+            return value
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: atoms, options: [.sortedKeys]) else { return "[]" }
         return String(data: data, encoding: .utf8) ?? "[]"
     }
 
@@ -209,7 +307,18 @@ public final class PreparedProseDrawingView: UIView {
     }()
 
     public override init(frame: CGRect) {
+        imagePipeline = ViewerImagePipeline(policy: .default)
         super.init(frame: frame)
+        configureDrawingView()
+    }
+
+    init(frame: CGRect, imagePipeline: ViewerImagePipeline) {
+        self.imagePipeline = imagePipeline
+        super.init(frame: frame)
+        configureDrawingView()
+    }
+
+    private func configureDrawingView() {
         isAccessibilityElement = false
         addGestureRecognizer(tapRecognizer)
     }
@@ -282,15 +391,16 @@ public final class PreparedProseDrawingView: UIView {
         scrollObservations = activeScrollViews.map { scrollView in
             scrollView.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
                 self?.updateConfiguredImagesForVisibleWindow()
+                self?.onTableGeometryChanged?()
             }
         }
     }
 
     func interaction(at point: CGPoint) -> PreparedProseInteraction? {
-        guard let layout else { return nil }
-        return layout.interactions.first { interaction in
-            (linkInteractionsEnabled || interaction.kind != .link) && interaction.rects.contains { $0.contains(point) }
-        }
+        presentationSnapshot()?.interactions.first { interaction in
+            (linkInteractionsEnabled || interaction.interaction.kind != .link) &&
+                interaction.rects.contains { $0.contains(point) } && interaction.clip.contains(point)
+        }?.interaction
     }
 
     @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
@@ -322,13 +432,14 @@ public final class PreparedProseDrawingView: UIView {
 
     public override func accessibilityElement(at index: Int) -> Any? {
         let nodes = accessibilityNodes
-        guard nodes.indices.contains(index), let layout else { return nil }
+        guard nodes.indices.contains(index), layout != nil else { return nil }
         if let existing = accessibilityElementsByIndex[index] { return existing }
         let element = PreparedProseDrawingAccessibilityElement(
             container: self,
             index: index,
-            node: nodes[index],
-            layout: layout
+            rootLayout: layout,
+            generation: accessibilityPresentationGeneration,
+            presented: nodes[index]
         )
         accessibilityElementsByIndex[index] = element
         return element
@@ -337,55 +448,78 @@ public final class PreparedProseDrawingView: UIView {
     public override func index(ofAccessibilityElement element: Any) -> Int {
         guard let element = element as? PreparedProseDrawingAccessibilityElement,
               element.drawingView === self,
-              element.belongs(to: layout)
+              element.belongs(to: layout, generation: accessibilityPresentationGeneration)
         else { return NSNotFound }
         return element.index
     }
 
-    private var accessibilityNodes: [PreparedProseAccessibilityNode] {
-        layout?.accessibilityNodes.map { node in
-            guard !linkInteractionsEnabled, node.role == .link else { return node }
-            return PreparedProseAccessibilityNode(
-                interactionIndex: nil,
-                role: .text,
-                label: node.label,
-                rects: node.rects
+    private var accessibilityNodes: [ViewerTablePresentedAccessibilityNode] {
+        presentationSnapshot()?.accessibilityNodes.map { presented in
+            guard !linkInteractionsEnabled, presented.node.role == .link else { return presented }
+            return ViewerTablePresentedAccessibilityNode(
+                node: PreparedProseAccessibilityNode(
+                    interactionIndex: nil,
+                    role: .text,
+                    label: presented.node.label,
+                    rects: presented.rects,
+                    sourceBlockIndex: presented.node.sourceBlockIndex
+                ),
+                sourceIdentity: presented.sourceIdentity,
+                interactionSourceIdentity: nil,
+                rects: presented.rects,
+                clip: presented.clip,
+                layout: presented.layout
             )
         } ?? []
     }
 
     fileprivate func accessibilityFrame(
-        for node: PreparedProseAccessibilityNode,
-        layout: PreparedProseLayout
+        for node: ViewerTablePresentedAccessibilityNode
     ) -> CGRect {
-        guard self.layout === layout else { return .zero }
-        return UIAccessibility.convertToScreenCoordinates(node.bounds, in: self)
+        guard self.layout != nil else { return .zero }
+        let rect = clippedAccessibilityRects(for: node).reduce(CGRect.null) { $0.union($1) }
+        guard !rect.isNull, !rect.isEmpty else { return .zero }
+        return UIAccessibility.convertToScreenCoordinates(rect, in: self)
     }
 
     fileprivate func accessibilityPath(
-        for node: PreparedProseAccessibilityNode,
-        layout: PreparedProseLayout
+        for node: ViewerTablePresentedAccessibilityNode
     ) -> UIBezierPath? {
-        guard self.layout === layout, !node.rects.isEmpty else { return nil }
+        let rects = clippedAccessibilityRects(for: node)
+        guard self.layout != nil, !rects.isEmpty else { return nil }
         let path = UIBezierPath()
-        for rect in node.rects {
+        for rect in rects {
             path.append(UIBezierPath(rect: rect))
         }
         return UIAccessibility.convertToScreenCoordinates(path, in: self)
     }
 
     fileprivate func activateAccessibilityNode(
-        _ node: PreparedProseAccessibilityNode,
-        layout: PreparedProseLayout
+        _ node: ViewerTablePresentedAccessibilityNode
     ) -> Bool {
-        guard self.layout === layout,
-              let interactionIndex = node.interactionIndex,
-              let interaction = layout.interactions[safe: interactionIndex]
+        guard self.layout != nil,
+              !clippedAccessibilityRects(for: node).isEmpty,
+              let interactionIndex = node.node.interactionIndex,
+              let interaction = node.layout.interactions[safe: interactionIndex]
         else { return false }
         return activate(interaction)
     }
 
+    private func clippedAccessibilityRects(
+        for node: ViewerTablePresentedAccessibilityNode
+    ) -> [CGRect] {
+        node.rects.compactMap { rect in
+            let clipped = rect.intersection(node.clip)
+            guard clipped.origin.x.isFinite, clipped.origin.y.isFinite,
+                  clipped.width.isFinite, clipped.height.isFinite,
+                  !clipped.isNull, !clipped.isEmpty
+            else { return nil }
+            return clipped
+        }
+    }
+
     private func invalidateAccessibilityNodes() {
+        accessibilityPresentationGeneration &+= 1
         accessibilityElementsByIndex.removeAll(keepingCapacity: true)
         UIAccessibility.post(notification: .layoutChanged, argument: nil)
     }
@@ -403,13 +537,8 @@ public final class PreparedProseDrawingView: UIView {
     public override func draw(_ rect: CGRect) {
         let drawStarted = PreparedProseInstrumentation.now()
         guard let layout, let context = UIGraphicsGetCurrentContext(), !layout.blocks.isEmpty else { return }
-        let blocks = layout.blocks
-        var lower = 0
-        var upper = blocks.count
-        while layout.hasMonotonicBlockBounds && lower < upper {
-            let middle = (lower + upper) / 2
-            if blocks[middle].bounds.maxY < rect.minY { lower = middle + 1 } else { upper = middle }
-        }
+        let snapshot = ViewerTablePresentation.project(layout: layout, owner: tablePresentationOwner, viewport: presentationViewport())
+        onMountedTableCellsDrawnForTesting?(snapshot.mountedCells.count)
 
         context.saveGState()
         defer { context.restoreGState() }
@@ -417,29 +546,130 @@ public final class PreparedProseDrawingView: UIView {
             context.addPath(box.path(in: content.bounds).cgPath)
             context.clip()
         }
-        for fragment in layout.decorations where fragment.bounds.intersects(rect) {
-            fragment.styleBox?.draw(in: fragment.bounds, context: context)
-        }
+        let mountedLayoutIDs = Set(snapshot.mountedCells.map { ObjectIdentifier($0.content) })
+        drawHierarchicalBackgrounds(snapshot, mountedLayoutIDs: mountedLayoutIDs, dirtyRect: rect, context: context)
         context.saveGState()
         context.translateBy(x: 0, y: bounds.height)
         context.scaleBy(x: 1, y: -1)
         let scale = CGFloat(Double(bitPattern: layout.key.displayScaleBits))
-        var visibleFragments: [PreparedProseFragment] = []
-        var visibleBlockCount = 0
-        for index in lower..<blocks.count {
-            let block = blocks[index]
-            if layout.hasMonotonicBlockBounds && block.bounds.minY > rect.maxY { break }
-            guard block.bounds.intersects(rect) else { continue }
-            visibleFragments.append(contentsOf: block.fragments)
-            visibleBlockCount += 1
+        let visibleBlocks = snapshot.blocks.filter { presented in
+            (presented.layout === layout || mountedLayoutIDs.contains(ObjectIdentifier(presented.layout))) &&
+                presented.block.bounds.offsetBy(dx: presented.origin.x, dy: presented.origin.y).intersects(rect)
         }
         // Keep paint phases global across the visible range: a nested code
         // background must never cover a quote border from an adjacent block.
-        for fragment in visibleFragments { drawBackground(fragment, in: context) }
-        for fragment in visibleFragments { drawBorderOrRule(fragment, in: context, scale: scale) }
-        for fragment in visibleFragments { drawForeground(fragment, in: context) }
+        for presented in visibleBlocks {
+            drawPresented(presented, context: context) { fragment in drawBackground(fragment, in: context) }
+        }
+        for cell in snapshot.mountedCells {
+            drawTableChromeBorder(cell, context: context)
+        }
+        for presented in visibleBlocks {
+            drawPresented(presented, context: context) { fragment in drawBorderOrRule(fragment, in: context, scale: scale) }
+        }
+        for presented in visibleBlocks where presented.block.tableSurface?.layout.failure != nil {
+            drawTableFailure(presented, context: context)
+        }
+        let attachmentsByBlock = Dictionary(
+            uniqueKeysWithValues: snapshot.images.compactMap { image in
+                image.block.map { (ObjectIdentifier($0), image.attachment) }
+            }
+        )
+        for presented in visibleBlocks {
+            let attachment = attachmentsByBlock[ObjectIdentifier(presented.block)]
+            drawPresented(presented, context: context) { fragment in
+                if presented.layout !== layout, fragment.kind == .text {
+                    onTableRichFragmentDrawnForTesting?()
+                }
+                drawForeground(fragment, in: context, attachment: attachment)
+            }
+        }
         context.restoreGState()
-        PreparedProseInstrumentation.drew(drawStarted, visibleBlocks: visibleBlockCount)
+        PreparedProseInstrumentation.drew(drawStarted, visibleBlocks: visibleBlocks.count)
+    }
+
+    private func drawTableFailure(_ presented: ViewerTablePresentedBlock, context: CGContext) {
+        guard let tableBounds = presented.block.tableBounds else { return }
+        context.saveGState()
+        context.clip(to: flipped(presented.clip))
+        context.translateBy(x: presented.origin.x, y: -presented.origin.y)
+        let rect = CGRect(x: tableBounds.minX, y: bounds.height - tableBounds.maxY, width: tableBounds.width, height: tableBounds.height)
+        context.setFillColor(UIColor.systemRed.withAlphaComponent(0.18).cgColor)
+        context.fill(rect)
+        context.setStrokeColor(UIColor.systemRed.cgColor)
+        context.setLineWidth(1)
+        context.stroke(rect)
+        context.restoreGState()
+    }
+
+    private func drawHierarchicalBackgrounds(
+        _ snapshot: ViewerTablePresentationSnapshot,
+        mountedLayoutIDs: Set<ObjectIdentifier>,
+        dirtyRect: CGRect,
+        context: CGContext
+    ) {
+        let layouts = Dictionary(uniqueKeysWithValues: snapshot.layouts.map { (ObjectIdentifier($0.layout), $0) })
+        let blocks = Dictionary(grouping: snapshot.blocks, by: { ObjectIdentifier($0.layout) })
+        let cells = Dictionary(grouping: snapshot.mountedCells, by: { ObjectIdentifier($0.surface) })
+
+        func drawLayout(_ presented: ViewerTablePresentedLayout) {
+            context.saveGState()
+            context.clip(to: presented.clip)
+            context.translateBy(x: presented.origin.x, y: presented.origin.y)
+            for fragment in presented.layout.decorations {
+                guard fragment.bounds.offsetBy(dx: presented.origin.x, dy: presented.origin.y).intersects(dirtyRect) else { continue }
+                fragment.styleBox?.draw(in: fragment.bounds, context: context)
+            }
+            context.restoreGState()
+
+            for block in blocks[ObjectIdentifier(presented.layout)] ?? [] {
+                guard let surface = block.block.tableSurface else { continue }
+                let surfaceCells = cells[ObjectIdentifier(surface)] ?? []
+                for cell in surfaceCells where cell.cell.isHeader {
+                    context.saveGState()
+                    context.clip(to: cell.clip)
+                    context.setFillColor(cell.surface.style.headerBackgroundColor.cgColor)
+                    context.fill(cell.bounds)
+                    context.restoreGState()
+                }
+                for cell in surfaceCells {
+                    guard let child = layouts[ObjectIdentifier(cell.content)],
+                          mountedLayoutIDs.contains(ObjectIdentifier(cell.content))
+                    else { continue }
+                    drawLayout(child)
+                }
+            }
+        }
+
+        guard let root = snapshot.layouts.first else { return }
+        drawLayout(root)
+    }
+
+    private func drawTableChromeBorder(_ cell: ViewerTablePresentedCell, context: CGContext) {
+        onTableChromeDrawnForTesting?(cell.sourcePosition)
+        context.saveGState()
+        context.clip(to: flipped(cell.clip))
+        let rect = flipped(cell.bounds).insetBy(dx: cell.surface.style.borderWidth / 2, dy: cell.surface.style.borderWidth / 2)
+        context.setStrokeColor(cell.surface.style.borderColor.cgColor)
+        context.setLineWidth(cell.surface.style.borderWidth)
+        context.stroke(rect)
+        context.restoreGState()
+    }
+
+    private func flipped(_ rect: CGRect) -> CGRect {
+        CGRect(x: rect.minX, y: bounds.height - rect.maxY, width: rect.width, height: rect.height)
+    }
+
+    private func drawPresented(
+        _ presented: ViewerTablePresentedBlock,
+        context: CGContext,
+        draw: (PreparedProseFragment) -> Void
+    ) {
+        context.saveGState()
+        context.clip(to: flipped(presented.clip))
+        context.translateBy(x: presented.origin.x, y: -presented.origin.y)
+        presented.block.fragments.forEach(draw)
+        context.restoreGState()
     }
 
     private func drawingRect(for fragment: PreparedProseFragment) -> CGRect {
@@ -494,7 +724,7 @@ public final class PreparedProseDrawingView: UIView {
         }
     }
 
-    private func drawForeground(_ fragment: PreparedProseFragment, in context: CGContext) {
+    private func drawForeground(_ fragment: PreparedProseFragment, in context: CGContext, attachment presentedAttachment: ViewerImageAttachment? = nil) {
         let rect = CGRect(
             x: fragment.bounds.minX,
             y: bounds.height - fragment.bounds.maxY,
@@ -511,8 +741,7 @@ public final class PreparedProseDrawingView: UIView {
             context.textPosition = CGPoint(x: fragment.origin.x, y: bounds.height - fragment.origin.y)
             CTLineDraw(line, context)
         case .image:
-            guard let layout,
-                  let attachment = layout.imageAttachments.first(where: { $0.bounds == fragment.bounds }),
+            guard let attachment = presentedAttachment ?? layout?.imageAttachments.first(where: { $0.bounds == fragment.bounds }),
                   let image = imagePixels[attachment.id] else { return }
             context.saveGState()
             context.translateBy(x: rect.minX, y: rect.maxY)
@@ -572,34 +801,39 @@ public final class PreparedProseDrawingView: UIView {
 
 private final class PreparedProseDrawingAccessibilityElement: UIAccessibilityElement {
     weak var drawingView: PreparedProseDrawingView?
+    weak var rootLayout: PreparedProseLayout?
     weak var layout: PreparedProseLayout?
     let index: Int
-    let node: PreparedProseAccessibilityNode
+    let generation: Int
+    let presented: ViewerTablePresentedAccessibilityNode
 
     init(
         container: PreparedProseDrawingView,
         index: Int,
-        node: PreparedProseAccessibilityNode,
-        layout: PreparedProseLayout
+        rootLayout: PreparedProseLayout?,
+        generation: Int,
+        presented: ViewerTablePresentedAccessibilityNode
     ) {
         drawingView = container
         self.index = index
-        self.node = node
-        self.layout = layout
+        self.rootLayout = rootLayout
+        self.generation = generation
+        self.presented = presented
+        self.layout = presented.layout
         super.init(accessibilityContainer: container)
     }
 
-    func belongs(to layout: PreparedProseLayout?) -> Bool {
-        self.layout === layout
+    func belongs(to layout: PreparedProseLayout?, generation: Int) -> Bool {
+        rootLayout === layout && self.generation == generation
     }
 
     override var accessibilityLabel: String? {
-        get { node.label }
+        get { presented.node.label }
         set { }
     }
     override var accessibilityTraits: UIAccessibilityTraits {
         get {
-            switch node.role {
+            switch presented.node.role {
             case .text, .separator:
                 return .staticText
             case .heading:
@@ -616,21 +850,21 @@ private final class PreparedProseDrawingAccessibilityElement: UIAccessibilityEle
     }
     override var accessibilityFrame: CGRect {
         get {
-            guard let drawingView, let layout else { return .zero }
-            return drawingView.accessibilityFrame(for: node, layout: layout)
+            guard let drawingView, belongs(to: drawingView.layout, generation: drawingView.accessibilityPresentationGeneration) else { return .zero }
+            return drawingView.accessibilityFrame(for: presented)
         }
         set { }
     }
     override var accessibilityPath: UIBezierPath? {
         get {
-            guard let drawingView, let layout else { return nil }
-            return drawingView.accessibilityPath(for: node, layout: layout)
+            guard let drawingView, belongs(to: drawingView.layout, generation: drawingView.accessibilityPresentationGeneration) else { return nil }
+            return drawingView.accessibilityPath(for: presented)
         }
         set { }
     }
     override func accessibilityActivate() -> Bool {
-        guard let drawingView, let layout else { return false }
-        return drawingView.activateAccessibilityNode(node, layout: layout)
+        guard let drawingView, belongs(to: drawingView.layout, generation: drawingView.accessibilityPresentationGeneration) else { return false }
+        return drawingView.activateAccessibilityNode(presented)
     }
 }
 

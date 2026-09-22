@@ -41,12 +41,17 @@ struct ViewerImageAttachment: Hashable {
     }
 
     static func sourceAndDeclaredSize(in block: ViewerBlock) -> SourceMetadata? {
-        guard let atom = block.inlines.compactMap({ inline -> (UInt32, String)? in
+        guard let atom = block.inlines.compactMap({ inline -> (String, UInt32, String)? in
             guard case let .atom(nodeType, docPos, attrsJSON, _) = inline,
                   nodeType == "image" else { return nil }
-            return (docPos, attrsJSON)
-        }).first,
-            let values = try? JSONSerialization.jsonObject(with: Data(atom.1.utf8)) as? [String: Any],
+            return (nodeType, docPos, attrsJSON)
+        }).first else { return nil }
+        return sourceAndDeclaredSize(nodeType: atom.0, docPos: atom.1, attrsJSON: atom.2)
+    }
+
+    static func sourceAndDeclaredSize(nodeType: String, docPos: UInt32, attrsJSON: String) -> SourceMetadata? {
+        guard nodeType == "image",
+            let values = try? JSONSerialization.jsonObject(with: Data(attrsJSON.utf8)) as? [String: Any],
             let source = values["src"] as? String, !source.isEmpty else { return nil }
         func dimension(_ name: String) -> CGFloat? {
             guard let value = values[name] as? NSNumber else { return nil }
@@ -56,7 +61,7 @@ struct ViewerImageAttachment: Hashable {
         let width = dimension("width")
         let height = dimension("height")
         let declared = width.flatMap { declaredWidth in height.map { CGSize(width: declaredWidth, height: $0) } }
-        return SourceMetadata(id: "\(atom.0):\(source)", source: source, declaredSize: declared)
+        return SourceMetadata(id: "\(docPos):\(source)", source: source, declaredSize: declared)
     }
 }
 
@@ -67,6 +72,7 @@ final class ViewerImageIntrinsicStore {
 
     private struct Entry {
         let size: CGSize
+        let source: String
         var access: UInt64
     }
 
@@ -77,9 +83,14 @@ final class ViewerImageIntrinsicStore {
 
     init(entryLimit: Int = 256) { self.entryLimit = max(1, entryLimit) }
 
-    /// Preparation may only see its explicitly scoped local sidecar. The
-    /// process cache remains global, but an LRU miss never scans another host.
-    func size(for id: String) -> CGSize? {
+    /// Exact source-qualified state wins. A bounded global source fallback
+    /// carries immutable resource geometry across a semantic source shift.
+    func size(for id: String, source: String? = nil) -> CGSize? {
+        let scoped = FabricAttachmentSidecars.currentMeasurementState
+        if let scoped,
+           let size = scoped.intrinsicSize(forSourceQualifiedID: id) {
+            return size
+        }
         lock.lock()
         if var entry = values[id] {
             access &+= 1
@@ -89,7 +100,21 @@ final class ViewerImageIntrinsicStore {
             return entry.size
         }
         lock.unlock()
-        return FabricAttachmentSidecars.currentMeasurementState?.intrinsicSize(forSourceQualifiedID: id)
+        guard let source, !source.isEmpty else { return nil }
+        if let size = scoped?.intrinsicSize(forSource: source) { return size }
+        lock.lock()
+        if let matching = values
+            .filter({ $0.value.source == source })
+            .max(by: { $0.value.access < $1.value.access }) {
+            access &+= 1
+            var entry = matching.value
+            entry.access = access
+            values[matching.key] = entry
+            lock.unlock()
+            return entry.size
+        }
+        lock.unlock()
+        return nil
     }
 
     /// Test-only global-LRU inspection. `size(for:)` may consult its scoped
@@ -113,13 +138,17 @@ final class ViewerImageIntrinsicStore {
         lock.lock()
         defer { lock.unlock() }
         access &+= 1
-        values[id] = Entry(size: size, access: access)
+        values[id] = Entry(size: size, source: Self.source(from: id), access: access)
         while values.count > entryLimit,
               let oldest = values.min(by: { lhs, rhs in
                   lhs.value.access == rhs.value.access ? lhs.key < rhs.key : lhs.value.access < rhs.value.access
               }) {
             values.removeValue(forKey: oldest.key)
         }
+    }
+
+    private static func source(from id: String) -> String {
+        String(id.split(separator: ":", maxSplits: 1).last ?? "")
     }
 }
 
@@ -238,6 +267,20 @@ final class ViewerAttachmentRevisionState {
         }
     }
 
+    fileprivate func intrinsicSize(forSource source: String) -> CGSize? {
+        lock.withLock {
+            for index in sourceQualifiedIDs.indices.reversed() {
+                guard let id = sourceQualifiedIDs[index],
+                      id.split(separator: ":", maxSplits: 1).last == Substring(source)
+                else { continue }
+                let ordinal = attachmentOrdinals[index]
+                let mask = UInt8(1 << (ordinal % 8))
+                if publishedBits[ordinal / 8] & mask != 0 { return intrinsicSizes[ordinal] }
+            }
+            return nil
+        }
+    }
+
     private func clearLocked() {
         publishedBits.removeAll(keepingCapacity: false)
         reportedErrorBits.removeAll(keepingCapacity: false)
@@ -335,8 +378,8 @@ final class ViewerImagePipeline {
     /// Deliberately carries no source URL; hosts map it to their public error contract.
     var onResourceFailure: ((ViewerImageAttachment) -> Void)?
 
-    init(policy: ImageLoadingPolicy) {
-        owner = NativeImagePipeline(policy: policy)
+    init(policy: ImageLoadingPolicy, owner: NativeImagePipeline? = nil) {
+        self.owner = owner ?? NativeImagePipeline(policy: policy)
     }
 
     func begin(generation: String, imagesEnabled: Bool, policy: ImageLoadingPolicy? = nil) {
