@@ -20,6 +20,17 @@ import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import com.apollohg.editor.AndroidApiCompat
 import com.apollohg.editor.DecodedBitmapBudget
 import com.apollohg.editor.DecodedBitmapLease
+import com.apollohg.editor.tables.ViewerTablePresentation
+import com.apollohg.editor.tables.ViewerTablePresentationOwner
+import com.apollohg.editor.tables.ViewerTablePresentationViewport
+import com.apollohg.editor.tables.ViewerTablePresentedAccessibilityNode
+import com.apollohg.editor.tables.ViewerTablePresentedBlock
+import com.apollohg.editor.tables.ViewerTablePresentedCell
+import com.apollohg.editor.tables.ViewerTableSurface
+import java.util.Collections
+import java.util.IdentityHashMap
+import org.json.JSONArray
+import org.json.JSONObject
 
 /** Rendering-only consumer of fully prepared StaticLayout and geometry fragments. */
 internal class PreparedProseDrawingView @JvmOverloads constructor(
@@ -33,8 +44,15 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     private val codeHighlighting = ViewerCodeHighlighting(this)
     var onUsableMetricsChanged: (() -> Unit)? = null
     var onVisibleRectChanged: ((Rect) -> Unit)? = null
+    var onVisibleImagesChanged: ((Rect, List<ViewerImageAttachment>) -> Unit)? = null
     var onFontConfigurationChanged: ((Configuration) -> Unit)? = null
     var onInteractionActivated: ((PreparedProseInteraction) -> Boolean)? = null
+    /** Geometry-only notification for the later atom/event transport phase. */
+    var onTableGeometryChanged: (() -> Unit)? = null
+    internal var onMountedTableCellsDrawnForTesting: ((Int) -> Unit)? = null
+    internal var onTableChromeDrawnForTesting: ((Int) -> Unit)? = null
+    internal var onTableRichFragmentDrawnForTesting: (() -> Unit)? = null
+    private var tablePresentationOwner = ViewerTablePresentationOwner()
     private val imagePixelsLock = Any()
     private val imagePixels = mutableMapOf<String, DecodedBitmapLease>()
 
@@ -67,6 +85,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     private var contentOriginYPx = 0
     private val scrollChangedListener = ViewTreeObserver.OnScrollChangedListener {
         reconcileVirtualAccessibilityFocus()
+        onTableGeometryChanged?.invoke()
     }
 
     init {
@@ -128,6 +147,17 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         )
     }
 
+    internal val tablePresentationRetainedBytesForTesting: Long
+        get() = tablePresentationOwner.retainedBytes
+
+    private fun reportRetainedTablePresentation() {
+        PreparedProseInstrumentation.retained(
+            PreparedProseInstrumentation.Owner.SIDECARS,
+            "table-presentation-${System.identityHashCode(this)}",
+            if (preparedLayout == null) 0L else tablePresentationOwner.retainedBytes
+        )
+    }
+
     /**
      * Publishes a prepared artifact. Replacement owners suppress the transient
      * clear announcement and let the final install report the one logical
@@ -147,13 +177,104 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             return
         }
         clearVirtualAccessibilityFocus()
+        if (preparedLayout !== layout) tablePresentationOwner = ViewerTablePresentationOwner()
         preparedLayout = layout
         codeHighlighting.update()
         this.contentOriginXPx = contentOriginXPx
         this.contentOriginYPx = contentOriginYPx
+        reportRetainedTablePresentation()
         if (announceAccessibilitySubtree) announceAccessibilitySubtreeChanged()
         invalidate()
     }
+
+    /** Mounted-only seam; direction and gesture transport remain host-owned. */
+    internal fun setTableLogicalOffset(sourceIdentity: String, offset: Float) {
+        val artifact = preparedLayout ?: return
+        val surface = ViewerTablePresentation.project(
+            artifact,
+            tablePresentationOwner,
+            ViewerTablePresentationViewport.Unknown
+        ).cells.firstOrNull { it.surface.identity == sourceIdentity }?.surface ?: return
+        tablePresentationOwner.setLogicalOffset(offset, surface)
+        reportRetainedTablePresentation()
+        clearVirtualAccessibilityFocus()
+        onTableGeometryChanged?.invoke()
+        announceAccessibilitySubtreeChanged()
+        invalidate()
+    }
+
+    internal fun tablePhysicalOffsetForTesting(sourceIdentity: String): Float {
+        val artifact = preparedLayout ?: return 0f
+        val surface = ViewerTablePresentation.project(
+            artifact, tablePresentationOwner, ViewerTablePresentationViewport.Unknown
+        ).cells.firstOrNull { it.surface.identity == sourceIdentity }?.surface ?: return 0f
+        return tablePresentationOwner.physicalOffset(surface)
+    }
+
+    private fun presentationSnapshot() = preparedLayout?.let { artifact ->
+        ViewerTablePresentation.project(
+            artifact,
+            tablePresentationOwner,
+            presentationViewport()
+        )
+    }
+
+    internal fun atomLayoutsJson(density: Float): String {
+        val artifact = preparedLayout ?: return "[]"
+        if (!density.isFinite() || density <= 0f) return "[]"
+        val snapshot = ViewerTablePresentation.project(
+            artifact,
+            tablePresentationOwner,
+            presentationViewport()
+        )
+        val mountedLayouts = snapshot.mountedCells.mapTo(
+            Collections.newSetFromMap(IdentityHashMap<PreparedProseLayout, Boolean>())
+        ) { it.content }
+
+        return JSONArray().apply {
+            snapshot.atoms.forEach { presented ->
+                put(JSONObject().apply {
+                    put("nodeType", presented.atom.nodeType)
+                    put("docPos", presented.atom.docPos)
+                    put("attrsJson", presented.atom.attrsJson)
+                    put("x", (presented.bounds.left + contentOriginXPx) / density)
+                    put("y", (presented.bounds.top + contentOriginYPx) / density)
+                    put("width", presented.atom.bounds.width().toFloat() / density)
+                    put("height", presented.atom.bounds.height().toFloat() / density)
+                    if (presented.layout !== artifact) {
+                        put("presentation", JSONObject().apply {
+                            put("clip", JSONObject().apply {
+                                put("x", (presented.clip.left + contentOriginXPx) / density)
+                                put("y", (presented.clip.top + contentOriginYPx) / density)
+                                put("width", presented.clip.width().coerceAtLeast(0f) / density)
+                                put("height", presented.clip.height().coerceAtLeast(0f) / density)
+                            })
+                            put("candidate", presented.layout in mountedLayouts)
+                        })
+                    }
+                })
+            }
+        }.toString()
+    }
+
+    private fun presentationViewport(): ViewerTablePresentationViewport {
+        if (windowToken == null) return ViewerTablePresentationViewport.Unknown
+        if (!isShown || alpha <= 0f) return ViewerTablePresentationViewport.Known(Rect())
+        val visible = Rect()
+        if (!getLocalVisibleRect(visible)) return ViewerTablePresentationViewport.Known(Rect())
+        visible.offset(-contentOriginXPx, -contentOriginYPx)
+        return ViewerTablePresentationViewport.Known(visible)
+    }
+
+    private fun presentedInteractions() = presentationSnapshot()?.interactions.orEmpty()
+
+    private fun presentedAccessibilityNodes(): List<ViewerTablePresentedAccessibilityNode> =
+        presentationSnapshot()?.accessibilityNodes.orEmpty().filter { presented ->
+            when (presented.node.role) {
+                PreparedProseAccessibilityNode.Role.LINK -> linkInteractionsEnabled
+                PreparedProseAccessibilityNode.Role.MENTION -> mentionInteractionsEnabled
+            }
+        }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -172,23 +293,142 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             }
             recordPreparedProseDraw {
                 onVisibleRectChanged?.invoke(Rect(canvas.clipBounds))
-                val visible = mutableListOf<PreparedProseFragment>()
-                var visibleBlockCount = 0
-                artifact.forEachBlockIntersecting(canvas.clipBounds) { block ->
-                    visible +=
-                        block.fragments
-                    visibleBlockCount += 1
+                val paintClip = Rect(canvas.clipBounds)
+                val visibleRect = Rect()
+                val presentationViewport = presentationViewport()
+                val snapshot = ViewerTablePresentation.project(
+                    artifact,
+                    tablePresentationOwner,
+                    presentationViewport
+                )
+                onMountedTableCellsDrawnForTesting?.invoke(snapshot.mountedCells.size)
+                onVisibleImagesChanged?.invoke(
+                    if (presentationViewport is ViewerTablePresentationViewport.Known) presentationViewport.rect else paintClip,
+                    snapshot.images.mapNotNull { image ->
+                        val bounds = RectF(image.bounds)
+                        if (!bounds.intersect(image.clip) || bounds.isEmpty) return@mapNotNull null
+                        image.attachment.copy(
+                            bounds = Rect(
+                                bounds.left.toInt(), bounds.top.toInt(),
+                                bounds.right.toInt(), bounds.bottom.toInt()
+                            )
+                        )
+                    }
+                )
+                val mountedLayouts = Collections.newSetFromMap(IdentityHashMap<PreparedProseLayout, Boolean>())
+                snapshot.mountedCells.forEach { mountedLayouts += it.content }
+                val visible = snapshot.blocks.filter { presented ->
+                    (presented.layout === artifact || presented.layout in mountedLayouts) &&
+                        presented.block.bounds.let { bounds ->
+                        bounds.right + presented.originX > paintClip.left &&
+                            bounds.left + presented.originX < paintClip.right &&
+                            bounds.bottom + presented.originY > paintClip.top &&
+                            bounds.top + presented.originY < paintClip.bottom
+                    }
                 }
                 // Phases stay global across blocks: later code backgrounds cannot cover
                 // an earlier quote border, and text/labels always remain foreground.
-                visible.forEach { drawBackground(canvas, it) }
-                visible.forEach { drawBorderOrRule(canvas, it) }
-                visible.forEach { drawForeground(canvas, it) }
-                visibleBlockCount
+                drawHierarchicalBackgrounds(canvas, artifact, snapshot, mountedLayouts, paintClip)
+                snapshot.mountedCells.forEach { drawTableChromeBorder(canvas, it) }
+                visible.forEach { drawPresented(canvas, it, snapshot) { drawBorderOrRule(canvas, it) } }
+                visible.filter { it.block.tableSurface?.layout?.failure != null }.forEach { drawTableFailure(canvas, it) }
+                val attachmentsByBlock = snapshot.images.mapNotNull { image ->
+                    image.block?.let { block -> block to image.attachment }
+                }.toMap()
+                visible.forEach { presented ->
+                    drawPresented(canvas, presented, snapshot) {
+                        val attachment = attachmentsByBlock[presented.block]
+                        if (presented.layout !== artifact && it.kind == PreparedProseFragmentKind.TEXT) {
+                            onTableRichFragmentDrawnForTesting?.invoke()
+                        }
+                        drawForeground(canvas, it, attachment)
+                    }
+                }
+                visible.size
             }
         } finally {
             canvas.restoreToCount(saved)
         }
+    }
+
+    private fun drawTableFailure(canvas: Canvas, presented: ViewerTablePresentedBlock) {
+        val bounds = presented.block.tableBounds ?: return
+        val saved = canvas.save()
+        canvas.clipRect(presented.clip)
+        canvas.translate(presented.originX, presented.originY)
+        paint.style = Paint.Style.FILL
+        paint.color = 0x30f44336
+        canvas.drawRect(bounds, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1f
+        paint.color = 0xfff44336.toInt()
+        canvas.drawRect(bounds, paint)
+        canvas.restoreToCount(saved)
+    }
+
+    private fun drawTableChromeBackground(canvas: Canvas, cell: ViewerTablePresentedCell) {
+        if (!cell.cell.isHeader) return
+        val saved = canvas.save()
+        canvas.clipRect(cell.clip)
+        paint.style = Paint.Style.FILL
+        paint.color = cell.surface.style.headerBackgroundColor
+        canvas.drawRect(cell.bounds, paint)
+        canvas.restoreToCount(saved)
+    }
+
+    private fun drawHierarchicalBackgrounds(
+        canvas: Canvas,
+        root: PreparedProseLayout,
+        snapshot: com.apollohg.editor.tables.ViewerTablePresentationSnapshot,
+        mountedLayouts: Set<PreparedProseLayout>,
+        paintClip: Rect
+    ) {
+        val layouts = IdentityHashMap<PreparedProseLayout, com.apollohg.editor.tables.ViewerTablePresentedLayout>()
+        snapshot.layouts.forEach { layouts[it.layout] = it }
+        val blocks = IdentityHashMap<PreparedProseLayout, MutableList<ViewerTablePresentedBlock>>()
+        snapshot.blocks.forEach { blocks.getOrPut(it.layout) { mutableListOf() }.add(it) }
+        val cells = IdentityHashMap<ViewerTableSurface, MutableList<ViewerTablePresentedCell>>()
+        snapshot.mountedCells.forEach { cells.getOrPut(it.surface) { mutableListOf() }.add(it) }
+
+        fun drawLayout(presented: com.apollohg.editor.tables.ViewerTablePresentedLayout) {
+            blocks[presented.layout].orEmpty().forEach { block ->
+                if (presented.layout !== root || block.block.intersects(paintClip)) {
+                    drawPresented(canvas, block, snapshot) { drawBackground(canvas, it) }
+                }
+                val surface = block.block.tableSurface ?: return@forEach
+                val surfaceCells = cells[surface].orEmpty()
+                surfaceCells.forEach { drawTableChromeBackground(canvas, it) }
+                surfaceCells.forEach { cell ->
+                    if (cell.content in mountedLayouts) layouts[cell.content]?.let(::drawLayout)
+                }
+            }
+        }
+        snapshot.layouts.firstOrNull()?.let(::drawLayout)
+    }
+
+    private fun drawTableChromeBorder(canvas: Canvas, cell: ViewerTablePresentedCell) {
+        onTableChromeDrawnForTesting?.invoke(cell.sourcePosition)
+        val saved = canvas.save()
+        canvas.clipRect(cell.clip)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = cell.surface.style.borderWidth
+        paint.color = cell.surface.style.borderColor
+        val inset = paint.strokeWidth / 2f
+        canvas.drawRect(RectF(cell.bounds).apply { inset(inset, inset) }, paint)
+        canvas.restoreToCount(saved)
+    }
+
+    private inline fun drawPresented(
+        canvas: Canvas,
+        presented: ViewerTablePresentedBlock,
+        snapshot: com.apollohg.editor.tables.ViewerTablePresentationSnapshot,
+        draw: (PreparedProseFragment) -> Unit
+    ) {
+        val saved = canvas.save()
+        canvas.clipRect(presented.clip)
+        canvas.translate(presented.originX, presented.originY)
+        presented.block.fragments.forEach(draw)
+        canvas.restoreToCount(saved)
     }
 
     private fun drawBackground(canvas: Canvas, fragment: PreparedProseFragment) {
@@ -247,7 +487,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         }
     }
 
-    private fun drawForeground(canvas: Canvas, fragment: PreparedProseFragment) {
+    private fun drawForeground(canvas: Canvas, fragment: PreparedProseFragment, attachment: ViewerImageAttachment? = null) {
         when (fragment.kind) {
             PreparedProseFragmentKind.TEXT, PreparedProseFragmentKind.MARKER -> {
                 fragment.layout?.let { layout ->
@@ -281,9 +521,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             }
 
             PreparedProseFragmentKind.IMAGE -> {
-                val attachment =
-                    preparedLayout?.imageAttachments?.firstOrNull { it.bounds == fragment.bounds }
-                        ?: return
+                val attachment = attachment ?: preparedLayout?.imageAttachments?.firstOrNull { it.bounds == fragment.bounds } ?: return
                 val bitmap =
                     synchronized(imagePixelsLock) { imagePixels[attachment.id]?.bitmap } ?: return
                 fragment.box?.let {
@@ -376,11 +614,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         val contentX = event.x - contentOriginXPx
         val contentY = event.y - contentOriginYPx
         fun targetAt(): PreparedProseInteraction? =
-            preparedLayout?.interactions?.firstOrNull { interaction ->
+            presentedInteractions().firstOrNull { presented ->
                 if (contentX < 0f || contentY < 0f) return@firstOrNull false
-                interactionEnabled(interaction.kind) &&
-                    interaction.rects.any { it.contains(contentX.toInt(), contentY.toInt()) }
-            }
+                interactionEnabled(presented.interaction.kind) &&
+                    presented.rects.any { it.contains(contentX, contentY) } &&
+                    presented.clip.contains(contentX, contentY)
+            }?.interaction
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 pendingTap =
@@ -470,14 +709,13 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                     this@PreparedProseDrawingView
                 ).also(::onInitializeAccessibilityNodeInfo)
             }
-            val node = nodes().getOrNull(id - 1) ?: return null
-            val parentBounds = Rect(node.bounds).apply {
-                offset(contentOriginXPx, contentOriginYPx)
-            }
-            val screen = accessibilityScreenBounds(node)
-            val visibleToUser = accessibilityNodeVisibleOnScreen(screen)
+            val presented = nodes().getOrNull(id - 1) ?: return null
+            val node = presented.node
+            val parentBounds = accessibilityParentBounds(presented)
+            val screen = accessibilityScreenBounds(parentBounds)
+            val visibleToUser = accessibilityNodeVisible(presented)
             reconcileVirtualAccessibilityFocus()
-            val identity = identity(node)
+            val identity = identity(presented)
             return AccessibilityNodeInfo.obtain().apply {
                 packageName = context.packageName
                 className = android.widget.Button::class.java.name
@@ -509,7 +747,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             val node = nodes().getOrNull(id - 1) ?: return false
             return when (action) {
                 AccessibilityNodeInfo.ACTION_CLICK -> if (accessibilityNodeVisible(node)) {
-                    preparedLayout?.interactions?.getOrNull(node.interactionIndex)?.let {
+                    node.node.interactionIndex?.let { index -> node.layout.interactions.getOrNull(index) }?.let {
                         onInteractionActivated?.invoke(it) ?: false
                     } ?: false
                 } else {
@@ -531,13 +769,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         }
     }
 
-    private fun nodes(): List<PreparedProseAccessibilityNode> =
-        preparedLayout?.accessibilityNodes.orEmpty().filter { node ->
-            when (node.role) {
-                PreparedProseAccessibilityNode.Role.LINK -> linkInteractionsEnabled
-                PreparedProseAccessibilityNode.Role.MENTION -> mentionInteractionsEnabled
-            }
-        }
+    private fun nodes(): List<ViewerTablePresentedAccessibilityNode> = presentedAccessibilityNodes()
 
     private fun interactionEnabled(kind: PreparedProseInteraction.Kind): Boolean = when (kind) {
         PreparedProseInteraction.Kind.LINK -> linkInteractionsEnabled
@@ -580,25 +812,36 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         }
     }
 
-    private fun accessibilityNodeVisible(node: PreparedProseAccessibilityNode): Boolean =
-        accessibilityScreenBounds(node).let { bounds ->
+    private fun accessibilityNodeVisible(node: ViewerTablePresentedAccessibilityNode): Boolean =
+        accessibilityParentBounds(node).let { parentBounds ->
+            if (parentBounds.isEmpty) return false
+            accessibilityScreenBounds(parentBounds).let { bounds ->
             accessibilityVisibilityForTesting?.invoke(bounds)
                 ?: accessibilityNodeVisibleOnScreen(bounds)
+            }
         }
 
-    private fun accessibilityScreenBounds(node: PreparedProseAccessibilityNode): Rect {
-        val bounds = Rect(node.bounds).apply { offset(contentOriginXPx, contentOriginYPx) }
+    private fun accessibilityParentBounds(node: ViewerTablePresentedAccessibilityNode): Rect {
+        val bounds = RectF(node.bounds)
+        if (!bounds.intersect(node.clip)) return Rect()
+        return Rect(bounds.left.toInt(), bounds.top.toInt(), bounds.right.toInt(), bounds.bottom.toInt()).apply {
+            offset(contentOriginXPx, contentOriginYPx)
+        }
+    }
+
+    private fun accessibilityScreenBounds(parentBounds: Rect): Rect {
+        val bounds = Rect(parentBounds)
         val location = IntArray(2)
         getLocationOnScreen(location)
         bounds.offset(location[0], location[1])
         return bounds
     }
 
-    private fun identity(node: PreparedProseAccessibilityNode) = AccessibilityNodeIdentity(
-        preparedLayout?.key?.generationIdentity,
-        node.interactionIndex,
-        node.role,
-        node.label
+    private fun identity(node: ViewerTablePresentedAccessibilityNode) = AccessibilityNodeIdentity(
+        node.sourceIdentity,
+        node.node.interactionIndex ?: -1,
+        node.node.role,
+        node.node.label
     )
 
     // AccessibilityEvent(Int) is API 30; see the node provider above.
@@ -629,7 +872,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     private data class AccessibilityNodeIdentity(
-        val generation: String?,
+        val generation: String,
         val interactionIndex: Int,
         val role: PreparedProseAccessibilityNode.Role,
         val label: String

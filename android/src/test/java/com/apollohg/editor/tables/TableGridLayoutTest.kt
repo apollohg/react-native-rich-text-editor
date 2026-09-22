@@ -4,10 +4,58 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.apollohg.editor.viewer.PreparedProseLayout
+import com.apollohg.editor.viewer.ProseLayoutKey
 
 class TableGridLayoutTest {
+    @Test fun `physical table adapter scales declared widths and chrome once`() {
+        val source = TableGridRecord("density", 2, 1, listOf(100f, 100f), listOf(
+            TableGridCell(1, 0, 0, contentKey = "one"), TableGridCell(2, 0, 1, contentKey = "two")
+        ))
+        val layout = TableGridLayout().layout(source.physical(2f), 300f, TableStyle().physical(2f), false) { _, width ->
+            assertEquals(164f, width)
+            20f
+        }
+        assertEquals(listOf(100f, 100f), source.columnWidths)
+        assertEquals(listOf(200f, 200f), layout.columnWidths)
+        assertEquals(400f, layout.contentWidth)
+        assertEquals(18f, TableStyle().physical(2f).cellPadding + TableStyle().physical(2f).borderWidth)
+        val minimum = TableGridLayout().layout(TableGridRecord("min", 1, 1, listOf(null), emptyList()).physical(2f), 100f, TableStyle().physical(2f), false) { _, _ -> 0f }
+        assertEquals(160f, minimum.contentWidth)
+    }
+    @Test fun `viewer surface retains one prepared cell for each source anchor`() {
+        val cells = listOf(TableGridCell(10, 0, 0, contentKey = "a"), TableGridCell(20, 0, 1, contentKey = "b"))
+        val surface = ViewerTableSurface("t1", TableGridRecord("viewer", 2, 1, listOf(null, null), cells), 160f, TableStyle(), false) { cell, width ->
+            artifact(width.toInt(), 20, cell.contentKey)
+        }
+
+        assertEquals(listOf(10, 20), surface.cells.map { it.sourcePosition })
+        assertEquals(2, surface.visibleCells(surface.bounds).size)
+        assertTrue(surface.layout.contentHeight.isFinite())
+    }
+
+    @Test fun `viewer surface measures equal content once per source and keeps source artifacts`() {
+        val cells = listOf(TableGridCell(10, 0, 0, contentKey = "same"), TableGridCell(20, 0, 1, contentKey = "same"))
+        val preparedSources = mutableListOf<Int>()
+        val preparedContentKeys = mutableListOf<String>()
+        val surface = ViewerTableSurface("t1", TableGridRecord("viewer", 2, 1, listOf(null, null), cells), 160f, TableStyle(), false) { cell, width ->
+            preparedSources += cell.sourcePosition
+            preparedContentKeys += cell.contentKey
+            artifact(width.toInt(), 20, "${cell.sourcePosition}")
+        }
+
+        assertEquals(listOf(10, 20), surface.cells.map { it.sourcePosition })
+        assertEquals(listOf("10", "20"), surface.cells.map { it.content.key.semanticKey })
+        assertEquals(listOf(10, 20), preparedSources)
+        assertEquals(listOf("same", "same"), preparedContentKeys)
+    }
+
     private fun record(columns: Int = 2, rows: Int = 1, widths: List<Float?> = listOf(null, null), cells: List<TableGridCell> = emptyList()) =
         TableGridRecord("test-document", columns, rows, widths, cells)
+
+    private fun artifact(width: Int, height: Int, identity: String) = PreparedProseLayout(
+        ProseLayoutKey(identity, width, "", 0, 0, 1, 0, identity), width, height, emptyList(), retainedBytes = 0
+    )
 
     @Test fun `unassigned columns share surplus and narrow view overflows`() {
         assertEquals(listOf(120f, 120f), TableGridLayout().layout(record(), 240f, TableStyle(), false) { _, _ -> 10f }.columnWidths)

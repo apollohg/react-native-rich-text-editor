@@ -29,7 +29,16 @@ internal data class ViewerImageAttachment(
             val atom =
                 block.inlines.filterIsInstance<Atom>().firstOrNull { it.nodeType == "image" }
                     ?: return null
-            val attrs = runCatching { JSONObject(atom.attrsJson) }.getOrNull() ?: return null
+            return sourceAndDeclaredSize(atom.nodeType, atom.docPos, atom.attrsJson)
+        }
+
+        fun sourceAndDeclaredSize(
+            nodeType: String,
+            docPos: Long,
+            attrsJson: String
+        ): Triple<String, String, Pair<Int, Int>?>? {
+            if (nodeType != "image") return null
+            val attrs = runCatching { JSONObject(attrsJson) }.getOrNull() ?: return null
             val source = attrs.optString("src").takeIf(String::isNotEmpty) ?: return null
             val width = attrs.optDouble("width", Double.NaN).takeIf {
                 it.isFinite() && it > 0
@@ -38,7 +47,7 @@ internal data class ViewerImageAttachment(
                 it.isFinite() && it > 0
             }?.toInt()
             return Triple(
-                "${atom.docPos}:$source",
+                "$docPos:$source",
                 source,
                 if (width != null &&
                     height != null
@@ -72,10 +81,26 @@ internal class ViewerImageIntrinsicStore(entryLimit: Int = 256) {
         }
         // The global LRU is process-wide, but sidecar fallback must be the
         // measurement owner's explicit local state. Never scan another host.
-        return cached
-            ?: FabricAttachmentSidecars.currentMeasurementState?.intrinsicSizeForSourceQualifiedId(
-                id
-            )
+        cached?.let { return it }
+        FabricAttachmentSidecars.currentMeasurementState?.intrinsicSizeForSourceQualifiedId(id)?.let {
+            return it
+        }
+        return id.substringAfter(':', missingDelimiterValue = "").takeIf(String::isNotEmpty)
+            ?.let(::sizeForSource)
+    }
+
+    /** Intrinsic dimensions belong to the resource, while [id] binds it to one source position. */
+    fun sizeForSource(source: String): Pair<Int, Int>? = synchronized(lock) {
+        values.entries
+            .asSequence()
+            .filter { (id, _) -> id.substringAfter(':', missingDelimiterValue = "") == source }
+            .maxByOrNull { it.value.access }
+            ?.value
+            ?.also { entry ->
+                access += 1
+                entry.access = access
+            }
+            ?.size
     }
 
     /** Test-only global-LRU inspection; [size] can consult its scoped owner. */
@@ -253,12 +278,20 @@ internal class ViewerImagePipeline(
         NativeImagePipeline.load(source, owner, priority, callback)
     }
 ) {
+    private data class RequestedLoad(
+        val attachment: ViewerImageAttachment,
+        val generation: String,
+        val ownerIdentity: String,
+        val priority: DecodedBitmapPriority
+    )
+
     companion object {
         const val PREFETCH_MARGIN_PX = 480
     }
 
     private val lock = Any()
     private var generation = ""
+    private var ownerIdentity = ""
     private var enabled = false
     private var policy = ImageLoadingPolicy.DEFAULT
     private val requested = mutableSetOf<String>()
@@ -276,11 +309,12 @@ internal class ViewerImagePipeline(
     fun begin(
         generation: String,
         imagesEnabled: Boolean,
-        policy: ImageLoadingPolicy = this.policy
+        policy: ImageLoadingPolicy = this.policy,
+        ownerIdentity: String = generation
     ) {
         val released = synchronized(lock) {
             if (this.generation == generation && enabled == imagesEnabled &&
-                this.policy == policy
+                this.policy == policy && this.ownerIdentity == ownerIdentity
             ) {
                 return@synchronized null
             }
@@ -291,6 +325,7 @@ internal class ViewerImagePipeline(
                 requestPriorities.clear()
                 requestCountForTesting = 0
                 this.generation = generation
+                this.ownerIdentity = ownerIdentity
                 this.enabled = imagesEnabled
                 this.policy = policy
             }
@@ -302,6 +337,7 @@ internal class ViewerImagePipeline(
     fun cancel() {
         val released = synchronized(lock) {
             generation = ""
+            ownerIdentity = ""
             enabled = false
             receipts.values.forEach(RenderImageLoader.LoadHandle::cancel)
             receipts.clear()
@@ -318,8 +354,9 @@ internal class ViewerImagePipeline(
         enabled && this.generation.isNotEmpty() && this.generation == generation
     }
 
-    private fun acceptsCompletion(generation: String, id: String): Boolean = synchronized(lock) {
-        enabled && this.generation.isNotEmpty() && this.generation == generation && id in requested
+    private fun acceptsCompletion(generation: String, ownerIdentity: String, id: String): Boolean = synchronized(lock) {
+        enabled && this.generation.isNotEmpty() && this.generation == generation &&
+            this.ownerIdentity == ownerIdentity && id in requested
     }
 
     fun updateVisibleRect(visible: Rect, attachments: List<ViewerImageAttachment>) {
@@ -361,27 +398,28 @@ internal class ViewerImagePipeline(
                 .toList()
                 .also { requestCountForTesting += it.size }
                 .map { attachment ->
-                    Triple(
+                    RequestedLoad(
                         attachment,
                         generation,
+                        ownerIdentity,
                         if (Rect.intersects(attachment.bounds, visible)) {
                             DecodedBitmapPriority.VISIBLE
                         } else {
                             DecodedBitmapPriority.PREFETCH
                         }
-                    ).also { requestPriorities[attachment.id] = it.third }
+                    ).also { requestPriorities[attachment.id] = it.priority }
                 }
         }
         if (released.isNotEmpty()) onPixelsReleased?.invoke(released)
-        start.forEach { (attachment, requestGeneration, priority) ->
-            if (!acceptsCompletion(requestGeneration, attachment.id)) return@forEach
+        start.forEach { (attachment, requestGeneration, requestOwnerIdentity, priority) ->
+            if (!acceptsCompletion(requestGeneration, requestOwnerIdentity, attachment.id)) return@forEach
             val source = NativeImagePipeline.prepare(attachment.source, policy) ?: run {
                 reportFailure(attachment, requestGeneration)
                 return@forEach
             }
             PreparedProseInstrumentation.imageRequested()
             val receipt = load(source, ownerId, priority) { lease ->
-                if (!acceptsCompletion(requestGeneration, attachment.id)) {
+                if (!acceptsCompletion(requestGeneration, requestOwnerIdentity, attachment.id)) {
                     lease?.close()
                     return@load
                 }
@@ -395,6 +433,7 @@ internal class ViewerImagePipeline(
                 onIntrinsicMetadata?.invoke(attachment, bitmap.width, bitmap.height)
                 val delivered = synchronized(lock) {
                     if (!enabled || generation != requestGeneration ||
+                        ownerIdentity != requestOwnerIdentity ||
                         attachment.id !in requested
                     ) {
                         false
@@ -414,7 +453,7 @@ internal class ViewerImagePipeline(
                 }
             }
             synchronized(lock) {
-                if (acceptsCompletion(requestGeneration) && attachment.id in requested) {
+                if (acceptsCompletion(requestGeneration, requestOwnerIdentity, attachment.id)) {
                     receipts[attachment.id] = receipt
                 } else {
                     receipt.cancel()

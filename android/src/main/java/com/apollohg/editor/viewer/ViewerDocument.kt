@@ -87,7 +87,8 @@ internal data class ViewerDocument(
     val retainedBytes: Long,
     val trailingEmptyTextBlockCount: Int = 0,
     val tableAttributes: Map<String, JSONObject> = emptyMap(),
-    val tableRecords: Map<String, FfiViewerTable> = emptyMap()
+    val tableRecords: Map<String, FfiViewerTable> = emptyMap(),
+    val preferredTextBlockName: String = "paragraph"
 )
 
 internal data class ProseViewerRequest(
@@ -202,11 +203,7 @@ private fun validViewerTables(elements: List<FfiViewerElement>, tableRecords: Ma
 internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
     val result = viewerCompile(
         FfiViewerCompileRequest(
-            sourceKind = if (request.source is ProseViewerSource.Html) {
-                FfiViewerSourceKind.HTML
-            } else {
-                FfiViewerSourceKind.JSON
-            },
+            sourceKind = if (request.source is ProseViewerSource.Html) FfiViewerSourceKind.HTML else FfiViewerSourceKind.JSON,
             source = request.source.value,
             configJson = request.configuration.configJson,
             imagesEnabled = request.configuration.imagesEnabled,
@@ -215,265 +212,304 @@ internal fun compileWithRust(request: ProseViewerRequest): ViewerDocument {
     )
     try {
         result.error?.let { throw ProseViewerError.compiler(it.domain, it.code, it.message) }
-        val compiled =
-            result.value
-                ?: throw ProseViewerError.compiler(
-                    "viewer",
-                    "MISSING_COMPILED_DOCUMENT",
-                    "The compiler returned neither a document nor an error."
-                )
+        val compiled = result.value ?: throw ProseViewerError.compiler("viewer", "MISSING_COMPILED_DOCUMENT", "The compiler returned neither a document nor an error.")
         val semanticKey = compiled.semanticKey()
         if (!semanticKey.matches(Regex("[0-9a-f]{64}"))) {
-            throw ProseViewerError.compiler(
-                "viewer",
-                "INVALID_SEMANTIC_KEY",
-                "The compiler returned an invalid semantic key."
-            )
+            throw ProseViewerError.compiler("viewer", "INVALID_SEMANTIC_KEY", "The compiler returned an invalid semantic key.")
         }
-
-        data class Builder(
-            val nodeType: String,
-            val depth: Int,
-            val listContext: ViewerListContext?,
-            val listItemIdentity: Int?,
-            val listItemContext: ViewerListContext?,
-            val identity: Int,
-            val language: String? = null,
-            val inlines: MutableList<ViewerInline> = mutableListOf()
-        )
-
-        val stack = mutableListOf<Builder>()
-        val rendered = mutableListOf<ViewerBlock>()
-        // A list item's terminal spacing belongs after its own direct leaves,
-        // before a child list begins. Descendant leaves are retained only as a
-        // fallback for an item whose sole renderable content is nested.
-        val directLeavesByListItem = mutableMapOf<Int, MutableList<Int>>()
-        val descendantLeavesByListItem = mutableMapOf<Int, MutableList<Int>>()
-        val listItemDepths = mutableMapOf<Int, Int>()
-        var nextListItemIdentity = 0
-        var nextContainerIdentity = 0
-
-        fun nearestListContext(builders: List<Builder>): ViewerListContext? =
-            builders.asReversed().firstNotNullOfOrNull {
-                it.listContext
-            }
-        fun listItemAncestors(builders: List<Builder>): List<ViewerListItemAncestor> =
-            builders.mapNotNull { builder ->
-                val identity = builder.listItemIdentity ?: return@mapNotNull null
-                val context = builder.listItemContext ?: return@mapNotNull null
-                ViewerListItemAncestor(identity, context, builder.depth, false, false)
-            }
-        fun appendLeaf(
-            nodeType: String,
-            depth: Int,
-            inlines: List<ViewerInline>,
-            ancestors: List<Builder>,
-            isBlockAtom: Boolean = false,
-            table: FfiViewerTable? = null
-        ) {
-            val itemAncestors = listItemAncestors(ancestors)
-            rendered += ViewerBlock(
-                nodeType = nodeType,
-                depth = depth,
-                inBlockquote = ancestors.any { it.nodeType == "blockquote" },
-                listContext = nearestListContext(ancestors),
-                listItemBoundary = null,
-                inlines = inlines,
-                isBlockAtom = isBlockAtom,
-                table = table,
-                language = ancestors.lastOrNull()?.language,
-                containers = ancestors.filter {
-                    it.nodeType in CONTAINER_BLOCKS &&
-                        it.nodeType != "doc"
-                }.map { ViewerContainerAncestor(it.identity, it.nodeType, 0, 0) },
-                listItemAncestors = itemAncestors,
-                outermostListItemIdentity = itemAncestors.firstOrNull()?.identity,
-                outermostListItemIsLast = itemAncestors.firstOrNull()?.context?.isLast == true
-            )
-            itemAncestors.forEach { ancestor ->
-                descendantLeavesByListItem.getOrPut(ancestor.identity) { mutableListOf() } +=
-                    rendered.lastIndex
-            }
-            itemAncestors.lastOrNull()?.let { nearest ->
-                directLeavesByListItem.getOrPut(nearest.identity) { mutableListOf() } +=
-                    rendered.lastIndex
-            }
-        }
-
-        val compiledElements = compiled.elements()
+        val elements = compiled.elements()
         val tableRecords = mutableMapOf<String, FfiViewerTable>()
         for (record in compiled.tableRecords()) {
-            val previous = tableRecords.put("t${record.tablePos}", record)
-            if (previous != null) {
+            if (tableRecords.put("t${record.tablePos}", record) != null) {
                 throw ProseViewerError.compiler("viewer", "INVALID_TABLE_RECORD", "The compiler returned duplicate semantic table records.")
             }
         }
         val tableAttributes = parseTableAttributes(JSONObject(compiled.tableAttributes()))
-        if (tableAttributes == null || !validViewerTables(compiledElements, tableRecords, tableAttributes)) {
+        if (tableAttributes == null || !validViewerTables(elements, tableRecords, tableAttributes)) {
             throw ProseViewerError.compiler("viewer", "INVALID_TABLE_RECORD", "The compiler returned an invalid semantic record.")
         }
-        compiledElements.forEach { element ->
-            when (element) {
-                is FfiViewerElement.Table -> appendLeaf("table", stack.lastOrNull()?.depth ?: 0, emptyList(), stack, true, tableRecords[element.tableId] ?: throw ProseViewerError.compiler("viewer", "INVALID_TABLE_RECORD", "The compiler returned a dangling semantic table reference."))
-                is FfiViewerElement.BlockStart -> {
-                    val context = listContext(element.listContextJson)
-                    if (context?.isFirst == true) {
-                        stack +=
-                            Builder(
-                                if (context.kind ==
-                                    "task"
-                                ) {
-                                    "taskList"
-                                } else if (context.ordered) {
-                                    "orderedList"
-                                } else {
-                                    "bulletList"
-                                },
-                                element.depth.toInt(),
-                                null,
-                                null,
-                                null,
-                                nextContainerIdentity++
-                            )
-                    }
-                    val identity = if (context != null) nextListItemIdentity++ else null
-                    identity?.let { listItemDepths[it] = element.depth.toInt() }
-                    stack += Builder(
-                        element.nodeType,
-                        element.depth.toInt(),
-                        context,
-                        identity,
-                        if (identity == null) null else context,
-                        nextContainerIdentity++,
-                        element.language
-                    )
-                }
+        validateAdmittedAttachments(elements, tableRecords)
+        val isEmpty = compiled.isEmpty()
+        val preferredTextBlockName = compiled.preferredTextBlockName()
+        return ViewerDocument(
+            semanticKey = semanticKey,
+            blocks = lowerElements(elements, preferredTextBlockName, tableRecords, isEmpty),
+            isEmpty = isEmpty,
+            retainedBytes = compiled.retainedBytesDecimal().toLongOrNull() ?: 0,
+            trailingEmptyTextBlockCount = compiled.trailingEmptyTextBlockCount().toInt(),
+            tableAttributes = tableAttributes,
+            tableRecords = tableRecords,
+            preferredTextBlockName = preferredTextBlockName
+        )
+    } finally {
+        result.destroy()
+    }
+}
 
-                is FfiViewerElement.TextRun -> stack.lastOrNull()?.inlines?.add(
-                    ViewerInline.Text(element.text, element.marks)
+private fun validateAdmittedAttachments(
+    elements: List<FfiViewerElement>,
+    tableRecords: Map<String, FfiViewerTable>
+) {
+    var count = 0
+    fun countAttachments(elements: List<FfiViewerElement>) {
+        elements.forEach { element ->
+            val atom = element as? FfiViewerElement.BlockAtom ?: return@forEach
+            if (ViewerImageAttachment.sourceAndDeclaredSize(atom.nodeType, u32(atom.docPos), atom.attrsJson) == null) {
+                return@forEach
+            }
+            count += 1
+            if (count > ViewerImageAttachment.MAXIMUM_ADMITTED_ATTACHMENTS) {
+                throw ProseViewerError.compiler(
+                    "viewer",
+                    "ATTACHMENT_LIMIT_EXCEEDED",
+                    "The document exceeds the maximum admitted image attachment count."
                 )
+            }
+        }
+    }
 
-                is FfiViewerElement.InlineAtom -> stack.lastOrNull()?.inlines?.add(
+    countAttachments(elements)
+    tableRecords.values.forEach { table ->
+        table.cells.forEach { cell -> countAttachments(cell.elements) }
+    }
+}
+
+private fun lowerElements(
+    elements: List<FfiViewerElement>,
+    preferredTextBlockName: String,
+    tableRecords: Map<String, FfiViewerTable>,
+    isEmpty: Boolean
+): List<ViewerBlock> {
+    data class Builder(
+        val nodeType: String,
+        val depth: Int,
+        val listContext: ViewerListContext?,
+        val listItemIdentity: Int?,
+        val listItemContext: ViewerListContext?,
+        val identity: Int,
+        val language: String? = null,
+        val inlines: MutableList<ViewerInline> = mutableListOf()
+    )
+
+    val stack = mutableListOf<Builder>()
+    val rendered = mutableListOf<ViewerBlock>()
+    // A list item's terminal spacing belongs after its own direct leaves,
+    // before a child list begins. Descendant leaves are retained only as a
+    // fallback for an item whose sole renderable content is nested.
+    val directLeavesByListItem = mutableMapOf<Int, MutableList<Int>>()
+    val descendantLeavesByListItem = mutableMapOf<Int, MutableList<Int>>()
+    val listItemDepths = mutableMapOf<Int, Int>()
+    var nextListItemIdentity = 0
+    var nextContainerIdentity = 0
+
+    fun nearestListContext(builders: List<Builder>): ViewerListContext? =
+        builders.asReversed().firstNotNullOfOrNull {
+            it.listContext
+        }
+    fun listItemAncestors(builders: List<Builder>): List<ViewerListItemAncestor> =
+        builders.mapNotNull { builder ->
+            val identity = builder.listItemIdentity ?: return@mapNotNull null
+            val context = builder.listItemContext ?: return@mapNotNull null
+            ViewerListItemAncestor(identity, context, builder.depth, false, false)
+        }
+    fun appendLeaf(
+        nodeType: String,
+        depth: Int,
+        inlines: List<ViewerInline>,
+        ancestors: List<Builder>,
+        isBlockAtom: Boolean = false,
+        table: FfiViewerTable? = null
+    ) {
+        val itemAncestors = listItemAncestors(ancestors)
+        rendered += ViewerBlock(
+            nodeType = nodeType,
+            depth = depth,
+            inBlockquote = ancestors.any { it.nodeType == "blockquote" },
+            listContext = nearestListContext(ancestors),
+            listItemBoundary = null,
+            inlines = inlines,
+            isBlockAtom = isBlockAtom,
+            table = table,
+            language = ancestors.lastOrNull()?.language,
+            containers = ancestors.filter {
+                it.nodeType in CONTAINER_BLOCKS &&
+                    it.nodeType != "doc"
+            }.map { ViewerContainerAncestor(it.identity, it.nodeType, 0, 0) },
+            listItemAncestors = itemAncestors,
+            outermostListItemIdentity = itemAncestors.firstOrNull()?.identity,
+            outermostListItemIsLast = itemAncestors.firstOrNull()?.context?.isLast == true
+        )
+        itemAncestors.forEach { ancestor ->
+            descendantLeavesByListItem.getOrPut(ancestor.identity) { mutableListOf() } +=
+                rendered.lastIndex
+        }
+        itemAncestors.lastOrNull()?.let { nearest ->
+            directLeavesByListItem.getOrPut(nearest.identity) { mutableListOf() } +=
+                rendered.lastIndex
+        }
+    }
+
+    elements.forEach { element ->
+        when (element) {
+            is FfiViewerElement.Table -> appendLeaf("table", stack.lastOrNull()?.depth ?: 0, emptyList(), stack, true, tableRecords[element.tableId] ?: throw ProseViewerError.compiler("viewer", "INVALID_TABLE_RECORD", "The compiler returned a dangling semantic table reference."))
+            is FfiViewerElement.BlockStart -> {
+                val context = listContext(element.listContextJson)
+                if (context?.isFirst == true) {
+                    stack +=
+                        Builder(
+                            if (context.kind ==
+                                "task"
+                            ) {
+                                "taskList"
+                            } else if (context.ordered) {
+                                "orderedList"
+                            } else {
+                                "bulletList"
+                            },
+                            element.depth.toInt(),
+                            null,
+                            null,
+                            null,
+                            nextContainerIdentity++
+                        )
+                }
+                val identity = if (context != null) nextListItemIdentity++ else null
+                identity?.let { listItemDepths[it] = element.depth.toInt() }
+                stack += Builder(
+                    element.nodeType,
+                    element.depth.toInt(),
+                    context,
+                    identity,
+                    if (identity == null) null else context,
+                    nextContainerIdentity++,
+                    element.language
+                )
+            }
+
+            is FfiViewerElement.TextRun -> stack.lastOrNull()?.inlines?.add(
+                ViewerInline.Text(element.text, element.marks)
+            )
+
+            is FfiViewerElement.InlineAtom -> stack.lastOrNull()?.inlines?.add(
+                ViewerInline.Atom(
+                    element.nodeType,
+                    u32(element.docPos),
+                    element.attrsJson,
+                    element.label
+                )
+            )
+
+            is FfiViewerElement.BlockAtom -> appendLeaf(
+                element.nodeType,
+                stack.lastOrNull()?.depth ?: 0,
+                listOf(
                     ViewerInline.Atom(
                         element.nodeType,
                         u32(element.docPos),
                         element.attrsJson,
                         element.label
                     )
-                )
-
-                is FfiViewerElement.BlockAtom -> appendLeaf(
-                    element.nodeType,
-                    stack.lastOrNull()?.depth ?: 0,
-                    listOf(
-                        ViewerInline.Atom(
-                            element.nodeType,
-                            u32(element.docPos),
-                            element.attrsJson,
-                            element.label
-                        )
-                    ),
-                    stack,
-                    isBlockAtom = true
-                )
-
-                FfiViewerElement.BlockEnd -> {
-                    val builder = stack.removeLastOrNull() ?: return@forEach
-                    // Containers are represented by inherited context. Every text block,
-                    // including an empty paragraph, remains a leaf for list boundaries.
-                    if (builder.nodeType !in CONTAINER_BLOCKS && builder.listItemIdentity == null) {
-                        appendLeaf(
-                            builder.nodeType,
-                            builder.depth,
-                            builder.inlines,
-                            stack + builder
-                        )
-                    }
-                    if (builder.listItemContext?.isLast == true &&
-                        stack.lastOrNull()?.nodeType in
-                        setOf("bulletList", "orderedList", "taskList")
-                    ) {
-                        stack.removeLastOrNull()
-                    }
-                }
-            }
-        }
-        descendantLeavesByListItem.forEach { (identity, descendantLeaves) ->
-            val leaves =
-                directLeavesByListItem[identity]?.takeIf { it.isNotEmpty() } ?: descendantLeaves
-            val first = leaves.firstOrNull() ?: return@forEach
-            val final = leaves.last()
-            leaves.forEach { index ->
-                val updatedAncestors = rendered[index].listItemAncestors.map { ancestor ->
-                    if (ancestor.identity == identity) {
-                        ancestor.copy(
-                            nestingDepth = listItemDepths[identity] ?: ancestor.nestingDepth,
-                            isFirstRenderableLeaf = index == first,
-                            isFinalRenderableLeaf = index == final
-                        )
-                    } else {
-                        ancestor
-                    }
-                }
-                val nearest = updatedAncestors.lastOrNull()
-                rendered[index] = rendered[index].copy(
-                    listItemBoundary = nearest?.let {
-                        ViewerListItemBoundary(
-                            it.identity,
-                            it.nestingDepth,
-                            it.isFirstRenderableLeaf,
-                            it.isFinalRenderableLeaf
-                        )
-                    },
-                    listItemAncestors = updatedAncestors
-                )
-            }
-        }
-        val containerLeaves = mutableMapOf<Int, MutableList<Int>>()
-        rendered.forEachIndexed { index, block ->
-            block.containers.forEach {
-                containerLeaves.getOrPut(it.identity) { mutableListOf() } +=
-                    index
-            }
-        }
-        rendered.indices.forEach { index ->
-            rendered[index] = rendered[index].copy(
-                containers = rendered[index].containers.map {
-                    val leaves = containerLeaves.getValue(it.identity)
-                    it.copy(firstLeaf = leaves.first(), lastLeaf = leaves.last())
-                }
+                ),
+                stack,
+                isBlockAtom = true
             )
+
+            FfiViewerElement.BlockEnd -> {
+                val builder = stack.removeLastOrNull() ?: return@forEach
+                // Containers are represented by inherited context. Every text block,
+                // including an empty paragraph, remains a leaf for list boundaries.
+                if (builder.nodeType !in CONTAINER_BLOCKS && builder.listItemIdentity == null) {
+                    appendLeaf(
+                        builder.nodeType,
+                        builder.depth,
+                        builder.inlines,
+                        stack + builder
+                    )
+                }
+                if (builder.listItemContext?.isLast == true &&
+                    stack.lastOrNull()?.nodeType in
+                    setOf("bulletList", "orderedList", "taskList")
+                ) {
+                    stack.removeLastOrNull()
+                }
+            }
         }
-        val fallback = if (rendered.isEmpty() &&
-            !compiled.isEmpty()
-        ) {
-            listOf(ViewerBlock("paragraph", 0, false, null, null, emptyList()))
-        } else {
-            rendered
-        }
-        val admittedAttachmentCount = fallback.count { block ->
-            block.nodeType == "image" && ViewerImageAttachment.sourceAndDeclaredSize(block) != null
-        }
-        if (admittedAttachmentCount > ViewerImageAttachment.MAXIMUM_ADMITTED_ATTACHMENTS) {
-            throw ProseViewerError.compiler(
-                "viewer",
-                "ATTACHMENT_LIMIT_EXCEEDED",
-                "The document exceeds the maximum admitted image attachment count."
-            )
-        }
-        return ViewerDocument(
-            semanticKey = semanticKey,
-            blocks = fallback,
-            isEmpty = compiled.isEmpty(),
-            retainedBytes = compiled.retainedBytesDecimal().toLongOrNull() ?: 0,
-            trailingEmptyTextBlockCount = compiled.trailingEmptyTextBlockCount().toInt(),
-            tableAttributes = tableAttributes,
-            tableRecords = tableRecords
-        )
-    } finally {
-        result.destroy()
     }
+    descendantLeavesByListItem.forEach { (identity, descendantLeaves) ->
+        val leaves =
+            directLeavesByListItem[identity]?.takeIf { it.isNotEmpty() } ?: descendantLeaves
+        val first = leaves.firstOrNull() ?: return@forEach
+        val final = leaves.last()
+        leaves.forEach { index ->
+            val updatedAncestors = rendered[index].listItemAncestors.map { ancestor ->
+                if (ancestor.identity == identity) {
+                    ancestor.copy(
+                        nestingDepth = listItemDepths[identity] ?: ancestor.nestingDepth,
+                        isFirstRenderableLeaf = index == first,
+                        isFinalRenderableLeaf = index == final
+                    )
+                } else {
+                    ancestor
+                }
+            }
+            val nearest = updatedAncestors.lastOrNull()
+            rendered[index] = rendered[index].copy(
+                listItemBoundary = nearest?.let {
+                    ViewerListItemBoundary(
+                        it.identity,
+                        it.nestingDepth,
+                        it.isFirstRenderableLeaf,
+                        it.isFinalRenderableLeaf
+                    )
+                },
+                listItemAncestors = updatedAncestors
+            )
+        }
+    }
+    val containerLeaves = mutableMapOf<Int, MutableList<Int>>()
+    rendered.forEachIndexed { index, block ->
+        block.containers.forEach {
+            containerLeaves.getOrPut(it.identity) { mutableListOf() } +=
+                index
+        }
+    }
+    rendered.indices.forEach { index ->
+        rendered[index] = rendered[index].copy(
+            containers = rendered[index].containers.map {
+                val leaves = containerLeaves.getValue(it.identity)
+                it.copy(firstLeaf = leaves.first(), lastLeaf = leaves.last())
+            }
+        )
+    }
+    val fallback = if (rendered.isEmpty() &&
+        !isEmpty
+    ) {
+        listOf(ViewerBlock("paragraph", 0, false, null, null, emptyList()))
+    } else {
+        rendered
+    }
+    val admittedAttachmentCount = fallback.count { block ->
+        block.nodeType == "image" && ViewerImageAttachment.sourceAndDeclaredSize(block) != null
+    }
+    if (admittedAttachmentCount > ViewerImageAttachment.MAXIMUM_ADMITTED_ATTACHMENTS) {
+        throw ProseViewerError.compiler(
+            "viewer",
+            "ATTACHMENT_LIMIT_EXCEEDED",
+            "The document exceeds the maximum admitted image attachment count."
+        )
+    }
+    return fallback
+
 }
+
+internal fun ViewerDocument.cellDocument(cell: uniffi.editor_core.FfiViewerTableCell): ViewerDocument =
+    copy(
+        semanticKey = "$semanticKey:${cell.sourcePos}:${cell.contentKey}",
+        blocks = lowerElements(cell.elements, preferredTextBlockName, tableRecords, cell.elements.isEmpty()),
+        isEmpty = cell.elements.isEmpty(),
+        retainedBytes = 0,
+        trailingEmptyTextBlockCount = 0
+    )
 
 private val CONTAINER_BLOCKS = setOf(
     "doc",

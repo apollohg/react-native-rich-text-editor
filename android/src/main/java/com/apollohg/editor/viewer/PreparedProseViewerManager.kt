@@ -22,7 +22,10 @@ import com.facebook.react.viewmanagers.PreparedProseViewerManagerInterface
 import com.facebook.yoga.YogaMeasureMode
 import com.facebook.yoga.YogaMeasureOutput
 import java.util.WeakHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
+import org.json.JSONArray
+import org.json.JSONObject
 
 internal fun fabricConstraintPixels(value: Float): Int? {
     if (!value.isFinite() || value <= 0f || value > Int.MAX_VALUE.toFloat()) return null
@@ -34,14 +37,24 @@ internal fun fabricPixelsToDp(value: Float, density: Float): Float? {
     return value / density
 }
 
+internal data class ViewerAtomLayoutEvent(
+    val generation: String,
+    val revision: String,
+    val layoutWidth: Double,
+    val atomsJson: String
+)
+
 /** Fabric ViewManager; Yoga measurement creates the artifact and mounting only acquires it. */
 @ReactModule(name = PreparedProseViewerManager.REACT_CLASS)
-internal class PreparedProseViewerManager :
+internal class PreparedProseViewerManager(
+    private val imagePipelineFactory: () -> ViewerImagePipeline = { ViewerImagePipeline() }
+) :
     SimpleViewManager<PreparedProseDrawingView>(),
     PreparedProseViewerManagerInterface<PreparedProseDrawingView> {
     private val delegate: ViewManagerDelegate<PreparedProseDrawingView> =
         PreparedProseViewerManagerDelegate(this)
     private val states = WeakHashMap<PreparedProseDrawingView, ViewState>()
+    internal var atomLayoutEventSinkForTesting: ((ViewerAtomLayoutEvent) -> Unit)? = null
 
     override fun getName(): String = REACT_CLASS
 
@@ -49,11 +62,13 @@ internal class PreparedProseViewerManager :
 
     override fun createViewInstance(context: ThemedReactContext): PreparedProseDrawingView =
         PreparedProseDrawingView(context).also { view ->
-            val state = ViewState()
+            val state = ViewState(imagePipeline = imagePipelineFactory())
             states[view] = state
             view.onCodeHighlightsReady = { state.publishFontRevision(1) }
             view.onUsableMetricsChanged = { installCachedLayout(view) }
-            view.onVisibleRectChanged = { visible -> state.requestVisibleImages(view, visible) }
+            view.onVisibleRectChanged = { dispatchAtomLayout(view, state) }
+            view.onTableGeometryChanged = { dispatchAtomLayout(view, state) }
+            view.onVisibleImagesChanged = { visible, attachments -> state.requestVisibleImages(visible, attachments) }
             view.onFontConfigurationChanged =
                 { configuration -> state.fontEnvironment.onConfigurationChanged(configuration) }
             view.onInteractionActivated = { interaction -> dispatchInteraction(view, interaction) }
@@ -88,6 +103,8 @@ internal class PreparedProseViewerManager :
         view.onCodeHighlightsReady = null
         view.onUsableMetricsChanged = null
         view.onVisibleRectChanged = null
+        view.onTableGeometryChanged = null
+        view.onVisibleImagesChanged = null
         view.onFontConfigurationChanged = null
         view.onInteractionActivated = null
         view.clearImageLeases()
@@ -329,27 +346,49 @@ internal class PreparedProseViewerManager :
         }
         state.installMountedReplacement(view, ticket)
         state.beginImages(view, ticket.artifact, currentRequest)
-        ViewerAtomConfiguration.parse(currentRequest.configuration.themeJson)?.let { atoms ->
-            val density = view.resources.displayMetrics.density
-            dispatchViewerEvent(
-                view,
-                "topAtomLayout",
-                Arguments.createMap().apply {
-                    putString("generation", atoms.generation)
-                    putString("revision", atoms.revision)
-                    putDouble("layoutWidth", ticket.artifact.widthPx.toDouble() / density)
-                    putString(
-                        "atomsJson",
-                        ticket.artifact.atomsJson(
-                            density,
-                            ticket.contentOriginXPx,
-                            ticket.contentOriginYPx
-                        )
-                    )
-                }
-            )
-        }
+        state.installAtomArtifact(ticket.generation, ticket.artifact)
+        dispatchAtomLayout(view, state, ticket)
         ticket.artifact.error?.let { dispatchError(view, currentRequest, it) }
+    }
+
+    private fun dispatchAtomLayout(
+        view: PreparedProseDrawingView,
+        state: ViewState,
+        ticket: PreparedMountTicket? = null
+    ) {
+        val generation = state.generation ?: return
+        val artifact = view.preparedLayout ?: return
+        if (ticket != null && (ticket.generation != generation || ticket.artifact !== artifact)) return
+        if (!state.ownsAtomArtifact(generation, artifact)) return
+        val atoms = ViewerAtomConfiguration.parse(state.requestOrNull()?.configuration?.themeJson) ?: return
+        val density = view.resources.displayMetrics.density
+        if (!density.isFinite() || density <= 0f) return
+        val rawAtoms = view.atomLayoutsJson(density)
+        val projection = "${atoms.generation}\u0000${atoms.revision}\u0000${artifact.widthPx}\u0000$rawAtoms"
+        if (!state.atomProjectionChanged(projection)) return
+        val sequence = nextAtomPresentationSequence() ?: return
+        val envelope = JSONObject().apply {
+            put("format", "viewer-atoms-v2")
+            put("presentationSequence", sequence)
+            put("atoms", JSONArray(rawAtoms))
+        }.toString()
+        val event = ViewerAtomLayoutEvent(
+            atoms.generation,
+            atoms.revision,
+            artifact.widthPx.toDouble() / density,
+            envelope
+        )
+        atomLayoutEventSinkForTesting?.invoke(event) ?: dispatchViewerEvent(
+            view,
+            "topAtomLayout",
+            Arguments.createMap().apply {
+            putString("generation", atoms.generation)
+            putString("revision", atoms.revision)
+            putDouble("layoutWidth", artifact.widthPx.toDouble() / density)
+            putString("atomsJson", envelope)
+            }
+        )
+        state.recordAtomProjection(projection)
     }
 
     private fun prepareCurrentTicket(view: PreparedProseDrawingView, state: ViewState) {
@@ -553,9 +592,13 @@ internal class PreparedProseViewerManager :
         val errorReporter: FabricErrorReporter = FabricErrorReporter(),
         private val replacementAccessibilityTransaction: FabricReplacementAccessibilityTransaction =
             FabricReplacementAccessibilityTransaction(),
-        private val createStateMap: () -> WritableMap = { Arguments.createMap() }
+        private val createStateMap: () -> WritableMap = { Arguments.createMap() },
+        val imagePipeline: ViewerImagePipeline = ViewerImagePipeline()
     ) {
         private var pendingFontRevision = 0L
+        private var atomArtifact: PreparedProseLayout? = null
+        private var atomArtifactGeneration: FabricGenerationToken? = null
+        private var lastAtomProjection: String? = null
         fun requestOrNull(): ProseViewerRequest? = revisions?.let { revisions ->
             ProseViewerRequest(
                 source = if (sourceKind ==
@@ -617,7 +660,6 @@ internal class PreparedProseViewerManager :
 
         private var attachmentRevisions = ViewerAttachmentRevisionState()
         val fontEnvironment = ViewerFontEnvironment()
-        val imagePipeline = ViewerImagePipeline()
         private var visibleRect: android.graphics.Rect = android.graphics.Rect()
 
         fun beginImages(
@@ -633,7 +675,8 @@ internal class PreparedProseViewerManager :
             imagePipeline.begin(
                 request.semanticGenerationIdentity,
                 request.configuration.imagesEnabled,
-                ImageLoadingPolicy.fromJson(request.configuration.imagePolicyJson)
+                ImageLoadingPolicy.fromJson(request.configuration.imagePolicyJson),
+                imageOwnerIdentity(request)
             )
         }
 
@@ -672,8 +715,9 @@ internal class PreparedProseViewerManager :
         internal fun retainedSurfaceBytesForTesting(view: PreparedProseDrawingView): Long {
             val layout = view.preparedLayout?.retainedBytes ?: 0L
             val sidecar = attachmentRevisions.retainedPublicationBytesForTesting.toLong()
+            val tablePresentation = view.tablePresentationRetainedBytesForTesting
             val pixels = view.retainedImagePixelsBytesForTesting
-            return listOf(layout, sidecar, pixels).fold(0L) { total, value ->
+            return listOf(layout, sidecar, tablePresentation, pixels).fold(0L) { total, value ->
                 if (value > 0 && total > Long.MAX_VALUE - value) Long.MAX_VALUE else total + value
             }
         }
@@ -682,6 +726,15 @@ internal class PreparedProseViewerManager :
             visibleRect = android.graphics.Rect(visible)
             val artifact = view.preparedLayout ?: return
             imagePipeline.updateVisibleRect(visibleRect, artifact.imageAttachments)
+        }
+
+        private fun imageOwnerIdentity(request: ProseViewerRequest): String = generation?.let {
+            "${it.surface.surfaceId}\u0000${it.surface.componentTag}\u0000${it.leaseHandle}\u0000${it.generationIdentity}"
+        } ?: request.generationIdentity
+
+        fun requestVisibleImages(visible: android.graphics.Rect, attachments: List<ViewerImageAttachment>) {
+            visibleRect = android.graphics.Rect(visible)
+            imagePipeline.updateVisibleRect(visibleRect, attachments)
         }
 
         fun publishAttachmentRevision() {
@@ -726,6 +779,9 @@ internal class PreparedProseViewerManager :
         fun releaseGeneration(view: PreparedProseDrawingView) {
             generation?.let(PreparedProseLayoutRegistry.shared::releaseFabricGeneration)
             generation = null
+            atomArtifact = null
+            atomArtifactGeneration = null
+            lastAtomProjection = null
             releaseSidecarOwnership()
             imagePipeline.cancel()
             replacementAccessibilityTransaction.finishWithoutMountedReplacement(view)
@@ -735,6 +791,24 @@ internal class PreparedProseViewerManager :
 
         fun installMountedReplacement(view: PreparedProseDrawingView, ticket: PreparedMountTicket) {
             replacementAccessibilityTransaction.installMountedReplacement(view, ticket)
+        }
+
+        fun installAtomArtifact(generation: FabricGenerationToken, artifact: PreparedProseLayout) {
+            atomArtifactGeneration = generation
+            atomArtifact = artifact
+            lastAtomProjection = null
+        }
+
+        fun ownsAtomArtifact(generation: FabricGenerationToken, artifact: PreparedProseLayout): Boolean =
+            this.generation == generation &&
+                PreparedProseLayoutRegistry.shared.isFabricLeaseActive(generation) &&
+                revisions?.leaseHandle == generation.leaseHandle &&
+                atomArtifactGeneration == generation && atomArtifact === artifact
+
+        fun atomProjectionChanged(projection: String): Boolean = lastAtomProjection != projection
+
+        fun recordAtomProjection(projection: String) {
+            lastAtomProjection = projection
         }
 
         fun finishWithoutMountedReplacement(view: PreparedProseDrawingView) {
@@ -780,6 +854,9 @@ internal class PreparedProseViewerManager :
             }
             generation = null
             sidecarGeneration = null
+            atomArtifact = null
+            atomArtifactGeneration = null
+            lastAtomProjection = null
             imagePipeline.cancel()
             fontEnvironment.deactivate()
             attachmentRevisions.reset()
@@ -808,6 +885,17 @@ internal class PreparedProseViewerManager :
         private const val EVENT_ERROR = "topError"
         private const val EVENT_PRESS_LINK = "topPressLink"
         private const val EVENT_PRESS_MENTION = "topPressMention"
+        private val atomPresentationSequence = AtomicLong(0)
+
+        private fun nextAtomPresentationSequence(): String? {
+            while (true) {
+                val previous = atomPresentationSequence.get()
+                if (previous == Long.MAX_VALUE) return null
+                if (atomPresentationSequence.compareAndSet(previous, previous + 1)) {
+                    return (previous + 1).toString()
+                }
+            }
+        }
     }
 }
 

@@ -12,3 +12,8 @@ data class TableStyle(
     fun isValid() = minColumnWidth.isFinite() && minColumnWidth > 0f &&
         cellPadding.isFinite() && cellPadding >= 0f && borderWidth.isFinite() && borderWidth >= 0f
 }
+
+internal fun TableStyle.physical(scale: Float): TableStyle {
+    val unit = scale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    return copy(minColumnWidth = minColumnWidth * unit, cellPadding = cellPadding * unit, borderWidth = borderWidth * unit)
+}

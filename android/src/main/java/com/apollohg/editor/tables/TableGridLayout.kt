@@ -27,6 +27,11 @@ data class TableGridRecord(
     }
 }
 
+internal fun TableGridRecord.physical(scale: Float): TableGridRecord {
+    val unit = scale.takeIf { it.isFinite() && it > 0f } ?: 1f
+    return copy(columnWidths = columnWidths.map { it?.times(unit) })
+}
+
 data class TableCellRect(val left: Float, val top: Float, val width: Float, val height: Float)
 data class TableLayoutResult(
     val columnWidths: List<Float>, val rowOffsets: List<Float>, val rectangles: Map<Int, TableCellRect>,

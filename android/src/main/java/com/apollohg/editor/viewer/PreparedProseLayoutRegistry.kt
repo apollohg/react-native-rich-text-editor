@@ -196,13 +196,13 @@ internal class PreparedProseLayoutRegistry(
             }
             val theme = resolveTheme(request, density, fontScale)
             val key = layoutKey(document, request, widthPx, densityBits)
-            layoutCache.value(key, ownedGeneration, shouldCreateFabricLease = {
+            layoutCache.valueWithCellShapeContext(key, ownedGeneration, shouldCreateFabricLease = {
                 ownedGeneration == null ||
                     (
                         isLeaseActive(ownedGeneration, leaseActive) &&
                             fabricLeaseEligibility?.invoke() != false
                         )
-            }) {
+            }) { cellContext ->
                 val layoutStarted = PreparedProseInstrumentation.now()
                 layoutPreparationCount += 1
                 try {
@@ -214,7 +214,8 @@ internal class PreparedProseLayoutRegistry(
                             widthPx,
                             density,
                             request.configuration.collapsesWhenEmpty,
-                            request.semanticGenerationIdentity
+                            request.semanticGenerationIdentity,
+                            cellContext
                         )
                     }
                     val artifact = if (imageMeasurementState != null) {
@@ -804,6 +805,9 @@ internal class PreparedProseLayoutRegistry(
         synchronized(fabricLeaseLock) {
             activeFabricLeases[FabricLeaseOwner(generation.surface, generation.leaseHandle)]
         }
+
+    internal fun isFabricLeaseActive(generation: FabricGenerationToken): Boolean =
+        isLeaseActive(generation, activeLeaseFor(generation))
 
     private fun isLeaseActiveLocked(generation: FabricGenerationToken): Boolean = isLeaseActive(
         generation,

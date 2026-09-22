@@ -9,10 +9,12 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
 import com.apollohg.editor.ProseViewerConfiguration
+import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.ProseViewerSource
 import uniffi.editor_core.FfiViewerElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -39,6 +41,11 @@ class PreparedProseRenderingTest {
             nested.cells.first().elements.filterIsInstance<FfiViewerElement.TextRun>().map { it.text }
         )
         assertEquals(1, document.copy().tableRecords[nestedId]?.cells?.size)
+
+        val cellDocument = document.cellDocument(requireNotNull(outer).cells.first())
+        assertEquals(listOf("table"), cellDocument.blocks.map { it.nodeType })
+        assertEquals(nested.tablePos, cellDocument.blocks.single().table?.tablePos)
+        assertEquals(1, cellDocument.tableRecords[nestedId]?.cells?.size)
     }
 
     @Test
@@ -107,7 +114,7 @@ class PreparedProseRenderingTest {
         val visualStart = atomLayout.getPrimaryHorizontal(atomOffset)
         val visualEnd = atomLayout.getPrimaryHorizontal(atomOffset + 1)
 
-        assertEquals("4294967295.", outerMarker.label)
+        assertEquals("4293967295.", outerMarker.label)
         assertEquals("•", nestedMarker.label)
         assertTrue("nested anchor must retain the outer marker gutter", nestedAnchor > outerAnchor)
         assertTrue(
@@ -933,11 +940,17 @@ class PreparedProseRenderingTest {
     }
 
     @Test
-    fun `compiler u32 maximum ordered index and semantic atom position never narrow or wrap`() {
+    fun `compiler admitted ordered index and independent full u32 atom position never narrow or wrap`() {
         val document = compileSource(
-            """{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4294967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"max"}]}]}]}]}""",
+            """{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4293967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"max"}]}]}]}]}""",
             Fixture.structural[2].configJson
         )
+        val overLimit = assertThrows(ProseViewerError::class.java) {
+            compileSource(
+                """{"type":"doc","content":[{"type":"orderedList","attrs":{"start":4293967296},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"over"}]}]}]}]}""",
+                Fixture.structural[2].configJson
+            )
+        }
         val compilerIndex = document.blocks.single().listContext!!.index
         val semanticAtom = ViewerInline.Atom("opaque", 0xFFFF_FFFFL, "{}", "max")
         val atomDocument =
@@ -952,8 +965,9 @@ class PreparedProseRenderingTest {
                 PreparedProseFragmentKind.MARKER
         }
 
-        assertEquals(0xFFFF_FFFFL, compilerIndex)
-        assertEquals("4294967295.", marker.label)
+        assertEquals(4_293_967_295L, compilerIndex)
+        assertEquals("4293967295.", marker.label)
+        assertEquals("DOCUMENT_INVALID", overLimit.code.value)
         assertEquals(
             0xFFFF_FFFFL,
             (atomDocument.blocks.single().inlines.single() as ViewerInline.Atom).docPos
@@ -1412,9 +1426,9 @@ private data class Fixture(
                 }
             }
         val finalAndroidEdge = Fixture(
-            name = "fixed density max u32 nested quote code rule and RTL atom",
+            name = "fixed density admitted ordered index nested quote code rule and RTL atom",
             source = ProseViewerSource.Json(
-                """{"type":"doc","content":[{"type":"blockquote","content":[{"type":"orderedList","attrs":{"start":4294967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"אב"},{"type":"opaque","attrs":{"label":"atom"}},{"type":"text","text":" tail"}]},{"type":"codeBlock","content":[{"type":"text","text":"code"}]},{"type":"horizontal_rule"},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]}]}]}]}"""
+                """{"type":"doc","content":[{"type":"blockquote","content":[{"type":"orderedList","attrs":{"start":4293967295},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"אב"},{"type":"opaque","attrs":{"label":"atom"}},{"type":"text","text":" tail"}]},{"type":"codeBlock","content":[{"type":"text","text":"code"}]},{"type":"horizontal_rule"},{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]}]}]}]}"""
             ),
             configJson = CUSTOM_CONFIG,
             expectedKinds = setOf(
@@ -1426,11 +1440,11 @@ private data class Fixture(
                 PreparedProseFragmentKind.ATOM
             ),
             documentExpectation = "four blocks, a nested-list final block, " +
-                "and a max-u32 ordered-list index",
+                "and an admitted ordered-list index",
             assertDocument = { document ->
                 document.blocks.size == 4 &&
                     document.blocks.last().listItemAncestors.size == 2 &&
-                    document.blocks.first().listContext?.index == 0xFFFF_FFFFL
+                    document.blocks.first().listContext?.index == 4_293_967_295L
             },
             expectedGeometry = ExpectedGeometry(
                 heightPx = 158,

@@ -130,6 +130,8 @@ internal data class PreparedProseTheme(
     val sourceTheme: EditorTheme? = null,
     val codeHighlighting: com.apollohg.editor.NativeCodeHighlightingConfig? = null
 ) {
+    val tableStyle: com.apollohg.editor.tables.TableStyle
+        get() = sourceTheme?.table ?: com.apollohg.editor.tables.TableStyle()
     companion object {
         fun resolve(
             themeJson: String?,
