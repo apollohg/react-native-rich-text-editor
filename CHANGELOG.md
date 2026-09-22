@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.0.7] - 2026-09-22
+
+### Fixed
+
+- Fixed the iOS caret appearing an extra mention-width after a styled mention inserted at the start of an empty editor.
+
 ## [2.0.6] - 2026-09-19
 
 ### Fixed
@@ -673,6 +679,7 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.0.7]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.6...2.0.7
 [2.0.6]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.5...2.0.6
 [2.0.5]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.4...2.0.5
 [2.0.4]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.3...2.0.4
