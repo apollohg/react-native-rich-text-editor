@@ -1,6 +1,14 @@
 import Foundation
 
 extension EditorV2Adapter {
+    struct EditorTablePresentationSnapshot {
+        let documentRevision: UInt64
+        let positionEpoch: UInt64?
+        let tableAttributes: [String: [String: Any]]
+        let tableRecords: [String: FfiViewerTable]
+        let tableInputMappings: TableInputMappings?
+    }
+
     /// One view-facing update plus the document's scalar extent (the lenient
     /// `UInt32.max` doc→scalar mapping, used to clamp transient-IME
     /// positions the way the legacy engine did).
@@ -67,6 +75,174 @@ extension EditorV2Adapter {
 
     struct TableInputMappings: Equatable {
         let tables: [String: TableInputTable]
+    }
+
+    private static func jsonString(_ value: Any) -> String? {
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func lowerRenderMark(_ value: Any) -> FfiViewerMark? {
+        if let markType = value as? String {
+            return FfiViewerMark(markType: markType, attrsJson: "{}")
+        }
+        guard var object = value as? [String: Any], let markType = object.removeValue(forKey: "type") as? String,
+              let attrsJSON = jsonString(object)
+        else {
+            return nil
+        }
+        return FfiViewerMark(markType: markType, attrsJson: attrsJSON)
+    }
+
+    private static func lowerRenderElements(_ values: [Any]) -> [FfiViewerElement]? {
+        let elements = values.compactMap { value -> FfiViewerElement? in
+            guard let object = value as? [String: Any], let type = object["type"] as? String else { return nil }
+            switch type {
+            case "table":
+                guard let tableID = object["tableId"] as? String else { return nil }
+                return .table(tableId: tableID)
+            case "textRun":
+                guard let text = object["text"] as? String, let values = object["marks"] as? [Any] else { return nil }
+                let marks = values.compactMap(lowerRenderMark)
+                guard marks.count == values.count else { return nil }
+                return .textRun(text: text, marks: marks)
+            case "voidInline", "opaqueInlineAtom", "voidBlock", "opaqueBlockAtom":
+                guard let nodeType = object["nodeType"] as? String, let docPos = uint32Field(object, "docPos") else { return nil }
+                let attrs = object["attrs"] as? [String: Any] ?? [:]
+                guard let attrsJSON = jsonString(attrs) else { return nil }
+                let label: String
+                if type == "voidInline" || type == "voidBlock" {
+                    let base = (attrs["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? nodeType
+                    if nodeType == "mention", let trigger = attrs["mentionSuggestionChar"] as? String,
+                       !trigger.isEmpty, !base.hasPrefix(trigger) {
+                        label = trigger + base
+                    } else {
+                        label = base
+                    }
+                } else {
+                    guard let explicit = object["label"] as? String else { return nil }
+                    label = explicit
+                }
+                return (type == "voidInline" || type == "opaqueInlineAtom")
+                    ? .inlineAtom(nodeType: nodeType, docPos: docPos, attrsJson: attrsJSON, label: label)
+                    : .blockAtom(nodeType: nodeType, docPos: docPos, attrsJson: attrsJSON, label: label)
+            case "blockStart":
+                guard let nodeType = object["nodeType"] as? String, let depth = uint32Field(object, "depth"),
+                      let typedDepth = UInt16(exactly: depth)
+                else { return nil }
+                let language = object["language"] as? String
+                let listContextJSON: String?
+                if var context = object["listContext"] as? [String: Any] {
+                    context["kind"] = context["kind"] ?? NSNull()
+                    context["checked"] = context["checked"] ?? NSNull()
+                    listContextJSON = jsonString(context)
+                } else {
+                    listContextJSON = nil
+                }
+                if object["listContext"] != nil && listContextJSON == nil { return nil }
+                return .blockStart(nodeType: nodeType, language: language, depth: typedDepth, listContextJson: listContextJSON)
+            case "blockEnd":
+                return .blockEnd
+            default:
+                return nil
+            }
+        }
+        return elements.count == values.count ? elements : nil
+    }
+
+    private static func lowerTableRecord(_ record: [String: Any]) -> FfiViewerTable? {
+        guard let tablePos = uint32Field(record, "tablePos"), let sourceEnd = uint32Field(record, "sourceEnd"),
+              let rows = uint32Field(record, "rows"), let columns = uint32Field(record, "columns"),
+              let columnWidths = record["columnWidths"] as? [Any], let irregular = exactBool(record["irregular"]),
+              let readOnlyDescendants = exactBool(record["readOnlyDescendants"]), let attrsKey = record["attrsKey"] as? String,
+              let rawRows = record["sourceRows"] as? [[String: Any]], let rawCells = record["cells"] as? [[String: Any]],
+              let rawSyntheticRegions = record["syntheticRegions"] as? [[String: Any]]
+        else { return nil }
+        let widths = columnWidths.map { value -> UInt32? in
+            value is NSNull ? nil : v2ExactUInt32(value as? NSNumber)
+        }
+        guard widths.count == columnWidths.count else { return nil }
+        let sourceRows = rawRows.compactMap { row -> TableRenderRow? in
+            guard let sourcePos = uint32Field(row, "sourcePos"), let sourceEnd = uint32Field(row, "sourceEnd"),
+                  let attrsKey = row["attrsKey"] as? String else { return nil }
+            return TableRenderRow(sourcePos: sourcePos, sourceEnd: sourceEnd, attrsKey: attrsKey)
+        }
+        guard sourceRows.count == rawRows.count else { return nil }
+        let cells = rawCells.compactMap { cell -> FfiViewerTableCell? in
+            guard let sourcePos = uint32Field(cell, "sourcePos"), let sourceEnd = uint32Field(cell, "sourceEnd"),
+                  let row = uint32Field(cell, "row"), let column = uint32Field(cell, "column"),
+                  let rowspan = uint32Field(cell, "rowspan"), let colspan = uint32Field(cell, "colspan"),
+                  let header = exactBool(cell["header"]), let attrsKey = cell["attrsKey"] as? String,
+                  let contentKey = cell["contentKey"] as? String, let rawElements = cell["elements"] as? [Any],
+                  let elements = lowerRenderElements(rawElements)
+            else { return nil }
+            return FfiViewerTableCell(sourcePos: sourcePos, sourceEnd: sourceEnd, row: row, column: column,
+                                      rowspan: rowspan, colspan: colspan, header: header, attrsKey: attrsKey,
+                                      contentKey: contentKey, elements: elements)
+        }
+        guard cells.count == rawCells.count else { return nil }
+        let syntheticRegions = rawSyntheticRegions.compactMap { region -> TableRenderSyntheticRegion? in
+            guard let row = uint32Field(region, "row"), let column = uint32Field(region, "column"),
+                  let rowspan = uint32Field(region, "rowspan"), let colspan = uint32Field(region, "colspan"),
+                  let header = exactBool(region["header"]), let attrsKey = region["attrsKey"] as? String
+            else { return nil }
+            return TableRenderSyntheticRegion(row: row, column: column, rowspan: rowspan, colspan: colspan,
+                                              header: header, attrsKey: attrsKey)
+        }
+        guard syntheticRegions.count == rawSyntheticRegions.count else { return nil }
+        let failure: TableRenderFailure?
+        switch record["failure"] as? String {
+        case nil: failure = nil
+        case "gridLimit": failure = .gridLimit
+        case "workLimit": failure = .workLimit
+        case "allocation": failure = .allocation
+        case "invalidStructure": failure = .invalidStructure
+        case "invalidAttributes": failure = .invalidAttributes
+        default: return nil
+        }
+        let diagnostic: TableCompatibilityDiagnostic?
+        switch record["compatibilityDiagnostic"] as? String {
+        case nil: diagnostic = nil
+        case "virtual-grid-limit": diagnostic = .virtualGridLimit
+        case "empty-reference-surface": diagnostic = .emptyReferenceSurface
+        case "unsupported-row-role": diagnostic = .unsupportedRowRole
+        case "unsupported-cell-role": diagnostic = .unsupportedCellRole
+        case "ambiguous-source-map": diagnostic = .ambiguousSourceMap
+        case "unsupported-gap-default": diagnostic = .unsupportedGapDefault
+        case "overlapping-reference-cells": diagnostic = .overlappingReferenceCells
+        case "unmapped-reference-cell": diagnostic = .unmappedReferenceCell
+        case "nonrectangular-reference-cell": diagnostic = .nonrectangularReferenceCell
+        case "zero-span-after-reference-pass": diagnostic = .zeroSpanAfterReferencePass
+        default: return nil
+        }
+        return FfiViewerTable(tablePos: tablePos, sourceEnd: sourceEnd, rows: rows, columns: columns,
+                              columnWidths: widths, direction: record["direction"] as? String, irregular: irregular,
+                              readOnlyDescendants: readOnlyDescendants, attrsKey: attrsKey, sourceRows: sourceRows,
+                              cells: cells, syntheticRegions: syntheticRegions, failure: failure,
+                              compatibilityDiagnostic: diagnostic)
+    }
+
+    static func lowerTablePresentation(
+        from snapshot: AtomicRenderSnapshot,
+        positionEpoch: UInt64?
+    ) -> EditorTablePresentationSnapshot? {
+        guard !snapshot.tableRecords.isEmpty else { return nil }
+        var tableRecords: [String: FfiViewerTable] = [:]
+        for (tableID, record) in snapshot.tableRecords {
+            guard let table = lowerTableRecord(record) else { return nil }
+            tableRecords[tableID] = table
+        }
+        return EditorTablePresentationSnapshot(
+            documentRevision: snapshot.documentRevision,
+            positionEpoch: positionEpoch,
+            tableAttributes: snapshot.tableAttributes,
+            tableRecords: tableRecords,
+            tableInputMappings: snapshot.tableInputMappings
+        )
     }
 
     static func exactBool(_ value: Any?) -> Bool? {

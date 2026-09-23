@@ -2,6 +2,127 @@ import UIKit
 import XCTest
 
 extension EditorV2AdapterTests {
+    func testTablePresentationSnapshotLowersAdoptedRenderAndClearsAtomically() throws {
+        let adapter = makeAdapter()
+        let owner = UUID()
+        adapter.claimNativeBindingIfUnowned(token: owner)
+        let valid = mutatedObjectJSON(try tableInputMappingSnapshot()) { $0["positionEpoch"] = "17" }
+
+        XCTAssertNotNil(adapter.adoptExternalRender(valid))
+        let presentation = try XCTUnwrap(adapter.cachedTablePresentation)
+        XCTAssertEqual(presentation.documentRevision, 1)
+        XCTAssertEqual(presentation.positionEpoch, 17)
+        XCTAssertEqual(presentation.tableInputMappings?.tables["t0"]?.cells.count, 1)
+        XCTAssertEqual(presentation.tableAttributes.count, 1)
+        let cell = try XCTUnwrap(presentation.tableRecords["t0"]?.cells.first)
+        guard case let .textRun(text, _) = cell.elements[1] else {
+            return XCTFail("expected typed table cell text")
+        }
+        XCTAssertEqual(text, "base")
+
+        let replacement = mutatedObjectJSON(valid) { object in
+            object.removeValue(forKey: "tableAttributes")
+            object.removeValue(forKey: "tableRecords")
+            object.removeValue(forKey: "tableInputMappings")
+            object["renderBlocks"] = [[
+                ["type": "blockStart", "nodeType": "paragraph", "depth": 0],
+                ["type": "textRun", "text": "replacement", "marks": []],
+                ["type": "blockEnd"]
+            ]]
+            object["documentVersion"] = "2"
+            object["stateRevision"] = "2"
+            object["positionEpoch"] = "18"
+        }
+        XCTAssertNotNil(adapter.adoptExternalRender(replacement))
+        XCTAssertNil(adapter.cachedTablePresentation)
+        XCTAssertTrue(adapter.cachedTableAttributes.isEmpty)
+        XCTAssertTrue(adapter.cachedTableRecords.isEmpty)
+        XCTAssertNil(adapter.cachedTableInputMappings)
+
+        XCTAssertNotNil(adapter.adoptExternalRender(valid))
+        let baseline = adapter.cacheStateForTesting
+        let baselinePresentation = try XCTUnwrap(adapter.cachedTablePresentation)
+        let stale = mutatedObjectJSON(valid) {
+            $0.removeValue(forKey: "positionEpoch")
+            $0["documentVersion"] = "999"
+        }
+        XCTAssertNil(adapter.adoptExternalRender(stale))
+        XCTAssertEqual(adapter.cacheStateForTesting, baseline)
+        XCTAssertEqual(adapter.cachedTablePresentation?.documentRevision, baselinePresentation.documentRevision)
+        XCTAssertEqual(adapter.cachedTablePresentation?.positionEpoch, baselinePresentation.positionEpoch)
+
+        let malformed = mutatedObjectJSON(valid) {
+            var records = $0["tableRecords"] as! [String: Any]
+            var table = records["t0"] as! [String: Any]
+            var cells = table["cells"] as! [[String: Any]]
+            cells[0]["elements"] = [["type": "textRun", "text": 1, "marks": []]]
+            table["cells"] = cells
+            records["t0"] = table
+            $0["tableRecords"] = records
+        }
+        XCTAssertNil(adapter.adoptExternalRender(malformed))
+        XCTAssertEqual(adapter.cacheStateForTesting, baseline)
+        XCTAssertEqual(adapter.cachedTablePresentation?.tableRecords["t0"]?.cells.first?.elements, baselinePresentation.tableRecords["t0"]?.cells.first?.elements)
+
+        let matchingAdapter = makeAdapter()
+        let matchingSnapshot = try tableInputMappingSnapshot(for: matchingAdapter)
+        matchingAdapter.claimNativeBindingIfUnowned(token: UUID())
+        let revision = try XCTUnwrap(EditorV2Adapter.parseAtomicRenderSnapshot(matchingSnapshot)).documentRevision
+        XCTAssertTrue(matchingAdapter.pinCurrentPositionEpoch(revision))
+        matchingAdapter.positionEpoch = try XCTUnwrap(matchingAdapter.positionEpoch) + 1_000
+        let baselineEpoch = matchingAdapter.positionEpoch
+        let lowerInvalid = mutatedObjectJSON(matchingSnapshot) { object in
+            object.removeValue(forKey: "positionEpoch")
+            var records = object["tableRecords"] as! [String: Any]
+            var table = records["t0"] as! [String: Any]
+            var cells = table["cells"] as! [[String: Any]]
+            var elements = cells[0]["elements"] as! [[String: Any]]
+            elements[0]["depth"] = 65_536
+            cells[0]["elements"] = elements
+            table["cells"] = cells
+            records["t0"] = table
+            object["tableRecords"] = records
+        }
+        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(lowerInvalid))
+        XCTAssertNil(matchingAdapter.adoptExternalRender(lowerInvalid))
+        XCTAssertEqual(matchingAdapter.positionEpoch, baselineEpoch)
+        XCTAssertNil(matchingAdapter.cachedTablePresentation)
+        XCTAssertFalse(matchingAdapter.validateExternalRender(lowerInvalid))
+
+        let withoutEpoch = mutatedObjectJSON(matchingSnapshot) { $0.removeValue(forKey: "positionEpoch") }
+        XCTAssertNotNil(matchingAdapter.adoptExternalRender(withoutEpoch))
+        XCTAssertEqual(matchingAdapter.cachedTablePresentation?.positionEpoch, matchingAdapter.positionEpoch)
+
+        let withMention = mutatedObjectJSON(valid) { object in
+            var records = object["tableRecords"] as! [String: Any]
+            var table = records["t0"] as! [String: Any]
+            var cells = table["cells"] as! [[String: Any]]
+            cells[0]["elements"] = [
+                ["type": "blockStart", "nodeType": "paragraph", "depth": 0],
+                ["type": "textRun", "text": "linked", "marks": [["type": "link", "href": "https://example.com"]]],
+                ["type": "voidInline", "nodeType": "mention", "docPos": 4,
+                 "attrs": ["label": "Ada", "mentionSuggestionChar": "@"]],
+                ["type": "blockEnd"]
+            ]
+            table["cells"] = cells
+            records["t0"] = table
+            object["tableRecords"] = records
+        }
+        XCTAssertNotNil(adapter.adoptExternalRender(withMention))
+        let mentionElements = try XCTUnwrap(adapter.cachedTablePresentation?.tableRecords["t0"]?.cells.first?.elements)
+        guard case let .textRun(_, marks) = mentionElements[1],
+              case let .inlineAtom(_, _, _, label) = mentionElements[2] else {
+            return XCTFail("expected typed mention atom")
+        }
+        XCTAssertEqual(marks.first?.markType, "link")
+        let markAttrs = try XCTUnwrap(marks.first?.attrsJson.data(using: .utf8))
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: markAttrs) as? [String: String])?["href"], "https://example.com")
+        XCTAssertEqual(label, "@Ada")
+
+        adapter.releaseNativeBindingOwner(token: owner)
+        XCTAssertNil(adapter.cachedTablePresentation)
+    }
+
     func testTableInputMappingIsRetainedInAtomicAndViewSnapshots() throws {
         let adapter = makeAdapter()
         let snapshot = try tableInputMappingSnapshot()
@@ -148,6 +269,12 @@ extension EditorV2AdapterTests {
             object["scalarLength"] = 6
         }
         XCTAssertNotNil(adapter.adoptExternalRender(valid))
+        XCTAssertEqual(adapter.cachedTablePresentation?.tableRecords["t0"]?.cells.last?.elements.count, 0)
+        let elements = try XCTUnwrap(adapter.cachedTablePresentation?.tableRecords["t0"]?.cells.first?.elements)
+        guard case let .blockStart(_, _, _, listContextJSON) = elements[1] else {
+            return XCTFail("expected typed list context")
+        }
+        XCTAssertEqual(listContextJSON, #"{"checked":null,"index":1,"isFirst":true,"isLast":true,"kind":null,"ordered":false,"start":1,"total":1}"#)
     }
 
     func testTableInputMappingRequiresNestedTableExclusionWithMatchingExtent() throws {
@@ -201,8 +328,8 @@ extension EditorV2AdapterTests {
         XCTAssertNil(adapter.adoptExternalRender(missingExclusion))
     }
 
-    private func tableInputMappingSnapshot() throws -> String {
-        let adapter = makeAdapter()
+    private func tableInputMappingSnapshot(for providedAdapter: EditorV2Adapter? = nil) throws -> String {
+        let adapter = providedAdapter ?? makeAdapter()
         _ = adapter.setContentHtml("<p>base</p>")
         let raw = try XCTUnwrap(editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value)
         let attrsKey = String(repeating: "a", count: 64)

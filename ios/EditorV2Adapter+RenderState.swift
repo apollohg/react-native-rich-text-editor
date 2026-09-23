@@ -57,7 +57,11 @@ extension EditorV2Adapter {
     }
 
     @discardableResult
-    private func adopt(_ snapshot: AtomicRenderSnapshot, strippingViewSelection: Bool) -> EditorV2DerivedUpdate? {
+    private func adopt(
+        _ snapshot: AtomicRenderSnapshot,
+        strippingViewSelection: Bool,
+        pinMissingPositionEpoch: Bool = false
+    ) -> EditorV2DerivedUpdate? {
         var candidate = snapshot.renderObject["renderBlocks"] as? [[[String: Any]]]
         if candidate == nil, let patch = snapshot.renderObject["renderPatch"] as? [String: Any] {
             if let retained = cachedSemanticRenderBlocks,
@@ -80,6 +84,24 @@ extension EditorV2Adapter {
         ) else {
             return nil
         }
+        let loweredTablePresentation = Self.lowerTablePresentation(
+            from: snapshot,
+            positionEpoch: snapshot.positionEpoch
+        )
+        guard snapshot.tableRecords.isEmpty || loweredTablePresentation != nil else { return nil }
+        if pinMissingPositionEpoch && snapshot.positionEpoch == nil {
+            guard pinCurrentPositionEpoch(snapshot.documentRevision) else { return nil }
+        }
+        let resolvedPositionEpoch = snapshot.positionEpoch ?? (pinMissingPositionEpoch ? positionEpoch : nil)
+        let tablePresentation = loweredTablePresentation.map {
+            EditorTablePresentationSnapshot(
+                documentRevision: $0.documentRevision,
+                positionEpoch: resolvedPositionEpoch,
+                tableAttributes: $0.tableAttributes,
+                tableRecords: $0.tableRecords,
+                tableInputMappings: $0.tableInputMappings
+            )
+        }
         baseDocumentRevision = snapshot.documentRevision
         stateRevision = snapshot.stateRevision
         cachedScalarLength = snapshot.scalarLength
@@ -92,7 +114,8 @@ extension EditorV2Adapter {
         cachedTableAttributes = snapshot.tableAttributes
         cachedTableRecords = snapshot.tableRecords
         cachedTableInputMappings = snapshot.tableInputMappings
-        if let epoch = snapshot.positionEpoch {
+        cachedTablePresentation = tablePresentation
+        if let epoch = resolvedPositionEpoch {
             positionEpoch = epoch
         }
         // This is the engine's selection from the locked snapshot. Keep it
@@ -191,14 +214,16 @@ extension EditorV2Adapter {
             rejectExternalRenderEnvelope("external editor update adapter is destroyed")
             return nil
         }
-        guard let snapshot = Self.parseAtomicRenderSnapshot(renderJSON),
-              let adopted = adopt(snapshot, strippingViewSelection: false)
-        else {
+        guard let snapshot = Self.parseAtomicRenderSnapshot(renderJSON) else {
             rejectAtomicRenderSnapshot()
             return nil
         }
-        if snapshot.positionEpoch == nil, !pinCurrentPositionEpoch(snapshot.documentRevision) {
-            cachedTableInputMappings = nil
+        guard let adopted = adopt(
+            snapshot,
+            strippingViewSelection: false,
+            pinMissingPositionEpoch: true
+        ) else {
+            rejectAtomicRenderSnapshot()
             return nil
         }
         return adopted.updateJSON
@@ -215,7 +240,12 @@ extension EditorV2Adapter {
             rejectExternalRenderEnvelope("external editor update adapter is destroyed")
             return false
         }
-        guard Self.parseAtomicRenderSnapshot(renderJSON) != nil else {
+        guard let snapshot = Self.parseAtomicRenderSnapshot(renderJSON),
+              snapshot.tableRecords.isEmpty || Self.lowerTablePresentation(
+                from: snapshot,
+                positionEpoch: snapshot.positionEpoch
+              ) != nil
+        else {
             rejectAtomicRenderSnapshot()
             return false
         }
@@ -290,6 +320,7 @@ extension EditorV2Adapter {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
         cachedTableInputMappings = nil
+        cachedTablePresentation = nil
         if let ownerId = nativeOwnerId {
             positionEpoch = nil
             _ = editorV2ReleaseNativeBinding(editorId: editorId, ownerId: String(ownerId))

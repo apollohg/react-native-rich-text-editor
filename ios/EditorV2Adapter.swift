@@ -80,6 +80,7 @@ final class EditorV2Adapter {
     var cachedTableAttributes: [String: [String: Any]] = [:]
     var cachedTableRecords: [String: [String: Any]] = [:]
     var cachedTableInputMappings: TableInputMappings?
+    var cachedTablePresentation: EditorTablePresentationSnapshot?
     /// Diagnostics: structured notes for adapter-path failures
     /// (mismatch refreshes, derivation failures) that never surface as
     /// autonomous error events.

@@ -142,6 +142,7 @@ extension EditorV2Adapter {
         cachedTableAttributes = [:]
         cachedTableRecords = [:]
         cachedTableInputMappings = nil
+        cachedTablePresentation = nil
         guard let ownerId = nativeOwnerId else { return }
         nativeOwnerId = nil
         nativeOwnerToken = nil
