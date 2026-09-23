@@ -24,9 +24,14 @@ final class PositionBridge {
 
     private final class TextViewConversionTable: NSObject {
         let adjustedUtf16ToScalar: [UInt32]
+        let rootTableExtents: [RootTableExtent]
 
-        init(adjustedUtf16ToScalar: [UInt32]) {
+        init(
+            adjustedUtf16ToScalar: [UInt32],
+            rootTableExtents: [RootTableExtent] = []
+        ) {
             self.adjustedUtf16ToScalar = adjustedUtf16ToScalar
+            self.rootTableExtents = rootTableExtents
         }
     }
 
@@ -38,6 +43,13 @@ final class PositionBridge {
     private struct PositionAdjustments {
         let placeholders: [Int]
         let listMarkers: [VirtualListMarker]
+        let rootTableExtents: [RootTableExtent]
+    }
+
+    private struct RootTableExtent {
+        let markerUtf16: Int
+        let scalarStart: UInt32
+        let scalarEnd: UInt32
     }
 
     private static var textViewConversionTableKey: UInt8 = 0
@@ -102,6 +114,41 @@ final class PositionBridge {
         let conversionTable = textViewConversionTable(for: textView)
         let utf16ToScalar = conversionTable.adjustedUtf16ToScalar
         return scalarToUtf16Offset(scalar, inAdjustedUtf16ToScalarTable: utf16ToScalar)
+    }
+
+    static func isScalarPositionRepresentable(_ scalar: UInt32, in textView: UITextView) -> Bool {
+        !textViewConversionTable(for: textView).rootTableExtents.contains {
+            $0.scalarStart < scalar && scalar < $0.scalarEnd
+        }
+    }
+
+    static func hasRootTableScalarExtents(in textView: UITextView) -> Bool {
+        !textViewConversionTable(for: textView).rootTableExtents.isEmpty
+    }
+
+    static func isScalarRangeRepresentable(
+        from: UInt32,
+        to: UInt32,
+        in textView: UITextView
+    ) -> Bool {
+        guard from <= to,
+              isScalarPositionRepresentable(from, in: textView),
+              isScalarPositionRepresentable(to, in: textView)
+        else { return false }
+        return !textViewConversionTable(for: textView).rootTableExtents.contains {
+            from < $0.scalarEnd && $0.scalarStart < to
+        }
+    }
+
+    static func isRootTextInputRangeSafe(
+        from: UInt32,
+        to: UInt32,
+        in textView: UITextView
+    ) -> Bool {
+        guard from <= to else { return false }
+        return !textViewConversionTable(for: textView).rootTableExtents.contains {
+            from <= $0.scalarEnd && $0.scalarStart <= to
+        }
     }
 
     static func scalarToUtf16Offset(_ scalar: UInt32, in attributedString: NSAttributedString) -> Int {
@@ -278,6 +325,7 @@ final class PositionBridge {
         guard let cached = objc_getAssociatedObject(textView, &textViewConversionTableKey) as? TextViewConversionTable else {
             return false
         }
+        guard cached.rootTableExtents.isEmpty else { return false }
 
         let oldAdjusted = cached.adjustedUtf16ToScalar
         let oldUtf16Count = max(0, oldAdjusted.count - 1)
@@ -316,6 +364,7 @@ final class PositionBridge {
         guard let cached = objc_getAssociatedObject(textView, &textViewConversionTableKey) as? TextViewConversionTable else {
             return false
         }
+        guard cached.rootTableExtents.isEmpty else { return false }
 
         let oldAdjusted = cached.adjustedUtf16ToScalar
         let oldUtf16Count = max(0, oldAdjusted.count - 1)
@@ -411,7 +460,8 @@ final class PositionBridge {
         return adjustedUtf16ToScalar(
             baseUtf16ToScalar: baseTable.utf16ToScalar,
             placeholders: adjustments.placeholders,
-            listMarkers: adjustments.listMarkers
+            listMarkers: adjustments.listMarkers,
+            rootTableExtents: adjustments.rootTableExtents
         )
     }
 
@@ -426,9 +476,13 @@ final class PositionBridge {
         let adjustedUtf16ToScalar = adjustedUtf16ToScalar(
             baseUtf16ToScalar: baseTable.utf16ToScalar,
             placeholders: adjustments.placeholders,
-            listMarkers: adjustments.listMarkers
+            listMarkers: adjustments.listMarkers,
+            rootTableExtents: adjustments.rootTableExtents
         )
-        let conversionTable = TextViewConversionTable(adjustedUtf16ToScalar: adjustedUtf16ToScalar)
+        let conversionTable = TextViewConversionTable(
+            adjustedUtf16ToScalar: adjustedUtf16ToScalar,
+            rootTableExtents: adjustments.rootTableExtents
+        )
         objc_setAssociatedObject(
             textView,
             &textViewConversionTableKey,
@@ -442,9 +496,10 @@ final class PositionBridge {
         baseUtf16ToScalar: [UInt32],
         placeholders: [Int],
         listMarkers: [VirtualListMarker] = [],
+        rootTableExtents: [RootTableExtent] = [],
     ) -> [UInt32] {
         let utf16Count = max(0, baseUtf16ToScalar.count - 1)
-        var deltas = Array(repeating: Int32(0), count: utf16Count + 2)
+        var deltas = Array(repeating: Int64(0), count: utf16Count + 2)
 
         for placeholderOffset in placeholders {
             let startOffset = min(max(placeholderOffset + 1, 0), utf16Count + 1)
@@ -455,15 +510,21 @@ final class PositionBridge {
 
         for marker in listMarkers {
             let startOffset = min(max(marker.paragraphStartUtf16, 0), utf16Count)
-            deltas[startOffset] += Int32(marker.scalarLength)
+            deltas[startOffset] += Int64(marker.scalarLength)
+        }
+
+        for extent in rootTableExtents {
+            let markerEnd = min(max(extent.markerUtf16 + 1, 0), utf16Count + 1)
+            guard markerEnd <= utf16Count else { continue }
+            deltas[markerEnd] += Int64(extent.scalarEnd) - Int64(extent.scalarStart) - 1
         }
 
         var adjustedUtf16ToScalar = Array(repeating: UInt32(0), count: utf16Count + 1)
-        var runningDelta: Int32 = 0
+        var runningDelta: Int64 = 0
         for offset in 0...utf16Count {
             runningDelta += deltas[offset]
-            let adjustedValue = Int32(baseUtf16ToScalar[offset]) + runningDelta
-            adjustedUtf16ToScalar[offset] = UInt32(max(0, adjustedValue))
+            let adjustedValue = Int64(baseUtf16ToScalar[offset]) + runningDelta
+            adjustedUtf16ToScalar[offset] = UInt32(max(0, min(adjustedValue, Int64(UInt32.max))))
         }
         return adjustedUtf16ToScalar
     }
@@ -481,12 +542,13 @@ final class PositionBridge {
 
     private static func positionAdjustments(in attributedString: NSAttributedString) -> PositionAdjustments {
         guard attributedString.length > 0 else {
-            return PositionAdjustments(placeholders: [], listMarkers: [])
+            return PositionAdjustments(placeholders: [], listMarkers: [], rootTableExtents: [])
         }
 
         let nsString = attributedString.string as NSString
         var placeholders: [Int] = []
         var markers: [VirtualListMarker] = []
+        var tableExtents: [RootTableExtent] = []
         var seenStarts = Set<Int>()
         let fullRange = NSRange(location: 0, length: attributedString.length)
 
@@ -498,6 +560,17 @@ final class PositionBridge {
 
             if attrs[RenderBridgeAttributes.syntheticPlaceholder] as? Bool == true {
                 placeholders.append(range.location)
+            }
+
+            if let extent = attrs[RenderBridgeAttributes.rootTableScalarExtent]
+                as? RenderBridge.RootTableScalarExtent {
+                tableExtents.append(
+                    RootTableExtent(
+                        markerUtf16: range.location,
+                        scalarStart: extent.scalarStart,
+                        scalarEnd: extent.scalarEnd
+                    )
+                )
             }
 
             guard let listContext = attrs[RenderBridgeAttributes.listMarkerContext] as? [String: Any] else {
@@ -528,7 +601,8 @@ final class PositionBridge {
 
         return PositionAdjustments(
             placeholders: placeholders,
-            listMarkers: markers.sorted { $0.paragraphStartUtf16 < $1.paragraphStartUtf16 }
+            listMarkers: markers.sorted { $0.paragraphStartUtf16 < $1.paragraphStartUtf16 },
+            rootTableExtents: tableExtents.sorted { $0.markerUtf16 < $1.markerUtf16 }
         )
     }
 

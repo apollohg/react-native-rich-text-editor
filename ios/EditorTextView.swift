@@ -174,6 +174,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     var recoveringRenderPatchBaseMismatch = false
     var currentTopLevelChildMetadata: [TopLevelChildMetadata]?
     var tableCellPositionMap: TableCellPositionMap?
+    var rootTableSelectionInputBlocked = false
     var tableCellInputAuthority: (() -> Bool)?
     var onProjectedUpdate: ((String, Bool) -> Bool)?
     var onAuthoritativeRenderApplied: ((String) -> Void)?
@@ -574,6 +575,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             super.insertText(text)
             return
         }
+        guard isAuthorizedForTableCellInput() else { return }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
         if !isReplayingDeferredInsertText, !deferredInsertTexts.isEmpty {
@@ -655,6 +657,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             super.deleteBackward()
             return
         }
+        guard isAuthorizedForTableCellInput() else { return }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
         guard !isCollapsedAtomBoundary(selectedUtf16Range()) else { return }
@@ -770,6 +773,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             super.replace(range, withText: text)
             return
         }
+        guard isAuthorizedForTableCellInput() else { return }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
         let replacementUtf16Range = NSRange(
@@ -829,6 +833,9 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     /// decoration). The text is NOT sent to Rust during composition.
     override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
         ensureInternalTextViewDelegate()
+        if markedText != nil {
+            guard isAuthorizedForTableCellInput() else { return }
+        }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         if markedText != nil {
             guard flushPendingNativeTextMutationCommitIfNeeded() else { return }

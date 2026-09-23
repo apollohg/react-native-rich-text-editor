@@ -26,6 +26,7 @@ extension EditorTextView {
                 .releaseNativeBindingOwner(token: nativeBindingToken)
             discardTransientNativeInputForEditorRebind()
             invalidateCurrentRenderBlocks()
+            rootTableSelectionInputBlocked = false
         }
         editorId = id
         EditorV2Registry.adapter(forLegacyId: id)?
@@ -55,6 +56,7 @@ extension EditorTextView {
         EditorV2Registry.adapter(forLegacyId: editorId)?
             .releaseNativeBindingOwner(token: nativeBindingToken)
         invalidateCurrentRenderBlocks()
+        rootTableSelectionInputBlocked = false
         editorId = 0
     }
 

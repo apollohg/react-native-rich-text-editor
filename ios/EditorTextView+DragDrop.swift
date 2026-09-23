@@ -37,8 +37,11 @@ extension EditorTextView {
                 session: ObjectIdentifier(dragRequest.dragSession as AnyObject),
                 editorId: editorId,
                 documentRevision: documentRevision,
-                supported: narrowedToVoidAttachment
-                    || containsNoBlockBoundary(dragRequest.dragRange),
+                supported: PositionBridge.isRootTextInputRangeSafe(
+                    from: range.from,
+                    to: range.to,
+                    in: self
+                ) && (narrowedToVoidAttachment || containsNoBlockBoundary(dragRequest.dragRange)),
                 range: range
             )
         }
@@ -101,6 +104,8 @@ extension EditorTextView {
         let destination = PositionBridge.textViewToScalar(drop.dropPosition, in: self)
         guard drag.supported,
               drag.documentRevision == EditorV2Shadow.documentRevision(id: editorId),
+              PositionBridge.isRootTextInputRangeSafe(from: drag.range.from, to: drag.range.to, in: self),
+              PositionBridge.isRootTextInputRangeSafe(from: destination, to: destination, in: self),
               canMove(drag.range, to: destination)
         else {
             return UITextDropProposal(operation: .forbidden)
@@ -122,6 +127,8 @@ extension EditorTextView {
         let destination = PositionBridge.textViewToScalar(drop.dropPosition, in: self)
         guard drag.supported,
               drag.documentRevision == EditorV2Shadow.documentRevision(id: editorId),
+              PositionBridge.isRootTextInputRangeSafe(from: drag.range.from, to: drag.range.to, in: self),
+              PositionBridge.isRootTextInputRangeSafe(from: destination, to: destination, in: self),
               canMove(drag.range, to: destination)
         else {
             localTextDragState = .idle

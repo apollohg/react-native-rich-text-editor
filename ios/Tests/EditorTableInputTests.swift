@@ -70,6 +70,147 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
     }
 
+    func testProjectedUpdateCannotRetargetInputAfterCellSourceMoves() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let initial = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"a"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"b"}]}]}]}]}]}"#
+        let replacement = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"longer"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"replacement"}]}]}]}]}]}"#
+        let view = RichTextEditorView(frame: .zero)
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(initial))))
+        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 1, contentRect: .zero))
+        let oldInput = view.activeTextInput
+        let oldSource = try XCTUnwrap(adapter.cachedTableInputMappings?.tables[tableID]?.cells[1].sourcePos)
+
+        _ = try XCTUnwrap(adapter.setContentJson(replacement))
+        let movedCell = try XCTUnwrap(adapter.cachedTableInputMappings?.tables[tableID]?.cells[1])
+        XCTAssertNotEqual(movedCell.sourcePos, oldSource)
+        let newSelection = try XCTUnwrap(movedCell.blocks.first?.contentScalarStart)
+        EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: newSelection, scalarHead: newSelection)
+        XCTAssertTrue(oldInput.applyUpdateJSON(EditorV2Shadow.getCurrentState(id: editorId)))
+
+        XCTAssertTrue(view.activeTextInput === view.textView)
+        XCTAssertEqual(oldInput.editorId, 0)
+        let settled = try XCTUnwrap(adapter.documentJson())
+        oldInput.insertText("!")
+        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), settled)
+    }
+
+    func testRootInputBlocksStaleCaretWhenAuthoritativeSelectionMovesInsideTable() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
+        let view = RichTextEditorView(frame: .zero)
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let table = try XCTUnwrap(adapter.cachedTableInputMappings?.tables[tableID])
+        let interior = try XCTUnwrap(table.cells.first?.blocks.first?.contentScalarStart) + 1
+        let extent = try XCTUnwrap(table.extent)
+        XCTAssertTrue(extent.scalarStart < interior && interior < extent.scalarEnd)
+
+        EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: interior, scalarHead: interior)
+        XCTAssertTrue(view.textView.applyUpdateJSON(EditorV2Shadow.getCurrentState(id: editorId)))
+        XCTAssertTrue(view.textView.rootTableSelectionInputBlocked)
+        let before = try XCTUnwrap(adapter.documentJson())
+        view.textView.insertText("!")
+        view.textView.deleteBackward()
+        XCTAssertFalse(view.textView.pasteHTML("<strong>unsafe</strong>", detectContentChange: true))
+        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
+
+        let afterStart = extent.scalarEnd + 1
+        EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: afterStart, scalarHead: afterStart)
+        XCTAssertTrue(view.textView.applyUpdateJSON(EditorV2Shadow.getCurrentState(id: editorId)))
+        XCTAssertFalse(view.textView.rootTableSelectionInputBlocked)
+        view.textView.insertText("!")
+        XCTAssertTrue(try XCTUnwrap(adapter.documentJson()).contains(#""text":"!after""#))
+
+        EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: interior, scalarHead: interior)
+        XCTAssertTrue(view.textView.applyUpdateJSON(EditorV2Shadow.getCurrentState(id: editorId)))
+        XCTAssertTrue(view.textView.rootTableSelectionInputBlocked)
+        let afterOffset = (view.textView.text as NSString).range(of: "!after").location
+        XCTAssertNotEqual(afterOffset, NSNotFound)
+        view.textView.selectedRange = NSRange(location: afterOffset, length: 0)
+        view.textView.textViewDidChangeSelection(view.textView)
+        XCTAssertFalse(view.textView.rootTableSelectionInputBlocked)
+        XCTAssertEqual(view.textView.currentLogicalScalarSelection()?.head, afterStart)
+
+        EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: interior, scalarHead: interior)
+        XCTAssertTrue(view.textView.applyUpdateJSON(EditorV2Shadow.getCurrentState(id: editorId)))
+        XCTAssertTrue(view.textView.rootTableSelectionInputBlocked)
+        view.bindEditor(id: 0, initialUpdateJSON: nil)
+        XCTAssertFalse(view.textView.rootTableSelectionInputBlocked)
+    }
+
+    func testRootTableAnchorEndpointsCannotEditACellWithoutCellBinding() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]}]}"#
+        let view = RichTextEditorView(frame: .zero)
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        let before = try XCTUnwrap(adapter.documentJson())
+
+        for scalar in [extent.scalarStart, extent.scalarEnd] {
+            EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: scalar, scalarHead: scalar)
+            XCTAssertTrue(view.textView.applyUpdateJSON(EditorV2Shadow.getCurrentState(id: editorId)))
+            view.textView.insertText("!")
+            XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
+        }
+    }
+
+    func testRootTextDragRejectsTableSourceAndDestination() throws {
+        try MainActor.assumeIsolated {
+            let editorId = makeV2Editor(configJson: tableConfig)
+            defer { destroyV2Editor(id: editorId) }
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+            let document = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
+            let view = RichTextEditorView(frame: .zero)
+            view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+            XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+            let textView = view.textView
+            let before = try XCTUnwrap(adapter.documentJson())
+            let tableOffset = (textView.text as NSString).range(of: "\u{200B}").location
+            XCTAssertNotEqual(tableOffset, NSNotFound)
+            let item = UIDragItem(itemProvider: NSItemProvider(object: "be" as NSString))
+
+            @MainActor func position(_ offset: Int) throws -> UITextPosition {
+                try XCTUnwrap(textView.position(from: textView.beginningOfDocument, offset: offset))
+            }
+            @MainActor func drag(_ start: Int, _ end: Int) throws -> TestTextDragSession {
+                let session = TestTextDragSession(items: [item])
+                let range = try XCTUnwrap(textView.textRange(from: position(start), to: position(end)))
+                _ = textView.textDraggableView(textView, itemsForDrag: TestTextDragRequest(
+                    dragRange: range,
+                    suggestedItems: [item],
+                    isSelected: true,
+                    dragSession: session
+                ))
+                return session
+            }
+            @MainActor func proposal(_ destination: Int, session: TestTextDragSession) throws -> UITextDropProposal {
+                let request = TestTextDropRequest(
+                    dropPosition: try position(destination),
+                    isSameView: true,
+                    dropSession: TestTextDropSession(dragSession: session)
+                )
+                let result = textView.textDroppableView(textView, proposalForDrop: request)
+                textView.textDroppableView(textView, willPerformDrop: request)
+                return result
+            }
+
+            XCTAssertEqual(try proposal(tableOffset, session: drag(0, 2)).operation, .forbidden)
+            XCTAssertEqual(try proposal(tableOffset + 1, session: drag(0, 2)).operation, .forbidden)
+            XCTAssertEqual(try proposal(0, session: drag(tableOffset, tableOffset + 1)).operation, .forbidden)
+            XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
+        }
+    }
+
     func testInvalidationClearsUIKitCompositionAndResignsCellInput() throws {
         let editorId = makeV2Editor(configJson: tableConfig)
         defer { destroyV2Editor(id: editorId) }

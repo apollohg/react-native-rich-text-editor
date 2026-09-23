@@ -4,6 +4,8 @@ import XCTest
 
 final class PositionBridgeTests: XCTestCase {
 
+    private let tablePositionConfig = #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"class":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"#
+
     private func makeTextView(with attributedText: NSAttributedString) -> UITextView {
         let layoutManager = EditorLayoutManager()
         let textContainer = NSTextContainer(size: .zero)
@@ -46,6 +48,466 @@ final class PositionBridgeTests: XCTestCase {
                 line: line
             )
         }
+    }
+
+    private func rootTableDocument(
+        before: String? = nil,
+        cellTexts: [String],
+        after: String? = nil
+    ) throws -> String {
+        func paragraph(_ text: String) -> [String: Any] {
+            ["type": "paragraph", "content": [["type": "text", "text": text]]]
+        }
+        let cells = cellTexts.map { text in
+            ["type": "table_cell", "content": [paragraph(text)]] as [String: Any]
+        }
+        var content: [[String: Any]] = []
+        if let before { content.append(paragraph(before)) }
+        content.append([
+            "type": "table",
+            "content": [["type": "table_row", "content": cells]]
+        ])
+        if let after { content.append(paragraph(after)) }
+        let data = try JSONSerialization.data(withJSONObject: ["type": "doc", "content": content])
+        return try XCTUnwrap(String(data: data, encoding: .utf8))
+    }
+
+    private func rootTableAnchorOffsets(in textView: UITextView) -> [Int] {
+        guard textView.textStorage.length > 0 else { return [] }
+        var offsets: [Int] = []
+        textView.textStorage.enumerateAttribute(
+            RenderBridgeAttributes.rootTableScalarExtent,
+            in: NSRange(location: 0, length: textView.textStorage.length)
+        ) { value, range, _ in
+            if value is RenderBridge.RootTableScalarExtent {
+                offsets.append(range.location)
+            }
+        }
+        return offsets
+    }
+
+    func testRootMiddleTableMapsFollowingProseAfterItsSidecarExtent() throws {
+        let editorId = makeV2Editor(configJson: tablePositionConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: .zero, textContainer: nil)
+        textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        let document = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"left"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"right"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+
+        let table = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first)
+        let extent = try XCTUnwrap(table.extent)
+        let afterOffset = (textView.text as NSString).range(of: "after").location
+        XCTAssertNotEqual(afterOffset, NSNotFound)
+        XCTAssertEqual(
+            PositionBridge.utf16OffsetToScalar(afterOffset, in: textView),
+            extent.scalarEnd + 1,
+            "following prose must begin after the table's complete descendant scalar extent"
+        )
+    }
+
+    func testRootFirstAndLastTablesPreserveTheirBoundaryScalars() throws {
+        for fixture in [
+            (before: Optional<String>.none, after: Optional("after")),
+            (before: Optional("before"), after: Optional<String>.none)
+        ] {
+            let editorId = makeV2Editor(configJson: tablePositionConfig)
+            defer { destroyV2Editor(id: editorId) }
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+            let textView = EditorTextView(frame: .zero, textContainer: nil)
+            textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+            XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
+                rootTableDocument(before: fixture.before, cellTexts: ["cell"], after: fixture.after)
+            ))))
+
+            let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+            let anchor = try XCTUnwrap(rootTableAnchorOffsets(in: textView).first)
+            XCTAssertEqual(PositionBridge.utf16OffsetToScalar(anchor, in: textView), extent.scalarStart)
+            XCTAssertEqual(PositionBridge.utf16OffsetToScalar(anchor + 1, in: textView), extent.scalarEnd)
+            if fixture.after != nil {
+                let afterOffset = (textView.text as NSString).range(of: "after").location
+                XCTAssertEqual(PositionBridge.utf16OffsetToScalar(afterOffset, in: textView), extent.scalarEnd + 1)
+            } else {
+                XCTAssertEqual(
+                    PositionBridge.utf16OffsetToScalar(textView.textStorage.length, in: textView),
+                    extent.scalarEnd
+                )
+            }
+        }
+    }
+
+    func testRootAdjacentTablesKeepTheirInterTableSeparatorOutsideBothExtents() throws {
+        let editorId = makeV2Editor(configJson: tablePositionConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: .zero, textContainer: nil)
+        textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        let first = try JSONSerialization.jsonObject(with: rootTableDocument(cellTexts: ["a"]).data(using: .utf8)!) as! [String: Any]
+        let second = try JSONSerialization.jsonObject(with: rootTableDocument(cellTexts: ["b"]).data(using: .utf8)!) as! [String: Any]
+        let document = try JSONSerialization.data(withJSONObject: [
+            "type": "doc",
+            "content": [
+                (first["content"] as! [[String: Any]])[0],
+                (second["content"] as! [[String: Any]])[0]
+            ]
+        ])
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
+            try XCTUnwrap(String(data: document, encoding: .utf8))
+        ))))
+
+        let extents = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values)
+            .compactMap(\.extent)
+            .sorted { $0.scalarStart < $1.scalarStart }
+        XCTAssertEqual(extents.count, 2)
+        XCTAssertEqual(extents[1].scalarStart, extents[0].scalarEnd + 1)
+        let anchors = rootTableAnchorOffsets(in: textView)
+        XCTAssertEqual(anchors.count, 2)
+        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(anchors[0] + 1, in: textView), extents[0].scalarEnd)
+        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(anchors[1], in: textView), extents[1].scalarStart)
+    }
+
+    func testRootTableInteriorAndRangesAreRejectedWhileBoundaryCaretsRemainRepresentable() throws {
+        let editorId = makeV2Editor(configJson: tablePositionConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: .zero, textContainer: nil)
+        textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
+            rootTableDocument(before: "before", cellTexts: ["left", "right"], after: "after")
+        ))))
+
+        let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        XCTAssertTrue(PositionBridge.isScalarPositionRepresentable(extent.scalarStart, in: textView))
+        XCTAssertTrue(PositionBridge.isScalarPositionRepresentable(extent.scalarEnd, in: textView))
+        XCTAssertFalse(PositionBridge.isScalarPositionRepresentable(extent.scalarStart + 1, in: textView))
+        XCTAssertFalse(PositionBridge.isRootTextInputRangeSafe(
+            from: extent.scalarStart,
+            to: extent.scalarStart,
+            in: textView
+        ))
+        XCTAssertFalse(PositionBridge.isRootTextInputRangeSafe(
+            from: extent.scalarEnd,
+            to: extent.scalarEnd,
+            in: textView
+        ))
+        XCTAssertTrue(PositionBridge.isRootTextInputRangeSafe(
+            from: extent.scalarEnd + 1,
+            to: extent.scalarEnd + 1,
+            in: textView
+        ))
+        XCTAssertFalse(PositionBridge.isScalarRangeRepresentable(
+            from: extent.scalarStart,
+            to: extent.scalarEnd,
+            in: textView
+        ))
+    }
+
+    func testRootTableStructuralUpdateRefreshesFollowingProseExtentWithoutPatchReuse() throws {
+        let editorId = makeV2Editor(configJson: tablePositionConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: .zero, textContainer: nil)
+        textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
+            rootTableDocument(before: "before", cellTexts: ["a"], after: "after")
+        ))))
+        let firstExtent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
+            rootTableDocument(before: "before", cellTexts: ["expanded"], after: "after")
+        ))))
+        let secondExtent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        let afterOffset = (textView.text as NSString).range(of: "after").location
+        XCTAssertNotEqual(firstExtent, secondExtent)
+        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(afterOffset, in: textView), secondExtent.scalarEnd + 1)
+        XCTAssertFalse(textView.lastRenderAppliedPatchForTesting)
+    }
+
+    func testRootTableSelectionOnlyUpdateKeepsTheExistingAttributedRender() throws {
+        let editorId = makeV2Editor(configJson: tablePositionConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: .zero, textContainer: nil)
+        textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
+            rootTableDocument(before: "before", cellTexts: ["cell"], after: "after")
+        ))))
+        let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        var rootRenderApplications = 0
+        textView.onApplyingRustTextForTesting = { rootRenderApplications += 1 }
+
+        let afterStart = extent.scalarEnd + 1
+        EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: afterStart, scalarHead: afterStart)
+        XCTAssertTrue(textView.applyUpdateJSON(EditorV2Shadow.getCurrentState(id: editorId)))
+
+        XCTAssertEqual(rootRenderApplications, 0)
+        XCTAssertEqual(
+            PositionBridge.utf16OffsetToScalar((textView.text as NSString).range(of: "after").location, in: textView),
+            afterStart
+        )
+    }
+
+    func testRootZeroLeafTableAddsNoSyntheticScalarAnchor() throws {
+        let editorId = makeV2Editor(configJson: tablePositionConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: .zero, textContainer: nil)
+        textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
+            rootTableDocument(before: "before", cellTexts: [], after: "after")
+        ))))
+
+        XCTAssertNil(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        XCTAssertEqual(rootTableAnchorOffsets(in: textView), [])
+        XCTAssertEqual(textView.text, "before\nafter")
+        XCTAssertEqual(
+            PositionBridge.utf16OffsetToScalar((textView.text as NSString).range(of: "after").location, in: textView),
+            7
+        )
+    }
+
+    func testRootEmptyCellStillHasAnAtomicAnchor() throws {
+        let editorId = makeV2Editor(configJson: tablePositionConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: .zero, textContainer: nil)
+        textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
+            rootTableDocument(before: "before", cellTexts: [""], after: "after")
+        ))))
+
+        let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+        let anchor = try XCTUnwrap(rootTableAnchorOffsets(in: textView).first)
+        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(anchor, in: textView), extent.scalarStart)
+        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(anchor + 1, in: textView), extent.scalarEnd)
+        XCTAssertFalse(PositionBridge.isRootTextInputRangeSafe(
+            from: extent.scalarStart,
+            to: extent.scalarEnd,
+            in: textView
+        ))
+    }
+
+    func testZeroWidthTableExtentKeepsBothAnchorEdgesAtOneScalar() {
+        let attributedText = NSMutableAttributedString(string: "a\u{200B}b")
+        attributedText.addAttribute(
+            RenderBridgeAttributes.rootTableScalarExtent,
+            value: RenderBridge.RootTableScalarExtent(scalarStart: 1, scalarEnd: 1),
+            range: NSRange(location: 1, length: 1)
+        )
+        let textView = makeTextView(with: attributedText)
+
+        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(1, in: textView), 1)
+        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(2, in: textView), 1)
+        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(3, in: textView), 2)
+        XCTAssertFalse(PositionBridge.isRootTextInputRangeSafe(from: 1, to: 1, in: textView))
+    }
+
+    func testRootAdjacentZeroLeafAndMappedTablesKeepOnlyTheMappedAnchor() throws {
+        for zeroLeafFirst in [true, false] {
+            let editorId = makeV2Editor(configJson: tablePositionConfig)
+            defer { destroyV2Editor(id: editorId) }
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+            let textView = EditorTextView(frame: .zero, textContainer: nil)
+            textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+            let zeroLeaf = try XCTUnwrap(JSONSerialization.jsonObject(
+                with: rootTableDocument(cellTexts: []).data(using: .utf8)!
+            ) as? [String: Any])
+            let mapped = try XCTUnwrap(JSONSerialization.jsonObject(
+                with: rootTableDocument(cellTexts: ["cell"]).data(using: .utf8)!
+            ) as? [String: Any])
+            let zeroLeafTable = try XCTUnwrap((zeroLeaf["content"] as? [[String: Any]])?.first)
+            let mappedTable = try XCTUnwrap((mapped["content"] as? [[String: Any]])?.first)
+            let content = zeroLeafFirst ? [zeroLeafTable, mappedTable] : [mappedTable, zeroLeafTable]
+            let document = try XCTUnwrap(String(data: JSONSerialization.data(
+                withJSONObject: ["type": "doc", "content": content]
+            ), encoding: .utf8))
+            XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+
+            let mappings = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values)
+            XCTAssertEqual(mappings.filter { $0.extent == nil }.count, 1)
+            let extent = try XCTUnwrap(mappings.compactMap(\.extent).first)
+            let anchor = try XCTUnwrap(rootTableAnchorOffsets(in: textView).first)
+            XCTAssertEqual(rootTableAnchorOffsets(in: textView).count, 1)
+            XCTAssertEqual(PositionBridge.utf16OffsetToScalar(anchor, in: textView), extent.scalarStart)
+            XCTAssertEqual(PositionBridge.utf16OffsetToScalar(anchor + 1, in: textView), extent.scalarEnd)
+        }
+    }
+
+    func testRootSelectionUpdateBlocksTableInterior() throws {
+        let editorId = makeV2Editor(configJson: tablePositionConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: .zero, textContainer: nil)
+        textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
+            rootTableDocument(before: "before", cellTexts: ["left", "right"], after: "after")
+        ))))
+        let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.values.first?.extent)
+
+        func updateSelecting(_ scalar: UInt32, type: String = "text") throws -> String {
+            var update = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: EditorV2Shadow.getCurrentState(id: editorId).data(using: .utf8)!)
+                    as? [String: Any]
+            )
+            let doc = EditorV2Shadow.scalarToDoc(id: editorId, scalar: scalar)
+            if type == "text" {
+                update["selection"] = [
+                    "type": type,
+                    "anchor": NSNumber(value: doc),
+                    "head": NSNumber(value: doc),
+                    "anchorScalar": NSNumber(value: scalar),
+                    "headScalar": NSNumber(value: scalar)
+                ]
+            } else {
+                update["selection"] = ["type": type, "pos": NSNumber(value: doc)]
+            }
+            return try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: update), encoding: .utf8))
+        }
+
+        XCTAssertTrue(textView.applyUpdateJSON(try updateSelecting(extent.scalarEnd)))
+        XCTAssertFalse(textView.rootTableSelectionInputBlocked)
+        XCTAssertTrue(textView.applyUpdateJSON(try updateSelecting(extent.scalarStart + 1)))
+        XCTAssertTrue(textView.rootTableSelectionInputBlocked)
+        XCTAssertTrue(textView.applyUpdateJSON(try updateSelecting(extent.scalarStart, type: "cell")))
+        XCTAssertTrue(textView.rootTableSelectionInputBlocked)
+        XCTAssertTrue(textView.applyUpdateJSON(try updateSelecting(extent.scalarStart, type: "unknown")))
+        XCTAssertTrue(textView.rootTableSelectionInputBlocked)
+    }
+
+    func testRootTableDoesNotBlockNodeSelectionOutsideItsExtent() throws {
+        var config = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: tablePositionConfig.data(using: .utf8)!
+        ) as? [String: Any])
+        var schema = try XCTUnwrap(config["schema"] as? [String: Any])
+        var nodes = try XCTUnwrap(schema["nodes"] as? [[String: Any]])
+        nodes.append([
+            "name": "horizontalRule", "content": "", "group": "block",
+            "role": "block", "htmlTag": "hr", "isVoid": true
+        ])
+        schema["nodes"] = nodes
+        config["schema"] = schema
+        let configJSON = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: config), encoding: .utf8))
+        let editorId = makeV2Editor(configJson: configJSON)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: .zero, textContainer: nil)
+        textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+
+        var document = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: rootTableDocument(cellTexts: ["cell"]).data(using: .utf8)!
+        ) as? [String: Any])
+        var content = try XCTUnwrap(document["content"] as? [[String: Any]])
+        content.append(["type": "horizontalRule"])
+        document["content"] = content
+        let documentJSON = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: document), encoding: .utf8))
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(documentJSON))))
+
+        var ruleOffset: Int?
+        textView.textStorage.enumerateAttribute(
+            RenderBridgeAttributes.voidNodeType,
+            in: NSRange(location: 0, length: textView.textStorage.length)
+        ) { value, range, _ in
+            if value as? String == "horizontalRule" { ruleOffset = range.location }
+        }
+        let offset = try XCTUnwrap(ruleOffset)
+        let scalar = PositionBridge.utf16OffsetToScalar(offset, in: textView)
+        var update = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: EditorV2Shadow.getCurrentState(id: editorId).data(using: .utf8)!
+        ) as? [String: Any])
+        update["selection"] = [
+            "type": "node", "pos": EditorV2Shadow.scalarToDoc(id: editorId, scalar: scalar),
+            "posScalar": scalar
+        ]
+        let selectionJSON = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: update), encoding: .utf8))
+        XCTAssertTrue(textView.applyUpdateJSON(selectionJSON))
+
+        XCTAssertFalse(textView.rootTableSelectionInputBlocked)
+        XCTAssertEqual(textView.selectedRange, NSRange(location: offset, length: 1))
+    }
+
+    func testRemovingRootTableForcesFullRenderBeforeReusingItsOldMarker() throws {
+        let editorId = makeV2Editor(configJson: tablePositionConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: .zero, textContainer: nil)
+        textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(
+            rootTableDocument(before: "before", cellTexts: ["cell"], after: "after")
+        ))))
+        XCTAssertFalse(rootTableAnchorOffsets(in: textView).isEmpty)
+
+        let tableFree = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
+        XCTAssertTrue(textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(tableFree))))
+        XCTAssertEqual(rootTableAnchorOffsets(in: textView), [])
+        XCTAssertFalse(textView.lastRenderAppliedPatchForTesting)
+        XCTAssertEqual(
+            PositionBridge.utf16OffsetToScalar((textView.text as NSString).range(of: "after").location, in: textView),
+            7
+        )
+    }
+
+    func testRootTableWithoutAnAtomicMappingFailsClosedInsteadOfErasingIt() throws {
+        let editorId = makeV2Editor(configJson: tablePositionConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let textView = EditorTextView(frame: .zero, textContainer: nil)
+        textView.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        let updateJSON = try XCTUnwrap(adapter.setContentJson(
+            rootTableDocument(before: "before", cellTexts: ["cell"], after: "after")
+        ))
+        XCTAssertTrue(textView.applyUpdateJSON(updateJSON))
+        let originalText = textView.text
+        let originalAnchors = rootTableAnchorOffsets(in: textView)
+
+        var update = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: updateJSON.data(using: .utf8)!) as? [String: Any]
+        )
+        let originalMapping = try XCTUnwrap(update["tableInputMappings"] as? [String: Any])
+        var mapping = originalMapping
+        mapping["tables"] = [:]
+        update["tableInputMappings"] = mapping
+        let malformed = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: update), encoding: .utf8))
+
+        XCTAssertFalse(textView.applyUpdateJSON(malformed))
+        XCTAssertEqual(textView.text, originalText)
+        XCTAssertEqual(rootTableAnchorOffsets(in: textView), originalAnchors)
+
+        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        for invalidExtent: [String: Any] in [
+            [:],
+            ["scalarStart": 9, "scalarEnd": 8]
+        ] {
+            var invalidUpdate = update
+            var invalidMapping = originalMapping
+            var tables = try XCTUnwrap(invalidMapping["tables"] as? [String: Any])
+            var table = try XCTUnwrap(tables[tableID] as? [String: Any])
+            table["extent"] = invalidExtent
+            tables[tableID] = table
+            invalidMapping["tables"] = tables
+            invalidUpdate["tableInputMappings"] = invalidMapping
+            let invalidJSON = try XCTUnwrap(String(
+                data: JSONSerialization.data(withJSONObject: invalidUpdate),
+                encoding: .utf8
+            ))
+            XCTAssertFalse(textView.applyUpdateJSON(invalidJSON))
+            XCTAssertEqual(textView.text, originalText)
+            XCTAssertEqual(rootTableAnchorOffsets(in: textView), originalAnchors)
+        }
+
+        var nullExtentUpdate = update
+        var nullExtentMapping = originalMapping
+        var tables = try XCTUnwrap(nullExtentMapping["tables"] as? [String: Any])
+        var table = try XCTUnwrap(tables[tableID] as? [String: Any])
+        table["extent"] = NSNull()
+        tables[tableID] = table
+        nullExtentMapping["tables"] = tables
+        nullExtentUpdate["tableInputMappings"] = nullExtentMapping
+        let nullExtentJSON = try XCTUnwrap(String(
+            data: JSONSerialization.data(withJSONObject: nullExtentUpdate), encoding: .utf8
+        ))
+        XCTAssertFalse(textView.applyUpdateJSON(nullExtentJSON))
+        XCTAssertEqual(textView.text, originalText)
+        XCTAssertEqual(rootTableAnchorOffsets(in: textView), originalAnchors)
     }
 
     // MARK: - UTF-16 -> Scalar: ASCII

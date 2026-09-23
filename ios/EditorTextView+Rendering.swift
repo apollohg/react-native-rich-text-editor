@@ -1,6 +1,11 @@
 import os
 import UIKit
 
+private struct RootTablePositionMapping {
+    let extents: [String: RenderBridge.RootTableScalarExtent]
+    let tableIDs: Set<String>
+}
+
 extension EditorTextView {
     func withImageLoadOwner<T>(_ body: () -> T) -> T {
         guard let imageLoadOwner else { return body() }
@@ -282,6 +287,10 @@ extension EditorTextView {
         resetPendingNativeTextMutationState()
 
         let renderElements = update["renderElements"] as? [[String: Any]]
+        guard let rootTablePositionMapping = rootTablePositionMapping(from: update) else {
+            return false
+        }
+        let rootTableScalarExtents = rootTablePositionMapping.extents
         let selectionFromUpdate = (update["selection"] as? [String: Any])
             .map(self.selectionSummary(from:)) ?? "none"
         Self.updateLog.debug(
@@ -307,6 +316,14 @@ extension EditorTextView {
            resolvedRenderBlocks == nil {
             return recoverRenderPatchBaseMismatch(notifyDelegate: notifyDelegate)
         }
+        let incomingRootTableIDs = rootTableIDs(
+            renderBlocks: resolvedRenderBlocks,
+            renderElements: renderElements
+        )
+        guard incomingRootTableIDs.isSubset(of: rootTablePositionMapping.tableIDs) else {
+            return false
+        }
+        let currentHasRootTableMarkers = PositionBridge.hasRootTableScalarExtents(in: self)
 
         let derivedRenderPatch: DerivedRenderPatch? =
             if let currentRenderBlocks,
@@ -322,14 +339,24 @@ extension EditorTextView {
         } else {
             nil
         }
+        let tablePositionSnapshotIsUnchanged = if let updateDocumentVersion,
+            let currentRenderBlocksDocumentVersion {
+            updateDocumentVersion == currentRenderBlocksDocumentVersion
+        } else {
+            false
+        }
         let shouldSkipRender = if case .unchanged? = derivedRenderPatch {
-            textStorage.string == lastAuthorizedText
+            (rootTableScalarExtents.isEmpty && !currentHasRootTableMarkers
+                || tablePositionSnapshotIsUnchanged)
+                && textStorage.string == lastAuthorizedText
                 && lastAppliedRenderAppearanceRevision == renderAppearanceRevision
         } else {
             false
         }
 
         let patchTrace: PatchApplyTrace? = if !shouldSkipRender
+            && rootTableScalarExtents.isEmpty
+            && !currentHasRootTableMarkers
             && textStorage.string == lastAuthorizedText
             && lastAppliedRenderAppearanceRevision == renderAppearanceRevision {
             renderPatch.map(applyRenderPatchIfPossible)
@@ -369,7 +396,9 @@ extension EditorTextView {
                         baseFont: baseFont,
                         textColor: baseTextColor,
                         theme: theme,
-                        atomConfiguration: atomRenderConfiguration
+                        atomConfiguration: atomRenderConfiguration,
+                        rootTableScalarExtents: rootTableScalarExtents,
+                        rootTableIDs: rootTablePositionMapping.tableIDs
                     )
                 }
                 retainCurrentRenderBlocks(
@@ -383,7 +412,9 @@ extension EditorTextView {
                         baseFont: baseFont,
                         textColor: baseTextColor,
                         theme: theme,
-                        atomConfiguration: atomRenderConfiguration
+                        atomConfiguration: atomRenderConfiguration,
+                        rootTableScalarExtents: rootTableScalarExtents,
+                        rootTableIDs: rootTablePositionMapping.tableIDs
                     )
                 }
                 invalidateCurrentRenderBlocks()
@@ -439,7 +470,18 @@ extension EditorTextView {
 
         let selectionTrace: SelectionApplyTrace
         if let selection = update["selection"] as? [String: Any] {
-            selectionTrace = applySelectionFromJSON(selection)
+            let representable = rootSelectionIsRepresentable(selection)
+            setRootTableSelectionRepresentable(representable)
+            if representable {
+                selectionTrace = applySelectionFromJSON(selection)
+            } else {
+                selectionTrace = SelectionApplyTrace(
+                    totalNanos: 0,
+                    resolveNanos: 0,
+                    assignmentNanos: 0,
+                    chromeNanos: 0
+                )
+            }
         } else {
             selectionTrace = SelectionApplyTrace(
                 totalNanos: 0,
@@ -503,6 +545,88 @@ extension EditorTextView {
         }
         onAuthoritativeRenderApplied?(updateJSON)
         return true
+    }
+
+    private func rootTablePositionMapping(
+        from update: [String: Any]
+    ) -> RootTablePositionMapping? {
+        guard tableCellPositionMap == nil else {
+            return .init(extents: [:], tableIDs: [])
+        }
+        guard let mappings = update["tableInputMappings"] as? [String: Any],
+              let tables = mappings["tables"] as? [String: Any]
+        else { return .init(extents: [:], tableIDs: []) }
+
+        var extents: [String: RenderBridge.RootTableScalarExtent] = [:]
+        var tableIDs = Set<String>()
+        for (tableID, rawTable) in tables {
+            guard let table = rawTable as? [String: Any],
+                  Set(table.keys) == ["extent", "cells"],
+                  let cells = table["cells"] as? [[String: Any]]
+            else { return nil }
+            tableIDs.insert(tableID)
+            if table["extent"] is NSNull {
+                guard cells.allSatisfy({ cell in
+                    guard let blocks = cell["blocks"] as? [[String: Any]],
+                          let excluded = cell["excluded"] as? [[String: Any]]
+                    else { return false }
+                    return blocks.isEmpty && excluded.allSatisfy { $0["extent"] is NSNull }
+                }) else { return nil }
+                continue
+            }
+            guard let rawExtent = table["extent"] as? [String: Any],
+                  Set(rawExtent.keys) == ["scalarStart", "scalarEnd"],
+                  let scalarStart = v2ExactUInt32(rawExtent["scalarStart"] as? NSNumber),
+                  let scalarEnd = v2ExactUInt32(rawExtent["scalarEnd"] as? NSNumber),
+                  scalarStart <= scalarEnd
+            else { return nil }
+            extents[tableID] = .init(scalarStart: scalarStart, scalarEnd: scalarEnd)
+        }
+        return .init(extents: extents, tableIDs: tableIDs)
+    }
+
+    private func rootTableIDs(
+        renderBlocks: [[[String: Any]]]?,
+        renderElements: [[String: Any]]?
+    ) -> Set<String> {
+        let elements = renderBlocks?.flatMap { $0 } ?? renderElements ?? []
+        return Set(elements.compactMap { element in
+            element["type"] as? String == "table" ? element["tableId"] as? String : nil
+        })
+    }
+
+    private func rootSelectionIsRepresentable(_ selection: [String: Any]) -> Bool {
+        guard tableCellPositionMap == nil else { return true }
+        guard PositionBridge.hasRootTableScalarExtents(in: self) else { return true }
+        switch selection["type"] as? String {
+        case "text":
+            guard let anchor = v2ExactUInt32(selection["anchorScalar"] as? NSNumber),
+                  let head = v2ExactUInt32(selection["headScalar"] as? NSNumber)
+            else { return false }
+            if anchor == head {
+                return PositionBridge.isScalarPositionRepresentable(anchor, in: self)
+            }
+            return PositionBridge.isScalarRangeRepresentable(
+                from: min(anchor, head),
+                to: max(anchor, head),
+                in: self
+            )
+        case "node":
+            guard let scalar = v2ExactUInt32(selection["posScalar"] as? NSNumber),
+                  scalar < UInt32.max
+            else { return false }
+            return PositionBridge.isScalarRangeRepresentable(
+                from: scalar,
+                to: scalar + 1,
+                in: self
+            ) && PositionBridge.isRootTextInputRangeSafe(
+                from: scalar,
+                to: scalar + 1,
+                in: self
+            )
+        default:
+            return false
+        }
     }
 
     /// Apply a render JSON string (just render elements, no update wrapper).

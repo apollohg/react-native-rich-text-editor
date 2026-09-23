@@ -193,6 +193,24 @@ extension EditorTextView {
         if normalizeSelectionForEmptyBlockAutocapitalizationIfNeeded() {
             return
         }
+        if rootTableSelectionInputBlocked {
+            guard selectedRange != lastAuthorizedSelectedUtf16Range,
+                  let range = selectedTextRange
+            else { return }
+            let scalars = PositionBridge.textRangeToScalarRange(range, in: self)
+            guard PositionBridge.isScalarRangeRepresentable(
+                from: scalars.from,
+                to: scalars.to,
+                in: self
+            ), PositionBridge.isRootTextInputRangeSafe(
+                from: scalars.from,
+                to: scalars.to,
+                in: self
+            ) else { return }
+            rootTableSelectionInputBlocked = false
+            logicalSelectionScalarRange = nil
+            logicalSelectionUtf16Range = nil
+        }
         recordAuthorizedSelectionIfPossible()
         refreshNativeSelectionChromeVisibility()
         onSelectionOrContentMayChange?()
@@ -339,7 +357,17 @@ extension EditorTextView {
         )
     }
 
+    func setRootTableSelectionRepresentable(_ representable: Bool) {
+        guard tableCellPositionMap == nil else { return }
+        rootTableSelectionInputBlocked = !representable
+        if !representable {
+            logicalSelectionScalarRange = nil
+            logicalSelectionUtf16Range = nil
+        }
+    }
+
     func currentLogicalScalarSelection() -> (anchor: UInt32, head: UInt32)? {
+        guard !rootTableSelectionInputBlocked else { return nil }
         guard let range = selectedTextRange else { return nil }
         let scalarRange = PositionBridge.textRangeToScalarRange(range, in: self)
         if tableCellPositionMap != nil {
@@ -356,6 +384,15 @@ extension EditorTextView {
             logicalSelectionUtf16Range = nil
             return (anchor: mapped.from, head: mapped.to)
         }
+        guard PositionBridge.isScalarRangeRepresentable(
+            from: scalarRange.from,
+            to: scalarRange.to,
+            in: self
+        ), PositionBridge.isRootTextInputRangeSafe(
+            from: scalarRange.from,
+            to: scalarRange.to,
+            in: self
+        ) else { return nil }
         if let logicalSelectionScalarRange,
            min(logicalSelectionScalarRange.anchor, logicalSelectionScalarRange.head) == scalarRange.from,
            max(logicalSelectionScalarRange.anchor, logicalSelectionScalarRange.head) == scalarRange.to {
@@ -386,7 +423,16 @@ extension EditorTextView {
     }
 
     func isAuthorizedForTableCellInput() -> Bool {
-        guard let map = tableCellPositionMap else { return true }
+        guard let map = tableCellPositionMap else {
+            guard !rootTableSelectionInputBlocked else { return false }
+            guard let selection = selectedTextRange else { return true }
+            let scalarRange = PositionBridge.textRangeToScalarRange(selection, in: self)
+            return PositionBridge.isRootTextInputRangeSafe(
+                from: scalarRange.from,
+                to: scalarRange.to,
+                in: self
+            )
+        }
         guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
               adapter.baseDocumentRevision == map.binding.documentRevision,
               adapter.positionEpoch == map.binding.positionEpoch
@@ -397,7 +443,12 @@ extension EditorTextView {
     }
 
     func inputScalar(atLocalScalar localScalar: UInt32) -> UInt32? {
-        guard let map = tableCellPositionMap else { return localScalar }
+        guard let map = tableCellPositionMap else {
+            return !rootTableSelectionInputBlocked
+                && PositionBridge.isScalarPositionRepresentable(localScalar, in: self)
+                && PositionBridge.isRootTextInputRangeSafe(from: localScalar, to: localScalar, in: self)
+                ? localScalar : nil
+        }
         guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
               isAuthorizedForTableCellInput(),
               adapter.baseDocumentRevision == map.binding.documentRevision,
@@ -412,7 +463,13 @@ extension EditorTextView {
 
     func inputScalarRange(fromLocal: UInt32, toLocal: UInt32) -> (from: UInt32, to: UInt32)? {
         guard fromLocal <= toLocal else { return nil }
-        guard let map = tableCellPositionMap else { return (fromLocal, toLocal) }
+        guard let map = tableCellPositionMap else {
+            guard !rootTableSelectionInputBlocked,
+                  PositionBridge.isScalarRangeRepresentable(from: fromLocal, to: toLocal, in: self),
+                  PositionBridge.isRootTextInputRangeSafe(from: fromLocal, to: toLocal, in: self)
+            else { return nil }
+            return (fromLocal, toLocal)
+        }
         guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
               isAuthorizedForTableCellInput(),
               adapter.baseDocumentRevision == map.binding.documentRevision,

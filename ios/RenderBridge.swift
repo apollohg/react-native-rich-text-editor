@@ -62,6 +62,7 @@ enum RenderBridgeAttributes {
 
     /// Stores the owning top-level document child index for partial native patching.
     static let topLevelChildIndex = NSAttributedString.Key("com.apollohg.editor.topLevelChildIndex")
+    static let rootTableScalarExtent = NSAttributedString.Key("com.apollohg.editor.rootTableScalarExtent")
 }
 
 /// Layout constants for paragraph styles.
@@ -152,6 +153,15 @@ struct AtomRenderConfiguration: Equatable {
 /// ]
 /// ```
 final class RenderBridge {
+    final class RootTableScalarExtent: NSObject {
+        let scalarStart: UInt32
+        let scalarEnd: UInt32
+
+        init(scalarStart: UInt32, scalarEnd: UInt32) {
+            self.scalarStart = scalarStart
+            self.scalarEnd = scalarEnd
+        }
+    }
 
     // MARK: - Public API
 
@@ -168,7 +178,9 @@ final class RenderBridge {
         baseFont: UIFont,
         textColor: UIColor,
         theme: EditorTheme? = nil,
-        atomConfiguration: AtomRenderConfiguration? = nil
+        atomConfiguration: AtomRenderConfiguration? = nil,
+        rootTableScalarExtents: [String: RootTableScalarExtent] = [:],
+        rootTableIDs: Set<String> = []
     ) -> NSAttributedString {
         guard let data = json.data(using: .utf8),
               let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
@@ -181,7 +193,9 @@ final class RenderBridge {
             baseFont: baseFont,
             textColor: textColor,
             theme: theme,
-            atomConfiguration: atomConfiguration
+            atomConfiguration: atomConfiguration,
+            rootTableScalarExtents: rootTableScalarExtents,
+            rootTableIDs: rootTableIDs
         )
     }
 
@@ -201,6 +215,8 @@ final class RenderBridge {
         textColor: UIColor,
         theme: EditorTheme? = nil,
         atomConfiguration: AtomRenderConfiguration? = nil,
+        rootTableScalarExtents: [String: RootTableScalarExtent] = [:],
+        rootTableIDs: Set<String> = [],
         blockRangeObserver: ((Int, NSRange) -> Void)? = nil
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
@@ -214,6 +230,39 @@ final class RenderBridge {
             let topLevelChildIndex = jsonInt(element["topLevelChildIndex"])
 
             switch type {
+            case "table":
+                guard let tableID = element["tableId"] as? String,
+                      rootTableIDs.contains(tableID),
+                      let extent = rootTableScalarExtents[tableID]
+                else { continue }
+                if !isFirstBlock {
+                    result.append(
+                        interBlockNewline(
+                            baseFont: baseFont,
+                            textColor: textColor,
+                            blockStack: [],
+                            theme: theme,
+                            topLevelChildIndex: topLevelChildIndex
+                        )
+                    )
+                }
+                isFirstBlock = false
+                let anchor = NSAttributedString(
+                    string: "\u{200B}",
+                    attributes: [
+                        .font: UIFont.systemFont(ofSize: 0.1),
+                        .foregroundColor: UIColor.clear,
+                        RenderBridgeAttributes.rootTableScalarExtent: extent
+                    ]
+                )
+                result.append(
+                    attributedStringApplyingLeadingTopLevelChildIndexIfNeeded(
+                        anchor,
+                        topLevelChildIndex: topLevelChildIndex,
+                        resultIsEmpty: result.length == 0
+                    )
+                )
+
             case "textRun":
                 let text = element["text"] as? String ?? ""
                 let marks = element["marks"] as? [Any] ?? []
@@ -572,7 +621,9 @@ final class RenderBridge {
         baseFont: UIFont,
         textColor: UIColor,
         theme: EditorTheme? = nil,
-        atomConfiguration: AtomRenderConfiguration? = nil
+        atomConfiguration: AtomRenderConfiguration? = nil,
+        rootTableScalarExtents: [String: RootTableScalarExtent] = [:],
+        rootTableIDs: Set<String> = []
     ) -> NSAttributedString {
         var flattened: [[String: Any]] = []
         flattened.reserveCapacity(blocks.reduce(0) { $0 + $1.count })
@@ -591,7 +642,9 @@ final class RenderBridge {
             baseFont: baseFont,
             textColor: textColor,
             theme: theme,
-            atomConfiguration: atomConfiguration
+            atomConfiguration: atomConfiguration,
+            rootTableScalarExtents: rootTableScalarExtents,
+            rootTableIDs: rootTableIDs
         )
         let needsLeadingInterBlockSeparator = includeLeadingInterBlockSeparator && startIndex > 0
         guard !blocks.isEmpty,

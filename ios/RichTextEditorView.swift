@@ -333,15 +333,23 @@ final class RichTextEditorView: UIView {
     }
 
     private func refreshActiveTableCell(after updateJSON: String) {
-        guard let tableID = tableInputCoordinator.activeTableID,
-              let cellIndex = tableInputCoordinator.activeCellIndex
-        else { return }
+        guard let tableID = tableInputCoordinator.activeTableID else { return }
+        guard let cellIndex = tableInputCoordinator.activeCellIndex,
+              let boundSourcePos = tableInputCoordinator.positionMap?.binding.cellSourcePosition
+        else {
+            invalidateTableCellBinding()
+            return
+        }
         guard isApplyingActiveTableCellUpdate else {
             invalidateTableCellBinding()
             return
         }
         let frame = tableInputCoordinator.cellInput.frame
-        guard let data = updateJSON.data(using: .utf8),
+        guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              let cells = adapter.cachedTableInputMappings?.tables[tableID]?.cells,
+              Int(cellIndex) < cells.count,
+              cells[Int(cellIndex)].sourcePos == boundSourcePos,
+              let data = updateJSON.data(using: .utf8),
               let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let selection = update["selection"] as? [String: Any],
               bindTableCell(tableID: tableID, cellIndex: cellIndex, contentRect: frame, selection: selection)

@@ -584,8 +584,8 @@ extension EditorTextView {
     /// Paste HTML content through Rust.
     @discardableResult
     func pasteHTML(_ html: String, detectContentChange: Bool = false) -> Bool {
+        guard syncCurrentUIKitSelectionToRust() else { return false }
         let previousHTML = detectContentChange ? EditorV2Shadow.getHtml(id: editorId) : nil
-        syncCurrentUIKitSelectionToRust()
         Self.inputLog.debug(
             "[rust.pasteHTML] html=\(self.preview(html), privacy: .public) selection=\(self.selectionSummary(), privacy: .public)"
         )
@@ -595,14 +595,15 @@ extension EditorTextView {
         return EditorV2Shadow.getHtml(id: editorId) != previousHTML
     }
 
-    private func syncCurrentUIKitSelectionToRust() {
-        guard editorId != 0, let range = selectedTextRange else { return }
+    private func syncCurrentUIKitSelectionToRust() -> Bool {
+        guard editorId != 0, let range = selectedTextRange else { return false }
         let localAnchor = PositionBridge.textViewToScalar(range.start, in: self)
         let localHead = PositionBridge.textViewToScalar(range.end, in: self)
         guard let anchor = inputScalar(atLocalScalar: localAnchor),
               let head = inputScalar(atLocalScalar: localHead)
-        else { return }
+        else { return false }
         EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: anchor, scalarHead: head)
+        return true
     }
 
     /// Paste plain text through Rust.
