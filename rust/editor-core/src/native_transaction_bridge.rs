@@ -199,13 +199,18 @@ impl<'session> NativeTransactionBridge<'session> {
                             (*allow_base64_images, *input_filter) =
                                 self.session.policy.clipboard_options();
                         }
+                        let origin = if matches!(command, TypedCommand::Table(_)) {
+                            TransactionOrigin::LocalCommand
+                        } else {
+                            TransactionOrigin::LocalInput
+                        };
                         let (engine, outbox) = self.session.engine_and_outbox();
                         let mut outbox = outbox;
                         let applied = engine.apply_command_at_selection_with_outbox(
                             request_id,
                             command.clone(),
                             selection,
-                            TransactionOrigin::LocalInput,
+                            origin,
                             outbox.as_deref_mut(),
                         );
                         let result = match applied {
@@ -222,7 +227,7 @@ impl<'session> NativeTransactionBridge<'session> {
                                         scalar_limit,
                                         Affinity::Before,
                                     ),
-                                    TransactionOrigin::LocalInput,
+                                    origin,
                                     outbox.as_deref_mut(),
                                 )
                             }

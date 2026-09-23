@@ -1,5 +1,6 @@
 use crate::boundary::ResourceLimits;
 use crate::native_transaction_bridge::NativeTransactionBridge;
+use crate::schema::presets::prosemirror_table_schema;
 use crate::schema::presets::tiptap_schema;
 use crate::session::{
     CollaborationLimits, DocumentState, EditorSession, EditorSessionConfig, SessionPolicy,
@@ -122,6 +123,99 @@ fn session_audit(session: &EditorSession) -> SessionAudit {
         outbox_reserved_bytes: outbox.reserved_bytes(),
         last_reserved_upper_bound: outbox.last_reserved_upper_bound_for_test(),
     }
+}
+
+#[test]
+fn native_table_tab_appends_one_row_with_one_trusted_commit() {
+    let config = EditorSessionConfig::local_for_test();
+    let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
+        schema: prosemirror_table_schema(),
+        fragment_name: "prosemirror".into(),
+        initialization_mode: InitializationMode::LocalEmpty,
+        resource_limits: ResourceLimits::default(),
+        editing_limits: EditingLimits::default(),
+        max_length: None,
+        scope: None,
+    })
+    .unwrap();
+    engine.import_json(
+        r#"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"First"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Second"}]}]}]}]}]}"#,
+        TransactionOrigin::DocumentImport,
+    ).unwrap();
+    let mut session = EditorSession::new(
+        engine,
+        SessionPolicy::from_config(&config),
+        DocumentState::LocalReady,
+        CollaborationLimits::default(),
+    )
+    .unwrap();
+    session.attach_collaboration_runtime();
+    let document = session.engine.document().unwrap();
+    let index = crate::tables::admission::TableProjectionIndex::derive_or_fallback(
+        document,
+        &prosemirror_table_schema(),
+        &ResourceLimits::default(),
+    );
+    let last = index.table_at(0).unwrap().cells.last().unwrap().source_pos + 2;
+    let scalar = session
+        .engine
+        .position_map()
+        .unwrap()
+        .doc_to_scalar(last, document);
+    let before = session_audit(&session);
+    let intent = serde_json::json!({
+        "type": "command", "anchor": scalar, "head": scalar,
+        "command": {"type": "moveToAdjacentCell", "step": "forward", "appendRow": true},
+    });
+    let request = native_intent_request(&mut session, 71, 72, intent);
+
+    let outcome = NativeTransactionBridge::new(&mut session)
+        .submit_native_intent(&request)
+        .unwrap();
+    let outcome: serde_json::Value = serde_json::from_str(&outcome).unwrap();
+    assert_eq!(outcome["type"], "transaction");
+    assert_eq!(outcome["changed"], true);
+    assert_eq!(outcome["documentChanged"], true);
+    assert_eq!(session.engine.revision(), before.document_revision + 1);
+    assert_eq!(
+        session.engine.document_json().unwrap()["content"][0]["content"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        session
+            .collaboration_outbox()
+            .unwrap()
+            .pending_document_update_count(),
+        before.outbox_pending_updates + 1
+    );
+    assert_eq!(
+        session.engine.last_committed_origin(),
+        Some(TransactionOrigin::LocalCommand)
+    );
+    assert!(session.engine.can_undo());
+
+    let after = session_audit(&session);
+    let mut stale: serde_json::Value = serde_json::from_str(&request).unwrap();
+    stale["requestId"] = serde_json::json!("73");
+    stale["ownerId"] = serde_json::json!("999");
+    assert!(NativeTransactionBridge::new(&mut session)
+        .submit_native_intent(&stale.to_string())
+        .is_err());
+    stale["ownerId"] = serde_json::json!("71");
+    assert!(NativeTransactionBridge::new(&mut session)
+        .submit_native_intent(&stale.to_string())
+        .is_err());
+    assert_eq!(session_audit(&session), after);
+
+    let (engine, outbox) = session.engine_and_outbox();
+    assert!(engine.undo_with_outbox(74, outbox).unwrap().is_some());
+    assert_eq!(
+        session.engine.document_json().unwrap(),
+        before.document_json
+    );
 }
 
 #[test]
