@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.0.9] - 2026-09-23
+
+### Fixed
+
+- Fixed Android viewer text overflowing its available width by correcting display-density conversion during final layout. Text now wraps to the parent width and matches the measured height without an explicit viewer width.
+
 ## [2.0.8] - 2026-09-22
 
 ### Fixed
@@ -685,6 +691,7 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.0.9]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.8...2.0.9
 [2.0.8]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.7...2.0.8
 [2.0.7]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.6...2.0.7
 [2.0.6]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.5...2.0.6

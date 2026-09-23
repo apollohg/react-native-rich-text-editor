@@ -44,6 +44,38 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 internal class PreparedProseLayoutFabricMeasurementTest : PreparedProseLayoutTestFixture() {
     @Test
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    fun `mounted text wraps at the measured width and reflows when its parent narrows`() {
+        val registry = testRegistry(CountingLayoutEngine())
+        val request = request("Text must wrap within the available parent width. ".repeat(12))
+        val surface = FabricSurfaceToken(surfaceId = 52, componentTag = 520)
+        val generation = FabricGenerationToken(surface, request.generationIdentity, 52)
+        registry.registerFabricLease(surface, generation.leaseHandle)
+        registry.activateFabricGeneration(generation)
+        var previousHeight = 0
+        var previousLineCount = 0
+
+        for (widthPx in listOf(1122, 600)) {
+            val measured = registry.measure(request, widthPx, 3f, surface, generation.leaseHandle)
+            registry.prepareFinalLayout(request, widthPx, 3f, 0, 0, surface, generation.leaseHandle)
+            val mounted = requireNotNull(registry.acquirePreparedMountTicket(generation)).artifact
+            val text = mounted.blocks.flatMap { it.fragments }.single {
+                it.kind == PreparedProseFragmentKind.TEXT
+            }.layout!!
+
+            assertTrue(measured === mounted)
+            assertEquals(widthPx, mounted.widthPx)
+            assertTrue(text.lineCount > maxOf(1, previousLineCount))
+            assertTrue(mounted.heightPx > previousHeight)
+            for (line in 0 until text.lineCount) {
+                assertTrue(text.getLineWidth(line) <= widthPx)
+            }
+            previousHeight = mounted.heightPx
+            previousLineCount = text.lineCount
+        }
+    }
+
+    @Test
     fun `Fabric mount only acquires the measured artifact and layout draw do not prepare`() {
         val engine = CountingLayoutEngine()
         val registry = testRegistry(engine)
