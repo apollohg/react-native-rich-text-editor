@@ -97,6 +97,12 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             .coerceAtLeast(0)
         val markers = markers(input)
         val admittedMappings = adapter?.cachedTableInputMappings?.tables
+        val rootTableIds = adapter?.cachedTableRecords?.filterValues {
+            !it.optBoolean("readOnlyDescendants", true)
+        }?.keys
+        val rootExtents = rootTableIds?.mapNotNull { id ->
+            admittedMappings?.get(id)?.extent?.let { id to it }
+        }?.toMap()
         if (adapter != null && input.rootTableMapPositionEpoch != adapter.positionEpoch) {
             input.isAuthorizedForRootTableInput()
         }
@@ -104,8 +110,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             input.lastAppliedDocumentVersion != revision.toString() ||
             input.rootTableMapDocumentVersion != revision.toString() ||
             input.rootTableMapPositionEpoch != adapter.positionEpoch ||
-            admittedMappings?.keys != input.rootTableMapTableIds ||
-            admittedMappings?.mapNotNull { (id, table) -> table.extent?.let { id to it } }?.toMap() != input.rootTableMapExtents ||
+            rootTableIds != input.rootTableMapTableIds ||
+            rootTableIds?.all { admittedMappings?.containsKey(it) == true } != true ||
+            rootExtents != input.rootTableMapExtents ||
             input.rootTableMapExtents.keys != markers.keys ||
             input.rootTablePositionMap == null || markers.isEmpty() || width <= 0 ||
             adapter.cachedTableRecords.keys.containsAll(markers.keys).not()

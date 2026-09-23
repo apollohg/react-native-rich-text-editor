@@ -120,6 +120,40 @@ class NativeDeviceTableCellTest {
     }
 
     @Test
+    @SdkSuppress(minSdkVersion = 29)
+    fun nestedTableRendersReadOnlyWhileHardwareTabSkipsItsOuterCell() = withEditor(NESTED_DOCUMENT) { fixture ->
+        fixture.onActivity {
+            assertTrue(fixture.nestedContentRendered())
+            assertEquals(listOf("Before table.", "After table."), fixture.proseTexts())
+        }
+        fixture.awaitCommittedFrame()
+        fixture.captureScreenshot("native-device-nested-table-mounted.png")
+        fixture.tapCell(1)
+        fixture.onActivity {
+            assertSame(fixture.editor.richTextView.editorEditText,
+                fixture.editor.richTextView.activeTextInput)
+        }
+        fixture.tapCell(0)
+        fixture.onActivity {
+            val input = fixture.cellInput()
+            assertEquals("Alpha", input.text.toString())
+            assertTrue(input.dispatchKeyEvent(KeyEvent(100L, 100L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB, 0)))
+            assertEquals("Owner", input.text.toString())
+            input.setSelection(input.text.length)
+            assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText("!", 1))
+            assertEquals("Owner!", fixture.outerCellText(2))
+            assertTrue(input.dispatchKeyEvent(KeyEvent(200L, 200L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB, 0, KeyEvent.META_SHIFT_ON)))
+            assertEquals("Alpha", input.text.toString())
+            assertEquals("Nested", fixture.nestedCellText())
+            assertEquals(listOf("Before table.", "After table."), fixture.proseTexts())
+        }
+        fixture.awaitCommittedFrame()
+        fixture.captureScreenshot("native-device-nested-table-edited.png")
+    }
+
+    @Test
     fun proseAndWrapperBlurFinishCompositionAndReadOnlyRetiresInput() = withEditor { fixture ->
         fixture.tapCell(0)
         fixture.onActivity {
@@ -165,7 +199,7 @@ class NativeDeviceTableCellTest {
         }
     }
 
-    private fun withEditor(test: (Fixture) -> Unit) {
+    private fun withEditor(document: String = DOCUMENT, test: (Fixture) -> Unit) {
         ActivityScenario.launch(NativeEditorOutsideTapActivity::class.java).use { scenario ->
             val editorRef = AtomicReference<NativeEditorExpoView>()
             val created = when (val result = UniffiEditorV2Backend.create(CONFIG, null)) {
@@ -177,7 +211,7 @@ class NativeDeviceTableCellTest {
             ))
             val token = EditorV2Registry.register(adapter)
             try {
-                requireNotNull(adapter.setContentJson(DOCUMENT))
+                requireNotNull(adapter.setContentJson(document))
                 val updates = Collections.synchronizedList(mutableListOf<Map<String, Any>>())
                 scenario.onActivity { activity ->
                     initializeSoLoaderIfAvailable(activity)
@@ -256,6 +290,27 @@ class NativeDeviceTableCellTest {
                 rows.getJSONObject(index).getJSONArray("content").getJSONObject(0)
                     .getJSONArray("content").getJSONObject(0).getString("text")
             }
+        }
+
+        fun outerCellText(index: Int): String = JSONObject(requireNotNull(adapter.documentJson()))
+            .getJSONArray("content").getJSONObject(1).getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(index).getJSONArray("content")
+            .getJSONObject(0).getJSONArray("content").getJSONObject(0).getString("text")
+
+        fun nestedCellText(): String = JSONObject(requireNotNull(adapter.documentJson()))
+            .getJSONArray("content").getJSONObject(1).getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(1).getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(0).getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(0).getString("text")
+
+        fun nestedContentRendered(): Boolean {
+            val outer = tableHostOrNull()?.preparedLayout?.blocks?.singleOrNull()?.tableSurface
+                ?: return false
+            val nested = outer.cells.getOrNull(1)?.content?.blocks
+                ?.singleOrNull { it.tableSurface != null }?.tableSurface ?: return false
+            return nested.cells.singleOrNull()?.content?.blocks?.flatMap { it.fragments }
+                ?.any { it.layout?.text?.contains("Nested") == true } == true
         }
 
         fun tableRowCount(): Int = JSONObject(requireNotNull(adapter.documentJson()))
@@ -430,5 +485,6 @@ class NativeDeviceTableCellTest {
     companion object {
         private const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
         private const val DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before table."}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After table."}]}]}"""
+        private const val NESTED_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before table."}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Nested"}]}]}]}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After table."}]}]}"""
     }
 }

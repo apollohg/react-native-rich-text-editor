@@ -6,6 +6,7 @@ import android.text.style.ForegroundColorSpan
 import android.graphics.Color
 import android.view.View
 import android.view.MotionEvent
+import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import com.apollohg.editor.tables.RootTableHeightSpan
 import com.apollohg.editor.viewer.PreparedProseDrawingView
@@ -28,6 +29,7 @@ import org.robolectric.annotation.GraphicsMode
 internal class EditorTableSurfaceMountTest {
     private val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
     private val tableDocument = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Cell text"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+    private val nestedTableDocument = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Nested"}]}]}]}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
 
     private fun measure(view: RichTextEditorView, width: Int) {
         view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
@@ -486,6 +488,102 @@ internal class EditorTableSurfaceMountTest {
             adapter.destroy()
         }
     }
+
+    @Test
+    fun `nested table snapshot mounts its outer root surface`() = withMountedView(nestedTableDocument) { view, adapter, update ->
+        val input = view.editorEditText
+        val mappings = requireNotNull(adapter.cachedTableInputMappings).tables
+        val before = adapter.documentJson()
+        val revision = adapter.baseDocumentRevision
+        assertEquals(JSONObject(update).getString("documentVersion"), revision.toString())
+        assertEquals(2, mappings.size)
+        assertEquals(1, input.rootTableMapTableIds.size)
+        assertEquals(1, input.rootTableMapExtents.size)
+        assertEquals(1, (input.text as Spanned).getSpans(0, input.text.length,
+            Annotation::class.java).count { it.key == RenderBridge.NATIVE_ROOT_TABLE_MARKER_ANNOTATION })
+        assertEquals(adapter.baseDocumentRevision.toString(), input.lastAppliedDocumentVersion)
+        assertEquals(adapter.baseDocumentRevision.toString(), input.rootTableMapDocumentVersion)
+        assertEquals(adapter.positionEpoch, input.rootTableMapPositionEpoch)
+        val drawing = requireNotNull(drawing(view))
+        val outer = requireNotNull(drawing.preparedLayout?.blocks?.singleOrNull()?.tableSurface)
+        assertEquals(3, outer.cells.size)
+        val nested = requireNotNull(outer.cells[1].content.blocks.singleOrNull { it.tableSurface != null }?.tableSurface)
+        assertEquals(1, nested.cells.size)
+        assertTrue(nested.cells.single().content.blocks.flatMap { it.fragments }
+            .any { it.layout?.text?.contains("Nested") == true })
+        assertTrue(input.text.toString().contains("before"))
+        assertTrue(input.text.toString().contains("after"))
+        assertTrue(heightSpan(view).heightPx > input.lineHeight)
+        assertEquals(before, adapter.documentJson())
+        assertEquals(revision, adapter.baseDocumentRevision)
+    }
+
+    @Test
+    fun `nested-only outer cell is skipped by Tab while direct cells remain editable`() =
+        withMountedView(nestedTableDocument) { view, adapter, _ ->
+            val original = JSONObject(requireNotNull(adapter.documentJson()))
+            val originalNested = original.getJSONArray("content").getJSONObject(1)
+                .getJSONArray("content").getJSONObject(0).getJSONArray("content")
+                .getJSONObject(1).toString()
+            tapFirstCell(view)
+            val input = view.activeTextInput
+            assertEquals("Alpha", input.text.toString())
+            assertTrue(input.dispatchKeyEvent(KeyEvent(100L, 100L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB, 0)))
+            assertTrue(input === view.activeTextInput)
+            assertEquals("Owner", input.text.toString())
+            input.setSelection(input.text.length)
+            assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText("!", 1))
+            assertEquals("Owner!", cellText(adapter, 2))
+            assertTrue(input.dispatchKeyEvent(KeyEvent(200L, 200L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB, 0, KeyEvent.META_SHIFT_ON)))
+            assertEquals("Alpha", input.text.toString())
+            val after = JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")
+            val outer = after.getJSONObject(1).getJSONArray("content").getJSONObject(0)
+                .getJSONArray("content")
+            assertEquals(originalNested, outer.getJSONObject(1).toString())
+            assertEquals("before", after.getJSONObject(0).getJSONArray("content")
+                .getJSONObject(0).getString("text"))
+            assertEquals("after", after.getJSONObject(2).getJSONArray("content")
+                .getJSONObject(0).getString("text"))
+        }
+
+    @Test
+    fun `nested snapshot with mismatched root identity or extent clears surface`() =
+        withMountedView(nestedTableDocument) { view, adapter, _ ->
+            val input = view.editorEditText
+            val rootIds = input.rootTableMapTableIds
+            val rootExtents = input.rootTableMapExtents
+            val mappings = requireNotNull(adapter.cachedTableInputMappings)
+            assertNotNull(drawing(view))
+
+            adapter.cachedTableInputMappings = TableInputMappings(mappings.tables - rootIds.single())
+            view.requestLayout()
+            measure(view, 600)
+            assertNull(drawing(view))
+
+            adapter.cachedTableInputMappings = mappings
+            view.requestLayout()
+            measure(view, 600)
+            assertNotNull(drawing(view))
+
+            input.rootTableMapTableIds = setOf("wrong-root")
+            view.requestLayout()
+            measure(view, 600)
+            assertNull(drawing(view))
+
+            input.rootTableMapTableIds = rootIds
+            view.requestLayout()
+            measure(view, 600)
+            assertNotNull(drawing(view))
+
+            val rootId = rootIds.single()
+            val extent = requireNotNull(rootExtents[rootId])
+            input.rootTableMapExtents = mapOf(rootId to TableInputExtent(extent.scalarStart, extent.scalarEnd - 1))
+            view.requestLayout()
+            measure(view, 600)
+            assertNull(drawing(view))
+        }
 
     @Test
     fun `table reflows on width and theme change then clears on removal and rebind`() {
