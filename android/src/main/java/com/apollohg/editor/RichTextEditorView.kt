@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import com.apollohg.editor.tables.EditorTableSurface
 import kotlin.math.roundToInt
 
 internal data class AtomLayoutPosition(
@@ -123,6 +124,13 @@ class RichTextEditorView @JvmOverloads constructor(
                 )
                 return
             }
+            if (child === editorTableSurface.drawingView) {
+                child.measure(
+                    MeasureSpec.makeMeasureSpec(editorEditText.measuredWidth, MeasureSpec.EXACTLY),
+                    MeasureSpec.makeMeasureSpec(editorEditText.measuredHeight, MeasureSpec.EXACTLY)
+                )
+                return
+            }
             val width =
                 atomHostViews.entries.firstOrNull { it.value === child }?.key?.let(::atomWidthPx)
                     ?: child.measuredWidth.takeIf { it > 0 }
@@ -143,10 +151,12 @@ class RichTextEditorView @JvmOverloads constructor(
             super.onLayout(changed, left, top, right, bottom)
             restoreAtomScrollAnchor()
             layoutAtomHostViews()
+            editorTableSurface.updateGeometry()
         }
     }
 
     val editorEditText: EditorEditText
+    private val editorTableSurface by lazy { EditorTableSurface(this) }
     val editorScrollView: ScrollView
     private val remoteSelectionOverlayView: RemoteSelectionOverlayView
     private val imageResizeOverlayView: ImageResizeOverlayView
@@ -782,6 +792,7 @@ class RichTextEditorView @JvmOverloads constructor(
             editorEditText.discardTransientNativeInputForEditorRebind()
         }
         invalidateAtomMeasurements(clearHeights = true)
+        editorTableSurface.clear()
         currentEditorId = value
         if (bindEditor && value != 0L) {
             editorEditText.bindEditor(value, notifyListener = notifyListener)
@@ -795,11 +806,13 @@ class RichTextEditorView @JvmOverloads constructor(
         super.onAttachedToWindow()
         clearDeferredEditorUnbind()
         rebindEditorIfNeeded()
+        editorTableSurface.refresh()
         atomHostViews.forEach { (key, child) -> scheduleAtomMeasurement(child, key) }
     }
 
     override fun onDetachedFromWindow() {
         invalidateAtomMeasurements()
+        editorTableSurface.clear()
         onBeforeDetachedFromWindow?.invoke()
         imageResizeOverlayView.cancelActiveResize()
         super.onDetachedFromWindow()
@@ -856,6 +869,7 @@ class RichTextEditorView @JvmOverloads constructor(
             }
         }
         layoutAtomHostViews()
+        editorTableSurface.refresh()
     }
 
     private fun updateScrollContainerAppearance() {
@@ -962,6 +976,7 @@ class RichTextEditorView @JvmOverloads constructor(
     }
 
     private fun refreshOverlays() {
+        editorTableSurface.refresh()
         layoutAtomHostViews()
         remoteSelectionOverlayView.refreshGeometry()
         imageResizeOverlayView.refresh()

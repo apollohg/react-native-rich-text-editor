@@ -137,13 +137,14 @@ internal data class PreparedProseTheme(
             themeJson: String?,
             density: Float,
             fontScale: Float = 1f,
-            semanticGeneration: String = "standalone-theme"
+            semanticGeneration: String = "standalone-theme",
+            editorTheme: EditorTheme? = null
         ): PreparedProseTheme {
             val decoded = EditorTheme.fromJson(themeJson)
             require(themeJson.isNullOrBlank() || decoded != null) {
                 "Invalid viewer theme version or payload shape."
             }
-            val theme = decoded ?: EditorTheme()
+            val theme = editorTheme ?: decoded ?: EditorTheme()
             val resolvedFontScale = fontScale.takeIf { it.isFinite() && it > 0f } ?: 1f
             val scaledDensity = density * resolvedFontScale
             fun px(value: Float, fallback: Float): Int = max(

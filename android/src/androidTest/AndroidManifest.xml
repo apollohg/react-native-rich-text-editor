@@ -17,5 +17,9 @@
         <activity
             android:name="com.apollohg.editor.AndroidApi24SmokeActivity"
             android:exported="false" />
+        <activity
+            android:name="com.apollohg.editor.NativeTableHostActivity"
+            android:exported="true"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
     </application>
 </manifest>
