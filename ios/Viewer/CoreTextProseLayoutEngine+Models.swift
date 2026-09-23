@@ -151,8 +151,42 @@ struct PreparedProseTheme {
         let theme = EditorTheme.from(json: themeJSON) ?? EditorTheme(dictionary: [:])
         let resolvedScale = fontScale.isFinite && fontScale > 0 ? fontScale : 1
         let baseFont = UIFont.systemFont(ofSize: 17 * resolvedScale)
+        return resolve(
+            theme: theme,
+            baseFont: baseFont,
+            defaultTextColor: .label,
+            fontScale: resolvedScale,
+            semanticGeneration: semanticGeneration,
+            themeJSON: themeJSON
+        )
+    }
+
+    static func resolve(
+        editorTheme: EditorTheme?,
+        baseFont: UIFont,
+        textColor: UIColor,
+        semanticGeneration: String
+    ) -> PreparedProseTheme {
+        resolve(
+            theme: editorTheme ?? EditorTheme(dictionary: [:]),
+            baseFont: baseFont,
+            defaultTextColor: textColor,
+            fontScale: 1,
+            semanticGeneration: semanticGeneration,
+            themeJSON: nil
+        )
+    }
+
+    private static func resolve(
+        theme: EditorTheme,
+        baseFont: UIFont,
+        defaultTextColor: UIColor,
+        fontScale resolvedScale: CGFloat,
+        semanticGeneration: String,
+        themeJSON: String?
+    ) -> PreparedProseTheme {
         func paint(_ style: EditorTextStyle?, fallback: PreparedTextPaint? = nil) -> PreparedTextPaint {
-            let fallback = fallback ?? PreparedTextPaint(font: baseFont, color: .label, lineHeight: nil, spacingAfter: 0)
+            let fallback = fallback ?? PreparedTextPaint(font: baseFont, color: defaultTextColor, lineHeight: nil, spacingAfter: 0)
             guard let style else { return fallback }
             let resolvedFont = ViewerFontEnvironment.shared.resolveFont(
                 style: style,

@@ -105,6 +105,11 @@ public final class PreparedProseDrawingView: UIView {
     var onMountedTableCellsDrawnForTesting: ((Int) -> Void)?
     var onTableChromeDrawnForTesting: ((Int) -> Void)?
     var onTableRichFragmentDrawnForTesting: (() -> Void)?
+    weak var excludedTableCellContentLayout: PreparedProseLayout? {
+        didSet {
+            if oldValue !== excludedTableCellContentLayout { setNeedsDisplay() }
+        }
+    }
 
     @objc public func install(layout: PreparedProseLayout?) {
         guard self.layout !== layout else { return }
@@ -547,13 +552,15 @@ public final class PreparedProseDrawingView: UIView {
             context.clip()
         }
         let mountedLayoutIDs = Set(snapshot.mountedCells.map { ObjectIdentifier($0.content) })
-        drawHierarchicalBackgrounds(snapshot, mountedLayoutIDs: mountedLayoutIDs, dirtyRect: rect, context: context)
+        let excludedLayoutID = excludedTableCellContentLayout.map(ObjectIdentifier.init)
+        drawHierarchicalBackgrounds(snapshot, mountedLayoutIDs: mountedLayoutIDs, excludedLayoutID: excludedLayoutID, dirtyRect: rect, context: context)
         context.saveGState()
         context.translateBy(x: 0, y: bounds.height)
         context.scaleBy(x: 1, y: -1)
         let scale = CGFloat(Double(bitPattern: layout.key.displayScaleBits))
         let visibleBlocks = snapshot.blocks.filter { presented in
             (presented.layout === layout || mountedLayoutIDs.contains(ObjectIdentifier(presented.layout))) &&
+                ObjectIdentifier(presented.layout) != excludedLayoutID &&
                 presented.block.bounds.offsetBy(dx: presented.origin.x, dy: presented.origin.y).intersects(rect)
         }
         // Keep paint phases global across the visible range: a nested code
@@ -605,6 +612,7 @@ public final class PreparedProseDrawingView: UIView {
     private func drawHierarchicalBackgrounds(
         _ snapshot: ViewerTablePresentationSnapshot,
         mountedLayoutIDs: Set<ObjectIdentifier>,
+        excludedLayoutID: ObjectIdentifier?,
         dirtyRect: CGRect,
         context: CGContext
     ) {
@@ -634,7 +642,8 @@ public final class PreparedProseDrawingView: UIView {
                 }
                 for cell in surfaceCells {
                     guard let child = layouts[ObjectIdentifier(cell.content)],
-                          mountedLayoutIDs.contains(ObjectIdentifier(cell.content))
+                          mountedLayoutIDs.contains(ObjectIdentifier(cell.content)),
+                          ObjectIdentifier(cell.content) != excludedLayoutID
                     else { continue }
                     drawLayout(child)
                 }

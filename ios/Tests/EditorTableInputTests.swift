@@ -1,3 +1,4 @@
+import CoreText
 import XCTest
 
 final class EditorTableInputTests: XCTestCase {
@@ -30,6 +31,468 @@ final class EditorTableInputTests: XCTestCase {
         let secondDocumentJSON = try XCTUnwrap(adapter.documentJson())
         XCTAssertTrue(secondDocumentJSON.contains(#""text":"!😀second""#), secondDocumentJSON)
         XCTAssertEqual(view.activeTextInput.currentLogicalScalarSelection()?.head, 15)
+    }
+
+    func testRootTableUsesPreparedViewerPresentation() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        view.layoutIfNeeded()
+
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let layout = try XCTUnwrap(drawing.layout)
+        XCTAssertFalse(drawing.isOpaque)
+        XCTAssertEqual(layout.blocks.compactMap(\.tableSurface).count, 1)
+        XCTAssertEqual(layout.blocks.compactMap(\.tableSurface).first?.cells.count, 1)
+
+        var paintedCells = 0
+        var paintedText = 0
+        drawing.onTableChromeDrawnForTesting = { _ in paintedCells += 1 }
+        drawing.onTableRichFragmentDrawnForTesting = { paintedText += 1 }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        _ = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { _ in
+            drawing.draw(drawing.bounds)
+        }
+        XCTAssertGreaterThan(paintedCells, 0)
+        XCTAssertGreaterThan(paintedText, 0)
+    }
+
+    func testRootTableKeepsScalarMarkerAndTracksItsRealCellAfterScroll() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 100))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        view.layoutIfNeeded()
+
+        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let extent = try XCTUnwrap(adapter.cachedTableInputMappings?.tables[tableID]?.extent)
+        let marker = (view.textView.text as NSString).range(of: "\u{200B}")
+        XCTAssertNotEqual(marker.location, NSNotFound)
+        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(marker.location, in: view.textView), extent.scalarStart)
+        XCTAssertEqual(PositionBridge.utf16OffsetToScalar(NSMaxRange(marker), in: view.textView), extent.scalarEnd)
+
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let contentLayout = try XCTUnwrap(drawing.layout)
+        let tableBounds = try XCTUnwrap(drawing.layout?.blocks.first?.tableBounds)
+        let after = (view.textView.text as NSString).range(of: "after")
+        XCTAssertNotEqual(after.location, NSNotFound)
+        view.textView.layoutManager.ensureLayout(forCharacterRange: after)
+        let afterGlyphs = view.textView.layoutManager.glyphRange(forCharacterRange: after, actualCharacterRange: nil)
+        let afterLine = view.textView.layoutManager.lineFragmentRect(forGlyphAt: afterGlyphs.location, effectiveRange: nil)
+        XCTAssertGreaterThanOrEqual(
+            view.textView.textContainerInset.top + afterLine.minY,
+            tableBounds.maxY - 0.5
+        )
+        let firstFrame = try XCTUnwrap(tableSurface.cellFrame(tableID: tableID, cellIndex: 0))
+        let firstCenter = CGPoint(x: firstFrame.midX, y: firstFrame.midY)
+        XCTAssertEqual(tableSurface.cellHit(at: firstCenter)?.tableID, tableID)
+        XCTAssertEqual(tableSurface.cellHit(at: firstCenter)?.cellIndex, 0)
+
+        let renderCalls = adapter.renderUpdateCallCountForTesting
+        view.textView.contentOffset.y += 12
+        tableSurface.updateGeometry(from: view.textView)
+        XCTAssertEqual(adapter.renderUpdateCallCountForTesting, renderCalls)
+        XCTAssertTrue(drawing.layout === contentLayout)
+        let scrolledFrame = try XCTUnwrap(tableSurface.cellFrame(tableID: tableID, cellIndex: 0))
+        XCTAssertEqual(scrolledFrame.minY, firstFrame.minY - 12, accuracy: 0.5)
+        XCTAssertNil(tableSurface.cellHit(at: CGPoint(x: tableBounds.maxX + 1, y: scrolledFrame.midY)))
+    }
+
+    func testRootTableRepreparesForAppearanceAndHostWidthWithoutDocumentUpdate() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]}]}"#
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        view.layoutIfNeeded()
+
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let initialLayout = try XCTUnwrap(drawing.layout)
+        let initialWidth = try XCTUnwrap(initialLayout.blocks.first?.tableSurface?.hostViewportWidth)
+        let renderCalls = adapter.renderUpdateCallCountForTesting
+
+        view.configure(font: .systemFont(ofSize: 22))
+        let appearanceLayout = try XCTUnwrap(drawing.layout)
+        XCTAssertFalse(initialLayout === appearanceLayout)
+        XCTAssertEqual(adapter.renderUpdateCallCountForTesting, renderCalls)
+
+        view.frame.size.width = 220
+        view.layoutIfNeeded()
+
+        let resizedWidth = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface?.hostViewportWidth)
+        XCTAssertLessThan(resizedWidth, initialWidth)
+        XCTAssertEqual(adapter.renderUpdateCallCountForTesting, renderCalls)
+    }
+
+    func testRootTableProjectsEditorThemeIntoInactiveCells() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]}]}"#
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        XCTAssertTrue(view.applyTheme(EditorTheme(dictionary: [
+            "text": ["fontSize": 22, "color": "#FF0000"],
+            "table": ["cellPadding": 14]
+        ])))
+
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let cell = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface?.cells.first)
+        let line = try XCTUnwrap(cell.content.blocks.flatMap(\.fragments).first(where: { $0.kind == .text })?.line)
+        let run = try XCTUnwrap((CTLineGetGlyphRuns(line) as? [CTRun])?.first)
+        let attributes = CTRunGetAttributes(run) as NSDictionary
+        let color = try unwrapCoreTextAttribute(attributes[kCTForegroundColorAttributeName], as: CGColor.self)
+
+        XCTAssertEqual(UIColor(cgColor: color), UIColor.red)
+        XCTAssertEqual(drawing.layout?.blocks.first?.tableSurface?.style.cellPadding, 14)
+    }
+
+    func testRootTableUsesHostInsetWidthOnce() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]}]}"#
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        XCTAssertTrue(view.applyTheme(EditorTheme(dictionary: [
+            "version": 1,
+            "styles": ["content": ["paddingLeft": 20, "paddingRight": 13]]
+        ])))
+        view.layoutIfNeeded()
+
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let prepared = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface)
+        XCTAssertEqual(view.textView.textContainerInset.left, 20)
+        XCTAssertEqual(view.textView.textContainerInset.right, 13)
+        XCTAssertEqual(prepared.hostViewportWidth, 287, accuracy: 0.5)
+    }
+
+    func testActiveHeaderCellSuppressesOnlyItsPreparedContent() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"active"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"inactive"}]}]}]}]}]}"#
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        view.layoutIfNeeded()
+
+        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let block = try XCTUnwrap(drawing.layout?.blocks.first)
+        let surface = try XCTUnwrap(block.tableSurface)
+        let tableBounds = try XCTUnwrap(block.tableBounds)
+        let activeHeader = try XCTUnwrap(surface.cells.first { $0.sourceCellIndex == 0 })
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        func paint() -> (rich: Int, chrome: Int, image: CGImage?) {
+            var rich = 0
+            var chrome = 0
+            drawing.onTableRichFragmentDrawnForTesting = { rich += 1 }
+            drawing.onTableChromeDrawnForTesting = { _ in chrome += 1 }
+            let image = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { _ in
+                drawing.draw(drawing.bounds)
+            }.cgImage
+            return (rich, chrome, image)
+        }
+
+        let unbound = paint()
+        XCTAssertGreaterThanOrEqual(unbound.rich, 2)
+        XCTAssertEqual(unbound.chrome, 2)
+        XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
+        let bound = paint()
+        XCTAssertGreaterThan(bound.rich, 0)
+        XCTAssertLessThan(bound.rich, unbound.rich)
+        XCTAssertEqual(bound.chrome, 2)
+
+        let image = try XCTUnwrap(bound.image)
+        let point = CGPoint(x: tableBounds.minX + activeHeader.frame.minX + 3, y: tableBounds.minY + activeHeader.frame.minY + 3)
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let context = try XCTUnwrap(CGContext(data: &pixels, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let pixelIndex = Int(point.y) * image.width * 4 + Int(point.x) * 4
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        XCTAssertTrue(surface.style.headerBackgroundColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha))
+        XCTAssertEqual(Array(pixels[pixelIndex..<(pixelIndex + 4)]), [red, green, blue, alpha].map { UInt8(($0 * 255).rounded()) })
+
+        tableSurface.invalidateAppearance()
+        tableSurface.updateGeometry(from: view.textView)
+        let refreshedCell = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface?.cells.first { $0.sourceCellIndex == 0 })
+        XCTAssertFalse(refreshedCell.content === activeHeader.content)
+        XCTAssertEqual(paint().rich, bound.rich)
+
+        view.invalidateTableCellBinding()
+        let restored = paint()
+        XCTAssertEqual(restored.rich, unbound.rich)
+        XCTAssertEqual(restored.chrome, 2)
+    }
+
+    func testActiveCellInputStaysTransparentAcrossRootBackgrounds() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]}]}"#
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+
+        for color in [UIColor.red, UIColor.clear] {
+            view.textView.baseBackgroundColor = color
+            view.textView.backgroundColor = color
+            XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
+            XCTAssertEqual(view.activeTextInput.backgroundColor, .clear)
+            XCTAssertFalse(view.activeTextInput.isOpaque)
+        }
+    }
+
+    func testRootTableMarginsOffsetPaintAndReserveFollowingProse() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        XCTAssertTrue(view.applyTheme(EditorTheme(dictionary: [
+            "version": 1,
+            "styles": ["table": ["marginTop": 17, "marginBottom": 23, "marginLeft": 11, "marginRight": 7]]
+        ])))
+        view.layoutIfNeeded()
+
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let tableBounds = try XCTUnwrap(drawing.layout?.blocks.first?.tableBounds)
+        let marker = (view.textView.text as NSString).range(of: "\u{200B}")
+        XCTAssertNotEqual(marker.location, NSNotFound)
+        let markerGlyph = view.textView.layoutManager.glyphRange(forCharacterRange: marker, actualCharacterRange: nil)
+        let markerLine = view.textView.layoutManager.lineFragmentRect(forGlyphAt: markerGlyph.location, effectiveRange: nil)
+        let anchorX = view.textView.textContainerInset.left + markerLine.minX
+        let anchorY = view.textView.textContainerInset.top + markerLine.minY
+        XCTAssertEqual(tableBounds.minX, anchorX + 11, accuracy: 0.5)
+        XCTAssertEqual(tableBounds.minY, anchorY + 17, accuracy: 0.5)
+        let markerStyle = try XCTUnwrap(view.textView.textStorage.attribute(.paragraphStyle, at: marker.location, effectiveRange: nil) as? NSParagraphStyle)
+        XCTAssertGreaterThanOrEqual(markerStyle.minimumLineHeight, tableBounds.maxY + 22 - anchorY)
+        let after = (view.textView.text as NSString).range(of: "after")
+        XCTAssertNotEqual(after.location, NSNotFound)
+        view.textView.layoutManager.ensureLayout(forCharacterRange: after)
+        let afterGlyph = view.textView.layoutManager.glyphRange(forCharacterRange: after, actualCharacterRange: nil)
+        let afterLine = view.textView.layoutManager.lineFragmentRect(forGlyphAt: afterGlyph.location, effectiveRange: nil)
+        let newlineStyle = try XCTUnwrap(view.textView.textStorage.attribute(.paragraphStyle, at: marker.location + 1, effectiveRange: nil) as? NSParagraphStyle)
+        XCTAssertEqual(newlineStyle.minimumLineHeight, markerStyle.minimumLineHeight, accuracy: 0.5)
+        XCTAssertGreaterThanOrEqual(
+            view.textView.textContainerInset.top + afterLine.minY,
+            tableBounds.maxY + 22
+        )
+    }
+
+    func testRootTableDeepScrollKeepsDrawingViewportMounted() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let before: [[String: Any]] = (0..<20).map { index in
+            ["type": "paragraph", "content": [["type": "text", "text": "before \(index)"]]]
+        }
+        let document = try XCTUnwrap(String(
+            data: JSONSerialization.data(withJSONObject: [
+                "type": "doc",
+                "content": before + [[
+                    "type": "table",
+                    "content": [[
+                        "type": "table_row",
+                        "content": [[
+                            "type": "table_cell",
+                            "content": [[
+                                "type": "paragraph",
+                                "content": [["type": "text", "text": "cell"]]
+                            ]]
+                        ]]
+                    ]]
+                ]]
+            ]),
+            encoding: .utf8
+        ))
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 80))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        view.layoutIfNeeded()
+
+        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let initialFrame = try XCTUnwrap(tableSurface.cellFrame(tableID: tableID, cellIndex: 0))
+        XCTAssertGreaterThan(initialFrame.minY, view.bounds.height)
+        let revision = adapter.baseDocumentRevision
+        let history = adapter.cachedHistoryState
+        let documentBeforeScroll = try XCTUnwrap(adapter.documentJson())
+
+        let window = UIWindow(frame: view.bounds)
+        window.addSubview(view)
+        window.isHidden = false
+        defer { window.isHidden = true }
+
+        view.textView.contentOffset.y = initialFrame.minY - 10
+        tableSurface.updateGeometry(from: view.textView)
+
+        let visibleFrame = try XCTUnwrap(tableSurface.cellFrame(tableID: tableID, cellIndex: 0))
+        XCTAssertEqual(visibleFrame.minY, 10, accuracy: 0.5)
+        XCTAssertTrue(drawing.frame.intersects(tableSurface.bounds))
+        XCTAssertLessThanOrEqual(drawing.bounds.height, view.bounds.height)
+        var paintedCells = 0
+        var paintedText = 0
+        drawing.onTableChromeDrawnForTesting = { _ in paintedCells += 1 }
+        drawing.onTableRichFragmentDrawnForTesting = { paintedText += 1 }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        _ = UIGraphicsImageRenderer(size: view.bounds.size, format: format).image { context in
+            context.cgContext.translateBy(x: -drawing.bounds.minX, y: -drawing.bounds.minY)
+            drawing.draw(drawing.bounds)
+        }
+        XCTAssertGreaterThan(paintedCells, 0)
+        XCTAssertGreaterThan(paintedText, 0)
+        XCTAssertEqual(adapter.baseDocumentRevision, revision)
+        XCTAssertEqual(adapter.cachedHistoryState?.canUndo, history?.canUndo)
+        XCTAssertEqual(adapter.cachedHistoryState?.canRedo, history?.canRedo)
+        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), documentBeforeScroll)
+    }
+
+    func testInactiveCellTouchBelongsToRootScrollView() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]}]}"#
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        view.layoutIfNeeded()
+
+        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let frame = try XCTUnwrap(tableSurface.cellFrame(tableID: tableID, cellIndex: 0))
+        XCTAssertTrue(view.hitTest(CGPoint(x: frame.midX, y: frame.midY), with: nil) === view.textView)
+        XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
+        XCTAssertTrue(view.hitTest(CGPoint(x: frame.midX, y: frame.midY), with: nil) === view.activeTextInput)
+    }
+
+    func testActiveCellInputUsesPreparedContentInsets() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]}]}"#
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        XCTAssertTrue(view.applyTheme(EditorTheme(dictionary: ["contentInsets": ["top": 12, "left": 20]])))
+        view.layoutIfNeeded()
+
+        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let cell = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface?.cells.first)
+        XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
+        let input = view.activeTextInput
+        let origin = try XCTUnwrap(drawing.layout?.blocks.first?.tableBounds?.origin)
+        XCTAssertEqual(input.frame.minX, (origin.x + cell.frame.minX + cell.contentOrigin.x).rounded(), accuracy: 1)
+        XCTAssertEqual(input.textContainerInset, .zero)
+        XCTAssertEqual(input.textContainer.lineFragmentPadding, 0)
+    }
+
+    func testRootTableRebindWithSameRevisionReplacesPreparedContent() throws {
+        let firstID = makeV2Editor(configJson: tableConfig)
+        let secondID = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: firstID); destroyV2Editor(id: secondID) }
+        let first = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: firstID))
+        let second = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: secondID))
+        let firstDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]}]}"#
+        let secondDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}]}"#
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        view.bindEditor(id: firstID, initialUpdateJSON: try XCTUnwrap(first.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(first.setContentJson(firstDocument))))
+        view.layoutIfNeeded()
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let firstSurface = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface)
+
+        _ = try XCTUnwrap(second.initialUpdateJSON())
+        _ = try XCTUnwrap(second.setContentJson(secondDocument))
+        XCTAssertEqual(first.baseDocumentRevision, second.baseDocumentRevision)
+        view.bindEditor(id: secondID, initialUpdateJSON: try XCTUnwrap(second.initialUpdateJSON()))
+        view.layoutIfNeeded()
+
+        XCTAssertEqual(first.baseDocumentRevision, second.baseDocumentRevision)
+        let secondSurface = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface)
+        XCTAssertFalse(firstSurface === secondSurface)
+        XCTAssertTrue(String(describing: secondSurface.sourceTable).contains("second"))
+        let secondTableID = try XCTUnwrap(second.cachedTableInputMappings?.tables.keys.first)
+        XCTAssertNotNil(second.positionEpoch)
+        XCTAssertTrue(view.bindTableCell(tableID: secondTableID, cellIndex: 0, contentRect: .zero))
+        XCTAssertTrue(view.textView.ownsNativeBinding(second))
+    }
+
+    func testPrepopulatedInitialBindRetainsTablePresentationAndCellAuthority() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"preloaded"}]}]}]}]}]}"#
+        _ = try XCTUnwrap(adapter.setContentJson(document))
+        let revision = adapter.baseDocumentRevision
+        let history = adapter.cachedHistoryState
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        view.layoutIfNeeded()
+
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        XCTAssertTrue(String(describing: drawing.layout?.blocks.first?.tableSurface?.sourceTable).contains("preloaded"))
+        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        XCTAssertNotNil(adapter.positionEpoch)
+        XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
+        XCTAssertTrue(view.textView.ownsNativeBinding(adapter))
+        XCTAssertEqual(adapter.baseDocumentRevision, revision)
+        XCTAssertEqual(adapter.cachedHistoryState?.canUndo, history?.canUndo)
+        XCTAssertEqual(adapter.cachedHistoryState?.canRedo, history?.canRedo)
+    }
+
+    func testRootTableRecoversAfterZeroWidthLayout() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]}]}"#
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        view.layoutIfNeeded()
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        XCTAssertNotNil(drawing.layout)
+
+        view.frame.size.width = 0
+        view.layoutIfNeeded()
+        XCTAssertNil(drawing.layout)
+        view.frame.size.width = 320
+        view.layoutIfNeeded()
+        XCTAssertNotNil(drawing.layout)
     }
 
     func testHostRejectsTableCellBindingWhenAnotherHostOwnsTheSession() throws {

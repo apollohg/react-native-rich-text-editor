@@ -156,10 +156,12 @@ final class RenderBridge {
     final class RootTableScalarExtent: NSObject {
         let scalarStart: UInt32
         let scalarEnd: UInt32
+        let tableID: String?
 
-        init(scalarStart: UInt32, scalarEnd: UInt32) {
+        init(scalarStart: UInt32, scalarEnd: UInt32, tableID: String? = nil) {
             self.scalarStart = scalarStart
             self.scalarEnd = scalarEnd
+            self.tableID = tableID
         }
     }
 
@@ -252,7 +254,11 @@ final class RenderBridge {
                     attributes: [
                         .font: UIFont.systemFont(ofSize: 0.1),
                         .foregroundColor: UIColor.clear,
-                        RenderBridgeAttributes.rootTableScalarExtent: extent
+                        RenderBridgeAttributes.rootTableScalarExtent: RootTableScalarExtent(
+                            scalarStart: extent.scalarStart,
+                            scalarEnd: extent.scalarEnd,
+                            tableID: tableID
+                        )
                     ]
                 )
                 result.append(

@@ -93,7 +93,7 @@ final class AtomHostContainerView: UIView {
 ///
 /// For now, this is a plain UIView that can be used in a UIKit context
 /// and serves as the integration point for the future Fabric component.
-final class RichTextEditorView: UIView {
+final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
 
     struct HostedLayoutTrace {
         let intrinsicContentSizeNanos: UInt64
@@ -117,6 +117,11 @@ final class RichTextEditorView: UIView {
     let textView: EditorTextView
     private lazy var tableInputCoordinator = EditorTableInputCoordinator()
     private lazy var tableSurface = EditorTableSurface(inputCoordinator: tableInputCoordinator)
+    private lazy var tableCellTapRecognizer: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTableCellTap(_:)))
+        recognizer.delegate = self
+        return recognizer
+    }()
     var tableCellBindingAuthority: ((EditorV2Adapter) -> Bool)?
 
     var activeTextInput: EditorTextView {
@@ -219,6 +224,7 @@ final class RichTextEditorView: UIView {
         didSet {
             guard oldValue != editorId else { return }
             invalidateTableCellBinding()
+            tableSurface.clearPresentation()
             textView.discardTransientNativeInputForEditorRebind()
             if editorId != 0 {
                 let initialUpdateJSON = initialUpdateJSONForNextEditorBind
@@ -269,6 +275,10 @@ final class RichTextEditorView: UIView {
         }
 
         tableInputCoordinator.copyInputTraits(from: textView)
+        tableInputCoordinator.cellInput.baseTextContainerInset = .zero
+        tableInputCoordinator.cellInput.baseLineFragmentPadding = 0
+        tableInputCoordinator.cellInput.textContainerInset = .zero
+        tableInputCoordinator.cellInput.textContainer.lineFragmentPadding = 0
         guard tableInputCoordinator.bind(
             projection.target,
             text: projection.text,
@@ -284,10 +294,12 @@ final class RichTextEditorView: UIView {
                 return self.hasTableCellBindingAuthority(adapter)
             }
         ) else { return false }
+        tableInputCoordinator.cellInput.backgroundColor = .clear
+        tableInputCoordinator.cellInput.isOpaque = false
         tableInputCoordinator.cellInput.onProjectedUpdate = { [weak self] updateJSON, notifyDelegate in
             self?.applyActiveTableCellUpdate(updateJSON, notifyDelegate: notifyDelegate) ?? false
         }
-        tableSurface.placeActiveInput(in: contentRect)
+        tableSurface.placeActiveInput(tableID: tableID, cellIndex: cellIndex, fallback: contentRect)
         return true
     }
 
@@ -396,17 +408,21 @@ final class RichTextEditorView: UIView {
             )
         }
         textView.onViewportMayChange = { [weak self] in
-            self?.layoutManagedSubviews()
-            self?.refreshOverlaysIfNeeded()
-            self?.emitAtomContentWidthIfAvailable()
+            guard let self else { return }
+            self.layoutManagedSubviews()
+            self.tableSurface.updateGeometry(from: self.textView)
+            self.refreshOverlaysIfNeeded()
+            self.emitAtomContentWidthIfAvailable()
         }
         textView.onSelectionOrContentMayChange = { [weak self] in
             self?.scheduleRefreshOverlaysIfNeeded()
         }
         textView.onAuthoritativeRenderApplied = { [weak self] updateJSON in
+            self?.refreshTablePresentation()
             self?.refreshActiveTableCell(after: updateJSON)
         }
         addSubview(textView)
+        textView.addGestureRecognizer(tableCellTapRecognizer)
         addSubview(tableSurface)
         addSubview(remoteSelectionOverlayView)
         addSubview(taskListMarkerTapOverlayView)
@@ -476,6 +492,8 @@ final class RichTextEditorView: UIView {
         textView.font = font
         textView.textColor = textColor
         textView.backgroundColor = backgroundColor
+        tableSurface.invalidateAppearance()
+        refreshTablePresentation()
     }
 
     @discardableResult
@@ -485,6 +503,8 @@ final class RichTextEditorView: UIView {
         layer.cornerRadius = cornerRadius
         clipsToBounds = cornerRadius > 0
         updateStyleContentMask()
+        tableSurface.invalidateAppearance()
+        refreshTablePresentation()
         refreshOverlays()
         return true
     }
@@ -918,6 +938,7 @@ final class RichTextEditorView: UIView {
         if tableSurface.frame != managedFrame {
             tableSurface.frame = managedFrame
         }
+        tableSurface.updateGeometry(from: textView)
         if remoteSelectionOverlayView.frame != managedFrame {
             remoteSelectionOverlayView.frame = managedFrame
         }
@@ -930,6 +951,32 @@ final class RichTextEditorView: UIView {
         if imageResizeOverlayView.frame != managedFrame {
             imageResizeOverlayView.frame = managedFrame
         }
+    }
+
+    private func refreshTablePresentation() {
+        guard editorId != 0,
+              let presentation = EditorV2Registry.adapter(forLegacyId: editorId)?.cachedTablePresentation
+        else {
+            tableSurface.clearPresentation()
+            return
+        }
+        tableSurface.present(presentation, from: textView)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer === tableCellTapRecognizer,
+              touch.tapCount == 1
+        else { return false }
+        return tableSurface.cellHit(at: touch.location(in: tableSurface)) != nil
+    }
+
+    @objc
+    private func handleTableCellTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended,
+              let hit = tableSurface.cellHit(at: recognizer.location(in: tableSurface)),
+              bindTableCell(tableID: hit.tableID, cellIndex: hit.cellIndex, contentRect: hit.contentRect)
+        else { return }
+        _ = tableInputCoordinator.cellInput.becomeFirstResponder()
     }
 
     func selectedImageGeometry() -> (docPos: UInt32, rect: CGRect)? {

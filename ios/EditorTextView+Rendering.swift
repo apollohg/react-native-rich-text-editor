@@ -7,6 +7,54 @@ private struct RootTablePositionMapping {
 }
 
 extension EditorTextView {
+    func reserveRootTableHeights(_ heights: [String: CGFloat]) {
+        guard !heights.isEmpty, textStorage.length > 0 else { return }
+        var changed = false
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        let wasApplyingRustState = isApplyingRustState
+        isApplyingRustState = true
+        defer { isApplyingRustState = wasApplyingRustState }
+        textStorage.beginEditing()
+        textStorage.enumerateAttribute(
+            RenderBridgeAttributes.rootTableScalarExtent,
+            in: fullRange,
+            options: []
+        ) { value, range, _ in
+            guard let extent = value as? RenderBridge.RootTableScalarExtent,
+                  let tableID = extent.tableID,
+                  let height = heights[tableID],
+                  height.isFinite,
+                  height > 0
+            else { return }
+            let paragraphRange = (textStorage.string as NSString).paragraphRange(for: range)
+            let current = textStorage.attribute(.paragraphStyle, at: range.location, effectiveRange: nil)
+                as? NSParagraphStyle
+            let trailing = textStorage.attribute(.paragraphStyle, at: NSMaxRange(paragraphRange) - 1, effectiveRange: nil)
+                as? NSParagraphStyle
+            if let current,
+               let trailing,
+               abs(current.minimumLineHeight - height) < 0.5,
+               abs(current.maximumLineHeight - height) < 0.5,
+               abs(trailing.minimumLineHeight - height) < 0.5,
+               abs(trailing.maximumLineHeight - height) < 0.5 {
+                return
+            }
+            let paragraph = (current?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+            paragraph.minimumLineHeight = height
+            paragraph.maximumLineHeight = height
+            paragraph.paragraphSpacing = 0
+            paragraph.paragraphSpacingBefore = 0
+            textStorage.addAttribute(.paragraphStyle, value: paragraph, range: paragraphRange)
+            changed = true
+        }
+        textStorage.endEditing()
+        guard changed else { return }
+        layoutManager.invalidateLayout(forCharacterRange: fullRange, actualCharacterRange: nil)
+        lastAuthorizedTextStorage.setString(textStorage.string)
+        lastAuthorizedAttributedTextStorage.setAttributedString(textStorage)
+        PositionBridge.invalidateCache(for: self)
+    }
+
     func withImageLoadOwner<T>(_ body: () -> T) -> T {
         guard let imageLoadOwner else { return body() }
         return imageLoadOwner.withCurrent(body)

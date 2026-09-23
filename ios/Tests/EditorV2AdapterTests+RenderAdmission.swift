@@ -2,6 +2,23 @@ import UIKit
 import XCTest
 
 extension EditorV2AdapterTests {
+    func testReplacingNativeOwnerDoesNotRefreshBeforeNewErrorCallbackIsInstalled() {
+        let adapter = makeAdapter()
+        let firstOwner = UUID()
+        let secondOwner = UUID()
+        var firstErrors: [FfiError] = []
+        var secondErrors: [FfiError] = []
+        adapter.bindAutonomousErrorOwner(token: firstOwner) { firstErrors.append($0) }
+        let renderCalls = adapter.renderUpdateCallCountForTesting
+
+        adapter.bindAutonomousErrorOwner(token: secondOwner) { secondErrors.append($0) }
+
+        XCTAssertEqual(adapter.renderUpdateCallCountForTesting, renderCalls)
+        XCTAssertTrue(firstErrors.isEmpty)
+        XCTAssertTrue(secondErrors.isEmpty)
+        XCTAssertTrue(adapter.isAutonomousErrorOwner(token: secondOwner))
+    }
+
     func testTablePresentationSnapshotLowersAdoptedRenderAndClearsAtomically() throws {
         let adapter = makeAdapter()
         let owner = UUID()
@@ -186,17 +203,20 @@ extension EditorV2AdapterTests {
 
     func testMissingTableInputMappingAndOwnerReleaseClearCachedMapping() throws {
         let adapter = makeAdapter()
-        XCTAssertNotNil(adapter.adoptExternalRender(try tableInputMappingSnapshot()))
+        let snapshot = try tableInputMappingSnapshot(for: adapter)
+        XCTAssertNotNil(adapter.adoptExternalRender(snapshot))
         XCTAssertNotNil(adapter.cachedTableInputMappings)
 
-        let legacy = mutatedObjectJSON(try tableInputMappingSnapshot()) { $0.removeValue(forKey: "tableInputMappings") }
+        let legacy = mutatedObjectJSON(snapshot) { $0.removeValue(forKey: "tableInputMappings") }
         XCTAssertNotNil(adapter.adoptExternalRender(legacy))
         XCTAssertNil(adapter.cachedTableInputMappings)
 
         let owner = UUID()
         adapter.claimNativeBindingIfUnowned(token: owner)
+        XCTAssertTrue(adapter.isNativeBindingOwner(token: owner))
         XCTAssertNil(adapter.cachedTableInputMappings)
-        let native = mutatedObjectJSON(try tableInputMappingSnapshot()) { $0["positionEpoch"] = "1" }
+        let epoch = try XCTUnwrap(adapter.positionEpoch)
+        let native = mutatedObjectJSON(snapshot) { $0["positionEpoch"] = String(epoch) }
         XCTAssertNotNil(adapter.adoptExternalRender(native))
         adapter.releaseNativeBindingOwner(token: owner)
         XCTAssertNil(adapter.cachedTableInputMappings)

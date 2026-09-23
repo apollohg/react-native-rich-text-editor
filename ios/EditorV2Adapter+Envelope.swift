@@ -106,7 +106,10 @@ extension EditorV2Adapter {
     private func claimNativeBinding(token: UUID, replaceExisting: Bool) {
         if !replaceExisting, nativeOwnerToken != nil { return }
         if nativeOwnerToken == token { return }
-        releaseNativeOwner()
+        let replacingExistingOwner = nativeOwnerToken != nil
+        if replacingExistingOwner {
+            releaseNativeOwner()
+        }
         Self.nativeOwnerLock.lock()
         guard Self.nextNativeOwnerId < UInt64.max else {
             Self.nativeOwnerLock.unlock()
@@ -117,6 +120,14 @@ extension EditorV2Adapter {
         nativeOwnerId = Self.nextNativeOwnerId
         nativeOwnerToken = token
         Self.nativeOwnerLock.unlock()
+        if cachedTablePresentation != nil, positionEpoch == nil {
+            guard let renderJSON = cachedAtomicRenderJSON,
+                  adoptExternalRender(renderJSON) != nil
+            else {
+                releaseNativeOwner()
+                return
+            }
+        }
     }
 
     func releaseNativeBindingOwner(token: UUID) {
