@@ -41,7 +41,7 @@ internal fun NativeEditorExpoView.handleEditorDestroyedImpl(editorId: Long) {
     uninstallOutsideTapBlurHandler()
     detachKeyboardToolbarIfNeeded()
     richTextView.setViewportBottomInsetPx(0)
-    val editText = richTextView.editorEditText
+    val editText = richTextView.activeTextInput
     if (editText.hasFocus()) {
         editText.clearFocus()
     }
@@ -142,7 +142,7 @@ internal fun NativeEditorExpoView.prepareForDetachFromWindow() {
         schedulePendingDetachPreflightRetry(editorId)
         return
     }
-    if (richTextView.editorEditText.prepareForExternalEditorUpdate()) {
+    if (richTextView.activeTextInput.prepareForExternalEditorUpdate()) {
         cancelPendingDetachPreflightRetry()
         richTextView.clearDeferredEditorUnbind()
         return
@@ -158,7 +158,7 @@ internal fun NativeEditorExpoView.schedulePendingDetachPreflightRetry(editorId: 
         if (activeExternalTextComposition != null) {
             cancelActiveExternalTextComposition("lifecycle")
         } else {
-            richTextView.editorEditText.restoreAuthorizedTextIfNeeded()
+            richTextView.activeTextInput.restoreAuthorizedTextIfNeeded()
         }
         cancelPendingDetachPreflightRetry()
         richTextView.unbindEditorForDetachedViewIfNeeded()
@@ -184,7 +184,7 @@ internal fun NativeEditorExpoView.schedulePendingDetachPreflightRetry(editorId: 
             schedulePendingDetachPreflightRetry(editorId)
             return@postDelayed
         }
-        if (richTextView.editorEditText.prepareForExternalEditorUpdate()) {
+        if (richTextView.activeTextInput.prepareForExternalEditorUpdate()) {
             cancelPendingDetachPreflightRetry()
             richTextView.unbindEditorForDetachedViewIfNeeded()
             return@postDelayed

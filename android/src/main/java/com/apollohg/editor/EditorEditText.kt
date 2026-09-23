@@ -291,6 +291,9 @@ class EditorEditText @JvmOverloads constructor(
     internal var onResizeImageAtDocPosForTesting: ((Int, Int, Int) -> Unit)? = null
     internal var onMoveSelectionScalarForTesting: ((Int, Int, Int) -> Unit)? = null
     internal var onBeforeRenderRefresh: (() -> Unit)? = null
+    internal var onTableRootTouch: ((MotionEvent) -> Boolean)? = null
+    internal var onTableCellSelectionSynced: (() -> Unit)? = null
+    internal var rootTableNativeOwnerAuthority: ((EditorV2Adapter) -> Boolean)? = null
     internal var blockExternalEditorUpdatePreparationForTesting = false
     internal var blockExternalEditorCommandPreparationForTesting = false
     internal var throwOnNextApplyUpdateForTesting: Throwable? = null
@@ -466,6 +469,7 @@ class EditorEditText @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (onTableRootTouch?.invoke(event) == false) return true
         if (event.actionMasked == MotionEvent.ACTION_DOWN &&
             imageSpanHitAt(event.x, event.y) == null
         ) {

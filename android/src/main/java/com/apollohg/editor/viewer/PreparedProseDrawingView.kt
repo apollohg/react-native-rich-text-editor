@@ -52,6 +52,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     internal var onMountedTableCellsDrawnForTesting: ((Int) -> Unit)? = null
     internal var onTableChromeDrawnForTesting: ((Int) -> Unit)? = null
     internal var onTableRichFragmentDrawnForTesting: (() -> Unit)? = null
+    internal var suppressedTableCellSourcePosition: Int? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
     private var tablePresentationOwner = ViewerTablePresentationOwner()
     private val imagePixelsLock = Any()
     private val imagePixels = mutableMapOf<String, DecodedBitmapLease>()
@@ -335,7 +341,10 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                 val attachmentsByBlock = snapshot.images.mapNotNull { image ->
                     image.block?.let { block -> block to image.attachment }
                 }.toMap()
-                visible.forEach { presented ->
+                val activeCellContent = snapshot.mountedCells.firstOrNull {
+                    it.sourcePosition == suppressedTableCellSourcePosition
+                }?.content
+                visible.filter { it.layout !== activeCellContent }.forEach { presented ->
                     drawPresented(canvas, presented, snapshot) {
                         val attachment = attachmentsByBlock[presented.block]
                         if (presented.layout !== artifact && it.kind == PreparedProseFragmentKind.TEXT) {

@@ -26,17 +26,17 @@ internal fun NativeEditorExpoView.scheduleOutsideTapBlurHandlerInstallRetry() {
     cancelPendingOutsideTapBlurHandlerInstallRetry()
     val retry = Runnable {
         pendingOutsideTapHandlerInstallRetry = null
-        if (richTextView.editorEditText.hasFocus()) {
+        if (richTextView.activeTextInput.hasFocus()) {
             installOutsideTapBlurHandlerIfNeeded()
         }
     }
     pendingOutsideTapHandlerInstallRetry = retry
-    richTextView.editorEditText.postDelayed(retry, OUTSIDE_TAP_HANDLER_INSTALL_RETRY_DELAY_MS)
+    richTextView.postDelayed(retry, OUTSIDE_TAP_HANDLER_INSTALL_RETRY_DELAY_MS)
 }
 
 internal fun NativeEditorExpoView.cancelPendingOutsideTapBlurHandlerInstallRetry() {
     pendingOutsideTapHandlerInstallRetry?.let {
-        richTextView.editorEditText.removeCallbacks(it)
+        richTextView.removeCallbacks(it)
         pendingOutsideTapHandlerInstallRetry = null
     }
 }
@@ -79,7 +79,7 @@ internal fun NativeEditorExpoView.handleOutsideTapDecisionFromWindowDispatcherIm
     traceOutsideTap("handle decision=$decision")
     when (decision) {
         NativeEditorOutsideTapDecision.IGNORE -> {
-            if (!richTextView.editorEditText.hasFocus()) {
+            if (!richTextView.activeTextInput.hasFocus()) {
                 cancelPendingOutsideTapBlur()
             }
         }
@@ -103,7 +103,7 @@ internal fun NativeEditorExpoView.cancelOutsideTapBlurFromWindowDispatcherImpl()
 }
 
 internal fun NativeEditorExpoView.isEditorFocusedForOutsideTapDecision(): Boolean =
-    editorFocusedForOutsideTapOverrideForTesting ?: richTextView.editorEditText.hasFocus()
+    editorFocusedForOutsideTapOverrideForTesting ?: richTextView.activeTextInput.hasFocus()
 
 internal fun NativeEditorExpoView.isTouchOutsideEditor(event: MotionEvent): Boolean {
     if (isTouchInsideKeyboardToolbar(event)) {
@@ -115,7 +115,7 @@ internal fun NativeEditorExpoView.isTouchOutsideEditor(event: MotionEvent): Bool
         return false
     }
     val rect = Rect()
-    richTextView.editorEditText.getGlobalVisibleRect(rect)
+    richTextView.getGlobalVisibleRect(rect)
     val isOutside = !rect.contains(event.rawX.toInt(), event.rawY.toInt())
     if (isOutside) {
         clearRecentToolbarTouch()

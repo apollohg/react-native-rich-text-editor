@@ -57,6 +57,27 @@ internal class EditorTableInputCoordinator(val cellInput: EditorEditText) {
         return true
     }
 
+    fun refreshBinding(target: Target, map: TableCellPositionMap,
+                       currentRevision: String, currentEpoch: String): Boolean {
+        val active = phase
+        val sourcePos = when (active) {
+            is TableInputPhase.Bound -> active.cellSourcePos
+            is TableInputPhase.Composing -> active.cellSourcePos
+            TableInputPhase.Inactive -> return false
+        }
+        if (sourcePos != target.binding.cellSourcePos ||
+            !canBind(target) || !map.hasValidSegments() || map.binding != target.binding ||
+            !map.isCurrent(currentRevision, currentEpoch)) return false
+        positionMap = map
+        cellInput.tableCellPositionMap = map
+        phase = if (active is TableInputPhase.Composing) {
+            TableInputPhase.Composing(target.binding.cellSourcePos, currentRevision, currentEpoch)
+        } else {
+            TableInputPhase.Bound(target.binding.cellSourcePos, currentRevision, currentEpoch)
+        }
+        return true
+    }
+
     fun invalidateBinding(): Boolean {
         if (phase == TableInputPhase.Inactive && positionMap == null) return false
         cellInput.discardTransientNativeInputForEditorRebind()

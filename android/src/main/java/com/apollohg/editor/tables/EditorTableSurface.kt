@@ -1,5 +1,6 @@
 package com.apollohg.editor.tables
 
+import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
@@ -9,12 +10,21 @@ import android.text.Spanned
 import android.text.style.ReplacementSpan
 import android.view.View
 import android.view.ViewGroup
+import android.view.MotionEvent
+import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import com.apollohg.editor.EditorEditText
 import com.apollohg.editor.EditorTextStyle
 import com.apollohg.editor.EditorV2Adapter
+import com.apollohg.editor.EditorV2Registry
 import com.apollohg.editor.RenderBridge
 import com.apollohg.editor.RichTextEditorView
+import com.apollohg.editor.canonicalV2U64
+import com.apollohg.editor.applyRenderedSpannable
+import com.apollohg.editor.applySelectionFromJSON
+import com.apollohg.editor.isAuthorizedForRootTableInput
+import com.apollohg.editor.hasAuthorizedNativeTableOwner
+import com.apollohg.editor.retireInputConnectionForEditor
 import com.apollohg.editor.viewer.PreparedProseBlock
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import com.apollohg.editor.viewer.PreparedProseLayout
@@ -23,6 +33,7 @@ import com.apollohg.editor.viewer.ProseLayoutKey
 import com.apollohg.editor.viewer.StaticLayoutAndroidProseLayoutEngine
 import com.apollohg.editor.viewer.ViewerBlock
 import com.apollohg.editor.viewer.ViewerDocument
+import org.json.JSONObject
 
 internal class RootTableHeightSpan(val heightPx: Int) : ReplacementSpan() {
     override fun getSize(paint: Paint, text: CharSequence?, start: Int, end: Int,
@@ -50,12 +61,22 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         mentionInteractionsEnabled = false
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        setOnTouchListener { _, event -> handleTableTouch(event) }
     }
+    private data class ActiveCell(val tableId: String, val cellIndex: Int, val sourcePos: Long)
+    private var activeCell: ActiveCell? = null
+    private var applyingCellUpdate = false
+    private var activeAppearanceRevision: Long? = null
+    private var blockedRootGesture = false
+    private var touchTarget: Pair<String, Int>? = null
+    private var coordinator: EditorTableInputCoordinator? = null
+    val activeInput: EditorEditText? get() = coordinator?.cellInput?.takeIf { activeCell != null }
     private var entries: Map<String, Entry> = emptyMap()
     private var key: Triple<EditorV2Adapter, ULong, Pair<Int, Long>>? = null
     private var positionedBlocks: List<PreparedProseBlock> = emptyList()
 
     fun clear() {
+        invalidateCell()
         entries = emptyMap()
         key = null
         positionedBlocks = emptyList()
@@ -72,6 +93,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             .coerceAtLeast(0)
         val markers = markers(input)
         val admittedMappings = adapter?.cachedTableInputMappings?.tables
+        if (adapter != null && input.rootTableMapPositionEpoch != adapter.positionEpoch) {
+            input.isAuthorizedForRootTableInput()
+        }
         if (adapter == null || revision == null ||
             input.lastAppliedDocumentVersion != revision.toString() ||
             input.rootTableMapDocumentVersion != revision.toString() ||
@@ -83,6 +107,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             adapter.cachedTableRecords.keys.containsAll(markers.keys).not()
         ) {
             if (entries.isNotEmpty() || drawingView.parent != null) clear()
+            else invalidateCell()
             return
         }
         val nextKey = Triple(adapter, revision, width to input.renderAppearanceRevision)
@@ -129,6 +154,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
                     ViewGroup.LayoutParams.MATCH_PARENT))
         }
         updateGeometry()
+        if (!applyingCellUpdate) reconcileActiveCell()
     }
 
     fun updateGeometry() {
@@ -152,6 +178,279 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             input.resources.displayMetrics.density.toBits().toLong(), 0, "editor-table-canvas")
         drawingView.install(PreparedProseLayout(key, width, height, blocks,
             retainedBytes = blocks.sumOf { it.retainedBytes }))
+        positionActiveInput()
+    }
+
+    fun onRootTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                blockedRootGesture = false
+                if (activeCell != null) {
+                    if (activeInput?.prepareForExternalEditorUpdate() != true) {
+                        blockedRootGesture = true
+                        return false
+                    }
+                    invalidateCell()
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (blockedRootGesture) {
+                    blockedRootGesture = false
+                    return false
+                }
+            }
+        }
+        return !blockedRootGesture
+    }
+
+    private fun handleTableTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                touchTarget = hitCell(event.x, event.y)
+                return touchTarget != null
+            }
+            MotionEvent.ACTION_CANCEL -> touchTarget = null
+            MotionEvent.ACTION_UP -> {
+                val target = touchTarget
+                touchTarget = null
+                if (target != null && target == hitCell(event.x, event.y)) {
+                    return activateCell(target.first, target.second, event.x, event.y)
+                }
+            }
+        }
+        return false
+    }
+
+    private fun hitCell(x: Float, y: Float): Pair<String, Int>? {
+        val blocks = drawingView.preparedLayout?.blocks.orEmpty()
+        for (block in blocks) {
+            val table = block.tableSurface ?: continue
+            val bounds = block.tableBounds ?: continue
+            val tableId = entries.entries.firstOrNull { it.value.surface === table }?.key ?: continue
+            for (cell in table.cells) {
+                val index = cell.sourceCellIndex ?: continue
+                if (x >= bounds.left + cell.frame.left && x < bounds.left + cell.frame.left + cell.frame.width &&
+                    y >= bounds.top + cell.frame.top && y < bounds.top + cell.frame.top + cell.frame.height) {
+                    return tableId to index
+                }
+            }
+        }
+        return null
+    }
+
+    private fun projection(tableId: String, cellIndex: Int): EditorTableCellProjection.Projection? {
+        val root = host.editorEditText
+        val adapter = root.v2Driver as? EditorV2Adapter ?: return null
+        if (!root.isEditable || !root.hasAuthorizedNativeTableOwner(adapter) ||
+            adapter.cachedAtomicRenderDocumentRevision != adapter.baseDocumentRevision ||
+            root.lastAppliedDocumentVersion != adapter.baseDocumentRevision.toString()) return null
+        val table = adapter.cachedTableRecords[tableId] ?: return null
+        val mapping = adapter.cachedTableInputMappings?.tables?.get(tableId) ?: return null
+        return EditorTableCellProjection.project(cellIndex, table, mapping,
+            adapter.baseDocumentRevision.toString(), adapter.positionEpoch ?: return null,
+            root.baseFontSize, root.baseTextColor, root.theme, root.resources.displayMetrics.density)
+    }
+
+    private fun activateCell(tableId: String, cellIndex: Int, x: Float, y: Float): Boolean {
+        val root = host.editorEditText
+        val current = activeCell
+        if (current != null && (current.tableId != tableId || current.cellIndex != cellIndex) &&
+            activeInput?.prepareForExternalEditorUpdate() != true) return false
+        var resolvedTableId = tableId
+        if (root.hasPendingCompositionForExternalRefresh()) {
+            val adapter = root.v2Driver as? EditorV2Adapter ?: return false
+            val beforeIds = markers(root).entries.sortedBy { it.value }.map { it.key }
+            val ordinal = beforeIds.indexOf(tableId).takeIf { it >= 0 } ?: return false
+            val beforeTable = adapter.cachedTableRecords[tableId] ?: return false
+            val beforeCells = beforeTable.optJSONArray("cells") ?: return false
+            val contentKey = beforeCells.optJSONObject(cellIndex)?.optString("contentKey")
+                ?.takeIf { it.isNotEmpty() } ?: return false
+            val preparation = root.prepareForExternalEditorUpdateWithResult()
+            if (!preparation.ready) return false
+            if (preparation.adoptedUpdateJSON?.let { root.applyUpdateJSON(it) } == false) return false
+            if (preparation.adoptedUpdateJSON != null) {
+                val afterIds = markers(root).entries.sortedBy { it.value }.map { it.key }
+                if (afterIds.size != beforeIds.size) return false
+                resolvedTableId = afterIds.getOrNull(ordinal) ?: return false
+                val afterCells = adapter.cachedTableRecords[resolvedTableId]
+                    ?.optJSONArray("cells") ?: return false
+                if (afterCells.length() != beforeCells.length() ||
+                    afterCells.optJSONObject(cellIndex)?.optString("contentKey") != contentKey
+                ) return false
+            }
+        }
+        val projected = projection(resolvedTableId, cellIndex) ?: return false
+        val sourcePos = projected.target.binding.cellSourcePos
+        if (current?.sourcePos == sourcePos && current.tableId == resolvedTableId) {
+            activeInput?.let { input ->
+                input.requestFocus()
+                input.setSelection(input.getOffsetForPosition(x - input.left, y - input.top))
+                showKeyboard(input)
+            }
+            reconcileActiveCell()
+            return true
+        }
+        invalidateCell()
+        val adapter = root.v2Driver as? EditorV2Adapter ?: return false
+        val input = coordinator?.cellInput ?: EditorEditText(host.context).apply {
+            isTableCellInput = true
+            setPadding(0, 0, 0, 0)
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            coordinator = EditorTableInputCoordinator(this)
+            host.onTableCellInputCreated?.invoke(this)
+        }
+        input.setBaseStyle(root.baseFontSize, root.baseTextColor, android.graphics.Color.TRANSPARENT)
+        input.isEditable = root.isEditable
+        input.editorId = root.editorId
+        input.v2Driver = adapter
+        val bound = coordinator?.bind(projected.target, projected.positionMap,
+            adapter.baseDocumentRevision.toString(), adapter.positionEpoch ?: "",
+            authority = { root.v2Driver === adapter && root.hasAuthorizedNativeTableOwner(adapter) &&
+                root.isEditable && activeCell?.sourcePos == sourcePos },
+            updateConsumer = { update, notify, external -> applyCellUpdate(update, notify, external) }
+        ) == true
+        if (!bound) return false
+        activeCell = ActiveCell(resolvedTableId, cellIndex, sourcePos)
+        activeAppearanceRevision = root.renderAppearanceRevision
+        root.retireInputConnectionForEditor()
+        input.onTableCellSelectionSynced = { reconcileActiveCell() }
+        input.applyRenderedSpannable(projected.text, usedPatch = false)
+        if (input.parent !== host.editorContentFrame) {
+            (input.parent as? ViewGroup)?.removeView(input)
+            host.editorContentFrame.addView(input, FrameLayout.LayoutParams(1, 1))
+        }
+        drawingView.suppressedTableCellSourcePosition = sourcePos.toInt()
+        positionActiveInput()
+        input.requestFocus()
+        input.setSelection(input.getOffsetForPosition(x - input.left, y - input.top))
+        showKeyboard(input)
+        reconcileActiveCell()
+        return true
+    }
+
+    private fun showKeyboard(input: EditorEditText) {
+        input.post {
+            if (activeInput !== input || !input.hasFocus()) return@post
+            val manager = host.context.getSystemService(Context.INPUT_METHOD_SERVICE)
+                as? InputMethodManager
+            manager?.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
+
+    private fun applyCellUpdate(update: String, notify: Boolean, external: Boolean): Boolean {
+        val active = activeCell ?: return false
+        if (applyingCellUpdate) return false
+        val root = host.editorEditText
+        val adapter = root.v2Driver as? EditorV2Adapter ?: return false
+        val editorId = root.editorId
+        val boundMap = coordinator?.positionMap ?: return false
+        val revision = runCatching { JSONObject(update).optString("documentVersion") }
+            .getOrNull()?.takeIf { canonicalV2U64(it) != null } ?: return false
+        applyingCellUpdate = true
+        val applied = try {
+            root.applyUpdateJSON(update, notify, external)
+        } finally {
+            applyingCellUpdate = false
+        }
+        val coherent = applied && root.editorId == editorId && root.v2Driver === adapter &&
+            EditorV2Registry.adapterForViewToken(editorId) === adapter &&
+            root.hasAuthorizedNativeTableOwner(adapter) &&
+            root.lastAppliedDocumentVersion == revision &&
+            adapter.baseDocumentRevision.toString() == revision &&
+            adapter.cachedAtomicRenderDocumentRevision == adapter.baseDocumentRevision &&
+            activeCell == active && coordinator?.positionMap === boundMap
+        if (coherent) {
+            reconcileActiveCell(JSONObject(update).optJSONObject("selection"), localUpdate = true)
+        } else {
+            invalidateCell()
+        }
+        return coherent
+    }
+
+    private fun reconcileActiveCell(selection: JSONObject? = null, localUpdate: Boolean = false) {
+        val active = activeCell ?: return
+        val adapter = host.editorEditText.v2Driver as? EditorV2Adapter ?: return
+        if (!localUpdate && coordinator?.positionMap?.binding?.revision !=
+            adapter.baseDocumentRevision.toString()) {
+            invalidateCell()
+            return
+        }
+        val projected = projection(active.tableId, active.cellIndex)
+        if (projected == null || projected.target.binding.cellSourcePos != active.sourcePos) {
+            invalidateCell()
+            return
+        }
+        val input = coordinator?.cellInput ?: return
+        val root = host.editorEditText
+        val composing = input.hasPendingCompositionForExternalRefresh()
+        if (composing && !localUpdate && projected.text.toString() != input.lastAuthorizedText) {
+            invalidateCell()
+            return
+        }
+        if (coordinator?.refreshBinding(projected.target, projected.positionMap,
+                adapter.baseDocumentRevision.toString(), adapter.positionEpoch ?: "") != true) {
+            invalidateCell()
+            return
+        }
+        val sameText = input.text.toString() == projected.text.toString()
+        val appearanceChanged = activeAppearanceRevision != root.renderAppearanceRevision
+        if (!composing && sameText && (localUpdate || appearanceChanged)) {
+            if (appearanceChanged) {
+                input.setBaseStyle(root.baseFontSize, root.baseTextColor,
+                    android.graphics.Color.TRANSPARENT)
+                input.applyTheme(root.theme)
+            }
+            val previousStyleOnly = input.reuseImagesDuringThemeUpdate
+            input.reuseImagesDuringThemeUpdate = true
+            try {
+                input.applyRenderedSpannable(projected.text, usedPatch = false)
+            } finally {
+                input.reuseImagesDuringThemeUpdate = previousStyleOnly
+            }
+        } else if ((!composing || localUpdate) && !sameText) {
+            input.applyRenderedSpannable(projected.text, usedPatch = false)
+        }
+        activeAppearanceRevision = root.renderAppearanceRevision
+        selection?.let { input.applySelectionFromJSON(it, adapter.baseDocumentRevision.toString()) }
+        positionActiveInput()
+    }
+
+    private fun positionActiveInput() {
+        val active = activeCell ?: return
+        val block = drawingView.preparedLayout?.blocks?.firstOrNull {
+            it.tableSurface === entries[active.tableId]?.surface
+        } ?: return
+        val cell = block.tableSurface?.cells?.firstOrNull {
+            it.sourceCellIndex == active.cellIndex || it.sourcePosition.toLong() == active.sourcePos
+        } ?: return
+        if (cell.sourcePosition.toLong() != active.sourcePos) { invalidateCell(); return }
+        val bounds = block.tableBounds ?: return
+        val input = coordinator?.cellInput ?: return
+        val inset = cell.contentOrigin
+        val width = (cell.frame.width - 2f * inset.first).toInt().coerceAtLeast(1)
+        val height = (cell.frame.height - 2f * inset.second).toInt().coerceAtLeast(1)
+        val params = FrameLayout.LayoutParams(width, height).apply {
+            leftMargin = (bounds.left + cell.frame.left + inset.first).toInt()
+            topMargin = (bounds.top + cell.frame.top + inset.second).toInt()
+        }
+        val current = input.layoutParams as? FrameLayout.LayoutParams
+        if (current == null || current.width != params.width || current.height != params.height ||
+            current.leftMargin != params.leftMargin || current.topMargin != params.topMargin) {
+            input.layoutParams = params
+        }
+    }
+
+    fun invalidateCell() {
+        touchTarget = null
+        activeCell = null
+        activeAppearanceRevision = null
+        coordinator?.invalidateBinding()
+        coordinator?.cellInput?.let { input ->
+            input.onTableCellSelectionSynced = null
+            input.clearFocus()
+            (input.parent as? ViewGroup)?.removeView(input)
+        }
+        drawingView.suppressedTableCellSourcePosition = null
     }
 
     private fun markers(input: EditorEditText): Map<String, Int> = markers(input.text)

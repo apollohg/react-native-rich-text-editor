@@ -2,7 +2,10 @@ package com.apollohg.editor
 
 import android.text.Annotation
 import android.text.Spanned
+import android.text.style.ForegroundColorSpan
+import android.graphics.Color
 import android.view.View
+import android.view.MotionEvent
 import android.view.inputmethod.EditorInfo
 import com.apollohg.editor.tables.RootTableHeightSpan
 import com.apollohg.editor.viewer.PreparedProseDrawingView
@@ -10,6 +13,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -61,6 +65,383 @@ internal class EditorTableSurfaceMountTest {
     private fun heightSpan(view: RichTextEditorView): RootTableHeightSpan {
         val text = view.editorEditText.text
         return text.getSpans(0, text.length, RootTableHeightSpan::class.java).single()
+    }
+
+    private fun cellText(adapter: EditorV2Adapter, cellIndex: Int): String =
+        JSONObject(requireNotNull(adapter.documentJson()))
+            .getJSONArray("content").let { content ->
+                (0 until content.length()).map { content.getJSONObject(it) }
+                    .first { it.getString("type") == "table" }
+            }
+            .getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(cellIndex)
+            .getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(0).getString("text")
+
+    private fun firstCellText(adapter: EditorV2Adapter): String = cellText(adapter, 0)
+
+    private fun externalReplacement(adapter: EditorV2Adapter, document: String): String {
+        val request = JSONObject().put("version", 1).put("requestId", "1")
+            .put("history", "resetAndClear").put("setJson", JSONObject(document))
+        val replaced = UniffiEditorV2Backend.replaceDocument(adapter.editorId, request.toString())
+        assertTrue("external replacement=$replaced", replaced is EditorV2CallResult.Ok)
+        return requireNotNull(adapter.refreshFromRustState(null))
+    }
+
+    private fun tapFirstCell(view: RichTextEditorView, cellIndex: Int = 0) {
+        val canvas = requireNotNull(drawing(view))
+        canvas.measure(View.MeasureSpec.makeMeasureSpec(view.editorEditText.width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(view.editorEditText.height, View.MeasureSpec.EXACTLY))
+        canvas.layout(0, 0, canvas.measuredWidth, canvas.measuredHeight)
+        val block = requireNotNull(canvas.preparedLayout?.blocks?.singleOrNull())
+        val cell = requireNotNull(block.tableSurface?.cells?.getOrNull(cellIndex))
+        val bounds = requireNotNull(block.tableBounds)
+        val x = bounds.left + cell.frame.left + cell.contentOrigin.first + 8f
+        val y = bounds.top + cell.frame.top + cell.contentOrigin.second + 8f
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+        val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
+        try {
+            assertTrue(view.dispatchTouchEvent(down))
+            val handled = view.dispatchTouchEvent(up)
+            assertTrue("tap up focus=${view.activeTextInput === view.editorEditText} rootTrace=${view.editorEditText.imeTraceSnapshotForTesting()} doc=${(view.editorEditText.v2Driver as? EditorV2Adapter)?.documentJson()}",
+                handled)
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+    }
+
+    @Test
+    fun `tap mounts one editable cell and its input connection types through the document`() = withMountedView { view, adapter, _ ->
+        measure(view, 600)
+        val canvas = requireNotNull(drawing(view))
+        canvas.measure(View.MeasureSpec.makeMeasureSpec(view.editorEditText.width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(view.editorEditText.height, View.MeasureSpec.EXACTLY))
+        canvas.layout(0, 0, canvas.measuredWidth, canvas.measuredHeight)
+        val block = requireNotNull(canvas.preparedLayout?.blocks?.singleOrNull())
+        val cell = requireNotNull(block.tableSurface?.cells?.singleOrNull())
+        val frame = requireNotNull(block.tableBounds)
+        assertTrue("canvas ${canvas.width}x${canvas.height}", canvas.width > 0)
+        assertNotNull("source cell index", cell.sourceCellIndex)
+        val x = frame.left + cell.frame.left + cell.contentOrigin.first + 8f
+        val y = frame.top + cell.frame.top + cell.contentOrigin.second + 8f
+        val rootConnection = requireNotNull(view.editorEditText.onCreateInputConnection(EditorInfo()))
+        val beforeTap = adapter.documentJson()
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+        val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
+        try {
+            assertTrue(view.dispatchTouchEvent(down))
+            assertTrue(view.dispatchTouchEvent(up))
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+
+        val cellInput = (0 until view.editorContentFrame.childCount)
+            .map { view.editorContentFrame.getChildAt(it) }
+            .filterIsInstance<EditorEditText>()
+            .singleOrNull { it !== view.editorEditText }
+        assertNotNull("cell input after host tap", cellInput)
+        val mountedInput = requireNotNull(cellInput)
+        assertTrue(mountedInput.hasFocus())
+        assertTrue("cell authority", mountedInput.isAuthorizedForTableCellInput())
+        assertTrue(view.editorEditText.ownsNativeBinding(adapter))
+        assertTrue(!rootConnection.beginBatchEdit())
+        rootConnection.commitText("stale", 1)
+        assertEquals(beforeTap, adapter.documentJson())
+        view.forceLayout()
+        measure(view, 600)
+        assertNotNull("table persists after selection-triggered relayout", drawing(view))
+        assertTrue("cell remains mounted after relayout", mountedInput.parent === view.editorContentFrame)
+        assertEquals(beforeTap, adapter.documentJson())
+        val epochBeforeCaretMove = adapter.positionEpoch
+        mountedInput.setSelection(if (mountedInput.selectionStart == 0) mountedInput.text.length else 0)
+        assertNotEquals(epochBeforeCaretMove, adapter.positionEpoch)
+        assertTrue("selection-only epoch must rebind", mountedInput.isAuthorizedForTableCellInput())
+        mountedInput.setSelection(mountedInput.text.length)
+        assertTrue("selection-only epoch must rebind", mountedInput.isAuthorizedForTableCellInput())
+        assertNotNull(mountedInput.inputScalar(mountedInput.selectionStart))
+        val connection = requireNotNull(mountedInput.onCreateInputConnection(EditorInfo()))
+        assertTrue(connection.commitText("Q", 1))
+        assertEquals("Cell textQ", firstCellText(adapter))
+        assertTrue(connection.setSelection(0, 0))
+        assertTrue("IME selection-only epoch must rebind", mountedInput.isAuthorizedForTableCellInput())
+        assertTrue(connection.commitText("R", 1))
+        assertEquals("RCell textQ", firstCellText(adapter))
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `cell composition survives width reflow and commits through the same connection`() = withMountedView { view, adapter, _ ->
+        val canvas = requireNotNull(drawing(view))
+        canvas.measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(500, View.MeasureSpec.EXACTLY))
+        canvas.layout(0, 0, 600, 500)
+        val block = requireNotNull(canvas.preparedLayout?.blocks?.singleOrNull())
+        val cell = requireNotNull(block.tableSurface?.cells?.singleOrNull())
+        val bounds = requireNotNull(block.tableBounds)
+        val x = bounds.left + cell.frame.left + cell.contentOrigin.first + 8f
+        val y = bounds.top + cell.frame.top + cell.contentOrigin.second + 8f
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+        val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
+        try {
+            assertTrue(view.dispatchTouchEvent(down))
+            assertTrue(view.dispatchTouchEvent(up))
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+        val input = view.activeTextInput
+        assertTrue(input !== view.editorEditText)
+        input.setSelection(input.text.length)
+        val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+        val generation = input.inputConnectionGenerationForTesting()
+        assertTrue(connection.setComposingText("pending", 1))
+        assertEquals("Cell textpending", input.text.toString())
+        assertEquals("Cell text", firstCellText(adapter))
+
+        view.forceLayout()
+        measure(view, 320)
+
+        assertTrue(input === view.activeTextInput)
+        assertEquals("Cell textpending", input.text.toString())
+        assertEquals("Cell text", firstCellText(adapter))
+        assertEquals(generation, input.inputConnectionGenerationForTesting())
+        assertTrue(connection.finishComposingText())
+        assertEquals("Cell textpending", firstCellText(adapter))
+    }
+
+    @Test
+    fun `root composition commits before a cell takes focus`() = withMountedView { view, adapter, _ ->
+        val root = view.editorEditText
+        root.setSelection(root.text.length)
+        val connection = requireNotNull(root.onCreateInputConnection(EditorInfo()))
+        assertTrue(connection.setComposingText("tail", 1))
+        assertTrue(root.hasPendingCompositionForExternalRefresh())
+        val before = adapter.documentJson()
+
+        tapFirstCell(view)
+
+        assertTrue(view.activeTextInput !== root)
+        assertTrue(view.activeTextInput.hasFocus())
+        assertEquals("Cell text", firstCellText(adapter))
+        assertTrue(adapter.documentJson() != before)
+        assertTrue(adapter.documentJson()?.contains("aftertail") == true)
+        assertTrue(!root.hasPendingCompositionForExternalRefresh())
+    }
+
+    @Test
+    fun `root composition before table retargets the same cell after position shift`() {
+        val document = tableDocument.replace("[{\"type\":\"table\"",
+            "[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"before\"}]},{\"type\":\"table\"")
+        withMountedView(document) { view, adapter, _ ->
+            val root = view.editorEditText
+            val originalTableId = requireNotNull(adapter.cachedTableInputMappings).tables.keys.single()
+            root.setSelection(root.text.toString().indexOf("before") + "before".length)
+            val connection = requireNotNull(root.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.setComposingText("tail", 1))
+            assertTrue(root.hasPendingCompositionForExternalRefresh())
+
+            tapFirstCell(view)
+
+            val content = JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")
+            assertEquals("beforetail", content.getJSONObject(0).getJSONArray("content")
+                .getJSONObject(0).getString("text"))
+            assertEquals("Cell text", firstCellText(adapter))
+            assertTrue(view.activeTextInput !== root)
+            assertTrue(view.activeTextInput.hasFocus())
+            assertTrue(originalTableId != requireNotNull(adapter.cachedTableInputMappings).tables.keys.single())
+        }
+    }
+
+    @Test
+    fun `tap into an empty cell inserts through its mounted input`() {
+        val document = tableDocument.replace("[{\"type\":\"text\",\"text\":\"Cell text\"}]", "[]")
+        withMountedView(document) { view, adapter, _ ->
+            tapFirstCell(view)
+            val input = view.activeTextInput
+            assertTrue(input !== view.editorEditText)
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.commitText("Z", 1))
+            assertEquals("Z", firstCellText(adapter))
+        }
+    }
+
+    @Test
+    fun `theme-only reflow updates mounted cell spans without replacing input`() = withMountedView { view, adapter, _ ->
+        view.applyTheme(EditorTheme.fromJson("""{"text":{"color":"#112233"}}"""))
+        tapFirstCell(view)
+        val input = view.activeTextInput
+        val before = adapter.documentJson()
+        view.applyTheme(EditorTheme.fromJson("""{"text":{"color":"#DDEEFF"}}"""))
+        val colors = input.text.getSpans(0, input.text.length, ForegroundColorSpan::class.java)
+            .map { it.foregroundColor }
+        assertTrue("colors=$colors", Color.parseColor("#DDEEFF") in colors)
+        assertTrue(view.activeTextInput === input)
+        assertEquals(before, adapter.documentJson())
+    }
+
+    @Test
+    fun `leaving a composing cell commits its text before root focus`() = withMountedView { view, adapter, _ ->
+        tapFirstCell(view)
+        val input = view.activeTextInput
+        assertTrue(input !== view.editorEditText)
+        input.setSelection(input.text.length)
+        val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+        assertTrue(connection.setComposingText("tail", 1))
+        assertEquals("Cell text", firstCellText(adapter))
+
+        val root = view.editorEditText
+        val offset = root.text.toString().indexOf("after") + 2
+        val line = root.layout.getLineForOffset(offset)
+        val x = root.left + root.totalPaddingLeft + root.layout.getPrimaryHorizontal(offset)
+        val y = root.top + root.totalPaddingTop +
+            (root.layout.getLineTop(line) + root.layout.getLineBottom(line)) / 2f
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+        val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
+        try {
+            assertTrue(view.dispatchTouchEvent(down))
+            assertEquals("after down trace=${input.imeTraceSnapshotForTesting()}",
+                "Cell texttail", firstCellText(adapter))
+            assertTrue(view.dispatchTouchEvent(up))
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+
+        assertTrue(view.activeTextInput === root)
+        assertEquals("Cell texttail", firstCellText(adapter))
+        assertTrue(!connection.beginBatchEdit())
+    }
+
+    @Test
+    fun `blocked composition preflight keeps the cell active on prose tap`() = withMountedView { view, adapter, _ ->
+        tapFirstCell(view)
+        val input = view.activeTextInput
+        input.setSelection(input.text.length)
+        val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+        assertTrue(connection.setComposingText("tail", 1))
+        val before = adapter.documentJson()
+        input.blockExternalEditorUpdatePreparationForTesting = true
+
+        val root = view.editorEditText
+        val offset = root.text.toString().indexOf("after") + 2
+        val line = root.layout.getLineForOffset(offset)
+        val x = root.left + root.totalPaddingLeft + root.layout.getPrimaryHorizontal(offset)
+        val y = root.top + root.totalPaddingTop +
+            (root.layout.getLineTop(line) + root.layout.getLineBottom(line)) / 2f
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+        val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
+        try {
+            assertTrue(view.dispatchTouchEvent(down))
+            assertTrue(view.dispatchTouchEvent(up))
+        } finally {
+            down.recycle()
+            up.recycle()
+            input.blockExternalEditorUpdatePreparationForTesting = false
+        }
+
+        assertTrue(view.activeTextInput === input)
+        assertTrue(input.hasFocus())
+        assertEquals("Cell texttail", input.text.toString())
+        assertEquals(before, adapter.documentJson())
+    }
+
+    @Test
+    fun `switching cells commits only the previous composition and reuses the input`() {
+        val document = JSONObject(tableDocument)
+        val cells = document.getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(0).getJSONArray("content")
+        val second = JSONObject(cells.getJSONObject(0).toString())
+        second.getJSONArray("content").getJSONObject(0).getJSONArray("content")
+            .getJSONObject(0).put("text", "Other")
+        cells.put(second)
+        withMountedView(document.toString()) { view, adapter, _ ->
+            tapFirstCell(view)
+            val input = view.activeTextInput
+            input.setSelection(input.text.length)
+            val firstConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(firstConnection.setComposingText("tail", 1))
+            assertEquals("Cell text", cellText(adapter, 0))
+
+            tapFirstCell(view, 1)
+
+            assertTrue(view.activeTextInput === input)
+            assertEquals("Other", input.text.toString())
+            assertEquals("Cell texttail", cellText(adapter, 0))
+            assertEquals("Other", cellText(adapter, 1))
+            assertTrue(!firstConnection.beginBatchEdit())
+            val secondConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            input.setSelection(input.text.length)
+            assertTrue(secondConnection.commitText("Q", 1))
+            assertEquals("OtherQ", cellText(adapter, 1))
+            assertEquals("Cell texttail", cellText(adapter, 0))
+        }
+    }
+
+    @Test
+    fun `external same-position replacement retires mounted cell connection`() = withMountedView { view, adapter, _ ->
+        tapFirstCell(view)
+        val connection = requireNotNull(view.activeTextInput.onCreateInputConnection(EditorInfo()))
+        val replacement = tableDocument.replace("Cell text", "Replacement")
+        val update = externalReplacement(adapter, replacement)
+        assertTrue(view.editorEditText.applyUpdateJSON(update))
+        measure(view, 600)
+
+        assertTrue(view.activeTextInput === view.editorEditText)
+        assertEquals("Replacement", firstCellText(adapter))
+        assertTrue(!connection.beginBatchEdit())
+    }
+
+    @Test
+    fun `reentrant replacement cannot be adopted as the local cell update`() = withMountedView { view, adapter, _ ->
+        tapFirstCell(view)
+        val root = view.editorEditText
+        val input = view.activeTextInput
+        val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+        var replaced = false
+        root.editorListener = object : EditorEditText.EditorListener {
+            override fun onSelectionChanged(anchor: Int, head: Int) = Unit
+            override fun onEditorUpdate(updateJSON: String) {
+                if (replaced) return
+                replaced = true
+                val replacement = tableDocument.replace("Cell text", "Replacement")
+                val next = externalReplacement(adapter, replacement)
+                assertTrue(root.applyUpdateJSON(next))
+            }
+        }
+
+        assertTrue(connection.commitText("Q", 1))
+
+        assertTrue(replaced)
+        assertEquals("Replacement", firstCellText(adapter))
+        assertTrue(view.activeTextInput === root)
+        assertTrue(!connection.beginBatchEdit())
+    }
+
+    @Test
+    fun `lost table owner authority retires cell before another mutation`() = withMountedView { view, adapter, _ ->
+        tapFirstCell(view)
+        val connection = requireNotNull(view.activeTextInput.onCreateInputConnection(EditorInfo()))
+        val before = adapter.documentJson()
+        view.editorEditText.rootTableNativeOwnerAuthority = { false }
+        assertTrue(!connection.beginBatchEdit())
+        connection.commitText("wrong", 1)
+        assertEquals(before, adapter.documentJson())
+        view.applyTheme(EditorTheme.fromJson("""{"text":{"color":"#112233"}}"""))
+        assertTrue(view.activeTextInput === view.editorEditText)
+    }
+
+    @Test
+    fun `rebind retires mounted cell connection`() = withMountedView { view, adapter, _ ->
+        tapFirstCell(view)
+        val connection = requireNotNull(view.activeTextInput.onCreateInputConnection(EditorInfo()))
+        val before = adapter.documentJson()
+        view.editorId = 0L
+        assertTrue(view.activeTextInput === view.editorEditText)
+        assertTrue(!connection.beginBatchEdit())
+        connection.commitText("wrong", 1)
+        assertEquals(before, adapter.documentJson())
     }
 
     @Test

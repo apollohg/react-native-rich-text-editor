@@ -131,6 +131,14 @@ class RichTextEditorView @JvmOverloads constructor(
                 )
                 return
             }
+            if (child === editorTableSurface.activeInput) {
+                val params = child.layoutParams as FrameLayout.LayoutParams
+                child.measure(
+                    MeasureSpec.makeMeasureSpec(params.width, MeasureSpec.EXACTLY),
+                    MeasureSpec.makeMeasureSpec(params.height, MeasureSpec.EXACTLY)
+                )
+                return
+            }
             val width =
                 atomHostViews.entries.firstOrNull { it.value === child }?.key?.let(::atomWidthPx)
                     ?: child.measuredWidth.takeIf { it > 0 }
@@ -157,6 +165,12 @@ class RichTextEditorView @JvmOverloads constructor(
 
     val editorEditText: EditorEditText
     private val editorTableSurface by lazy { EditorTableSurface(this) }
+    val activeTextInput: EditorEditText get() = editorTableSurface.activeInput ?: editorEditText
+    internal var onTableCellInputCreated: ((EditorEditText) -> Unit)? = null
+
+    internal fun invalidateActiveTableCellInput() {
+        editorTableSurface.invalidateCell()
+    }
     val editorScrollView: ScrollView
     private val remoteSelectionOverlayView: RemoteSelectionOverlayView
     private val imageResizeOverlayView: ImageResizeOverlayView
@@ -202,7 +216,8 @@ class RichTextEditorView @JvmOverloads constructor(
         editorEditText = EditorEditText(context)
         editorContentFrame = EditorContentFrame(context).apply {
             setOnTouchListener { _, event ->
-                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                val allowRoot = editorTableSurface.onRootTouch(event)
+                if (allowRoot && event.actionMasked == MotionEvent.ACTION_DOWN) {
                     editorEditText.isFocusableInTouchMode = true
                     editorEditText.requestFocus()
                 }
@@ -258,6 +273,7 @@ class RichTextEditorView @JvmOverloads constructor(
         remoteSelectionOverlayView.bind(this)
         imageResizeOverlayView.bind(this)
         editorEditText.onBeforeRenderRefresh = imageResizeOverlayView::cancelActiveResize
+        editorEditText.onTableRootTouch = editorTableSurface::onRootTouch
         editorScrollView.setOnScrollChangeListener { _, _, _, _, _ ->
             editorEditText.surfaceViewportChanged()
             refreshOverlays()

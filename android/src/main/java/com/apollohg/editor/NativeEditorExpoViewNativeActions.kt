@@ -19,7 +19,8 @@ internal fun NativeEditorExpoView.clearPendingNativeActionRetry() {
 internal fun NativeEditorExpoView.currentNativeActionScope(
     action: PendingNativeAction
 ): PendingNativeActionScope {
-    val selection = richTextView.editorEditText.currentScalarSelection()
+    val input = richTextView.activeTextInput
+    val selection = input.currentScalarSelection()
     val mentionScope = when (action) {
         is PendingNativeAction.MentionSuggestionSelect ->
             mentionQueryState ?: addons.mentions?.let { currentMentionQueryState(it.trigger) }
@@ -34,6 +35,7 @@ internal fun NativeEditorExpoView.currentNativeActionScope(
         hadVisibleToolbar = isNativeActionToolbarVisible(action),
         selectionAnchor = selection?.first,
         selectionHead = selection?.second,
+        cellSourcePos = input.tableCellPositionMap?.binding?.cellSourcePos,
         mentionAnchor = mentionScope?.anchor,
         mentionHead = mentionScope?.head,
         mentionQuery = mentionScope?.query
@@ -56,7 +58,9 @@ internal fun NativeEditorExpoView.isPendingNativeActionScopeCurrent(
     ) {
         return false
     }
-    val selection = richTextView.editorEditText.currentScalarSelection()
+    val input = richTextView.activeTextInput
+    if (scope.cellSourcePos != input.tableCellPositionMap?.binding?.cellSourcePos) return false
+    val selection = input.currentScalarSelection()
     if (scope.selectionAnchor != selection?.first || scope.selectionHead != selection?.second) {
         return false
     }
@@ -90,7 +94,7 @@ internal fun NativeEditorExpoView.isNativeActionToolbarVisible(
 }
 
 internal fun NativeEditorExpoView.isEditorEffectivelyFocusedForNativeAction(): Boolean =
-    richTextView.editorEditText.hasFocus() ||
+    richTextView.activeTextInput.hasFocus() ||
         (pendingToolbarRefocus != null && pendingToolbarRefocusEditorId == richTextView.editorId)
 
 internal fun NativeEditorExpoView.clearPendingNativeActionRetryIfScopeChanged() {

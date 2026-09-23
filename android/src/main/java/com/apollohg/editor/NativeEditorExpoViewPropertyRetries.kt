@@ -26,7 +26,7 @@ internal fun NativeEditorExpoView.applyPendingThemeIfNeeded() {
     }
     if (
         blockThemePreflightForTesting ||
-        !richTextView.editorEditText.prepareForExternalEditorUpdate()
+        !richTextView.activeTextInput.prepareForExternalEditorUpdate()
     ) {
         schedulePendingThemeRetry()
         return

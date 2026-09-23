@@ -341,7 +341,7 @@ internal fun NativeEditorExpoView.schedulePendingEditorUpdateRetry(kind: Pending
         richTextView.editorEditText.editorId == richTextView.editorId
     ) {
         pendingEditorUpdateForcedRecoveryAttempted = true
-        richTextView.editorEditText.discardTransientNativeInputForExternalRecovery()
+        richTextView.activeTextInput.discardTransientNativeInputForExternalRecovery()
     }
     if (!pastFastRetryBudget) {
         pendingEditorUpdateRetryAttempts += 1

@@ -15,10 +15,13 @@ internal fun EditorEditText.canDispatchTableCellMutation(): Boolean =
     (!isTableCellInput && !rootTableSelectionInputBlocked && isAuthorizedForRootTableInput()) ||
         (isTableCellInput && tableCellUpdateConsumer != null && isAuthorizedForTableCellInput())
 
+internal fun EditorEditText.hasAuthorizedNativeTableOwner(adapter: EditorV2Adapter): Boolean =
+    rootTableNativeOwnerAuthority?.invoke(adapter) ?: ownsNativeBinding(adapter)
+
 internal fun EditorEditText.isAuthorizedForRootTableInput(): Boolean {
     if (rootTablePositionMap == null) return true
     val adapter = v2Driver as? EditorV2Adapter ?: return false
-    if (rootTableHasUnmappedExtent || !ownsNativeBinding(adapter)) return false
+    if (rootTableHasUnmappedExtent || !hasAuthorizedNativeTableOwner(adapter)) return false
     if (rootTableMapDocumentVersion != adapter.baseDocumentRevision.toString()) return false
     val currentEpoch = adapter.positionEpoch ?: return false
     if (adapter.cachedAtomicRenderDocumentRevision != adapter.baseDocumentRevision) return false
