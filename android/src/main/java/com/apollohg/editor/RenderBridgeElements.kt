@@ -488,16 +488,18 @@ internal fun RenderBridge.appendElements(
                     ) {
                         state.result.append(LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER)
                     }
-                    appendTrailingHardBreakPlaceholderIfNeeded(
-                        builder = state.result,
-                        endedBlock = endedBlock,
-                        remainingBlockStack = state.blockStack,
-                        baseFontSize = baseFontSize,
-                        textColor = textColor,
-                        theme = theme,
-                        density = density,
-                        pendingLeadingMargins = state.pendingLeadingMargins
-                    )
+                    if (state.synthesizeTrailingHardBreakPlaceholders) {
+                        appendTrailingHardBreakPlaceholderIfNeeded(
+                            builder = state.result,
+                            endedBlock = endedBlock,
+                            remainingBlockStack = state.blockStack,
+                            baseFontSize = baseFontSize,
+                            textColor = textColor,
+                            theme = theme,
+                            density = density,
+                            pendingLeadingMargins = state.pendingLeadingMargins
+                        )
+                    }
                     theme?.styleSheet?.let { sheet ->
                         val start = endedBlock.renderStart
                         if (start <= state.result.length) {

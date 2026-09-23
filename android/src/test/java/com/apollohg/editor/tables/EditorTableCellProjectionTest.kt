@@ -2,6 +2,9 @@ package com.apollohg.editor.tables
 
 import android.graphics.Color
 import android.graphics.Typeface
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.text.style.StyleSpan
 import com.apollohg.editor.EditorTheme
 import com.apollohg.editor.TableInputBlock
@@ -216,7 +219,7 @@ internal class EditorTableCellProjectionTest {
     }
 
     @Test
-    fun `projection fails closed when hard break adds an unmapped renderer placeholder`() {
+    fun `trailing hard break projects its newline without a display placeholder`() {
         val elements = JSONArray("""[
             {"type":"blockStart","nodeType":"paragraph","depth":0},
             {"type":"textRun","text":"x","marks":[]},
@@ -224,6 +227,60 @@ internal class EditorTableCellProjectionTest {
             {"type":"blockEnd"}
         ]""")
         val record = table(elements)
-        assertNull(project(record, admitted(record, block(0, 8, 8, 10))))
+        val projection = requireNotNull(project(record, admitted(record, block(0, 8, 8, 10))))
+        assertEquals("x\n", projection.text.toString())
+        assertEquals(8, projection.positionMap.globalScalarForLocalScalar(0))
+        assertEquals(9, projection.positionMap.globalScalarForLocalScalar(1))
+        assertEquals(10, projection.positionMap.globalScalarForLocalScalar(2))
+        assertNull(projection.positionMap.globalScalarForLocalScalar(3))
+
+        val layout = StaticLayout.Builder.obtain(
+            projection.text, 0, projection.text.length,
+            TextPaint().apply { textSize = 16f }, 320
+        ).setAlignment(Layout.Alignment.ALIGN_NORMAL).build()
+        assertEquals(2, layout.lineCount)
+        assertEquals(1, layout.getLineForOffset(projection.text.length))
+        assertEquals(0f, layout.getPrimaryHorizontal(projection.text.length), 0.01f)
+        assertTrue(layout.getLineTop(1) > layout.getLineTop(0))
+    }
+
+    @Test
+    fun `multiple trailing hard breaks map every newline through final caret`() {
+        val elements = JSONArray("""[
+            {"type":"blockStart","nodeType":"paragraph","depth":0},
+            {"type":"textRun","text":"😀","marks":[]},
+            {"type":"voidInline","nodeType":"hardBreak","docPos":5},
+            {"type":"voidInline","nodeType":"hardBreak","docPos":6},
+            {"type":"blockEnd"}
+        ]""")
+        val record = table(elements)
+        val projection = requireNotNull(project(record, admitted(record, block(0, 20, 20, 23))))
+
+        assertEquals("😀\n\n", projection.text.toString())
+        assertEquals(20, projection.positionMap.globalScalarForLocalUtf16(0, projection.text.toString()))
+        assertEquals(21, projection.positionMap.globalScalarForLocalUtf16(2, projection.text.toString()))
+        assertEquals(23, projection.positionMap.globalScalarForLocalUtf16(4, projection.text.toString()))
+    }
+
+    @Test
+    fun `trailing hard break before next paragraph preserves only the mapped separator`() {
+        val elements = JSONArray("""[
+            {"type":"blockStart","nodeType":"paragraph","depth":0},
+            {"type":"textRun","text":"x","marks":[]},
+            {"type":"voidInline","nodeType":"hardBreak","docPos":5},
+            {"type":"blockEnd"},
+            {"type":"blockStart","nodeType":"paragraph","depth":0},
+            {"type":"textRun","text":"y","marks":[]},
+            {"type":"blockEnd"}
+        ]""")
+        val record = table(elements)
+        val projection = requireNotNull(project(record, admitted(record,
+            block(0, 8, 8, 10, 11), block(4, 11, 11, 12)
+        )))
+
+        assertEquals("x\n\ny", projection.text.toString())
+        assertEquals(10, projection.positionMap.globalScalarForLocalScalar(2))
+        assertEquals(11, projection.positionMap.globalScalarForLocalScalar(3))
+        assertEquals(12, projection.positionMap.globalScalarForLocalScalar(4))
     }
 }

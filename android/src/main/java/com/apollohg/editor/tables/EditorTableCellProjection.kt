@@ -55,7 +55,8 @@ internal object EditorTableCellProjection {
             blockRangeObserver = { index, start, end ->
                 if (ranges.put(index, start to end) != null) duplicate = true
             },
-            synthesizeEmptyBlocks = true
+            synthesizeEmptyBlocks = true,
+            synthesizeTrailingHardBreakPlaceholders = false
         )
         if (duplicate) return null
         if (ranges.keys != inputCell.blocks.map { it.elementIndex }.toSet()) return null

@@ -25,6 +25,7 @@ object RenderBridge {
         val reusableImages: MutableList<BlockImageSpan> = mutableListOf(),
         val blockRangeObserver: ((Int, Int, Int) -> Unit)? = null,
         val synthesizeEmptyBlocks: Boolean = false,
+        val synthesizeTrailingHardBreakPlaceholders: Boolean = true,
         var isFirstBlock: Boolean = true,
         var nextBlockSpacingBefore: Float? = null,
         var pendingListBoundarySpacing: Float? = null
@@ -81,12 +82,14 @@ object RenderBridge {
         hostView: View? = null,
         atomConfiguration: AtomRenderConfiguration? = null,
         blockRangeObserver: ((Int, Int, Int) -> Unit)? = null,
-        synthesizeEmptyBlocks: Boolean = false
+        synthesizeEmptyBlocks: Boolean = false,
+        synthesizeTrailingHardBreakPlaceholders: Boolean = true
     ): SpannableStringBuilder {
         val state = RenderBuildState(
             reusableImages = reusableImages(hostView),
             blockRangeObserver = blockRangeObserver,
-            synthesizeEmptyBlocks = synthesizeEmptyBlocks
+            synthesizeEmptyBlocks = synthesizeEmptyBlocks,
+            synthesizeTrailingHardBreakPlaceholders = synthesizeTrailingHardBreakPlaceholders
         )
         appendElements(
             state = state,
