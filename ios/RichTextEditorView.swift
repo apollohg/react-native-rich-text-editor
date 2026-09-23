@@ -299,8 +299,52 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         tableInputCoordinator.cellInput.onProjectedUpdate = { [weak self] updateJSON, notifyDelegate in
             self?.applyActiveTableCellUpdate(updateJSON, notifyDelegate: notifyDelegate) ?? false
         }
+        let cellInput = tableInputCoordinator.cellInput
+        cellInput.onAuthoritativeTextSelectionSynced = { [weak self, weak cellInput] in
+            guard let self, let cellInput else { return }
+            self.settleTableSelectionAfterTextSync(from: cellInput)
+        }
         tableSurface.placeActiveInput(tableID: tableID, cellIndex: cellIndex, fallback: contentRect)
         return true
+    }
+
+    private func settleTableSelectionAfterTextSync(from input: EditorTextView) {
+        guard editorId != 0,
+              input.editorId == editorId,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              hasTableCellBindingAuthority(adapter),
+              let atomic = adapter.cachedAtomicRenderJSON,
+              let data = atomic.data(using: .utf8),
+              let snapshot = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let selection = snapshot["selection"] as? [String: Any],
+              selection["type"] as? String == "text"
+        else { return }
+        if input === textView {
+            tableSurface.clearCellSelection()
+            return
+        }
+        guard input === tableInputCoordinator.cellInput,
+              activeTextInput === input,
+              let tableID = tableInputCoordinator.activeTableID,
+              let cellIndex = tableInputCoordinator.activeCellIndex,
+              let oldMap = tableInputCoordinator.positionMap,
+              oldMap.binding.documentRevision == adapter.baseDocumentRevision,
+              let epoch = adapter.positionEpoch,
+              let mapping = adapter.cachedTableInputMappings?.tables[tableID],
+              let table = adapter.cachedTableRecords[tableID],
+              Int(cellIndex) < mapping.cells.count,
+              mapping.cells[Int(cellIndex)].sourcePos == oldMap.binding.cellSourcePosition,
+              let projection = EditorTableInputCoordinator.projection(
+                cellIndex: cellIndex, table: table, mapping: mapping,
+                documentRevision: adapter.baseDocumentRevision, positionEpoch: epoch,
+                baseFont: textView.baseFont, textColor: textView.baseTextColor,
+                theme: textView.theme, atomConfiguration: textView.atomRenderConfiguration
+              ),
+              projection.text.string == input.textStorage.string,
+              tableInputCoordinator.refreshPositionMap(projection.positionMap)
+        else { return }
+        textView.setAuthoritativeCellSelectionActive(false)
+        tableSurface.clearCellSelection()
     }
 
     private var isApplyingActiveTableCellUpdate = false
@@ -346,6 +390,16 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
 
     private func refreshActiveTableCell(after updateJSON: String) {
         guard let tableID = tableInputCoordinator.activeTableID else { return }
+        if let data = updateJSON.data(using: .utf8),
+           let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let selection = update["selection"] as? [String: Any],
+           selection["type"] as? String == "cell" {
+            if tableInputCoordinator.cellInput.isFirstResponder {
+                _ = textView.becomeFirstResponder()
+            }
+            invalidateTableCellBinding()
+            return
+        }
         guard let cellIndex = tableInputCoordinator.activeCellIndex,
               let boundSourcePos = tableInputCoordinator.positionMap?.binding.cellSourcePosition
         else {
@@ -417,8 +471,12 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         textView.onSelectionOrContentMayChange = { [weak self] in
             self?.scheduleRefreshOverlaysIfNeeded()
         }
+        textView.onAuthoritativeTextSelectionSynced = { [weak self] in
+            guard let self else { return }
+            self.settleTableSelectionAfterTextSync(from: self.textView)
+        }
         textView.onAuthoritativeRenderApplied = { [weak self] updateJSON in
-            self?.refreshTablePresentation()
+            self?.refreshTablePresentation(updateJSON: updateJSON)
             self?.refreshActiveTableCell(after: updateJSON)
         }
         addSubview(textView)
@@ -953,14 +1011,19 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
-    private func refreshTablePresentation() {
+    private func refreshTablePresentation(updateJSON: String? = nil) {
         guard editorId != 0,
-              let presentation = EditorV2Registry.adapter(forLegacyId: editorId)?.cachedTablePresentation
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              let presentation = adapter.cachedTablePresentation
         else {
             tableSurface.clearPresentation()
             return
         }
-        tableSurface.present(presentation, from: textView)
+        let selection = (updateJSON ?? adapter.cachedViewUpdateJSON)?.data(using: .utf8)
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            .flatMap { $0["selection"] }
+            .flatMap { EditorCellSelection.resolve($0, records: adapter.cachedTableRecords) }
+        tableSurface.present(presentation, selection: selection, from: textView)
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
@@ -972,11 +1035,18 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
 
     @objc
     private func handleTableCellTap(_ recognizer: UITapGestureRecognizer) {
-        guard recognizer.state == .ended,
-              let hit = tableSurface.cellHit(at: recognizer.location(in: tableSurface)),
+        guard recognizer.state == .ended else { return }
+        _ = activateTableCell(at: recognizer.location(in: tableSurface))
+    }
+
+    @discardableResult
+    func activateTableCell(at point: CGPoint) -> Bool {
+        guard let hit = tableSurface.cellHit(at: point),
               bindTableCell(tableID: hit.tableID, cellIndex: hit.cellIndex, contentRect: hit.contentRect)
-        else { return }
-        _ = tableInputCoordinator.cellInput.becomeFirstResponder()
+        else { return false }
+        return tableInputCoordinator.cellInput.placeCaret(
+            at: tableSurface.convert(point, to: tableInputCoordinator.cellInput)
+        )
     }
 
     func selectedImageGeometry() -> (docPos: UInt32, rect: CGRect)? {

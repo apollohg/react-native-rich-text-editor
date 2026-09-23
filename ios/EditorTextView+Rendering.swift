@@ -518,6 +518,7 @@ extension EditorTextView {
 
         let selectionTrace: SelectionApplyTrace
         if let selection = update["selection"] as? [String: Any] {
+            setAuthoritativeCellSelectionActive(selection["type"] as? String == "cell")
             let representable = rootSelectionIsRepresentable(selection)
             setRootTableSelectionRepresentable(representable)
             if representable {

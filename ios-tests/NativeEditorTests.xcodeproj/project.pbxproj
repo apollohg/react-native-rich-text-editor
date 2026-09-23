@@ -159,6 +159,7 @@
 		A17000000000000000000012 /* EditorTableInputCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000002 /* EditorTableInputCoordinator.swift */; };
 		A17000000000000000000013 /* EditorTableSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000003 /* EditorTableSurface.swift */; };
 		A17000000000000000000014 /* EditorTableInputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000004 /* EditorTableInputTests.swift */; };
+		A17200000000000000000011 /* EditorCellSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17200000000000000000001 /* EditorCellSelection.swift */; };
 		A17100000000000000000011 /* TableCellPositionMapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17100000000000000000001 /* TableCellPositionMapTests.swift */; };
 		B4F9AA2B05BFD1623A26870B /* EditorV2AdapterTests+Destroy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D651415D399FE0F5164ABE /* EditorV2AdapterTests+Destroy.swift */; };
 		B66C05B49F6A20001A9AD417 /* RichTextEditorViewTests+MentionsImagesTests+SuggestionPreflight.swift in Sources */ = {isa = PBXBuildFile; fileRef = 527D8571146395F1F95D3A0E /* RichTextEditorViewTests+MentionsImagesTests+SuggestionPreflight.swift */; };
@@ -249,6 +250,7 @@
 		A17000000000000000000002 /* EditorTableInputCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableInputCoordinator.swift; sourceTree = "<group>"; };
 		A17000000000000000000003 /* EditorTableSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableSurface.swift; sourceTree = "<group>"; };
 		A17000000000000000000004 /* EditorTableInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableInputTests.swift; sourceTree = "<group>"; };
+		A17200000000000000000001 /* EditorCellSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorCellSelection.swift; sourceTree = "<group>"; };
 		A17100000000000000000001 /* TableCellPositionMapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellPositionMapTests.swift; sourceTree = "<group>"; };
 		10A13C02E22F5783115D5F8B /* EditorV2Adapter+TextCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorV2Adapter+TextCommands.swift"; sourceTree = "<group>"; };
 		1183AB931D0AC2A077A5ADC2 /* EditorTextView+ExternalComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorTextView+ExternalComposition.swift"; sourceTree = "<group>"; };
@@ -788,6 +790,7 @@
 				A17000000000000000000001 /* TableCellPositionMap.swift */,
 				A17000000000000000000002 /* EditorTableInputCoordinator.swift */,
 				A17000000000000000000003 /* EditorTableSurface.swift */,
+				A17200000000000000000001 /* EditorCellSelection.swift */,
 			);
 			path = Tables;
 			sourceTree = "<group>";
@@ -1283,6 +1286,7 @@
 				A17000000000000000000011 /* TableCellPositionMap.swift in Sources */,
 				A17000000000000000000012 /* EditorTableInputCoordinator.swift in Sources */,
 				A17000000000000000000013 /* EditorTableSurface.swift in Sources */,
+				A17200000000000000000011 /* EditorCellSelection.swift in Sources */,
 				A17000000000000000000014 /* EditorTableInputTests.swift in Sources */,
 				A17100000000000000000011 /* TableCellPositionMapTests.swift in Sources */,
 			);

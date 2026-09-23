@@ -5,6 +5,289 @@ final class EditorTableInputTests: XCTestCase {
     private let tableConfig = #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"class":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"#
     private let listTableConfig = #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"bulletList","content":"listItem+","group":"block","role":"list"},{"name":"listItem","content":"block+","role":"listItem"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"class":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"#
 
+    func testEngineCellSelectionAdmitsAuthoritativeSnapshot() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]}]}]}]}"#
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 360, height: 180))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        let record = try XCTUnwrap(adapter.cachedTableRecords.values.first)
+        let cells = try XCTUnwrap(record["cells"] as? [[String: Any]])
+        let first = try XCTUnwrap(cells[0]["sourcePos"] as? Int)
+        let second = try XCTUnwrap(cells[1]["sourcePos"] as? Int)
+        let firstScalar = EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(first + 2))
+        let secondScalar = EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(second + 2))
+        let result = editorV2SetSelection(
+            editorId: adapter.editorId,
+            requestJson: #"{"version":1,"requestId":"991102","baseDocumentRevision":"\#(adapter.baseDocumentRevision)","selection":{"type":"cell","anchorCell":{"offset":\#(firstScalar),"kind":"scalar"},"headCell":{"offset":\#(secondScalar),"kind":"scalar"}}}"#
+        )
+        XCTAssertNil(result.error)
+        let raw = try XCTUnwrap(editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+        let selection = try XCTUnwrap(object["selection"] as? [String: Any])
+        XCTAssertEqual(selection["type"] as? String, "cell")
+        XCTAssertEqual(selection["anchorCell"] as? Int, first)
+        XCTAssertEqual(selection["headCell"] as? Int, second)
+        XCTAssertFalse(raw.isEmpty)
+        XCTAssertTrue(view.textView.applyUpdateJSON(EditorV2Shadow.getCurrentState(id: editorId)))
+        let snapshot = try XCTUnwrap(adapter.cachedAtomicRenderJSON)
+        XCTAssertTrue(snapshot.contains(#""type":"cell""#))
+        XCTAssertTrue(view.applyTheme(EditorTheme(dictionary: ["table": ["selectionColor": "#FF000080"]])))
+        view.layoutIfNeeded()
+        let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let block = try XCTUnwrap(drawing.layout?.blocks.first)
+        let table = try XCTUnwrap(block.tableSurface)
+        let origin = try XCTUnwrap(block.tableBounds).origin
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { _ in
+            drawing.draw(drawing.bounds)
+        }
+        let cgImage = try XCTUnwrap(image.cgImage)
+        var pixels = [UInt8](repeating: 0, count: cgImage.width * cgImage.height * 4)
+        let bitmap = try XCTUnwrap(CGContext(data: &pixels, width: cgImage.width, height: cgImage.height,
+                                              bitsPerComponent: 8, bytesPerRow: cgImage.width * 4,
+                                              space: CGColorSpaceCreateDeviceRGB(),
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+        bitmap.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+        let selectedPositions = drawing.selectedTableCellSourcePositions
+        drawing.selectedTableCellSourcePositions = [:]
+        let baselineImage = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { _ in
+            drawing.draw(drawing.bounds)
+        }
+        drawing.selectedTableCellSourcePositions = selectedPositions
+        let baselineCG = try XCTUnwrap(baselineImage.cgImage)
+        var baselinePixels = [UInt8](repeating: 0, count: baselineCG.width * baselineCG.height * 4)
+        let baselineBitmap = try XCTUnwrap(CGContext(data: &baselinePixels, width: baselineCG.width, height: baselineCG.height,
+                                                      bitsPerComponent: 8, bytesPerRow: baselineCG.width * 4,
+                                                      space: CGColorSpaceCreateDeviceRGB(),
+                                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+        baselineBitmap.draw(baselineCG, in: CGRect(x: 0, y: 0, width: baselineCG.width, height: baselineCG.height))
+        let offset = { (cell: PreparedViewerTableCell) -> Int in
+            let x = Int(origin.x + cell.frame.maxX - 6)
+            let y = Int(origin.y + cell.frame.maxY - 6)
+            return (y * cgImage.width + x) * 4
+        }
+        let alpha = { (cell: PreparedViewerTableCell) -> UInt8 in
+            pixels[offset(cell) + 3]
+        }
+        XCTAssertGreaterThan(alpha(table.cells[0]), alpha(table.cells[2]))
+        XCTAssertGreaterThan(alpha(table.cells[1]), alpha(table.cells[2]))
+        for cell in table.cells.prefix(2) {
+            let index = offset(cell)
+            XCTAssertGreaterThan(pixels[index], pixels[index + 1])
+            XCTAssertGreaterThan(pixels[index], pixels[index + 2])
+            XCTAssertGreaterThan(pixels[index + 3], baselinePixels[index + 3])
+        }
+        let third = offset(table.cells[2])
+        XCTAssertEqual(Array(pixels[third..<(third + 4)]), Array(baselinePixels[third..<(third + 4)]))
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "Native-rendered iPhone 17 light cell selection"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    func testCellSelectionPreservesFocusedCellInputAndRejectsStaleTyping() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 360, height: 220))
+        let view = RichTextEditorView(frame: window.bounds)
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let cells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
+        let first = try XCTUnwrap(cells[0]["sourcePos"] as? Int)
+        let second = try XCTUnwrap(cells[1]["sourcePos"] as? Int)
+        XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: CGRect(x: 0, y: 0, width: 100, height: 50)))
+        let input = view.activeTextInput
+        XCTAssertTrue(input.becomeFirstResponder())
+        let request = #"{"version":1,"requestId":"991103","baseDocumentRevision":"\#(adapter.baseDocumentRevision)","selection":{"type":"cell","anchorCell":{"offset":\#(EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(first + 2))),"kind":"scalar"},"headCell":{"offset":\#(EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(second + 2))),"kind":"scalar"}}}"#
+        XCTAssertNil(editorV2SetSelection(editorId: adapter.editorId, requestJson: request).error)
+        XCTAssertTrue(view.textView.applyUpdateJSON(EditorV2Shadow.getCurrentState(id: editorId)))
+        XCTAssertFalse(input.isFirstResponder)
+        XCTAssertTrue(view.textView.isFirstResponder)
+        XCTAssertTrue(view.activeTextInput === view.textView)
+        let before = try XCTUnwrap(adapter.documentJson())
+        input.insertText("unsafe")
+        view.textView.insertText("unsafe")
+        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
+        XCTAssertTrue(view.textView.rootTableSelectionInputBlocked)
+        let root = view.textView
+        let afterRange = (root.text as NSString).range(of: "after")
+        XCTAssertNotEqual(afterRange.location, NSNotFound)
+        root.selectedRange = NSRange(location: afterRange.location, length: 0)
+        root.textViewDidChangeSelection(root)
+        XCTAssertTrue(root.authoritativeCellSelectionActive)
+        XCTAssertTrue(root.rootTableSelectionInputBlocked)
+        root.insertText("unsafe")
+        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
+
+        root.layoutManager.ensureLayout(forCharacterRange: afterRange)
+        let glyphs = root.layoutManager.glyphRange(forCharacterRange: afterRange, actualCharacterRange: nil)
+        let rect = root.layoutManager.boundingRect(forGlyphRange: glyphs, in: root.textContainer)
+        let point = CGPoint(x: rect.minX + root.textContainerInset.left + 2,
+                            y: rect.midY + root.textContainerInset.top)
+        XCTAssertTrue(root.placeCaret(at: point))
+        flushMainQueue()
+        XCTAssertFalse(root.authoritativeCellSelectionActive)
+        XCTAssertFalse(root.rootTableSelectionInputBlocked)
+        let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        XCTAssertTrue(drawing.selectedTableCellSourcePositions.isEmpty)
+        let proseSnapshot = try XCTUnwrap(adapter.cachedAtomicRenderJSON)
+        let proseObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(proseSnapshot.utf8)) as? [String: Any])
+        XCTAssertEqual((proseObject["selection"] as? [String: Any])?["type"] as? String, "text")
+        root.insertText("!")
+        XCTAssertTrue(try XCTUnwrap(adapter.documentJson()).contains(#""text":"!after""#))
+
+        let nextRequest = #"{"version":1,"requestId":"991104","baseDocumentRevision":"\#(adapter.baseDocumentRevision)","selection":{"type":"cell","anchorCell":{"offset":\#(EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(first + 2))),"kind":"scalar"},"headCell":{"offset":\#(EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(second + 2))),"kind":"scalar"}}}"#
+        XCTAssertNil(editorV2SetSelection(editorId: adapter.editorId, requestJson: nextRequest).error)
+        XCTAssertTrue(root.applyUpdateJSON(EditorV2Shadow.getCurrentState(id: editorId)))
+        let cellFrame = try XCTUnwrap(surface.cellFrame(tableID: tableID, cellIndex: 0))
+        XCTAssertTrue(view.activateTableCell(at: CGPoint(x: cellFrame.midX, y: cellFrame.midY)))
+        let cellInput = view.activeTextInput
+        flushMainQueue()
+        XCTAssertTrue(drawing.selectedTableCellSourcePositions.isEmpty)
+        XCTAssertFalse(root.authoritativeCellSelectionActive)
+        XCTAssertEqual(cellInput.tableCellPositionMap?.binding.positionEpoch, adapter.positionEpoch)
+        let cellSnapshot = try XCTUnwrap(adapter.cachedAtomicRenderJSON)
+        let cellObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(cellSnapshot.utf8)) as? [String: Any])
+        XCTAssertEqual((cellObject["selection"] as? [String: Any])?["type"] as? String, "text")
+        let beforeCellTap = try XCTUnwrap(adapter.documentJson())
+        cellInput.insertText("?")
+        let editedJSON = try XCTUnwrap(adapter.documentJson())
+        XCTAssertNotEqual(editedJSON, beforeCellTap)
+        let edited = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(editedJSON.utf8)) as? [String: Any])
+        let topLevel = try XCTUnwrap(edited["content"] as? [[String: Any]])
+        let rows = try XCTUnwrap(topLevel[0]["content"] as? [[String: Any]])
+        let editedCells = try XCTUnwrap(rows[0]["content"] as? [[String: Any]])
+        let firstCellJSON = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: editedCells[0]), encoding: .utf8))
+        XCTAssertTrue(firstCellJSON.contains("?"))
+        XCTAssertFalse(try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: editedCells[1]), encoding: .utf8)).contains("?"))
+        XCTAssertFalse(try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: topLevel[1]), encoding: .utf8)).contains("?"))
+    }
+
+    func testCellSelectionResolverUsesRealSourceCellsAndClosesMergedSpans() {
+        func cell(_ pos: Int, _ row: Int, _ column: Int, colspan: Int = 1) -> [String: Any] {
+            ["sourcePos": pos, "row": row, "column": column, "rowspan": 1, "colspan": colspan]
+        }
+        let records: [String: [String: Any]] = [
+            "t1": ["tablePos": 1, "sourceEnd": 40, "rows": 2, "columns": 3,
+                   "direction": "rtl", "failure": NSNull(),
+                   "cells": [cell(3, 0, 0), cell(7, 0, 1, colspan: 2),
+                             cell(13, 1, 0), cell(17, 1, 1), cell(21, 1, 2)],
+                   "syntheticRegions": [["row": 0, "column": 2]]],
+            "t40": ["tablePos": 40, "sourceEnd": 70, "rows": 1, "columns": 1,
+                    "failure": NSNull(), "cells": [cell(42, 0, 0)]]
+        ]
+        let selection: [String: Any] = ["type": "cell", "anchorCell": 3, "headCell": 17]
+        XCTAssertEqual(EditorCellSelection.resolve(selection, records: records),
+                       .drawable(tableID: "t1", sourcePositions: Set([3, 7, 13, 17, 21])))
+        XCTAssertNil(EditorCellSelection.resolve(selection.merging(["anchorScalar": 0]) { _, new in new }, records: records))
+        XCTAssertNil(EditorCellSelection.resolve(["type": "cell", "anchorCell": 3.5, "headCell": 17], records: records))
+        XCTAssertNil(EditorCellSelection.resolve(["type": "cell", "anchorCell": 3, "headCell": 42], records: records))
+        let failed: [String: [String: Any]] = ["t1": ["tablePos": 1, "sourceEnd": 40,
+                                                   "failure": "gridLimit", "cells": []]]
+        XCTAssertEqual(EditorCellSelection.resolve(selection, records: failed), .unavailable(tableID: "t1"))
+        let chained: [String: [String: Any]] = ["t1": ["tablePos": 1, "sourceEnd": 40,
+            "rows": 3, "columns": 3, "failure": NSNull(), "direction": "rtl",
+            "cells": [
+                ["sourcePos": 3, "row": 0, "column": 0, "rowspan": 2, "colspan": 1],
+                ["sourcePos": 7, "row": 2, "column": 0, "rowspan": 1, "colspan": 2],
+                ["sourcePos": 11, "row": 1, "column": 1, "rowspan": 1, "colspan": 1],
+                ["sourcePos": 15, "row": 1, "column": 2, "rowspan": 2, "colspan": 1]
+            ]]]
+        let forward: [String: Any] = ["type": "cell", "anchorCell": 11, "headCell": 15]
+        let backward: [String: Any] = ["type": "cell", "anchorCell": 15, "headCell": 11]
+        let closed = EditorCellSelection.drawable(tableID: "t1", sourcePositions: Set([3, 7, 11, 15]))
+        XCTAssertEqual(EditorCellSelection.resolve(forward, records: chained), closed)
+        XCTAssertEqual(EditorCellSelection.resolve(backward, records: chained), closed)
+    }
+
+    func testExpoOwnerPublishesAuthoritativeCellSelectionShape() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let expoHost = NativeEditorExpoView()
+        defer { expoHost.setEditorId(0) }
+        expoHost.setEditorId(editorId)
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
+        XCTAssertTrue(expoHost.richTextView.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
+        let cells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
+        let first = try XCTUnwrap(cells[0]["sourcePos"] as? Int)
+        let second = try XCTUnwrap(cells[1]["sourcePos"] as? Int)
+        XCTAssertTrue(expoHost.richTextView.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
+        let staleCell = expoHost.richTextView.activeTextInput
+        let request = #"{"version":1,"requestId":"991105","baseDocumentRevision":"\#(adapter.baseDocumentRevision)","selection":{"type":"cell","anchorCell":{"offset":\#(EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(first + 2))),"kind":"scalar"},"headCell":{"offset":\#(EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(second + 2))),"kind":"scalar"}}}"#
+        XCTAssertNil(editorV2SetSelection(editorId: adapter.editorId, requestJson: request).error)
+        let update = EditorV2Shadow.getCurrentState(id: editorId)
+        XCTAssertTrue(expoHost.richTextView.textView.applyUpdateJSON(update))
+        XCTAssertTrue(expoHost.ownsNativeBinding(editorId: editorId))
+        XCTAssertTrue(expoHost.richTextView.activeTextInput === expoHost.richTextView.textView)
+        XCTAssertEqual(staleCell.editorId, 0)
+        let event = try XCTUnwrap(NativeEditorExpoView.nativeCommitEventPayload(
+            originatingEditorId: adapter.editorId, updateJSON: update
+        ))
+        XCTAssertEqual(Set(event.keys), ["editorId", "documentRevision", "updateJson"])
+        XCTAssertEqual(event["editorId"] as? String, adapter.editorId)
+        let atomic = try XCTUnwrap(event["updateJson"] as? String)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(atomic.utf8)) as? [String: Any])
+        let selection = try XCTUnwrap(payload["selection"] as? [String: Any])
+        XCTAssertEqual(Set(selection.keys), ["type", "anchorCell", "headCell"])
+        XCTAssertEqual(selection["anchorCell"] as? Int, first)
+        XCTAssertEqual(selection["headCell"] as? Int, second)
+    }
+
+    func testSyntheticPreservedFailureFrameAdmitsCellSelectionWithoutGeometry() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
+        _ = try XCTUnwrap(adapter.setContentJson(document))
+        let tableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
+        let cells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
+        let first = try XCTUnwrap(cells[0]["sourcePos"] as? Int)
+        let second = try XCTUnwrap(cells[1]["sourcePos"] as? Int)
+        let request = #"{"version":1,"requestId":"991106","baseDocumentRevision":"\#(adapter.baseDocumentRevision)","selection":{"type":"cell","anchorCell":{"offset":\#(EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(first + 2))),"kind":"scalar"},"headCell":{"offset":\#(EditorV2Shadow.docToScalar(id: editorId, docPos: UInt32(second + 2))),"kind":"scalar"}}}"#
+        XCTAssertNil(editorV2SetSelection(editorId: adapter.editorId, requestJson: request).error)
+        let raw = try XCTUnwrap(editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value)
+        var snapshot = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+        var records = try XCTUnwrap(snapshot["tableRecords"] as? [String: [String: Any]])
+        var record = try XCTUnwrap(records[tableID])
+        record["rows"] = 0
+        record["columns"] = 0
+        record["columnWidths"] = []
+        record["sourceRows"] = []
+        record["cells"] = []
+        record["syntheticRegions"] = []
+        record["failure"] = "gridLimit"
+        record["compatibilityDiagnostic"] = NSNull()
+        records[tableID] = record
+        snapshot["tableRecords"] = records
+        let attributes = try XCTUnwrap(snapshot["tableAttributes"] as? [String: String])
+        let tableAttrsKey = try XCTUnwrap(record["attrsKey"] as? String)
+        snapshot["tableAttributes"] = attributes.filter { $0.key == tableAttrsKey }
+        snapshot.removeValue(forKey: "tableInputMappings")
+        let selection = try XCTUnwrap(snapshot["selection"] as? [String: Any])
+        XCTAssertEqual(EditorCellSelection.resolve(selection, records: records), .unavailable(tableID: tableID))
+        let failureJSON = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: snapshot), encoding: .utf8))
+        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(failureJSON))
+
+        var malformed = snapshot
+        malformed["selection"] = selection.merging(["anchorScalar": 0]) { _, new in new }
+        let malformedJSON = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: malformed), encoding: .utf8))
+        XCTAssertNil(EditorV2Adapter.parseAtomicRenderSnapshot(malformedJSON))
+    }
+
     func testHostRoutesCellEditThroughRootAdapterUsingGeneratedSnapshotMapping() throws {
         let editorId = makeV2Editor(configJson: tableConfig)
         defer { destroyV2Editor(id: editorId) }

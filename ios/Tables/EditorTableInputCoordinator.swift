@@ -97,6 +97,7 @@ final class EditorTableInputCoordinator {
         _ = cellInput.discardTransientNativeInputForEditorRebind()
         cellInput.finishTransientMarkedTextMutation()
         self.positionMap = positionMap
+        cellInput.setAuthoritativeCellSelectionActive(false)
         activeTableID = tableID
         activeCellIndex = cellIndex
         cellInput.editorId = editorId
@@ -124,6 +125,21 @@ final class EditorTableInputCoordinator {
         phase = .composing(cellSourcePos: cellSourcePos, documentRevision: documentRevision, positionEpoch: positionEpoch)
     }
 
+    func refreshPositionMap(_ map: TableCellPositionMap) -> Bool {
+        guard case .bound = phase,
+              let previous = positionMap,
+              previous.binding.cellSourcePosition == map.binding.cellSourcePosition,
+              previous.binding.documentRevision == map.binding.documentRevision,
+              cellInput.tableCellPositionMap != nil
+        else { return false }
+        positionMap = map
+        cellInput.tableCellPositionMap = map
+        phase = .bound(cellSourcePos: map.binding.cellSourcePosition,
+                       documentRevision: String(map.binding.documentRevision),
+                       positionEpoch: String(map.binding.positionEpoch))
+        return true
+    }
+
     @discardableResult
     func invalidateBinding() -> String? {
         guard phase != .inactive
@@ -138,11 +154,13 @@ final class EditorTableInputCoordinator {
         let cancellation = cellInput.discardTransientNativeInputForEditorRebind()
         cellInput.finishTransientMarkedTextMutation()
         positionMap = nil
+        cellInput.setAuthoritativeCellSelectionActive(false)
         activeTableID = nil
         activeCellIndex = nil
         cellInput.tableCellPositionMap = nil
         cellInput.tableCellInputAuthority = nil
         cellInput.onProjectedUpdate = nil
+        cellInput.onAuthoritativeTextSelectionSynced = nil
         cellInput.editorId = 0
         phase = .inactive
         _ = cellInput.resignFirstResponder()

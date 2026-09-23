@@ -52,6 +52,12 @@ extension EditorTextView {
         let caretPosition = autocapitalizationFriendlyEmptyBlockPosition(for: position) ?? position
         let offset = self.offset(from: beginningOfDocument, to: caretPosition)
         guard !isAtomBoundaryCaretOffset(offset) else { return false }
+        if authoritativeCellSelectionActive {
+            let scalar = PositionBridge.utf16OffsetToScalar(offset, in: self)
+            guard PositionBridge.isRootTextInputRangeSafe(from: scalar, to: scalar, in: self) else { return false }
+            setAuthoritativeCellSelectionActive(false)
+            rootTableSelectionInputBlocked = false
+        }
         _ = becomeFirstResponder()
         logicalSelectionScalarRange = nil
         logicalSelectionUtf16Range = nil
@@ -147,6 +153,7 @@ extension EditorTextView {
     func textViewDidChangeSelection(_ textView: UITextView) {
         guard textView === self else { return }
         ensureInternalTextViewDelegate()
+        guard !authoritativeCellSelectionActive else { return }
         if !isApplyingRustState,
            !isComposing,
            externalTextComposition == nil,
@@ -287,7 +294,7 @@ extension EditorTextView {
     }
 
     func refreshNativeSelectionChromeVisibility() {
-        let hidden = selectedImageSelectionState() != nil
+        let hidden = authoritativeCellSelectionActive || selectedImageSelectionState() != nil
         if !hidden, tintColor.cgColor.alpha > 0 {
             visibleSelectionTintColor = tintColor
         }
@@ -355,6 +362,7 @@ extension EditorTextView {
             selectionDidChange: sync.docAnchor,
             head: sync.docHead
         )
+        onAuthoritativeTextSelectionSynced?()
     }
 
     func setRootTableSelectionRepresentable(_ representable: Bool) {
@@ -364,6 +372,18 @@ extension EditorTextView {
             logicalSelectionScalarRange = nil
             logicalSelectionUtf16Range = nil
         }
+    }
+
+    func setAuthoritativeCellSelectionActive(_ active: Bool) {
+        guard authoritativeCellSelectionActive != active else { return }
+        authoritativeCellSelectionActive = active
+        if active {
+            pendingSelectionSyncGeneration &+= 1
+            resetPendingNativeTextMutationState()
+            logicalSelectionScalarRange = nil
+            logicalSelectionUtf16Range = nil
+        }
+        refreshNativeSelectionChromeVisibility()
     }
 
     func currentLogicalScalarSelection() -> (anchor: UInt32, head: UInt32)? {
@@ -423,6 +443,7 @@ extension EditorTextView {
     }
 
     func isAuthorizedForTableCellInput() -> Bool {
+        guard !authoritativeCellSelectionActive else { return false }
         guard let map = tableCellPositionMap else {
             guard !rootTableSelectionInputBlocked else { return false }
             guard let selection = selectedTextRange else { return true }

@@ -143,6 +143,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     var onHeightMayChange: ((CGFloat) -> Void)?
     var onViewportMayChange: (() -> Void)?
     var onSelectionOrContentMayChange: (() -> Void)?
+    var onAuthoritativeTextSelectionSynced: (() -> Void)?
     var onExternalUpdateReadinessMayChange: (() -> Void)?
     var lastAutoGrowMeasuredHeight: CGFloat = 0
     var lastAutoGrowMeasuredWidth: CGFloat = 0
@@ -175,6 +176,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     var currentTopLevelChildMetadata: [TopLevelChildMetadata]?
     var tableCellPositionMap: TableCellPositionMap?
     var rootTableSelectionInputBlocked = false
+    var authoritativeCellSelectionActive = false
     var tableCellInputAuthority: (() -> Bool)?
     var onProjectedUpdate: ((String, Bool) -> Bool)?
     var onAuthoritativeRenderApplied: ((String) -> Void)?

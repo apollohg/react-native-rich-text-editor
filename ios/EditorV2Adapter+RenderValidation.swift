@@ -848,7 +848,7 @@ extension EditorV2Adapter {
         }
     }
 
-    private static func isValidSelection(_ value: Any) -> Bool {
+    private static func isValidSelection(_ value: Any, tableRecords: [String: [String: Any]]) -> Bool {
         guard let selection = value as? [String: Any],
               let type = selection["type"] as? String
         else {
@@ -863,6 +863,8 @@ extension EditorV2Adapter {
                 && uint32Field(selection, "posScalar") != nil
         case "all":
             return Set(selection.keys) == ["type"]
+        case "cell":
+            return EditorCellSelection.resolve(selection, records: tableRecords) != nil
         default:
             return false
         }
@@ -880,7 +882,7 @@ extension EditorV2Adapter {
               (isValidRenderBlocks(renderBlocks, tableAttributes: tableAttributes, tableRecords: tableRecords) && renderPatch is NSNull)
                 || (renderBlocks is NSNull && !(renderPatch is NSNull) && isValidRenderPatch(renderPatch, tableAttributes: tableAttributes, tableRecords: tableRecords)),
               let selectionValue = object["selection"],
-              isValidSelection(selectionValue),
+              isValidSelection(selectionValue, tableRecords: tableRecords),
               let activeState = object["activeState"] as? [String: Any],
               isValidActiveState(activeState),
               let history = object["historyState"] as? [String: Any],

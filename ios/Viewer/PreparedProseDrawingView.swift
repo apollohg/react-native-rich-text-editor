@@ -110,6 +110,11 @@ public final class PreparedProseDrawingView: UIView {
             if oldValue !== excludedTableCellContentLayout { setNeedsDisplay() }
         }
     }
+    var selectedTableCellSourcePositions: [String: Set<Int>] = [:] {
+        didSet {
+            if selectedTableCellSourcePositions != oldValue { setNeedsDisplay() }
+        }
+    }
 
     @objc public func install(layout: PreparedProseLayout?) {
         guard self.layout !== layout else { return }
@@ -554,6 +559,14 @@ public final class PreparedProseDrawingView: UIView {
         let mountedLayoutIDs = Set(snapshot.mountedCells.map { ObjectIdentifier($0.content) })
         let excludedLayoutID = excludedTableCellContentLayout.map(ObjectIdentifier.init)
         drawHierarchicalBackgrounds(snapshot, mountedLayoutIDs: mountedLayoutIDs, excludedLayoutID: excludedLayoutID, dirtyRect: rect, context: context)
+        for cell in snapshot.mountedCells where cell.cell.sourceCellIndex != nil
+            && selectedTableCellSourcePositions[cell.surface.identity]?.contains(cell.sourcePosition) == true {
+            context.saveGState()
+            context.clip(to: cell.clip)
+            context.setFillColor(cell.surface.style.selectionColor.cgColor)
+            context.fill(cell.bounds)
+            context.restoreGState()
+        }
         context.saveGState()
         context.translateBy(x: 0, y: bounds.height)
         context.scaleBy(x: 1, y: -1)

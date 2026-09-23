@@ -44,8 +44,14 @@ final class EditorTableSurface: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func present(_ presentation: EditorV2Adapter.EditorTablePresentationSnapshot, from textView: EditorTextView) {
+    func present(_ presentation: EditorV2Adapter.EditorTablePresentationSnapshot,
+                 selection: EditorCellSelection?, from textView: EditorTextView) {
         latestPresentation = presentation
+        if case let .drawable(tableID, sourcePositions) = selection {
+            drawingView.selectedTableCellSourcePositions = [tableID: sourcePositions]
+        } else {
+            drawingView.selectedTableCellSourcePositions = [:]
+        }
         reprepareIfNeeded(from: textView)
         updateGeometry(from: textView)
     }
@@ -66,7 +72,12 @@ final class EditorTableSurface: UIView {
         drawingOffset = .zero
         drawingView.bounds.origin = .zero
         drawingView.excludedTableCellContentLayout = nil
+        drawingView.selectedTableCellSourcePositions = [:]
         drawingView.install(layout: nil)
+    }
+
+    func clearCellSelection() {
+        drawingView.selectedTableCellSourcePositions = [:]
     }
 
     func updateGeometry(from textView: EditorTextView) {
