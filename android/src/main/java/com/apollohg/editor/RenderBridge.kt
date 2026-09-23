@@ -23,6 +23,8 @@ object RenderBridge {
         val pendingCodeBlockSpans: MutableList<PendingCodeBlockSpan> = mutableListOf(),
         val atomOccurrences: MutableMap<String, Int> = mutableMapOf(),
         val reusableImages: MutableList<BlockImageSpan> = mutableListOf(),
+        val blockRangeObserver: ((Int, Int, Int) -> Unit)? = null,
+        val synthesizeEmptyBlocks: Boolean = false,
         var isFirstBlock: Boolean = true,
         var nextBlockSpacingBefore: Float? = null,
         var pendingListBoundarySpacing: Float? = null
@@ -77,9 +79,15 @@ object RenderBridge {
         theme: EditorTheme? = null,
         density: Float = 1f,
         hostView: View? = null,
-        atomConfiguration: AtomRenderConfiguration? = null
+        atomConfiguration: AtomRenderConfiguration? = null,
+        blockRangeObserver: ((Int, Int, Int) -> Unit)? = null,
+        synthesizeEmptyBlocks: Boolean = false
     ): SpannableStringBuilder {
-        val state = RenderBuildState(reusableImages = reusableImages(hostView))
+        val state = RenderBuildState(
+            reusableImages = reusableImages(hostView),
+            blockRangeObserver = blockRangeObserver,
+            synthesizeEmptyBlocks = synthesizeEmptyBlocks
+        )
         appendElements(
             state = state,
             elements = elements,

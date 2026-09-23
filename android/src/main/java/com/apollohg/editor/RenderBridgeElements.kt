@@ -15,7 +15,8 @@ internal fun RenderBridge.appendElements(
     density: Float,
     hostView: View?,
     atomConfiguration: AtomRenderConfiguration?,
-    topLevelChildIndex: Int? = null
+    topLevelChildIndex: Int? = null,
+    observeSourceElements: Boolean = true
 ) {
     for (i in 0 until elements.length()) {
         val element = elements.optJSONObject(i) ?: continue
@@ -84,6 +85,7 @@ internal fun RenderBridge.appendElements(
                 val spacingBefore = theme?.effectiveTextStyle(nodeType)?.spacingAfter
                     ?: theme?.list?.itemSpacing
                 state.replaceNextBlockSpacing(spacingBefore)
+                val rangeStart = state.result.length
                 appendVoidBlock(
                     state.result,
                     nodeType,
@@ -116,6 +118,7 @@ internal fun RenderBridge.appendElements(
                     state.blockStack.size,
                     state.blockStack.map { it.nodeType }
                 )
+                if (observeSourceElements) state.blockRangeObserver?.invoke(i, rangeStart, state.result.length)
             }
 
             "opaqueInlineAtom" -> {
@@ -166,6 +169,7 @@ internal fun RenderBridge.appendElements(
                 }
                 state.isFirstBlock = false
                 state.replaceNextBlockSpacing(blockSpacing)
+                val rangeStart = state.result.length
                 appendOpaqueBlockAtom(
                     state.result,
                     nodeType,
@@ -177,6 +181,7 @@ internal fun RenderBridge.appendElements(
                     blockSpacing,
                     topLevelChildIndex
                 )
+                if (observeSourceElements) state.blockRangeObserver?.invoke(i, rangeStart, state.result.length)
             }
 
             "blockStart" -> {
@@ -208,7 +213,8 @@ internal fun RenderBridge.appendElements(
                         density,
                         hostView,
                         atomConfiguration,
-                        topLevelChildIndex
+                        topLevelChildIndex,
+                        observeSourceElements = false
                     )
                 }
                 val isListItemContainer = isListItemNodeType(nodeType) && listContext != null
@@ -274,7 +280,10 @@ internal fun RenderBridge.appendElements(
                     topLevelChildIndex = topLevelChildIndex,
                     markerPending = isListItemContainer,
                     renderStart = state.result.length,
-                    language = element.optNullableString("language")
+                    language = element.optNullableString("language"),
+                    sourceElementIndex = if (observeSourceElements &&
+                        !isListItemNodeType(nodeType) && !isTransparentContainer
+                    ) i else null
                 )
                 state.blockStack.add(ctx)
 
@@ -464,12 +473,21 @@ internal fun RenderBridge.appendElements(
                         density = density
                     )
                 }
+                ctx.contentStart = state.result.length
             }
 
             "blockEnd" -> {
                 if (state.blockStack.isNotEmpty()) {
                     val endedAncestors = state.blockStack.dropLast(1).map { it.nodeType }
                     val endedBlock = state.blockStack.removeAt(state.blockStack.lastIndex)
+                    if (state.synthesizeEmptyBlocks &&
+                        endedBlock.sourceElementIndex != null &&
+                        endedBlock.contentStart == state.result.length &&
+                        !isListItemNodeType(endedBlock.nodeType) &&
+                        !isTransparentContainer(endedBlock.nodeType)
+                    ) {
+                        state.result.append(LayoutConstants.SYNTHETIC_PLACEHOLDER_CHARACTER)
+                    }
                     appendTrailingHardBreakPlaceholderIfNeeded(
                         builder = state.result,
                         endedBlock = endedBlock,
@@ -592,8 +610,12 @@ internal fun RenderBridge.appendElements(
                             density,
                             hostView,
                             atomConfiguration,
-                            topLevelChildIndex
+                            topLevelChildIndex,
+                            observeSourceElements = false
                         )
+                    }
+                    endedBlock.sourceElementIndex?.let { sourceIndex ->
+                        state.blockRangeObserver?.invoke(sourceIndex, endedBlock.contentStart, state.result.length)
                     }
                 }
             }
