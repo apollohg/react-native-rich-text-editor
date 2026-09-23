@@ -549,6 +549,20 @@ internal class EditorTableSurfaceMountTest {
         }
 
     @Test
+    fun `right arrow skips nested-only outer cell`() =
+        withMountedView(nestedTableDocument) { view, adapter, _ ->
+            tapFirstCell(view)
+            val input = view.activeTextInput
+            input.setSelection(input.text.length)
+            val revision = adapter.baseDocumentRevision
+            assertTrue(input.dispatchKeyEvent(KeyEvent(213L, 213L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0)))
+            assertTrue(input === view.activeTextInput)
+            assertEquals("Owner", input.text.toString())
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+
+    @Test
     fun `nested snapshot with mismatched root identity or extent clears surface`() =
         withMountedView(nestedTableDocument) { view, adapter, _ ->
             val input = view.editorEditText

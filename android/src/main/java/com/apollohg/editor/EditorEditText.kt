@@ -294,6 +294,7 @@ class EditorEditText @JvmOverloads constructor(
     internal var onTableRootTouch: ((MotionEvent) -> Boolean)? = null
     internal var onTableCellSelectionSynced: (() -> Unit)? = null
     internal var onTableCellTab: ((Boolean) -> Boolean)? = null
+    internal var onTableCellArrow: ((Int, Int) -> Boolean)? = null
     internal var rootTableNativeOwnerAuthority: ((EditorV2Adapter) -> Boolean)? = null
     internal var blockExternalEditorUpdatePreparationForTesting = false
     internal var blockExternalEditorCommandPreparationForTesting = false
@@ -394,8 +395,25 @@ class EditorEditText @JvmOverloads constructor(
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val tableArrow = isTableCellInput &&
+            event.keyCode in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_RIGHT
+        if (tableArrow && event.action == KeyEvent.ACTION_DOWN) {
+            val signature = hardwareKeyEventSignature(event)
+            if (lastHandledHardwareKeySignature == signature ||
+                didRecentlyHandleHardwareKeyDown(signature)) return true
+        }
+        val arrowStart = if (isTableCellInput && event.action == KeyEvent.ACTION_DOWN &&
+            event.keyCode in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_RIGHT &&
+            !event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed &&
+            !event.isMetaPressed && selectionStart == selectionEnd &&
+            isAuthorizedForTableCellInput()
+        ) selectionStart else null
+        val arrowBinding = if (arrowStart != null) tableCellPositionMap?.binding else null
         if (isTableCellInput && !canDispatchTableCellMutation() &&
             isReadOnlyTextMutationKeyEvent(event)
+        ) return true
+        if (isTableCellInput && !isAuthorizedForTableCellInput() && arrowStart == null &&
+            event.keyCode in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_RIGHT
         ) return true
         if (!isEditable && isReadOnlyTextMutationKeyEvent(event)) {
             return true
@@ -410,7 +428,21 @@ class EditorEditText @JvmOverloads constructor(
         if (handlePrintableHardwareKeyEvent(event) { super.dispatchKeyEvent(event) }) {
             return true
         }
-        return super.dispatchKeyEvent(event)
+        val handled = super.dispatchKeyEvent(event)
+        if (arrowStart != null && arrowBinding == tableCellPositionMap?.binding &&
+            selectionStart == arrowStart && selectionEnd == arrowStart &&
+            isAuthorizedForTableCellInput() &&
+            onTableCellArrow?.invoke(event.keyCode, arrowStart) == true
+        ) {
+            markHandledHardwareKeyDown(hardwareKeyEventSignature(event))
+            return true
+        }
+        if (tableArrow && event.action == KeyEvent.ACTION_UP &&
+            lastHandledHardwareKeySignature?.let {
+                it.keyCode == event.keyCode && it.downTime == event.downTime
+            } == true
+        ) lastHandledHardwareKeySignature = null
+        return handled
     }
 
     internal fun handleCompositionKeyEvent(

@@ -120,6 +120,60 @@ class NativeDeviceTableCellTest {
     }
 
     @Test
+    fun hardwareRightArrowCrossesCellsThenEntersFollowingProse() = withEditor { fixture ->
+        fixture.tapCell(0)
+        fixture.onActivity {
+            val input = fixture.cellInput()
+            input.setSelection(input.text.length)
+            val oldConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            val revision = fixture.adapter.baseDocumentRevision
+            assertTrue(input.dispatchKeyEvent(KeyEvent(310L, 310L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0)))
+            assertSame(input, fixture.cellInput())
+            assertEquals("Owner", input.text.toString())
+            assertFalse(oldConnection.beginBatchEdit())
+            assertEquals(revision, fixture.adapter.baseDocumentRevision)
+
+            input.setSelection(input.text.length)
+            assertTrue(input.dispatchKeyEvent(KeyEvent(311L, 311L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0)))
+            val root = fixture.editor.richTextView.editorEditText
+            assertSame(root, fixture.editor.richTextView.activeTextInput)
+            assertEquals(root.text.toString().indexOf("After table."), root.selectionStart)
+            assertEquals(revision, fixture.adapter.baseDocumentRevision)
+            assertTrue(requireNotNull(root.onCreateInputConnection(EditorInfo()))
+                .commitText("X", 1))
+            assertEquals(listOf("Before table.", "XAfter table."), fixture.proseTexts())
+            assertEquals(1, fixture.tableRowCount())
+        }
+    }
+
+    @Test
+    fun hardwareRightArrowEntersRtlTextAtVisualLeftEdge() =
+        withEditor(DOCUMENT.replace("\"Owner\"", "\"אבג\"")) { fixture ->
+            fixture.tapCell(0)
+            fixture.onActivity {
+                val input = fixture.cellInput()
+                input.setSelection(input.text.length)
+                val revision = fixture.adapter.baseDocumentRevision
+                assertTrue(input.dispatchKeyEvent(KeyEvent(320L, 320L,
+                    KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0)))
+                assertSame(input, fixture.cellInput())
+                assertEquals("אבג", input.text.toString())
+                val entry = input.selectionStart
+                assertEquals(entry, input.layout.getOffsetToLeftOf(entry))
+                val nativeNext = input.layout.getOffsetToRightOf(entry)
+                assertTrue(nativeNext != entry)
+                assertTrue(input.dispatchKeyEvent(KeyEvent(321L, 321L,
+                    KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0)))
+                assertSame(input, fixture.cellInput())
+                assertEquals("אבג", input.text.toString())
+                assertEquals(nativeNext, input.selectionStart)
+                assertEquals(revision, fixture.adapter.baseDocumentRevision)
+            }
+        }
+
+    @Test
     @SdkSuppress(minSdkVersion = 29)
     fun nestedTableRendersReadOnlyWhileHardwareTabSkipsItsOuterCell() = withEditor(NESTED_DOCUMENT) { fixture ->
         fixture.onActivity {

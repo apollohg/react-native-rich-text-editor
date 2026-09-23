@@ -11,6 +11,7 @@ import android.text.style.ReplacementSpan
 import android.view.View
 import android.view.ViewGroup
 import android.view.MotionEvent
+import android.view.KeyEvent
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import com.apollohg.editor.EditorEditText
@@ -20,6 +21,8 @@ import com.apollohg.editor.EditorV2Registry
 import com.apollohg.editor.exactV2ScalarInt
 import com.apollohg.editor.isAuthorizedForTableCellInput
 import com.apollohg.editor.inputScalarSelection
+import com.apollohg.editor.syncCurrentSelectionToRust
+import com.apollohg.editor.PositionBridge
 import com.apollohg.editor.commandAtSelection
 import com.apollohg.editor.RenderBridge
 import com.apollohg.editor.RichTextEditorView
@@ -338,6 +341,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         root.retireInputConnectionForEditor()
         input.onTableCellSelectionSynced = { reconcileActiveCell() }
         input.onTableCellTab = ::moveFromActiveCell
+        input.onTableCellArrow = ::moveFromActiveCellByArrow
         input.applyRenderedSpannable(projected.text, usedPatch = false)
         if (input.parent !== host.editorContentFrame) {
             (input.parent as? ViewGroup)?.removeView(input)
@@ -401,6 +405,97 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             invalidateCell()
         }
         return true
+    }
+
+    private fun moveFromActiveCellByArrow(keyCode: Int, offset: Int): Boolean {
+        val active = activeCell ?: return false
+        val input = activeInput ?: return false
+        val layout = input.layout ?: return false
+        if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT &&
+            layout.getOffsetToRightOf(offset) != offset) return false
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT &&
+            layout.getOffsetToLeftOf(offset) != offset) return false
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP &&
+            layout.getLineForOffset(offset) != 0) return false
+        if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN &&
+            layout.getLineForOffset(offset) != layout.lineCount - 1) return false
+        val root = host.editorEditText
+        val adapter = root.v2Driver as? EditorV2Adapter ?: return false
+        if (!input.isEditable || !input.isAuthorizedForTableCellInput() ||
+            !root.hasAuthorizedNativeTableOwner(adapter)) return true
+        if (!input.prepareForExternalEditorUpdate()) return true
+        if (activeCell != active || !input.isAuthorizedForTableCellInput()) return true
+        if (input.selectionStart != offset || input.selectionEnd != offset) return true
+        val currentLayout = input.layout ?: return true
+        val surface = entries[active.tableId]?.surface ?: return true
+        val source = surface.sourceTable ?: return true
+        val cell = source.cells.getOrNull(active.cellIndex) ?: return true
+        if (cell.sourcePos.toLong() != active.sourcePos) return true
+        val row = cell.row.toInt()
+        val horizontal = keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
+            keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+        val forward = (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) != surface.isRightToLeft
+        val targets = if (horizontal) {
+            if (forward) (active.cellIndex + 1 until source.cells.size).toList()
+            else (active.cellIndex - 1 downTo 0).toList()
+        } else {
+            val targetRow = if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                row + cell.rowspan.toInt()
+            } else row - 1
+            val activeFrame = surface.cells.firstOrNull { it.sourceCellIndex == active.cellIndex }
+                ?: return true
+            val x = (activeFrame.frame.left + activeFrame.contentOrigin.first +
+                currentLayout.getPrimaryHorizontal(offset)).coerceIn(
+                    activeFrame.frame.left + 0.5f,
+                    activeFrame.frame.left + activeFrame.frame.width - 0.5f
+                )
+            surface.cells.mapNotNull { candidate ->
+                val index = candidate.sourceCellIndex ?: return@mapNotNull null
+                val sourceCell = source.cells.getOrNull(index) ?: return@mapNotNull null
+                if (sourceCell.row.toInt() <= targetRow &&
+                    targetRow < sourceCell.row.toInt() + sourceCell.rowspan.toInt() &&
+                    x >= candidate.frame.left && x < candidate.frame.left + candidate.frame.width
+                ) index else null
+            }
+        }
+        val target = targets.firstOrNull { projection(active.tableId, it) != null }
+        if (target == null) {
+            val outside = if (horizontal) true else
+                (keyCode == KeyEvent.KEYCODE_DPAD_UP && row == 0) ||
+                    (keyCode == KeyEvent.KEYCODE_DPAD_DOWN &&
+                        row + cell.rowspan.toInt() == source.rows.toInt())
+            if (outside) exitCellToProse(active, if (horizontal) forward else
+                keyCode == KeyEvent.KEYCODE_DPAD_DOWN)
+            return true
+        }
+        val projected = projection(active.tableId, target) ?: return true
+        if (!bindCell(active.tableId, target, projected)) return true
+        val destination = if (horizontal) {
+            val targetLayout = input.layout ?: return true
+            val line = if (forward) 0 else targetLayout.lineCount - 1
+            val edge = if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+                targetLayout.getLineLeft(line) - 1f
+            } else targetLayout.getLineRight(line) + 1f
+            targetLayout.getOffsetForHorizontal(line, edge)
+        } else 0
+        input.setSelection(destination)
+        input.syncCurrentSelectionToRust()
+        return true
+    }
+
+    private fun exitCellToProse(active: ActiveCell, forward: Boolean) {
+        val root = host.editorEditText
+        val adapter = root.v2Driver as? EditorV2Adapter ?: return
+        if (!root.hasAuthorizedNativeTableOwner(adapter) ||
+            !root.isAuthorizedForRootTableInput()) return
+        val extent = root.rootTableMapExtents[active.tableId] ?: return
+        val scalar = if (forward) extent.scalarEnd + 1 else extent.scalarStart - 1
+        val local = root.rootTablePositionMap?.localScalar(scalar) ?: return
+        val offset = PositionBridge.scalarToUtf16(local, root.text.toString())
+        invalidateCell()
+        root.requestFocus()
+        root.setSelection(offset)
+        root.syncCurrentSelectionToRust()
     }
 
     private fun showKeyboard(input: EditorEditText) {
@@ -523,6 +618,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         coordinator?.cellInput?.let { input ->
             input.onTableCellSelectionSynced = null
             input.onTableCellTab = null
+            input.onTableCellArrow = null
             input.clearFocus()
             (input.parent as? ViewGroup)?.removeView(input)
         }

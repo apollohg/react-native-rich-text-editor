@@ -12,6 +12,7 @@ import android.widget.FrameLayout
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import java.time.Duration
 import org.json.JSONObject
+import org.json.JSONArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -34,6 +35,13 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
         doc.getJSONArray("content").getJSONObject(0).getJSONArray("content").put(JSONObject(
             """{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Third"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Fourth"}]}]}]}"""
         ))
+    }.toString()
+
+    private fun rowspanDocument(): String = JSONObject(document).also { doc ->
+        val rows = doc.getJSONArray("content").getJSONObject(0).getJSONArray("content")
+        rows.getJSONObject(0).getJSONArray("content").getJSONObject(0)
+            .put("attrs", JSONObject().put("rowspan", 2))
+        rows.put(JSONObject("""{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Third"}]}]}]}"""))
     }.toString()
 
     private fun tapCell(view: NativeEditorExpoView, index: Int) {
@@ -86,6 +94,9 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
                          downTime: Long = 100L): Boolean =
         input.dispatchKeyEvent(KeyEvent(downTime, downTime, KeyEvent.ACTION_DOWN,
             KeyEvent.KEYCODE_TAB, 0, if (shift) KeyEvent.META_SHIFT_ON else 0))
+
+    private fun pressArrow(input: EditorEditText, keyCode: Int, downTime: Long = 200L): Boolean =
+        input.dispatchKeyEvent(KeyEvent(downTime, downTime, KeyEvent.ACTION_DOWN, keyCode, 0))
 
     private fun tableRows(adapter: EditorV2Adapter) =
         JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")
@@ -176,6 +187,337 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             assertSame(input, view.richTextView.activeTextInput)
             assertEquals("Second", input.text.toString())
             assertEquals(listOf("First", "Second"), cellTexts(adapter))
+        }
+
+    @Test
+    fun `right arrow at LTR cell end enters the physical neighbor without changing document`() =
+        withActiveCell { view, input, adapter ->
+            input.setSelection(input.text.length)
+            val before = adapter.documentJson()
+            val revision = adapter.baseDocumentRevision
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_RIGHT))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            assertEquals(before, adapter.documentJson())
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+
+    @Test
+    fun `horizontal arrows wrap rows without appending a row`() =
+        withActiveCell(initialDocument = twoRowDocument()) { view, input, adapter ->
+            tapCell(view, 1)
+            input.setSelection(input.text.length)
+            val revision = adapter.baseDocumentRevision
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_RIGHT, 201L))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Third", input.text.toString())
+            input.setSelection(0)
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_LEFT, 202L))
+            assertEquals("Second", input.text.toString())
+            assertEquals(2, tableRows(adapter).length())
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+
+    @Test
+    fun `vertical arrows cross the adjacent row without changing document`() =
+        withActiveCell(initialDocument = twoRowDocument()) { view, input, adapter ->
+            input.setSelection(input.text.length)
+            val revision = adapter.baseDocumentRevision
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_DOWN, 203L))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Third", input.text.toString())
+            input.setSelection(0)
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_UP, 204L))
+            assertEquals("First", input.text.toString())
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+
+    @Test
+    fun `horizontal row wrap skips a cell spanning the preceding row`() =
+        withActiveCell(initialDocument = rowspanDocument()) { view, input, adapter ->
+            tapCell(view, 1)
+            input.setSelection(input.text.length)
+            val revision = adapter.baseDocumentRevision
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_RIGHT, 205L))
+            assertEquals("Third", input.text.toString())
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+
+    @Test
+    fun `right arrow inside cell keeps native text movement`() =
+        withActiveCell { view, input, adapter ->
+            input.setSelection(1)
+            assertEquals(1, input.selectionStart)
+            val nativeDestination = input.layout.getOffsetToRightOf(1)
+            val revision = adapter.baseDocumentRevision
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_RIGHT, 206L))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("First", input.text.toString())
+            assertEquals(nativeDestination, input.selectionStart)
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+
+    @Test
+    fun `right arrow at final LTR cell exits into following prose without adding a row`() =
+        withActiveCell { view, input, adapter ->
+            tapCell(view, 1)
+            input.setSelection(input.text.length)
+            val revision = adapter.baseDocumentRevision
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_RIGHT, 207L))
+            val root = view.richTextView.editorEditText
+            assertSame(root, view.richTextView.activeTextInput)
+            assertEquals(root.text.toString().indexOf("after"), root.selectionStart)
+            assertEquals(revision, adapter.baseDocumentRevision)
+            val connection = requireNotNull(root.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.commitText("X", 1))
+            assertEquals("Xafter", proseText(adapter))
+            assertEquals(1, tableRows(adapter).length())
+        }
+
+    @Test
+    fun `left arrow enters the physical neighbor in RTL`() {
+        val editorConfig = JSONObject(config)
+        val nodes = editorConfig.getJSONObject("schema").getJSONArray("nodes")
+        (0 until nodes.length()).map { nodes.getJSONObject(it) }
+            .first { it.getString("name") == "table" }
+            .put("attrs", JSONObject().put("dir", JSONObject().put("default", "ltr")))
+        val rtlDocument = JSONObject(document)
+        rtlDocument.getJSONArray("content").getJSONObject(0)
+            .put("attrs", JSONObject().put("dir", "rtl"))
+        withActiveCell(initialDocument = rtlDocument.toString(),
+            editorConfig = editorConfig.toString(), direction = View.LAYOUT_DIRECTION_RTL) {
+                view, input, adapter ->
+            input.setSelection(0)
+            val revision = adapter.baseDocumentRevision
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_LEFT, 208L))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+    }
+
+    @Test
+    fun `right arrow enters RTL text at its visual left edge and next arrow stays in cell`() {
+        val mixed = JSONObject(document)
+        mixed.getJSONArray("content").getJSONObject(0).getJSONArray("content")
+            .getJSONObject(0).getJSONArray("content").getJSONObject(1)
+            .getJSONArray("content").getJSONObject(0).getJSONArray("content")
+            .getJSONObject(0).put("text", "אבג")
+        withActiveCell(initialDocument = mixed.toString()) { view, input, adapter ->
+            input.setSelection(input.text.length)
+            val revision = adapter.baseDocumentRevision
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_RIGHT, 221L))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("אבג", input.text.toString())
+            val entry = input.selectionStart
+            assertEquals(entry, input.layout.getOffsetToLeftOf(entry))
+            val nativeNext = input.layout.getOffsetToRightOf(entry)
+            assertTrue(nativeNext != entry)
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_RIGHT, 222L))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("אבג", input.text.toString())
+            assertEquals(nativeNext, input.selectionStart)
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+    }
+
+    @Test
+    fun `left arrow in RTL table enters LTR text at its visual right edge`() {
+        val editorConfig = JSONObject(config)
+        val nodes = editorConfig.getJSONObject("schema").getJSONArray("nodes")
+        (0 until nodes.length()).map { nodes.getJSONObject(it) }
+            .first { it.getString("name") == "table" }
+            .put("attrs", JSONObject().put("dir", JSONObject().put("default", "ltr")))
+        val rtlDocument = JSONObject(document)
+        rtlDocument.getJSONArray("content").getJSONObject(0)
+            .put("attrs", JSONObject().put("dir", "rtl"))
+        withActiveCell(initialDocument = rtlDocument.toString(),
+            editorConfig = editorConfig.toString(), direction = View.LAYOUT_DIRECTION_RTL) {
+                view, input, adapter ->
+            input.setSelection(0)
+            val revision = adapter.baseDocumentRevision
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_LEFT, 223L))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            val entry = input.selectionStart
+            assertEquals(entry, input.layout.getOffsetToRightOf(entry))
+            val nativeNext = input.layout.getOffsetToLeftOf(entry)
+            assertTrue(nativeNext != entry)
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_LEFT, 224L))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            assertEquals(nativeNext, input.selectionStart)
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+    }
+
+    @Test
+    fun `left arrow at first cell exits into preceding prose`() {
+        val withBefore = JSONObject(document)
+        val original = withBefore.getJSONArray("content")
+        val content = JSONArray().put(JSONObject(
+            """{"type":"paragraph","content":[{"type":"text","text":"before"}]}"""))
+        for (index in 0 until original.length()) content.put(original.get(index))
+        withBefore.put("content", content)
+        withActiveCell(initialDocument = withBefore.toString()) { view, input, adapter ->
+            input.setSelection(0)
+            val revision = adapter.baseDocumentRevision
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_LEFT, 209L))
+            val root = view.richTextView.editorEditText
+            assertSame(root, view.richTextView.activeTextInput)
+            assertEquals(root.text.toString().indexOf("before") + "before".length,
+                root.selectionStart)
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+    }
+
+    @Test
+    fun `down arrow at final row exits into following prose`() =
+        withActiveCell { view, input, adapter ->
+            val revision = adapter.baseDocumentRevision
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_DOWN, 210L))
+            val root = view.richTextView.editorEditText
+            assertSame(root, view.richTextView.activeTextInput)
+            assertEquals(root.text.toString().indexOf("after"), root.selectionStart)
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+
+    @Test
+    fun `input connection arrow navigates and retires its old connection`() =
+        withActiveCell { view, input, adapter ->
+            input.setSelection(input.text.length)
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            val revision = adapter.baseDocumentRevision
+            assertTrue(connection.sendKeyEvent(KeyEvent(211L, 211L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0)))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            assertFalse(connection.beginBatchEdit())
+            val destination = input.selectionStart
+            connection.sendKeyEvent(KeyEvent(211L, 211L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            assertEquals(destination, input.selectionStart)
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+
+    @Test
+    fun `stale table epoch consumes arrow without moving or writing`() =
+        withActiveCell { view, input, adapter ->
+            input.setSelection(input.text.length)
+            val revision = adapter.baseDocumentRevision
+            adapter.positionEpoch = "999"
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_RIGHT, 212L))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("First", input.text.toString())
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+
+    @Test
+    fun `arrow commits composition once before entering next cell`() =
+        withActiveCell { view, input, adapter ->
+            val oldConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            input.setSelection(input.text.length)
+            assertTrue(oldConnection.setComposingText("X", 1))
+            val revision = adapter.baseDocumentRevision
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_RIGHT, 214L))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            assertFalse(oldConnection.beginBatchEdit())
+            assertEquals(revision + 1uL, adapter.baseDocumentRevision)
+            assertEquals(listOf("FirstX", "Second"), cellTexts(adapter))
+        }
+
+    @Test
+    fun `owner rebind does not revive the retired arrow input connection`() =
+        withActiveCell { view, input, adapter ->
+            input.setSelection(input.text.length)
+            val oldConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            val token = input.editorId
+            val revision = adapter.baseDocumentRevision
+            view.setEditorId(0L)
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_RIGHT, 215L))
+            assertEquals(revision, adapter.baseDocumentRevision)
+            assertFalse(oldConnection.beginBatchEdit())
+            view.setEditorId(token)
+            tapCell(view, 0)
+            input.setSelection(input.text.length)
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_RIGHT, 216L))
+            assertEquals("Second", input.text.toString())
+            oldConnection.commitText("stale", 1)
+            assertEquals(revision, adapter.baseDocumentRevision)
+            assertEquals(listOf("First", "Second"), cellTexts(adapter))
+        }
+
+    @Test
+    fun `duplicate arrow delivery crosses only one cell`() =
+        withActiveCell(initialDocument = twoRowDocument()) { view, input, adapter ->
+            input.setSelection(input.text.length)
+            val arrow = KeyEvent(217L, 217L, KeyEvent.ACTION_DOWN,
+                KeyEvent.KEYCODE_DPAD_RIGHT, 0)
+            assertTrue(input.dispatchKeyEvent(arrow))
+            val destination = input.selectionStart
+            assertTrue(input.dispatchKeyEvent(arrow))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            assertEquals(destination, input.selectionStart)
+            assertEquals(2, tableRows(adapter).length())
+        }
+
+    @Test
+    fun `hardware repeat count remains a distinct native arrow movement`() =
+        withActiveCell { view, input, adapter ->
+            input.setSelection(input.text.length)
+            val revision = adapter.baseDocumentRevision
+            assertTrue(input.dispatchKeyEvent(KeyEvent(225L, 225L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0)))
+            assertEquals("Second", input.text.toString())
+            val entry = input.selectionStart
+            val nativeNext = input.layout.getOffsetToRightOf(entry)
+            assertTrue(nativeNext != entry)
+            assertTrue(input.dispatchKeyEvent(KeyEvent(225L, 240L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 1)))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals(nativeNext, input.selectionStart)
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+
+    @Test
+    fun `modified arrow keeps native selection inside the active cell`() =
+        withActiveCell { view, input, adapter ->
+            input.setSelection(input.text.length)
+            val revision = adapter.baseDocumentRevision
+            assertTrue(input.dispatchKeyEvent(KeyEvent(218L, 218L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, 0,
+                KeyEvent.META_SHIFT_ON)))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("First", input.text.toString())
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+
+    @Test
+    fun `control arrow does not switch cells`() =
+        withActiveCell { view, input, adapter ->
+            input.setSelection(input.text.length)
+            val revision = adapter.baseDocumentRevision
+            input.dispatchKeyEvent(KeyEvent(219L, 219L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0,
+                KeyEvent.META_CTRL_ON))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("First", input.text.toString())
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+
+    @Test
+    fun `read only transition consumes arrow on retired cell input`() =
+        withActiveCell { view, input, adapter ->
+            input.setSelection(input.text.length)
+            val revision = adapter.baseDocumentRevision
+            view.setEditable(false)
+            assertTrue(pressArrow(input, KeyEvent.KEYCODE_DPAD_RIGHT, 220L))
+            assertSame(view.richTextView.editorEditText, view.richTextView.activeTextInput)
+            assertEquals(revision, adapter.baseDocumentRevision)
         }
 
     @Test
