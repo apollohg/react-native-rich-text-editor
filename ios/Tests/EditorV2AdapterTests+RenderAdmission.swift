@@ -87,10 +87,14 @@ extension EditorV2AdapterTests {
         XCTAssertNil(matchingAdapter.adoptExternalRender(lowerInvalid))
         XCTAssertEqual(matchingAdapter.positionEpoch, baselineEpoch)
         XCTAssertNil(matchingAdapter.cachedTablePresentation)
+        let beforePreflight = matchingAdapter.cacheStateForTesting
         XCTAssertFalse(matchingAdapter.validateExternalRender(lowerInvalid))
+        XCTAssertEqual(matchingAdapter.cacheStateForTesting, beforePreflight)
+        XCTAssertEqual(matchingAdapter.positionEpoch, baselineEpoch)
 
         let withoutEpoch = mutatedObjectJSON(matchingSnapshot) { $0.removeValue(forKey: "positionEpoch") }
         XCTAssertNotNil(matchingAdapter.adoptExternalRender(withoutEpoch))
+        XCTAssertNotEqual(matchingAdapter.positionEpoch, baselineEpoch)
         XCTAssertEqual(matchingAdapter.cachedTablePresentation?.positionEpoch, matchingAdapter.positionEpoch)
 
         let withMention = mutatedObjectJSON(valid) { object in
