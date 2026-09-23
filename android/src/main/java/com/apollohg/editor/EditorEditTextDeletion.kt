@@ -241,14 +241,12 @@ internal fun EditorEditText.handleHardBreakImpl() {
     }
 }
 
-/**
- * Handle hardware Tab / Shift+Tab as list indent / outdent when the caret is in a list.
- */
 internal fun EditorEditText.handleTabImpl(shiftPressed: Boolean): Boolean {
     if (isTableCellInput && !canDispatchTableCellMutation()) return false
     if (!isEditable) return false
     if (isApplyingRustState) return false
     if (!hasLiveEditor()) return false
+    if (isTableCellInput) return onTableCellTab?.invoke(shiftPressed) == true
     if (!isSelectionInsideList()) return false
     val selection = currentScalarSelection()?.let { inputScalarSelection(it.first, it.second) }
         ?: return false

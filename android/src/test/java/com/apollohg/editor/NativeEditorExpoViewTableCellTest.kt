@@ -4,6 +4,7 @@ import android.app.Activity
 import android.graphics.Rect
 import android.os.Looper
 import android.text.InputType
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -28,6 +29,12 @@ import org.robolectric.annotation.Config
 internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSupport() {
     private val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
     private val document = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"First"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Second"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+
+    private fun twoRowDocument(): String = JSONObject(document).also { doc ->
+        doc.getJSONArray("content").getJSONObject(0).getJSONArray("content").put(JSONObject(
+            """{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Third"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Fourth"}]}]}]}"""
+        ))
+    }.toString()
 
     private fun tapCell(view: NativeEditorExpoView, index: Int) {
         val canvas = (0 until view.richTextView.editorContentFrame.childCount)
@@ -75,6 +82,15 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
         JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")
             .getJSONObject(1).getJSONArray("content").getJSONObject(0).getString("text")
 
+    private fun pressTab(input: EditorEditText, shift: Boolean = false,
+                         downTime: Long = 100L): Boolean =
+        input.dispatchKeyEvent(KeyEvent(downTime, downTime, KeyEvent.ACTION_DOWN,
+            KeyEvent.KEYCODE_TAB, 0, if (shift) KeyEvent.META_SHIFT_ON else 0))
+
+    private fun tableRows(adapter: EditorV2Adapter) =
+        JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")
+            .getJSONObject(0).getJSONArray("content")
+
     private fun tapProse(view: NativeEditorExpoView) {
         val root = view.richTextView.editorEditText
         val offset = root.text.toString().indexOf("after")
@@ -95,18 +111,26 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
         }
     }
 
-    private fun withActiveCell(block: (NativeEditorExpoView, EditorEditText, EditorV2Adapter) -> Unit) {
+    private fun withActiveCell(
+        initialDocument: String = document,
+        editorConfig: String = config,
+        direction: Int = View.LAYOUT_DIRECTION_LTR,
+        block: (NativeEditorExpoView, EditorEditText, EditorV2Adapter) -> Unit
+    ) {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
-        val created = UniffiEditorV2Backend.create(config, null) as EditorV2CallResult.Ok
+        val created = UniffiEditorV2Backend.create(editorConfig, null) as EditorV2CallResult.Ok
         val adapter = requireNotNull(EditorV2Adapter.attach(
             UniffiEditorV2Backend, JSONObject(created.value).getString("editorId"), false))
-        val update = requireNotNull(adapter.setContentJson(document)) {
+        val update = requireNotNull(adapter.setContentJson(initialDocument)) {
             adapter.debugNotes.toString()
         }
         val token = EditorV2Registry.register(adapter)
         try {
             val expo = testExpoContext(activity)
             val view = NativeEditorExpoView(expo.context, expo.appContext)
+            view.layoutDirection = direction
+            view.richTextView.layoutDirection = direction
+            view.richTextView.editorEditText.layoutDirection = direction
             view.onFocusChangeForTesting = {}
             view.onAddonEventForTesting = {}
             view.onEditorReadyForTesting = {}
@@ -144,6 +168,236 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
         assertTrue(input.hasFocus())
         assertTrue(view.isEditorEffectivelyFocusedForNativeAction())
     }
+
+    @Test
+    fun `hardware Tab moves into the next cell on the reusable input`() =
+        withActiveCell { view, input, adapter ->
+            assertTrue(pressTab(input))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            assertEquals(listOf("First", "Second"), cellTexts(adapter))
+        }
+
+    @Test
+    fun `hardware Shift Tab moves backward to the exact first cell`() =
+        withActiveCell { view, input, adapter ->
+            tapCell(view, 1)
+            assertTrue(pressTab(input, shift = true))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("First", input.text.toString())
+            val scalar = JSONObject(requireNotNull(adapter.selectionJson())).getInt("anchorScalar")
+            assertEquals(input.currentScalarSelection()?.first,
+                input.tableCellPositionMap?.localScalarForGlobalScalar(scalar))
+            assertEquals(listOf("First", "Second"), cellTexts(adapter))
+        }
+
+    @Test
+    fun `hardware Tab crosses a row boundary and Shift Tab returns to the previous row`() =
+        withActiveCell(initialDocument = twoRowDocument()) { view, input, adapter ->
+            tapCell(view, 1)
+            assertEquals("Second", input.text.toString())
+            assertTrue(pressTab(input, downTime = 301L))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Third", input.text.toString())
+            assertTrue(pressTab(input, shift = true, downTime = 302L))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            assertEquals(2, tableRows(adapter).length())
+            assertEquals("after", proseText(adapter))
+        }
+
+    @Test
+    fun `hardware Tab follows document order across physically reversed RTL cells`() {
+        val editorConfig = JSONObject(config)
+        val nodes = editorConfig.getJSONObject("schema").getJSONArray("nodes")
+        (0 until nodes.length()).map { nodes.getJSONObject(it) }
+            .first { it.getString("name") == "table" }
+            .put("attrs", JSONObject().put("dir", JSONObject().put("default", "ltr")))
+        val rtlDocument = JSONObject(document)
+        rtlDocument.getJSONArray("content").getJSONObject(0)
+            .put("attrs", JSONObject().put("dir", "rtl"))
+        withActiveCell(initialDocument = rtlDocument.toString(),
+            editorConfig = editorConfig.toString(), direction = View.LAYOUT_DIRECTION_RTL) {
+                view, input, adapter ->
+            val canvas = (0 until view.richTextView.editorContentFrame.childCount)
+                .map { view.richTextView.editorContentFrame.getChildAt(it) }
+                .filterIsInstance<PreparedProseDrawingView>().single()
+            val cells = requireNotNull(canvas.preparedLayout?.blocks?.singleOrNull()?.tableSurface).cells
+            assertTrue(cells[0].frame.left > cells[1].frame.left)
+            assertTrue(pressTab(input))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            assertEquals(listOf("First", "Second"), cellTexts(adapter))
+        }
+    }
+
+    @Test
+    fun `hardware Shift Tab at the first cell leaves the document unchanged`() =
+        withActiveCell { view, input, adapter ->
+            val before = adapter.documentJson()
+            val revision = adapter.baseDocumentRevision
+            assertTrue(pressTab(input, shift = true))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals(before, adapter.documentJson())
+            assertEquals(revision, adapter.baseDocumentRevision)
+        }
+
+    @Test
+    fun `hardware Tab at the last cell appends one row and enters its first cell`() =
+        withActiveCell { view, input, adapter ->
+            tapCell(view, 1)
+            val before = adapter.baseDocumentRevision
+            assertTrue(pressTab(input))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals(before + 1uL, adapter.baseDocumentRevision)
+            assertEquals("\u200B", input.text.toString())
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(input.canDispatchTableCellMutation())
+            assertTrue(connection.commitText("N", 1))
+            val rows = tableRows(adapter)
+            assertEquals(2, rows.length())
+            assertEquals(2, rows.getJSONObject(1).getJSONArray("content").length())
+            assertEquals("N", rows.getJSONObject(1).getJSONArray("content").getJSONObject(0)
+                .getJSONArray("content").getJSONObject(0).getJSONArray("content")
+                .getJSONObject(0).getString("text"))
+            assertEquals(listOf("First", "Second"), cellTexts(adapter))
+            assertEquals("after", proseText(adapter))
+        }
+
+    @Test
+    fun `hardware Tab commits composition once and retires the old connection`() =
+        withActiveCell { view, input, adapter ->
+            val oldConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            input.setSelection(input.text.length)
+            assertTrue(oldConnection.setComposingText("X", 1))
+            val before = adapter.baseDocumentRevision
+            val tab = KeyEvent(101L, 101L, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB, 0)
+            assertTrue(input.dispatchKeyEvent(tab))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            assertEquals(listOf("FirstX", "Second"), cellTexts(adapter))
+            assertEquals(before + 1uL, adapter.baseDocumentRevision)
+            assertFalse(oldConnection.beginBatchEdit())
+            oldConnection.commitText("stale", 1)
+            oldConnection.sendKeyEvent(tab)
+            assertTrue(input.dispatchKeyEvent(tab))
+            assertEquals(listOf("FirstX", "Second"), cellTexts(adapter))
+            assertEquals(1, tableRows(adapter).length())
+        }
+
+    @Test
+    fun `input connection hardware Tab follows the same cell navigation route`() =
+        withActiveCell { view, input, adapter ->
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.sendKeyEvent(KeyEvent(103L, 103L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB, 0)))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            assertEquals(listOf("First", "Second"), cellTexts(adapter))
+            assertFalse(connection.beginBatchEdit())
+        }
+
+    @Test
+    fun `stale table binding consumes Tab without changing document`() =
+        withActiveCell { _, input, adapter ->
+            val before = adapter.documentJson()
+            adapter.positionEpoch = "999"
+            assertTrue(pressTab(input))
+            assertEquals(before, adapter.documentJson())
+        }
+
+    @Test
+    fun `owner loss before Tab and later rebind do not revive the old connection`() =
+        withActiveCell { view, input, adapter ->
+            val token = input.editorId
+            val oldConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            val before = adapter.baseDocumentRevision
+            view.setEditorId(0L)
+            assertTrue(pressTab(input))
+            assertEquals(before, adapter.baseDocumentRevision)
+            assertFalse(oldConnection.beginBatchEdit())
+
+            view.setEditorId(token)
+            tapCell(view, 0)
+            assertSame(input, view.richTextView.activeTextInput)
+            assertTrue(pressTab(input, downTime = 501L))
+            assertEquals("Second", input.text.toString())
+            oldConnection.commitText("stale", 1)
+            assertEquals(listOf("First", "Second"), cellTexts(adapter))
+            assertEquals(before, adapter.baseDocumentRevision)
+        }
+
+    @Test
+    fun `owner switch during table Tab cannot write into the new editor`() =
+        withActiveCell { view, input, adapter ->
+            val created = UniffiEditorV2Backend.create(config, null) as EditorV2CallResult.Ok
+            val other = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend,
+                JSONObject(created.value).getString("editorId"), false))
+            requireNotNull(other.setContentJson(document))
+            val otherToken = EditorV2Registry.register(other)
+            try {
+                tapCell(view, 1)
+                val oldConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+                val otherBefore = other.baseDocumentRevision
+                val originalBefore = adapter.baseDocumentRevision
+                val root = view.richTextView.editorEditText
+                val previous = root.onBeforeRenderRefresh
+                var switched = false
+                root.onBeforeRenderRefresh = {
+                    previous?.invoke()
+                    if (!switched) {
+                        switched = true
+                        view.setEditorId(otherToken)
+                    }
+                }
+
+                assertTrue(pressTab(input))
+                assertTrue(switched)
+                assertEquals(otherBefore, other.baseDocumentRevision)
+                assertEquals(originalBefore + 1uL, adapter.baseDocumentRevision)
+                assertSame(root, view.richTextView.activeTextInput)
+                assertFalse(oldConnection.beginBatchEdit())
+                oldConnection.commitText("stale", 1)
+                assertEquals(otherBefore, other.baseDocumentRevision)
+                assertEquals(1, tableRows(other).length())
+            } finally {
+                view.setEditorId(0L)
+                EditorV2Registry.remove(other.editorId)
+                other.destroy()
+            }
+        }
+
+    @Test
+    fun `duplicate hardware Tab delivery does not navigate twice`() =
+        withActiveCell { view, input, adapter ->
+            val tab = KeyEvent(102L, 102L, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB, 0)
+            assertTrue(input.dispatchKeyEvent(tab))
+            assertTrue(input.dispatchKeyEvent(tab))
+            assertSame(input, view.richTextView.activeTextInput)
+            assertEquals("Second", input.text.toString())
+            assertEquals(1, tableRows(adapter).length())
+        }
+
+    @Test
+    fun `read only hardware Tab leaves table and active input unchanged`() =
+        withActiveCell { view, input, adapter ->
+            val before = adapter.documentJson()
+            view.setEditable(false)
+            assertTrue(pressTab(input))
+            assertEquals(before, adapter.documentJson())
+            assertSame(view.richTextView.editorEditText, view.richTextView.activeTextInput)
+        }
+
+    @Test
+    fun `prose Tab does not enter a table or mutate its document`() =
+        withActiveCell { view, _, adapter ->
+            tapProse(view)
+            val root = view.richTextView.editorEditText
+            val before = adapter.documentJson()
+            pressTab(root)
+            assertSame(root, view.richTextView.activeTextInput)
+            assertEquals(before, adapter.documentJson())
+        }
 
     @Test
     fun `cell input connection updates only the intended cell and emits a wrapper update`() =

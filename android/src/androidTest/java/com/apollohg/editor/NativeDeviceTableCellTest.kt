@@ -6,6 +6,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
@@ -87,6 +88,33 @@ class NativeDeviceTableCellTest {
             val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
             assertTrue(connection.commitText("!", 1))
             assertEquals(listOf("Alphapending", "Owner!"), fixture.cellTexts())
+            assertEquals(listOf("Before table.", "After table."), fixture.proseTexts())
+        }
+    }
+
+    @Test
+    fun hardwareTabMovesToNextCellAndAppendsOneRow() = withEditor { fixture ->
+        fixture.tapCell(0)
+        fixture.onActivity {
+            val input = fixture.cellInput()
+            val oldConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(input.dispatchKeyEvent(KeyEvent(100L, 100L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB, 0)))
+            assertSame(input, fixture.cellInput())
+            assertEquals("Owner", input.text.toString())
+            assertFalse(oldConnection.beginBatchEdit())
+            val before = fixture.adapter.baseDocumentRevision
+            assertTrue(input.dispatchKeyEvent(KeyEvent(200L, 200L,
+                KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB, 0)))
+            assertEquals(before + 1uL, fixture.adapter.baseDocumentRevision)
+            assertSame(input, fixture.cellInput())
+            assertEquals("\u200B", input.text.toString())
+            val freshConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(input.canDispatchTableCellMutation())
+            assertTrue(freshConnection.commitText("N", 1))
+            assertEquals(2, fixture.tableRowCount())
+            assertEquals("N", fixture.secondRowFirstCellText())
+            assertEquals(listOf("Alpha", "Owner"), fixture.cellTexts())
             assertEquals(listOf("Before table.", "After table."), fixture.proseTexts())
         }
     }
@@ -229,6 +257,15 @@ class NativeDeviceTableCellTest {
                     .getJSONArray("content").getJSONObject(0).getString("text")
             }
         }
+
+        fun tableRowCount(): Int = JSONObject(requireNotNull(adapter.documentJson()))
+            .getJSONArray("content").getJSONObject(1).getJSONArray("content").length()
+
+        fun secondRowFirstCellText(): String = JSONObject(requireNotNull(adapter.documentJson()))
+            .getJSONArray("content").getJSONObject(1).getJSONArray("content")
+            .getJSONObject(1).getJSONArray("content").getJSONObject(0)
+            .getJSONArray("content").getJSONObject(0).getJSONArray("content")
+            .getJSONObject(0).getString("text")
 
         fun proseTexts(): List<String> {
             val blocks = JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")

@@ -17,6 +17,10 @@ import com.apollohg.editor.EditorEditText
 import com.apollohg.editor.EditorTextStyle
 import com.apollohg.editor.EditorV2Adapter
 import com.apollohg.editor.EditorV2Registry
+import com.apollohg.editor.exactV2ScalarInt
+import com.apollohg.editor.isAuthorizedForTableCellInput
+import com.apollohg.editor.inputScalarSelection
+import com.apollohg.editor.commandAtSelection
 import com.apollohg.editor.RenderBridge
 import com.apollohg.editor.RichTextEditorView
 import com.apollohg.editor.canonicalV2U64
@@ -280,11 +284,23 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             }
         }
         val projected = projection(resolvedTableId, cellIndex) ?: return false
+        return bindCell(resolvedTableId, cellIndex, projected, x to y)
+    }
+
+    private fun bindCell(tableId: String, cellIndex: Int,
+                         projected: EditorTableCellProjection.Projection,
+                         touch: Pair<Float, Float>? = null,
+                         selection: JSONObject? = null): Boolean {
+        val root = host.editorEditText
+        val current = activeCell
         val sourcePos = projected.target.binding.cellSourcePos
-        if (current?.sourcePos == sourcePos && current.tableId == resolvedTableId) {
+        if (current?.sourcePos == sourcePos && current.tableId == tableId) {
             activeInput?.let { input ->
                 input.requestFocus()
-                input.setSelection(input.getOffsetForPosition(x - input.left, y - input.top))
+                touch?.let { input.setSelection(input.getOffsetForPosition(
+                    it.first - input.left, it.second - input.top)) }
+                selection?.let { input.applySelectionFromJSON(it,
+                    adapterRevision(root)) }
                 showKeyboard(input)
             }
             reconcileActiveCell()
@@ -310,10 +326,11 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             updateConsumer = { update, notify, external -> applyCellUpdate(update, notify, external) }
         ) == true
         if (!bound) return false
-        activeCell = ActiveCell(resolvedTableId, cellIndex, sourcePos)
+        activeCell = ActiveCell(tableId, cellIndex, sourcePos)
         activeAppearanceRevision = root.renderAppearanceRevision
         root.retireInputConnectionForEditor()
         input.onTableCellSelectionSynced = { reconcileActiveCell() }
+        input.onTableCellTab = ::moveFromActiveCell
         input.applyRenderedSpannable(projected.text, usedPatch = false)
         if (input.parent !== host.editorContentFrame) {
             (input.parent as? ViewGroup)?.removeView(input)
@@ -322,9 +339,60 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         drawingView.suppressedTableCellSourcePosition = sourcePos.toInt()
         positionActiveInput()
         input.requestFocus()
-        input.setSelection(input.getOffsetForPosition(x - input.left, y - input.top))
+        touch?.let { input.setSelection(input.getOffsetForPosition(
+            it.first - input.left, it.second - input.top)) }
+        selection?.let { input.applySelectionFromJSON(it, adapter.baseDocumentRevision.toString()) }
         showKeyboard(input)
         reconcileActiveCell()
+        return true
+    }
+
+    private fun adapterRevision(root: EditorEditText): String? =
+        (root.v2Driver as? EditorV2Adapter)?.baseDocumentRevision?.toString()
+
+    private fun moveFromActiveCell(shiftPressed: Boolean): Boolean {
+        val active = activeCell ?: return false
+        val input = activeInput ?: return false
+        val root = host.editorEditText
+        val adapter = root.v2Driver as? EditorV2Adapter ?: return false
+        if (!input.isEditable || !input.isAuthorizedForTableCellInput() ||
+            !root.hasAuthorizedNativeTableOwner(adapter)) return false
+        if (!input.prepareForExternalEditorUpdate()) return true
+        if (activeCell != active || !input.isAuthorizedForTableCellInput()) return true
+        val local = input.currentScalarSelection() ?: return true
+        val selection = input.inputScalarSelection(local.first, local.second) ?: return true
+        val command = JSONObject().put("type", "moveToAdjacentCell")
+            .put("step", if (shiftPressed) "backward" else "forward")
+            .put("appendRow", !shiftPressed)
+        val update = adapter.commandAtSelection(command, selection.first, selection.second)
+            ?: return true
+        if (!input.applyUpdateJSON(update)) {
+            invalidateCell()
+            return true
+        }
+        val targetSelection = runCatching { JSONObject(update).optJSONObject("selection") }
+            .getOrNull() ?: run { invalidateCell(); return true }
+        val scalar = exactV2ScalarInt(targetSelection.opt("anchorScalar") as? Number)
+            ?: run { invalidateCell(); return true }
+        if (scalar != exactV2ScalarInt(targetSelection.opt("headScalar") as? Number)) {
+            invalidateCell()
+            return true
+        }
+        if (input.tableCellPositionMap?.localScalarForGlobalScalar(scalar) != null) {
+            if (!input.isAuthorizedForTableCellInput()) invalidateCell()
+            return true
+        }
+        val table = adapter.cachedTableInputMappings?.tables?.get(active.tableId)
+        val cell = table?.cells?.firstOrNull { candidate ->
+            candidate.blocks.any { block ->
+                scalar >= block.scalarStart && scalar <= block.breakScalarEnd
+            }
+        }
+        val projected = cell?.let { projection(active.tableId, it.cellIndex) }
+        if (projected == null || projected.positionMap.localScalarForGlobalScalar(scalar) == null ||
+            !bindCell(active.tableId, cell.cellIndex, projected, selection = targetSelection)) {
+            invalidateCell()
+        }
         return true
     }
 
@@ -447,6 +515,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         coordinator?.invalidateBinding()
         coordinator?.cellInput?.let { input ->
             input.onTableCellSelectionSynced = null
+            input.onTableCellTab = null
             input.clearFocus()
             (input.parent as? ViewGroup)?.removeView(input)
         }

@@ -293,6 +293,7 @@ class EditorEditText @JvmOverloads constructor(
     internal var onBeforeRenderRefresh: (() -> Unit)? = null
     internal var onTableRootTouch: ((MotionEvent) -> Boolean)? = null
     internal var onTableCellSelectionSynced: (() -> Unit)? = null
+    internal var onTableCellTab: ((Boolean) -> Boolean)? = null
     internal var rootTableNativeOwnerAuthority: ((EditorV2Adapter) -> Boolean)? = null
     internal var blockExternalEditorUpdatePreparationForTesting = false
     internal var blockExternalEditorCommandPreparationForTesting = false
