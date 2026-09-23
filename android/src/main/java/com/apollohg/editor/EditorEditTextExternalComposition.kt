@@ -212,8 +212,10 @@ internal fun EditorEditText.finishExternalTextComposition(
         state.replacementEndUtf16,
         state.startingAuthorizedText
     )
+    val mappedRange = inputScalarRange(scalarFrom, scalarTo)
+        ?: return failExternalTextCompositionCommit(state, cause)
     val nativeOutcome = if (driver is EditorV2Adapter) {
-        driver.replaceTextRangeNative(scalarFrom, scalarTo, state.latestText)
+        driver.replaceTextRangeNative(mappedRange.first, mappedRange.second, state.latestText)
     } else {
         null
     }
@@ -225,7 +227,7 @@ internal fun EditorEditText.finishExternalTextComposition(
         is EditorV2NativeIntentResult.Applied -> nativeOutcome.render.updateJson
         EditorV2NativeIntentResult.Rejected -> null
         is EditorV2NativeIntentResult.Recovered -> null
-        null -> driver?.replaceTextRange(scalarFrom, scalarTo, state.latestText)
+        null -> driver?.replaceTextRange(mappedRange.first, mappedRange.second, state.latestText)
     }
     if (updateJSON == null) {
         val recoveryJSON = (driver as? EditorV2Adapter)?.recoverNativeRender()

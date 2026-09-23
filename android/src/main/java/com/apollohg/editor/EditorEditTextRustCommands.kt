@@ -153,6 +153,7 @@ internal fun EditorEditText.deleteBackwardAtSelectionScalarInRust(
     scalarHead: Int
 ) {
     if (!hasLiveEditor()) return
+    if (!canDeleteBackwardAtLocalSelection(scalarAnchor, scalarHead)) return
     val globalSelection = inputScalarSelection(scalarAnchor, scalarHead) ?: return
     onDeleteBackwardAtSelectionScalarInRustForTesting?.let { callback ->
         callback(globalSelection.first, globalSelection.second)

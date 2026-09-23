@@ -278,7 +278,7 @@ internal fun EditorEditText.authorizeVisibleTextForMatchedOptimisticRender(
  * @param renderJSON The JSON array string of render elements.
  */
 internal fun EditorEditText.applyRenderJSONImpl(renderJSON: String) {
-    if (isTableCellInput) return
+    if (isTableCellInput || rootTablePositionMap != null || rootTableRenderNeedsRefresh) return
     standaloneRenderJSON = renderJSON
     cancelPendingImageLoads()
     restartImageLoadsOnAttach = false

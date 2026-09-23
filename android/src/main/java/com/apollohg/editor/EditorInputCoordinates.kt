@@ -15,7 +15,7 @@ import android.view.inputmethod.InputConnectionWrapper
 internal fun EditorInputConnection.isCurrentInputSession(): Boolean =
     !closedForInput && editorView.activeInputConnection === this &&
         editorView.isInputConnectionCurrentForEditor(boundEditorId, boundGeneration) &&
-        (!editorView.isTableCellInput || editorView.canDispatchTableCellMutation())
+        editorView.canDispatchTableCellMutation()
 
 internal fun EditorInputConnection.currentMapper(): ImeTextCoordinateMapper? =
     if (isCurrentInputSession()) {
@@ -60,6 +60,12 @@ internal fun EditorInputConnection.nanosToMicros(nanos: Long): Long = nanos / 1_
 internal fun EditorInputConnection.isCurrentInputSessionFor(event: String): Boolean {
     val isCurrent = isCurrentInputSession()
     if (!isCurrent) {
+        if (!closedForInput && editorView.activeInputConnection === this &&
+            editorView.isInputConnectionCurrentForEditor(boundEditorId, boundGeneration) &&
+            editorView.rootTablePositionMap != null && !editorView.canDispatchTableCellMutation()
+        ) {
+            abandonCompositionForRejectedRootInput()
+        }
         editorView.recordImeTraceForTesting(
             "${event}Ignored",
             "reason=stale boundEditor=$boundEditorId boundGen=$boundGeneration"

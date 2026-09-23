@@ -246,6 +246,14 @@ class EditorEditText @JvmOverloads constructor(
     internal var currentRenderBlocksJson: org.json.JSONArray? = null
     internal var currentRenderBlocksDocumentVersion: String? = null
     internal var currentRenderBlocksNeedFullApply = false
+    internal var rootTablePositionMap: RootTablePositionMap? = null
+    internal var rootTableMapDocumentVersion: String? = null
+    internal var rootTableMapPositionEpoch: String? = null
+    internal var rootTableMapTableIds: Set<String> = emptySet()
+    internal var rootTableMapExtents: Map<String, TableInputExtent> = emptyMap()
+    internal var rootTableHasUnmappedExtent = false
+    internal var rootTableSelectionInputBlocked = false
+    internal var rootTableRenderNeedsRefresh = false
     internal var authorizedVisibleTextNeedsRebuild = false
     internal var logicalSelectionSnapshot: LogicalSelectionSnapshot? = null
     internal var authoritativeNodeSelectionRange: ImageSelectionRange? = null
@@ -296,9 +304,17 @@ class EditorEditText @JvmOverloads constructor(
     internal var v2Driver: EditorV2Driver? = null
         set(value) {
             if (field === value) return
+            rootTableRenderNeedsRefresh = rootTableRenderNeedsRefresh || rootTablePositionMap != null
             (field as? EditorV2Adapter)?.releaseNativeBindingOwner(nativeBindingToken)
             field = value
             invalidateCurrentRenderBlocks()
+            rootTablePositionMap = null
+            rootTableMapDocumentVersion = null
+            rootTableMapPositionEpoch = null
+            rootTableMapTableIds = emptySet()
+            rootTableMapExtents = emptyMap()
+            rootTableHasUnmappedExtent = false
+            rootTableSelectionInputBlocked = rootTableRenderNeedsRefresh
             (value as? EditorV2Adapter)?.claimNativeBindingIfUnowned(nativeBindingToken)
         }
     internal var tableCellPositionMap: TableCellPositionMap? = null
@@ -482,7 +498,7 @@ class EditorEditText @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
-    override fun onDragEvent(event: DragEvent): Boolean = if (isTableCellInput) false else when (event.action) {
+    override fun onDragEvent(event: DragEvent): Boolean = if (isTableCellInput || rootTablePositionMap != null || rootTableRenderNeedsRefresh) false else when (event.action) {
         DragEvent.ACTION_DRAG_STARTED -> {
             val drag = localTextDragFor(event)
             localTextDrag = drag
@@ -868,6 +884,14 @@ class EditorEditText @JvmOverloads constructor(
         }
         ensureSelectionVisible()
         if (isApplyingRustState) return
+        if (rootTableSelectionInputBlocked) {
+            val current = text?.toString().orEmpty()
+            val start = PositionBridge.utf16ToScalar(selStart, current)
+            val end = PositionBridge.utf16ToScalar(selEnd, current)
+            if (rootTablePositionMap?.globalRange(minOf(start, end), maxOf(start, end)) != null) {
+                rootTableSelectionInputBlocked = false
+            }
+        }
         authoritativeNodeSelectionRange = null
         val wasExternallyComposing = externalTextComposition != null
         if (!commitExternalTextCompositionBeforeInteractionIfNeeded()) return

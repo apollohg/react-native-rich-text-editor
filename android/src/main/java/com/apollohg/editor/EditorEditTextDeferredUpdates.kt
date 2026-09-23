@@ -170,6 +170,7 @@ internal fun EditorEditText.handleStructuralBackspaceImpl() {
     val (anchor, head) = currentLogicalScalarSelection()
         ?: normalizedScalarSelectionRange(currentText)
         ?: return
+    if (!canDeleteBackwardAtLocalSelection(anchor, head)) return
     val mapped = inputScalarSelection(anchor, head) ?: return
     onDeleteBackwardAtSelectionScalarInRustForTesting?.let { callback ->
         callback(mapped.first, mapped.second)

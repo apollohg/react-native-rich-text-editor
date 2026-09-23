@@ -119,7 +119,9 @@ internal fun EditorEditText.applyThemeImpl(theme: EditorTheme?) {
             requestLayout()
         }
     } else {
-        standaloneRenderJSON?.let { json ->
+        standaloneRenderJSON?.takeIf {
+            rootTablePositionMap == null && !rootTableRenderNeedsRefresh
+        }?.let { json ->
             reuseImagesDuringThemeUpdate = true
             try {
                 val rendered = RenderBridge.buildSpannable(
@@ -155,6 +157,7 @@ internal fun EditorEditText.applyAtomRenderConfigurationImpl(
     } else {
         null
     }
+    if (stateJson == null && (rootTablePositionMap != null || rootTableRenderNeedsRefresh)) return false
     atomRenderConfiguration = configuration
     renderAppearanceRevision += 1L
 

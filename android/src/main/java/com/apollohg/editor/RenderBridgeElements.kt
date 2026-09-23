@@ -2,6 +2,7 @@ package com.apollohg.editor
 
 import android.text.Annotation
 import android.text.Spanned
+import android.graphics.Color
 import android.view.View
 import com.apollohg.editor.RenderBridge.RenderBuildState
 import org.json.JSONArray
@@ -23,6 +24,35 @@ internal fun RenderBridge.appendElements(
         val type = element.optString("type", "")
 
         when (type) {
+            "table" -> {
+                val tableId = element.opt("tableId") as? String ?: continue
+                if (tableId !in state.rootTableIds) continue
+                if (!state.isFirstBlock) {
+                    val spacingPx = ((state.nextBlockSpacingBefore ?: 0f) * density).toInt()
+                    appendInterBlockNewline(
+                        state.result, baseFontSize, textColor, spacingPx,
+                        topLevelChildIndex = topLevelChildIndex
+                    )
+                }
+                state.isFirstBlock = false
+                state.replaceNextBlockSpacing(null)
+                val markerStart = state.result.length
+                state.result.append('\u200B')
+                state.result.setSpan(
+                    Annotation(NATIVE_ROOT_TABLE_MARKER_ANNOTATION, tableId),
+                    markerStart, markerStart + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                state.result.setSpan(
+                    android.text.style.ForegroundColorSpan(Color.TRANSPARENT),
+                    markerStart, markerStart + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                state.result.setSpan(
+                    android.text.style.AbsoluteSizeSpan(1),
+                    markerStart, markerStart + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                if (observeSourceElements) state.blockRangeObserver?.invoke(i, markerStart, markerStart + 1)
+            }
+
             "textRun" -> {
                 val text = element.optString("text", "")
                 val marksArray = element.optJSONArray("marks")

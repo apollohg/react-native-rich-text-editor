@@ -15,6 +15,7 @@ object RenderBridge {
     internal const val NATIVE_INTER_BLOCK_SEPARATOR_ANNOTATION = "nativeInterBlockSeparator"
     internal const val NATIVE_LIST_MARKER_ANNOTATION = "nativeListMarker"
     internal const val NATIVE_SYNTHETIC_PLACEHOLDER_ANNOTATION = "nativeSyntheticPlaceholder"
+    internal const val NATIVE_ROOT_TABLE_MARKER_ANNOTATION = "nativeRootTableMarker"
 
     internal data class RenderBuildState(
         val result: SpannableStringBuilder = SpannableStringBuilder(),
@@ -26,6 +27,7 @@ object RenderBridge {
         val blockRangeObserver: ((Int, Int, Int) -> Unit)? = null,
         val synthesizeEmptyBlocks: Boolean = false,
         val synthesizeTrailingHardBreakPlaceholders: Boolean = true,
+        val rootTableIds: Set<String> = emptySet(),
         var isFirstBlock: Boolean = true,
         var nextBlockSpacingBefore: Float? = null,
         var pendingListBoundarySpacing: Float? = null
@@ -83,13 +85,15 @@ object RenderBridge {
         atomConfiguration: AtomRenderConfiguration? = null,
         blockRangeObserver: ((Int, Int, Int) -> Unit)? = null,
         synthesizeEmptyBlocks: Boolean = false,
-        synthesizeTrailingHardBreakPlaceholders: Boolean = true
+        synthesizeTrailingHardBreakPlaceholders: Boolean = true,
+        rootTableIds: Set<String> = emptySet()
     ): SpannableStringBuilder {
         val state = RenderBuildState(
             reusableImages = reusableImages(hostView),
             blockRangeObserver = blockRangeObserver,
             synthesizeEmptyBlocks = synthesizeEmptyBlocks,
-            synthesizeTrailingHardBreakPlaceholders = synthesizeTrailingHardBreakPlaceholders
+            synthesizeTrailingHardBreakPlaceholders = synthesizeTrailingHardBreakPlaceholders,
+            rootTableIds = rootTableIds
         )
         appendElements(
             state = state,
@@ -117,11 +121,15 @@ object RenderBridge {
         density: Float = 1f,
         hostView: View? = null,
         atomConfiguration: AtomRenderConfiguration? = null,
-        reuseImages: Boolean = true
+        reuseImages: Boolean = true,
+        rootTableIds: Set<String> = emptySet(),
+        synthesizeTrailingHardBreakPlaceholders: Boolean = true
     ): SpannableStringBuilder {
         val state =
             RenderBuildState(
-                reusableImages = if (reuseImages) reusableImages(hostView) else mutableListOf()
+                reusableImages = if (reuseImages) reusableImages(hostView) else mutableListOf(),
+                rootTableIds = rootTableIds,
+                synthesizeTrailingHardBreakPlaceholders = synthesizeTrailingHardBreakPlaceholders
             )
         for (blockOffset in 0 until blocks.length()) {
             val blockElements = blocks.optJSONArray(blockOffset) ?: continue

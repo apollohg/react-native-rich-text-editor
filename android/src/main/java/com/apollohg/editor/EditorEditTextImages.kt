@@ -67,8 +67,10 @@ internal fun EditorEditText.selectedImageGeometryImpl(): SelectedImageGeometry? 
 
     val textLayout = layout ?: return null
     val currentText = text?.toString() ?: return null
-    val scalarPos = PositionBridge.utf16ToScalar(spanStart, currentText)
-    val docPos = v2Driver?.docPositionForScalar(scalarPos) ?: scalarPos
+    val scalarPos = inputScalar(PositionBridge.utf16ToScalar(spanStart, currentText)) ?: return null
+    val docPos = v2Driver?.docPositionForScalar(scalarPos)
+        ?: scalarPos.takeIf { rootTablePositionMap == null && !rootTableRenderNeedsRefresh }
+        ?: return null
     val line = textLayout.getLineForOffset(spanStart.coerceAtMost(maxOf(spannable.length - 1, 0)))
     val rect = resolvedImageRect(textLayout, imageSpan, spanStart, spanEnd)
     return SelectedImageGeometry(

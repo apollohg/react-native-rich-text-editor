@@ -296,6 +296,7 @@ internal fun EditorEditText.applySelectionFromJSON(
         recordImeTraceForTesting("applySelectionFromJSONSkipped", "reason=destroyed type=$type")
         return
     }
+    if (rootTableRenderNeedsRefresh) return
 
     isApplyingRustState = true
     try {
@@ -312,13 +313,17 @@ internal fun EditorEditText.applySelectionFromJSON(
                 val selectionDriver = v2Driver ?: return
                 val scalarAnchor = exactV2ScalarInt(selection.opt("anchorScalar") as? Number)
                     ?: selectionDriver.scalarPositionForDoc(docAnchor)
-                    ?: docAnchor.takeUnless { isTableCellInput }
+                    ?: docAnchor.takeUnless { isTableCellInput || rootTablePositionMap != null }
                     ?: return
                 val scalarHead = exactV2ScalarInt(selection.opt("headScalar") as? Number)
                     ?: selectionDriver.scalarPositionForDoc(docHead)
-                    ?: docHead.takeUnless { isTableCellInput }
+                    ?: docHead.takeUnless { isTableCellInput || rootTablePositionMap != null }
                     ?: return
-                val localSelection = localScalarSelection(scalarAnchor, scalarHead) ?: return
+                val localSelection = localScalarSelection(scalarAnchor, scalarHead) ?: run {
+                    if (rootTablePositionMap != null) rootTableSelectionInputBlocked = true
+                    return
+                }
+                rootTableSelectionInputBlocked = false
                 val anchorUtf16 = PositionBridge.scalarToUtf16(localSelection.first, currentText)
                 val headUtf16 = PositionBridge.scalarToUtf16(localSelection.second, currentText)
                 val len = text?.length ?: 0
@@ -341,6 +346,10 @@ internal fun EditorEditText.applySelectionFromJSON(
 
             "node" -> {
                 if (isTableCellInput) return
+                if (rootTablePositionMap != null) {
+                    rootTableSelectionInputBlocked = true
+                    return
+                }
                 logicalSelectionSnapshot = null
                 val docPos = exactV2ScalarInt(selection.opt("pos") as? Number) ?: return
                 val nodeSelectionDriver = v2Driver ?: return
@@ -355,10 +364,15 @@ internal fun EditorEditText.applySelectionFromJSON(
 
             "all" -> {
                 if (isTableCellInput) return
+                if (rootTablePositionMap != null) {
+                    rootTableSelectionInputBlocked = true
+                    return
+                }
                 logicalSelectionSnapshot = null
                 authoritativeNodeSelectionRange = null
                 selectAll()
             }
+            else -> if (rootTablePositionMap != null) rootTableSelectionInputBlocked = true
         }
     } finally {
         isApplyingRustState = false

@@ -118,6 +118,7 @@ internal fun EditorEditText.publishClipboard(payload: EditorClipboardPayload): B
 
 internal fun EditorEditText.handleCopy(): Boolean {
     if (isTableCellInput) return false
+    if (rootTableRenderNeedsRefresh || rootTablePositionMap != null) return false
     if (editorId == 0L || v2Driver == null) return baseTextContextMenuItem(android.R.id.copy)
     if (discardTransientInputForDestroyedEditorIfNeeded()) return false
     if (!prepareForExternalInteractionMutation()) return false
@@ -179,6 +180,7 @@ internal fun EditorEditText.handlePaste(plainTextOnly: Boolean) {
 
 internal fun EditorEditText.handleCut() {
     if (isTableCellInput) return
+    if (rootTableRenderNeedsRefresh || rootTablePositionMap != null) return
     if (editorId == 0L) {
         baseTextContextMenuItem(android.R.id.cut)
         return
