@@ -634,7 +634,13 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
             atomicUpdateJSON = atomicUpdateJSON
         )
         val key = NativeCommitKey(event.editorId, event.documentRevision)
-        if (!pendingEditorUpdateKeys.add(key)) return
+        val pending = pendingEditorUpdateEvents.firstOrNull {
+            it.editorId == event.editorId && it.documentRevision == event.documentRevision
+        }
+        if (pending != null) {
+            if (pending.atomicUpdateJSON == event.atomicUpdateJSON) return
+            pendingEditorUpdateEvents.remove(pending)
+        } else if (!pendingEditorUpdateKeys.add(key)) return
         pendingEditorUpdateEvents.addLast(event)
         richTextView.editorEditText.recordImeTraceForTesting(
             "nativeViewEditorUpdateQueued",

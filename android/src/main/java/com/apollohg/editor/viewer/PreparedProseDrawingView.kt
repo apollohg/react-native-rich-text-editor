@@ -58,6 +58,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             field = value
             invalidate()
         }
+    internal var selectedTableCellSourcePositions: Map<String, Set<Int>> = emptyMap()
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
     private var tablePresentationOwner = ViewerTablePresentationOwner()
     private val imagePixelsLock = Any()
     private val imagePixels = mutableMapOf<String, DecodedBitmapLease>()
@@ -335,6 +341,18 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                 // Phases stay global across blocks: later code backgrounds cannot cover
                 // an earlier quote border, and text/labels always remain foreground.
                 drawHierarchicalBackgrounds(canvas, artifact, snapshot, mountedLayouts, paintClip)
+                snapshot.mountedCells.forEach { cell ->
+                    val tableId = cell.surface.sourceTable?.tablePos?.let { "t$it" }
+                    if (tableId != null && cell.sourcePosition in
+                        selectedTableCellSourcePositions[tableId].orEmpty()) {
+                        val selected = canvas.save()
+                        canvas.clipRect(cell.clip)
+                        paint.style = Paint.Style.FILL
+                        paint.color = cell.surface.style.selectionColor
+                        canvas.drawRect(cell.bounds, paint)
+                        canvas.restoreToCount(selected)
+                    }
+                }
                 snapshot.mountedCells.forEach { drawTableChromeBorder(canvas, it) }
                 visible.forEach { drawPresented(canvas, it, snapshot) { drawBorderOrRule(canvas, it) } }
                 visible.filter { it.block.tableSurface?.layout?.failure != null }.forEach { drawTableFailure(canvas, it) }

@@ -42,6 +42,52 @@ class NativeDeviceTableCellTest {
 
     @Test
     @SdkSuppress(minSdkVersion = 29)
+    fun authoritativeCellRectangleRetiresInputAndReturnsToTextOnTap() = withEditor { fixture ->
+        fixture.tapCell(0)
+        fixture.onActivity {
+            val stale = requireNotNull(fixture.cellInput().onCreateInputConnection(EditorInfo()))
+            val before = fixture.adapter.documentJson()
+            val revision = fixture.adapter.baseDocumentRevision
+            val cells = fixture.adapter.cachedTableRecords.values.single().getJSONArray("cells")
+            fun point(index: Int): JSONObject {
+                val opening = cells.getJSONObject(index).getInt("sourcePos")
+                return JSONObject().put("kind", "scalar").put("offset",
+                    requireNotNull(fixture.adapter.scalarPositionForDoc(opening + 2)))
+            }
+            val selection = JSONObject().put("type", "cell")
+                .put("anchorCell", point(0)).put("headCell", point(1))
+            val result = fixture.adapter.callWithEnvelope(JSONObject().put("selection", selection)) {
+                UniffiEditorV2Backend.setSelection(fixture.adapter.editorId, it)
+            }
+            assertTrue(result is EditorV2CallResult.Ok)
+            val root = fixture.editor.richTextView.editorEditText
+            assertTrue(root.applyUpdateJSON(requireNotNull(fixture.adapter.refreshFromRustState(null))))
+            assertSame(root, fixture.editor.richTextView.activeTextInput)
+            assertTrue(root.hasFocus())
+            assertTrue(root.authoritativeCellSelectionActive)
+            assertFalse(root.isCursorVisible)
+            assertFalse(stale.beginBatchEdit())
+            stale.commitText("stale", 1)
+            assertEquals(before, fixture.adapter.documentJson())
+            assertEquals(revision, fixture.adapter.baseDocumentRevision)
+        }
+        fixture.awaitCommittedFrame()
+        fixture.captureScreenshot("native-device-table-cell-selection.png")
+        fixture.tapCell(1)
+        fixture.onActivity {
+            val input = fixture.cellInput()
+            assertEquals("Owner", input.text.toString())
+            assertEquals("text", JSONObject(requireNotNull(fixture.adapter.cachedAtomicRenderJson))
+                .getJSONObject("selection").getString("type"))
+            assertFalse(fixture.editor.richTextView.editorEditText.authoritativeCellSelectionActive)
+            input.setSelection(input.text.length)
+            assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText("!", 1))
+            assertEquals(fixture.diagnostics(), listOf("Alpha", "Owner!"), fixture.cellTexts())
+        }
+    }
+
+    @Test
+    @SdkSuppress(minSdkVersion = 29)
     fun tappedCellCommitsTextAndEmojiThroughExpoOwner() = withEditor { fixture ->
         fixture.tapCell(0)
         var expectedRevision = ""

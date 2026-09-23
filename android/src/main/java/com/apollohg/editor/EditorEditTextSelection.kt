@@ -7,6 +7,7 @@ import android.text.Spanned
 import org.json.JSONObject
 
 internal fun EditorEditText.caretRectImpl(): RectF? {
+    if (authoritativeCellSelectionActive) return null
     if (isCollapsedAtomBoundarySelection(selectionStart, selectionEnd)) return null
     val textLayout = layout ?: return null
     val selectionOffset = selectionEnd.takeIf { it >= 0 } ?: return null
@@ -45,7 +46,8 @@ internal fun EditorEditText.isCollapsedAtomBoundarySelection(start: Int, end: In
 }
 
 internal fun EditorEditText.updateAtomBoundaryCursorVisibility() {
-    val shouldShowCursor = !isCollapsedAtomBoundarySelection(selectionStart, selectionEnd)
+    val shouldShowCursor = !authoritativeCellSelectionActive &&
+        !isCollapsedAtomBoundarySelection(selectionStart, selectionEnd)
     if (isCursorVisible != shouldShowCursor) {
         isCursorVisible = shouldShowCursor
         invalidate()
@@ -328,6 +330,9 @@ internal fun EditorEditText.applySelectionFromJSON(
                     ?: selectionDriver.scalarPositionForDoc(docHead)
                     ?: docHead.takeUnless { isTableCellInput || rootTablePositionMap != null }
                     ?: return
+                authoritativeCellSelectionActive = false
+                cellSelectionRootTouchPending = false
+                updateAtomBoundaryCursorVisibility()
                 val localSelection = localScalarSelection(scalarAnchor, scalarHead) ?: run {
                     if (rootTablePositionMap != null) rootTableSelectionInputBlocked = true
                     return
@@ -355,6 +360,9 @@ internal fun EditorEditText.applySelectionFromJSON(
 
             "node" -> {
                 if (isTableCellInput) return
+                authoritativeCellSelectionActive = false
+                cellSelectionRootTouchPending = false
+                updateAtomBoundaryCursorVisibility()
                 if (rootTablePositionMap != null) {
                     rootTableSelectionInputBlocked = true
                     return
@@ -373,6 +381,9 @@ internal fun EditorEditText.applySelectionFromJSON(
 
             "all" -> {
                 if (isTableCellInput) return
+                authoritativeCellSelectionActive = false
+                cellSelectionRootTouchPending = false
+                updateAtomBoundaryCursorVisibility()
                 if (rootTablePositionMap != null) {
                     rootTableSelectionInputBlocked = true
                     return
@@ -380,6 +391,19 @@ internal fun EditorEditText.applySelectionFromJSON(
                 logicalSelectionSnapshot = null
                 authoritativeNodeSelectionRange = null
                 selectAll()
+            }
+            "cell" -> {
+                if (isTableCellInput) return
+                logicalSelectionSnapshot = null
+                authoritativeNodeSelectionRange = null
+                authoritativeCellSelectionActive = true
+                cellSelectionRootTouchPending = false
+                rootTableSelectionInputBlocked = true
+                retireInputConnectionForEditor()
+                selectionActionMode?.finish()
+                val length = text?.length ?: 0
+                setSelection(selectionEnd.coerceIn(0, length))
+                updateAtomBoundaryCursorVisibility()
             }
             else -> if (rootTablePositionMap != null) rootTableSelectionInputBlocked = true
         }

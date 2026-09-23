@@ -253,6 +253,8 @@ class EditorEditText @JvmOverloads constructor(
     internal var rootTableMapExtents: Map<String, TableInputExtent> = emptyMap()
     internal var rootTableHasUnmappedExtent = false
     internal var rootTableSelectionInputBlocked = false
+    internal var authoritativeCellSelectionActive = false
+    internal var cellSelectionRootTouchPending = false
     internal var rootTableRenderNeedsRefresh = false
     internal var authorizedVisibleTextNeedsRebuild = false
     internal var logicalSelectionSnapshot: LogicalSelectionSnapshot? = null
@@ -921,12 +923,15 @@ class EditorEditText @JvmOverloads constructor(
         }
         ensureSelectionVisible()
         if (isApplyingRustState) return
+        if (authoritativeCellSelectionActive && !cellSelectionRootTouchPending) return
         if (rootTableSelectionInputBlocked) {
             val current = text?.toString().orEmpty()
             val start = PositionBridge.utf16ToScalar(selStart, current)
             val end = PositionBridge.utf16ToScalar(selEnd, current)
             if (rootTablePositionMap?.globalRange(minOf(start, end), maxOf(start, end)) != null) {
                 rootTableSelectionInputBlocked = false
+                authoritativeCellSelectionActive = false
+                cellSelectionRootTouchPending = false
             }
         }
         authoritativeNodeSelectionRange = null

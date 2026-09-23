@@ -858,6 +858,48 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
     }
 
     @Test
+    fun `authoritative cell rectangle preserves wrapper focus and update shape`() =
+        withActiveCell { view, input, adapter ->
+            shadowOf(Looper.getMainLooper()).idle()
+            val focusChanges = mutableListOf<Map<String, Any>>()
+            val updates = mutableListOf<Map<String, Any>>()
+            view.onFocusChangeForTesting = focusChanges::add
+            view.onEditorUpdateForTesting = updates::add
+            val staleConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            val before = adapter.documentJson()
+            val cells = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+            fun point(index: Int): JSONObject {
+                val opening = cells.getJSONObject(index).getInt("sourcePos")
+                return JSONObject().put("offset", requireNotNull(adapter.scalarPositionForDoc(opening + 2)))
+                    .put("kind", "scalar")
+            }
+            val selection = JSONObject().put("type", "cell")
+                .put("anchorCell", point(0)).put("headCell", point(1))
+            val result = adapter.callWithEnvelope(JSONObject().put("selection", selection)) {
+                UniffiEditorV2Backend.setSelection(adapter.editorId, it)
+            }
+            assertTrue(result is EditorV2CallResult.Ok)
+            assertTrue(view.richTextView.editorEditText.applyUpdateJSON(
+                requireNotNull(adapter.refreshFromRustState(null))))
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(200))
+
+            assertSame(view.richTextView.editorEditText, view.richTextView.activeTextInput)
+            assertTrue(view.richTextView.activeTextInput.hasFocus())
+            assertFalse(focusChanges.any { it["isFocused"] == false })
+            assertTrue(view.isEditorEffectivelyFocusedForNativeAction())
+            assertEquals(1, updates.size)
+            val event = updates.single()
+            assertEquals(adapter.editorId, event["editorId"])
+            assertEquals(adapter.baseDocumentRevision.toString(), event["documentRevision"])
+            val published = JSONObject(event["updateJson"] as String).getJSONObject("selection")
+            assertEquals("cell", published.getString("type"))
+            assertEquals(cells.getJSONObject(0).getInt("sourcePos"), published.getInt("anchorCell"))
+            assertEquals(cells.getJSONObject(1).getInt("sourcePos"), published.getInt("headCell"))
+            staleConnection.commitText("stale", 1)
+            assertEquals(before, adapter.documentJson())
+        }
+
+    @Test
     fun `cell selection emits document coordinates`() = withActiveCell { view, input, adapter ->
         val events = mutableListOf<Map<String, Any>>()
         view.onSelectionChangeForTesting = events::add

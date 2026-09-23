@@ -280,7 +280,8 @@ internal fun EditorEditText.applyUpdateJSONImpl(
     rootTableMapTableIds = rootRender.tableIds
     rootTableMapExtents = rootRender.extents
     rootTableHasUnmappedExtent = rootRender.tableIds.size != rootRender.extents.size
-    rootTableSelectionInputBlocked = nextRootMap != null && rootInputWasBlocked
+    rootTableSelectionInputBlocked = authoritativeCellSelectionActive ||
+        (nextRootMap != null && rootInputWasBlocked)
 
     val selectionStartedAt = System.nanoTime()
     val selection = update.optJSONObject("selection")

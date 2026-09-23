@@ -32,6 +32,7 @@ import com.apollohg.editor.applySelectionFromJSON
 import com.apollohg.editor.isAuthorizedForRootTableInput
 import com.apollohg.editor.hasAuthorizedNativeTableOwner
 import com.apollohg.editor.retireInputConnectionForEditor
+import com.apollohg.editor.updateAtomBoundaryCursorVisibility
 import com.apollohg.editor.viewer.PreparedProseBlock
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import com.apollohg.editor.viewer.PreparedProseLayout
@@ -84,6 +85,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
 
     fun clear() {
         invalidateCell()
+        drawingView.selectedTableCellSourcePositions = emptyMap()
         entries = emptyMap()
         key = null
         positionedBlocks = emptyList()
@@ -120,9 +122,22 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             input.rootTablePositionMap == null || markers.isEmpty() || width <= 0 ||
             adapter.cachedTableRecords.keys.containsAll(markers.keys).not()
         ) {
+            val restoreCellSelectionFocus = input.authoritativeCellSelectionActive && activeCell != null
             if (entries.isNotEmpty() || drawingView.parent != null) clear()
-            else invalidateCell()
+            else {
+                invalidateCell()
+                drawingView.selectedTableCellSourcePositions = emptyMap()
+            }
+            if (restoreCellSelectionFocus) input.requestFocus()
             return
+        }
+        val cellSelection = adapter.cachedAtomicRenderJson?.let { raw ->
+            runCatching { JSONObject(raw).optJSONObject("selection") }.getOrNull()
+        }?.takeIf { it.optString("type") == "cell" }
+            ?.let { resolveEditorCellSelection(it, adapter.cachedTableRecords) }
+        if (input.authoritativeCellSelectionActive && activeCell != null) {
+            invalidateCell()
+            input.requestFocus()
         }
         val nextKey = Triple(adapter, revision, width to input.renderAppearanceRevision)
         if (key != nextKey) {
@@ -157,6 +172,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         }
         reserve(entries.mapValues { it.value.occupiedHeight })
         if (entries.isEmpty()) {
+            drawingView.selectedTableCellSourcePositions = emptyMap()
             drawingView.install(null)
             (drawingView.parent as? ViewGroup)?.removeView(drawingView)
             return
@@ -168,6 +184,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
                     ViewGroup.LayoutParams.MATCH_PARENT))
         }
         updateGeometry()
+        drawingView.selectedTableCellSourcePositions = when (cellSelection) {
+            is EditorCellSelection.Drawable -> mapOf(cellSelection.tableId to cellSelection.sourcePositions)
+            else -> emptyMap()
+        }
         if (!applyingCellUpdate) reconcileActiveCell()
     }
 
@@ -199,6 +219,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 blockedRootGesture = false
+                if (host.editorEditText.authoritativeCellSelectionActive) {
+                    host.editorEditText.cellSelectionRootTouchPending = true
+                }
                 if (activeCell != null) {
                     if (activeInput?.prepareForExternalEditorUpdate() != true) {
                         blockedRootGesture = true
@@ -207,7 +230,18 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
                     invalidateCell()
                 }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+            MotionEvent.ACTION_UP -> {
+                val root = host.editorEditText
+                if (root.cellSelectionRootTouchPending) {
+                    root.post { root.cellSelectionRootTouchPending = false }
+                }
+                if (blockedRootGesture) {
+                    blockedRootGesture = false
+                    return false
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                host.editorEditText.cellSelectionRootTouchPending = false
                 if (blockedRootGesture) {
                     blockedRootGesture = false
                     return false
@@ -339,7 +373,22 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         activeCell = ActiveCell(tableId, cellIndex, sourcePos)
         activeAppearanceRevision = root.renderAppearanceRevision
         root.retireInputConnectionForEditor()
-        input.onTableCellSelectionSynced = { reconcileActiveCell() }
+        input.onTableCellSelectionSynced = {
+            val latest = adapter.cachedAtomicRenderJson?.let { raw ->
+                runCatching { JSONObject(raw).optJSONObject("selection") }.getOrNull()
+            }
+            if (root.authoritativeCellSelectionActive &&
+                adapter.cachedAtomicRenderDocumentRevision == adapter.baseDocumentRevision &&
+                latest?.optString("type") == "text" &&
+                root.hasAuthorizedNativeTableOwner(adapter)
+            ) {
+                root.authoritativeCellSelectionActive = false
+                root.cellSelectionRootTouchPending = false
+                root.updateAtomBoundaryCursorVisibility()
+                drawingView.selectedTableCellSourcePositions = emptyMap()
+            }
+            reconcileActiveCell()
+        }
         input.onTableCellTab = ::moveFromActiveCell
         input.onTableCellArrow = ::moveFromActiveCellByArrow
         input.applyRenderedSpannable(projected.text, usedPatch = false)

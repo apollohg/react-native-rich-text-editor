@@ -2,6 +2,7 @@ package com.apollohg.editor
 
 import org.json.JSONArray
 import org.json.JSONObject
+import com.apollohg.editor.tables.resolveEditorCellSelection
 
 internal fun ulongField(jsonObject: JSONObject, key: String): ULong? =
     canonicalV2U64(jsonObject.opt(key) as? String)?.toULong()
@@ -593,7 +594,7 @@ internal fun scalarSelection(value: Any?): IntArray? {
     )
 }
 
-private fun validSelection(value: Any?): Boolean {
+private fun validSelection(value: Any?, tableRecords: Map<String, JSONObject>): Boolean {
     val selection = value as? JSONObject ?: return false
     return when (selection.opt("type") as? String) {
         "text" -> scalarSelection(selection) != null
@@ -603,6 +604,11 @@ private fun validSelection(value: Any?): Boolean {
             scalarField(selection, "posScalar") != null
 
         "all" -> exactKeys(selection, setOf("type"))
+
+        "cell" -> exactKeys(selection, setOf("type", "anchorCell", "headCell")) &&
+            exactV2U32(selection.opt("anchorCell") as? Number) != null &&
+            exactV2U32(selection.opt("headCell") as? Number) != null &&
+            resolveEditorCellSelection(selection, tableRecords) != null
 
         else -> false
     }
@@ -680,7 +686,7 @@ internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
         if (!onlyKeys(jsonObject, requiredKeys + setOf("positionEpoch", "tableAttributes", "tableRecords", "tableInputMappings")) ||
             requiredKeys.any { !jsonObject.has(it) } ||
             !validRenderPayload ||
-            !validSelection(jsonObject.opt("selection")) ||
+            !validSelection(jsonObject.opt("selection"), tableRecords) ||
             !validActiveState(jsonObject.opt("activeState")) ||
             exactBool(jsonObject.opt("documentIsEmpty")) == null
         ) {
