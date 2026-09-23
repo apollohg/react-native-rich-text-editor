@@ -13,6 +13,7 @@ import java.time.Duration
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -270,6 +271,36 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
         assertEquals(expected, events.last()["anchor"])
         assertEquals(expected, events.last()["head"])
     }
+
+    @Test
+    fun `wrapper selection state refresh keeps mounted cell input current`() =
+        withActiveCell { _, input, adapter ->
+            val boundEpoch = input.tableCellPositionMap?.binding?.epoch
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            input.setSelection(1)
+            assertNotEquals(boundEpoch, adapter.positionEpoch)
+            assertTrue(
+                "cell map=${input.tableCellPositionMap?.binding} adapter epoch=${adapter.positionEpoch}",
+                input.isAuthorizedForTableCellInput()
+            )
+            assertTrue(connection.commitText("Q", 1))
+            assertEquals(listOf("FQirst", "Second"), cellTexts(adapter))
+        }
+
+    @Test
+    fun `wrapper selection rebind cannot revive old cell connection`() =
+        withActiveCell { view, input, adapter ->
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            val before = adapter.documentJson()
+            view.onSelectionChangeForTesting = { view.setEditorId(0L) }
+            input.setSelection(1)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertSame(view.richTextView.editorEditText, view.richTextView.activeTextInput)
+            assertFalse(input.isAuthorizedForTableCellInput())
+            assertFalse(connection.beginBatchEdit())
+            connection.commitText("wrong", 1)
+            assertEquals(before, adapter.documentJson())
+        }
 
     @Test
     fun `outside tap checks editor focus while a cell owns it`() = withActiveCell { view, input, _ ->

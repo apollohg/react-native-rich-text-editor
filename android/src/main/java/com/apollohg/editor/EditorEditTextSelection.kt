@@ -118,7 +118,15 @@ internal fun EditorEditText.syncCurrentSelectionToRust() {
         if (sync != null) {
             sync.refreshedUpdateJson?.let { applyRustUpdateJSON(it) }
             if (isTableCellInput) onTableCellSelectionSynced?.invoke()
+            val editorIdBeforeListener = editorId
+            val driverBeforeListener = v2Driver
+            val cellSyncBeforeListener = if (isTableCellInput) onTableCellSelectionSynced else null
             editorListener?.onSelectionChanged(sync.docAnchor, sync.docHead)
+            if (editorId == editorIdBeforeListener && v2Driver === driverBeforeListener &&
+                onTableCellSelectionSynced === cellSyncBeforeListener
+            ) {
+                cellSyncBeforeListener?.invoke()
+            }
         }
         return
     }
