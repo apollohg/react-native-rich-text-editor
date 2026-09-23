@@ -133,6 +133,7 @@ internal fun EditorEditText.clearNativeComposingSpans() {
 }
 
 internal fun EditorEditText.restoreAuthorizedTextIfNeededImpl() {
+    if (isTableCellInput) return
     if (!hasLiveEditor()) return
     if ((text?.toString() ?: "") == lastAuthorizedText) return
     recordImeTraceForTesting(

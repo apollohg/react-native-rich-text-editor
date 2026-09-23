@@ -14,7 +14,8 @@ import android.view.inputmethod.InputConnectionWrapper
 
 internal fun EditorInputConnection.isCurrentInputSession(): Boolean =
     !closedForInput && editorView.activeInputConnection === this &&
-        editorView.isInputConnectionCurrentForEditor(boundEditorId, boundGeneration)
+        editorView.isInputConnectionCurrentForEditor(boundEditorId, boundGeneration) &&
+        (!editorView.isTableCellInput || editorView.canDispatchTableCellMutation())
 
 internal fun EditorInputConnection.currentMapper(): ImeTextCoordinateMapper? =
     if (isCurrentInputSession()) {

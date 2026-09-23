@@ -32,6 +32,7 @@ internal fun EditorEditText.handleTextCommitImpl(text: String, newCursorPosition
         )
         return
     }
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     val selectionRange = normalizedUtf16SelectionRange()
     if (selectionRange == null) {
         recordImeTraceForTesting(
@@ -90,6 +91,7 @@ internal fun EditorEditText.handleTextCommitImpl(text: String, newCursorPosition
         return
     }
     val (scalarStart, scalarEnd) = scalarSelectionRange
+    if (inputScalarRange(scalarStart, scalarEnd) == null) return
     val requestedCursor = requestedCursorScalar(
         scalarStart,
         scalarEnd,
@@ -250,6 +252,7 @@ internal fun EditorEditText.applyVisibleCompositionCommitForPendingImeOperationF
     replacementEndUtf16: Int,
     newCursorPosition: Int
 ): Boolean {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return false
     val editable = text ?: return false
     val currentText = editable.toString()
     val (startUtf16, endUtf16) = PositionBridge.snapRangeToScalarBoundaries(
@@ -281,6 +284,7 @@ internal fun EditorEditText.commitVisibleCompositionMutationForPendingImeOperati
     committedText: String,
     newCursorPosition: Int
 ): Boolean {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return false
     if (committedText.isEmpty()) return false
     val currentText = text?.toString() ?: return false
     val mutation = nativeTextMutationFromAuthorizedDiff(currentText) ?: return false

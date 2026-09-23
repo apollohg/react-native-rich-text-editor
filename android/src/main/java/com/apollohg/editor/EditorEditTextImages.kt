@@ -52,6 +52,7 @@ internal fun EditorEditText.hasRenderedImageSpans(): Boolean {
 }
 
 internal fun EditorEditText.selectedImageGeometryImpl(): SelectedImageGeometry? {
+    if (isTableCellInput) return null
     if (!imageResizingEnabled) return null
     val spannable = text as? Spanned ?: return null
     val selection = resolvedSelectedImageRange(spannable) ?: return null
@@ -102,6 +103,7 @@ internal fun EditorEditText.relayoutImageResizePreview(span: BlockImageSpan) {
 }
 
 internal fun EditorEditText.resizeImageAtDocPosImpl(docPos: Int, widthPx: Float, heightPx: Float) {
+    if (isTableCellInput) return
     if (!hasLiveEditor()) return
     val density = resources.displayMetrics.density
     val widthDp = maxOf(48, (widthPx / density).roundToInt())

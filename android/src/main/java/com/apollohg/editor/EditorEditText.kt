@@ -17,6 +17,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
+import com.apollohg.editor.tables.TableCellPositionMap
 
 /**
  * Rendering surface that routes input through [EditorV2Driver].
@@ -300,6 +301,10 @@ class EditorEditText @JvmOverloads constructor(
             invalidateCurrentRenderBlocks()
             (value as? EditorV2Adapter)?.claimNativeBindingIfUnowned(nativeBindingToken)
         }
+    internal var tableCellPositionMap: TableCellPositionMap? = null
+    internal var isTableCellInput: Boolean = false
+    internal var tableCellInputAuthority: (() -> Boolean)? = null
+    internal var tableCellUpdateConsumer: ((String, Boolean, Boolean) -> Boolean)? = null
     internal val nativeBindingToken = nextNativeBindingToken.incrementAndGet()
 
     internal fun ownsNativeBinding(adapter: EditorV2Adapter): Boolean =
@@ -369,6 +374,9 @@ class EditorEditText @JvmOverloads constructor(
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (isTableCellInput && !canDispatchTableCellMutation() &&
+            isReadOnlyTextMutationKeyEvent(event)
+        ) return true
         if (!isEditable && isReadOnlyTextMutationKeyEvent(event)) {
             return true
         }
@@ -474,7 +482,7 @@ class EditorEditText @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
-    override fun onDragEvent(event: DragEvent): Boolean = when (event.action) {
+    override fun onDragEvent(event: DragEvent): Boolean = if (isTableCellInput) false else when (event.action) {
         DragEvent.ACTION_DRAG_STARTED -> {
             val drag = localTextDragFor(event)
             localTextDrag = drag
@@ -820,6 +828,11 @@ class EditorEditText @JvmOverloads constructor(
      * Selection and copy actions remain available.
      */
     override fun performAccessibilityAction(action: Int, arguments: android.os.Bundle?): Boolean {
+        if (isTableCellInput && (
+                action == android.view.accessibility.AccessibilityNodeInfo.ACTION_PASTE ||
+                    action == android.view.accessibility.AccessibilityNodeInfo.ACTION_CUT
+                )
+        ) return false
         if (pasteMode == EditorPasteMode.DISABLED &&
             action == android.view.accessibility.AccessibilityNodeInfo.ACTION_PASTE
         ) {

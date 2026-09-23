@@ -18,7 +18,7 @@ internal fun EditorEditText.runWithTransientInputMutationGuardImpl(block: () -> 
 
 internal fun EditorEditText.beginExternalTextCompositionImpl(sessionId: String): String {
     val driver = v2Driver
-    if (!hasLiveEditor() || !isEditable || driver == null) {
+    if (!hasLiveEditor() || !isEditable || driver == null || isTableCellInput) {
         return externalCompositionErrorJSON(
             sessionId,
             "EXTERNAL_COMPOSITION_UNAVAILABLE",
@@ -174,6 +174,7 @@ internal fun EditorEditText.finishExternalTextComposition(
     finalText: String?,
     cancel: Boolean
 ): Boolean {
+    if (isTableCellInput) return false
     val state = externalTextComposition ?: return true
     if (finalText != null && finalText != state.latestText) {
         renderExternalTextComposition(finalText)

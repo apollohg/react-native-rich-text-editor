@@ -26,7 +26,9 @@ internal class EditorTableInputCoordinator(val cellInput: EditorEditText) {
         target: Target,
         positionMap: TableCellPositionMap,
         currentRevision: String,
-        currentEpoch: String
+        currentEpoch: String,
+        authority: (() -> Boolean)? = null,
+        updateConsumer: ((String, Boolean, Boolean) -> Boolean)? = null
     ): Boolean {
         if (phase is TableInputPhase.Composing ||
             !canBind(target) || !positionMap.hasValidSegments() || positionMap.binding != target.binding ||
@@ -34,7 +36,13 @@ internal class EditorTableInputCoordinator(val cellInput: EditorEditText) {
         ) return false
 
         cellInput.discardTransientNativeInputForEditorRebind()
+        cellInput.logicalSelectionSnapshot = null
+        cellInput.authoritativeNodeSelectionRange = null
         this.positionMap = positionMap
+        cellInput.isTableCellInput = true
+        cellInput.tableCellPositionMap = positionMap
+        cellInput.tableCellInputAuthority = authority
+        cellInput.tableCellUpdateConsumer = updateConsumer
         phase = TableInputPhase.Bound(
             target.binding.cellSourcePos,
             target.binding.revision,
@@ -52,7 +60,13 @@ internal class EditorTableInputCoordinator(val cellInput: EditorEditText) {
     fun invalidateBinding(): Boolean {
         if (phase == TableInputPhase.Inactive && positionMap == null) return false
         cellInput.discardTransientNativeInputForEditorRebind()
+        cellInput.logicalSelectionSnapshot = null
+        cellInput.authoritativeNodeSelectionRange = null
         positionMap = null
+        cellInput.isTableCellInput = true
+        cellInput.tableCellPositionMap = null
+        cellInput.tableCellInputAuthority = null
+        cellInput.tableCellUpdateConsumer = null
         phase = TableInputPhase.Inactive
         return true
     }

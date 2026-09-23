@@ -13,6 +13,7 @@ import com.apollohg.editor.EditorEditText.Companion.EMPTY_BLOCK_PLACEHOLDER
 internal fun EditorEditText.handleDeleteImpl(beforeLength: Int, afterLength: Int) {
     if (!isEditable) return
     if (isApplyingRustState) return
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     val selectionRange = normalizedUtf16SelectionRange()
     if (selectionRange != null &&
         isCollapsedAtomBoundarySelection(selectionRange.first, selectionRange.second)
@@ -80,6 +81,7 @@ internal fun EditorEditText.handleDeleteImpl(beforeLength: Int, afterLength: Int
 internal fun EditorEditText.handleBackspaceImpl() {
     if (!isEditable) return
     if (isApplyingRustState) return
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     val selectionRange = normalizedUtf16SelectionRange() ?: return
     if (isCollapsedAtomBoundarySelection(selectionRange.first, selectionRange.second)) return
     if (editorId == 0L) {
@@ -134,6 +136,7 @@ internal fun EditorEditText.handleBackspaceImpl() {
 }
 
 internal fun EditorEditText.handleForwardDeleteImpl() {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     if (!isEditable) return
     if (isApplyingRustState) return
     val selectionRange = normalizedUtf16SelectionRange() ?: return
@@ -189,6 +192,7 @@ internal fun EditorEditText.handleForwardDeleteImpl() {
  * Handle return/enter key as a block split operation.
  */
 internal fun EditorEditText.handleReturnKeyImpl() {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     if (!isEditable) return
     if (isApplyingRustState) return
 
@@ -215,6 +219,7 @@ internal fun EditorEditText.handleReturnKeyImpl() {
  * Handle Shift+Enter as an inline hard break insertion.
  */
 internal fun EditorEditText.handleHardBreakImpl() {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     if (!isEditable) return
     if (isApplyingRustState) return
     if (isCollapsedAtomBoundarySelection(selectionStart, selectionEnd)) return
@@ -228,7 +233,7 @@ internal fun EditorEditText.handleHardBreakImpl() {
     }
     if (discardTransientInputForDestroyedEditorIfNeeded()) return
 
-    val selection = currentScalarSelection() ?: return
+    val selection = currentScalarSelection()?.let { inputScalarSelection(it.first, it.second) } ?: return
     v2Driver?.let { driver ->
         driver.insertNode(preferredHardBreakNodeType(), selection.first, selection.second)?.let {
             applyUpdateJSON(it)
@@ -240,11 +245,13 @@ internal fun EditorEditText.handleHardBreakImpl() {
  * Handle hardware Tab / Shift+Tab as list indent / outdent when the caret is in a list.
  */
 internal fun EditorEditText.handleTabImpl(shiftPressed: Boolean): Boolean {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return false
     if (!isEditable) return false
     if (isApplyingRustState) return false
     if (!hasLiveEditor()) return false
     if (!isSelectionInsideList()) return false
-    val selection = currentScalarSelection() ?: return false
+    val selection = currentScalarSelection()?.let { inputScalarSelection(it.first, it.second) }
+        ?: return false
 
     v2Driver?.let { driver ->
         val update = if (shiftPressed) {

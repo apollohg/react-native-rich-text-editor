@@ -14,12 +14,24 @@ internal fun EditorEditText.bindEditorImpl(
     initialHTML: String? = null,
     notifyListener: Boolean = true
 ) {
+    val wasTableCellInput = isTableCellInput
     if (id != 0L && NativeEditorViewRegistry.isDestroyed(id)) {
         discardTransientNativeInputForEditorRebind()
+        if (wasTableCellInput) {
+            tableCellPositionMap = null
+            tableCellInputAuthority = null
+            tableCellUpdateConsumer = null
+            v2Driver = null
+        }
         editorId = 0L
         return
     }
-    if (editorId != id) {
+    if (wasTableCellInput) discardTransientNativeInputForEditorRebind()
+    isTableCellInput = false
+    tableCellPositionMap = null
+    tableCellInputAuthority = null
+    tableCellUpdateConsumer = null
+    if (editorId != id && !wasTableCellInput) {
         discardTransientNativeInputForEditorRebind()
     }
     editorId = id
@@ -39,11 +51,16 @@ internal fun EditorEditText.bindEditorImpl(
  * Unbind from the current editor instance.
  */
 internal fun EditorEditText.unbindEditorImpl() {
+    val wasTableCellInput = isTableCellInput
     if (editorId != 0L) {
         discardTransientNativeInputForEditorRebind()
     }
     editorId = 0
     v2Driver = null
+    isTableCellInput = wasTableCellInput
+    tableCellPositionMap = null
+    tableCellInputAuthority = null
+    tableCellUpdateConsumer = null
 }
 
 internal fun EditorEditText.handleEditorDestroyedFromRegistryImpl(destroyedEditorId: Long) {
@@ -80,6 +97,11 @@ internal fun EditorEditText.applyThemeImpl(theme: EditorTheme?) {
         content?.let { EditorContentInsets(it.top, it.right, it.bottom, it.left) }
             ?: theme?.contentInsets
     )
+    if (isTableCellInput) {
+        requestLayout()
+        invalidate()
+        return
+    }
     if (hasLiveEditor()) {
         val previousScrollX = scrollX
         val previousScrollY = scrollY
@@ -123,6 +145,11 @@ internal fun EditorEditText.applyAtomRenderConfigurationImpl(
     configuration: AtomRenderConfiguration?
 ): Boolean {
     if (atomRenderConfiguration == configuration) return true
+    if (isTableCellInput) {
+        atomRenderConfiguration = configuration
+        renderAppearanceRevision += 1L
+        return true
+    }
     val stateJson = if (hasLiveEditor()) {
         v2Driver?.currentStateJson() ?: return false
     } else {

@@ -57,6 +57,7 @@ internal fun EditorEditText.prepareExternalUpdateInternal(): ExternalEditorUpdat
 }
 
 internal fun EditorEditText.prepareForExternalEditorCommandImpl(): CommandPreparation {
+    if (isTableCellInput) return CommandPreparation(ready = false, updateJSON = null)
     if (blockExternalEditorCommandPreparationForTesting) {
         return CommandPreparation(ready = false, updateJSON = null)
     }

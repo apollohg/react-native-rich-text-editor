@@ -72,6 +72,7 @@ internal fun EditorEditText.shouldAdoptNativeTextMutation(
     mutation: NativeTextMutation,
     allowAfterBlur: Boolean = false
 ): Boolean {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return false
     if (!isEditable) return false
     if (isNativeTextMutationAdoptionSuppressedForCurrentRevision()) return false
     if (!hasFocus()) {

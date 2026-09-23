@@ -33,6 +33,10 @@ internal fun EditorEditText.applyRustUpdateJSON(
     updateJSON: String,
     lineBoundaryRefreshSource: String? = null
 ) {
+    if (isTableCellInput) {
+        tableCellUpdateConsumer?.invoke(updateJSON, true, false)
+        return
+    }
     if (externalUpdatePreparationCaptureDepth > 0) {
         capturedExternalUpdatePreparationJSON = updateJSON
         // Keep the visible IME commit authorized until the external view
@@ -109,13 +113,15 @@ internal fun EditorEditText.deleteScalarRangeForPendingImeOperationForEditorImpl
     scalarFrom: Int,
     scalarTo: Int
 ): EditorV2NativeIntentResult? {
+    val mapped = inputScalarRange(scalarFrom, scalarTo) ?: return null
     onDeleteRangeInRustForTesting?.let { callback ->
         runWithDeferredRustUpdateApplication {
-            callback(scalarFrom, scalarTo)
+            callback(mapped.first, mapped.second)
         }
         return null
     }
-    return v2Driver?.deleteScalarRangeNative(scalarFrom, scalarTo)
+    if (!canDispatchTableCellMutation()) return null
+    return v2Driver?.deleteScalarRangeNative(mapped.first, mapped.second)
 }
 
 internal fun EditorEditText.promoteOptimisticInputForEditorImpl(
@@ -153,6 +159,7 @@ internal fun EditorEditText.restoreAuthoritativeInputForEditorImpl(
 }
 
 internal fun EditorEditText.handleStructuralBackspaceImpl() {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     if (!isEditable || isApplyingRustState) return
     if (editorId == 0L) {
         handleBackspace()
@@ -163,13 +170,15 @@ internal fun EditorEditText.handleStructuralBackspaceImpl() {
     val (anchor, head) = currentLogicalScalarSelection()
         ?: normalizedScalarSelectionRange(currentText)
         ?: return
+    val mapped = inputScalarSelection(anchor, head) ?: return
     onDeleteBackwardAtSelectionScalarInRustForTesting?.let { callback ->
-        callback(anchor, head)
+        callback(mapped.first, mapped.second)
         return
     }
+    if (!canDispatchTableCellMutation()) return
     v2Driver?.let { driver ->
         if (selectAtomBeforeEmptyTrailingParagraph(driver)) return
-        val updateJSON = driver.deleteBackwardAtSelection(anchor, head)
+        val updateJSON = driver.deleteBackwardAtSelection(mapped.first, mapped.second)
         applyNonOptimisticRustUpdate(driver, updateJSON)
     }
 }
@@ -177,6 +186,7 @@ internal fun EditorEditText.handleStructuralBackspaceImpl() {
 internal fun EditorEditText.selectAtomBeforeEmptyTrailingParagraph(
     driver: EditorV2Driver
 ): Boolean {
+    if (isTableCellInput) return false
     val adapter = driver as? EditorV2Adapter ?: return false
     val content = text ?: return false
     if (selectionStart != selectionEnd) return false
@@ -205,18 +215,21 @@ internal fun EditorEditText.handleStructuralDeleteImpl(
     scalarFrom: Int,
     scalarTo: Int
 ) {
+    if (isTableCellInput && !canDispatchTableCellMutation()) return
     if (!isEditable || isApplyingRustState || scalarFrom >= scalarTo) return
     if (editorId == 0L) {
         text?.delete(utf16From, utf16To)
         return
     }
     if (discardTransientInputForDestroyedEditorIfNeeded()) return
+    val mapped = inputScalarRange(scalarFrom, scalarTo) ?: return
     onDeleteRangeInRustForTesting?.let { callback ->
-        callback(scalarFrom, scalarTo)
+        callback(mapped.first, mapped.second)
         return
     }
+    if (!canDispatchTableCellMutation()) return
     v2Driver?.let { driver ->
-        val updateJSON = driver.deleteScalarRange(scalarFrom, scalarTo)
+        val updateJSON = driver.deleteScalarRange(mapped.first, mapped.second)
         applyNonOptimisticRustUpdate(driver, updateJSON)
     }
 }

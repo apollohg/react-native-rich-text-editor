@@ -17,6 +17,11 @@ internal fun EditorEditText.applyUpdateJSONImpl(
     notifyListener: Boolean = true,
     refreshInputConnectionForExternalUpdate: Boolean = false
 ): Boolean {
+    if (isTableCellInput) {
+        return tableCellUpdateConsumer?.invoke(
+            updateJSON, notifyListener, refreshInputConnectionForExternalUpdate
+        ) == true
+    }
     throwOnNextApplyUpdateForTesting?.let { error ->
         throwOnNextApplyUpdateForTesting = null
         throw error

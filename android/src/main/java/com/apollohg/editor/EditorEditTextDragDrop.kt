@@ -5,6 +5,7 @@ import android.text.Spanned
 import android.view.DragEvent
 
 internal fun EditorEditText.localTextDragFor(event: DragEvent): LocalTextDrag? {
+    if (isTableCellInput) return null
     if (!isEditable || editorId == 0L || !isDragFromThisEditor(event.localState) || !hasFocus()) {
         return null
     }
@@ -37,6 +38,7 @@ internal fun EditorEditText.performLocalSelectionDrop(
     drag: LocalTextDrag,
     destination: Int
 ): Boolean {
+    if (isTableCellInput) return false
     if (destination in drag.scalarFrom..drag.scalarTo) return false
     if (drag.editorId != editorId || drag.documentVersion == null) return false
     if (lastAppliedDocumentVersion == null ||

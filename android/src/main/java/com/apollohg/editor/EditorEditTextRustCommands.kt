@@ -8,12 +8,14 @@ import org.json.JSONObject
  */
 internal fun EditorEditText.insertTextInRust(text: String, atScalarPos: Int) {
     if (!hasLiveEditor()) return
+    val globalPos = inputScalar(atScalarPos) ?: return
     onInsertTextInRustForTesting?.let { callback ->
-        callback(text, atScalarPos)
+        callback(text, globalPos)
         return
     }
+    if (!canDispatchTableCellMutation()) return
     v2Driver?.let { driver ->
-        driver.insertText(text, atScalarPos)?.let { applyRustUpdateJSON(it) }
+        driver.insertText(text, globalPos)?.let { applyRustUpdateJSON(it) }
     }
 }
 
@@ -23,11 +25,14 @@ internal fun EditorEditText.replaceTextRangeInRust(
     text: String
 ): Boolean {
     if (!hasLiveEditor()) return false
+    val globalRange = inputScalarRange(scalarFrom, scalarTo) ?: return false
     onReplaceTextInRustForTesting?.let { callback ->
-        callback(scalarFrom, scalarTo, text)
+        callback(globalRange.first, globalRange.second, text)
         return true
     }
-    val update = v2Driver?.replaceTextRange(scalarFrom, scalarTo, text) ?: return false
+    if (!canDispatchTableCellMutation()) return false
+    val update = v2Driver?.replaceTextRange(globalRange.first, globalRange.second, text)
+        ?: return false
     applyRustUpdateJSON(update)
     return true
 }
@@ -103,12 +108,14 @@ internal fun EditorEditText.applyRequestedCursorScalar(requestedCursorScalar: In
     val requested = requestedCursorScalar ?: return
     if (!hasLiveEditor()) return
     val safeScalar = requested.coerceAtLeast(0)
+    val globalScalar = inputScalar(safeScalar) ?: return
     val cursorDriver = v2Driver
     if (cursorDriver != null) {
-        cursorDriver.syncSelectionQuiet(safeScalar, safeScalar)?.let(::applyRustUpdateJSON)
+        if (!canDispatchTableCellMutation()) return
+        cursorDriver.syncSelectionQuiet(globalScalar, globalScalar)?.let(::applyRustUpdateJSON)
     } else {
         onSetSelectionScalarInRustForTesting?.let { callback ->
-            callback(safeScalar, safeScalar)
+            callback(globalScalar, globalScalar)
         }
     }
     val currentText = text?.toString().orEmpty()
@@ -129,12 +136,15 @@ internal fun EditorEditText.applyRequestedCursorScalar(requestedCursorScalar: In
 internal fun EditorEditText.deleteRangeInRust(scalarFrom: Int, scalarTo: Int) {
     if (!hasLiveEditor()) return
     if (scalarFrom >= scalarTo) return
+    val globalRange = inputScalarRange(scalarFrom, scalarTo) ?: return
     onDeleteRangeInRustForTesting?.let { callback ->
-        callback(scalarFrom, scalarTo)
+        callback(globalRange.first, globalRange.second)
         return
     }
+    if (!canDispatchTableCellMutation()) return
     v2Driver?.let { driver ->
-        driver.deleteScalarRange(scalarFrom, scalarTo)?.let { applyRustUpdateJSON(it) }
+        driver.deleteScalarRange(globalRange.first, globalRange.second)
+            ?.let { applyRustUpdateJSON(it) }
     }
 }
 
@@ -143,13 +153,16 @@ internal fun EditorEditText.deleteBackwardAtSelectionScalarInRust(
     scalarHead: Int
 ) {
     if (!hasLiveEditor()) return
+    val globalSelection = inputScalarSelection(scalarAnchor, scalarHead) ?: return
     onDeleteBackwardAtSelectionScalarInRustForTesting?.let { callback ->
-        callback(scalarAnchor, scalarHead)
+        callback(globalSelection.first, globalSelection.second)
         return
     }
+    if (!canDispatchTableCellMutation()) return
     v2Driver?.let { driver ->
         if (selectAtomBeforeEmptyTrailingParagraph(driver)) return
-        driver.deleteBackwardAtSelection(scalarAnchor, scalarHead)?.let { applyRustUpdateJSON(it) }
+        driver.deleteBackwardAtSelection(globalSelection.first, globalSelection.second)
+            ?.let { applyRustUpdateJSON(it) }
     }
 }
 
@@ -158,20 +171,21 @@ internal fun EditorEditText.toggleTaskItemCheckedAtSelectionScalarInRust(
     scalarHead: Int
 ) {
     if (!hasLiveEditor()) return
+    val globalSelection = inputScalarSelection(scalarAnchor, scalarHead) ?: return
     onToggleTaskItemCheckedAtSelectionScalarInRustForTesting?.let { callback ->
-        callback(scalarAnchor, scalarHead)
+        callback(globalSelection.first, globalSelection.second)
         return
     }
+    if (!canDispatchTableCellMutation()) return
     v2Driver?.let { driver ->
         val selection =
             currentLogicalScalarSelection() ?: rawScalarSelection(text?.toString().orEmpty())
-        driver.toggleTaskItemCheckedAtSelection(scalarAnchor, scalarHead)?.let { update ->
+        driver.toggleTaskItemCheckedAtSelection(globalSelection.first, globalSelection.second)?.let { update ->
             applyRustUpdateJSON(update)
             if (selection != null) {
-                driver.syncSelectionQuiet(
-                    selection.first,
-                    selection.second
-                )?.let(::applyRustUpdateJSON)
+                inputScalarSelection(selection.first, selection.second)?.let { mapped ->
+                    driver.syncSelectionQuiet(mapped.first, mapped.second)?.let(::applyRustUpdateJSON)
+                }
                 val currentText = text?.toString().orEmpty()
                 setSelection(
                     PositionBridge.scalarToUtf16(selection.first, currentText),
@@ -187,12 +201,14 @@ internal fun EditorEditText.toggleTaskItemCheckedAtSelectionScalarInRust(
  */
 internal fun EditorEditText.splitBlockInRust(atScalarPos: Int) {
     if (!hasLiveEditor()) return
+    val globalPos = inputScalar(atScalarPos) ?: return
     onSplitBlockInRustForTesting?.let { callback ->
-        callback(atScalarPos)
+        callback(globalPos)
         return
     }
+    if (!canDispatchTableCellMutation()) return
     v2Driver?.let { driver ->
-        driver.splitBlockAt(atScalarPos)?.let { result ->
+        driver.splitBlockAt(globalPos)?.let { result ->
             applyRustUpdateJSON(
                 result.updateJson,
                 lineBoundaryRefreshSource = if (result.committed) "splitBlock" else null
@@ -203,12 +219,14 @@ internal fun EditorEditText.splitBlockInRust(atScalarPos: Int) {
 
 internal fun EditorEditText.deleteAndSplitInRust(scalarFrom: Int, scalarTo: Int) {
     if (!hasLiveEditor()) return
+    val globalRange = inputScalarRange(scalarFrom, scalarTo) ?: return
     onDeleteAndSplitScalarInRustForTesting?.let { callback ->
-        callback(scalarFrom, scalarTo)
+        callback(globalRange.first, globalRange.second)
         return
     }
+    if (!canDispatchTableCellMutation()) return
     v2Driver?.let { driver ->
-        driver.deleteAndSplit(scalarFrom, scalarTo)?.let { result ->
+        driver.deleteAndSplit(globalRange.first, globalRange.second)?.let { result ->
             applyRustUpdateJSON(
                 result.updateJson,
                 lineBoundaryRefreshSource = if (result.committed) "deleteAndSplit" else null
@@ -219,6 +237,7 @@ internal fun EditorEditText.deleteAndSplitInRust(scalarFrom: Int, scalarTo: Int)
 
 internal fun EditorEditText.isSelectionInsideList(): Boolean {
     if (!hasLiveEditor()) return false
+    if (isTableCellInput) return false
 
     return try {
         val stateJson = v2Driver?.currentStateJson() ?: return false
@@ -233,6 +252,7 @@ internal fun EditorEditText.isSelectionInsideList(): Boolean {
 }
 
 internal fun EditorEditText.preferredHardBreakNodeType(): String {
+    if (isTableCellInput) return "hardBreak"
     return try {
         val stateJson = v2Driver?.currentStateJson() ?: return "hardBreak"
         val insertableNodes = org.json.JSONObject(stateJson)
@@ -261,8 +281,9 @@ internal fun EditorEditText.pasteHTML(html: String) {
         callback(html)
         return
     }
+    if (!canDispatchTableCellMutation()) return
     v2Driver?.let { driver ->
-        val selection = currentScalarSelection()
+        val selection = currentScalarSelection()?.let { inputScalarSelection(it.first, it.second) }
         val update = if (selection != null) {
             driver.insertContentHtmlAtSelection(html, selection.first, selection.second)
         } else {
