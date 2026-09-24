@@ -247,12 +247,24 @@ fn build_config(
             let initialization: LocalHtmlInitialization<'_> =
                 parse_create_json(initialization_json.get())?;
             let html = materialize_html(initialization.html, &resource_limits)?;
-            (
-                EditorInitialization::Local {
+            let initialization = match initialization.snapshot_scope {
+                Some(scope) => {
+                    if scope.document_id.trim().is_empty() || scope.lineage_id.trim().is_empty() {
+                        return Err(config_invalid(
+                            None,
+                            "localHtml snapshotScope requires non-empty documentId and lineageId",
+                        ));
+                    }
+                    EditorInitialization::LocalScoped {
+                        initial_content: InitialContent::Html(html),
+                        scope,
+                    }
+                }
+                None => EditorInitialization::Local {
                     initial_content: InitialContent::Html(html),
                 },
-                false,
-            )
+            };
+            (initialization, false)
         }
         InitializationKind::Room => {
             let initialization: RoomInitialization = parse_create_json(initialization_json.get())?;

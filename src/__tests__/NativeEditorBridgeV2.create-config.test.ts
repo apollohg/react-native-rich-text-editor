@@ -203,6 +203,35 @@ describe('NativeEditorBridge v2', () => {
             expect(snapshotState).toBeNull();
         });
 
+        it('serializes a localHtml snapshotScope and rejects an empty scope', () => {
+            createNativeEditorDocumentHandle({
+                initialization: {
+                    type: 'localHtml',
+                    html: '<p>offline</p>',
+                    snapshotScope: { documentId: 'draft-1', lineageId: 'local-create' },
+                },
+            });
+
+            const [ configJson ] = mockNativeModule.editorV2Create.mock.calls[0];
+            expect(JSON.parse(configJson)).toEqual({
+                initialization: {
+                    type: 'localHtml',
+                    html: '<p>offline</p>',
+                    snapshotScope: { documentId: 'draft-1', lineageId: 'local-create' },
+                },
+            });
+
+            expect(() =>
+                createNativeEditorDocumentHandle({
+                    initialization: {
+                        type: 'localHtml',
+                        html: '<p>offline</p>',
+                        snapshotScope: { documentId: '', lineageId: 'local-create' },
+                    },
+                })
+            ).toThrow(NativeEditorEngineBoundaryError);
+        });
+
         it('omits undefined optional fields from custom schemas', () => {
             createNativeEditorDocumentHandle({
                 initialization: { type: 'localEmpty' },

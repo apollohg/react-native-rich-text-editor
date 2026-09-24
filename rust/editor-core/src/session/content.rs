@@ -13,9 +13,6 @@ impl EditorSession {
         self.engine.document_html().ok_or_else(engine_not_ready)
     }
 
-    /// Same-store whole-document replacement from ProseMirror JSON, behind
-    /// the session policy gate. An attached collaboration runtime captures
-    /// the replacement's outbound update through its bounded outbox.
     pub(crate) fn replace_document_json(
         &mut self,
         request_id: u64,
@@ -29,8 +26,6 @@ impl EditorSession {
             .map_err(|error| replacement_session_error(error, request_id))
     }
 
-    /// Same-store whole-document replacement from HTML, behind the session
-    /// policy gate.
     pub(crate) fn replace_document_html(
         &mut self,
         request_id: u64,
@@ -48,11 +43,7 @@ impl EditorSession {
             .map_err(|error| replacement_session_error(error, request_id))
     }
 
-    /// Session-level snapshot export: read-only and allowed in every
-    /// transport state, including connected ones (design "Snapshot and
-    /// Persistence Flow": "Export is read-only and available while
-    /// connected"). The engine owns manifest construction and its
-    /// scope/readiness refusals; the session stamps the request id.
+    /// Export remains available while connected.
     pub(crate) fn export_snapshot(
         &self,
         request_id: u64,
@@ -62,37 +53,7 @@ impl EditorSession {
             .map_err(|error| snapshot_session_error(error, request_id))
     }
 
-    /// Session-level snapshot restore behind the lifecycle policy gate
-    /// (design "Whole-Document Replacement Policy" / "Snapshot and
-    /// Persistence Flow"):
-    ///
-    /// 1. Transport gate: restore is `Detached`/`Disconnected`-only.
-    ///    `Connecting`/`Handshaking`/`Synchronized` reject the frozen
-    ///    snapshot-domain `SNAPSHOT_RESTORE_CONNECTED`. `Incompatible`
-    ///    rejects with the same code by decision: it is not a live
-    ///    transport, but it changes only through an explicit
-    ///    detach/reattach (design line 124) and restore must not smuggle
-    ///    a transition out of it; the frozen error contract adds exactly
-    ///    one restore-gate code, which covers every non-quiescent
-    ///    transport. `Destroying`/`Destroyed` are unreachable through
-    ///    `with_alive`.
-    /// 2. Outbox gate: pending local *document* updates reject
-    ///    `SNAPSHOT_OUTBOX_NOT_EMPTY`. Pending protocol/awareness replies
-    ///    never block — they are transport-scoped and cleared on success.
-    /// 3. Engine restore: every manifest field validates before any decode
-    ///    or mutation, the candidate installs atomically under a fresh
-    ///    client identity (existing engine contract).
-    ///
-    /// On success the session clears the prior-store residue:
-    /// `AwaitRemote` promotes to `RoomReady`, the transport settles to
-    /// `Disconnected` (the design's restore rows end there; stale
-    /// generations stay refused and issuance remains monotonic), and the
-    /// runtime drops pending protocol replies, dependency-quarantine work
-    /// accounting, and peer bookkeeping. Desired local awareness is
-    /// retained — the engine's store-swap rebind re-published it under the
-    /// fresh identity — and cursor projections recompute against the
-    /// restored store on every read. Every failure above leaves session,
-    /// engine, outbox, and runtime untouched.
+    /// Failed restores leave the session unchanged.
     pub(crate) fn restore_snapshot(
         &mut self,
         request_id: u64,
@@ -109,20 +70,15 @@ impl EditorSession {
         if self.document_state == DocumentState::AwaitRemote {
             self.document_state = DocumentState::RoomReady;
         }
-        self.collaboration.transport.settle_for_restore();
+        if self.room_bound() {
+            self.collaboration.transport.settle_for_restore();
+        }
         if let Some(runtime) = self.collaboration.runtime.as_mut() {
             runtime.reset_for_restore();
         }
         Ok(commit)
     }
 
-    /// Document-state x transport-state policy matrix for snapshot restore,
-    /// checked before any engine work. Any document state may restore
-    /// (`AwaitRemote` promotes on success; `LocalReady` has no scope and
-    /// fails inside the engine), so the gate is transport-first, then the
-    /// document-outbox check via
-    /// [`crate::collaboration_runtime::CollaborationOutbox::has_pending_document_updates`]
-    /// without peeking at queue internals.
     fn admit_snapshot_restore(&self, request_id: u64) -> Result<(), SessionError> {
         match self.transport_state() {
             TransportState::Detached | TransportState::Disconnected => {}

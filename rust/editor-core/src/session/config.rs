@@ -10,6 +10,10 @@ pub(crate) enum EditorInitialization {
     Local {
         initial_content: InitialContent,
     },
+    LocalScoped {
+        initial_content: InitialContent,
+        scope: DocumentScope,
+    },
     Room {
         scope: DocumentScope,
         snapshot: Option<DocumentSnapshot>,

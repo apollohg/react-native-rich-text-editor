@@ -19,6 +19,7 @@ export {
     type CommandBlockedInfo,
     type NativeEditorHistoryMode,
     type NativeEditorSnapshotMetadata,
+    type NativeEditorSnapshotScope,
     type NativeEditorRoomSnapshot,
     type NativeEditorInitialization,
     type NativeEditorCreateConfig,

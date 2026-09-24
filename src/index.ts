@@ -256,6 +256,7 @@ export {
     type NativeEditorPeerInfo,
     type NativeEditorRoomSnapshot,
     type NativeEditorSnapshotMetadata,
+    type NativeEditorSnapshotScope,
 } from './NativeEditorBridge';
 
 export {

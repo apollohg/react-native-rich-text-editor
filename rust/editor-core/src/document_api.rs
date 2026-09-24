@@ -91,13 +91,20 @@ impl DocumentApiFacade {
     fn admit(config: EditorSessionConfig, schema: Schema) -> Result<EditorSession, SessionError> {
         config.collaboration_limits.validate()?;
         let policy = SessionPolicy::from_config(&config);
+        let local_scope = match &config.initialization {
+            EditorInitialization::LocalScoped { scope, .. } => Some(scope.clone()),
+            _ => None,
+        };
         let (engine, document_state) = match &config.initialization {
-            EditorInitialization::Local { initial_content } => {
+            EditorInitialization::Local { initial_content }
+            | EditorInitialization::LocalScoped {
+                initial_content, ..
+            } => {
                 let mut engine = YrsDocumentEngine::new(engine_config(
                     &config,
                     schema,
                     InitializationMode::LocalEmpty,
-                    None,
+                    local_scope,
                 ))?;
                 match initial_content {
                     InitialContent::Empty => {}

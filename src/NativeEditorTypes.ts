@@ -240,7 +240,7 @@ export interface CommandBlockedInfo {
 export type NativeEditorHistoryMode = 'undoableBoundary' | 'resetAndClear';
 
 /**
- * Provenance of an exported room snapshot. A snapshot only restores into a
+ * Provenance of an exported snapshot. A snapshot only restores into a
  * handle whose document, lineage, fragment, and schema match.
  */
 export interface NativeEditorSnapshotMetadata {
@@ -253,7 +253,13 @@ export interface NativeEditorSnapshotMetadata {
     schemaFingerprint: string;
 }
 
-/** An exported room document: its provenance plus the encoded Yjs state. */
+/** Snapshot identity for a local document. */
+export interface NativeEditorSnapshotScope {
+    documentId: string;
+    lineageId: string;
+}
+
+/** Snapshot provenance and encoded Yjs state. */
 export interface NativeEditorRoomSnapshot {
     metadata: NativeEditorSnapshotMetadata;
     /** Encoded Yjs state. Bounded by `EditorResourceLimits.maxEncodedStateBytes`. */
@@ -272,7 +278,12 @@ export interface NativeEditorRoomSnapshot {
 export type NativeEditorInitialization =
     | { type: 'localEmpty' }
     | { type: 'localJson'; json: DocumentJSON }
-    | { type: 'localHtml'; html: string }
+    | {
+          type: 'localHtml';
+          html: string;
+          /** Enables local snapshot export and restore. */
+          snapshotScope?: NativeEditorSnapshotScope;
+      }
     | {
           type: 'room';
           /** Room identity. Must match the collaboration controller's `documentId`. */
