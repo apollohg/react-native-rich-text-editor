@@ -498,9 +498,19 @@ extension EditorV2Adapter {
         var nodes = 0
         var slots: UInt64 = 0
         var referenced = Set<String>()
+        var referencedSourceIds = Set<String>()
         var referencedAttributes = Set<String>()
         func number(_ object: [String: Any], _ key: String) -> UInt64? {
             uint32Field(object, key).map(UInt64.init)
+        }
+        func validTableSourceIdentity(_ value: Any?) -> String? {
+            guard let sourceId = value as? String, sourceId.first == "y" else { return nil }
+            let parts = sourceId.dropFirst().split(separator: "-", omittingEmptySubsequences: false)
+            guard parts.count == 2,
+                  v2CanonicalUInt64String(String(parts[0])) != nil,
+                  v2CanonicalUInt64String(String(parts[1])) != nil,
+                  UInt32(parts[1]) != nil else { return nil }
+            return sourceId
         }
         func attrs(_ value: Any?) -> Bool {
             guard let key = value as? String else { return false }
@@ -524,8 +534,10 @@ extension EditorV2Adapter {
             guard Set(element.keys) == ["type", "tableId"], let tableId = element["tableId"] as? String,
                   tableId.range(of: "^t(?:0|[1-9][0-9]*)$", options: .regularExpression) != nil,
                   referenced.insert(tableId).inserted, let table = tableRecords[tableId],
-                  Set(table.keys) == ["tablePos", "sourceEnd", "rows", "columns", "columnWidths", "direction", "irregular", "readOnlyDescendants", "attrsKey", "sourceRows", "cells", "syntheticRegions", "failure", "compatibilityDiagnostic"],
+                  Set(table.keys) == ["tablePos", "sourceId", "sourceEnd", "rows", "columns", "columnWidths", "direction", "irregular", "readOnlyDescendants", "attrsKey", "sourceRows", "cells", "syntheticRegions", "failure", "compatibilityDiagnostic"],
                   let pos = number(table, "tablePos"), tableId == "t\(pos)", let end = number(table, "sourceEnd"),
+                  let sourceId = validTableSourceIdentity(table["sourceId"]),
+                  referencedSourceIds.insert(sourceId).inserted,
                   let rows = number(table, "rows"), let columns = number(table, "columns"),
                   let widths = table["columnWidths"] as? [Any], let sourceRows = table["sourceRows"] as? [[String: Any]],
                   let cells = table["cells"] as? [[String: Any]], let synthetic = table["syntheticRegions"] as? [[String: Any]],
@@ -879,6 +891,7 @@ extension EditorV2Adapter {
               let renderPatch = object["renderPatch"],
               let tableAttributes = parseTableAttributes(object["tableAttributes"]),
               let tableRecords = parseTableRecords(object["tableRecords"]),
+              tableRecords.isEmpty || hasValidCompleteTablePool(tableAttributes, tableRecords),
               (isValidRenderBlocks(renderBlocks, tableAttributes: tableAttributes, tableRecords: tableRecords) && renderPatch is NSNull)
                 || (renderBlocks is NSNull && !(renderPatch is NSNull) && isValidRenderPatch(renderPatch, tableAttributes: tableAttributes, tableRecords: tableRecords)),
               let selectionValue = object["selection"],

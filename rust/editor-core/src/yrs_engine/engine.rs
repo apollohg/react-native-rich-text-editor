@@ -56,7 +56,7 @@ use outbound::OutboundUpdateSink;
 use remote::admit_max_encoded_state_len;
 pub use remote::PreparedRemoteUpdate;
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 #[cfg(test)]
 use test_hooks::{
@@ -422,10 +422,10 @@ impl YrsDocumentEngine {
             .map(|state| Arc::clone(&state.render_blocks))
     }
 
-    pub(crate) fn block_atom_ids(&self) -> Option<HashMap<u32, String>> {
+    pub(crate) fn block_source_ids(&self) -> Option<super::position::BlockSourceIds> {
         let txn = self.doc.transact();
         let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
-        super::position::block_atom_ids(&txn, &fragment, &self.schema)
+        super::position::block_source_ids(&txn, &fragment, &self.schema)
     }
 
     pub fn document_json(&self) -> Option<serde_json::Value> {

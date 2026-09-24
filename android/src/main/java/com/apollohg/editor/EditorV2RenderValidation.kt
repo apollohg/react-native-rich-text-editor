@@ -276,6 +276,7 @@ internal fun validSemanticRenderElements(elements: List<Any?>, tableAttributes: 
     var nodes = 0L
     var gridSlots = 0L
     val referenced = mutableSetOf<String>()
+    val referencedSourceIds = mutableSetOf<String>()
     val referencedAttributes = mutableSetOf<String>()
     fun number(value: JSONObject, key: String): Long? {
         val raw = value.opt(key) as? Number ?: return null
@@ -305,9 +306,15 @@ internal fun validSemanticRenderElements(elements: List<Any?>, tableAttributes: 
         val tableId = element.opt("tableId") as? String ?: return false
         if (!Regex("^t(?:0|[1-9][0-9]*)$").matches(tableId) || !referenced.add(tableId)) return false
         val table = tableRecords[tableId] ?: return false
-        if (!exactKeys(table, setOf("tablePos", "sourceEnd", "rows", "columns", "columnWidths", "direction", "irregular", "readOnlyDescendants", "attrsKey", "sourceRows", "cells", "syntheticRegions", "failure", "compatibilityDiagnostic"))) return false
+        if (!exactKeys(table, setOf("tablePos", "sourceId", "sourceEnd", "rows", "columns", "columnWidths", "direction", "irregular", "readOnlyDescendants", "attrsKey", "sourceRows", "cells", "syntheticRegions", "failure", "compatibilityDiagnostic"))) return false
         val pos = number(table, "tablePos") ?: return false
         if (tableId != "t$pos") return false
+        val sourceId = table.opt("sourceId") as? String ?: return false
+        if (!sourceId.startsWith('y')) return false
+        val sourceParts = sourceId.substring(1).split('-')
+        if (sourceParts.size != 2 || canonicalV2U64(sourceParts[0]) == null ||
+            canonicalV2U64(sourceParts[1]) == null || sourceParts[1].toUIntOrNull() == null ||
+            !referencedSourceIds.add(sourceId)) return false
         val end = number(table, "sourceEnd") ?: return false
         val rows = number(table, "rows") ?: return false
         val columns = number(table, "columns") ?: return false
@@ -677,6 +684,7 @@ internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
         val renderPatch = jsonObject.opt("renderPatch")
         val tableAttributes = parseTableAttributes(jsonObject.opt("tableAttributes")) ?: return null
         val tableRecords = parseTableRecords(jsonObject.opt("tableRecords")) ?: return null
+        if (tableRecords.isNotEmpty() && !validCompleteTablePool(tableAttributes, tableRecords)) return null
         val validRenderPayload =
             (validRenderBlocks(renderBlocks, tableAttributes, tableRecords) && renderPatch === JSONObject.NULL) ||
                 (

@@ -48,6 +48,97 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
     }
 
     @Test
+    fun `table source identity rejects missing malformed and duplicate wire values`() {
+        val adapter = makeAdapter()
+        val valid = tableInputMappingSnapshot()
+        assertNotNull(adoptExternalRender(adapter, valid.toString()))
+        val baseline = adapter.cachedAtomicRenderJson
+        for (sourceId in listOf(null, "", "t0", "y01-2", "y1-02", "y18446744073709551616-2", "y1-4294967296", "y1-2\n", "y1-2\r", "y١-2")) {
+            val invalid = JSONObject(valid.toString())
+            val record = invalid.getJSONObject("tableRecords").getJSONObject("t0")
+            if (sourceId == null) record.remove("sourceId") else record.put("sourceId", sourceId)
+            assertNull(adoptExternalRender(adapter, invalid.toString()))
+            assertEquals(baseline, adapter.cachedAtomicRenderJson)
+        }
+        val maxIdentity = JSONObject(valid.toString())
+        maxIdentity.getJSONObject("tableRecords").getJSONObject("t0")
+            .put("sourceId", "y18446744073709551615-4294967295")
+        assertNotNull(adoptExternalRender(adapter, maxIdentity.toString()))
+        val first = valid.getJSONObject("tableRecords").getJSONObject("t0")
+        val second = JSONObject(first.toString()).put("tablePos", 12).put("sourceEnd", 24)
+            .put("sourceId", "y2-3").put("sourceRows", org.json.JSONArray().put(
+                JSONObject(first.getJSONArray("sourceRows").getJSONObject(0).toString())
+                    .put("sourcePos", 13).put("sourceEnd", 23)))
+        second.getJSONArray("cells").getJSONObject(0).put("sourcePos", 14).put("sourceEnd", 22)
+        val elements = listOf(
+            JSONObject().put("type", "table").put("tableId", "t0"),
+            JSONObject().put("type", "table").put("tableId", "t12")
+        )
+        val pool = mapOf("a".repeat(64) to JSONObject())
+        assertTrue(validSemanticRenderElements(elements, pool, mapOf("t0" to first, "t12" to second)))
+        second.put("sourceId", first.getString("sourceId"))
+        assertFalse(validSemanticRenderElements(elements, pool, mapOf("t0" to first, "t12" to second)))
+    }
+
+    @Test
+    fun `render preflight validates retained table identities without mapping sidecar`() {
+        val adapter = makeAdapter()
+        val retained = tableInputMappingSnapshot().apply {
+            remove("tableInputMappings")
+            val records = getJSONObject("tableRecords")
+            val outer = records.getJSONObject("t0")
+            outer.put("sourceEnd", 14)
+            outer.getJSONArray("sourceRows").getJSONObject(0).put("sourceEnd", 13)
+            val cell = outer.getJSONArray("cells").getJSONObject(0)
+            cell.put("sourceEnd", 12)
+            cell.getJSONArray("elements").put(JSONObject().put("type", "table").put("tableId", "t9"))
+            records.put("t9", JSONObject()
+                .put("tablePos", 9).put("sourceId", "y1-3").put("sourceEnd", 11)
+                .put("rows", 0).put("columns", 0).put("columnWidths", org.json.JSONArray())
+                .put("direction", JSONObject.NULL).put("irregular", false)
+                .put("readOnlyDescendants", true).put("attrsKey", "a".repeat(64))
+                .put("sourceRows", org.json.JSONArray()).put("cells", org.json.JSONArray())
+                .put("syntheticRegions", org.json.JSONArray()).put("failure", "invalidStructure")
+                .put("compatibilityDiagnostic", JSONObject.NULL))
+        }
+        val patchBlocks = listOf(
+            org.json.JSONArray(),
+            org.json.JSONArray().put(org.json.JSONArray()
+                .put(JSONObject().put("type", "blockStart").put("nodeType", "paragraph").put("depth", 0))
+                .put(JSONObject().put("type", "textRun").put("text", "changed").put("marks", org.json.JSONArray()))
+                .put(JSONObject().put("type", "blockEnd")))
+        )
+        for ((patchIndex, blocks) in patchBlocks.withIndex()) {
+            val valid = JSONObject(retained.toString()).put("renderBlocks", JSONObject.NULL)
+                .put("renderPatch", JSONObject().put("baseDocumentVersion", "1")
+                    .put("startIndex", 0).put("deleteCount", patchIndex).put("renderBlocks", blocks))
+            assertNotNull("valid patch $patchIndex", parseAtomicRenderSnapshot(valid.toString()))
+            assertTrue("valid patch $patchIndex", adapter.validateExternalRender(valid.toString()))
+
+            for (tableId in listOf("t0", "t9")) {
+                for (sourceId in listOf(null, "y01-2")) {
+                    val invalid = JSONObject(valid.toString())
+                    val record = invalid.getJSONObject("tableRecords").getJSONObject(tableId)
+                    if (sourceId == null) record.remove("sourceId") else record.put("sourceId", sourceId)
+                    assertNull("patch $patchIndex $tableId sourceId $sourceId", parseAtomicRenderSnapshot(invalid.toString()))
+                    assertFalse("patch $patchIndex $tableId sourceId $sourceId", adapter.validateExternalRender(invalid.toString()))
+                }
+            }
+            val duplicate = JSONObject(valid.toString())
+            val records = duplicate.getJSONObject("tableRecords")
+            records.getJSONObject("t9").put("sourceId", records.getJSONObject("t0").getString("sourceId"))
+            assertNull("patch $patchIndex duplicate sourceId", parseAtomicRenderSnapshot(duplicate.toString()))
+            assertFalse("patch $patchIndex duplicate sourceId", adapter.validateExternalRender(duplicate.toString()))
+        }
+
+        val tableFree = JSONObject(atomicRenderSnapshot("base", "1"))
+            .put("renderBlocks", JSONObject.NULL)
+            .put("renderPatch", JSONObject().put("baseDocumentVersion", "1")
+                .put("startIndex", 0).put("deleteCount", 0).put("renderBlocks", org.json.JSONArray()))
+        assertTrue(adapter.validateExternalRender(tableFree.toString()))
+    }
+
+    @Test
     fun `legacy and release clear cached table input mapping`() {
         val adapter = makeAdapter()
         assertNotNull(adoptExternalRender(adapter, tableInputMappingSnapshot().toString()))
@@ -70,7 +161,7 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
     private fun tableInputMappingSnapshot(): JSONObject {
         val attrsKey = "a".repeat(64)
         val table = JSONObject("""{
-            "tablePos":0,"sourceEnd":12,"rows":1,"columns":1,"columnWidths":[null],
+            "tablePos":0,"sourceId":"y1-2","sourceEnd":12,"rows":1,"columns":1,"columnWidths":[null],
             "direction":null,"irregular":false,"readOnlyDescendants":false,"attrsKey":"$attrsKey",
             "sourceRows":[{"sourcePos":1,"sourceEnd":11,"attrsKey":"$attrsKey"}],
             "syntheticRegions":[],"failure":null,"compatibilityDiagnostic":null,
@@ -466,7 +557,7 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
         val attrsKey = "a".repeat(64)
         val snapshot = JSONObject(atomicRenderSnapshot("base", "1"))
         val table = JSONObject("""{
-            "tablePos":0,"sourceEnd":10,"rows":1,"columns":1,"columnWidths":[null],
+            "tablePos":0,"sourceId":"y1-2","sourceEnd":10,"rows":1,"columns":1,"columnWidths":[null],
             "direction":null,"irregular":false,"readOnlyDescendants":false,"attrsKey":"$attrsKey",
             "sourceRows":[{"sourcePos":1,"sourceEnd":9,"attrsKey":"$attrsKey"}],
             "syntheticRegions":[],"failure":null,"compatibilityDiagnostic":null,

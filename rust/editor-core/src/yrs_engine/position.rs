@@ -650,22 +650,30 @@ fn xml_out_pm_size<T: ReadTxn>(txn: &T, node: &XmlOut, schema: &Schema) -> Optio
     }
 }
 
-pub(crate) fn block_atom_ids<T: ReadTxn>(
+pub(crate) struct BlockSourceIds {
+    pub atom_ids: HashMap<u32, String>,
+    pub table_ids: HashMap<u32, String>,
+}
+
+pub(crate) fn block_source_ids<T: ReadTxn>(
     txn: &T,
     fragment: &XmlFragmentRef,
     schema: &Schema,
-) -> Option<HashMap<u32, String>> {
-    let mut ids = HashMap::new();
-    collect_block_atom_ids(txn, fragment.children(txn), 0, schema, &mut ids)?;
+) -> Option<BlockSourceIds> {
+    let mut ids = BlockSourceIds {
+        atom_ids: HashMap::new(),
+        table_ids: HashMap::new(),
+    };
+    collect_block_source_ids(txn, fragment.children(txn), 0, schema, &mut ids)?;
     Some(ids)
 }
 
-fn collect_block_atom_ids<T: ReadTxn>(
+fn collect_block_source_ids<T: ReadTxn>(
     txn: &T,
     children: impl Iterator<Item = XmlOut>,
     start: u32,
     schema: &Schema,
-    ids: &mut HashMap<u32, String>,
+    ids: &mut BlockSourceIds,
 ) -> Option<u32> {
     let mut position = start;
     for child in children {
@@ -674,21 +682,32 @@ fn collect_block_atom_ids<T: ReadTxn>(
                 let spec = super::codec::wire_element_node_spec(element, txn, schema);
                 if spec.is_some_and(|spec| matches!(spec.role, NodeRole::Block)) {
                     if let BranchID::Nested(id) = AsRef::<Branch>::as_ref(element).id() {
-                        ids.insert(position, format!("y{}-{}", id.client, id.clock));
+                        ids.atom_ids
+                            .insert(position, format!("y{}-{}", id.client, id.clock));
                     }
                 }
                 position.checked_add(xml_out_pm_size(txn, &child, schema)?)?
             }
-            XmlOut::Element(element) => collect_block_atom_ids(
-                txn,
-                element.children(txn),
-                position.checked_add(1)?,
-                schema,
-                ids,
-            )?
-            .checked_add(1)?,
+            XmlOut::Element(element) => {
+                let spec = super::codec::wire_element_node_spec(element, txn, schema);
+                if spec.is_some_and(|spec| spec.table_role == Some(crate::tables::TableRole::Table))
+                {
+                    if let BranchID::Nested(id) = AsRef::<Branch>::as_ref(element).id() {
+                        ids.table_ids
+                            .insert(position, format!("y{}-{}", id.client, id.clock));
+                    }
+                }
+                collect_block_source_ids(
+                    txn,
+                    element.children(txn),
+                    position.checked_add(1)?,
+                    schema,
+                    ids,
+                )?
+                .checked_add(1)?
+            }
             XmlOut::Fragment(nested) => {
-                collect_block_atom_ids(txn, nested.children(txn), position, schema, ids)?
+                collect_block_source_ids(txn, nested.children(txn), position, schema, ids)?
             }
             XmlOut::Text(_) => position.checked_add(xml_out_pm_size(txn, &child, schema)?)?,
         };

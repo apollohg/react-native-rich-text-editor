@@ -26,6 +26,24 @@ extension EditorV2AdapterTests {
         let valid = mutatedObjectJSON(try tableInputMappingSnapshot()) { $0["positionEpoch"] = "17" }
 
         XCTAssertNotNil(adapter.adoptExternalRender(valid))
+        for sourceId in [nil, "", "t0", "y01-2", "y1-02", "y18446744073709551616-2", "y1-4294967296", "y1-2\n", "y1-2\r", "y١-2"] as [String?] {
+            let invalid = mutatedObjectJSON(valid) { object in
+                var records = object["tableRecords"] as! [String: Any]
+                var record = records["t0"] as! [String: Any]
+                record["sourceId"] = sourceId
+                records["t0"] = record
+                object["tableRecords"] = records
+            }
+            XCTAssertNil(adapter.adoptExternalRender(invalid), String(describing: sourceId))
+        }
+        let maxIdentity = mutatedObjectJSON(valid) { object in
+            var records = object["tableRecords"] as! [String: Any]
+            var record = records["t0"] as! [String: Any]
+            record["sourceId"] = "y18446744073709551615-4294967295"
+            records["t0"] = record
+            object["tableRecords"] = records
+        }
+        XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(maxIdentity))
         let presentation = try XCTUnwrap(adapter.cachedTablePresentation)
         XCTAssertEqual(presentation.documentRevision, 1)
         XCTAssertEqual(presentation.positionEpoch, 17)
@@ -320,7 +338,7 @@ extension EditorV2AdapterTests {
             outer["sourceRows"] = [["sourcePos": 1, "sourceEnd": 13, "attrsKey": attrsKey]]
             records["t0"] = outer
             records["t9"] = [
-                "tablePos": 9, "sourceEnd": 11, "rows": 0, "columns": 0, "columnWidths": [],
+                "tablePos": 9, "sourceId": "y1-3", "sourceEnd": 11, "rows": 0, "columns": 0, "columnWidths": [],
                 "direction": NSNull(), "irregular": false, "readOnlyDescendants": true, "attrsKey": attrsKey,
                 "sourceRows": [], "cells": [], "syntheticRegions": [], "failure": "invalidStructure", "compatibilityDiagnostic": NSNull()
             ]
@@ -338,6 +356,55 @@ extension EditorV2AdapterTests {
             object["tableInputMappings"] = mapping
         }
         XCTAssertNotNil(adapter.adoptExternalRender(valid))
+        let retained = mutatedObjectJSON(valid) { $0.removeValue(forKey: "tableInputMappings") }
+        let patchBlocks: [[[String: Any]]] = [
+            [],
+            [["type": "blockStart", "nodeType": "paragraph", "depth": 0],
+             ["type": "textRun", "text": "changed", "marks": []],
+             ["type": "blockEnd"]]
+        ]
+        for (patchIndex, elements) in patchBlocks.enumerated() {
+            let patch = mutatedObjectJSON(retained) { object in
+                object["renderBlocks"] = NSNull()
+                object["renderPatch"] = ["baseDocumentVersion": object["documentVersion"]!,
+                    "startIndex": 0, "deleteCount": patchIndex,
+                    "renderBlocks": elements.isEmpty ? [] : [elements]]
+            }
+            XCTAssertNotNil(EditorV2Adapter.parseAtomicRenderSnapshot(patch), "valid patch \(patchIndex)")
+            XCTAssertTrue(adapter.validateExternalRender(patch), "valid patch \(patchIndex)")
+
+            for tableID in ["t0", "t9"] {
+                for sourceID in [nil, "y01-2"] as [String?] {
+                    let invalid = mutatedObjectJSON(patch) { object in
+                        var records = object["tableRecords"] as! [String: Any]
+                        var record = records[tableID] as! [String: Any]
+                        record["sourceId"] = sourceID
+                        records[tableID] = record
+                        object["tableRecords"] = records
+                    }
+                    XCTAssertNil(EditorV2Adapter.parseAtomicRenderSnapshot(invalid), "patch \(patchIndex) \(tableID) \(String(describing: sourceID))")
+                    XCTAssertFalse(adapter.validateExternalRender(invalid), "patch \(patchIndex) \(tableID) \(String(describing: sourceID))")
+                }
+            }
+            let duplicate = mutatedObjectJSON(patch) { object in
+                var records = object["tableRecords"] as! [String: Any]
+                var nested = records["t9"] as! [String: Any]
+                nested["sourceId"] = (records["t0"] as! [String: Any])["sourceId"]
+                records["t9"] = nested
+                object["tableRecords"] = records
+            }
+            XCTAssertNil(EditorV2Adapter.parseAtomicRenderSnapshot(duplicate), "patch \(patchIndex) duplicate sourceId")
+            XCTAssertFalse(adapter.validateExternalRender(duplicate), "patch \(patchIndex) duplicate sourceId")
+        }
+        let tableFree = mutatedObjectJSON(snapshot) { object in
+            object.removeValue(forKey: "tableAttributes")
+            object.removeValue(forKey: "tableRecords")
+            object.removeValue(forKey: "tableInputMappings")
+            object["renderBlocks"] = NSNull()
+            object["renderPatch"] = ["baseDocumentVersion": object["documentVersion"]!,
+                "startIndex": 0, "deleteCount": 0, "renderBlocks": []]
+        }
+        XCTAssertTrue(adapter.validateExternalRender(tableFree))
         let missingExclusion = mutatedObjectJSON(valid) { object in
             var mapping = object["tableInputMappings"] as! [String: Any]
             var tables = mapping["tables"] as! [String: Any]
@@ -350,6 +417,14 @@ extension EditorV2AdapterTests {
             object["tableInputMappings"] = mapping
         }
         XCTAssertNil(adapter.adoptExternalRender(missingExclusion))
+        let duplicateSource = mutatedObjectJSON(valid) { object in
+            var records = object["tableRecords"] as! [String: Any]
+            var nested = records["t9"] as! [String: Any]
+            nested["sourceId"] = (records["t0"] as! [String: Any])["sourceId"]
+            records["t9"] = nested
+            object["tableRecords"] = records
+        }
+        XCTAssertNil(adapter.adoptExternalRender(duplicateSource))
     }
 
     private func tableInputMappingSnapshot(for providedAdapter: EditorV2Adapter? = nil) throws -> String {
@@ -358,7 +433,7 @@ extension EditorV2AdapterTests {
         let raw = try XCTUnwrap(editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value)
         let attrsKey = String(repeating: "a", count: 64)
         let table: [String: Any] = [
-            "tablePos": 0, "sourceEnd": 12, "rows": 1, "columns": 1,
+            "tablePos": 0, "sourceId": "y1-2", "sourceEnd": 12, "rows": 1, "columns": 1,
             "columnWidths": [NSNull()], "direction": NSNull(), "irregular": false,
             "readOnlyDescendants": false, "attrsKey": attrsKey,
             "sourceRows": [["sourcePos": 1, "sourceEnd": 11, "attrsKey": attrsKey]],
@@ -388,7 +463,7 @@ extension EditorV2AdapterTests {
         _ = adapter.setContentHtml("<p>base</p>")
         let raw = try XCTUnwrap(editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value)
         let table: [String: Any] = [
-            "tablePos": 0, "sourceEnd": 10, "rows": 1, "columns": 1,
+            "tablePos": 0, "sourceId": "y1-2", "sourceEnd": 10, "rows": 1, "columns": 1,
             "columnWidths": [NSNull()], "direction": NSNull(), "irregular": false,
             "readOnlyDescendants": false, "attrsKey": attrsKey,
             "sourceRows": [["sourcePos": 1, "sourceEnd": 9, "attrsKey": attrsKey]],

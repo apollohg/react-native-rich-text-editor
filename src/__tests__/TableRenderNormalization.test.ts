@@ -14,6 +14,7 @@ const normalizeRenderBlocks = (
 
 const table = () => ({
     tablePos: 0,
+    sourceId: 'y18446744073709551615-4294967295',
     sourceEnd: 10,
     rows: 1,
     columns: 2,
@@ -60,6 +61,52 @@ test('accepts flat table records and shallow table references', () => {
             flatRecords(),
         ),
     ).toEqual(flatBlocks());
+});
+
+test.each([
+    undefined,
+    '',
+    't0',
+    'y01-2',
+    'y1-02',
+    'y18446744073709551616-2',
+    'y1-4294967296',
+    'y1-2-extra',
+    'y1-2\n',
+    'y1-2\r',
+    'y١-2',
+])('rejects missing or malformed table source identity %s', (sourceId) => {
+    expect(withRecord({ ...table(), sourceId })).toBeNull();
+});
+
+test('rejects duplicate table source identities across distinct positions', () => {
+    const first = table();
+    const second = {
+        ...table(),
+        tablePos: 10,
+        sourceEnd: 20,
+        sourceId: 'y2-3',
+        sourceRows: [{ sourcePos: 11, sourceEnd: 19, attrsKey }],
+        cells: [{ ...table().cells[0], sourcePos: 12, sourceEnd: 18 }],
+    };
+    const twoTables = [
+        [
+            { type: 'table', tableId: 't0' },
+            { type: 'table', tableId: 't10' },
+        ],
+    ];
+    expect(
+        normalizeRenderBlocks(twoTables, { [attrsKey]: '{}' }, {
+            t0: first,
+            t10: second,
+        }),
+    ).toEqual(twoTables);
+    expect(
+        normalizeRenderBlocks(twoTables, { [attrsKey]: '{}' }, {
+            t0: first,
+            t10: { ...second, sourceId: first.sourceId },
+        }),
+    ).toBeNull();
 });
 
 test('rejects dangling, aliased, and unreachable flat table records', () => {

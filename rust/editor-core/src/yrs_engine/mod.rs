@@ -63,6 +63,7 @@ pub use operation::{
 pub use operation::{ReplacementHistory, RootReplacementError};
 pub use origin::{DocumentOrigin, TransactionOrigin};
 pub(crate) use position::editor_offset_to_doc_pos;
+pub(crate) use position::BlockSourceIds;
 #[allow(unused_imports)]
 pub(crate) use position::{cursor_sticky_index_from_doc_pos, sticky_index_to_doc_pos};
 #[allow(unused_imports)]

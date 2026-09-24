@@ -43,6 +43,7 @@ const block = (
 function fixture() {
     const table = (tablePos: number, sourceEnd: number, nested: boolean) => ({
         tablePos,
+        sourceId: `y1-${tablePos}`,
         sourceEnd,
         rows: 1,
         columns: 1,
@@ -134,6 +135,25 @@ function fixture() {
     };
 }
 
+function patchWithoutMappings(renderBlocks: unknown[][]) {
+    const { tableInputMappings: _mapping, ...value } = fixture();
+    return {
+        ...value,
+        renderBlocks: null,
+        renderPatch: {
+            baseDocumentVersion: '4',
+            startIndex: 0,
+            deleteCount: 0,
+            renderBlocks,
+        },
+    };
+}
+
+const patchCases: [string, unknown[][]][] = [
+    ['an empty', []],
+    ['a partial', [paragraph('replacement')]],
+];
+
 test('retains and deeply freezes snapshot-bound mappings and nested exclusions', () => {
     const value = fixture();
     const result = normalize(value);
@@ -158,6 +178,46 @@ test('accepts the complete mapping pool with an empty render patch', () => {
     };
     expect(normalize(value)).toEqual(value);
 });
+
+test.each(patchCases)(
+    'accepts %s patch with retained nested tables and no mappings',
+    (_name, renderBlocks) => {
+        const patch = patchWithoutMappings(renderBlocks);
+        expect(normalize(patch)).toEqual(patch);
+    },
+);
+
+test('accepts an empty table-free patch without mappings', () => {
+    const value = {
+        ...MOCK_ATOMIC_RENDER_SNAPSHOT,
+        renderBlocks: null,
+        renderPatch: {
+            baseDocumentVersion: '4',
+            startIndex: 0,
+            deleteCount: 0,
+            renderBlocks: [],
+        },
+    };
+    expect(normalize(value)).toEqual(value);
+});
+
+for (const [patchDescription, renderBlocks] of patchCases) {
+    test.each<[string, (value: any) => void]>([
+        ['missing nested', (v) => delete v.tableRecords.t6.sourceId],
+        ['malformed root', (v) => (v.tableRecords.t0.sourceId = 'y01-0')],
+        [
+            'duplicate nested',
+            (v) => (v.tableRecords.t6.sourceId = v.tableRecords.t0.sourceId),
+        ],
+    ])(
+        'rejects %s table identity in ' + patchDescription + ' patch without mappings',
+        (_name, mutate) => {
+            const patch = patchWithoutMappings(renderBlocks) as any;
+            mutate(patch);
+            expect(normalize(patch)).toBeNull();
+        },
+    );
+}
 
 test('keeps legacy table snapshots without input mappings valid', () => {
     const { tableInputMappings: _mapping, ...value } = fixture();
@@ -380,6 +440,7 @@ test('rejects overlapping scalar extents for separate root tables', () => {
     value.tableRecords.t22 = {
         ...value.tableRecords.t6,
         tablePos: 22,
+        sourceId: 'y1-22',
         sourceEnd: 32,
         readOnlyDescendants: false,
         sourceRows: [{ sourcePos: 23, sourceEnd: 31, attrsKey }],

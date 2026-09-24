@@ -28,6 +28,26 @@ import {
 import { validEditorMentionTheme } from './EditorMentionThemeValidation';
 import { normalizeTableInputMappings } from './TableInputMappingValidation';
 
+const TABLE_SOURCE_ID_PATTERN = /^y(0|[1-9][0-9]*)-(0|[1-9][0-9]*)$/;
+const TABLE_SOURCE_CLOCK_MAX = '4294967295';
+
+function validTableSourceId(value: unknown): value is string {
+    if (typeof value !== 'string') return false;
+    const match = TABLE_SOURCE_ID_PATTERN.exec(value);
+    if (
+        !match ||
+        match[0] !== value ||
+        normalizeNativeEditorV2DecimalId(match[1]) === null
+    )
+        return false;
+    const clock = match[2];
+    return (
+        clock.length < TABLE_SOURCE_CLOCK_MAX.length ||
+        (clock.length === TABLE_SOURCE_CLOCK_MAX.length &&
+            clock <= TABLE_SOURCE_CLOCK_MAX)
+    );
+}
+
 export function validListContext(value: unknown): value is ListContext {
     if (!isPlainRecord(value)) {
         return false;
@@ -279,6 +299,7 @@ function validRenderElements(
     let nodes = 0;
     let gridSlots = 0;
     const referencedTableIds = new Set<string>();
+    const referencedTableSourceIds = new Set<string>();
     const referencedAttributeKeys = new Set<string>();
     const attrs = (value: unknown): boolean => {
         if (
@@ -319,6 +340,7 @@ function validRenderElements(
         if (
             !hasExactOwnKeys(t, [
                 'tablePos',
+                'sourceId',
                 'sourceEnd',
                 'rows',
                 'columns',
@@ -335,6 +357,8 @@ function validRenderElements(
             ]) ||
             !u32(t.tablePos) ||
             value.tableId !== `t${t.tablePos}` ||
+            !validTableSourceId(t.sourceId) ||
+            referencedTableSourceIds.has(t.sourceId) ||
             !u32(t.sourceEnd) ||
             t.tablePos < start ||
             t.sourceEnd > end ||
@@ -358,6 +382,7 @@ function validRenderElements(
                 !tableDiagnostics.has(t.compatibilityDiagnostic as string))
         )
             return false;
+        referencedTableSourceIds.add(t.sourceId);
         gridSlots += t.rows * t.columns;
         if (
             t.rows > 4_000_000 ||
@@ -776,9 +801,8 @@ export function normalizeNativeEditorV2RenderUpdateValue(
         parsed,
         'tableInputMappings',
     );
-    let tableInputMappings;
-    if (hasInputMappings) {
-        if (!isPlainRecord(tableRecords)) return null;
+    if (!isPlainRecord(tableRecords)) return null;
+    if (Object.keys(tableRecords).length > 0 || hasInputMappings) {
         const roots = Object.entries(tableRecords).flatMap(
             ([tableId, record]) =>
                 isPlainRecord(record) && record.readOnlyDescendants === false
@@ -790,6 +814,10 @@ export function normalizeNativeEditorV2RenderUpdateValue(
             !validRenderElements(roots, tableAttributes, tableRecords)
         )
             return null;
+    }
+
+    let tableInputMappings;
+    if (hasInputMappings) {
         tableInputMappings = normalizeTableInputMappings(
             parsed.tableInputMappings,
             normalizedTableRecords,

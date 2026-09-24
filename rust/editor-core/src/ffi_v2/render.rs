@@ -349,7 +349,24 @@ fn render_snapshot_json(
     let position_map = engine.position_map().ok_or_else(engine_not_ready)?;
     let schema = registered_schema(&editor_id)?;
     let current_render_blocks = engine.cached_render_blocks().ok_or_else(engine_not_ready)?;
-    let atom_ids = engine.block_atom_ids().ok_or_else(engine_not_ready)?;
+    let source_ids = engine.block_source_ids().ok_or_else(engine_not_ready)?;
+    let mut cached_tables = Vec::new();
+    current_render_blocks.visit_table_records(&mut cached_tables);
+    let mut unique_table_ids = std::collections::HashSet::new();
+    for table in cached_tables {
+        let Some(source_id) = source_ids.table_ids.get(&table.table_pos) else {
+            return Err(SessionError::from(YrsEngineError::new(
+                "ENGINE_INVARIANT_FAILED",
+                "render table is missing its live Yrs source identity",
+            )));
+        };
+        if !unique_table_ids.insert(source_id) {
+            return Err(SessionError::from(YrsEngineError::new(
+                "ENGINE_INVARIANT_FAILED",
+                "render tables have duplicate live Yrs source identities",
+            )));
+        }
+    }
     pause_render_snapshot_for_test(&editor_id);
 
     let (selection, selection_value, stored_marks) = match mirror {
@@ -385,17 +402,16 @@ fn render_snapshot_json(
     let document_is_empty = crate::editor_state::document_is_empty(document, &schema);
 
     let document_version = engine.revision();
-    let table_input_mappings = super::table_input_mapping::derive(
-        document,
-        position_map,
-        &current_render_blocks,
-    )
-    .map_err(|message| SessionError::from(YrsEngineError::new("ENGINE_INVARIANT_FAILED", message)))?;
+    let table_input_mappings =
+        super::table_input_mapping::derive(document, position_map, &current_render_blocks)
+            .map_err(|message| {
+                SessionError::from(YrsEngineError::new("ENGINE_INVARIANT_FAILED", message))
+            })?;
     let mut table_records = std::collections::BTreeMap::new();
     // Patches carry the complete current table pool, including retained blocks.
     let _ = serialize_render_blocks(
         &current_render_blocks.materialize(),
-        &atom_ids,
+        &source_ids,
         &mut table_records,
     );
     let (render_blocks, render_patch) = match previous_native_render {
@@ -407,7 +423,7 @@ fn render_snapshot_json(
                     delete_count: 0,
                     blocks: Vec::new(),
                 },
-                &atom_ids,
+                &source_ids,
                 previous.document_revision,
                 &mut table_records,
             ),
@@ -421,7 +437,7 @@ fn render_snapshot_json(
                     Value::Null,
                     serialize_render_patch(
                         &patch,
-                        &atom_ids,
+                        &source_ids,
                         previous.document_revision,
                         &mut table_records,
                     ),
@@ -434,13 +450,13 @@ fn render_snapshot_json(
                             delete_count: 0,
                             blocks: Vec::new(),
                         },
-                        &atom_ids,
+                        &source_ids,
                         previous.document_revision,
                         &mut table_records,
                     ),
                 ),
                 crate::render::incremental::CachedRenderTransitionUpdate::Full(blocks) => (
-                    serialize_render_blocks(&blocks, &atom_ids, &mut table_records),
+                    serialize_render_blocks(&blocks, &source_ids, &mut table_records),
                     Value::Null,
                 ),
             }
@@ -448,7 +464,7 @@ fn render_snapshot_json(
         _ => (
             serialize_render_blocks(
                 &current_render_blocks.materialize(),
-                &atom_ids,
+                &source_ids,
                 &mut table_records,
             ),
             Value::Null,
@@ -535,6 +551,7 @@ pub fn editor_v2_scalar_to_doc(editor_id: String, scalar: u32) -> FfiJsonResult 
 #[cfg(test)]
 pub(crate) fn serialize_render_cache_for_test(
     cache: &crate::render::incremental::CachedRenderBlocks,
+    table_ids: &HashMap<u32, String>,
 ) -> String {
     let attributes: std::collections::BTreeMap<_, _> = cache
         .table_attributes
@@ -542,12 +559,16 @@ pub(crate) fn serialize_render_cache_for_test(
         .map(|(key, json)| (key, json.as_ref()))
         .collect();
     let mut records = std::collections::BTreeMap::new();
-    serde_json::json!({"renderBlocks": serialize_render_blocks(&cache.materialize(), &HashMap::new(), &mut records), "tableAttributes": attributes, "tableRecords": records}).to_string()
+    let source_ids = crate::yrs_engine::BlockSourceIds {
+        atom_ids: HashMap::new(),
+        table_ids: table_ids.clone(),
+    };
+    serde_json::json!({"renderBlocks": serialize_render_blocks(&cache.materialize(), &source_ids, &mut records), "tableAttributes": attributes, "tableRecords": records}).to_string()
 }
 
 fn serialize_render_elements(
     elements: &[crate::render::RenderElement],
-    atom_ids: &HashMap<u32, String>,
+    source_ids: &crate::yrs_engine::BlockSourceIds,
     table_records: &mut std::collections::BTreeMap<String, Value>,
 ) -> serde_json::Value {
     let items: Vec<serde_json::Value> = elements
@@ -557,6 +578,7 @@ fn serialize_render_elements(
                 let table_id = format!("t{}", table.table_pos);
                 let record = serde_json::json!({
                         "tablePos": table.table_pos,
+                        "sourceId": source_ids.table_ids.get(&table.table_pos).expect("table identity preflight required"),
                         "sourceEnd": table.source_end,
                         "rows": table.rows,
                         "columns": table.columns,
@@ -579,7 +601,7 @@ fn serialize_render_elements(
                             "header": cell.header,
                             "attrsKey": cell.attrs_key,
                             "contentKey": cell.content_key,
-                            "elements": serialize_render_elements(&cell.elements, atom_ids, table_records),
+                            "elements": serialize_render_elements(&cell.elements, source_ids, table_records),
                         })).collect::<Vec<_>>()
                 })
                 ;
@@ -641,7 +663,7 @@ fn serialize_render_elements(
                             .collect(),
                     );
                 }
-                if let Some(atom_id) = atom_ids.get(doc_pos) {
+                if let Some(atom_id) = source_ids.atom_ids.get(doc_pos) {
                     obj["atomId"] = Value::String(atom_id.clone());
                 }
                 obj
@@ -772,20 +794,20 @@ fn serialize_render_mark(mark: &crate::render::RenderMark) -> serde_json::Value 
 
 fn serialize_render_blocks(
     blocks: &[Vec<crate::render::RenderElement>],
-    atom_ids: &HashMap<u32, String>,
+    source_ids: &crate::yrs_engine::BlockSourceIds,
     table_records: &mut std::collections::BTreeMap<String, Value>,
 ) -> serde_json::Value {
     serde_json::Value::Array(
         blocks
             .iter()
-            .map(|block| serialize_render_elements(block, atom_ids, table_records))
+            .map(|block| serialize_render_elements(block, source_ids, table_records))
             .collect(),
     )
 }
 
 fn serialize_render_patch(
     patch: &crate::render::incremental::RenderBlocksPatch,
-    atom_ids: &HashMap<u32, String>,
+    source_ids: &crate::yrs_engine::BlockSourceIds,
     base_document_version: u64,
     table_records: &mut std::collections::BTreeMap<String, Value>,
 ) -> Value {
@@ -793,7 +815,7 @@ fn serialize_render_patch(
         "baseDocumentVersion": decimal_u64(base_document_version),
         "startIndex": patch.start_index,
         "deleteCount": patch.delete_count,
-        "renderBlocks": serialize_render_blocks(&patch.blocks, atom_ids, table_records),
+        "renderBlocks": serialize_render_blocks(&patch.blocks, source_ids, table_records),
     })
 }
 

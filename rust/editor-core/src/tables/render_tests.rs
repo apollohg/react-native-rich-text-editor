@@ -12,6 +12,16 @@ fn cell(text: &str) -> serde_json::Value {
     json!({ "type": "table_cell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": text }] }] })
 }
 
+fn test_table_ids(cache: &CachedRenderBlocks) -> std::collections::HashMap<u32, String> {
+    let mut tables = Vec::new();
+    cache.visit_table_records(&mut tables);
+    tables
+        .iter()
+        .enumerate()
+        .map(|(index, table)| (table.table_pos, format!("y0-{index}")))
+        .collect()
+}
+
 #[test]
 fn attribute_pool_collision_keeps_canonical_key_and_exact_json() {
     let schema = tabled_schema(PROSEMIRROR_TABLE_NAMES);
@@ -90,7 +100,8 @@ fn raised_depth_table_transport_has_bounded_json_container_depth() {
         )
         .unwrap();
         let cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
-        let wire = crate::ffi_v2::render::serialize_render_cache_for_test(&cache);
+        let wire =
+            crate::ffi_v2::render::serialize_render_cache_for_test(&cache, &test_table_ids(&cache));
         let mut depth = 0usize;
         let mut maximum = 0usize;
         let mut quoted = false;
@@ -165,7 +176,8 @@ fn shared_synthetic_attributes_are_retained_and_serialized_once() {
     let (document, schema, payload) = shared_default_fixture();
     crate::tables::render::ATTRIBUTE_SERIALIZED_BYTES.set(0);
     let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
-    let json = crate::ffi_v2::render::serialize_render_cache_for_test(&cache);
+    let json =
+        crate::ffi_v2::render::serialize_render_cache_for_test(&cache, &test_table_ids(&cache));
     assert_eq!(
         json.matches(&payload).count(),
         1,
@@ -469,7 +481,7 @@ fn grid_limit_failure_keeps_the_real_table_extent_without_inventing_cells() {
     assert!(table.source_rows.is_empty());
     assert!(table.synthetic_regions.is_empty());
     let wire: serde_json::Value = serde_json::from_str(
-        &crate::ffi_v2::render::serialize_render_cache_for_test(&cache),
+        &crate::ffi_v2::render::serialize_render_cache_for_test(&cache, &test_table_ids(&cache)),
     )
     .unwrap();
     let id = wire["renderBlocks"][0][0]["tableId"].as_str().unwrap();

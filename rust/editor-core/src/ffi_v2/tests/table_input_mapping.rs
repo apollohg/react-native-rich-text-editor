@@ -15,6 +15,204 @@ fn table_mapping_snapshot(
 }
 
 #[test]
+fn native_table_source_identity_survives_preceding_and_cell_text_edits() {
+    let mut schema =
+        crate::tables::tests::tabled_schema_json(crate::tables::tests::PROSEMIRROR_TABLE_NAMES);
+    schema["nodes"]
+        .as_array_mut()
+        .expect("nodes")
+        .push(serde_json::json!({
+            "name": "card", "content": "", "group": "block", "role": "block", "isVoid": true
+        }));
+    let editor_id = create_editor(serde_json::json!({
+        "schema": schema,
+        "initialization": { "type": "localJson", "json": {
+            "type": "doc", "content": [
+                { "type": "paragraph", "content": [{ "type": "text", "text": "before" }] },
+                { "type": "table", "content": [{ "type": "table_row", "content": [{
+                    "type": "table_cell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "inside" }] }]
+                }] }] },
+                { "type": "card" }
+            ]
+        } },
+    }));
+    let render = || {
+        let result =
+            super::render::editor_v2_render_native(editor_id.clone(), "22".into(), None, None);
+        serde_json::from_str::<serde_json::Value>(result.value.as_deref().expect("native render"))
+            .expect("snapshot JSON")
+    };
+    let full_render = || {
+        let result = super::render::editor_v2_render_update(editor_id.clone(), None, None);
+        serde_json::from_str::<serde_json::Value>(result.value.as_deref().expect("full render"))
+            .expect("full snapshot JSON")
+    };
+    let schema_fingerprint = super::editor::with_editor(&editor_id, |session| {
+        Ok(session.engine.schema_fingerprint().to_owned())
+    })
+    .expect("initial schema fingerprint");
+    let initial_document: serde_json::Value = serde_json::from_str(
+        super::editor::editor_v2_get_document_json(editor_id.clone())
+            .value
+            .as_deref()
+            .expect("initial document"),
+    )
+    .expect("initial document JSON");
+    let first = render();
+    let atom_id = full_render()["renderBlocks"][2][0]["atomId"].clone();
+    assert!(atom_id.as_str().is_some_and(|id| id.starts_with('y')));
+    let (first_key, first_record) = first["tableRecords"]
+        .as_object()
+        .expect("first table records")
+        .iter()
+        .next()
+        .expect("first table");
+    let source_id = first_record["sourceId"].clone();
+    assert!(source_id.as_str().is_some_and(|id| id.starts_with('y')));
+
+    let select = |request_id: &str, revision: &serde_json::Value, scalar: u64| {
+        super::editor::editor_v2_set_selection(
+            editor_id.clone(),
+            serde_json::json!({
+                "version": 1, "requestId": request_id, "baseDocumentRevision": revision,
+                "selection": {
+                    "type": "text",
+                    "anchor": { "offset": scalar, "kind": "scalar", "affinity": "after" },
+                    "head": { "offset": scalar, "kind": "scalar", "affinity": "after" },
+                }
+            })
+            .to_string(),
+        )
+    };
+    let insert = |request_id: &str, revision: &serde_json::Value, text: &str| {
+        super::editor::editor_v2_apply_command(
+            editor_id.clone(),
+            serde_json::json!({
+                "version": 1, "requestId": request_id, "baseDocumentRevision": revision,
+                "command": { "type": "insertText", "text": text }
+            })
+            .to_string(),
+        )
+    };
+    let selected = select("1", &first["documentVersion"], 0);
+    assert!(
+        selected.error.is_none(),
+        "select preceding text: {:?}",
+        selected.error
+    );
+    let inserted = insert("2", &first["documentVersion"], "x");
+    assert!(
+        inserted.error.is_none(),
+        "edit preceding text: {:?}",
+        inserted.error
+    );
+    let after_prefix: serde_json::Value = serde_json::from_str(
+        super::editor::editor_v2_get_document_json(editor_id.clone())
+            .value
+            .as_deref()
+            .expect("document after preceding edit"),
+    )
+    .expect("document JSON");
+    assert_eq!(after_prefix["content"][0]["content"][0]["text"], "xbefore");
+    let second = render();
+    assert!(second["renderPatch"].is_object());
+    assert_ne!(second["documentVersion"], first["documentVersion"]);
+    let (second_key, second_record) = second["tableRecords"]
+        .as_object()
+        .expect("second table records")
+        .iter()
+        .next()
+        .expect("second table");
+    assert_ne!(first_key, second_key);
+    assert_eq!(source_id, second_record["sourceId"]);
+    assert_eq!(full_render()["renderBlocks"][2][0]["atomId"], atom_id);
+
+    let scalar_start = second["tableInputMappings"]["tables"][second_key]["extent"]["scalarStart"]
+        .as_u64()
+        .expect("cell scalar start");
+    let selected = select("3", &second["documentVersion"], scalar_start + 1);
+    assert!(
+        selected.error.is_none(),
+        "select cell text: {:?}",
+        selected.error
+    );
+    let inserted = insert("4", &second["documentVersion"], "z");
+    assert!(
+        inserted.error.is_none(),
+        "edit cell text: {:?}",
+        inserted.error
+    );
+    let after_cell: serde_json::Value = serde_json::from_str(
+        super::editor::editor_v2_get_document_json(editor_id.clone())
+            .value
+            .as_deref()
+            .expect("document after cell edit"),
+    )
+    .expect("document JSON");
+    assert_eq!(
+        after_cell["content"][1]["content"][0]["content"][0]["content"][0]["content"][0]["text"],
+        "iznside",
+        "after cell: {after_cell}"
+    );
+    let third = render();
+    assert!(third["renderPatch"].is_object());
+    assert_ne!(third["documentVersion"], second["documentVersion"]);
+    let third_record = third["tableRecords"][second_key]
+        .as_object()
+        .expect("retained table");
+    assert_eq!(third_record["sourceId"], source_id);
+    assert_eq!(third_record["tablePos"], second_record["tablePos"]);
+    assert_eq!(full_render()["renderBlocks"][2][0]["atomId"], atom_id);
+    assert_eq!(
+        after_cell["content"][1].get("attrs"),
+        initial_document["content"][1].get("attrs")
+    );
+    assert!(!after_cell.to_string().contains("\"sourceId\""));
+    let final_schema_fingerprint = super::editor::with_editor(&editor_id, |session| {
+        Ok(session.engine.schema_fingerprint().to_owned())
+    })
+    .expect("final schema fingerprint");
+    assert_eq!(final_schema_fingerprint, schema_fingerprint);
+    assert_eq!(
+        super::editor::editor_v2_destroy(editor_id).value,
+        Some(true)
+    );
+}
+
+#[test]
+fn native_table_source_identity_follows_custom_schema_role_and_keeps_atom_ids() {
+    let names = ["gridPanel", "gridRow", "gridCell", "gridHeader"];
+    let mut schema = crate::tables::tests::tabled_schema_json(names);
+    schema["nodes"]
+        .as_array_mut()
+        .expect("nodes")
+        .push(serde_json::json!({
+            "name": "card", "content": "", "group": "block", "role": "block", "isVoid": true
+        }));
+    let snapshot = table_mapping_snapshot(
+        serde_json::json!({ "type": "doc", "content": [
+            { "type": "card" },
+            { "type": "gridPanel", "content": [{ "type": "gridRow", "content": [{
+                "type": "gridCell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "cell" }] }]
+            }] }] }
+        ] }),
+        schema,
+    );
+    let atom_id = snapshot["renderBlocks"][0][0]["atomId"]
+        .as_str()
+        .expect("existing atom ID");
+    let table_id = snapshot["renderBlocks"][1][0]["tableId"]
+        .as_str()
+        .expect("custom role table");
+    let source_id = snapshot["tableRecords"][table_id]["sourceId"]
+        .as_str()
+        .expect("custom role source ID");
+    assert!(atom_id.starts_with('y'));
+    assert!(source_id.starts_with('y'));
+    assert_ne!(atom_id, source_id);
+}
+
+#[test]
 fn table_input_mapping_snapshot_associates_middle_table_cell_blocks_with_effective_coordinates() {
     let schema =
         crate::tables::tests::tabled_schema_json(crate::tables::tests::PROSEMIRROR_TABLE_NAMES);
@@ -47,6 +245,9 @@ fn table_input_mapping_snapshot_associates_middle_table_cell_blocks_with_effecti
         snapshot["tableInputMappings"]["tables"]["t8"]["extent"],
         serde_json::json!({ "scalarStart": 7, "scalarEnd": 17 })
     );
+    assert!(snapshot["tableRecords"]["t8"]["sourceId"]
+        .as_str()
+        .is_some_and(|id| id.starts_with('y') && id.contains('-')));
     assert_eq!(
         snapshot["tableInputMappings"]["tables"]["t8"]["cells"][0]["blocks"][0],
         serde_json::json!({
@@ -121,6 +322,12 @@ fn table_input_mapping_excludes_nested_table_blocks_and_maps_the_nested_record()
         .as_object()
         .expect("tables");
     assert_eq!(tables.len(), 2);
+    let records = snapshot["tableRecords"].as_object().expect("table records");
+    let source_ids: std::collections::HashSet<_> = records
+        .values()
+        .map(|record| record["sourceId"].as_str().expect("stable source identity"))
+        .collect();
+    assert_eq!(source_ids.len(), records.len());
     let outer = tables.get("t0").expect("outer table");
     assert!(outer["cells"][0]["blocks"]
         .as_array()
@@ -296,6 +503,10 @@ fn table_input_mapping_is_complete_on_patch_snapshots_after_an_ordered_prefix_ch
         first["tableRecords"][table_id]["cells"][0]["contentKey"],
         second["tableRecords"][table_id]["cells"][0]["contentKey"]
     );
+    assert_ne!(
+        first["tableRecords"][table_id]["sourceId"],
+        second["tableRecords"][table_id]["sourceId"]
+    );
 }
 
 #[test]
@@ -361,7 +572,11 @@ fn table_input_mapping_preserves_extent_without_editable_cells_for_nested_failur
         .unwrap()
         .unwrap();
     let records: serde_json::Value =
-        serde_json::from_str(&super::render::serialize_render_cache_for_test(&cache)).unwrap();
+        serde_json::from_str(&super::render::serialize_render_cache_for_test(
+            &cache,
+            &std::collections::HashMap::from([(0, "y0-0".to_owned())]),
+        ))
+        .unwrap();
     assert_eq!(
         records["tableRecords"]["t0"]["failure"],
         "invalidAttributes"

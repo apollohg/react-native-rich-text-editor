@@ -44,6 +44,7 @@ export interface TableRenderRow {
 
 export interface TableRenderRecord {
     tablePos: number;
+    sourceId: string;
     sourceEnd: number;
     rows: number;
     columns: number;
