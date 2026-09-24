@@ -131,17 +131,55 @@ internal class ViewerTablePresentationOwner {
         private const val ENTRY_RETAINED_BYTES = 48L
     }
 
-    private val logicalOffsets = mutableMapOf<String, Float>()
+    private data class OffsetState(val logical: Float, val columnWidths: List<Float>)
+    private val logicalOffsets = mutableMapOf<String, OffsetState>()
 
     val retainedBytes: Long
         get() = FIXED_RETAINED_BYTES + logicalOffsets.entries.sumOf { entry ->
-            ENTRY_RETAINED_BYTES + entry.key.length.toLong() * 2L
+            ENTRY_RETAINED_BYTES + entry.key.length.toLong() * 2L +
+                entry.value.columnWidths.size * Float.SIZE_BYTES
         }
 
-    fun logicalOffset(surface: ViewerTableSurface): Float = logicalOffsets[surface.identity] ?: 0f
+    fun logicalOffset(surface: ViewerTableSurface): Float =
+        clamp(logicalOffsets[surface.identity]?.logical ?: 0f, surface)
 
     fun setLogicalOffset(offset: Float, surface: ViewerTableSurface) {
-        logicalOffsets[surface.identity] = clamp(offset, surface)
+        val clamped = clamp(offset, surface)
+        if (clamped == 0f) logicalOffsets.remove(surface.identity)
+        else logicalOffsets[surface.identity] = OffsetState(clamped, surface.layout.columnWidths)
+    }
+
+    fun reconcile(surfaces: List<ViewerTableSurface>) {
+        val previous = logicalOffsets.toMap()
+        logicalOffsets.clear()
+        surfaces.distinctBy { it.identity }.forEach { surface ->
+            val state = previous[surface.identity] ?: return@forEach
+            val oldWidths = state.columnWidths
+            var column = 0
+            var oldPrefix = 0f
+            while (column < oldWidths.lastIndex && state.logical >= oldPrefix + oldWidths[column]) {
+                oldPrefix += oldWidths[column]
+                column++
+            }
+            val within = state.logical - oldPrefix
+            val next = surface.layout.columnWidths.take(column).sum() + within
+            setLogicalOffset(next, surface)
+        }
+    }
+
+    fun maximumOffset(surface: ViewerTableSurface): Float =
+        (surface.bounds.width() - surface.hostViewportWidth).takeIf { it.isFinite() }?.coerceAtLeast(0f) ?: 0f
+
+    fun canConsumePhysical(delta: Float, surface: ViewerTableSurface): Boolean {
+        val offset = physicalOffset(surface)
+        return if (delta > 0f) offset < maximumOffset(surface) else delta < 0f && offset > 0f
+    }
+
+    fun scrollPhysical(delta: Float, surface: ViewerTableSurface): Float {
+        val before = physicalOffset(surface)
+        val after = (before + delta).coerceIn(0f, maximumOffset(surface))
+        setLogicalOffset(if (surface.isRightToLeft) maximumOffset(surface) - after else after, surface)
+        return after - before
     }
 
     fun physicalOffset(surface: ViewerTableSurface): Float {
@@ -153,8 +191,6 @@ internal class ViewerTablePresentationOwner {
     private fun clamp(offset: Float, surface: ViewerTableSurface): Float =
         if (!offset.isFinite()) 0f else offset.coerceIn(0f, maximumOffset(surface))
 
-    private fun maximumOffset(surface: ViewerTableSurface): Float =
-        (surface.bounds.width() - surface.hostViewportWidth).takeIf { it.isFinite() }?.coerceAtLeast(0f) ?: 0f
 }
 
 internal sealed interface ViewerTablePresentationViewport {
@@ -185,6 +221,12 @@ internal data class ViewerTablePresentedCell(
     val content: PreparedProseLayout,
     val bounds: RectF,
     val contentBounds: RectF,
+    val clip: RectF
+)
+
+internal data class ViewerTablePresentedSurface(
+    val surface: ViewerTableSurface,
+    val bounds: RectF,
     val clip: RectF
 )
 
@@ -227,6 +269,7 @@ internal data class ViewerTablePresentedAccessibilityNode(
 internal data class ViewerTablePresentationSnapshot(
     val layouts: List<ViewerTablePresentedLayout>,
     val blocks: List<ViewerTablePresentedBlock>,
+    val tables: List<ViewerTablePresentedSurface>,
     val cells: List<ViewerTablePresentedCell>,
     val mountedCells: List<ViewerTablePresentedCell>,
     val images: List<ViewerTablePresentedImage>,
@@ -244,6 +287,7 @@ internal object ViewerTablePresentation {
     ): ViewerTablePresentationSnapshot {
         val layouts = mutableListOf<ViewerTablePresentedLayout>()
         val blocks = mutableListOf<ViewerTablePresentedBlock>()
+        val tables = mutableListOf<ViewerTablePresentedSurface>()
         val cells = mutableListOf<ViewerTablePresentedCell>()
         val images = mutableListOf<ViewerTablePresentedImage>()
         val atoms = mutableListOf<ViewerTablePresentedAtom>()
@@ -341,6 +385,9 @@ internal object ViewerTablePresentation {
                 val hostY = originY + tableBounds.top
                 val hostWidth = minOf(surface.hostViewportWidth, surface.bounds.width())
                 val hostClip = intersect(clip, RectF(hostX, hostY, hostX + hostWidth, hostY + surface.bounds.height()))
+                tables += ViewerTablePresentedSurface(
+                    surface, RectF(hostX, hostY, hostX + hostWidth, hostY + surface.bounds.height()), hostClip
+                )
                 val contentX = hostX - owner.physicalOffset(surface)
                 surface.cells.forEach { cell ->
                     val cellBounds = RectF(
@@ -394,6 +441,6 @@ internal object ViewerTablePresentation {
                 }
             }
         }
-        return ViewerTablePresentationSnapshot(layouts, blocks, cells, mountedCells, images, atoms, interactions, accessibilityNodes)
+        return ViewerTablePresentationSnapshot(layouts, blocks, tables, cells, mountedCells, images, atoms, interactions, accessibilityNodes)
     }
 }

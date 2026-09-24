@@ -88,8 +88,12 @@ internal data class ViewerDocument(
     val trailingEmptyTextBlockCount: Int = 0,
     val tableAttributes: Map<String, JSONObject> = emptyMap(),
     val tableRecords: Map<String, FfiViewerTable> = emptyMap(),
-    val preferredTextBlockName: String = "paragraph"
-)
+    val preferredTextBlockName: String = "paragraph",
+    val tablePresentationIdentities: Map<String, String> = emptyMap()
+) {
+    fun tablePresentationIdentity(table: FfiViewerTable): String =
+        tablePresentationIdentities["t${table.tablePos}"] ?: "t${table.tablePos}"
+}
 
 internal data class ProseViewerRequest(
     val source: ProseViewerSource,

@@ -30,6 +30,8 @@ import org.robolectric.annotation.Config
 internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSupport() {
     private val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
     private val document = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"First"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Second"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+    private val wideDocument = document.replace("\"type\":\"table_cell\",\"content\"",
+        "\"type\":\"table_cell\",\"attrs\":{\"colwidth\":[600]},\"content\"")
 
     private fun twoRowDocument(): String = JSONObject(document).also { doc ->
         doc.getJSONArray("content").getJSONObject(0).getJSONArray("content").put(JSONObject(
@@ -170,6 +172,29 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             adapter.destroy()
         }
     }
+
+    @Test
+    fun `reset snapshot with reused table source identity clears mounted scroll`() =
+        withActiveCell(initialDocument = wideDocument) { view, _, adapter ->
+            val canvas = (0 until view.richTextView.editorContentFrame.childCount)
+                .map { view.richTextView.editorContentFrame.getChildAt(it) }
+                .filterIsInstance<PreparedProseDrawingView>().single()
+            val initial = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
+            val sourceId = adapter.cachedTableRecords.values.single().getString("sourceId")
+            canvas.setTableLogicalOffset(initial.identity, 150f)
+            assertEquals(150f, canvas.tablePhysicalOffsetForTesting(initial.identity), 0.01f)
+
+            val snapshot = requireNotNull(adapter.refreshFromRustState(null))
+            assertEquals(PendingEditorUpdateApplyOutcome.APPLIED,
+                view.applyEditorResetUpdateOutcome(snapshot))
+            view.richTextView.measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(500, View.MeasureSpec.EXACTLY))
+            view.richTextView.layout(0, 0, 600, 500)
+
+            val replacement = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
+            assertEquals(sourceId, adapter.cachedTableRecords.values.single().getString("sourceId"))
+            assertEquals(0f, canvas.tablePhysicalOffsetForTesting(replacement.identity), 0.01f)
+        }
 
     @Test
     fun `public focus keeps the active cell as input target`() = withActiveCell { view, input, _ ->

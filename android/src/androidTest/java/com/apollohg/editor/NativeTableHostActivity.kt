@@ -9,6 +9,7 @@ import android.widget.TextView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import org.json.JSONObject
+import org.json.JSONArray
 
 class NativeTableHostActivity : Activity() {
     internal lateinit var richTextView: RichTextEditorView
@@ -32,7 +33,11 @@ class NativeTableHostActivity : Activity() {
         }
         val id = JSONObject(created).getString("editorId")
         adapter = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend, id, roomBound = false))
-        requireNotNull(adapter.setContentJson(DOCUMENT))
+        requireNotNull(adapter.setContentJson(
+            if (intent.getBooleanExtra(EXTRA_OVERFLOW, false)) {
+                overflowingDocument(intent.getBooleanExtra(EXTRA_RTL, false))
+            } else DOCUMENT
+        ))
         documentBeforeMount = requireNotNull(adapter.documentJson())
         historyBeforeMount = adapter.historyCanUndo() to adapter.historyCanRedo()
         revisionBeforeMount = adapter.baseDocumentRevision
@@ -84,9 +89,55 @@ class NativeTableHostActivity : Activity() {
 
     companion object {
         const val EXTRA_DARK = "dark"
+        const val EXTRA_OVERFLOW = "overflow"
+        const val EXTRA_RTL = "rtl"
+        private const val SCROLL_EXTRA_COLUMNS = 16
+        private const val SCROLL_COLUMN_WIDTH = 140
+        private const val SCROLL_FOLLOWING_PARAGRAPHS = 80
 
-        private const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
+        internal const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"dir":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
 
         private const val DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before table."}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Project"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]},{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Ready"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Beta"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After table."}]}]}"""
+
+        internal fun overflowingDocument(rtl: Boolean = false): String {
+            val document = JSONObject(DOCUMENT)
+            val blocks = document.getJSONArray("content")
+            val table = blocks.getJSONObject(1)
+            if (rtl) table.put("attrs", JSONObject().put("dir", "rtl"))
+            val rows = table.getJSONArray("content")
+            for (rowIndex in 0 until rows.length()) {
+                val cells = rows.getJSONObject(rowIndex).getJSONArray("content")
+                for (column in 0 until SCROLL_EXTRA_COLUMNS) {
+                    cells.put(wideCell("Wide $rowIndex:$column"))
+                }
+            }
+            val following = blocks.getJSONObject(2)
+            repeat(SCROLL_FOLLOWING_PARAGRAPHS) { blocks.put(JSONObject(following.toString())) }
+            return document.toString()
+        }
+
+        internal fun nestedOverflowingDocument(): String {
+            val document = JSONObject(overflowingDocument())
+            val outerCell = document.getJSONArray("content").getJSONObject(1)
+                .getJSONArray("content").getJSONObject(1)
+                .getJSONArray("content").getJSONObject(0)
+            val nestedCells = JSONArray()
+            repeat(SCROLL_EXTRA_COLUMNS) { nestedCells.put(wideCell("Nested $it")) }
+            val nestedRow = JSONObject().put("type", "table_row")
+                .put("content", nestedCells)
+            outerCell.getJSONArray("content").put(JSONObject().put("type", "table")
+                .put("content", JSONArray().put(nestedRow)))
+            return document.toString()
+        }
+
+        private fun wideCell(value: String): JSONObject {
+            val text = JSONObject().put("type", "text").put("text", value)
+            val paragraph = JSONObject().put("type", "paragraph")
+                .put("content", JSONArray().put(text))
+            return JSONObject().put("type", "table_cell")
+                .put("attrs", JSONObject().put("colwidth",
+                    JSONArray().put(SCROLL_COLUMN_WIDTH)))
+                .put("content", JSONArray().put(paragraph))
+        }
     }
 }

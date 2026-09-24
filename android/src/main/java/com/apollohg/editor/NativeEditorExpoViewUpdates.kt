@@ -60,6 +60,7 @@ internal fun NativeEditorExpoView.applyEditorResetUpdateOutcome(
             )
             ?: return PendingEditorUpdateApplyOutcome.PERMANENTLY_REJECTED
     }
+    if (adapter != null && resetJson == null) adapter.markTablePresentationReset()
     drainPendingEditorUpdateEvents()
     isApplyingJSUpdate = true
     val applied = try {

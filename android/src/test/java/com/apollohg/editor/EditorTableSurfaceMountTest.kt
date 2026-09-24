@@ -1,11 +1,13 @@
 package com.apollohg.editor
 
+import android.app.Activity
 import android.text.Annotation
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.graphics.Color
 import android.view.View
 import android.view.MotionEvent
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import com.apollohg.editor.tables.RootTableHeightSpan
@@ -21,6 +23,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Robolectric
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -30,6 +33,9 @@ internal class EditorTableSurfaceMountTest {
     private val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
     private val tableDocument = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Cell text"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
     private val nestedTableDocument = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Nested"}]}]}]}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+    private val wideTableDocument = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Left"}]}]},{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Right"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+    private val wideTableWithBefore = wideTableDocument.replace("[{\"type\":\"table\"",
+        "[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"before\"}]},{\"type\":\"table\"")
 
     private fun measure(view: RichTextEditorView, width: Int) {
         view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
@@ -61,6 +67,20 @@ internal class EditorTableSurfaceMountTest {
         } finally {
             EditorV2Registry.remove(adapter.editorId)
             adapter.destroy()
+        }
+    }
+
+    private fun withAttachedMountedView(
+        document: String,
+        block: (RichTextEditorView, EditorV2Adapter) -> Unit
+    ) = withMountedView(document) { view, adapter, _ ->
+        val activityController = Robolectric.buildActivity(Activity::class.java).setup()
+        try {
+            activityController.get().setContentView(view)
+            measure(view, 600)
+            block(view, adapter)
+        } finally {
+            activityController.pause().stop().destroy()
         }
     }
 
@@ -112,6 +132,178 @@ internal class EditorTableSurfaceMountTest {
             up.recycle()
         }
     }
+
+    @Test
+    fun `editor host routes horizontal drag over active cell input without changing document`() =
+        withAttachedMountedView(wideTableDocument) { view, adapter ->
+            tapFirstCell(view)
+            measure(view, 600)
+            val input = view.activeTextInput
+            assertTrue(input !== view.editorEditText)
+            input.setSelection(input.text.length)
+            val composition = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(composition.setComposingText("pending", 1))
+            val canvas = requireNotNull(drawing(view))
+            val surface = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
+            val before = adapter.documentJson()
+            val beforeRevision = adapter.baseDocumentRevision
+            val beforeHistory = adapter.historyCanUndo() to adapter.historyCanRedo()
+            val initialLeft = (input.layoutParams as android.widget.FrameLayout.LayoutParams).leftMargin
+            val y = input.top + input.height / 2f
+            val downX = input.left + minOf(input.width - 20f, 300f)
+            assertTrue("input=${input.left},${input.top} ${input.width}x${input.height} canvas=${canvas.width}x${canvas.height} down=$downX,$y",
+                canvas.hasTableAt(downX, y))
+            assertTrue(canvas.canConsumeTableDragAt(downX, y, -120f))
+            val events = listOf(
+                MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, downX, y, 0),
+                MotionEvent.obtain(0, 16, MotionEvent.ACTION_MOVE, downX - 120f, y, 0),
+                MotionEvent.obtain(0, 32, MotionEvent.ACTION_UP, downX - 120f, y, 0)
+            )
+            try {
+                events.forEach(view::dispatchTouchEvent)
+            } finally {
+                events.forEach(MotionEvent::recycle)
+            }
+            assertTrue("table should scroll through active input", canvas.tablePhysicalOffsetForTesting(surface.identity) > 0f)
+            val shiftedLeft = (input.layoutParams as android.widget.FrameLayout.LayoutParams).leftMargin
+            assertTrue("active input should follow presented cell", shiftedLeft < initialLeft)
+            measure(view, 600)
+            assertEquals(shiftedLeft, input.left)
+            assertTrue(input === view.activeTextInput)
+            assertEquals(before, adapter.documentJson())
+            assertEquals(beforeRevision, adapter.baseDocumentRevision)
+            assertEquals(beforeHistory, adapter.historyCanUndo() to adapter.historyCanRedo())
+            assertEquals("Leftpending", input.text.toString())
+            assertTrue(composition.finishComposingText())
+            assertEquals("Leftpending", cellText(adapter, 0))
+            input.setSelection(input.text.length)
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.commitText("X", 1))
+            assertEquals("LeftpendingX", cellText(adapter, 0))
+            assertTrue(input === view.activeTextInput)
+        }
+
+    @Test
+    fun `editor host routes active cell drag with a nonzero touch pointer id`() =
+        withAttachedMountedView(wideTableDocument) { view, adapter ->
+            tapFirstCell(view)
+            measure(view, 600)
+            val input = view.activeTextInput
+            assertTrue(input !== view.editorEditText)
+            val canvas = requireNotNull(drawing(view))
+            val surface = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
+            val before = adapter.documentJson()
+            val pointerId = 7
+            val touchDeviceId = 31
+            val y = input.top + input.height / 2f
+            val downX = input.left + minOf(input.width - 20f, 300f)
+            assertTrue(canvas.hasTableAt(downX, y))
+            assertTrue(canvas.canConsumeTableDragAt(downX, y, -120f))
+
+            fun touch(action: Int, eventTime: Long, x: Float): MotionEvent {
+                val properties = arrayOf(MotionEvent.PointerProperties().apply {
+                    id = pointerId
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                })
+                val coordinates = arrayOf(MotionEvent.PointerCoords().apply {
+                    this.x = x
+                    this.y = y
+                    pressure = 1f
+                    size = 1f
+                })
+                return MotionEvent.obtain(0, eventTime, action, 1, properties, coordinates,
+                    0, 0, 1f, 1f, touchDeviceId, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
+            }
+
+            val events = listOf(
+                touch(MotionEvent.ACTION_DOWN, 0, downX),
+                touch(MotionEvent.ACTION_MOVE, 16, downX - 120f),
+                touch(MotionEvent.ACTION_UP, 32, downX - 120f)
+            )
+            try {
+                events.forEach { event ->
+                    assertEquals(pointerId, event.getPointerId(0))
+                    assertEquals(touchDeviceId, event.deviceId)
+                    view.dispatchTouchEvent(event)
+                }
+            } finally {
+                events.forEach(MotionEvent::recycle)
+            }
+            assertTrue("nonzero pointer drag should scroll active table",
+                canvas.tablePhysicalOffsetForTesting(surface.identity) > 0f)
+            assertEquals(before, adapter.documentJson())
+            assertTrue(input === view.activeTextInput)
+        }
+
+    @Test
+    fun `native text selection retains gesture ownership after its range collapses`() =
+        withAttachedMountedView(wideTableDocument) { view, adapter ->
+            tapFirstCell(view)
+            measure(view, 600)
+            val input = view.activeTextInput
+            val canvas = requireNotNull(drawing(view))
+            val surface = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
+            val before = adapter.documentJson()
+            input.setSelection(0, input.text.length)
+            val x = input.left + minOf(input.width - 20f, 300f)
+            val y = input.top + input.height / 2f
+            val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+            val selectedMove = MotionEvent.obtain(0, 16, MotionEvent.ACTION_MOVE, x - 40f, y, 0)
+            val collapsedMove = MotionEvent.obtain(0, 32, MotionEvent.ACTION_MOVE, x - 140f, y, 0)
+            val up = MotionEvent.obtain(0, 48, MotionEvent.ACTION_UP, x - 140f, y, 0)
+            try {
+                assertTrue(view.dispatchTouchEvent(down))
+                assertTrue(view.dispatchTouchEvent(selectedMove))
+                input.setSelection(input.text.length)
+                assertTrue(view.dispatchTouchEvent(collapsedMove))
+                view.dispatchTouchEvent(up)
+            } finally {
+                listOf(down, selectedMove, collapsedMove, up).forEach(MotionEvent::recycle)
+            }
+            assertEquals(0f, canvas.tablePhysicalOffsetForTesting(surface.identity), 0.01f)
+            assertEquals(before, adapter.documentJson())
+        }
+
+    @Test
+    fun `typing before table preserves mounted offset by source identity after positional shift`() =
+        withMountedView(wideTableWithBefore) { view, adapter, _ ->
+            val canvas = requireNotNull(drawing(view))
+            val beforeSurface = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
+            val beforeId = requireNotNull(adapter.cachedTableRecords.values.single().optString("sourceId"))
+            val beforeEpoch = adapter.positionEpoch
+            canvas.setTableLogicalOffset(beforeSurface.identity, 180f)
+            val oldPosition = requireNotNull(adapter.cachedTableRecords.keys.singleOrNull())
+
+            val root = view.editorEditText
+            root.setSelection(root.text.toString().indexOf("before") + "before".length)
+            val connection = requireNotNull(root.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.commitText(" extended", 1))
+            measure(view, 600)
+
+            val nextSurface = requireNotNull(drawing(view)?.preparedLayout?.blocks?.single()?.tableSurface)
+            assertNotEquals(oldPosition, adapter.cachedTableRecords.keys.single())
+            assertEquals(beforeId, adapter.cachedTableRecords.values.single().getString("sourceId"))
+            assertEquals("source=$beforeId epochs=$beforeEpoch/${adapter.positionEpoch}",
+                beforeSurface.identity, nextSurface.identity)
+            assertEquals(180f, canvas.tablePhysicalOffsetForTesting(nextSurface.identity), 0.01f)
+        }
+
+    @Test
+    fun `resetting document with a new table at the same position clears mounted offset`() =
+        withMountedView(wideTableDocument) { view, adapter, _ ->
+            val canvas = requireNotNull(drawing(view))
+            val beforeSurface = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
+            canvas.setTableLogicalOffset(beforeSurface.identity, 180f)
+            val beforeSourceId = adapter.cachedTableRecords.values.single().getString("sourceId")
+            val beforeEpoch = adapter.positionEpoch
+            val replacement = wideTableDocument.replace("Left", "Replacement")
+            assertTrue(view.editorEditText.applyUpdateJSON(externalReplacement(adapter, replacement)))
+            measure(view, 600)
+
+            val nextSurface = requireNotNull(drawing(view)?.preparedLayout?.blocks?.single()?.tableSurface)
+            assertEquals("old=$beforeSourceId/$beforeEpoch next=${adapter.cachedTableRecords.values.single().getString("sourceId")}/${adapter.positionEpoch}",
+                0f, canvas.tablePhysicalOffsetForTesting(nextSurface.identity), 0.01f)
+        }
 
     @Test
     fun `tap mounts one editable cell and its input connection types through the document`() = withMountedView { view, adapter, _ ->

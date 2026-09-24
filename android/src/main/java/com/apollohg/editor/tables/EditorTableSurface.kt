@@ -62,6 +62,9 @@ internal class RootTableHeightSpan(val heightPx: Int) : ReplacementSpan() {
 internal class EditorTableSurface(private val host: RichTextEditorView) {
     private data class Entry(val surface: ViewerTableSurface, val localBounds: Rect,
                              val occupiedHeight: Int)
+    private data class PreparationKey(val adapter: EditorV2Adapter, val revision: ULong,
+                                      val width: Int, val appearanceRevision: Long,
+                                      val documentGeneration: Long)
 
     val drawingView = PreparedProseDrawingView(host.context).apply {
         isFocusable = false
@@ -69,19 +72,38 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         mentionInteractionsEnabled = false
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
-        setOnTouchListener { _, event -> handleTableTouch(event) }
+        onTableGeometryChanged = { positionActiveInput() }
+        onTableTap = { downX, downY, upX, upY ->
+            val target = hitCell(downX, downY)
+            target != null && target == hitCell(upX, upY) &&
+                activateCell(target.first, target.second, upX, upY)
+        }
     }
     private data class ActiveCell(val tableId: String, val cellIndex: Int, val sourcePos: Long)
     private var activeCell: ActiveCell? = null
     private var applyingCellUpdate = false
     private var activeAppearanceRevision: Long? = null
     private var blockedRootGesture = false
-    private var touchTarget: Pair<String, Int>? = null
     private var coordinator: EditorTableInputCoordinator? = null
     val activeInput: EditorEditText? get() = coordinator?.cellInput?.takeIf { activeCell != null }
+    fun nativeTextSelectionActive(): Boolean = activeInput?.let {
+        it.selectionStart != it.selectionEnd
+    } == true
     private var entries: Map<String, Entry> = emptyMap()
-    private var key: Triple<EditorV2Adapter, ULong, Pair<Int, Long>>? = null
+    private var key: PreparationKey? = null
     private var positionedBlocks: List<PreparedProseBlock> = emptyList()
+    private val hostGestureAxis = TableGestureAxisLock(host.context)
+
+    fun beginHostGesture() = hostGestureAxis.reset()
+
+    fun hasTableAt(x: Float, y: Float): Boolean = drawingView.hasTableAt(
+        x - drawingView.left, y - drawingView.top
+    )
+
+    fun hostGestureAxis(x: Float, y: Float, dx: Float, dy: Float): TableGestureAxis =
+        hostGestureAxis.update(dx, dy) {
+            drawingView.canConsumeTableDragAt(x - drawingView.left, y - drawingView.top, dx)
+        }
 
     fun clear() {
         invalidateCell()
@@ -139,7 +161,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             invalidateCell()
             input.requestFocus()
         }
-        val nextKey = Triple(adapter, revision, width to input.renderAppearanceRevision)
+        val nextKey = PreparationKey(adapter, revision, width, input.renderAppearanceRevision,
+            adapter.tablePresentationDocumentGeneration)
         if (key != nextKey) {
             val records = lowerEditorTableRecords(adapter.cachedTableRecords) ?: run { clear(); return }
             val density = input.resources.displayMetrics.density
@@ -151,13 +174,16 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
                 semanticGeneration = "editor-table", editorTheme = theme)
                 .copy(insetTopPx = 0, insetRightPx = 0, insetBottomPx = 0, insetLeftPx = 0)
             val engine = StaticLayoutAndroidProseLayoutEngine()
+            val presentationIdentities = adapter.cachedTableRecords.mapValues { (_, record) ->
+                "${adapter.editorId}:${adapter.tablePresentationDocumentGeneration}:${record.getString("sourceId")}"
+            }
             val prepared = markers.mapNotNull { (id, _) ->
                 val table = records[id] ?: return@mapNotNull null
                 val semantic = "editor-table-$id-$revision"
                 val document = ViewerDocument(semantic,
                     listOf(ViewerBlock("table", 0, false, null, null, emptyList(), table = table)),
                     false, 256, tableAttributes = adapter.cachedTableAttributes,
-                    tableRecords = records)
+                    tableRecords = records, tablePresentationIdentities = presentationIdentities)
                 val layoutKey = ProseLayoutKey(semantic, width, "editor-table-${input.renderAppearanceRevision}",
                     0, 0, density.toBits().toLong(), revision.toLong(), semantic)
                 val result = engine.prepare(document, layoutKey, preparedTheme, width, density, false)
@@ -251,39 +277,13 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         return !blockedRootGesture
     }
 
-    private fun handleTableTouch(event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                touchTarget = hitCell(event.x, event.y)
-                return touchTarget != null
-            }
-            MotionEvent.ACTION_CANCEL -> touchTarget = null
-            MotionEvent.ACTION_UP -> {
-                val target = touchTarget
-                touchTarget = null
-                if (target != null && target == hitCell(event.x, event.y)) {
-                    return activateCell(target.first, target.second, event.x, event.y)
-                }
-            }
-        }
-        return false
-    }
-
     private fun hitCell(x: Float, y: Float): Pair<String, Int>? {
-        val blocks = drawingView.preparedLayout?.blocks.orEmpty()
-        for (block in blocks) {
-            val table = block.tableSurface ?: continue
-            val bounds = block.tableBounds ?: continue
-            val tableId = entries.entries.firstOrNull { it.value.surface === table }?.key ?: continue
-            for (cell in table.cells) {
-                val index = cell.sourceCellIndex ?: continue
-                if (x >= bounds.left + cell.frame.left && x < bounds.left + cell.frame.left + cell.frame.width &&
-                    y >= bounds.top + cell.frame.top && y < bounds.top + cell.frame.top + cell.frame.height) {
-                    return tableId to index
-                }
-            }
-        }
-        return null
+        val presented = drawingView.presentedTableCells().asReversed().firstOrNull {
+            it.bounds.contains(x, y) && it.clip.contains(x, y)
+        } ?: return null
+        val tableId = entries.entries.firstOrNull { it.value.surface === presented.surface }?.key
+            ?: return null
+        return tableId to (presented.cell.sourceCellIndex ?: return null)
     }
 
     private fun projection(tableId: String, cellIndex: Int): EditorTableCellProjection.Projection? {
@@ -636,31 +636,34 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
 
     private fun positionActiveInput() {
         val active = activeCell ?: return
-        val block = drawingView.preparedLayout?.blocks?.firstOrNull {
-            it.tableSurface === entries[active.tableId]?.surface
+        val presented = drawingView.presentedTableCells().firstOrNull {
+            it.surface === entries[active.tableId]?.surface &&
+                (it.cell.sourceCellIndex == active.cellIndex || it.sourcePosition.toLong() == active.sourcePos)
         } ?: return
-        val cell = block.tableSurface?.cells?.firstOrNull {
-            it.sourceCellIndex == active.cellIndex || it.sourcePosition.toLong() == active.sourcePos
-        } ?: return
+        val cell = presented.cell
         if (cell.sourcePosition.toLong() != active.sourcePos) { invalidateCell(); return }
-        val bounds = block.tableBounds ?: return
         val input = coordinator?.cellInput ?: return
         val inset = cell.contentOrigin
         val width = (cell.frame.width - 2f * inset.first).toInt().coerceAtLeast(1)
         val height = (cell.frame.height - 2f * inset.second).toInt().coerceAtLeast(1)
         val params = FrameLayout.LayoutParams(width, height).apply {
-            leftMargin = (bounds.left + cell.frame.left + inset.first).toInt()
-            topMargin = (bounds.top + cell.frame.top + inset.second).toInt()
+            leftMargin = presented.contentBounds.left.toInt()
+            topMargin = presented.contentBounds.top.toInt()
         }
         val current = input.layoutParams as? FrameLayout.LayoutParams
         if (current == null || current.width != params.width || current.height != params.height ||
             current.leftMargin != params.leftMargin || current.topMargin != params.topMargin) {
             input.layoutParams = params
         }
+        input.clipBounds = Rect(
+            (presented.clip.left - params.leftMargin).toInt().coerceAtLeast(0),
+            (presented.clip.top - params.topMargin).toInt().coerceAtLeast(0),
+            (presented.clip.right - params.leftMargin).toInt().coerceAtMost(width),
+            (presented.clip.bottom - params.topMargin).toInt().coerceAtMost(height)
+        )
     }
 
     fun invalidateCell() {
-        touchTarget = null
         activeCell = null
         activeAppearanceRevision = null
         coordinator?.invalidateBinding()

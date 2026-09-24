@@ -1,7 +1,6 @@
 package com.apollohg.editor
 
 import android.content.Intent
-import android.graphics.Bitmap
 import android.os.SystemClock
 import android.text.Spanned
 import android.view.View
@@ -14,8 +13,6 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.filters.SdkSuppress
-import com.apollohg.editor.viewer.PreparedProseDrawingView
-import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
@@ -48,7 +45,7 @@ class NativeTableHostTest {
         ActivityScenario.launch<NativeTableHostActivity>(intent).use { scenario ->
             awaitTableLayout(scenario, "native-table-cell-timeout.png")
             tapCell(scenario, 2)
-            saveDeviceScreenshot("native-table-cell-tapped.png")
+            instrumentation.saveDeviceScreenshot("native-table-cell-tapped.png")
             lateinit var cellInput: EditorEditText
             lateinit var firstConnection: InputConnection
             scenario.onActivity { activity ->
@@ -85,7 +82,7 @@ class NativeTableHostTest {
                 assertSame(cellInput, activity.currentFocus)
             }
             awaitCommittedFrame(scenario)
-            saveDeviceScreenshot("native-table-cell-editing.png")
+            instrumentation.saveDeviceScreenshot("native-table-cell-editing.png")
             tapCell(scenario, 3)
             lateinit var secondConnection: InputConnection
             var reflowWidth = 0
@@ -118,7 +115,7 @@ class NativeTableHostTest {
                 assertEquals("AlphaX", cellText(activity, 1, 0))
             }
             awaitCommittedFrame(scenario)
-            saveDeviceScreenshot("native-table-cell-composed.png")
+            instrumentation.saveDeviceScreenshot("native-table-cell-composed.png")
             tapFollowingProse(scenario)
             scenario.onActivity { activity ->
                 assertSame(activity.richTextView.editorEditText, activity.currentFocus)
@@ -219,7 +216,7 @@ class NativeTableHostTest {
                 assertTableLayout(activity)
                 before = widths(activity.richTextView)
             }
-            saveDeviceScreenshot(screenshotName)
+            instrumentation.saveDeviceScreenshot(screenshotName)
             if (reflow) {
                 var targetWidth = 0
                 scenario.onActivity { activity ->
@@ -294,7 +291,7 @@ class NativeTableHostTest {
             if (ready) return
             SystemClock.sleep(16L)
         } while (SystemClock.uptimeMillis() < deadline)
-        val screenshot = runCatching { saveDeviceScreenshot(timeoutScreenshotName) }
+        val screenshot = runCatching { instrumentation.saveDeviceScreenshot(timeoutScreenshotName) }
             .fold(onSuccess = { it.absolutePath }, onFailure = { "failed: $it" })
         error("Native table host did not finish layout: $lastReadinessState; screenshot=$screenshot")
     }
@@ -363,11 +360,6 @@ class NativeTableHostTest {
         assertEquals(activity.revisionBeforeMount, activity.adapter.baseDocumentRevision)
     }
 
-    private fun tableHosts(editor: RichTextEditorView): List<PreparedProseDrawingView> =
-        (0 until editor.editorContentFrame.childCount)
-            .map(editor.editorContentFrame::getChildAt)
-            .filterIsInstance<PreparedProseDrawingView>()
-
     private fun widths(editor: RichTextEditorView): Widths {
         val host = tableHosts(editor).single()
         return Widths(editor.width, host.width, requireNotNull(host.preparedLayout).widthPx)
@@ -379,16 +371,4 @@ class NativeTableHostTest {
         return self + (0 until children.childCount).sumOf { countEditorInputs(children.getChildAt(it)) }
     }
 
-    private fun saveDeviceScreenshot(filename: String): File {
-        instrumentation.waitForIdleSync()
-        val directory = requireNotNull(instrumentation.targetContext.getExternalFilesDir(null))
-        val file = File(directory, filename)
-        val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
-        try {
-            file.outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
-        } finally {
-            bitmap.recycle()
-        }
-        return file
-    }
 }

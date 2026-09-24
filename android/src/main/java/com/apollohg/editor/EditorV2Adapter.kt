@@ -62,6 +62,9 @@ internal class EditorV2Adapter private constructor(
     internal var cachedSemanticRenderBlocks: List<List<Any?>>? = null
     internal var cachedTableAttributes: Map<String, JSONObject> = emptyMap()
     internal var cachedTableRecords: Map<String, JSONObject> = emptyMap()
+    internal var tablePresentationDocumentGeneration: Long = 0
+        private set
+    private var lastTablePresentationResetRevision: ULong? = null
     internal var cachedTableInputMappings: TableInputMappings? = null
     internal var cachedAtomicRenderDocumentRevision: ULong? = null
     internal var renderUpdateCallCountForTesting = 0
@@ -314,11 +317,14 @@ internal class EditorV2Adapter private constructor(
     @Synchronized
     internal fun adoptExternalReset(renderJson: String, resetJson: String): String? {
         val reset = parseExternalReset(resetJson) ?: return null
+        val resetRevision = reset.getString("documentRevision").toULong()
         val current = refreshFromRustState(null) ?: return null
         if (parseAtomicRenderSnapshot(current)?.documentRevision ==
-            reset.getString("documentRevision").toULong()
+            resetRevision
         ) {
-            return adoptExternalRender(renderJson)
+            return adoptExternalRender(renderJson)?.also {
+                markTablePresentationReset(resetRevision)
+            }
         }
         if (latestJSDrivenDocumentRevision >
             reset.getString("documentRevision").toULong()
@@ -370,6 +376,7 @@ internal class EditorV2Adapter private constructor(
                     return null
                 }
                 val update = refreshFromRustState(null) ?: return null
+                markTablePresentationReset(commit.getString("documentRevision").toULong())
                 if (commit.getBoolean("changed")) {
                     publishCachedCollaborationSelection()
                     notifyCollaborationMutation()
@@ -377,6 +384,12 @@ internal class EditorV2Adapter private constructor(
                 update
             }
         }
+    }
+
+    internal fun markTablePresentationReset(revision: ULong? = null) {
+        if (revision != null && lastTablePresentationResetRevision == revision) return
+        lastTablePresentationResetRevision = revision
+        tablePresentationDocumentGeneration++
     }
 
     internal fun adoptExternalRender(renderJson: String): String? {
@@ -943,7 +956,7 @@ internal class EditorV2Adapter private constructor(
             ) { requestJson ->
                 backend.applyLocalApi(editorId, requestJson)
             }
-        }
+        }?.also { markTablePresentationReset() }
 
     override fun setContentJson(json: String): String? {
         val document = try {
@@ -961,6 +974,6 @@ internal class EditorV2Adapter private constructor(
             ) { requestJson ->
                 backend.applyLocalApi(editorId, requestJson)
             }
-        }
+        }?.also { markTablePresentationReset() }
     }
 }

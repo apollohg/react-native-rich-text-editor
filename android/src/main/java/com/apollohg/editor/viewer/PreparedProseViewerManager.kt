@@ -933,7 +933,8 @@ internal class FabricReplacementAccessibilityTransaction {
 
     fun clearReplacing(view: PreparedProseDrawingView) {
         if (view.preparedLayout == null) return
-        view.install(null, announceAccessibilitySubtree = false)
+        view.install(null, announceAccessibilitySubtree = false,
+            preserveTablePresentationForReplacement = true)
         notificationOwner = NotificationOwner.FINAL_INSTALL
     }
 
@@ -966,6 +967,7 @@ internal class FabricReplacementAccessibilityTransaction {
     }
 
     fun finishWithoutMountedReplacement(view: PreparedProseDrawingView) {
+        view.discardPendingTableReplacement()
         if (notificationOwner != NotificationOwner.FINAL_INSTALL) return
         view.announceAccessibilitySubtreeChanged()
         notificationOwner = NotificationOwner.REMOVED_SUBTREE

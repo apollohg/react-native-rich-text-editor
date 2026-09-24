@@ -17,12 +17,16 @@ import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeProvider
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
+import androidx.core.view.NestedScrollingChild3
+import androidx.core.view.NestedScrollingChildHelper
+import androidx.core.view.ViewCompat
 import com.apollohg.editor.AndroidApiCompat
 import com.apollohg.editor.DecodedBitmapBudget
 import com.apollohg.editor.DecodedBitmapLease
 import com.apollohg.editor.tables.ViewerTablePresentation
 import com.apollohg.editor.tables.ViewerTablePresentationOwner
 import com.apollohg.editor.tables.ViewerTablePresentationViewport
+import com.apollohg.editor.tables.TableInteractionController
 import com.apollohg.editor.tables.ViewerTablePresentedAccessibilityNode
 import com.apollohg.editor.tables.ViewerTablePresentedBlock
 import com.apollohg.editor.tables.ViewerTablePresentedCell
@@ -36,7 +40,7 @@ import org.json.JSONObject
 internal class PreparedProseDrawingView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
-) : View(context, attrs) {
+) : View(context, attrs), NestedScrollingChild3 {
     private val accessibilityManager = context.getSystemService(AccessibilityManager::class.java)
     var preparedLayout: PreparedProseLayout? = null
         private set
@@ -47,6 +51,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     var onVisibleImagesChanged: ((Rect, List<ViewerImageAttachment>) -> Unit)? = null
     var onFontConfigurationChanged: ((Configuration) -> Unit)? = null
     var onInteractionActivated: ((PreparedProseInteraction) -> Boolean)? = null
+    internal var onTableTap: ((Float, Float, Float, Float) -> Boolean)? = null
     /** Geometry-only notification for the later atom/event transport phase. */
     var onTableGeometryChanged: (() -> Unit)? = null
     internal var onMountedTableCellsDrawnForTesting: ((Int) -> Unit)? = null
@@ -65,6 +70,21 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             invalidate()
         }
     private var tablePresentationOwner = ViewerTablePresentationOwner()
+    private var replacementTablePresentationOwner: ViewerTablePresentationOwner? = null
+    private var replacementTableSemanticOwner: String? = null
+    private val nestedScrolling = NestedScrollingChildHelper(this)
+    private val tableInteraction = TableInteractionController(
+        context, this, { tablePresentationOwner }, { presentationSnapshot() },
+        { tableOffsetChanged() },
+        { startNestedScroll(ViewCompat.SCROLL_AXIS_HORIZONTAL, it) },
+        { stopNestedScroll(it) },
+        { dx, consumed, offset, type -> dispatchNestedPreScroll(dx, 0, consumed, offset, type) },
+        { consumedX, remainingX, consumed, offset, type ->
+            dispatchNestedScroll(consumedX, 0, remainingX, 0, offset, type, consumed)
+        },
+        { dispatchNestedPreFling(it, 0f) },
+        { velocity, consumed -> dispatchNestedFling(velocity, 0f, consumed) }
+    )
     private val imagePixelsLock = Any()
     private val imagePixels = mutableMapOf<String, DecodedBitmapLease>()
 
@@ -92,6 +112,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     private var pendingTap: PendingTap? = null
+    private var pendingTableTap: Pair<Float, Float>? = null
     private var focusedVirtualNode: FocusedVirtualNode? = null
     private var contentOriginXPx = 0
     private var contentOriginYPx = 0
@@ -102,6 +123,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     init {
         DecodedBitmapBudget.shared(context)
+        isNestedScrollingEnabled = true
     }
 
     internal companion object {
@@ -179,7 +201,8 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         layout: PreparedProseLayout?,
         announceAccessibilitySubtree: Boolean = true,
         contentOriginXPx: Int = 0,
-        contentOriginYPx: Int = 0
+        contentOriginYPx: Int = 0,
+        preserveTablePresentationForReplacement: Boolean = false
     ) {
         if (
             preparedLayout === layout &&
@@ -189,14 +212,44 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             return
         }
         clearVirtualAccessibilityFocus()
-        if (preparedLayout !== layout) tablePresentationOwner = ViewerTablePresentationOwner()
+        if (preparedLayout !== layout) {
+            tableInteraction.cancel()
+            val priorLayout = preparedLayout
+            if (layout == null && preserveTablePresentationForReplacement && priorLayout != null) {
+                replacementTablePresentationOwner = tablePresentationOwner
+                replacementTableSemanticOwner = priorLayout.key.semanticGenerationIdentity
+            }
+            val preserve = layout != null &&
+                (priorLayout?.key?.semanticGenerationIdentity == layout.key.semanticGenerationIdentity ||
+                    replacementTableSemanticOwner == layout.key.semanticGenerationIdentity)
+            tablePresentationOwner = if (preserve) {
+                if (priorLayout != null) tablePresentationOwner
+                else requireNotNull(replacementTablePresentationOwner)
+            } else ViewerTablePresentationOwner()
+            if (layout != null || !preserveTablePresentationForReplacement) {
+                replacementTablePresentationOwner = null
+                replacementTableSemanticOwner = null
+            }
+            pendingTap = null
+            pendingTableTap = null
+        }
         preparedLayout = layout
+        if (layout != null) {
+            val surfaces = ViewerTablePresentation.project(layout, tablePresentationOwner,
+                ViewerTablePresentationViewport.Unknown).tables.map { it.surface }
+            tablePresentationOwner.reconcile(surfaces)
+        }
         codeHighlighting.update()
         this.contentOriginXPx = contentOriginXPx
         this.contentOriginYPx = contentOriginYPx
         reportRetainedTablePresentation()
         if (announceAccessibilitySubtree) announceAccessibilitySubtreeChanged()
         invalidate()
+    }
+
+    internal fun discardPendingTableReplacement() {
+        replacementTablePresentationOwner = null
+        replacementTableSemanticOwner = null
     }
 
     /** Mounted-only seam; direction and gesture transport remain host-owned. */
@@ -208,6 +261,10 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             ViewerTablePresentationViewport.Unknown
         ).cells.firstOrNull { it.surface.identity == sourceIdentity }?.surface ?: return
         tablePresentationOwner.setLogicalOffset(offset, surface)
+        tableOffsetChanged()
+    }
+
+    private fun tableOffsetChanged() {
         reportRetainedTablePresentation()
         clearVirtualAccessibilityFocus()
         onTableGeometryChanged?.invoke()
@@ -230,6 +287,9 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             presentationViewport()
         )
     }
+
+    internal fun presentedTableCells(): List<ViewerTablePresentedCell> =
+        presentationSnapshot()?.cells.orEmpty()
 
     internal fun atomLayoutsJson(density: Float): String {
         val artifact = preparedLayout ?: return "[]"
@@ -614,6 +674,9 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
+        tableInteraction.cancel()
+        pendingTap = null
+        pendingTableTap = null
         codeHighlighting.cancel()
         if (viewTreeObserver.isAlive) {
             viewTreeObserver.removeOnScrollChangedListener(scrollChangedListener)
@@ -640,6 +703,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val contentX = event.x - contentOriginXPx
         val contentY = event.y - contentOriginYPx
+        val tableHandled = tableInteraction.onTouch(event, contentX, contentY)
+        if (tableInteraction.ownsHorizontalGesture) {
+            pendingTap = null
+            pendingTableTap = null
+            return true
+        }
         fun targetAt(): PreparedProseInteraction? =
             presentedInteractions().firstOrNull { presented ->
                 if (contentX < 0f || contentY < 0f) return@firstOrNull false
@@ -649,6 +718,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             }?.interaction
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                pendingTableTap = if (tableHandled) event.x to event.y else null
                 pendingTap =
                     if (event.pointerCount ==
                         1
@@ -664,7 +734,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                     } else {
                         null
                     }
-                return pendingTap != null
+                return tableHandled || pendingTap != null
             }
 
             MotionEvent.ACTION_MOVE -> {
@@ -676,7 +746,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                         pendingTap = null
                     }
                 }
-                return pendingTap != null
+                pendingTableTap?.let { (x, y) ->
+                    val dx = event.x - x
+                    val dy = event.y - y
+                    if (dx * dx + dy * dy > touchSlop * touchSlop) pendingTableTap = null
+                }
+                return tableHandled || pendingTap != null || pendingTableTap != null
             }
 
             MotionEvent.ACTION_CANCEL,
@@ -684,12 +759,22 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             MotionEvent.ACTION_POINTER_UP -> {
                 pendingTap =
                     null
+                pendingTableTap = null
                 return false
             }
 
             MotionEvent.ACTION_UP -> {
+                if (tableHandled) {
+                    pendingTap = null
+                    pendingTableTap = null
+                    return true
+                }
                 val tap = pendingTap
                 pendingTap = null
+                val tableTap = pendingTableTap
+                pendingTableTap = null
+                if (tableTap != null && onTableTap?.invoke(tableTap.first - contentOriginXPx,
+                        tableTap.second - contentOriginYPx, contentX, contentY) == true) return true
                 if (tap != null && event.pointerCount == 1 &&
                     event.getPointerId(event.actionIndex) == tap.pointerId &&
                     !exceedsSlop(event, tap) &&
@@ -701,6 +786,48 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         }
         return false
     }
+
+    override fun computeScroll() {
+        super.computeScroll()
+        tableInteraction.computeScroll()
+    }
+
+    internal val ownsHorizontalTableGesture: Boolean get() = tableInteraction.ownsHorizontalGesture
+
+    internal fun canConsumeTableDragAt(x: Float, y: Float, dx: Float): Boolean =
+        tableInteraction.canConsumeAt(x - contentOriginXPx, y - contentOriginYPx, dx)
+
+    internal fun hasTableAt(x: Float, y: Float): Boolean =
+        tableInteraction.hasTableAt(x - contentOriginXPx, y - contentOriginYPx)
+
+    override fun setNestedScrollingEnabled(enabled: Boolean) = nestedScrolling.setNestedScrollingEnabled(enabled)
+    override fun isNestedScrollingEnabled(): Boolean = nestedScrolling.isNestedScrollingEnabled
+    override fun startNestedScroll(axes: Int): Boolean = nestedScrolling.startNestedScroll(axes)
+    override fun startNestedScroll(axes: Int, type: Int): Boolean = nestedScrolling.startNestedScroll(axes, type)
+    override fun stopNestedScroll() = nestedScrolling.stopNestedScroll()
+    override fun stopNestedScroll(type: Int) = nestedScrolling.stopNestedScroll(type)
+    override fun hasNestedScrollingParent(): Boolean = nestedScrolling.hasNestedScrollingParent()
+    override fun hasNestedScrollingParent(type: Int): Boolean = nestedScrolling.hasNestedScrollingParent(type)
+    override fun dispatchNestedScroll(dxConsumed: Int, dyConsumed: Int, dxUnconsumed: Int,
+                                      dyUnconsumed: Int, offsetInWindow: IntArray?): Boolean =
+        nestedScrolling.dispatchNestedScroll(dxConsumed, dyConsumed, dxUnconsumed, dyUnconsumed, offsetInWindow)
+    override fun dispatchNestedScroll(dxConsumed: Int, dyConsumed: Int, dxUnconsumed: Int,
+                                      dyUnconsumed: Int, offsetInWindow: IntArray?, type: Int): Boolean =
+        nestedScrolling.dispatchNestedScroll(dxConsumed, dyConsumed, dxUnconsumed, dyUnconsumed, offsetInWindow, type)
+    override fun dispatchNestedScroll(dxConsumed: Int, dyConsumed: Int, dxUnconsumed: Int,
+                                      dyUnconsumed: Int, offsetInWindow: IntArray?, type: Int,
+                                      consumed: IntArray) =
+        nestedScrolling.dispatchNestedScroll(dxConsumed, dyConsumed, dxUnconsumed, dyUnconsumed,
+            offsetInWindow, type, consumed)
+    override fun dispatchNestedPreScroll(dx: Int, dy: Int, consumed: IntArray?, offsetInWindow: IntArray?): Boolean =
+        nestedScrolling.dispatchNestedPreScroll(dx, dy, consumed, offsetInWindow)
+    override fun dispatchNestedPreScroll(dx: Int, dy: Int, consumed: IntArray?, offsetInWindow: IntArray?,
+                                         type: Int): Boolean =
+        nestedScrolling.dispatchNestedPreScroll(dx, dy, consumed, offsetInWindow, type)
+    override fun dispatchNestedFling(velocityX: Float, velocityY: Float, consumed: Boolean): Boolean =
+        nestedScrolling.dispatchNestedFling(velocityX, velocityY, consumed)
+    override fun dispatchNestedPreFling(velocityX: Float, velocityY: Float): Boolean =
+        nestedScrolling.dispatchNestedPreFling(velocityX, velocityY)
 
     private fun exceedsSlop(event: MotionEvent, tap: PendingTap): Boolean {
         val dx = event.x - tap.downX

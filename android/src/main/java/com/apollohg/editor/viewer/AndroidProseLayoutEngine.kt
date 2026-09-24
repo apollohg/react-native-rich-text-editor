@@ -420,7 +420,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 val tableX = placement.textX
                 val tableWidth = placement.availableWidth
                 val surface = ViewerTableSurface(
-                    "t${table.tablePos}",
+                    document.tablePresentationIdentity(table),
                     TableGridRecord.from(table, document.semanticKey).physical(density),
                     tableWidth.toFloat(),
                     theme.tableStyle.physical(density),
@@ -792,7 +792,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 val tableBounds = localBlock.tableBounds ?: return null
                 val cellsByPosition = table.cells.associateBy { it.sourcePos.toInt() }
                 val surface = ViewerTableSurface(
-                    "t${table.tablePos}",
+                    document.tablePresentationIdentity(table),
                     TableGridRecord.from(table, document.semanticKey).physical(density),
                     tableBounds.width().toFloat(),
                     theme.tableStyle.physical(density),

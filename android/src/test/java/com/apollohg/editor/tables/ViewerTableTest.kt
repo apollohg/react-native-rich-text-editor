@@ -255,7 +255,7 @@ class ViewerTableTest {
             val scrolled = manager.retainedSurfaceBytesForTesting(view)
             assertTrue(scrolled > before)
 
-            view.install(layout.copy())
+            view.install(layout.copy(key = layout.key.copy(semanticGenerationIdentity = "replacement")))
             assertEquals(before, manager.retainedSurfaceBytesForTesting(view))
             manager.onDropViewInstance(view)
             assertEquals(0L, manager.retainedSurfaceBytesForTesting(view))
@@ -2220,7 +2220,7 @@ class ViewerTableTest {
         }
     }
 
-    private companion object {
+    internal companion object {
         const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"codeBlock","content":"inline*","group":"block","role":"textBlock","attrs":{"language":{"default":null}}},{"name":"text","content":"","group":"inline","role":"text"},{"name":"blockquote","content":"block+","group":"block","role":"block"},{"name":"bulletList","content":"listItem+","group":"block","role":"list"},{"name":"listItem","content":"block+","role":"listItem","attrs":{"checked":{"default":false}}},{"name":"image","content":"","group":"block","role":"block","isVoid":true,"attrs":{"src":{"default":""},"width":{"default":null},"height":{"default":null}}},{"name":"card","content":"","group":"block","role":"block","isVoid":true},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"class":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[{"name":"bold"}]},"initialization":{"type":"localEmpty"}}"""
     }
 }
