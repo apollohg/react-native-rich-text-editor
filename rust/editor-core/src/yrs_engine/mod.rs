@@ -55,10 +55,11 @@ pub use engine::{
 };
 pub use error::{YrsEngineError, YrsEngineResult};
 pub use operation::{
-    Affinity, EditorOffsetKind, HistoryPolicy, OperationError, OperationResult, RenderUpdate,
-    ResolvedPoint, ResolvedSelection, RevisionedPosition, RevisionedRange, SelectionInput,
-    SelectionIntent, StructuralEdit, StructuralEditBatch, StructuralReplacement, TransactionCommit,
-    TypedOperation, TypedTransaction, TypedTransactionResult, DEFAULT_POSITION_AFFINITY,
+    Affinity, CellSelectionPoint, EditorOffsetKind, HistoryPolicy, OperationError, OperationResult,
+    RenderUpdate, ResolvedPoint, ResolvedSelection, RevisionedPosition, RevisionedRange,
+    SelectionInput, SelectionIntent, StructuralEdit, StructuralEditBatch, StructuralReplacement,
+    TransactionCommit, TypedOperation, TypedTransaction, TypedTransactionResult,
+    DEFAULT_POSITION_AFFINITY,
 };
 pub use operation::{ReplacementHistory, RootReplacementError};
 pub use origin::{DocumentOrigin, TransactionOrigin};

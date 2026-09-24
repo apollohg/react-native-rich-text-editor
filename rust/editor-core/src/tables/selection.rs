@@ -56,6 +56,20 @@ pub(crate) fn admit_cell_opening(
     }
 }
 
+pub(crate) fn admit_exact_cell_opening(
+    index: &TableProjectionIndex,
+    opening: u32,
+) -> Result<u32, CellAdmission> {
+    if locate(index, opening).is_some() {
+        Ok(opening)
+    } else {
+        Err(match index.projection_failure() {
+            Some(failure) => CellAdmission::ProjectionUnavailable(failure),
+            None => CellAdmission::NotCells,
+        })
+    }
+}
+
 pub(crate) const CELL_SELECTION_ANCHOR_FIELD: &str = "selection.anchorCell";
 pub(crate) const CELL_SELECTION_HEAD_FIELD: &str = "selection.headCell";
 pub(crate) const CELL_SELECTION_INVALID: &str =

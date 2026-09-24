@@ -183,40 +183,27 @@ fn admitted_cell_content(
     )
 }
 
-fn cell_selection_intent(
-    context: &PlanningContext<'_>,
-    expanded: &Selection,
-) -> OperationResult<Option<crate::yrs_engine::SelectionInput>> {
+fn cell_selection_intent(expanded: &Selection) -> Option<crate::yrs_engine::SelectionInput> {
     let Selection::Cell { anchor, head } = expanded else {
-        return Ok(None);
+        return None;
     };
-    let inside = |opening: u32| -> OperationResult<Option<crate::yrs_engine::RevisionedPosition>> {
-        let interior = first_editable_position_in_cell(context.document, context.schema, opening)
-            .map_err(|failure| failure.into_operation_error(context.request_id))?;
-        Ok(
-            interior.map(|interior| crate::yrs_engine::RevisionedPosition {
-                offset: context
-                    .position_map
-                    .doc_to_scalar(interior, context.document),
-                kind: crate::yrs_engine::EditorOffsetKind::Scalar,
-                affinity: crate::yrs_engine::DEFAULT_POSITION_AFFINITY,
-            }),
-        )
-    };
-    let (Some(anchor), Some(head)) = (inside(*anchor)?, inside(*head)?) else {
-        return Ok(None);
-    };
-    Ok(Some(crate::yrs_engine::SelectionInput::Cell {
-        anchor,
-        head,
-    }))
+    Some(crate::yrs_engine::SelectionInput::Cell {
+        anchor: crate::yrs_engine::CellSelectionPoint::Document {
+            opening: *anchor,
+            affinity: crate::yrs_engine::DEFAULT_POSITION_AFFINITY,
+        },
+        head: crate::yrs_engine::CellSelectionPoint::Document {
+            opening: *head,
+            affinity: crate::yrs_engine::DEFAULT_POSITION_AFFINITY,
+        },
+    })
 }
 
 fn selection_only(
     context: &PlanningContext<'_>,
     expanded: Selection,
 ) -> OperationResult<CommandPlan> {
-    let Some(intent) = cell_selection_intent(context, &expanded)? else {
+    let Some(intent) = cell_selection_intent(&expanded) else {
         return Ok(CommandPlan::NotApplicable);
     };
     Ok(CommandPlan::SelectionOnly(TypedTransaction {
@@ -385,24 +372,6 @@ fn caret_only(context: &PlanningContext<'_>, interior: u32) -> OperationResult<C
         }),
         history_policy: HistoryPolicy::Skip,
     }))
-}
-
-fn cell_rectangle_is_addressable(
-    document: &Document,
-    schema: &Schema,
-    expanded: &Selection,
-) -> bool {
-    let Selection::Cell { anchor, head } = expanded else {
-        return false;
-    };
-    [*anchor, *head].into_iter().all(|opening| {
-        match first_editable_position_in_cell(document, schema, opening) {
-            Ok(interior) => interior.is_some(),
-            Err(InterchangeFailure::NotACellRectangle | InterchangeFailure::UnreadableGrid) => {
-                UNREADABLE_GRID_IS_NOT_AVAILABLE
-            }
-        }
-    })
 }
 
 fn next_editable_outer_cell(
@@ -594,16 +563,14 @@ impl<'a> TableCommandSurface<'a> {
                         .is_some()
                 })
             }
-            TableCommand::SelectTableRows => self.target.as_ref().is_some_and(|target| {
-                plan_select_rows(target).is_some_and(|expanded| {
-                    cell_rectangle_is_addressable(self.document, self.schema, &expanded)
-                })
-            }),
-            TableCommand::SelectTableColumns => self.target.as_ref().is_some_and(|target| {
-                plan_select_columns(target).is_some_and(|expanded| {
-                    cell_rectangle_is_addressable(self.document, self.schema, &expanded)
-                })
-            }),
+            TableCommand::SelectTableRows => self
+                .target
+                .as_ref()
+                .is_some_and(|target| plan_select_rows(target).is_some()),
+            TableCommand::SelectTableColumns => self
+                .target
+                .as_ref()
+                .is_some_and(|target| plan_select_columns(target).is_some()),
             TableCommand::ClearTableCells => self
                 .target
                 .as_ref()

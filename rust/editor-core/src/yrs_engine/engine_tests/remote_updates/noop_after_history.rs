@@ -78,8 +78,8 @@ fn crossing_history() -> YrsDocumentEngine {
             origin: TransactionOrigin::LocalApi,
             operations: Vec::new(),
             selection_intent: SelectionIntent::Set(SelectionInput::Cell {
-                anchor: anchor.clone(),
-                head: anchor,
+                anchor: anchor.into(),
+                head: anchor.into(),
             }),
             history_policy: HistoryPolicy::Skip,
         })

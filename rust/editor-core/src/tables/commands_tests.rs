@@ -145,7 +145,10 @@ fn select_cells(engine: &mut YrsDocumentEngine, anchor: usize, head: usize) {
             base_document_revision: engine.revision(),
             origin: TransactionOrigin::LocalApi,
             operations: Vec::new(),
-            selection_intent: SelectionIntent::Set(SelectionInput::Cell { anchor, head }),
+            selection_intent: SelectionIntent::Set(SelectionInput::Cell {
+                anchor: anchor.into(),
+                head: head.into(),
+            }),
             history_policy: HistoryPolicy::Skip,
         })
         .expect("the cell selection applies");
@@ -636,6 +639,24 @@ fn selecting_table_columns_grows_the_rectangle_to_every_row() {
 }
 
 #[test]
+fn selecting_rows_can_end_on_an_outer_cell_with_only_nested_content() {
+    let mut engine = seeded(vec![table(vec![row(vec![
+        cell("first"),
+        nested_only_cell(),
+    ])])]);
+    select_cell(&mut engine, 0);
+    let openings = cell_openings(&engine);
+    let before = engine.document_json();
+    let before_revision = engine.revision();
+
+    applied(&mut engine, TableCommand::SelectTableRows);
+
+    assert_eq!(resolved_cells(&engine), Some((openings[0], openings[1])));
+    assert_eq!(engine.document_json(), before);
+    assert_eq!(engine.revision(), before_revision);
+}
+
+#[test]
 fn clearing_a_merged_selection_keeps_its_spans_and_its_grid() {
     let mut engine = seeded(wide_span_fixture());
     let before = geometry(&projection_of(&engine));
@@ -1115,7 +1136,10 @@ pub(crate) fn session_select_rectangle(
             base_document_revision: revision,
             origin: TransactionOrigin::LocalApi,
             operations: Vec::new(),
-            selection_intent: SelectionIntent::Set(SelectionInput::Cell { anchor, head }),
+            selection_intent: SelectionIntent::Set(SelectionInput::Cell {
+                anchor: anchor.into(),
+                head: head.into(),
+            }),
             history_policy: HistoryPolicy::Skip,
         })
         .expect("the cell selection applies");

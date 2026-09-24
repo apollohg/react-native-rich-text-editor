@@ -7,11 +7,10 @@ use super::YrsDocumentEngine;
 use crate::model::Document;
 use crate::selection::Selection;
 use crate::tables::selection::{
-    admit_cell_opening, admit_cell_pair, CellAdmission, CELL_SELECTION_ANCHOR_FIELD,
-    CELL_SELECTION_HEAD_FIELD,
+    admit_cell_pair, CellAdmission, CELL_SELECTION_ANCHOR_FIELD, CELL_SELECTION_HEAD_FIELD,
 };
 use crate::yrs_engine;
-use crate::yrs_engine::compiler::cell_admission_error;
+use crate::yrs_engine::compiler::{cell_admission_error, resolve_cell_opening};
 use crate::yrs_engine::compiler::{
     selectable_void_at, CompiledTransaction, PreparedSemanticAdmission, SelectionPlan,
 };
@@ -262,9 +261,15 @@ impl YrsDocumentEngine {
             }
             yrs_engine::SelectionInput::Cell { anchor, head } => {
                 let opening = |field: &'static str, point| {
-                    let document_position = resolve(field, point)?;
-                    admit_cell_opening(&state.table_projection_index, document_position)
-                        .map_err(|admission| cell_admission_error(request_id, field, admission))
+                    resolve_cell_opening(
+                        &state.table_projection_index,
+                        point,
+                        &state.rendered_text,
+                        &state.position_map,
+                        &state.document,
+                        request_id,
+                        field,
+                    )
                 };
                 let anchor = opening(CELL_SELECTION_ANCHOR_FIELD, *anchor)?;
                 let head = opening(CELL_SELECTION_HEAD_FIELD, *head)?;

@@ -643,8 +643,14 @@ fn direct_selection_input(
         },
         crate::selection::Selection::Node { pos } => SelectionInput::Node { at: encoded(*pos)? },
         crate::selection::Selection::Cell { anchor, head } => SelectionInput::Cell {
-            anchor: encoded(*anchor)?,
-            head: encoded(*head)?,
+            anchor: crate::yrs_engine::CellSelectionPoint::Document {
+                opening: *anchor,
+                affinity: crate::yrs_engine::DEFAULT_POSITION_AFFINITY,
+            },
+            head: crate::yrs_engine::CellSelectionPoint::Document {
+                opening: *head,
+                affinity: crate::yrs_engine::DEFAULT_POSITION_AFFINITY,
+            },
         },
         crate::selection::Selection::All => SelectionInput::All,
     })

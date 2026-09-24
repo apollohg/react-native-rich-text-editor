@@ -84,6 +84,73 @@ internal class EditorTableSurfaceMountTest {
         }
     }
 
+    @Test
+    fun `nested only outer cell has a representable selection endpoint`() =
+        withMountedView(nestedTableDocument) { _, adapter, _ ->
+            val outer = adapter.cachedTableRecords.values.minBy { it.getInt("tablePos") }
+            val cells = outer.getJSONArray("cells")
+            val first = cells.getJSONObject(0).getInt("sourcePos")
+            val nestedOnly = cells.getJSONObject(1).getInt("sourcePos")
+            val sibling = cells.getJSONObject(2).getInt("sourcePos")
+            val anchor = requireNotNull(adapter.scalarPositionForDoc(first + 2))
+            val matches = mutableListOf<Pair<Int, String>>()
+            val accepted = mutableListOf<String>()
+            val rejected = mutableMapOf<String, Int>()
+            val extent = requireNotNull(adapter.cachedScalarLength)
+            for (scalar in 0..extent) for (affinity in listOf("before", "after")) {
+                fun point(offset: Int) = JSONObject().put("kind", "scalar")
+                    .put("offset", offset).put("affinity", affinity)
+                val selection = JSONObject().put("type", "cell")
+                    .put("anchorCell", point(anchor)).put("headCell", point(scalar))
+                val result = adapter.callWithEnvelope(JSONObject().put("selection", selection)) {
+                    UniffiEditorV2Backend.setSelection(adapter.editorId, it)
+                }
+                if (result is EditorV2CallResult.Ok) {
+                    val rendered = UniffiEditorV2Backend.renderUpdate(adapter.editorId, null, null)
+                    assertTrue("render after successful admission=$rendered", rendered is EditorV2CallResult.Ok)
+                    val canonical = JSONObject((rendered as EditorV2CallResult.Ok).value)
+                        .getJSONObject("selection")
+                    accepted += "$scalar/$affinity:${canonical.optString("type")}/${canonical.optInt("headCell", -1)}"
+                    if (canonical.optString("type") == "cell" &&
+                        canonical.optInt("headCell", -1) == nestedOnly) matches += scalar to affinity
+                } else if (result is EditorV2CallResult.Err) {
+                    rejected[result.error.code] = (rejected[result.error.code] ?: 0) + 1
+                }
+            }
+            val siblingScalar = requireNotNull(adapter.scalarPositionForDoc(sibling + 2))
+            fun siblingPoint(offset: Int) = JSONObject().put("kind", "scalar").put("offset", offset)
+            val siblingSelection = JSONObject().put("type", "cell")
+                .put("anchorCell", siblingPoint(anchor)).put("headCell", siblingPoint(siblingScalar))
+            val siblingResult = adapter.callWithEnvelope(JSONObject().put("selection", siblingSelection)) {
+                UniffiEditorV2Backend.setSelection(adapter.editorId, it)
+            }
+            assertTrue("known sibling selection=$siblingResult", siblingResult is EditorV2CallResult.Ok)
+            val siblingRender = UniffiEditorV2Backend.renderUpdate(adapter.editorId, null, null)
+            assertTrue(siblingRender is EditorV2CallResult.Ok)
+            assertEquals(sibling, JSONObject((siblingRender as EditorV2CallResult.Ok).value)
+                .getJSONObject("selection").getInt("headCell"))
+            assertTrue("legacy scalar probe unexpectedly reached outer opening=$nestedOnly matches=$matches accepted=$accepted rejected=$rejected",
+                matches.isEmpty())
+            fun documentPoint(opening: Int) = JSONObject().put("kind", "document").put("offset", opening)
+            val exactSelection = JSONObject().put("type", "cell")
+                .put("anchorCell", documentPoint(first)).put("headCell", documentPoint(nestedOnly))
+            val beforeDocument = requireNotNull(adapter.documentJson())
+            val beforeRevision = adapter.baseDocumentRevision
+            val exactResult = adapter.callWithEnvelope(JSONObject().put("selection", exactSelection)) {
+                UniffiEditorV2Backend.setSelection(adapter.editorId, it)
+            }
+            assertTrue("exact nested-only selection=$exactResult", exactResult is EditorV2CallResult.Ok)
+            val exactRender = UniffiEditorV2Backend.renderUpdate(adapter.editorId, null, null)
+            assertTrue("render after exact selection=$exactRender", exactRender is EditorV2CallResult.Ok)
+            val exactCanonical = JSONObject((exactRender as EditorV2CallResult.Ok).value)
+                .getJSONObject("selection")
+            assertEquals("cell", exactCanonical.getString("type"))
+            assertEquals(first, exactCanonical.getInt("anchorCell"))
+            assertEquals(nestedOnly, exactCanonical.getInt("headCell"))
+            assertEquals(beforeDocument, adapter.documentJson())
+            assertEquals(beforeRevision, adapter.baseDocumentRevision)
+        }
+
     private fun heightSpan(view: RichTextEditorView): RootTableHeightSpan {
         val text = view.editorEditText.text
         return text.getSpans(0, text.length, RootTableHeightSpan::class.java).single()

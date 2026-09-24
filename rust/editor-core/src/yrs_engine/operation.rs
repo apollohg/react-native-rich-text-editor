@@ -34,6 +34,37 @@ pub struct RevisionedPosition {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellSelectionPoint {
+    Editor(RevisionedPosition),
+    Document { opening: u32, affinity: Affinity },
+}
+
+impl CellSelectionPoint {
+    pub fn affinity(self) -> Affinity {
+        match self {
+            Self::Editor(point) => point.affinity,
+            Self::Document { affinity, .. } => affinity,
+        }
+    }
+
+    pub fn needs_rendered_text(self) -> bool {
+        matches!(
+            self,
+            Self::Editor(RevisionedPosition {
+                kind: EditorOffsetKind::Utf16,
+                ..
+            })
+        )
+    }
+}
+
+impl From<RevisionedPosition> for CellSelectionPoint {
+    fn from(point: RevisionedPosition) -> Self {
+        Self::Editor(point)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RevisionedRange {
     pub from: RevisionedPosition,
     pub to: RevisionedPosition,
@@ -86,8 +117,8 @@ pub enum SelectionInput {
         at: RevisionedPosition,
     },
     Cell {
-        anchor: RevisionedPosition,
-        head: RevisionedPosition,
+        anchor: CellSelectionPoint,
+        head: CellSelectionPoint,
     },
     All,
 }

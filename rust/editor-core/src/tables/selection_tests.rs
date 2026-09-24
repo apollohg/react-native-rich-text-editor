@@ -7,8 +7,9 @@ use crate::selection::Selection;
 use crate::serialize::json_in::{from_prosemirror_json, UnknownTypeMode};
 use crate::tables::admission::{validate_table_shapes, ProjectionFailure, TableProjectionIndex};
 use crate::tables::selection::{
-    admit_cell_opening, admit_cell_pair, cell_pair_is_usable, resolve_cell_rect,
-    snap_cell_selection, CellAdmission, CellSelectionOrigin, CELL_SELECTION_ANCHOR_FIELD,
+    admit_cell_opening, admit_cell_pair, admit_exact_cell_opening, cell_pair_is_usable,
+    resolve_cell_rect, snap_cell_selection, CellAdmission, CellSelectionOrigin,
+    CELL_SELECTION_ANCHOR_FIELD,
 };
 use crate::tables::tests::{tabled_schema, PROSEMIRROR_TABLE_NAMES};
 use crate::yrs_engine::cell_admission_error;
@@ -105,6 +106,32 @@ fn a_single_cell_resolves_to_exactly_that_cell() {
 }
 
 #[test]
+fn exact_openings_admit_empty_and_void_only_cells() {
+    let schema =
+        crate::tables::tests::tabled_schema_with_cell_content_blocks(PROSEMIRROR_TABLE_NAMES);
+    let source = json!({ "type": "doc", "content": [table(vec![row(vec![
+        plain_cell(),
+        json!({ "type": CELL_NODE, "content": [{ "type": crate::tables::tests::VOID_BLOCK_NODE }] }),
+    ])])] });
+    let document = from_prosemirror_json(&source, &schema, UnknownTypeMode::Preserve)
+        .expect("the empty and void cells parse");
+    let index = validate_table_shapes(&document, &schema, &ResourceLimits::default())
+        .expect("the empty and void cells project");
+    let cells = &index.table_at(0).unwrap().cells;
+    assert_eq!(cells.len(), 2);
+    for cell in cells {
+        assert_eq!(
+            admit_exact_cell_opening(&index, cell.source_pos),
+            Ok(cell.source_pos)
+        );
+    }
+    assert_eq!(
+        admit_cell_pair(&index, cells[0].source_pos, cells[1].source_pos),
+        CellAdmission::Admitted
+    );
+}
+
+#[test]
 fn a_rectangle_collects_every_covered_real_cell() {
     let index = two_by_three();
 
@@ -179,6 +206,10 @@ fn a_synthetic_slot_is_never_an_anchor() {
             resolve_cell_rect(&index, position, position),
             None,
             "position {position} is not a real cell opening"
+        );
+        assert_eq!(
+            admit_exact_cell_opening(&index, position),
+            Err(CellAdmission::NotCells)
         );
     }
 }
@@ -328,6 +359,12 @@ fn a_starved_projection_is_distinguished_from_a_document_without_cells() {
         ))
     );
     assert_eq!(
+        admit_exact_cell_opening(&starved_index, FIRST_CELL),
+        Err(CellAdmission::ProjectionUnavailable(
+            ProjectionFailure::ResourceExhausted
+        ))
+    );
+    assert_eq!(
         admit_cell_opening(&table_free, FIRST_CELL + 2),
         Err(CellAdmission::NotCells)
     );
@@ -378,6 +415,12 @@ fn an_invalid_table_is_reported_as_structural_not_as_starvation() {
     assert_eq!(
         admit_cell_pair(&index, FIRST_CELL, FIRST_CELL),
         CellAdmission::ProjectionUnavailable(ProjectionFailure::Structural)
+    );
+    assert_eq!(
+        admit_exact_cell_opening(&index, FIRST_CELL),
+        Err(CellAdmission::ProjectionUnavailable(
+            ProjectionFailure::Structural
+        ))
     );
     assert_eq!(
         cell_admission_error(
@@ -548,6 +591,21 @@ mod engine_round_trip {
         })
     }
 
+    fn nested_only_outer_table() -> serde_json::Value {
+        let nested_only = json!({
+            "type": TIPTAP_CELL,
+            "content": [{ "type": TIPTAP_TABLE, "content": [{ "type": TIPTAP_ROW,
+                "content": [cell("inner")]
+            }] }],
+        });
+        json!({
+            "type": TIPTAP_TABLE,
+            "content": [{ "type": TIPTAP_ROW,
+                "content": [cell("first"), nested_only, cell("last")]
+            }],
+        })
+    }
+
     fn seeded_with(content: Vec<serde_json::Value>) -> YrsDocumentEngine {
         let mut engine = engine();
         engine
@@ -622,7 +680,10 @@ mod engine_round_trip {
             engine,
             request_id,
             Vec::new(),
-            SelectionIntent::Set(SelectionInput::Cell { anchor, head }),
+            SelectionIntent::Set(SelectionInput::Cell {
+                anchor: anchor.into(),
+                head: head.into(),
+            }),
         )
     }
 
@@ -646,6 +707,95 @@ mod engine_round_trip {
             resolved_cells(&engine),
             Some((openings[TOP_LEFT], openings[BOTTOM_RIGHT]))
         );
+    }
+
+    #[test]
+    fn exact_nested_only_cell_endpoint_matches_fast_and_full_selection_compilers() {
+        let content = vec![nested_only_outer_table()];
+        let mut fast = seeded_with(content.clone());
+        let mut full = seeded_with(content);
+        let openings = cell_openings(&fast);
+        let before_json = fast.document_json();
+        let before_revision = fast.revision();
+        let intent = SelectionIntent::Set(SelectionInput::Cell {
+            anchor: crate::yrs_engine::CellSelectionPoint::Document {
+                opening: openings[0],
+                affinity: Affinity::Before,
+            },
+            head: crate::yrs_engine::CellSelectionPoint::Document {
+                opening: openings[1],
+                affinity: Affinity::After,
+            },
+        });
+        let make_transaction = |engine: &YrsDocumentEngine, history_policy| TypedTransaction {
+            request_id: 51,
+            base_document_revision: engine.revision(),
+            origin: TransactionOrigin::LocalApi,
+            operations: Vec::new(),
+            selection_intent: intent.clone(),
+            history_policy,
+        };
+        fast.apply_typed_transaction(make_transaction(&fast, HistoryPolicy::Skip))
+            .expect("the fast selection path admits the exact outer opening");
+        full.compile_typed_transaction(make_transaction(&full, HistoryPolicy::Boundary))
+            .expect("the full compiler admits the exact outer opening");
+        full.apply_typed_transaction(make_transaction(&full, HistoryPolicy::Boundary))
+            .expect("the full compiler commits the selection");
+
+        assert_eq!(resolved_cells(&fast), Some((openings[0], openings[1])));
+        assert_eq!(fast.resolved_selection(), full.resolved_selection());
+        assert_eq!(fast.document_json(), before_json);
+        assert_eq!(full.document_json(), before_json);
+        assert_eq!(fast.revision(), before_revision);
+        assert_eq!(full.revision(), before_revision);
+    }
+
+    #[test]
+    fn exact_cell_selection_does_not_change_encoded_document_or_schema() {
+        let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
+            schema: tiptap_table_schema(),
+            fragment_name: FRAGMENT_NAME.into(),
+            initialization_mode: InitializationMode::LocalEmpty,
+            resource_limits: ResourceLimits::default(),
+            editing_limits: EditingLimits::default(),
+            max_length: None,
+            scope: Some(crate::yrs_engine::DocumentScope {
+                document_id: "exact-cell".into(),
+                lineage_id: "exact-cell-lineage".into(),
+            }),
+        })
+        .unwrap();
+        engine
+            .import_json(
+                &json!({ "type": "doc", "content": [nested_only_outer_table()] }).to_string(),
+                TransactionOrigin::DocumentImport,
+            )
+            .unwrap();
+        let openings = cell_openings(&engine);
+        let before = engine.export_snapshot().unwrap();
+        let before_revision = engine.revision();
+        let before_json = engine.document_json();
+        apply(
+            &mut engine,
+            52,
+            Vec::new(),
+            SelectionIntent::Set(SelectionInput::Cell {
+                anchor: crate::yrs_engine::CellSelectionPoint::Document {
+                    opening: openings[0],
+                    affinity: Affinity::Before,
+                },
+                head: crate::yrs_engine::CellSelectionPoint::Document {
+                    opening: openings[1],
+                    affinity: Affinity::After,
+                },
+            }),
+        )
+        .unwrap();
+        let after = engine.export_snapshot().unwrap();
+        assert_eq!(after.encoded_state, before.encoded_state);
+        assert_eq!(after.schema_fingerprint, before.schema_fingerprint);
+        assert_eq!(engine.document_json(), before_json);
+        assert_eq!(engine.revision(), before_revision);
     }
 
     #[test]

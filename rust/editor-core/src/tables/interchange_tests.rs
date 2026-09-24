@@ -613,7 +613,10 @@ fn a_stray_table_child_reports_an_unreadable_grid_to_the_host() {
             origin: TransactionOrigin::LocalApi,
             operations: Vec::new(),
             selection_intent: crate::yrs_engine::SelectionIntent::Set(
-                crate::yrs_engine::SelectionInput::Cell { anchor, head },
+                crate::yrs_engine::SelectionInput::Cell {
+                    anchor: anchor.into(),
+                    head: head.into(),
+                },
             ),
             history_policy: crate::yrs_engine::HistoryPolicy::Skip,
         })

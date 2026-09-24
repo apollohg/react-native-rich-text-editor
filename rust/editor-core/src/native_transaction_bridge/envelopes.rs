@@ -72,6 +72,45 @@ struct PositionEnvelope {
 }
 
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CellPositionEnvelope {
+    offset: u32,
+    kind: CellOffsetKindEnvelope,
+    #[serde(default)]
+    affinity: Option<AffinityEnvelope>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum CellOffsetKindEnvelope {
+    Scalar,
+    Utf16,
+    Document,
+}
+
+impl From<CellPositionEnvelope> for crate::yrs_engine::CellSelectionPoint {
+    fn from(position: CellPositionEnvelope) -> Self {
+        let affinity = position_affinity(position.affinity);
+        match position.kind {
+            CellOffsetKindEnvelope::Scalar => Self::Editor(RevisionedPosition {
+                offset: position.offset,
+                kind: EditorOffsetKind::Scalar,
+                affinity,
+            }),
+            CellOffsetKindEnvelope::Utf16 => Self::Editor(RevisionedPosition {
+                offset: position.offset,
+                kind: EditorOffsetKind::Utf16,
+                affinity,
+            }),
+            CellOffsetKindEnvelope::Document => Self::Document {
+                opening: position.offset,
+                affinity,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum OffsetKindEnvelope {
     Scalar,
@@ -83,6 +122,14 @@ enum OffsetKindEnvelope {
 enum AffinityEnvelope {
     Before,
     After,
+}
+
+fn position_affinity(affinity: Option<AffinityEnvelope>) -> Affinity {
+    match affinity {
+        Some(AffinityEnvelope::Before) => Affinity::Before,
+        Some(AffinityEnvelope::After) => Affinity::After,
+        None => DEFAULT_POSITION_AFFINITY,
+    }
 }
 
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
@@ -100,11 +147,7 @@ impl From<PositionEnvelope> for RevisionedPosition {
                 OffsetKindEnvelope::Scalar => EditorOffsetKind::Scalar,
                 OffsetKindEnvelope::Utf16 => EditorOffsetKind::Utf16,
             },
-            affinity: match position.affinity {
-                Some(AffinityEnvelope::Before) => Affinity::Before,
-                Some(AffinityEnvelope::After) => Affinity::After,
-                None => DEFAULT_POSITION_AFFINITY,
-            },
+            affinity: position_affinity(position.affinity),
         }
     }
 }
@@ -504,9 +547,9 @@ enum SelectionEnvelope {
     },
     Cell {
         #[serde(rename = "anchorCell")]
-        anchor_cell: PositionEnvelope,
+        anchor_cell: CellPositionEnvelope,
         #[serde(rename = "headCell")]
-        head_cell: PositionEnvelope,
+        head_cell: CellPositionEnvelope,
     },
     Atom {
         #[serde(rename = "docPos")]

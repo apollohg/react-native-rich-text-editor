@@ -6,8 +6,8 @@ use crate::selection::Selection;
 use crate::tables::admission::ProjectionFailure;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::selection::{
-    admit_cell_opening, admit_cell_pair, snap_cell_selection, CellAdmission,
-    CELL_SELECTION_ANCHOR_FIELD, CELL_SELECTION_HEAD_FIELD, CELL_SELECTION_INVALID,
+    admit_cell_opening, admit_cell_pair, admit_exact_cell_opening, snap_cell_selection,
+    CellAdmission, CELL_SELECTION_ANCHOR_FIELD, CELL_SELECTION_HEAD_FIELD, CELL_SELECTION_INVALID,
     CELL_SELECTION_PROJECTION_EXHAUSTED, CELL_SELECTION_PROJECTION_INVALID,
 };
 use crate::transform::StepMap;
@@ -76,8 +76,8 @@ pub(super) fn planned_relative_selection<T: yrs::ReadTxn>(
                 context.schema,
                 context.resource_limits,
             );
-            let cell_point = |field: &'static str, point: yrs_engine::RevisionedPosition| {
-                let opening = cell_opening_for_offset(
+            let cell_point = |field: &'static str, point: yrs_engine::CellSelectionPoint| {
+                let opening = resolve_cell_opening(
                     &index,
                     point,
                     rendered,
@@ -90,7 +90,7 @@ pub(super) fn planned_relative_selection<T: yrs::ReadTxn>(
                     txn,
                     fragment,
                     opening,
-                    point.affinity,
+                    point.affinity(),
                     context.schema,
                 )
                 .ok_or_else(|| {
@@ -113,31 +113,38 @@ pub(super) fn planned_relative_selection<T: yrs::ReadTxn>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn cell_opening_for_offset(
+pub(crate) fn resolve_cell_opening(
     index: &TableProjectionIndex,
-    point: yrs_engine::RevisionedPosition,
+    point: yrs_engine::CellSelectionPoint,
     rendered_text: &str,
     position_map: &PositionMap,
     document: &Document,
     request_id: u64,
     field: &'static str,
 ) -> OperationResult<u32> {
-    let document_position = yrs_engine::position::editor_offset_to_doc_pos(
-        point.offset,
-        point.kind,
-        rendered_text,
-        position_map,
-        document,
-    )
-    .ok_or_else(|| {
-        OperationError::selection_position_invalid(
-            request_id,
-            field,
-            format!("{field} is outside the current document"),
-        )
-    })?;
-    admit_cell_opening(index, document_position)
-        .map_err(|admission| cell_admission_error(request_id, field, admission))
+    let admitted = match point {
+        yrs_engine::CellSelectionPoint::Editor(point) => {
+            let document_position = yrs_engine::position::editor_offset_to_doc_pos(
+                point.offset,
+                point.kind,
+                rendered_text,
+                position_map,
+                document,
+            )
+            .ok_or_else(|| {
+                OperationError::selection_position_invalid(
+                    request_id,
+                    field,
+                    format!("{field} is outside the current document"),
+                )
+            })?;
+            admit_cell_opening(index, document_position)
+        }
+        yrs_engine::CellSelectionPoint::Document { opening, .. } => {
+            admit_exact_cell_opening(index, opening)
+        }
+    };
+    admitted.map_err(|admission| cell_admission_error(request_id, field, admission))
 }
 
 pub(crate) fn cell_admission_error(
@@ -272,7 +279,7 @@ pub(super) fn selection_plan(
                         context.resource_limits,
                     );
                     let opening = |field, point| {
-                        cell_opening_for_offset(
+                        resolve_cell_opening(
                             &index,
                             point,
                             rendered_text,
