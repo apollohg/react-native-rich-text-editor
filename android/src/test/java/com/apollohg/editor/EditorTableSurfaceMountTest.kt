@@ -27,12 +27,22 @@ import org.robolectric.Robolectric
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
+internal fun replaceTableDocumentExternallyForTest(adapter: EditorV2Adapter, document: String): String {
+    val request = JSONObject().put("version", 1).put("requestId", "1")
+        .put("history", "resetAndClear").put("setJson", JSONObject(document))
+    val replaced = UniffiEditorV2Backend.replaceDocument(adapter.editorId, request.toString())
+    assertTrue("external replacement=$replaced", replaced is EditorV2CallResult.Ok)
+    return requireNotNull(adapter.refreshFromRustState(null))
+}
+
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 internal class EditorTableSurfaceMountTest {
     private val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
     private val tableDocument = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Cell text"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
-    private val nestedTableDocument = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Nested"}]}]}]}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+    internal companion object {
+        val nestedTableDocument = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Nested"}]}]}]}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+    }
     private val wideTableDocument = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Left"}]}]},{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Right"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
     private val wideTableWithBefore = wideTableDocument.replace("[{\"type\":\"table\"",
         "[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"before\"}]},{\"type\":\"table\"")
@@ -168,14 +178,6 @@ internal class EditorTableSurfaceMountTest {
             .getJSONArray("content").getJSONObject(0).getString("text")
 
     private fun firstCellText(adapter: EditorV2Adapter): String = cellText(adapter, 0)
-
-    private fun externalReplacement(adapter: EditorV2Adapter, document: String): String {
-        val request = JSONObject().put("version", 1).put("requestId", "1")
-            .put("history", "resetAndClear").put("setJson", JSONObject(document))
-        val replaced = UniffiEditorV2Backend.replaceDocument(adapter.editorId, request.toString())
-        assertTrue("external replacement=$replaced", replaced is EditorV2CallResult.Ok)
-        return requireNotNull(adapter.refreshFromRustState(null))
-    }
 
     private fun tapFirstCell(view: RichTextEditorView, cellIndex: Int = 0) {
         val canvas = requireNotNull(drawing(view))
@@ -364,7 +366,7 @@ internal class EditorTableSurfaceMountTest {
             val beforeSourceId = adapter.cachedTableRecords.values.single().getString("sourceId")
             val beforeEpoch = adapter.positionEpoch
             val replacement = wideTableDocument.replace("Left", "Replacement")
-            assertTrue(view.editorEditText.applyUpdateJSON(externalReplacement(adapter, replacement)))
+            assertTrue(view.editorEditText.applyUpdateJSON(replaceTableDocumentExternallyForTest(adapter, replacement)))
             measure(view, 600)
 
             val nextSurface = requireNotNull(drawing(view)?.preparedLayout?.blocks?.single()?.tableSurface)
@@ -645,7 +647,7 @@ internal class EditorTableSurfaceMountTest {
         tapFirstCell(view)
         val connection = requireNotNull(view.activeTextInput.onCreateInputConnection(EditorInfo()))
         val replacement = tableDocument.replace("Cell text", "Replacement")
-        val update = externalReplacement(adapter, replacement)
+        val update = replaceTableDocumentExternallyForTest(adapter, replacement)
         assertTrue(view.editorEditText.applyUpdateJSON(update))
         measure(view, 600)
 
@@ -667,7 +669,7 @@ internal class EditorTableSurfaceMountTest {
                 if (replaced) return
                 replaced = true
                 val replacement = tableDocument.replace("Cell text", "Replacement")
-                val next = externalReplacement(adapter, replacement)
+                val next = replaceTableDocumentExternallyForTest(adapter, replacement)
                 assertTrue(root.applyUpdateJSON(next))
             }
         }

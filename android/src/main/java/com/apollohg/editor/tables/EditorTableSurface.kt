@@ -14,6 +14,7 @@ import android.view.MotionEvent
 import android.view.KeyEvent
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
+import kotlin.math.roundToInt
 import com.apollohg.editor.EditorEditText
 import com.apollohg.editor.EditorTextStyle
 import com.apollohg.editor.EditorV2Adapter
@@ -25,6 +26,7 @@ import com.apollohg.editor.syncCurrentSelectionToRust
 import com.apollohg.editor.PositionBridge
 import com.apollohg.editor.commandAtSelection
 import com.apollohg.editor.RenderBridge
+import com.apollohg.editor.selectExactTableCells
 import com.apollohg.editor.RichTextEditorView
 import com.apollohg.editor.canonicalV2U64
 import com.apollohg.editor.applyRenderedSpannable
@@ -35,6 +37,7 @@ import com.apollohg.editor.retireInputConnectionForEditor
 import com.apollohg.editor.updateAtomBoundaryCursorVisibility
 import com.apollohg.editor.viewer.PreparedProseBlock
 import com.apollohg.editor.viewer.PreparedProseDrawingView
+import com.apollohg.editor.viewer.TableSelectionHandleRole
 import com.apollohg.editor.viewer.PreparedProseLayout
 import com.apollohg.editor.viewer.PreparedProseTheme
 import com.apollohg.editor.viewer.ProseLayoutKey
@@ -60,6 +63,10 @@ internal class RootTableHeightSpan(val heightPx: Int) : ReplacementSpan() {
 }
 
 internal class EditorTableSurface(private val host: RichTextEditorView) {
+    private companion object {
+        const val HANDLE_EDGE_BAND_DP = 48f
+        const val HANDLE_SCROLL_STEP_DP = 12f
+    }
     private data class Entry(val surface: ViewerTableSurface, val localBounds: Rect,
                              val occupiedHeight: Int)
     private data class PreparationKey(val adapter: EditorV2Adapter, val revision: ULong,
@@ -93,8 +100,223 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
     private var key: PreparationKey? = null
     private var positionedBlocks: List<PreparedProseBlock> = emptyList()
     private val hostGestureAxis = TableGestureAxisLock(host.context)
+    private data class HandleDrag(
+        val adapter: EditorV2Adapter,
+        val tableId: String,
+        val role: TableSelectionHandleRole,
+        val pointerId: Int,
+        val revision: ULong,
+        var epoch: String,
+        val generation: Long,
+        val ownerId: String?,
+        val ownerToken: Long?,
+        val offsetX: Float,
+        val offsetY: Float,
+        var anchor: Int,
+        var head: Int,
+        var screenX: Float,
+        var screenY: Float
+    )
+    private var handleDrag: HandleDrag? = null
+    private var handleFramePosted = false
+    private var runningHandleFrame = false
+    private val handleFrame = object : Runnable {
+        override fun run() {
+            handleFramePosted = false
+            val drag = handleDrag ?: return
+            if (runningHandleFrame || !validHandleDrag(drag)) {
+                cancelHandleDrag()
+                return
+            }
+            runningHandleFrame = true
+            try {
+                val density = host.resources.displayMetrics.density
+                val band = HANDLE_EDGE_BAND_DP * density
+                val step = HANDLE_SCROLL_STEP_DP * density
+                val viewport = drawingView.selectedTableViewport(drag.tableId)
+                var scrolled = false
+                if (viewport != null) {
+                    val x = drag.screenX - drawingView.left
+                    val horizontal = when {
+                        x < viewport.left + band -> -step
+                        x > viewport.right - band -> step
+                        else -> 0f
+                    }
+                    if (horizontal != 0f) {
+                        scrolled = drawingView.scrollSelectedTablePhysical(drag.tableId,
+                            horizontal) != 0f
+                    }
+                }
+                if (handleDrag !== drag || !validHandleDrag(drag)) return
+                val scroll = host.editorScrollView
+                val visible = Rect()
+                if (!scroll.getLocalVisibleRect(visible)) {
+                    cancelHandleDrag()
+                    return
+                }
+                val viewportTop = maxOf(visible.top.toFloat() - scroll.scrollY,
+                    scroll.paddingTop.toFloat())
+                val viewportBottom = minOf(visible.bottom.toFloat() - scroll.scrollY,
+                    (scroll.height - scroll.paddingBottom).toFloat())
+                val vertical = when {
+                    drag.screenY < viewportTop + band -> -step
+                    drag.screenY > viewportBottom - band -> step
+                    else -> 0f
+                }
+                if (vertical != 0f) {
+                    val prior = scroll.scrollY
+                    scroll.scrollBy(0, vertical.roundToInt())
+                    scrolled = scrolled || scroll.scrollY != prior
+                }
+                if (scrolled && validHandleDrag(drag)) updateHandleTarget(drag)
+                if (scrolled && handleDrag === drag) scheduleHandleFrame()
+            } finally {
+                runningHandleFrame = false
+            }
+        }
+    }
 
     fun beginHostGesture() = hostGestureAxis.reset()
+
+    fun startHandleDrag(event: MotionEvent): Boolean {
+        if (event.actionMasked != MotionEvent.ACTION_DOWN || event.pointerCount != 1) return false
+        val root = host.editorEditText
+        val adapter = root.v2Driver as? EditorV2Adapter ?: return false
+        if (!root.isEnabled || !root.isEditable || root.hasPendingCompositionForExternalRefresh() ||
+            nativeTextSelectionActive() || activeCell != null ||
+            !root.hasAuthorizedNativeTableOwner(adapter) ||
+            adapter.cachedAtomicRenderDocumentRevision != adapter.baseDocumentRevision ||
+            root.lastAppliedDocumentVersion != adapter.baseDocumentRevision.toString()) return false
+        val epoch = adapter.positionEpoch ?: return false
+        val handle = drawingView.hitSelectionHandle(event.x - drawingView.left,
+            event.y - drawingView.top) ?: return false
+        if (handle.tableId !in entries ||
+            adapter.cachedTableRecords[handle.tableId]?.optBoolean("readOnlyDescendants", true) != false) return false
+        val selection = adapter.cachedAtomicRenderJson?.let { raw ->
+            runCatching { JSONObject(raw).getJSONObject("selection") }.getOrNull()
+        } ?: return false
+        if (selection.optString("type") != "cell") return false
+        val anchor = exactV2ScalarInt(selection.opt("anchorCell") as? Number) ?: return false
+        val head = exactV2ScalarInt(selection.opt("headCell") as? Number) ?: return false
+        val resolved = resolveEditorCellSelection(selection, adapter.cachedTableRecords)
+            as? EditorCellSelection.Drawable ?: return false
+        if (resolved.tableId != handle.tableId) return false
+        cancelHandleDrag()
+        drawingView.cancelTableInteraction()
+        handleDrag = HandleDrag(adapter, handle.tableId, handle.role,
+            event.getPointerId(0), adapter.baseDocumentRevision, epoch,
+            adapter.tablePresentationDocumentGeneration, adapter.nativeOwnerId,
+            adapter.currentNativeOwnerToken, event.x - drawingView.left - handle.x,
+            event.y - drawingView.top - handle.y, anchor, head,
+            event.x, event.y + host.editorContentFrame.top - host.editorScrollView.scrollY)
+        host.editorContentFrame.parent?.requestDisallowInterceptTouchEvent(true)
+        return true
+    }
+
+    fun handleDragActive(): Boolean = handleDrag != null
+
+    fun onHandleTouch(event: MotionEvent): Boolean {
+        val drag = handleDrag ?: return false
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> return true
+            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP,
+            MotionEvent.ACTION_CANCEL -> {
+                cancelHandleDrag()
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (event.pointerCount != 1) {
+                    cancelHandleDrag()
+                    return true
+                }
+                val index = event.findPointerIndex(drag.pointerId)
+                if (index < 0 || !validHandleDrag(drag)) {
+                    cancelHandleDrag()
+                    return true
+                }
+                drag.screenX = event.getX(index)
+                drag.screenY = event.getY(index) + host.editorContentFrame.top -
+                    host.editorScrollView.scrollY
+                updateHandleTarget(drag)
+                if (handleDrag === drag) scheduleHandleFrame()
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                if (event.pointerCount == 1 && event.getPointerId(0) == drag.pointerId &&
+                    validHandleDrag(drag)) {
+                    drag.screenX = event.x
+                    drag.screenY = event.y + host.editorContentFrame.top -
+                        host.editorScrollView.scrollY
+                    updateHandleTarget(drag)
+                }
+                cancelHandleDrag()
+                return true
+            }
+        }
+        return true
+    }
+
+    private fun validHandleDrag(drag: HandleDrag): Boolean {
+        val root = host.editorEditText
+        val adapter = drag.adapter
+        if (root.v2Driver !== adapter || !root.isEnabled || !root.isEditable ||
+            root.hasPendingCompositionForExternalRefresh() ||
+            !root.hasAuthorizedNativeTableOwner(adapter) ||
+            adapter.baseDocumentRevision != drag.revision ||
+            adapter.cachedAtomicRenderDocumentRevision != drag.revision ||
+            adapter.positionEpoch != drag.epoch ||
+            adapter.tablePresentationDocumentGeneration != drag.generation ||
+            adapter.nativeOwnerId != drag.ownerId || adapter.currentNativeOwnerToken != drag.ownerToken ||
+            root.lastAppliedDocumentVersion != drag.revision.toString()) return false
+        val selection = adapter.cachedAtomicRenderJson?.let { raw ->
+            runCatching { JSONObject(raw).getJSONObject("selection") }.getOrNull()
+        } ?: return false
+        return selection.optString("type") == "cell" &&
+            exactV2ScalarInt(selection.opt("anchorCell") as? Number) == drag.anchor &&
+            exactV2ScalarInt(selection.opt("headCell") as? Number) == drag.head &&
+            (resolveEditorCellSelection(selection, adapter.cachedTableRecords)
+                as? EditorCellSelection.Drawable)?.tableId == drag.tableId
+    }
+
+    private fun updateHandleTarget(drag: HandleDrag) {
+        if (!validHandleDrag(drag)) {
+            cancelHandleDrag()
+            return
+        }
+        val x = drag.screenX - drawingView.left - drag.offsetX
+        val y = drag.screenY + host.editorScrollView.scrollY - host.editorContentFrame.top -
+            drawingView.top - drag.offsetY
+        val target = drawingView.selectedTableCellAt(x, y, drag.tableId) ?: return
+        val anchor = if (drag.role == TableSelectionHandleRole.ANCHOR) target else drag.anchor
+        val head = if (drag.role == TableSelectionHandleRole.HEAD) target else drag.head
+        if (anchor == drag.anchor && head == drag.head) return
+        val update = drag.adapter.selectExactTableCells(anchor, head, drag.revision,
+            drag.epoch, drag.generation, drag.ownerId, drag.ownerToken,
+            drag.anchor, drag.head) ?: run {
+            cancelHandleDrag()
+            return
+        }
+        drag.anchor = anchor
+        drag.head = head
+        drag.epoch = requireNotNull(drag.adapter.positionEpoch)
+        if (!host.editorEditText.applyUpdateJSON(update) || !validHandleDrag(drag)) {
+            cancelHandleDrag()
+        }
+    }
+
+    private fun scheduleHandleFrame() {
+        if (handleFramePosted || handleDrag == null) return
+        handleFramePosted = true
+        host.editorContentFrame.postOnAnimation(handleFrame)
+    }
+
+    fun cancelHandleDrag() {
+        if (handleDrag == null && !handleFramePosted) return
+        handleDrag = null
+        if (handleFramePosted) host.editorContentFrame.removeCallbacks(handleFrame)
+        handleFramePosted = false
+        host.editorContentFrame.parent?.requestDisallowInterceptTouchEvent(false)
+    }
 
     fun hasTableAt(x: Float, y: Float): Boolean = drawingView.hasTableAt(
         x - drawingView.left, y - drawingView.top
@@ -106,8 +328,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         }
 
     fun clear() {
+        cancelHandleDrag()
         invalidateCell()
         drawingView.selectedTableCellSourcePositions = emptyMap()
+        drawingView.selectedTableCellEndpoints = null
         entries = emptyMap()
         key = null
         positionedBlocks = emptyList()
@@ -149,6 +373,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             else {
                 invalidateCell()
                 drawingView.selectedTableCellSourcePositions = emptyMap()
+                drawingView.selectedTableCellEndpoints = null
             }
             if (restoreCellSelectionFocus) input.requestFocus()
             return
@@ -157,6 +382,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             runCatching { JSONObject(raw).optJSONObject("selection") }.getOrNull()
         }?.takeIf { it.optString("type") == "cell" }
             ?.let { resolveEditorCellSelection(it, adapter.cachedTableRecords) }
+        handleDrag?.let { drag -> if (!validHandleDrag(drag)) cancelHandleDrag() }
         if (input.authoritativeCellSelectionActive && activeCell != null) {
             invalidateCell()
             input.requestFocus()
@@ -199,6 +425,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         reserve(entries.mapValues { it.value.occupiedHeight })
         if (entries.isEmpty()) {
             drawingView.selectedTableCellSourcePositions = emptyMap()
+            drawingView.selectedTableCellEndpoints = null
             drawingView.install(null)
             (drawingView.parent as? ViewGroup)?.removeView(drawingView)
             return
@@ -214,6 +441,17 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             is EditorCellSelection.Drawable -> mapOf(cellSelection.tableId to cellSelection.sourcePositions)
             else -> emptyMap()
         }
+        drawingView.selectedTableCellEndpoints = if (cellSelection is EditorCellSelection.Drawable &&
+            cellSelection.tableId in entries && input.isEnabled && input.isEditable &&
+            !input.hasPendingCompositionForExternalRefresh() &&
+            input.hasAuthorizedNativeTableOwner(adapter) &&
+            adapter.cachedTableRecords[cellSelection.tableId]?.optBoolean("readOnlyDescendants", true) == false
+        ) {
+            val selection = JSONObject(requireNotNull(adapter.cachedAtomicRenderJson)).getJSONObject("selection")
+            val anchor = exactV2ScalarInt(selection.opt("anchorCell") as? Number)
+            val head = exactV2ScalarInt(selection.opt("headCell") as? Number)
+            if (anchor != null && head != null) Triple(cellSelection.tableId, anchor, head) else null
+        } else null
         if (!applyingCellUpdate) reconcileActiveCell()
     }
 

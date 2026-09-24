@@ -39,6 +39,79 @@ class NativeTableHostTest {
     }
 
     @Test
+    fun draggingSelectedTableHandlePublishesExactCellSelectionOnDevice() {
+        val intent = Intent(instrumentation.targetContext, NativeTableHostActivity::class.java)
+        ActivityScenario.launch<NativeTableHostActivity>(intent).use { scenario ->
+            awaitTableLayout(scenario, "native-table-selection-layout-timeout.png")
+            var fromX = 0f
+            var fromY = 0f
+            var toX = 0f
+            var toY = 0f
+            var targetOpening = -1
+            lateinit var beforeDocument: String
+            var beforeRevision = 0uL
+            var beforeHistory: Pair<Boolean?, Boolean?> = null to null
+            scenario.onActivity { activity ->
+                val adapter = activity.adapter
+                val root = activity.richTextView.editorEditText
+                val cells = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+                fun point(index: Int) = JSONObject().put("kind", "document")
+                    .put("offset", cells.getJSONObject(index).getInt("sourcePos"))
+                val selection = JSONObject().put("type", "cell")
+                    .put("anchorCell", point(2)).put("headCell", point(3))
+                val admitted = adapter.callWithEnvelope(JSONObject().put("selection", selection)) {
+                    UniffiEditorV2Backend.setSelection(adapter.editorId, it)
+                }
+                assertTrue("device selection admission=$admitted", admitted is EditorV2CallResult.Ok)
+                assertTrue(root.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
+                val drawing = tableHosts(activity.richTextView).single()
+                val handles = drawing.selectionHandles()
+                assertEquals(2, handles.size)
+                val head = handles.single { it.role ==
+                    com.apollohg.editor.viewer.TableSelectionHandleRole.HEAD }
+                targetOpening = cells.getJSONObject(4).getInt("sourcePos")
+                val target = drawing.presentedTableCells().single { it.sourcePosition == targetOpening }
+                val location = IntArray(2)
+                drawing.getLocationOnScreen(location)
+                fromX = location[0] + head.x
+                fromY = location[1] + head.y
+                toX = location[0] + target.bounds.centerX()
+                toY = location[1] + target.bounds.centerY()
+                beforeDocument = requireNotNull(adapter.documentJson())
+                beforeRevision = adapter.baseDocumentRevision
+                beforeHistory = adapter.historyCanUndo() to adapter.historyCanRedo()
+            }
+            awaitCommittedFrame(scenario)
+            instrumentation.saveDeviceScreenshot("native-table-selection-handles-before.png")
+            val start = SystemClock.uptimeMillis()
+            listOf(
+                MotionEvent.obtain(start, start, MotionEvent.ACTION_DOWN, fromX, fromY, 0),
+                MotionEvent.obtain(start, start + 30, MotionEvent.ACTION_MOVE, toX, toY, 0),
+                MotionEvent.obtain(start, start + 60, MotionEvent.ACTION_UP, toX, toY, 0)
+            ).forEach { event ->
+                try { instrumentation.sendPointerSync(event) }
+                finally { event.recycle() }
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { activity ->
+                val adapter = activity.adapter
+                val rendered = UniffiEditorV2Backend.renderUpdate(adapter.editorId, null, null)
+                assertTrue(rendered is EditorV2CallResult.Ok)
+                val canonical = JSONObject((rendered as EditorV2CallResult.Ok).value)
+                    .getJSONObject("selection")
+                assertEquals("cell", canonical.getString("type"))
+                assertEquals(targetOpening, canonical.getInt("headCell"))
+                assertTrue(activity.richTextView.editorEditText.authoritativeCellSelectionActive)
+                assertEquals(beforeDocument, adapter.documentJson())
+                assertEquals(beforeRevision, adapter.baseDocumentRevision)
+                assertEquals(beforeHistory, adapter.historyCanUndo() to adapter.historyCanRedo())
+            }
+            awaitCommittedFrame(scenario)
+            instrumentation.saveDeviceScreenshot("native-table-selection-handles-after.png")
+        }
+    }
+
+    @Test
     @SdkSuppress(minSdkVersion = 29)
     fun tappingCellsReusesInputAndRetiresPreviousConnections() {
         val intent = Intent(instrumentation.targetContext, NativeTableHostActivity::class.java)

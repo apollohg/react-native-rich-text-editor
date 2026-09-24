@@ -9,6 +9,53 @@ internal sealed interface SelectionSyncOutcome {
     object Failed : SelectionSyncOutcome
 }
 
+internal fun EditorV2Adapter.selectExactTableCells(
+    anchorCell: Int,
+    headCell: Int,
+    expectedRevision: ULong,
+    expectedEpoch: String,
+    expectedGeneration: Long,
+    expectedOwnerId: String?,
+    expectedOwnerToken: Long?,
+    expectedAnchor: Int,
+    expectedHead: Int
+): String? {
+    if (destroyed || baseDocumentRevision != expectedRevision ||
+        cachedAtomicRenderDocumentRevision != expectedRevision ||
+        positionEpoch != expectedEpoch ||
+        tablePresentationDocumentGeneration != expectedGeneration ||
+        nativeOwnerId != expectedOwnerId || currentNativeOwnerToken != expectedOwnerToken) return null
+    val current = cachedAtomicRenderJson?.let { raw ->
+        runCatching { JSONObject(raw).getJSONObject("selection") }.getOrNull()
+    } ?: return null
+    if (current.optString("type") != "cell" ||
+        exactV2ScalarInt(current.opt("anchorCell") as? Number) != expectedAnchor ||
+        exactV2ScalarInt(current.opt("headCell") as? Number) != expectedHead) return null
+    fun point(opening: Int) = JSONObject().put("kind", "document").put("offset", opening)
+    val selection = JSONObject().put("type", "cell")
+        .put("anchorCell", point(anchorCell)).put("headCell", point(headCell))
+    val result = callWithEnvelope(JSONObject().put("selection", selection)) {
+        backend.setSelection(editorId, it)
+    }
+    if (result is EditorV2CallResult.Err) {
+        if (result.error.code != "REVISION_MISMATCH" && result.error.code != "POSITION_INVALID") {
+            emit(result.error)
+        }
+        return null
+    }
+    val update = refreshFromRustState(null) ?: return null
+    val admitted = runCatching { JSONObject(update).getJSONObject("selection") }.getOrNull()
+        ?: return null
+    if (admitted.optString("type") != "cell" ||
+        exactV2ScalarInt(admitted.opt("anchorCell") as? Number) != anchorCell ||
+        exactV2ScalarInt(admitted.opt("headCell") as? Number) != headCell ||
+        baseDocumentRevision != expectedRevision ||
+        tablePresentationDocumentGeneration != expectedGeneration ||
+        nativeOwnerId != expectedOwnerId || currentNativeOwnerToken != expectedOwnerToken ||
+        positionEpoch == null) return null
+    return update
+}
+
 internal fun EditorV2Adapter.clampScalar(scalar: Int): Int {
     val extent = cachedScalarLength ?: return scalar
     return scalar.coerceIn(0, extent)

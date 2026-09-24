@@ -47,6 +47,7 @@ internal class EditorV2Adapter private constructor(
     private var nextRequestId: ULong = 0uL
     internal var nativeOwnerId: String? = null
     private var nativeOwnerToken: Long? = null
+    internal val currentNativeOwnerToken: Long? get() = nativeOwnerToken
     internal var positionEpoch: String? = null
     internal var lastRequestIdForTesting: ULong? = null
         private set

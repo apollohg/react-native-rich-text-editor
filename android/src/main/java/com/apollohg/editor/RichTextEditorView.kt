@@ -141,8 +141,10 @@ class RichTextEditorView @JvmOverloads constructor(
         private var nativeTableSelectionGesture = false
 
         override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+            if (editorTableSurface.handleDragActive()) return true
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    if (editorTableSurface.startHandleDrag(event)) return true
                     tableDownX = event.x
                     tableDownY = event.y
                     routingTableDrag = false
@@ -171,6 +173,7 @@ class RichTextEditorView @JvmOverloads constructor(
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
+            if (editorTableSurface.handleDragActive()) return editorTableSurface.onHandleTouch(event)
             if (routingTableDrag) {
                 val handled = if (event.actionMasked == MotionEvent.ACTION_MOVE &&
                     event.eventTime == forwardedMoveTime) true else forwardTableGesture(event)
@@ -916,6 +919,7 @@ class RichTextEditorView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
+        editorTableSurface.cancelHandleDrag()
         invalidateAtomMeasurements()
         editorTableSurface.clear()
         onBeforeDetachedFromWindow?.invoke()

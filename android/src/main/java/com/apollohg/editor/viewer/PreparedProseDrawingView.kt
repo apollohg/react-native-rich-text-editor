@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Color
 import android.os.Bundle
 import android.util.AttributeSet
 import android.view.MotionEvent
@@ -30,11 +31,24 @@ import com.apollohg.editor.tables.TableInteractionController
 import com.apollohg.editor.tables.ViewerTablePresentedAccessibilityNode
 import com.apollohg.editor.tables.ViewerTablePresentedBlock
 import com.apollohg.editor.tables.ViewerTablePresentedCell
+import com.apollohg.editor.tables.ViewerTablePresentedSurface
+import com.apollohg.editor.tables.ViewerTablePresentationSnapshot
 import com.apollohg.editor.tables.ViewerTableSurface
+import kotlin.math.pow
 import java.util.Collections
 import java.util.IdentityHashMap
 import org.json.JSONArray
 import org.json.JSONObject
+
+internal enum class TableSelectionHandleRole { ANCHOR, HEAD }
+
+internal data class TableSelectionHandle(
+    val role: TableSelectionHandleRole,
+    val tableId: String,
+    val sourcePosition: Int,
+    val x: Float,
+    val y: Float
+)
 
 /** Rendering-only consumer of fully prepared StaticLayout and geometry fragments. */
 internal class PreparedProseDrawingView @JvmOverloads constructor(
@@ -64,6 +78,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             invalidate()
         }
     internal var selectedTableCellSourcePositions: Map<String, Set<Int>> = emptyMap()
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
+    internal var selectedTableCellEndpoints: Triple<String, Int, Int>? = null
         set(value) {
             if (field == value) return
             field = value
@@ -127,6 +147,9 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     internal companion object {
+        private const val HANDLE_RADIUS_DP = 8f
+        private const val HANDLE_INSET_DP = 8f
+        private const val HANDLE_HIT_SIZE_DP = 48f
         const val IMAGE_PIXEL_MAP_RETAINED_BYTES = 48L
         const val IMAGE_PIXEL_ENTRY_RETAINED_BYTES = 48L
 
@@ -291,6 +314,84 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     internal fun presentedTableCells(): List<ViewerTablePresentedCell> =
         presentationSnapshot()?.cells.orEmpty()
 
+    internal fun selectionHandles(): List<TableSelectionHandle> =
+        presentationSnapshot()?.let(::selectionHandles).orEmpty()
+
+    private fun ViewerTablePresentationSnapshot.tableWithId(tableId: String): ViewerTablePresentedSurface? =
+        tables.firstOrNull {
+            it.surface.sourceTable?.tablePos?.let { position -> "t$position" } == tableId
+        }
+
+    private fun selectionHandles(snapshot: ViewerTablePresentationSnapshot): List<TableSelectionHandle> {
+        val (tableId, anchor, head) = selectedTableCellEndpoints ?: return emptyList()
+        val surface = snapshot.tableWithId(tableId) ?: return emptyList()
+        val cells = snapshot.cells.filter {
+            it.surface === surface.surface &&
+                it.sourcePosition in selectedTableCellSourcePositions[tableId].orEmpty()
+        }
+        if (cells.isEmpty() || cells.none { it.sourcePosition == anchor } ||
+            cells.none { it.sourcePosition == head }) return emptyList()
+        val inset = HANDLE_INSET_DP * resources.displayMetrics.density
+        val forward = anchor <= head
+        val rtl = surface.surface.isRightToLeft
+        val firstCell = cells.minWith(compareBy<ViewerTablePresentedCell> { it.bounds.top }
+            .thenBy { if (rtl) -it.bounds.right else it.bounds.left })
+        val lastCell = cells.maxWith(compareBy<ViewerTablePresentedCell> { it.bounds.bottom }
+            .thenBy { if (rtl) -it.bounds.left else it.bounds.right })
+        val firstX = if (rtl) firstCell.bounds.right - inset else firstCell.bounds.left + inset
+        val lastX = if (rtl) lastCell.bounds.left + inset else lastCell.bounds.right - inset
+        val first = TableSelectionHandle(
+            if (forward) TableSelectionHandleRole.ANCHOR else TableSelectionHandleRole.HEAD,
+            tableId, if (forward) anchor else head, firstX, firstCell.bounds.top + inset
+        )
+        val last = TableSelectionHandle(
+            if (forward) TableSelectionHandleRole.HEAD else TableSelectionHandleRole.ANCHOR,
+            tableId, if (forward) head else anchor, lastX, lastCell.bounds.bottom - inset
+        )
+        val visible = (presentationViewport() as? ViewerTablePresentationViewport.Known)?.rect
+        return listOf(first, last).filter {
+            surface.clip.contains(it.x, it.y) &&
+                (visible == null || visible.contains(it.x.toInt(), it.y.toInt())) &&
+                cells.any { cell -> cell.bounds.contains(it.x, it.y) }
+        }
+    }
+
+    internal fun hitSelectionHandle(x: Float, y: Float): TableSelectionHandle? {
+        val snapshot = presentationSnapshot() ?: return null
+        val visible = (presentationViewport() as? ViewerTablePresentationViewport.Known)?.rect
+        if (visible != null && (x < visible.left || x >= visible.right ||
+                y < visible.top || y >= visible.bottom)) return null
+        val radius = HANDLE_HIT_SIZE_DP * resources.displayMetrics.density / 2f
+        return selectionHandles(snapshot).mapNotNull { handle ->
+            val distance = (x - handle.x).pow(2) + (y - handle.y).pow(2)
+            if (distance <= radius * radius) handle to distance else null
+        }.minWithOrNull(compareBy<Pair<TableSelectionHandle, Float>> { it.second }
+            .thenBy { it.first.role.ordinal })?.first
+    }
+
+    internal fun selectedTableCellAt(x: Float, y: Float, tableId: String): Int? {
+        val snapshot = presentationSnapshot() ?: return null
+        val visible = (presentationViewport() as? ViewerTablePresentationViewport.Known)?.rect
+        if (visible != null && (x < visible.left || x >= visible.right ||
+                y < visible.top || y >= visible.bottom)) return null
+        val surface = snapshot.tableWithId(tableId) ?: return null
+        return snapshot.cells.firstOrNull {
+            it.surface === surface.surface && it.bounds.contains(x, y) && it.clip.contains(x, y)
+        }?.sourcePosition
+    }
+
+    internal fun scrollSelectedTablePhysical(tableId: String, delta: Float): Float {
+        val surface = presentationSnapshot()?.tableWithId(tableId)?.surface ?: return 0f
+        val consumed = tablePresentationOwner.scrollPhysical(delta, surface)
+        if (consumed != 0f) tableOffsetChanged()
+        return consumed
+    }
+
+    internal fun cancelTableInteraction() = tableInteraction.cancel()
+
+    internal fun selectedTableViewport(tableId: String): RectF? =
+        presentationSnapshot()?.tableWithId(tableId)?.clip
+
     internal fun atomLayoutsJson(density: Float): String {
         val artifact = preparedLayout ?: return "[]"
         if (!density.isFinite() || density <= 0f) return "[]"
@@ -430,6 +531,21 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                         }
                         drawForeground(canvas, it, attachment)
                     }
+                }
+                val handleTable = selectedTableCellEndpoints?.first?.let { tableId ->
+                    snapshot.tableWithId(tableId)
+                }
+                if (handleTable != null) {
+                    paint.style = Paint.Style.FILL
+                    val handleColor = handleTable.surface.style.selectionColor
+                    paint.color = Color.rgb(Color.red(handleColor), Color.green(handleColor), Color.blue(handleColor))
+                    val radius = HANDLE_RADIUS_DP * resources.displayMetrics.density
+                    val handleClip = canvas.save()
+                    canvas.clipRect(handleTable.clip)
+                    selectionHandles(snapshot).forEach { handle ->
+                        canvas.drawCircle(handle.x, handle.y, radius, paint)
+                    }
+                    canvas.restoreToCount(handleClip)
                 }
                 visible.size
             }
