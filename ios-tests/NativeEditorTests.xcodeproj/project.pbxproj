@@ -160,6 +160,7 @@
 		A17000000000000000000013 /* EditorTableSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000003 /* EditorTableSurface.swift */; };
 		A17000000000000000000014 /* EditorTableInputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000004 /* EditorTableInputTests.swift */; };
 		A18000000000000000000011 /* EditorTableNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000001 /* EditorTableNavigationTests.swift */; };
+		A18000000000000000000012 /* EditorTableArrowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000002 /* EditorTableArrowTests.swift */; };
 		A17200000000000000000011 /* EditorCellSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17200000000000000000001 /* EditorCellSelection.swift */; };
 		A17100000000000000000011 /* TableCellPositionMapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17100000000000000000001 /* TableCellPositionMapTests.swift */; };
 		B4F9AA2B05BFD1623A26870B /* EditorV2AdapterTests+Destroy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D651415D399FE0F5164ABE /* EditorV2AdapterTests+Destroy.swift */; };
@@ -252,6 +253,7 @@
 		A17000000000000000000003 /* EditorTableSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableSurface.swift; sourceTree = "<group>"; };
 		A17000000000000000000004 /* EditorTableInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableInputTests.swift; sourceTree = "<group>"; };
 		A18000000000000000000001 /* EditorTableNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableNavigationTests.swift; sourceTree = "<group>"; };
+		A18000000000000000000002 /* EditorTableArrowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableArrowTests.swift; sourceTree = "<group>"; };
 		A17200000000000000000001 /* EditorCellSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorCellSelection.swift; sourceTree = "<group>"; };
 		A17100000000000000000001 /* TableCellPositionMapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellPositionMapTests.swift; sourceTree = "<group>"; };
 		10A13C02E22F5783115D5F8B /* EditorV2Adapter+TextCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorV2Adapter+TextCommands.swift"; sourceTree = "<group>"; };
@@ -689,6 +691,7 @@
 				A16000000000000000000003 /* ViewerTableTests.swift */,
 				A17000000000000000000004 /* EditorTableInputTests.swift */,
 				A18000000000000000000001 /* EditorTableNavigationTests.swift */,
+				A18000000000000000000002 /* EditorTableArrowTests.swift */,
 				A17100000000000000000001 /* TableCellPositionMapTests.swift */,
 				0A70A1000000000000000002 /* AtomMountingTests.swift */,
 				80892297FFD41613BE083EF1 /* EditorV2AdapterTests.swift */,
@@ -1292,6 +1295,7 @@
 				A17200000000000000000011 /* EditorCellSelection.swift in Sources */,
 				A17000000000000000000014 /* EditorTableInputTests.swift in Sources */,
 				A18000000000000000000011 /* EditorTableNavigationTests.swift in Sources */,
+				A18000000000000000000012 /* EditorTableArrowTests.swift in Sources */,
 				A17100000000000000000011 /* TableCellPositionMapTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -1,6 +1,11 @@
 import UIKit
 
 final class EditorTableSurface: UIView {
+    enum ArrowDestination {
+        case cell(UInt32)
+        case surroundingProse
+        case blocked
+    }
     struct RootTableCellHit: Equatable {
         let tableID: String
         let cellIndex: UInt32
@@ -178,6 +183,60 @@ final class EditorTableSurface: UIView {
         else { return nil }
         let inset = entry.surface.style.cellPadding + entry.surface.style.borderWidth
         return cell.frame.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: inset, dy: inset)
+    }
+
+    func isRightToLeft(tableID: String) -> Bool? {
+        guard let surface = entries[tableID]?.surface else { return nil }
+        return surface.direction == .rightToLeft
+    }
+
+    func arrowDestination(tableID: String, cellIndex: UInt32,
+                          direction: TableCellArrowDirection, caret: CGPoint) -> ArrowDestination? {
+        guard let entry = entries[tableID],
+              let origin = tableOrigin(for: tableID),
+              let source = entry.surface.cells.first(where: { $0.sourceCellIndex == Int(cellIndex) })
+        else { return nil }
+        let cells = entry.surface.cells.filter { $0.sourceCellIndex != nil && $0.sourceCellIndex != Int(cellIndex) }
+        let x = min(max(caret.x - origin.x, source.frame.minX), source.frame.maxX.nextDown)
+        let y = min(max(caret.y - origin.y, source.frame.minY), source.frame.maxY.nextDown)
+        let candidates: [PreparedViewerTableCell]
+        switch direction {
+        case .left:
+            candidates = cells.filter {
+                $0.frame.minY <= y && y < $0.frame.maxY
+                    && $0.frame.minX < source.frame.minX && $0.frame.maxX <= source.frame.minX
+            }.sorted { $0.frame.maxX > $1.frame.maxX }
+        case .right:
+            candidates = cells.filter {
+                $0.frame.minY <= y && y < $0.frame.maxY
+                    && $0.frame.minX >= source.frame.maxX && $0.frame.maxX > source.frame.maxX
+            }.sorted { $0.frame.minX < $1.frame.minX }
+        case .up:
+            candidates = cells.filter {
+                $0.frame.minX <= x && x < $0.frame.maxX
+                    && $0.frame.minY < source.frame.minY && $0.frame.maxY <= source.frame.minY
+            }.sorted { $0.frame.maxY > $1.frame.maxY }
+        case .down:
+            candidates = cells.filter {
+                $0.frame.minX <= x && x < $0.frame.maxX
+                    && $0.frame.minY >= source.frame.maxY && $0.frame.maxY > source.frame.maxY
+            }.sorted { $0.frame.minY < $1.frame.minY }
+        }
+        if let index = candidates.first?.sourceCellIndex {
+            return .cell(UInt32(index))
+        }
+        if direction == .left || direction == .right {
+            let forward = (direction == .right) != (entry.surface.direction == .rightToLeft)
+            let nextIndex = Int(cellIndex) + (forward ? 1 : -1)
+            if entry.surface.cells.contains(where: { $0.sourceCellIndex == nextIndex }) {
+                return .cell(UInt32(nextIndex))
+            }
+            return .surroundingProse
+        }
+        let outerEdge = direction == .up
+            ? source.frame.minY == entry.surface.bounds.minY
+            : source.frame.maxY == entry.surface.bounds.maxY
+        return outerEdge ? .surroundingProse : .blocked
     }
 
     func nestedTableHeights(tableID: String, cellIndex: UInt32, input: EditorTextView? = nil) -> [String: CGFloat]? {

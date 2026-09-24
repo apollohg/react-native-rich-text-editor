@@ -179,6 +179,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     var authoritativeCellSelectionActive = false
     var tableCellInputAuthority: (() -> Bool)?
     var onTableCellTab: ((Bool) -> Void)?
+    var onTableCellArrow: ((TableCellArrowDirection) -> Void)?
     var onProjectedUpdate: ((String, Bool) -> Bool)?
     var onAuthoritativeRenderApplied: ((String) -> Void)?
     var renderAppearanceRevision: UInt64 = 1
@@ -620,7 +621,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     }
 
     override var keyCommands: [UIKeyCommand]? {
-        [
+        var commands = [
             UIKeyCommand(
                 input: "\r",
                 modifierFlags: [.shift],
@@ -642,6 +643,18 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
                 action: #selector(pasteAndMatchStyle(_:))
             )
         ]
+        if tableCellPositionMap != nil {
+            for direction in TableCellArrowDirection.allCases where isAtTableCellArrowBoundary(direction) {
+                let command = UIKeyCommand(
+                    input: direction.keyInput,
+                    modifierFlags: [],
+                    action: direction.action
+                )
+                command.wantsPriorityOverSystemBehavior = true
+                commands.append(command)
+            }
+        }
+        return commands
     }
 
     // MARK: - Input Interception: Deletion

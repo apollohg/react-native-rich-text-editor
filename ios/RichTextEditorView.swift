@@ -306,6 +306,9 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         tableInputCoordinator.cellInput.onTableCellTab = { [weak self] backward in
             self?.moveFromActiveTableCell(backward: backward)
         }
+        tableInputCoordinator.cellInput.onTableCellArrow = { [weak self] direction in
+            self?.moveFromActiveTableCell(by: direction)
+        }
         let cellInput = tableInputCoordinator.cellInput
         cellInput.onAuthoritativeTextSelectionSynced = { [weak self, weak cellInput] in
             guard let self, let cellInput else { return }
@@ -442,6 +445,177 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         }
         _ = input.applySelectionFromJSON(targetSelection)
         if focused { _ = input.becomeFirstResponder() }
+    }
+
+    private func moveFromActiveTableCell(by direction: TableCellArrowDirection) {
+        let input = tableInputCoordinator.cellInput
+        guard activeTextInput === input,
+              case .bound = tableInputCoordinator.phase,
+              input.isAtTableCellArrowBoundary(direction),
+              let tableID = tableInputCoordinator.activeTableID,
+              let cellIndex = tableInputCoordinator.activeCellIndex,
+              let currentMap = tableInputCoordinator.positionMap,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              hasTableCellBindingAuthority(adapter)
+        else { return }
+        guard input.prepareForExternalEditorUpdate(),
+              activeTextInput === input,
+              tableInputCoordinator.activeTableID == tableID,
+              tableInputCoordinator.activeCellIndex == cellIndex,
+              tableInputCoordinator.positionMap?.binding == currentMap.binding,
+              input.isAtTableCellArrowBoundary(direction),
+              hasTableCellBindingAuthority(adapter),
+              EditorV2Registry.adapter(forLegacyId: editorId) === adapter,
+              let currentPosition = input.selectedTextRange,
+              currentPosition.isEmpty
+        else { return }
+        let caretRect = input.caretRect(for: currentPosition.start)
+        let caret = tableSurface.convert(CGPoint(x: caretRect.midX, y: caretRect.midY), from: input)
+        guard let destination = tableSurface.arrowDestination(
+            tableID: tableID, cellIndex: cellIndex, direction: direction, caret: caret
+        ) else { return }
+        let focused = input.isFirstResponder
+        let stateRevision = adapter.stateRevision
+        switch destination {
+        case .blocked:
+            return
+        case .surroundingProse:
+            guard let rightToLeft = tableSurface.isRightToLeft(tableID: tableID) else { return }
+            let forward: Bool
+            switch direction {
+            case .left: forward = rightToLeft
+            case .right: forward = !rightToLeft
+            case .up: forward = false
+            case .down: forward = true
+            }
+            guard let scalar = surroundingProseScalar(tableID: tableID, forward: forward),
+                  adapter.stateRevision == stateRevision,
+                  adapter.positionEpoch == currentMap.binding.positionEpoch,
+                  tableInputCoordinator.positionMap?.binding == currentMap.binding,
+                  activeTextInput === input
+            else { return }
+            invalidateTableCellBinding()
+            guard EditorV2Registry.adapter(forLegacyId: editorId) === adapter,
+                  hasTableCellBindingAuthority(adapter),
+                  adapter.baseDocumentRevision == currentMap.binding.documentRevision,
+                  adapter.stateRevision == stateRevision
+            else { return }
+            let offset = PositionBridge.scalarToUtf16Offset(scalar, in: textView)
+            textView.setRootTableSelectionRepresentable(true)
+            if focused { _ = textView.becomeFirstResponder() }
+            guard activeTextInput === textView,
+                  EditorV2Registry.adapter(forLegacyId: editorId) === adapter,
+                  hasTableCellBindingAuthority(adapter),
+                  adapter.baseDocumentRevision == currentMap.binding.documentRevision,
+                  adapter.stateRevision == stateRevision,
+                  adapter.positionEpoch == currentMap.binding.positionEpoch
+            else { return }
+            textView.selectedRange = NSRange(location: offset, length: 0)
+            textView.syncSelectionImmediately()
+        case .cell(let targetIndex):
+            guard targetIndex != cellIndex,
+                  bindTableCell(tableID: tableID, cellIndex: targetIndex,
+                                contentRect: input.frame),
+                  let targetMap = tableInputCoordinator.positionMap,
+                  activeTextInput === input,
+                  tableInputCoordinator.activeTableID == tableID,
+                  tableInputCoordinator.activeCellIndex == targetIndex,
+                  input.tableCellPositionMap?.binding == targetMap.binding,
+                  adapter.stateRevision == stateRevision,
+                  adapter.positionEpoch == currentMap.binding.positionEpoch,
+                  EditorV2Registry.adapter(forLegacyId: editorId) === adapter,
+                  hasTableCellBindingAuthority(adapter)
+            else { return }
+            let entry: CGPoint
+            switch direction {
+            case .right:
+                entry = CGPoint(x: input.bounds.minX, y: input.bounds.minY)
+            case .left:
+                entry = CGPoint(x: input.bounds.maxX, y: input.bounds.maxY)
+            case .down:
+                entry = CGPoint(x: tableSurface.convert(caret, to: input).x, y: input.bounds.minY)
+            case .up:
+                entry = CGPoint(x: tableSurface.convert(caret, to: input).x, y: input.bounds.maxY)
+            }
+            let nearest = input.closestPosition(to: entry).map {
+                PositionBridge.utf16OffsetToScalar(input.offset(from: input.beginningOfDocument, to: $0), in: input)
+            }
+            let fallback = (direction == .left || direction == .up)
+                ? targetMap.segments.last.map { $0.localScalarRange.upperBound - 1 }
+                : targetMap.segments.first?.localScalarRange.lowerBound
+            guard let local = nearest.flatMap({ targetMap.globalScalar(forLocalScalar: $0) }) != nil
+                ? nearest : fallback,
+                  let scalar = targetMap.globalScalar(forLocalScalar: local)
+            else {
+                if activeTextInput === input && tableInputCoordinator.activeTableID == tableID
+                    && tableInputCoordinator.activeCellIndex == targetIndex {
+                    invalidateTableCellBinding()
+                }
+                return
+            }
+            input.selectedRange = NSRange(
+                location: PositionBridge.scalarToUtf16Offset(local, in: input), length: 0
+            )
+            input.syncSelectionImmediately()
+            guard EditorV2Registry.adapter(forLegacyId: editorId) === adapter,
+                  hasTableCellBindingAuthority(adapter),
+                  adapter.baseDocumentRevision == currentMap.binding.documentRevision,
+                  tableInputCoordinator.activeTableID == tableID,
+                  tableInputCoordinator.activeCellIndex == targetIndex,
+                  input.currentScalarSelection()?.head == scalar,
+                  authoritativeTextSelectionIsAt(scalar, adapter: adapter)
+            else { return }
+            if focused { _ = input.becomeFirstResponder() }
+        }
+    }
+
+    private func authoritativeTextSelectionIsAt(_ scalar: UInt32, adapter: EditorV2Adapter) -> Bool {
+        guard let atomic = adapter.cachedAtomicRenderJSON,
+              let data = atomic.data(using: .utf8),
+              let snapshot = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let selection = snapshot["selection"] as? [String: Any],
+              selection["type"] as? String == "text"
+        else { return false }
+        return v2ExactUInt32(selection["anchorScalar"] as? NSNumber) == scalar
+            && v2ExactUInt32(selection["headScalar"] as? NSNumber) == scalar
+    }
+
+    private func surroundingProseScalar(tableID: String, forward: Bool) -> UInt32? {
+        let root = textView
+        guard root.textStorage.length > 0 else { return nil }
+        var result: UInt32?
+        root.textStorage.enumerateAttribute(
+            RenderBridgeAttributes.rootTableScalarExtent,
+            in: NSRange(location: 0, length: root.textStorage.length)
+        ) { value, range, stop in
+            guard let extent = value as? RenderBridge.RootTableScalarExtent,
+                  extent.tableID == tableID
+            else { return }
+            var neighbor = forward ? NSMaxRange(range) : range.location - 1
+            let rendered = root.textStorage.string as NSString
+            while neighbor >= 0 && neighbor < rendered.length,
+                  rendered.substring(with: NSRange(location: neighbor, length: 1))
+                    .rangeOfCharacter(from: .newlines) != nil {
+                neighbor += forward ? 1 : -1
+            }
+            guard neighbor >= 0,
+                  neighbor < rendered.length,
+                  root.textStorage.attribute(
+                    RenderBridgeAttributes.rootTableScalarExtent, at: neighbor, effectiveRange: nil
+                  ) == nil
+            else { return }
+            let scalar = forward ? extent.scalarEnd.addingReportingOverflow(1)
+                : extent.scalarStart.subtractingReportingOverflow(1)
+            guard !scalar.overflow,
+                  PositionBridge.isScalarPositionRepresentable(scalar.partialValue, in: root),
+                  PositionBridge.isRootTextInputRangeSafe(
+                    from: scalar.partialValue, to: scalar.partialValue, in: root
+                  )
+            else { return }
+            result = scalar.partialValue
+            stop.pointee = true
+        }
+        return result
     }
 
     private func selectionFitsTableCell(_ selection: [String: Any], map: TableCellPositionMap) -> Bool {

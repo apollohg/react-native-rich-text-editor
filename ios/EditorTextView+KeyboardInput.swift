@@ -1,6 +1,37 @@
 import os
 import UIKit
 
+enum TableCellArrowDirection: CaseIterable {
+    case left, right, up, down
+
+    var keyInput: String {
+        switch self {
+        case .left: UIKeyCommand.inputLeftArrow
+        case .right: UIKeyCommand.inputRightArrow
+        case .up: UIKeyCommand.inputUpArrow
+        case .down: UIKeyCommand.inputDownArrow
+        }
+    }
+
+    var layoutDirection: UITextLayoutDirection {
+        switch self {
+        case .left: .left
+        case .right: .right
+        case .up: .up
+        case .down: .down
+        }
+    }
+
+    var action: Selector {
+        switch self {
+        case .left: #selector(EditorTextView.handleTableCellLeftArrowKeyCommand)
+        case .right: #selector(EditorTextView.handleTableCellRightArrowKeyCommand)
+        case .up: #selector(EditorTextView.handleTableCellUpArrowKeyCommand)
+        case .down: #selector(EditorTextView.handleTableCellDownArrowKeyCommand)
+        }
+    }
+}
+
 enum EditorPasteMode: String {
     case rich
     case plainText
@@ -260,6 +291,70 @@ enum EditorClipboardPaste {
 }
 
 extension EditorTextView {
+    func isAtTableCellArrowBoundary(_ direction: TableCellArrowDirection) -> Bool {
+        guard tableCellPositionMap != nil,
+              editorId != 0,
+              isEditable,
+              isAuthorizedForTableCellInput(),
+              selectedRange.length == 0,
+              markedTextRange == nil,
+              !hasPendingCompositionForExternalRefresh,
+              let selected = selectedTextRange,
+              selected.isEmpty,
+              currentScalarSelection() != nil
+        else { return false }
+        if isLoneEmptyPlaceholderBlock { return true }
+        guard let next = position(from: selected.start, in: direction.layoutDirection, offset: 1) else {
+            return true
+        }
+        if direction == .up || direction == .down {
+            guard let currentLine = tableCellVisualLineOrigin(at: selected.start),
+                  let nextLine = tableCellVisualLineOrigin(at: next)
+            else { return false }
+            return direction == .up ? nextLine >= currentLine : nextLine <= currentLine
+        }
+        return offset(from: beginningOfDocument, to: next)
+            == offset(from: beginningOfDocument, to: selected.start)
+    }
+
+    private func tableCellVisualLineOrigin(at position: UITextPosition) -> CGFloat? {
+        let caret = caretRect(for: position)
+        guard !caret.isEmpty, caret.midY.isFinite else { return nil }
+        layoutManager.ensureLayout(for: textContainer)
+        let y = caret.midY - textContainerInset.top
+        if layoutManager.extraLineFragmentTextContainer != nil {
+            let extra = layoutManager.extraLineFragmentRect
+            if extra.minY <= y && y < extra.maxY { return extra.minY }
+        }
+        guard layoutManager.numberOfGlyphs > 0 else { return 0 }
+        let glyph = layoutManager.glyphIndex(
+            for: CGPoint(x: textContainer.lineFragmentPadding, y: y), in: textContainer
+        )
+        let line = layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        return line.minY <= y && y < line.maxY ? line.minY : nil
+    }
+
+    @objc func handleTableCellLeftArrowKeyCommand() {
+        handleTableCellArrowKeyCommand(.left)
+    }
+
+    @objc func handleTableCellRightArrowKeyCommand() {
+        handleTableCellArrowKeyCommand(.right)
+    }
+
+    @objc func handleTableCellUpArrowKeyCommand() {
+        handleTableCellArrowKeyCommand(.up)
+    }
+
+    @objc func handleTableCellDownArrowKeyCommand() {
+        handleTableCellArrowKeyCommand(.down)
+    }
+
+    private func handleTableCellArrowKeyCommand(_ direction: TableCellArrowDirection) {
+        guard isAtTableCellArrowBoundary(direction) else { return }
+        onTableCellArrow?(direction)
+    }
+
     @discardableResult
     func exportSelectionToPasteboard(_ pasteboard: UIPasteboard = .general) -> Bool {
         ensureInternalTextViewDelegate()

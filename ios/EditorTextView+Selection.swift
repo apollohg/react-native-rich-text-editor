@@ -325,6 +325,11 @@ extension EditorTextView {
         }
     }
 
+    func syncSelectionImmediately() {
+        pendingSelectionSyncGeneration &+= 1
+        syncSelectionToRustAndNotifyDelegate()
+    }
+
     private func syncSelectionToRustAndNotifyDelegate() {
         guard !isApplyingRustState,
               !isComposing,

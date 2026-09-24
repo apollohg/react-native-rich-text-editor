@@ -20,8 +20,8 @@ private final class ReentrantTableTabDelegate: NSObject, EditorTextViewDelegate 
 }
 
 final class EditorTableNavigationTests: XCTestCase {
-    private let tableConfig = TableInputTestSchema.tableConfig
-    private let listTableConfig = TableInputTestSchema.listTableConfig
+    let tableConfig = TableInputTestSchema.tableConfig
+    let listTableConfig = TableInputTestSchema.listTableConfig
 
     func testHardwareTabMovesFromSelectedTextToNextCellAndTypingEditsTarget() throws {
         let document = TableInputTestSchema.twoCellDocument
@@ -622,10 +622,10 @@ final class EditorTableNavigationTests: XCTestCase {
         oldInput.insertText("unsafe")
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
     }
-    private static let editorSize = CGSize(width: 360, height: 220)
-    private static let geometrySize = CGSize(width: 360, height: 360)
+    static let editorSize = CGSize(width: 360, height: 220)
+    static let geometrySize = CGSize(width: 360, height: 360)
 
-    private struct Fixture {
+    struct Fixture {
         let editorId: UInt64
         let adapter: EditorV2Adapter
         let view: RichTextEditorView
@@ -637,7 +637,7 @@ final class EditorTableNavigationTests: XCTestCase {
         }
     }
 
-    private func makeFixture(
+    func makeFixture(
         config: String,
         document: String,
         size: CGSize,
@@ -658,7 +658,7 @@ final class EditorTableNavigationTests: XCTestCase {
         return Fixture(editorId: editorId, adapter: adapter, view: view, window: window)
     }
 
-    private func nestedDocument(
+    func nestedDocument(
         leadingText: String?,
         nestedTableCount: Int,
         trailingText: String,
@@ -690,7 +690,7 @@ final class EditorTableNavigationTests: XCTestCase {
         return try XCTUnwrap(String(data: data, encoding: .utf8))
     }
 
-    private func nestedTableContent(in json: String, outerCellIndex: Int) throws -> Data {
+    func nestedTableContent(in json: String, outerCellIndex: Int) throws -> Data {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
         let table = try XCTUnwrap((object["content"] as? [[String: Any]])?.first)
         let row = try XCTUnwrap((table["content"] as? [[String: Any]])?.first)
@@ -700,7 +700,7 @@ final class EditorTableNavigationTests: XCTestCase {
         return try JSONSerialization.data(withJSONObject: nested, options: [.sortedKeys])
     }
 
-    private func select(_ range: NSRange, in input: EditorTextView) {
+    func select(_ range: NSRange, in input: EditorTextView) {
         input.selectedRange = range
         input.textViewDidChangeSelection(input)
         XCTAssertNotNil(input.currentScalarSelection())

@@ -197,6 +197,7 @@ final class EditorTableInputCoordinator {
             || cellInput.tableCellPositionMap != nil
             || cellInput.onProjectedUpdate != nil
             || cellInput.tableCellInputAuthority != nil
+            || cellInput.onTableCellArrow != nil
         else { return nil }
         let cancellation = cellInput.discardTransientNativeInputForEditorRebind()
         cellInput.finishTransientMarkedTextMutation()
@@ -208,6 +209,7 @@ final class EditorTableInputCoordinator {
         cellInput.tableCellInputAuthority = nil
         cellInput.onProjectedUpdate = nil
         cellInput.onTableCellTab = nil
+        cellInput.onTableCellArrow = nil
         cellInput.onAuthoritativeTextSelectionSynced = nil
         cellInput.editorId = 0
         phase = .inactive
