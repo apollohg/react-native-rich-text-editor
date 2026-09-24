@@ -165,6 +165,7 @@ final class CoreTextProseLayoutEngine {
                 let cellsByPosition = Dictionary(uniqueKeysWithValues: table.cells.map { (Int($0.sourcePos), $0) })
                 let surface = ViewerTableSurface(
                     identity: "t\(table.tablePos)",
+                    scrollIdentity: document.tableSourceIDs["t\(table.tablePos)"],
                     record: record,
                     viewportWidth: tableWidth,
                     style: theme.tableStyle,
@@ -514,6 +515,7 @@ final class CoreTextProseLayoutEngine {
         childTheme.contentInsets = .zero
         let surface = ViewerTableSurface(
             identity: "t\(table.tablePos)",
+            scrollIdentity: document.tableSourceIDs["t\(table.tablePos)"],
             record: TableGridRecord(table: table, documentOwner: document.semanticKey),
             viewportWidth: cachedSurface.hostViewportWidth,
             style: cachedSurface.style,

@@ -99,6 +99,7 @@ extension EditorV2Adapter {
                 positionEpoch: resolvedPositionEpoch,
                 tableAttributes: $0.tableAttributes,
                 tableRecords: $0.tableRecords,
+                tableSourceIDs: $0.tableSourceIDs,
                 tableInputMappings: $0.tableInputMappings
             )
         }
@@ -158,7 +159,9 @@ extension EditorV2Adapter {
         let resetRevision = intent.revision
         guard let current = fetchAtomicRenderSnapshot(mirrorScalarSelection: nil) else { return nil }
         if current.documentRevision == resetRevision {
-            return adoptExternalRender(renderJSON)
+            let update = adoptExternalRender(renderJSON)
+            if update != nil { tableResetGeneration &+= 1 }
+            return update
         }
         if latestJSDrivenDocumentRevision > resetRevision {
             return adopt(current, strippingViewSelection: false)?.updateJSON
@@ -176,7 +179,9 @@ extension EditorV2Adapter {
                 return nil
             }
             if origin != "nativeView" {
-                return refreshInternal(mirrorSelection: nil, strippingViewSelection: false)?.updateJSON
+                let update = refreshInternal(mirrorSelection: nil, strippingViewSelection: false)?.updateJSON
+                if update != nil { tableResetGeneration &+= 1 }
+                return update
             }
         }
         reset.removeValue(forKey: "documentRevision")
@@ -199,6 +204,7 @@ extension EditorV2Adapter {
             guard let update = refreshInternal(mirrorSelection: nil, strippingViewSelection: false) else {
                 return nil
             }
+            tableResetGeneration &+= 1
             if changed {
                 publishCachedCollaborationSelection()
                 notifyCollaborationMutation()

@@ -4,6 +4,211 @@ import XCTest
 final class EditorTableInputTests: XCTestCase {
     private let tableConfig = TableInputTestSchema.tableConfig
     private let listTableConfig = TableInputTestSchema.listTableConfig
+    private let wideTwoCellDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
+
+    func testMountedOffsetFollowsSourceIdentityAcrossProseTypingAndClearsOnReset() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = wideTwoCellDocument
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        view.layoutIfNeeded()
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let initialTableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
+        let sourceID = try XCTUnwrap(adapter.cachedTableRecords[initialTableID]?["sourceId"] as? String)
+        drawing.setTableLogicalOffset(100, sourceIdentity: initialTableID)
+        XCTAssertEqual(drawing.tableLogicalOffset(for: initialTableID), 100, accuracy: 1)
+
+        view.textView.selectedRange = NSRange(location: 0, length: 0)
+        view.textView.insertText("X")
+        view.layoutIfNeeded()
+        let shiftedTableID = try XCTUnwrap(adapter.cachedTableRecords.first {
+            $0.value["sourceId"] as? String == sourceID
+        }?.key)
+        XCTAssertNotEqual(shiftedTableID, initialTableID)
+        XCTAssertEqual(drawing.tableLogicalOffset(for: shiftedTableID), 100, accuracy: 1)
+
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        view.layoutIfNeeded()
+        let resetTableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
+        XCTAssertEqual(drawing.tableLogicalOffset(for: resetTableID), 0, accuracy: 1)
+    }
+
+    func testActiveInputClipPassesNeighborHitToRootAfterScroll() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 0, width: 320, height: 200))
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(wideTwoCellDocument))))
+        view.layoutIfNeeded()
+        let tableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
+        let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let first = try XCTUnwrap(surface.cellFrame(tableID: tableID, cellIndex: 0))
+        XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: first))
+
+        drawing.setTableLogicalOffset(350, sourceIdentity: tableID)
+        let scrolledFirst = try XCTUnwrap(surface.cellFrame(tableID: tableID, cellIndex: 0))
+        XCTAssertEqual(scrolledFirst.minX, first.minX - 350, accuracy: 1)
+        XCTAssertEqual(surface.convert(view.activeTextInput.bounds, from: view.activeTextInput).minX,
+                       scrolledFirst.minX, accuracy: 1)
+        guard case .cell(1) = surface.arrowDestination(
+            tableID: tableID, cellIndex: 0, direction: .right,
+            caret: CGPoint(x: scrolledFirst.maxX, y: scrolledFirst.midY)
+        ) else {
+            return XCTFail("projected first-cell caret did not navigate to visible neighbor")
+        }
+        let second = try XCTUnwrap(surface.cellFrame(tableID: tableID, cellIndex: 1))
+        let visibleSecond = second.intersection(surface.bounds)
+        XCTAssertFalse(visibleSecond.isEmpty)
+        let point = CGPoint(x: visibleSecond.midX, y: visibleSecond.midY)
+        let hit = try XCTUnwrap(surface.cellHit(at: point))
+        XCTAssertEqual(hit.cellIndex, 1)
+        XCTAssertNil(surface.hitTest(point, with: nil), "clipped active input must not intercept a visible neighboring cell")
+        let rootPoint = surface.convert(point, to: view)
+        XCTAssertFalse(view.hitTest(rootPoint, with: nil) === view.activeTextInput)
+    }
+
+    func testLiveMountedEditorPansInactiveAndActiveCellWithoutDocumentMutation() throws {
+        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
+            throw XCTSkip("Live simulator gesture probe is opt in")
+        }
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = wideTwoCellDocument
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.backgroundColor = .systemBackground
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 100, width: window.bounds.width, height: 240))
+        window.addSubview(view)
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        view.layoutIfNeeded()
+        let tableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
+        let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let firstCell = try XCTUnwrap(tableSurface.cellFrame(tableID: tableID, cellIndex: 0))
+        let initialJSON = try XCTUnwrap(adapter.documentJson())
+        let initialRevision = adapter.baseDocumentRevision
+        let status = UILabel(frame: CGRect(x: 0, y: 350, width: window.bounds.width, height: 30))
+        status.backgroundColor = .systemYellow
+        status.textAlignment = .center
+        status.text = "EDITOR INACTIVE READY"
+        window.addSubview(status)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let inactive = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            drawing.tableLogicalOffset(for: tableID) > 40
+        }, object: nil)
+        guard XCTWaiter.wait(for: [inactive], timeout: 180) == .completed else {
+            return XCTFail("Real pan over inactive editor cell did not scroll the table")
+        }
+        XCTAssertEqual(adapter.baseDocumentRevision, initialRevision)
+        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), initialJSON)
+        drawing.cancelTableMotion()
+        drawing.setTableLogicalOffset(0, sourceIdentity: tableID)
+        XCTAssertEqual(drawing.tableLogicalOffset(for: tableID), 0, accuracy: 1)
+        XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: firstCell))
+        let activeInput = view.activeTextInput
+        XCTAssertFalse(activeInput === view.textView)
+        XCTAssertTrue(activeInput.becomeFirstResponder())
+        XCTAssertTrue(activeInput.isFirstResponder)
+        activeInput.selectedRange = NSRange(location: 0, length: 0)
+        activeInput.setMarkedText("Z", selectedRange: NSRange(location: 1, length: 0))
+        XCTAssertNotNil(activeInput.markedTextRange)
+        status.text = "EDITOR ACTIVE READY"
+        let active = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            drawing.tableLogicalOffset(for: tableID) > 40
+        }, object: nil)
+        guard XCTWaiter.wait(for: [active], timeout: 180) == .completed else {
+            return XCTFail("Real pan over the one active cell input did not scroll the table")
+        }
+        XCTAssertEqual(adapter.baseDocumentRevision, initialRevision)
+        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), initialJSON)
+        let scrolled = try XCTUnwrap(tableSurface.cellFrame(tableID: tableID, cellIndex: 0))
+        XCTAssertLessThan(scrolled.minX, firstCell.minX)
+        XCTAssertTrue(view.activeTextInput === activeInput)
+        XCTAssertFalse(activeInput.isHidden)
+        XCTAssertTrue(activeInput.isFirstResponder)
+        XCTAssertNotNil(activeInput.markedTextRange, "horizontal pan must preserve an in-progress IME composition")
+        let offsetAfterPan = drawing.tableLogicalOffset(for: tableID)
+        activeInput.unmarkText()
+        let composed = try XCTUnwrap(adapter.documentJson())
+        XCTAssertTrue(composed.contains(#""text":"Zone""#), composed)
+        XCTAssertNil(activeInput.markedTextRange)
+        XCTAssertEqual(drawing.tableLogicalOffset(for: tableID), offsetAfterPan, accuracy: 1)
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.undo())))
+        let undone = try XCTUnwrap(adapter.documentJson())
+        let initialObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(initialJSON.utf8)) as? NSDictionary)
+        let undoneObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(undone.utf8)) as? NSDictionary)
+        XCTAssertEqual(undoneObject, initialObject)
+        XCTAssertEqual(drawing.tableLogicalOffset(for: tableID), offsetAfterPan, accuracy: 1)
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.redo())))
+        let redone = try XCTUnwrap(adapter.documentJson())
+        let composedObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(composed.utf8)) as? NSDictionary)
+        let redoneObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(redone.utf8)) as? NSDictionary)
+        XCTAssertEqual(redoneObject, composedObject)
+        XCTAssertEqual(drawing.tableLogicalOffset(for: tableID), offsetAfterPan, accuracy: 1)
+    }
+
+    func testLiveNativeSelectionHandlePrecedesTablePan() throws {
+        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
+            throw XCTSkip("Live simulator gesture probe is opt in")
+        }
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = wideTwoCellDocument.replacingOccurrences(
+            of: #""text":"one""#, with: #""text":"selection words for native drag""#
+        )
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.backgroundColor = .systemBackground
+        let view = RichTextEditorView(frame: CGRect(x: 0, y: 100, width: window.bounds.width, height: 240))
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        view.layoutIfNeeded()
+        let tableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
+        let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let first = try XCTUnwrap(surface.cellFrame(tableID: tableID, cellIndex: 0))
+        XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: first))
+        let input = view.activeTextInput
+        XCTAssertTrue(input.becomeFirstResponder())
+        input.selectedRange = NSRange(location: 0, length: 0)
+        let originalDocument = try XCTUnwrap(adapter.documentJson())
+        let status = UILabel(frame: CGRect(x: 0, y: 350, width: window.bounds.width, height: 30))
+        status.backgroundColor = .systemYellow
+        status.textAlignment = .center
+        status.text = "WORD SELECTION READY"
+        window.addSubview(status)
+
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            input.selectedRange.length > 0
+        }, object: nil)
+        guard XCTWaiter.wait(for: [selected], timeout: 180) == .completed else {
+            return XCTFail("real word-selection gesture did not create a native text selection")
+        }
+        let initialSelection = input.selectedRange
+        XCTAssertEqual(drawing.tableLogicalOffset(for: tableID), 0, accuracy: 1)
+        status.text = "SELECTION HANDLE READY"
+        let dragged = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            input.selectedRange != initialSelection
+        }, object: nil)
+        guard XCTWaiter.wait(for: [dragged], timeout: 180) == .completed else {
+            return XCTFail("real selection handle drag did not alter the native selection")
+        }
+        XCTAssertEqual(drawing.tableLogicalOffset(for: tableID), 0, accuracy: 1)
+        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), originalDocument)
+        XCTAssertTrue(input.isFirstResponder)
+    }
 
     func testEngineCellSelectionAdmitsAuthoritativeSnapshot() throws {
         let editorId = makeV2Editor(configJson: tableConfig)
@@ -701,7 +906,8 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         let origin = try XCTUnwrap(drawing.layout?.blocks.first?.tableBounds?.origin)
-        XCTAssertEqual(input.frame.minX, (origin.x + cell.frame.minX + cell.contentOrigin.x).rounded(), accuracy: 1)
+        XCTAssertEqual(input.convert(.zero, to: tableSurface).x,
+                       (origin.x + cell.frame.minX + cell.contentOrigin.x).rounded(), accuracy: 1)
         XCTAssertEqual(input.textContainerInset, .zero)
         XCTAssertEqual(input.textContainer.lineFragmentPadding, 0)
     }

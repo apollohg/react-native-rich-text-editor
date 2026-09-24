@@ -664,7 +664,8 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             invalidateTableCellBinding()
             return
         }
-        let frame = tableInputCoordinator.cellInput.frame
+        let frame = tableSurface.convert(tableInputCoordinator.cellInput.bounds,
+                                         from: tableInputCoordinator.cellInput)
         guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
               let cells = adapter.cachedTableInputMappings?.tables[tableID]?.cells,
               Int(cellIndex) < cells.count,
@@ -736,6 +737,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         addSubview(textView)
         textView.addGestureRecognizer(tableCellTapRecognizer)
         addSubview(tableSurface)
+        tableSurface.installTableInteraction(on: self)
         addSubview(remoteSelectionOverlayView)
         addSubview(taskListMarkerTapOverlayView)
         // Image touches must stay inside the scroll view's gesture hierarchy.
@@ -1277,7 +1279,11 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             .flatMap { $0["selection"] }
             .flatMap { EditorCellSelection.resolve($0, records: adapter.cachedTableRecords) }
-        tableSurface.present(presentation, selection: selection, from: textView)
+        tableSurface.present(
+            presentation, selection: selection,
+            ownerIdentity: "\(editorId):\(adapter.tableResetGeneration)",
+            from: textView
+        )
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {

@@ -158,6 +158,7 @@
 		A17000000000000000000011 /* TableCellPositionMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000001 /* TableCellPositionMap.swift */; };
 		A17000000000000000000012 /* EditorTableInputCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000002 /* EditorTableInputCoordinator.swift */; };
 		A17000000000000000000013 /* EditorTableSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000003 /* EditorTableSurface.swift */; };
+		A17900000000000000000011 /* TableInteractionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17900000000000000000001 /* TableInteractionController.swift */; };
 		A17000000000000000000014 /* EditorTableInputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000004 /* EditorTableInputTests.swift */; };
 		A18000000000000000000011 /* EditorTableNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000001 /* EditorTableNavigationTests.swift */; };
 		A18000000000000000000012 /* EditorTableArrowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000002 /* EditorTableArrowTests.swift */; };
@@ -251,6 +252,7 @@
 		A17000000000000000000001 /* TableCellPositionMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellPositionMap.swift; sourceTree = "<group>"; };
 		A17000000000000000000002 /* EditorTableInputCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableInputCoordinator.swift; sourceTree = "<group>"; };
 		A17000000000000000000003 /* EditorTableSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableSurface.swift; sourceTree = "<group>"; };
+		A17900000000000000000001 /* TableInteractionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableInteractionController.swift; sourceTree = "<group>"; };
 		A17000000000000000000004 /* EditorTableInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableInputTests.swift; sourceTree = "<group>"; };
 		A18000000000000000000001 /* EditorTableNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableNavigationTests.swift; sourceTree = "<group>"; };
 		A18000000000000000000002 /* EditorTableArrowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableArrowTests.swift; sourceTree = "<group>"; };
@@ -796,6 +798,7 @@
 				A17000000000000000000001 /* TableCellPositionMap.swift */,
 				A17000000000000000000002 /* EditorTableInputCoordinator.swift */,
 				A17000000000000000000003 /* EditorTableSurface.swift */,
+				A17900000000000000000001 /* TableInteractionController.swift */,
 				A17200000000000000000001 /* EditorCellSelection.swift */,
 			);
 			path = Tables;
@@ -1292,6 +1295,7 @@
 				A17000000000000000000011 /* TableCellPositionMap.swift in Sources */,
 				A17000000000000000000012 /* EditorTableInputCoordinator.swift in Sources */,
 				A17000000000000000000013 /* EditorTableSurface.swift in Sources */,
+				A17900000000000000000011 /* TableInteractionController.swift in Sources */,
 				A17200000000000000000011 /* EditorCellSelection.swift in Sources */,
 				A17000000000000000000014 /* EditorTableInputTests.swift in Sources */,
 				A18000000000000000000011 /* EditorTableNavigationTests.swift in Sources */,
@@ -1319,6 +1323,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = NativeEditorTestHost;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
@@ -1385,6 +1390,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = NativeEditorTestHost;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.4;

@@ -223,6 +223,7 @@ extension EditorV2Adapter {
         includeSelectionInUpdate: Bool = false,
         adoptEngineSelection: Bool = false,
         publishMutation: Bool = true,
+        onAcceptedMutation: (() -> Void)? = nil,
         _ call: () -> FfiJsonResult
     ) -> String? {
         guard !destroyed else {
@@ -267,6 +268,7 @@ extension EditorV2Adapter {
             case .transaction(let didChange, let revision):
                 changed = didChange
                 baseDocumentRevision = revision
+                onAcceptedMutation?()
                 if let postSelectionMirror, !adoptEngineSelection {
                     lastSyncedScalarSelection = postSelectionMirror
                 }
@@ -277,6 +279,7 @@ extension EditorV2Adapter {
             case .replacement(let didChange, let revision):
                 changed = didChange
                 baseDocumentRevision = revision
+                onAcceptedMutation?()
                 // Whole-root replacement resets the engine-side selection;
                 // the cached sync point is no longer valid.
                 lastSyncedScalarSelection = nil

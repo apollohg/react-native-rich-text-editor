@@ -30,6 +30,23 @@ extension EditorV2AdapterTests {
         XCTAssertEqual(documentText(adapter), "Hello")
     }
 
+    func testRejectedStaleContentResetDoesNotAdvanceTableResetGeneration() {
+        let adapter = makeAdapter()
+        XCTAssertNotNil(adapter.setContentHtml("<p>before</p>"))
+        let acceptedGeneration = adapter.tableResetGeneration
+        let directInput = adapter.callWithEnvelope(["text": "X"]) { requestJSON in
+            editorV2ApplyInput(editorId: adapter.editorId, requestJson: requestJSON)
+        }
+        XCTAssertNil(directInput.error)
+        XCTAssertEqual(adapter.tableResetGeneration, acceptedGeneration)
+
+        let refreshed = adapter.setContentHtml("<p>stale reset</p>")
+        XCTAssertNotNil(refreshed, "revision mismatch should refresh the authoritative engine state")
+        XCTAssertEqual(adapter.tableResetGeneration, acceptedGeneration,
+                       "a rejected reset must not clear mounted table positions")
+        XCTAssertNotEqual(documentText(adapter), "stale reset")
+    }
+
     func testTypingCommitIsExactlyOneLocalInputTransaction() {
         let adapter = makeAdapter()
         _ = adapter.setContentHtml("<p>ab</p>")

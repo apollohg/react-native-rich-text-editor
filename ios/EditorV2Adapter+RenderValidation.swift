@@ -6,6 +6,7 @@ extension EditorV2Adapter {
         let positionEpoch: UInt64?
         let tableAttributes: [String: [String: Any]]
         let tableRecords: [String: FfiViewerTable]
+        let tableSourceIDs: [String: String]
         let tableInputMappings: TableInputMappings?
     }
 
@@ -232,15 +233,18 @@ extension EditorV2Adapter {
     ) -> EditorTablePresentationSnapshot? {
         guard !snapshot.tableRecords.isEmpty else { return nil }
         var tableRecords: [String: FfiViewerTable] = [:]
+        var tableSourceIDs: [String: String] = [:]
         for (tableID, record) in snapshot.tableRecords {
-            guard let table = lowerTableRecord(record) else { return nil }
+            guard let table = lowerTableRecord(record), let sourceID = record["sourceId"] as? String else { return nil }
             tableRecords[tableID] = table
+            tableSourceIDs[tableID] = sourceID
         }
         return EditorTablePresentationSnapshot(
             documentRevision: snapshot.documentRevision,
             positionEpoch: positionEpoch,
             tableAttributes: snapshot.tableAttributes,
             tableRecords: tableRecords,
+            tableSourceIDs: tableSourceIDs,
             tableInputMappings: snapshot.tableInputMappings
         )
     }

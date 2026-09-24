@@ -316,6 +316,7 @@ struct ViewerBlock: Hashable {
 struct ViewerDocument {
     let tableAttributes: [String: [String: Any]]
     let tableRecords: [String: FfiViewerTable]
+    let tableSourceIDs: [String: String]
     let semanticKey: String
     let blocks: [ViewerBlock]
     let isEmpty: Bool
@@ -339,6 +340,7 @@ struct ViewerDocument {
     init(semanticKey: String, paragraphs: [ViewerParagraph], isEmpty: Bool, retainedBytes: Int) {
         tableAttributes = [:]
         tableRecords = [:]
+        tableSourceIDs = [:]
         self.semanticKey = semanticKey
         blocks = paragraphs.map {
             ViewerBlock(
@@ -366,10 +368,12 @@ struct ViewerDocument {
         preparedTheme: PreparedProseTheme? = nil,
         tableAttributes: [String: [String: Any]] = [:],
         tableRecords: [String: FfiViewerTable] = [:],
+        tableSourceIDs: [String: String] = [:],
         preferredTextBlockName: String = "paragraph"
     ) {
         self.tableAttributes = tableAttributes
         self.tableRecords = tableRecords
+        self.tableSourceIDs = tableSourceIDs
         self.semanticKey = semanticKey
         self.blocks = blocks
         self.isEmpty = isEmpty
@@ -396,6 +400,7 @@ struct ViewerDocument {
         try Self.validateAdmittedAttachments(elements: elements, tableRecords: tableRecords)
         tableAttributes = pool
         self.tableRecords = tableRecords
+        tableSourceIDs = [:]
         semanticKey = compiled.semanticKey()
         isEmpty = compiled.isEmpty()
         retainedBytes = Int(compiled.retainedBytesDecimal()) ?? 0
@@ -646,6 +651,7 @@ struct ViewerDocument {
             retainedBytes: 0,
             tableAttributes: tableAttributes,
             tableRecords: tableRecords,
+            tableSourceIDs: tableSourceIDs,
             preferredTextBlockName: preferredTextBlockName
         )
     }
@@ -660,6 +666,7 @@ struct ViewerDocument {
             preparedTheme: theme,
             tableAttributes: tableAttributes,
             tableRecords: tableRecords,
+            tableSourceIDs: tableSourceIDs,
             preferredTextBlockName: preferredTextBlockName
         )
     }

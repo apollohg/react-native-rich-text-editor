@@ -21,6 +21,7 @@ final class EditorTableSurface: UIView {
 
     let inputCoordinator: EditorTableInputCoordinator
     private let drawingView = PreparedProseDrawingView(frame: .zero)
+    private let activeCellClipView = UIView(frame: .zero)
     private var entries: [String: Entry] = [:]
     private var latestPresentation: EditorV2Adapter.EditorTablePresentationSnapshot?
     private var presentationRevision: UInt64?
@@ -41,16 +42,27 @@ final class EditorTableSurface: UIView {
         drawingView.backgroundColor = .clear
         drawingView.isUserInteractionEnabled = false
         addSubview(drawingView)
+        activeCellClipView.clipsToBounds = true
+        addSubview(activeCellClipView)
         inputCoordinator.cellInput.isHidden = true
-        addSubview(inputCoordinator.cellInput)
+        activeCellClipView.addSubview(inputCoordinator.cellInput)
+        drawingView.onTableGeometryChanged = { [weak self] in
+            self?.refreshActiveInputFrame()
+        }
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
+    func installTableInteraction(on host: UIView) {
+        drawingView.installTableInteraction(on: host)
+    }
+
     func present(_ presentation: EditorV2Adapter.EditorTablePresentationSnapshot,
-                 selection: EditorCellSelection?, from textView: EditorTextView) {
+                 selection: EditorCellSelection?, ownerIdentity: String,
+                 from textView: EditorTextView) {
+        drawingView.setTableOwnerIdentity(ownerIdentity)
         latestPresentation = presentation
         if case let .drawable(tableID, sourcePositions) = selection {
             drawingView.selectedTableCellSourcePositions = [tableID: sourcePositions]
@@ -66,6 +78,7 @@ final class EditorTableSurface: UIView {
     }
 
     func clearPresentation() {
+        drawingView.setTableOwnerIdentity(nil)
         entries.removeAll()
         latestPresentation = nil
         presentationRevision = nil
@@ -166,7 +179,7 @@ final class EditorTableSurface: UIView {
     func placeActiveInput(tableID: String, cellIndex: UInt32, fallback contentRect: CGRect) {
         activeCell = (tableID, cellIndex)
         updateExcludedCellContent()
-        inputCoordinator.cellInput.frame = (cellFrame(tableID: tableID, cellIndex: cellIndex) ?? contentRect).integral
+        placeInput(in: presentedCell(tableID: tableID, cellIndex: cellIndex), fallback: contentRect)
         inputCoordinator.cellInput.isHidden = false
     }
 
@@ -174,29 +187,31 @@ final class EditorTableSurface: UIView {
         activeCell = nil
         drawingView.excludedTableCellContentLayout = nil
         inputCoordinator.cellInput.isHidden = true
+        activeCellClipView.frame = .zero
     }
 
     func cellFrame(tableID: String, cellIndex: UInt32) -> CGRect? {
-        guard let entry = entries[tableID],
-              let origin = tableOrigin(for: tableID),
-              let cell = entry.surface.cells.first(where: { $0.sourceCellIndex == Int(cellIndex) })
-        else { return nil }
-        let inset = entry.surface.style.cellPadding + entry.surface.style.borderWidth
-        return cell.frame.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: inset, dy: inset)
+        guard let presented = presentedCell(tableID: tableID, cellIndex: cellIndex) else { return nil }
+        let inset = presented.surface.style.cellPadding + presented.surface.style.borderWidth
+        return presented.bounds.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
+            .insetBy(dx: inset, dy: inset)
     }
 
     func isRightToLeft(tableID: String) -> Bool? {
-        guard let surface = entries[tableID]?.surface else { return nil }
+        guard let surface = drawingView.mountedTablePresentation()?.tables.first(where: {
+            $0.surface.identity == tableID
+        })?.surface else { return nil }
         return surface.direction == .rightToLeft
     }
 
     func arrowDestination(tableID: String, cellIndex: UInt32,
                           direction: TableCellArrowDirection, caret: CGPoint) -> ArrowDestination? {
-        guard let entry = entries[tableID],
-              let origin = tableOrigin(for: tableID),
-              let source = entry.surface.cells.first(where: { $0.sourceCellIndex == Int(cellIndex) })
+        guard let presented = presentedCell(tableID: tableID, cellIndex: cellIndex),
+              let source = presented.surface.cells.first(where: { $0.sourceCellIndex == Int(cellIndex) })
         else { return nil }
-        let cells = entry.surface.cells.filter { $0.sourceCellIndex != nil && $0.sourceCellIndex != Int(cellIndex) }
+        let origin = CGPoint(x: presented.bounds.minX - source.frame.minX - drawingOffset.x,
+                             y: presented.bounds.minY - source.frame.minY - drawingOffset.y)
+        let cells = presented.surface.cells.filter { $0.sourceCellIndex != nil && $0.sourceCellIndex != Int(cellIndex) }
         let x = min(max(caret.x - origin.x, source.frame.minX), source.frame.maxX.nextDown)
         let y = min(max(caret.y - origin.y, source.frame.minY), source.frame.maxY.nextDown)
         let candidates: [PreparedViewerTableCell]
@@ -226,23 +241,21 @@ final class EditorTableSurface: UIView {
             return .cell(UInt32(index))
         }
         if direction == .left || direction == .right {
-            let forward = (direction == .right) != (entry.surface.direction == .rightToLeft)
+            let forward = (direction == .right) != (presented.surface.direction == .rightToLeft)
             let nextIndex = Int(cellIndex) + (forward ? 1 : -1)
-            if entry.surface.cells.contains(where: { $0.sourceCellIndex == nextIndex }) {
+            if presented.surface.cells.contains(where: { $0.sourceCellIndex == nextIndex }) {
                 return .cell(UInt32(nextIndex))
             }
             return .surroundingProse
         }
         let outerEdge = direction == .up
-            ? source.frame.minY == entry.surface.bounds.minY
-            : source.frame.maxY == entry.surface.bounds.maxY
+            ? source.frame.minY == presented.surface.bounds.minY
+            : source.frame.maxY == presented.surface.bounds.maxY
         return outerEdge ? .surroundingProse : .blocked
     }
 
     func nestedTableHeights(tableID: String, cellIndex: UInt32, input: EditorTextView? = nil) -> [String: CGFloat]? {
-        guard let cell = entries[tableID]?.surface.cells.first(where: {
-            $0.sourceCellIndex == Int(cellIndex)
-        }) else { return nil }
+        guard let cell = presentedCell(tableID: tableID, cellIndex: cellIndex)?.cell else { return nil }
         var precedingSpacing: [String: CGFloat] = [:]
         if let input, input.textStorage.length > 0 {
             input.textStorage.enumerateAttribute(
@@ -279,27 +292,23 @@ final class EditorTableSurface: UIView {
     }
 
     func cellHit(at point: CGPoint) -> RootTableCellHit? {
-        for entry in entries.values {
-            guard let origin = tableOrigin(for: entry.tableID) else { continue }
-            for cell in entry.surface.cells {
-                guard let sourceCellIndex = cell.sourceCellIndex,
-                      cell.frame.offsetBy(dx: origin.x, dy: origin.y).contains(point),
-                      !containsNestedTable(at: point, in: cell, tableOrigin: origin)
-                else { continue }
-                let inset = entry.surface.style.cellPadding + entry.surface.style.borderWidth
-                return RootTableCellHit(
-                    tableID: entry.tableID,
-                    cellIndex: UInt32(sourceCellIndex),
-                    contentRect: cell.frame.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: inset, dy: inset)
-                )
-            }
-        }
-        return nil
+        let contentPoint = CGPoint(x: point.x + drawingOffset.x, y: point.y + drawingOffset.y)
+        guard let presented = drawingView.mountedTablePresentation()?.cells.last(where: {
+            $0.cell.sourceCellIndex != nil && $0.clip.contains(contentPoint) && $0.bounds.contains(contentPoint)
+        }), let sourceCellIndex = presented.cell.sourceCellIndex else { return nil }
+        let inset = presented.surface.style.cellPadding + presented.surface.style.borderWidth
+        return RootTableCellHit(
+            tableID: presented.surface.identity,
+            cellIndex: UInt32(sourceCellIndex),
+            contentRect: presented.bounds.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
+                .insetBy(dx: inset, dy: inset)
+        )
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         if !inputCoordinator.cellInput.isHidden,
-           inputCoordinator.cellInput.frame.contains(point) {
+           activeCellClipView.frame.contains(point),
+           inputCoordinator.cellInput.frame.contains(convert(point, to: activeCellClipView)) {
             return super.hitTest(point, with: event)
         }
         return nil
@@ -337,7 +346,8 @@ final class EditorTableSurface: UIView {
                 retainedBytes: 256,
                 preparedTheme: theme,
                 tableAttributes: presentation.tableAttributes,
-                tableRecords: presentation.tableRecords
+                tableRecords: presentation.tableRecords,
+                tableSourceIDs: presentation.tableSourceIDs
             )
             guard let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: width, scale: displayScale) else { return }
             let key = ProseLayoutKey(
@@ -465,43 +475,43 @@ final class EditorTableSurface: UIView {
         return tableIDs
     }
 
-    private func tableOrigin(for tableID: String) -> CGPoint? {
-        guard let origin = drawingView.layout?.blocks.first(where: { block in
-            block.tableSurface === entries[tableID]?.surface
-        })?.tableBounds?.origin else { return nil }
-        return CGPoint(x: origin.x - drawingOffset.x, y: origin.y - drawingOffset.y)
+    private func presentedCell(tableID: String, cellIndex: UInt32) -> ViewerTablePresentedCell? {
+        drawingView.mountedTablePresentation()?.cells.first {
+            $0.surface.identity == tableID && $0.cell.sourceCellIndex == Int(cellIndex)
+        }
     }
 
-    private func containsNestedTable(
-        at point: CGPoint,
-        in cell: PreparedViewerTableCell,
-        tableOrigin: CGPoint
-    ) -> Bool {
-        let contentOrigin = CGPoint(
-            x: tableOrigin.x + cell.frame.minX + cell.contentOrigin.x,
-            y: tableOrigin.y + cell.frame.minY + cell.contentOrigin.y
-        )
-        return cell.content.blocks.contains { block in
-            guard let nestedBounds = block.tableBounds else { return false }
-            return nestedBounds.offsetBy(dx: contentOrigin.x, dy: contentOrigin.y).contains(point)
+    private func placeInput(in presented: ViewerTablePresentedCell?, fallback: CGRect) {
+        guard let presented else {
+            activeCellClipView.frame = bounds
+            inputCoordinator.cellInput.frame = fallback.integral
+            return
         }
+        let clip = presented.clip.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
+            .intersection(bounds)
+        activeCellClipView.frame = clip.isNull ? .zero : clip.integral
+        let inset = presented.surface.style.cellPadding + presented.surface.style.borderWidth
+        let content = presented.bounds.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
+            .insetBy(dx: inset, dy: inset)
+        inputCoordinator.cellInput.frame = content.offsetBy(
+            dx: -activeCellClipView.frame.minX, dy: -activeCellClipView.frame.minY
+        ).integral
     }
 
     private func refreshActiveInputFrame() {
         guard let activeCell,
-              let frame = cellFrame(tableID: activeCell.tableID, cellIndex: activeCell.cellIndex)
+              let presented = presentedCell(tableID: activeCell.tableID, cellIndex: activeCell.cellIndex)
         else { return }
-        inputCoordinator.cellInput.frame = frame.integral
+        placeInput(in: presented, fallback: .zero)
     }
 
     private func updateExcludedCellContent() {
-        guard let activeCell, let entry = entries[activeCell.tableID] else {
+        guard let activeCell,
+              let presented = presentedCell(tableID: activeCell.tableID, cellIndex: activeCell.cellIndex) else {
             drawingView.excludedTableCellContentLayout = nil
             return
         }
-        drawingView.excludedTableCellContentLayout = entry.surface.cells.first {
-            $0.sourceCellIndex == Int(activeCell.cellIndex)
-        }?.content
+        drawingView.excludedTableCellContentLayout = presented.content
         if let heights = nestedTableHeights(
             tableID: activeCell.tableID,
             cellIndex: activeCell.cellIndex,

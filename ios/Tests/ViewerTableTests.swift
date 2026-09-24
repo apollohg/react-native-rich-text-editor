@@ -1,7 +1,347 @@
 import CoreText
 import XCTest
 
+private final class TableAtomPanProbe: NSObject {
+    var began = false
+
+    @objc func handle(_ recognizer: UIPanGestureRecognizer) {
+        if recognizer.state == .began || recognizer.state == .changed { began = true }
+    }
+}
+
+private final class TablePanLifecycleProbe: NSObject {
+    weak var scrollView: UIScrollView?
+    var hostOffsetAtEnd: CGFloat?
+
+    init(scrollView: UIScrollView) {
+        self.scrollView = scrollView
+    }
+
+    @objc func handle(_ recognizer: UIPanGestureRecognizer) {
+        if recognizer.state == .ended { hostOffsetAtEnd = scrollView?.contentOffset.x }
+    }
+}
+
 final class ViewerTableTests: XCTestCase {
+    func testNativeTablePanAxisTieAndReversalDecision() {
+        let verticalTravel: CGFloat = 100
+        let boundaryHorizontalTravel: CGFloat = 125
+        let pastBoundaryHorizontalTravel: CGFloat = 126
+        XCTAssertFalse(TableInteractionController.isHorizontalIntent(
+            CGPoint(x: boundaryHorizontalTravel, y: verticalTravel)
+        ))
+        XCTAssertFalse(TableInteractionController.isHorizontalIntent(
+            CGPoint(x: -boundaryHorizontalTravel, y: -verticalTravel)
+        ))
+        XCTAssertTrue(TableInteractionController.isHorizontalIntent(
+            CGPoint(x: pastBoundaryHorizontalTravel, y: verticalTravel)
+        ))
+        XCTAssertTrue(TableInteractionController.isHorizontalIntent(
+            CGPoint(x: -pastBoundaryHorizontalTravel, y: -verticalTravel)
+        ))
+    }
+
+    func testMountedLogicalColumnAnchorSurvivesWidthReflowAndDirectionChange() throws {
+        let source = try nestedHeaderImageSource(nestedOverflow: true)
+        var compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json, source: source, configJson: Self.config,
+            imagesEnabled: true, mentionPrefix: nil
+        ))
+        let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value))
+        compiled.value = nil
+        let narrow = try prepare(document, widthPoints: 240)
+        let wide = try prepare(document, widthPoints: 320)
+        let narrowTable = try XCTUnwrap(narrow.blocks.first { $0.tableSurface != nil }?.tableSurface)
+        let wideTable = try XCTUnwrap(wide.blocks.first { $0.tableSurface != nil }?.tableSurface)
+        XCTAssertEqual(narrowTable.scrollIdentity, wideTable.scrollIdentity)
+        XCTAssertNotEqual(narrowTable.hostViewportWidth, wideTable.hostViewportWidth)
+        let owner = ViewerTablePresentationOwner()
+        let leadingColumnWidth = narrowTable.layout.columnWidths[0]
+        let withinColumn: CGFloat = 40
+        owner.setLogicalOffset(leadingColumnWidth + withinColumn, for: narrowTable)
+        XCTAssertEqual(owner.logicalOffset(for: wideTable), wideTable.layout.columnWidths[0] + withinColumn, accuracy: 1)
+
+        let rtl = ViewerTableSurface(
+            identity: wideTable.identity, scrollIdentity: wideTable.scrollIdentity,
+            hostViewportWidth: wideTable.hostViewportWidth, style: wideTable.style,
+            direction: .rightToLeft, layout: wideTable.layout, cells: wideTable.cells,
+            preparationError: wideTable.preparationError
+        )
+        XCTAssertEqual(owner.logicalOffset(for: rtl), owner.logicalOffset(for: wideTable), accuracy: 1)
+        XCTAssertEqual(owner.physicalOffset(for: rtl),
+                       rtl.bounds.width - rtl.hostViewportWidth - owner.logicalOffset(for: rtl), accuracy: 1)
+    }
+
+    func testMountedNestedPanEdges() throws {
+        let layout = try prepare(try nestedHeaderImageSource(nestedOverflow: true))
+        let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+        drawing.install(layout: layout)
+        let presentation = try XCTUnwrap(drawing.mountedTablePresentation())
+        let nested = try XCTUnwrap(presentation.tables.first { $0.parentScrollIdentity != nil })
+        let outer = try XCTUnwrap(presentation.tables.first {
+            $0.surface.scrollIdentity == nested.parentScrollIdentity
+        })
+        let touchRegion = nested.clip.intersection(nested.bounds)
+        XCTAssertFalse(touchRegion.isEmpty)
+        let chain = drawing.tableChain(at: CGPoint(x: touchRegion.midX, y: touchRegion.midY))
+        XCTAssertEqual(chain, [nested.surface.scrollIdentity, outer.surface.scrollIdentity])
+        let nestedMaximum = nested.surface.bounds.width - nested.surface.hostViewportWidth
+        let outerMaximum = outer.surface.bounds.width - outer.surface.hostViewportWidth
+        XCTAssertGreaterThan(nestedMaximum, 0)
+        XCTAssertGreaterThan(outerMaximum, 0)
+
+        let extra: CGFloat = 25
+        let remainder = drawing.scrollTables(in: chain, by: -(nestedMaximum + outerMaximum + extra))
+        XCTAssertEqual(drawing.tableLogicalOffset(for: nested.surface.identity), nestedMaximum, accuracy: 1)
+        XCTAssertEqual(drawing.tableLogicalOffset(for: outer.surface.identity), outerMaximum, accuracy: 1)
+        XCTAssertEqual(remainder, -extra, accuracy: 1)
+        XCTAssertFalse(drawing.canScrollTables(in: chain, by: -extra))
+
+        let reverse = drawing.scrollTables(in: chain, by: nestedMaximum + outerMaximum + extra)
+        XCTAssertEqual(drawing.tableLogicalOffset(for: nested.surface.identity), 0, accuracy: 1)
+        XCTAssertEqual(drawing.tableLogicalOffset(for: outer.surface.identity), 0, accuracy: 1)
+        XCTAssertEqual(reverse, extra, accuracy: 1)
+    }
+
+    func testSameSemanticReflowKeepsMountedTablePositionAndReplacementClearsIt() throws {
+        let source = try nestedHeaderImageSource(nestedOverflow: true)
+        let first = try prepare(source)
+        let firstSurface = try XCTUnwrap(first.blocks.first { $0.tableSurface != nil }?.tableSurface)
+        let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: first.size))
+        drawing.install(layout: first)
+        drawing.setTableLogicalOffset(40, sourceIdentity: firstSurface.identity)
+        XCTAssertGreaterThan(drawing.tablePresentationRetainedBytesForTesting, 0)
+
+        let reflow = try prepare(source)
+        XCTAssertFalse(first === reflow)
+        drawing.install(layout: reflow)
+        XCTAssertGreaterThan(drawing.tablePresentationRetainedBytesForTesting, 0)
+
+        let replacement = try prepare(try nestedHeaderImageSource(imageSource: "https://example.test/replacement.png", nestedOverflow: true))
+        drawing.install(layout: replacement)
+        XCTAssertEqual(drawing.tablePresentationRetainedBytesForTesting, 0)
+    }
+
+    func testSameLayoutOwnerResetRefreshesMountedPresentationConsumers() throws {
+        let layout = try prepare(try nestedHeaderImageSource(nestedOverflow: true))
+        let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
+        let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+        drawing.install(layout: layout)
+        drawing.setTableLogicalOffset(40, sourceIdentity: surface.identity)
+        let scrolled = try XCTUnwrap(drawing.mountedTablePresentation()?.cells.first?.bounds)
+        var geometryRefreshes = 0
+        drawing.onTableGeometryChanged = { geometryRefreshes += 1 }
+
+        drawing.setTableOwnerIdentity("new-owner")
+
+        XCTAssertTrue(drawing.layout === layout)
+        XCTAssertEqual(drawing.tableLogicalOffset(for: surface.identity), 0)
+        XCTAssertEqual(drawing.tablePresentationRetainedBytesForTesting, 0)
+        let reset = try XCTUnwrap(drawing.mountedTablePresentation()?.cells.first?.bounds)
+        XCTAssertNotEqual(scrolled.minX, reset.minX)
+        XCTAssertEqual(geometryRefreshes, 1)
+    }
+
+    func testMountedViewerInstallsTablePanOnItsHostAndRemovesItOnDetach() throws {
+        let layout = try prepare(try nestedHeaderImageSource(nestedOverflow: true))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 240))
+        let host = UIView(frame: window.bounds)
+        let drawing = PreparedProseDrawingView(frame: host.bounds)
+        window.addSubview(host)
+        host.addSubview(drawing)
+        drawing.install(layout: layout)
+        window.isHidden = false
+        defer { window.isHidden = true }
+        XCTAssertEqual(host.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }.count, 1)
+        drawing.removeFromSuperview()
+        XCTAssertTrue(host.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }.isEmpty ?? true)
+    }
+
+    func testLiveMountedViewerHorizontalThenVerticalPan() throws {
+        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
+            throw XCTSkip("Live simulator gesture probe is opt in")
+        }
+        let layout = try prepare(try nestedHeaderImageSource(nestedOverflow: true))
+        let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.backgroundColor = .systemBackground
+        let viewport = CGRect(x: 0, y: 100, width: window.bounds.width, height: 240)
+        let scroll = UIScrollView(frame: viewport)
+        scroll.contentSize = CGSize(width: viewport.width, height: layout.size.height + 500)
+        let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+        drawing.backgroundColor = .clear
+        drawing.install(layout: layout)
+        scroll.addSubview(drawing)
+        window.addSubview(scroll)
+        let status = UILabel(frame: CGRect(x: 0, y: 350, width: window.bounds.width, height: 30))
+        status.backgroundColor = .systemYellow
+        status.textAlignment = .center
+        status.text = "TABLE HORIZONTAL READY"
+        window.addSubview(status)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let horizontal = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            drawing.tableLogicalOffset(for: surface.identity) > 40
+        }, object: nil)
+        guard XCTWaiter.wait(for: [horizontal], timeout: 45) == .completed else {
+            return XCTFail("Real horizontal pan did not move the mounted table")
+        }
+        XCTAssertEqual(scroll.contentOffset.y, 0, accuracy: 1)
+        status.text = "TABLE SETTLING"
+        RunLoop.current.run(until: Date().addingTimeInterval(2.5))
+        let afterHorizontal = drawing.tableLogicalOffset(for: surface.identity)
+        status.text = "TABLE VERTICAL READY"
+        let vertical = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            scroll.contentOffset.y > 15
+        }, object: nil)
+        guard XCTWaiter.wait(for: [vertical], timeout: 45) == .completed else {
+            return XCTFail("Real vertical pan did not move the host scroll view")
+        }
+        XCTAssertEqual(drawing.tableLogicalOffset(for: surface.identity), afterHorizontal, accuracy: 1)
+    }
+
+    func testLiveTableEdgeHandoff() throws {
+        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
+            throw XCTSkip("Live simulator gesture probe is opt in")
+        }
+        let layout = try prepare(try nestedHeaderImageSource(nestedOverflow: true))
+        let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.backgroundColor = .systemBackground
+        let viewport = CGRect(x: 0, y: 100, width: window.bounds.width, height: 240)
+        let scroll = UIScrollView(frame: viewport)
+        scroll.contentSize = CGSize(width: viewport.width + 1_500, height: viewport.height + 500)
+        let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+        drawing.backgroundColor = .clear
+        drawing.install(layout: layout)
+        scroll.addSubview(drawing)
+        window.addSubview(scroll)
+        let ownedPan = try XCTUnwrap(scroll.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer }.first {
+            $0.delegate is TableInteractionController
+        })
+        let lifecycle = TablePanLifecycleProbe(scrollView: scroll)
+        ownedPan.addTarget(lifecycle, action: #selector(TablePanLifecycleProbe.handle(_:)))
+        defer { ownedPan.removeTarget(lifecycle, action: #selector(TablePanLifecycleProbe.handle(_:))) }
+        let maximum = surface.bounds.width - surface.hostViewportWidth
+        XCTAssertGreaterThan(maximum, 40)
+        drawing.setTableLogicalOffset(maximum - 30, sourceIdentity: surface.identity)
+        let status = UILabel(frame: CGRect(x: 0, y: 350, width: window.bounds.width, height: 30))
+        status.backgroundColor = .systemYellow
+        status.textAlignment = .center
+        status.text = "TABLE EDGE HANDOFF READY"
+        window.addSubview(status)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let handoff = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            scroll.contentOffset.x > 40
+                && drawing.tableLogicalOffset(for: surface.identity) >= maximum - 1
+        }, object: nil)
+        guard XCTWaiter.wait(for: [handoff], timeout: 180) == .completed else {
+            return XCTFail("One real pan did not transfer remainder: table=\(drawing.tableLogicalOffset(for: surface.identity)), maximum=\(maximum), host=\(scroll.contentOffset.x)")
+        }
+        XCTAssertEqual(scroll.contentOffset.y, 0, accuracy: 1)
+        let ended = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            lifecycle.hostOffsetAtEnd != nil
+        }, object: nil)
+        guard XCTWaiter.wait(for: [ended], timeout: 180) == .completed else {
+            return XCTFail("owned table pan never reached UIKit ended state")
+        }
+        let hostAtEnd = try XCTUnwrap(lifecycle.hostOffsetAtEnd)
+        let decelerating = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            scroll.contentOffset.x > hostAtEnd + 2
+        }, object: nil)
+        guard XCTWaiter.wait(for: [decelerating], timeout: 3) == .completed else {
+            return XCTFail("no post-end outer-host table deceleration observed")
+        }
+        status.text = "TABLE DETACHING"
+        drawing.removeFromSuperview()
+        let stoppedHostOffset = scroll.contentOffset.x
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        XCTAssertEqual(scroll.contentOffset.x, stoppedHostOffset, accuracy: 1,
+                       "detaching the mounted table must cancel its deceleration")
+
+        scroll.setContentOffset(.zero, animated: false)
+        scroll.addSubview(drawing)
+        drawing.setTableLogicalOffset(0, sourceIdentity: surface.identity)
+        var resetDuringGesture = false
+        drawing.onTableGeometryChanged = { [weak drawing] in
+            guard !resetDuringGesture else { return }
+            resetDuringGesture = true
+            drawing?.setTableOwnerIdentity("replacement")
+        }
+        status.text = "TABLE REENTRANT READY"
+        let reentrant = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in resetDuringGesture }, object: nil)
+        guard XCTWaiter.wait(for: [reentrant], timeout: 180) == .completed else {
+            return XCTFail("A real pan did not reach the mounted reentrant geometry callback")
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        XCTAssertEqual(drawing.tableLogicalOffset(for: surface.identity), 0, accuracy: 1,
+                       "reentrant owner replacement must not restart pan or deceleration")
+        drawing.onTableGeometryChanged = nil
+
+        status.text = "TABLE DIAGONAL READY"
+        let afterReentry = drawing.tableLogicalOffset(for: surface.identity)
+        let diagonal = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            scroll.contentOffset.y > 20
+        }, object: nil)
+        guard XCTWaiter.wait(for: [diagonal], timeout: 180) == .completed else {
+            return XCTFail("diagonal near-tie pan did not pass to the native vertical host")
+        }
+        XCTAssertEqual(drawing.tableLogicalOffset(for: surface.identity), afterReentry, accuracy: 1)
+
+        scroll.setContentOffset(.zero, animated: false)
+        scroll.isScrollEnabled = false
+        drawing.setTableLogicalOffset(maximum - 30, sourceIdentity: surface.identity)
+        status.text = "DISABLED HOST READY"
+        let disabledHost = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            drawing.tableLogicalOffset(for: surface.identity) >= maximum - 1
+        }, object: nil)
+        guard XCTWaiter.wait(for: [disabledHost], timeout: 180) == .completed else {
+            return XCTFail("real table pan failed to reach edge over disabled scroll host")
+        }
+        XCTAssertEqual(scroll.contentOffset.x, 0, accuracy: 1,
+                       "disabled UIScrollView must not consume table edge remainder")
+    }
+
+    func testLiveAtomPanPrecedesTable() throws {
+        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
+            throw XCTSkip("Live simulator gesture probe is opt in")
+        }
+        let source = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"card"}]},{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"body"}]}]}]}]}]}"#
+        let layout = try prepare(source, themeJSON: #"{"viewerAtoms":{"generation":"gesture","revision":"1","nodeTypes":["card"],"estimatedHeights":{"card":80}}}"#)
+        let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.backgroundColor = .systemBackground
+        let host = UIView(frame: CGRect(x: 0, y: 100, width: window.bounds.width, height: 240))
+        let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+        drawing.backgroundColor = .clear
+        drawing.install(layout: layout)
+        host.addSubview(drawing)
+        let atom = try XCTUnwrap(drawing.mountedTablePresentation()?.atoms.first)
+        let atomView = UIView(frame: atom.bounds)
+        atomView.backgroundColor = .systemOrange
+        let probe = TableAtomPanProbe()
+        atomView.addGestureRecognizer(UIPanGestureRecognizer(target: probe, action: #selector(TableAtomPanProbe.handle(_:))))
+        host.addSubview(atomView)
+        window.addSubview(host)
+        let status = UILabel(frame: CGRect(x: 0, y: 350, width: window.bounds.width, height: 30))
+        status.backgroundColor = .systemYellow
+        status.textAlignment = .center
+        status.text = "TABLE ATOM READY"
+        window.addSubview(status)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let atomPan = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in probe.began }, object: nil)
+        guard XCTWaiter.wait(for: [atomPan], timeout: 180) == .completed else {
+            return XCTFail("Real pan on custom atom did not reach its own recognizer")
+        }
+        XCTAssertEqual(drawing.tableLogicalOffset(for: surface.identity), 0, accuracy: 1,
+                       "custom atom's native pan must take priority over table motion")
+    }
+
     func testMountedViewportBoundsTableCandidatesWithoutRepreparingCells() throws {
         let source = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_header","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]},{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"four"}]}]}]}]}]}"#
         var result = viewerCompile(request: FfiViewerCompileRequest(sourceKind: .json, source: source, configJson: Self.config, imagesEnabled: true, mentionPrefix: nil))
@@ -1986,11 +2326,12 @@ final class ViewerTableTests: XCTestCase {
     private func prepare(
         _ document: ViewerDocument,
         themeJSON: String? = nil,
-        engine: CoreTextProseLayoutEngine = CoreTextProseLayoutEngine()
+        engine: CoreTextProseLayoutEngine = CoreTextProseLayoutEngine(),
+        widthPoints: CGFloat = 320
     ) throws -> PreparedProseLayout {
         let theme = PreparedProseTheme.resolve(themeJSON: themeJSON)
-        let key = ProseLayoutKey(semanticKey: document.semanticKey, widthPixels: 640, themeDigest: "table", nativeFontRevision: 0, fontEnvironmentRevision: 0, displayScale: 2, attachmentRevision: 0, generationIdentity: "table", semanticGenerationIdentity: "table")
-        return try engine.prepare(document: document.withPreparedTheme(theme), key: key, widthPoints: 320, displayScale: 2)
+        let key = ProseLayoutKey(semanticKey: document.semanticKey, widthPixels: Int(widthPoints * 2), themeDigest: "table", nativeFontRevision: 0, fontEnvironmentRevision: 0, displayScale: 2, attachmentRevision: 0, generationIdentity: "table", semanticGenerationIdentity: "table")
+        return try engine.prepare(document: document.withPreparedTheme(theme), key: key, widthPoints: widthPoints, displayScale: 2)
     }
 
     private func configWithGridSlots(_ slots: Int) throws -> String {

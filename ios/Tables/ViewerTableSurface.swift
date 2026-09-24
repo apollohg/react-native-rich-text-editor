@@ -18,6 +18,7 @@ struct PreparedViewerTableCell {
 /// has no cache, lease, editor session, or mutable viewport state.
 final class ViewerTableSurface {
     let identity: String
+    let scrollIdentity: String
     let hostViewportWidth: CGFloat
     let style: TableStyle
     let direction: TableLayoutDirection
@@ -38,6 +39,7 @@ final class ViewerTableSurface {
 
     init(
         identity: String,
+        scrollIdentity: String? = nil,
         record: TableGridRecord,
         viewportWidth: CGFloat,
         style: TableStyle,
@@ -51,6 +53,7 @@ final class ViewerTableSurface {
         prepareCell: (TableGridCell, CGFloat) -> PreparedProseLayout
     ) {
         self.identity = identity
+        self.scrollIdentity = scrollIdentity ?? identity
         self.hostViewportWidth = viewportWidth
         self.style = style
         self.direction = direction
@@ -119,6 +122,7 @@ final class ViewerTableSurface {
 
     init(
         identity: String,
+        scrollIdentity: String? = nil,
         hostViewportWidth: CGFloat,
         style: TableStyle,
         direction: TableLayoutDirection,
@@ -127,6 +131,7 @@ final class ViewerTableSurface {
         preparationError: ProseViewerError?
     ) {
         self.identity = identity
+        self.scrollIdentity = scrollIdentity ?? identity
         self.hostViewportWidth = hostViewportWidth
         self.style = style
         self.direction = direction
@@ -188,12 +193,16 @@ final class ViewerTableSurface {
 /// Mutable mounted state deliberately kept outside the immutable prepared surface.
 final class ViewerTablePresentationOwner {
     private static let mapRetainedBytes = 48
-    private static let entryRetainedBytes = 64
-    private var logicalOffsets: [String: CGFloat] = [:]
+    private static let entryRetainedBytes = 80
+    private struct Position {
+        let column: Int
+        let withinColumn: CGFloat
+    }
+    private var positions: [String: Position] = [:]
 
     var retainedBytes: Int {
-        guard !logicalOffsets.isEmpty else { return 0 }
-        return logicalOffsets.reduce(Self.mapRetainedBytes) { total, entry in
+        guard !positions.isEmpty else { return 0 }
+        return positions.reduce(Self.mapRetainedBytes) { total, entry in
             let keyBytes = entry.key.utf16.count.multipliedReportingOverflow(by: 2)
             let entryBytes = keyBytes.overflow ? Int.max : Self.saturatingAdd(keyBytes.partialValue, Self.entryRetainedBytes)
             return Self.saturatingAdd(total, entryBytes)
@@ -201,11 +210,25 @@ final class ViewerTablePresentationOwner {
     }
 
     func logicalOffset(for surface: ViewerTableSurface) -> CGFloat {
-        logicalOffsets[surface.identity] ?? 0
+        guard let position = positions[surface.scrollIdentity] else { return 0 }
+        let leading = surface.layout.columnWidths.prefix(position.column).reduce(CGFloat.zero, +)
+        return clamp(leading + position.withinColumn, for: surface)
     }
 
     func setLogicalOffset(_ offset: CGFloat, for surface: ViewerTableSurface) {
-        logicalOffsets[surface.identity] = clamp(offset, for: surface)
+        var remaining = clamp(offset, for: surface)
+        for (column, width) in surface.layout.columnWidths.enumerated() {
+            if remaining < width || column == surface.layout.columnWidths.count - 1 {
+                positions[surface.scrollIdentity] = Position(column: column, withinColumn: remaining)
+                return
+            }
+            remaining -= width
+        }
+    }
+
+    func retain(surfaces: [ViewerTableSurface]) {
+        let live = Set(surfaces.map(\.scrollIdentity))
+        positions = positions.filter { live.contains($0.key) }
     }
 
     func physicalOffset(for surface: ViewerTableSurface) -> CGFloat {
@@ -260,6 +283,13 @@ struct ViewerTablePresentedCell {
     let clip: CGRect
 }
 
+struct ViewerTablePresentedTable {
+    let surface: ViewerTableSurface
+    let bounds: CGRect
+    let clip: CGRect
+    let parentScrollIdentity: String?
+}
+
 struct ViewerTablePresentedImage {
     /// The root attachment remains the publication owner; this is only a mounted geometry projection.
     let attachment: ViewerImageAttachment
@@ -299,6 +329,7 @@ struct ViewerTablePresentedAccessibilityNode {
 struct ViewerTablePresentationSnapshot {
     let layouts: [ViewerTablePresentedLayout]
     let blocks: [ViewerTablePresentedBlock]
+    let tables: [ViewerTablePresentedTable]
     let cells: [ViewerTablePresentedCell]
     let mountedCells: [ViewerTablePresentedCell]
     let images: [ViewerTablePresentedImage]
@@ -316,6 +347,7 @@ enum ViewerTablePresentation {
     ) -> ViewerTablePresentationSnapshot {
         var layouts: [ViewerTablePresentedLayout] = []
         var blocks: [ViewerTablePresentedBlock] = []
+        var tables: [ViewerTablePresentedTable] = []
         var cells: [ViewerTablePresentedCell] = []
         var images: [ViewerTablePresentedImage] = []
         var atoms: [ViewerTablePresentedAtom] = []
@@ -328,7 +360,8 @@ enum ViewerTablePresentation {
             rect.offsetBy(dx: origin.x, dy: origin.y)
         }
 
-        func appendLayout(_ layout: PreparedProseLayout, origin: CGPoint, clip: CGRect) {
+        func appendLayout(_ layout: PreparedProseLayout, origin: CGPoint, clip: CGRect,
+                          parentScrollIdentity: String?) {
             layouts.append(ViewerTablePresentedLayout(layout: layout, origin: origin, clip: clip))
             var emittedInteractions = Set<Int>()
             var emittedAccessibility = Set<Int>()
@@ -392,7 +425,12 @@ enum ViewerTablePresentation {
                 guard let surface = block.tableSurface, let tableBounds = block.tableBounds else { continue }
                 let hostOrigin = CGPoint(x: origin.x + tableBounds.minX, y: origin.y + tableBounds.minY)
                 let hostWidth = min(surface.hostViewportWidth, surface.bounds.width)
-                let hostClip = clip.intersection(CGRect(origin: hostOrigin, size: CGSize(width: hostWidth, height: surface.bounds.height)))
+                let hostBounds = CGRect(origin: hostOrigin, size: CGSize(width: hostWidth, height: surface.bounds.height))
+                let hostClip = clip.intersection(hostBounds)
+                tables.append(ViewerTablePresentedTable(
+                    surface: surface, bounds: hostBounds, clip: hostClip,
+                    parentScrollIdentity: parentScrollIdentity
+                ))
                 let contentOrigin = CGPoint(x: hostOrigin.x - owner.physicalOffset(for: surface), y: hostOrigin.y)
                 for cell in surface.cells {
                     let cellBounds = transformed(cell.frame, by: contentOrigin)
@@ -408,7 +446,8 @@ enum ViewerTablePresentation {
                         clip: hostClip
                     )
                     cells.append(presented)
-                    appendLayout(cell.content, origin: childOrigin, clip: hostClip.intersection(contentBounds))
+                    appendLayout(cell.content, origin: childOrigin, clip: hostClip.intersection(contentBounds),
+                                 parentScrollIdentity: surface.scrollIdentity)
                 }
             }
             for attachment in layout.imageAttachments where emittedImages.insert(attachment.id).inserted {
@@ -425,7 +464,7 @@ enum ViewerTablePresentation {
             for index in layout.accessibilityNodes.indices { appendAccessibility(index) }
         }
 
-        appendLayout(root, origin: .zero, clip: .infinite)
+        appendLayout(root, origin: .zero, clip: .infinite, parentScrollIdentity: nil)
         let mountedCells: [ViewerTablePresentedCell]
         switch viewport {
         case .unknown:
@@ -439,6 +478,7 @@ enum ViewerTablePresentation {
         return ViewerTablePresentationSnapshot(
             layouts: layouts,
             blocks: blocks,
+            tables: tables,
             cells: cells,
             mountedCells: mountedCells,
             images: images,

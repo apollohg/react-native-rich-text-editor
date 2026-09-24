@@ -89,10 +89,24 @@ public final class PreparedProseDrawingView: UIView {
     private var imageConfiguration: (enabled: Bool, policy: ImageLoadingPolicy) = (false, .default)
     private var scrollObservations: [NSKeyValueObservation] = []
     private var observedScrollViewIDs: [ObjectIdentifier] = []
+    private var tableOwnerIdentityOverride: String?
+    private var mountedTableOwnerIdentity: String?
+    private var tableInteractionController: TableInteractionController?
     var layout: PreparedProseLayout? {
         didSet {
             guard oldValue !== layout else { return }
-            tablePresentationOwner = ViewerTablePresentationOwner()
+            tableInteractionController?.cancelMotion()
+            let nextOwner = layout.map { tableOwnerIdentityOverride ?? $0.key.semanticKey }
+                ?? tableOwnerIdentityOverride
+            if nextOwner == nil || nextOwner != mountedTableOwnerIdentity {
+                tablePresentationOwner = ViewerTablePresentationOwner()
+            } else if let layout {
+                let surfaces = ViewerTablePresentation.project(
+                    layout: layout, owner: tablePresentationOwner, viewport: .unknown
+                ).tables.map(\.surface)
+                tablePresentationOwner.retain(surfaces: surfaces)
+            }
+            mountedTableOwnerIdentity = nextOwner
             updateSidecarInstrumentation()
             invalidateAccessibilityNodes()
             setNeedsDisplay()
@@ -120,6 +134,19 @@ public final class PreparedProseDrawingView: UIView {
         guard self.layout !== layout else { return }
         self.layout = layout
         scheduleCodeHighlighting()
+    }
+
+    func setTableOwnerIdentity(_ identity: String?) {
+        guard tableOwnerIdentityOverride != identity else { return }
+        tableOwnerIdentityOverride = identity
+        tableInteractionController?.cancelMotion()
+        tablePresentationOwner = ViewerTablePresentationOwner()
+        mountedTableOwnerIdentity = nil
+        updateSidecarInstrumentation()
+        updateConfiguredImagesForVisibleWindow()
+        invalidateAccessibilityNodes()
+        onTableGeometryChanged?()
+        setNeedsDisplay()
     }
 
     @objc(configureImagesWithGeneration:imagesEnabled:policyJSON:)
@@ -215,16 +242,79 @@ public final class PreparedProseDrawingView: UIView {
         imagePixels = [:]
     }
 
-    /// Mounted-only offset seam. Host direction and gestures are deliberately
-    /// not inferred here.
+    func mountedTablePresentation() -> ViewerTablePresentationSnapshot? {
+        presentationSnapshot()
+    }
+
+    func tableLogicalOffset(for identity: String) -> CGFloat {
+        guard let surface = presentationSnapshot()?.tables.first(where: { $0.surface.identity == identity })?.surface
+        else { return 0 }
+        return tablePresentationOwner.logicalOffset(for: surface)
+    }
+
+    func tableChain(at point: CGPoint) -> [String] {
+        guard let snapshot = presentationSnapshot(),
+              let deepest = snapshot.tables.last(where: { $0.clip.contains(point) && $0.bounds.contains(point) })
+        else { return [] }
+        var chain: [String] = []
+        var table: ViewerTablePresentedTable? = deepest
+        while let current = table {
+            chain.append(current.surface.scrollIdentity)
+            table = current.parentScrollIdentity.flatMap { parent in
+                snapshot.tables.last { $0.surface.scrollIdentity == parent }
+            }
+        }
+        return chain
+    }
+
+    func canScrollTables(in chain: [String], by physicalDelta: CGFloat) -> Bool {
+        guard let snapshot = presentationSnapshot() else { return false }
+        return chain.contains { identity in
+            guard let surface = snapshot.tables.first(where: { $0.surface.scrollIdentity == identity })?.surface
+            else { return false }
+            let logicalDelta = physicalDelta * (surface.direction == .rightToLeft ? 1 : -1)
+            let offset = tablePresentationOwner.logicalOffset(for: surface)
+            let maximum = max(0, surface.bounds.width - surface.hostViewportWidth)
+            return logicalDelta > 0 ? offset < maximum : offset > 0
+        }
+    }
+
+    @discardableResult
+    func scrollTables(in chain: [String], by physicalDelta: CGFloat) -> CGFloat {
+        guard physicalDelta.isFinite, physicalDelta != 0,
+              let snapshot = presentationSnapshot()
+        else { return physicalDelta }
+        var remaining = physicalDelta
+        var changed = false
+        for identity in chain where remaining != 0 {
+            guard let surface = snapshot.tables.first(where: { $0.surface.scrollIdentity == identity })?.surface
+            else { return remaining }
+            let old = tablePresentationOwner.logicalOffset(for: surface)
+            let direction: CGFloat = surface.direction == .rightToLeft ? 1 : -1
+            tablePresentationOwner.setLogicalOffset(old + remaining * direction, for: surface)
+            let consumed = (tablePresentationOwner.logicalOffset(for: surface) - old) / direction
+            remaining -= consumed
+            changed = changed || consumed != 0
+        }
+        if changed {
+            updateSidecarInstrumentation()
+            updateConfiguredImagesForVisibleWindow()
+            invalidateAccessibilityNodes()
+            onTableGeometryChanged?()
+            setNeedsDisplay()
+        }
+        return remaining
+    }
+
     @objc(setTableLogicalOffset:sourceIdentity:)
     public func setTableLogicalOffset(_ offset: CGFloat, sourceIdentity: String) {
+        tableInteractionController?.cancelMotion()
         guard let layout,
               let surface = ViewerTablePresentation.project(
                 layout: layout,
                 owner: tablePresentationOwner,
                 viewport: .unknown
-              ).cells.first(where: { $0.surface.identity == sourceIdentity })?.surface
+              ).tables.first(where: { $0.surface.identity == sourceIdentity })?.surface
         else { return }
         tablePresentationOwner.setLogicalOffset(offset, for: surface)
         updateSidecarInstrumentation()
@@ -335,17 +425,30 @@ public final class PreparedProseDrawingView: UIView {
 
     public override func didMoveToSuperview() {
         super.didMoveToSuperview()
+        if isUserInteractionEnabled {
+            installTableInteraction(on: superview)
+        }
         updateConfiguredImagesForVisibleWindow()
     }
 
     public override func didMoveToWindow() {
         super.didMoveToWindow()
+        if window == nil { tableInteractionController?.cancelMotion() }
         if window == nil { codeHighlightingSession.cancel() } else { scheduleCodeHighlighting() }
         updateConfiguredImagesForVisibleWindow()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("PreparedProseDrawingView does not support NSCoder") }
+
+    func installTableInteraction(on host: UIView?) {
+        tableInteractionController?.detach()
+        tableInteractionController = host.map { TableInteractionController(host: $0, drawing: self) }
+    }
+
+    func cancelTableMotion() {
+        tableInteractionController?.cancelMotion()
+    }
 
     internal static func pixelAllocationBytes(for image: UIImage) -> Int {
         if let cgImage = image.cgImage {
