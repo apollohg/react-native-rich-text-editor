@@ -7,7 +7,10 @@
             "@apollohg/react-native-rich-text-editor": ["../src/index.ts"],
             "@expo/vector-icons": ["./node_modules/@expo/vector-icons"],
             "expo-modules-core": ["./node_modules/expo-modules-core"],
-            "react-native": ["./node_modules/react-native"]
+            "react": ["./node_modules/@types/react/index.d.ts"],
+            "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime.d.ts"],
+            "react-native": ["./node_modules/react-native/types_generated/index.d.ts"],
+            "react-native/Libraries/Types/CodegenTypes": ["./node_modules/react-native/types_generated/Libraries/Types/CodegenTypes.d.ts"]
         }
     },
     "include": ["./**/*.ts", "./**/*.tsx"],

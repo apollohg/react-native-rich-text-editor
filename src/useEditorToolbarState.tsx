@@ -1,5 +1,5 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { type View, useWindowDimensions } from 'react-native';
+import { type ComponentRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { View, useWindowDimensions } from 'react-native';
 import { DEFAULT_EDITOR_TOOLBAR_ITEMS } from './EditorToolbarItems';
 import { type EditorToolbarProps, type ToolbarMenuState } from './EditorToolbarTypes';
 import {
@@ -51,11 +51,11 @@ export function useEditorToolbarState({
 
     const publishesFocusFrames = preserveEditorFocus || frameOwnerId != null;
 
-    const rootRef = useRef<View | null>(null);
+    const rootRef = useRef<ComponentRef<typeof View> | null>(null);
 
-    const menuCardRef = useRef<View | null>(null);
+    const menuCardRef = useRef<ComponentRef<typeof View> | null>(null);
 
-    const groupButtonRefs = useRef(new Map<string, View | null>());
+    const groupButtonRefs = useRef(new Map<string, ComponentRef<typeof View> | null>());
 
     const { width: windowWidth, height: windowHeight } = useWindowDimensions();
 

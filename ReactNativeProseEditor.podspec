@@ -45,11 +45,37 @@ Pod::Spec.new do |s|
     'ios/EditorCore.xcframework/**/*',
   ]
 
+  # Dependents import this pod's Swift module, which in turn imports editor_coreFFI.
+  # Publish the companion Clang module in the pod's build directory, already on
+  # dependent Swift targets' include paths.
+  s.script_phases = [{
+    :name => 'Expose editor_coreFFI',
+    :execution_position => :before_compile,
+    :script => <<~SCRIPT,
+      set -e
+      ffi_destination="${PODS_CONFIGURATION_BUILD_DIR}/ReactNativeProseEditor"
+      mkdir -p "$ffi_destination"
+      cp "${PODS_TARGET_SRCROOT}/ios/editor_coreFFI/editor_coreFFI.h" "$ffi_destination/"
+      cp "${PODS_TARGET_SRCROOT}/ios/editor_coreFFI/module.modulemap" "$ffi_destination/"
+    SCRIPT
+    :input_files => [
+      '${PODS_TARGET_SRCROOT}/ios/editor_coreFFI/editor_coreFFI.h',
+      '${PODS_TARGET_SRCROOT}/ios/editor_coreFFI/module.modulemap',
+    ],
+    :output_files => [
+      '${PODS_CONFIGURATION_BUILD_DIR}/ReactNativeProseEditor/editor_coreFFI.h',
+      '${PODS_CONFIGURATION_BUILD_DIR}/ReactNativeProseEditor/module.modulemap',
+    ],
+  }]
+
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
     'SWIFT_COMPILATION_MODE' => 'wholemodule',
-    'SWIFT_INCLUDE_PATHS' => '$(PODS_TARGET_SRCROOT)/ios/editor_coreFFI',
-    'HEADER_SEARCH_PATHS' => '$(PODS_TARGET_SRCROOT)/ios/editor_coreFFI $(PODS_TARGET_SRCROOT)/common/cpp',
+    'SWIFT_INCLUDE_PATHS' => '$(PODS_CONFIGURATION_BUILD_DIR)/ReactNativeProseEditor',
+    'HEADER_SEARCH_PATHS' => '$(PODS_CONFIGURATION_BUILD_DIR)/ReactNativeProseEditor $(PODS_TARGET_SRCROOT)/common/cpp',
+  }
+  s.user_target_xcconfig = {
+    'SWIFT_INCLUDE_PATHS' => '$(PODS_CONFIGURATION_BUILD_DIR)/ReactNativeProseEditor',
   }
 
   # React Native must merge its Fabric and Yoga dependency settings after this

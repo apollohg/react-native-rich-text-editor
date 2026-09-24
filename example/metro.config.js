@@ -19,9 +19,8 @@ config.resolver.extraNodeModules = {
     react: path.resolve(projectRoot, 'node_modules/react'),
     'react-native': path.resolve(projectRoot, 'node_modules/react-native'),
     expo: path.resolve(projectRoot, 'node_modules/expo'),
-    'expo-modules-core': path.resolve(
-        projectRoot,
-        'node_modules/expo/node_modules/expo-modules-core'
+    'expo-modules-core': path.dirname(
+        require.resolve('expo-modules-core/package.json', { paths: [projectRoot] })
     ),
 };
 

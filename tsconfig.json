@@ -18,8 +18,8 @@
         ],
         "paths": {
             "@expo/vector-icons": ["./example/node_modules/@expo/vector-icons"],
-            "expo-modules-core": ["./example/node_modules/expo/node_modules/expo-modules-core"],
-            "react-native": ["./example/node_modules/react-native"]
+            "expo-modules-core": ["./node_modules/expo-modules-core"],
+            "react-native": ["./node_modules/react-native"]
         },
         "rootDir": "./src",
         "outDir": "./dist"
