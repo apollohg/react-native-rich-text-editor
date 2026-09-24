@@ -43,7 +43,7 @@ extension PreparedProseLayoutRegistry {
     }
 
     @objc(isFabricLeaseActiveSurfaceId:componentTag:generationIdentity:leaseHandle:)
-    func isFabricLeaseActive(
+    public func isFabricLeaseActive(
         surfaceId: Int64,
         componentTag: Int64,
         generationIdentity: String,
