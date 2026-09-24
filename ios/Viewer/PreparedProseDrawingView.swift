@@ -634,14 +634,16 @@ public final class PreparedProseDrawingView: UIView {
         let cells = Dictionary(grouping: snapshot.mountedCells, by: { ObjectIdentifier($0.surface) })
 
         func drawLayout(_ presented: ViewerTablePresentedLayout) {
-            context.saveGState()
-            context.clip(to: presented.clip)
-            context.translateBy(x: presented.origin.x, y: presented.origin.y)
-            for fragment in presented.layout.decorations {
-                guard fragment.bounds.offsetBy(dx: presented.origin.x, dy: presented.origin.y).intersects(dirtyRect) else { continue }
-                fragment.styleBox?.draw(in: fragment.bounds, context: context)
+            if ObjectIdentifier(presented.layout) != excludedLayoutID {
+                context.saveGState()
+                context.clip(to: presented.clip)
+                context.translateBy(x: presented.origin.x, y: presented.origin.y)
+                for fragment in presented.layout.decorations {
+                    guard fragment.bounds.offsetBy(dx: presented.origin.x, dy: presented.origin.y).intersects(dirtyRect) else { continue }
+                    fragment.styleBox?.draw(in: fragment.bounds, context: context)
+                }
+                context.restoreGState()
             }
-            context.restoreGState()
 
             for block in blocks[ObjectIdentifier(presented.layout)] ?? [] {
                 guard let surface = block.block.tableSurface else { continue }
@@ -655,8 +657,7 @@ public final class PreparedProseDrawingView: UIView {
                 }
                 for cell in surfaceCells {
                     guard let child = layouts[ObjectIdentifier(cell.content)],
-                          mountedLayoutIDs.contains(ObjectIdentifier(cell.content)),
-                          ObjectIdentifier(cell.content) != excludedLayoutID
+                          mountedLayoutIDs.contains(ObjectIdentifier(cell.content))
                     else { continue }
                     drawLayout(child)
                 }

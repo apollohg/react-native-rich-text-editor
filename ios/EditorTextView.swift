@@ -178,6 +178,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     var rootTableSelectionInputBlocked = false
     var authoritativeCellSelectionActive = false
     var tableCellInputAuthority: (() -> Bool)?
+    var onTableCellTab: ((Bool) -> Void)?
     var onProjectedUpdate: ((String, Bool) -> Bool)?
     var onAuthoritativeRenderApplied: ((String) -> Void)?
     var renderAppearanceRevision: UInt64 = 1

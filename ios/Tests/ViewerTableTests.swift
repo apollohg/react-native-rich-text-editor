@@ -150,6 +150,57 @@ final class ViewerTableTests: XCTestCase {
         }
         XCTAssertTrue(proseHasInk)
         XCTAssertEqual(layout.imageAttachments.filter { $0.id == image.id }.count, 1)
+
+        let activeOuter = try XCTUnwrap(surface.cells.first { cell in
+            cell.content.blocks.contains { $0.tableSurface != nil }
+        })
+        drawing.excludedTableCellContentLayout = activeOuter.content
+        let active = try XCTUnwrap(UIGraphicsImageRenderer(size: layout.size, format: format).image { _ in
+            drawing.draw(drawing.bounds)
+        }.cgImage)
+        XCTAssertEqual(
+            try rgba(active, CGPoint(x: nestedHeader.bounds.minX + 2, y: nestedHeader.bounds.minY + 2)),
+            colorRGBA(nestedHeader.surface.style.headerBackgroundColor)
+        )
+        for point in [CGPoint(x: 4, y: 4), CGPoint(x: 15, y: 15)] {
+            XCTAssertEqual(
+                try rgba(active, CGPoint(x: projectedImage.bounds.minX + point.x, y: projectedImage.bounds.minY + point.y)),
+                try rgba(sourceImage, point)
+            )
+        }
+    }
+
+    func testActiveOuterCellExclusionPaintsNestedHeaderBackground() throws {
+        let layout = try prepare(try nestedHeaderImageSource(outerHeader: false))
+        let root = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil })
+        let surface = try XCTUnwrap(root.tableSurface)
+        let activeCell = try XCTUnwrap(surface.cells.first { cell in
+            cell.content.blocks.contains { $0.tableSurface != nil }
+        })
+        let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+        drawing.install(layout: layout)
+        drawing.excludedTableCellContentLayout = activeCell.content
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = try XCTUnwrap(UIGraphicsImageRenderer(size: layout.size, format: format).image { _ in
+            drawing.draw(drawing.bounds)
+        }.cgImage)
+        let snapshot = ViewerTablePresentation.project(
+            layout: layout, owner: ViewerTablePresentationOwner(), viewport: .unknown
+        )
+        let nestedHeader = try XCTUnwrap(snapshot.cells.first {
+            $0.surface !== surface && $0.cell.isHeader
+        })
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        XCTAssertTrue(nestedHeader.surface.style.headerBackgroundColor.getRed(
+            &red, green: &green, blue: &blue, alpha: &alpha
+        ))
+        let expected = [red, green, blue, alpha].map { UInt8(($0 * 255).rounded()) }
+        let point = CGPoint(x: nestedHeader.bounds.minX + 2, y: nestedHeader.bounds.minY + 2)
+        XCTAssertEqual(try rgba(image, point), expected)
     }
 
     func testMountedTableOffsetRefreshesVisibleImageWithoutManualRefresh() throws {
@@ -2051,7 +2102,8 @@ final class ViewerTableTests: XCTestCase {
 
     private func nestedHeaderImageSource(
         imageSource: String = "https://example.test/nested.png",
-        nestedOverflow: Bool = false
+        nestedOverflow: Bool = false,
+        outerHeader: Bool = true
     ) throws -> String {
         let image: [String: Any] = [
             "type": "image",
@@ -2061,7 +2113,8 @@ final class ViewerTableTests: XCTestCase {
         let nestedRow: [String: Any] = ["type": "table_row", "content": [nestedHeader] + (nestedOverflow ? [["type": "table_cell", "attrs": ["colwidth": [500]], "content": [paragraph("nested body")]]] : [])]
         let nestedTable: [String: Any] = ["type": "table", "content": [nestedRow]]
         let quote: [String: Any] = ["type": "blockquote", "content": [paragraph("quoted"), nestedTable]]
-        let outerHeader: [String: Any] = ["type": "table_header", "attrs": ["colwidth": [300]], "content": [quote]]
+        let outerHeader: [String: Any] = ["type": outerHeader ? "table_header" : "table_cell",
+                                          "attrs": ["colwidth": [300]], "content": [quote]]
         let outerCell: [String: Any] = ["type": "table_cell", "attrs": ["colwidth": [nestedOverflow ? 500 : 300]], "content": [paragraph("body")]]
         let outerRow: [String: Any] = ["type": "table_row", "content": [outerHeader, outerCell]]
         let outerTable: [String: Any] = ["type": "table", "content": [outerRow]]

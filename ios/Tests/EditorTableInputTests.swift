@@ -2,8 +2,8 @@ import CoreText
 import XCTest
 
 final class EditorTableInputTests: XCTestCase {
-    private let tableConfig = #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"class":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"#
-    private let listTableConfig = #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"bulletList","content":"listItem+","group":"block","role":"list"},{"name":"listItem","content":"block+","role":"listItem"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"class":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"#
+    private let tableConfig = TableInputTestSchema.tableConfig
+    private let listTableConfig = TableInputTestSchema.listTableConfig
 
     func testEngineCellSelectionAdmitsAuthoritativeSnapshot() throws {
         let editorId = makeV2Editor(configJson: tableConfig)
@@ -116,6 +116,11 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(view.textView.isFirstResponder)
         XCTAssertTrue(view.activeTextInput === view.textView)
         let before = try XCTUnwrap(adapter.documentJson())
+        let tab = try XCTUnwrap(input.keyCommands?.first {
+            $0.input == "\t" && $0.modifierFlags.isEmpty
+        })
+        _ = input.perform(tab.action)
+        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
         input.insertText("unsafe")
         view.textView.insertText("unsafe")
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)

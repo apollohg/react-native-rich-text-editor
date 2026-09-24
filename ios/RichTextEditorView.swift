@@ -270,6 +270,10 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
                 atomConfiguration: textView.atomRenderConfiguration
               )
         else { return false }
+        let nestedHeights = tableSurface.nestedTableHeights(tableID: tableID, cellIndex: cellIndex) ?? [:]
+        guard mapping.cells[Int(cellIndex)].excluded.allSatisfy({ nestedHeights[$0.tableID] != nil }) else {
+            return false
+        }
         if let selection, !selectionFitsTableCell(selection, map: projection.positionMap) {
             return false
         }
@@ -298,6 +302,9 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         tableInputCoordinator.cellInput.isOpaque = false
         tableInputCoordinator.cellInput.onProjectedUpdate = { [weak self] updateJSON, notifyDelegate in
             self?.applyActiveTableCellUpdate(updateJSON, notifyDelegate: notifyDelegate) ?? false
+        }
+        tableInputCoordinator.cellInput.onTableCellTab = { [weak self] backward in
+            self?.moveFromActiveTableCell(backward: backward)
         }
         let cellInput = tableInputCoordinator.cellInput
         cellInput.onAuthoritativeTextSelectionSynced = { [weak self, weak cellInput] in
@@ -362,6 +369,79 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         isApplyingActiveTableCellUpdate = true
         defer { isApplyingActiveTableCellUpdate = false }
         return textView.applyUpdateJSON(updateJSON, notifyDelegate: notifyDelegate)
+    }
+
+    private func moveFromActiveTableCell(backward: Bool) {
+        let input = tableInputCoordinator.cellInput
+        guard activeTextInput === input,
+              case .bound = tableInputCoordinator.phase,
+              input.isEditable,
+              let tableID = tableInputCoordinator.activeTableID,
+              let currentMap = tableInputCoordinator.positionMap,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              hasTableCellBindingAuthority(adapter),
+              input.isAuthorizedForTableCellInput()
+        else { return }
+        guard input.prepareForExternalEditorUpdate(),
+              activeTextInput === input,
+              case .bound = tableInputCoordinator.phase,
+              input.isAuthorizedForTableCellInput(),
+              tableInputCoordinator.positionMap?.binding == currentMap.binding,
+              tableInputCoordinator.positionMap?.segments == currentMap.segments,
+              let selection = input.currentScalarSelection(),
+              let atomic = adapter.cachedAtomicRenderJSON,
+              let data = atomic.data(using: .utf8),
+              let snapshot = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let authoritativeSelection = snapshot["selection"] as? [String: Any],
+              authoritativeSelection["type"] as? String == "text"
+        else { return }
+
+        let command: [String: Any] = [
+            "type": "moveToAdjacentCell",
+            "step": backward ? "backward" : "forward",
+            "appendRow": !backward
+        ]
+        guard let update = adapter.commandAtSelection(command, anchor: selection.anchor, head: selection.head),
+              let updateData = update.data(using: .utf8),
+              let updateObject = try? JSONSerialization.jsonObject(with: updateData) as? [String: Any],
+              let targetSelection = updateObject["selection"] as? [String: Any],
+              targetSelection["type"] as? String == "text",
+              let targetScalar = v2ExactUInt32(targetSelection["anchorScalar"] as? NSNumber),
+              targetScalar == v2ExactUInt32(targetSelection["headScalar"] as? NSNumber)
+        else { return }
+
+        let commandRevision = adapter.baseDocumentRevision
+        let commandStateRevision = adapter.stateRevision
+        let commandEpoch = adapter.positionEpoch
+        let focused = input.isFirstResponder
+        guard input.applyUpdateJSON(update) else {
+            invalidateTableCellBinding()
+            return
+        }
+        guard editorId != 0,
+              EditorV2Registry.adapter(forLegacyId: editorId) === adapter,
+              hasTableCellBindingAuthority(adapter),
+              adapter.baseDocumentRevision == commandRevision,
+              adapter.stateRevision == commandStateRevision,
+              adapter.positionEpoch == commandEpoch
+        else { return }
+        guard let target = adapter.cachedTableInputMappings?.tables[tableID]?.cells.first(where: { cell in
+            cell.blocks.contains { block in
+                targetScalar >= block.scalarStart && targetScalar <= block.breakScalarEnd
+            }
+        }) else {
+            invalidateTableCellBinding()
+            return
+        }
+        if tableInputCoordinator.activeCellIndex != target.cellIndex || activeTextInput !== input {
+            guard bindTableCell(tableID: tableID, cellIndex: target.cellIndex,
+                                contentRect: input.frame, selection: targetSelection) else {
+                invalidateTableCellBinding()
+                return
+            }
+        }
+        _ = input.applySelectionFromJSON(targetSelection)
+        if focused { _ = input.becomeFirstResponder() }
     }
 
     private func selectionFitsTableCell(_ selection: [String: Any], map: TableCellPositionMap) -> Bool {

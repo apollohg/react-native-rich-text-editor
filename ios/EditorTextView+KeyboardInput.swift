@@ -302,6 +302,10 @@ extension EditorTextView {
     }
 
     @objc func handleIndentKeyCommand() {
+        if tableCellPositionMap != nil {
+            onTableCellTab?(false)
+            return
+        }
         handleListDepthKeyCommand(outdent: false)
     }
 
@@ -316,6 +320,10 @@ extension EditorTextView {
     }
 
     @objc func handleOutdentKeyCommand() {
+        if tableCellPositionMap != nil {
+            onTableCellTab?(true)
+            return
+        }
         handleListDepthKeyCommand(outdent: true)
     }
 

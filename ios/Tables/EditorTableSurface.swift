@@ -180,6 +180,45 @@ final class EditorTableSurface: UIView {
         return cell.frame.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: inset, dy: inset)
     }
 
+    func nestedTableHeights(tableID: String, cellIndex: UInt32, input: EditorTextView? = nil) -> [String: CGFloat]? {
+        guard let cell = entries[tableID]?.surface.cells.first(where: {
+            $0.sourceCellIndex == Int(cellIndex)
+        }) else { return nil }
+        var precedingSpacing: [String: CGFloat] = [:]
+        if let input, input.textStorage.length > 0 {
+            input.textStorage.enumerateAttribute(
+                RenderBridgeAttributes.rootTableScalarExtent,
+                in: NSRange(location: 0, length: input.textStorage.length)
+            ) { value, range, _ in
+                guard let marker = value as? RenderBridge.RootTableScalarExtent,
+                      let identity = marker.tableID,
+                      range.location > 0
+                else { return }
+                let paragraph = input.textStorage.attribute(
+                    .paragraphStyle, at: range.location - 1, effectiveRange: nil
+                ) as? NSParagraphStyle
+                precedingSpacing[identity] = paragraph?.paragraphSpacing ?? 0
+            }
+        }
+        var heights: [String: CGFloat] = [:]
+        let blocks = cell.content.blocks
+        for index in blocks.indices {
+            let block = blocks[index]
+            guard let nested = block.tableSurface else { continue }
+            let previous = index > blocks.startIndex ? blocks[index - 1] : nil
+            let nextStart = index + 1 < blocks.endIndex
+                ? blocks[index + 1].bounds.minY : cell.content.size.height
+            let leading = previous?.tableSurface == nil
+                ? block.bounds.minY - (previous?.bounds.maxY ?? 0) : 0
+            let trailing = nextStart - block.bounds.maxY
+            let height = block.bounds.height + leading + trailing
+                - (precedingSpacing[nested.identity] ?? 0)
+            guard height.isFinite, height > 0 else { return nil }
+            heights[nested.identity] = height
+        }
+        return heights
+    }
+
     func cellHit(at point: CGPoint) -> RootTableCellHit? {
         for entry in entries.values {
             guard let origin = tableOrigin(for: entry.tableID) else { continue }
@@ -404,6 +443,13 @@ final class EditorTableSurface: UIView {
         drawingView.excludedTableCellContentLayout = entry.surface.cells.first {
             $0.sourceCellIndex == Int(activeCell.cellIndex)
         }?.content
+        if let heights = nestedTableHeights(
+            tableID: activeCell.tableID,
+            cellIndex: activeCell.cellIndex,
+            input: inputCoordinator.cellInput
+        ) {
+            inputCoordinator.cellInput.reserveRootTableHeights(heights)
+        }
     }
 
     private func sameSurfaces(
