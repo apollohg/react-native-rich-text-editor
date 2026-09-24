@@ -31,12 +31,10 @@ enum EditorCellSelection: Equatable {
     }
 
     static func resolve(_ value: Any, records: [String: [String: Any]]) -> EditorCellSelection? {
-        guard let selection = value as? [String: Any],
-              Set(selection.keys) == ["type", "anchorCell", "headCell"],
-              selection["type"] as? String == "cell",
-              let anchor = v2ExactUInt32(selection["anchorCell"] as? NSNumber),
-              let head = v2ExactUInt32(selection["headCell"] as? NSNumber)
+        guard let endpoints = endpointPositions(value)
         else { return nil }
+        let anchor = endpoints.anchor
+        let head = endpoints.head
 
         var drawable: [EditorCellSelection] = []
         var unavailable: [(extent: UInt32, selection: EditorCellSelection)] = []
@@ -90,5 +88,15 @@ enum EditorCellSelection: Equatable {
               unavailable.filter({ $0.extent == smallest }).count == 1
         else { return nil }
         return unavailable.first { $0.extent == smallest }?.selection
+    }
+
+    static func endpointPositions(_ value: Any) -> (anchor: UInt32, head: UInt32)? {
+        guard let selection = value as? [String: Any],
+              Set(selection.keys) == ["type", "anchorCell", "headCell"],
+              selection["type"] as? String == "cell",
+              let anchor = v2ExactUInt32(selection["anchorCell"] as? NSNumber),
+              let head = v2ExactUInt32(selection["headCell"] as? NSNumber)
+        else { return nil }
+        return (anchor, head)
     }
 }

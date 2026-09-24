@@ -1,6 +1,83 @@
 import Foundation
 
 extension EditorV2Adapter {
+    struct TableCellSelectionAdmission {
+        let tableID: String
+        let documentRevision: UInt64
+        var positionEpoch: UInt64
+        let presentationGeneration: UInt64
+        let ownerID: UInt64
+        let ownerToken: UUID
+        var anchor: UInt32
+        var head: UInt32
+    }
+
+    func admitsTableCellSelection(_ admission: TableCellSelectionAdmission) -> Bool {
+        guard !destroyed,
+              baseDocumentRevision == admission.documentRevision,
+              cachedAtomicRenderDocumentRevision == admission.documentRevision,
+              cachedTablePresentation?.documentRevision == admission.documentRevision,
+              positionEpoch == admission.positionEpoch,
+              tableResetGeneration == admission.presentationGeneration,
+              nativeOwnerId == admission.ownerID,
+              nativeOwnerToken == admission.ownerToken,
+              cachedTableRecords[admission.tableID]?["readOnlyDescendants"] as? Bool == false,
+              let render = cachedAtomicRenderJSON?.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: render) as? [String: Any],
+              let selection = object["selection"],
+              let endpoints = EditorCellSelection.endpointPositions(selection),
+              endpoints.anchor == admission.anchor,
+              endpoints.head == admission.head,
+              case let .drawable(tableID, _) = EditorCellSelection.resolve(
+                selection, records: cachedTableRecords
+              ),
+              tableID == admission.tableID
+        else { return false }
+        return true
+    }
+
+    func selectExactTableCells(anchor: UInt32, head: UInt32,
+                               admission: TableCellSelectionAdmission) -> String? {
+        guard beginRuntimeOperation() else { return nil }
+        defer { endRuntimeOperation() }
+        guard admitsTableCellSelection(admission),
+              let cells = cachedTableRecords[admission.tableID]?["cells"] as? [[String: Any]],
+              cells.contains(where: { Self.uint32Field($0, "sourcePos") == anchor }),
+              cells.contains(where: { Self.uint32Field($0, "sourcePos") == head })
+        else { return nil }
+        let update = performMutation(adoptEngineSelection: true, publishMutation: false) {
+            self.callWithEnvelope([
+                "selection": [
+                    "type": "cell",
+                    "anchorCell": ["offset": Int(anchor), "kind": "document"],
+                    "headCell": ["offset": Int(head), "kind": "document"]
+                ]
+            ]) { requestJSON in
+                editorV2SetSelection(editorId: self.editorId, requestJson: requestJSON)
+            }
+        }
+        guard let update,
+              baseDocumentRevision == admission.documentRevision,
+              cachedAtomicRenderDocumentRevision == admission.documentRevision,
+              cachedTablePresentation?.documentRevision == admission.documentRevision,
+              tableResetGeneration == admission.presentationGeneration,
+              nativeOwnerId == admission.ownerID,
+              nativeOwnerToken == admission.ownerToken,
+              positionEpoch != nil,
+              let render = cachedAtomicRenderJSON?.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: render) as? [String: Any],
+              let selection = object["selection"],
+              let endpoints = EditorCellSelection.endpointPositions(selection),
+              endpoints.anchor == anchor,
+              endpoints.head == head,
+              case let .drawable(tableID, _) = EditorCellSelection.resolve(
+                selection, records: cachedTableRecords
+              ),
+              tableID == admission.tableID
+        else { return nil }
+        return update
+    }
+
     func syncNodeSelection(docPos: UInt32) -> EditorV2SelectionSync? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }

@@ -364,7 +364,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         _ = tableInputCoordinator.invalidateBinding()
     }
 
-    private func hasTableCellBindingAuthority(_ adapter: EditorV2Adapter) -> Bool {
+    func hasTableCellBindingAuthority(_ adapter: EditorV2Adapter) -> Bool {
         textView.ownsNativeBinding(adapter) || tableCellBindingAuthority?(adapter) == true
     }
 
@@ -731,7 +731,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             self.settleTableSelectionAfterTextSync(from: self.textView)
         }
         textView.onAuthoritativeRenderApplied = { [weak self] updateJSON in
-            self?.refreshTablePresentation(updateJSON: updateJSON)
+            self?.refreshTablePresentation()
             self?.refreshActiveTableCell(after: updateJSON)
         }
         addSubview(textView)
@@ -1267,7 +1267,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
-    private func refreshTablePresentation(updateJSON: String? = nil) {
+    private func refreshTablePresentation() {
         guard editorId != 0,
               let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
               let presentation = adapter.cachedTablePresentation
@@ -1275,12 +1275,15 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             tableSurface.clearPresentation()
             return
         }
-        let selection = (updateJSON ?? adapter.cachedViewUpdateJSON)?.data(using: .utf8)
+        let selectionValue = adapter.cachedAtomicRenderJSON?.data(using: .utf8)
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             .flatMap { $0["selection"] }
-            .flatMap { EditorCellSelection.resolve($0, records: adapter.cachedTableRecords) }
+        let selection = selectionValue.flatMap {
+            EditorCellSelection.resolve($0, records: adapter.cachedTableRecords)
+        }
         tableSurface.present(
             presentation, selection: selection,
+            endpoints: selectionValue.flatMap(EditorCellSelection.endpointPositions),
             ownerIdentity: "\(editorId):\(adapter.tableResetGeneration)",
             from: textView
         )
@@ -1290,7 +1293,8 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         guard gestureRecognizer === tableCellTapRecognizer,
               touch.tapCount == 1
         else { return false }
-        return tableSurface.cellHit(at: touch.location(in: tableSurface)) != nil
+        let point = touch.location(in: tableSurface)
+        return !tableSurface.hasSelectionHandle(at: point) && tableSurface.cellHit(at: point) != nil
     }
 
     @objc

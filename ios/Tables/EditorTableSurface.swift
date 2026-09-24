@@ -1,6 +1,38 @@
 import UIKit
 
-final class EditorTableSurface: UIView {
+final class TableSelectionHandleGestureRecognizer: UIGestureRecognizer {
+    private var primaryTouch: UITouch?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard primaryTouch == nil, touches.count == 1,
+              event.allTouches?.count == 1, let touch = touches.first
+        else { state = .cancelled; return }
+        primaryTouch = touch
+        state = .began
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let primaryTouch, touches.contains(primaryTouch),
+              event.allTouches?.count == 1
+        else { state = .cancelled; return }
+        state = .changed
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = primaryTouch.map(touches.contains) == true ? .ended : .cancelled
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = .cancelled
+    }
+
+    override func reset() {
+        super.reset()
+        primaryTouch = nil
+    }
+}
+
+final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     enum ArrowDestination {
         case cell(UInt32)
         case surroundingProse
@@ -33,6 +65,38 @@ final class EditorTableSurface: UIView {
     private var mountedCanvasSize = CGSize.zero
     private var drawingOffset = CGPoint.zero
     private var activeCell: (tableID: String, cellIndex: UInt32)?
+    private weak var interactionHost: RichTextEditorView?
+    private lazy var selectionGesture: TableSelectionHandleGestureRecognizer = {
+        let recognizer = TableSelectionHandleGestureRecognizer(target: self, action: #selector(handleSelectionGesture(_:)))
+        recognizer.delegate = self
+        recognizer.cancelsTouchesInView = true
+        return recognizer
+    }()
+    private final class HandleDrag {
+        let adapter: EditorV2Adapter
+        var admission: EditorV2Adapter.TableCellSelectionAdmission
+        let role: TableSelectionHandleRole
+        let touchOffset: CGPoint
+        var windowPoint: CGPoint
+
+        init(adapter: EditorV2Adapter, admission: EditorV2Adapter.TableCellSelectionAdmission,
+             role: TableSelectionHandleRole, touchOffset: CGPoint, windowPoint: CGPoint) {
+            self.adapter = adapter
+            self.admission = admission
+            self.role = role
+            self.touchOffset = touchOffset
+            self.windowPoint = windowPoint
+        }
+    }
+    private var handleDrag: HandleDrag?
+    private var handleFrameLink: CADisplayLink?
+    private var runningHandleFrame = false
+    private var submittingHandleSelection = false
+
+    private enum HandleScrollMetrics {
+        static let edgeBand: CGFloat = 36
+        static let stepPerFrame: CGFloat = 6
+    }
 
     init(inputCoordinator: EditorTableInputCoordinator) {
         self.inputCoordinator = inputCoordinator
@@ -55,22 +119,39 @@ final class EditorTableSurface: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        cancelHandleDrag()
+        selectionGesture.view?.removeGestureRecognizer(selectionGesture)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil { cancelHandleDrag() }
+    }
+
     func installTableInteraction(on host: UIView) {
+        interactionHost = host as? RichTextEditorView
+        host.addGestureRecognizer(selectionGesture)
         drawingView.installTableInteraction(on: host)
     }
 
     func present(_ presentation: EditorV2Adapter.EditorTablePresentationSnapshot,
-                 selection: EditorCellSelection?, ownerIdentity: String,
+                 selection: EditorCellSelection?, endpoints: (anchor: UInt32, head: UInt32)?, ownerIdentity: String,
                  from textView: EditorTextView) {
         drawingView.setTableOwnerIdentity(ownerIdentity)
         latestPresentation = presentation
         if case let .drawable(tableID, sourcePositions) = selection {
             drawingView.selectedTableCellSourcePositions = [tableID: sourcePositions]
+            drawingView.selectedTableCellEndpoints = endpoints.map {
+                TableSelectionEndpoints(tableID: tableID, anchor: $0.anchor, head: $0.head)
+            }
         } else {
             drawingView.selectedTableCellSourcePositions = [:]
+            drawingView.selectedTableCellEndpoints = nil
         }
         reprepareIfNeeded(from: textView)
         updateGeometry(from: textView)
+        if let drag = handleDrag, !validHandleDrag(drag) { cancelHandleDrag() }
     }
 
     func invalidateAppearance() {
@@ -78,6 +159,7 @@ final class EditorTableSurface: UIView {
     }
 
     func clearPresentation() {
+        cancelHandleDrag()
         drawingView.setTableOwnerIdentity(nil)
         entries.removeAll()
         latestPresentation = nil
@@ -91,14 +173,18 @@ final class EditorTableSurface: UIView {
         drawingView.bounds.origin = .zero
         drawingView.excludedTableCellContentLayout = nil
         drawingView.selectedTableCellSourcePositions = [:]
+        drawingView.selectedTableCellEndpoints = nil
         drawingView.install(layout: nil)
     }
 
     func clearCellSelection() {
+        cancelHandleDrag()
         drawingView.selectedTableCellSourcePositions = [:]
+        drawingView.selectedTableCellEndpoints = nil
     }
 
     func updateGeometry(from textView: EditorTextView) {
+        if let drag = handleDrag, !validHandleDrag(drag) { cancelHandleDrag() }
         reprepareIfNeeded(from: textView)
         guard !entries.isEmpty else {
             mountedTableFrames.removeAll()
@@ -303,6 +389,258 @@ final class EditorTableSurface: UIView {
             contentRect: presented.bounds.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
                 .insetBy(dx: inset, dy: inset)
         )
+    }
+
+    private func handleViewport() -> CGRect? {
+        guard let host = interactionHost,
+              let visible = drawingView.tableSelectionViewport()
+        else { return nil }
+        let insets = host.textView.adjustedContentInset
+        let padded = CGRect(
+            x: drawingView.bounds.minX + insets.left,
+            y: drawingView.bounds.minY + insets.top,
+            width: drawingView.bounds.width - insets.left - insets.right,
+            height: drawingView.bounds.height - insets.top - insets.bottom
+        )
+        var viewport = visible.intersection(padded)
+        guard !viewport.isNull, !viewport.isEmpty else { return nil }
+        if let window = host.window,
+           let keyboardFrame = host.textView.keyboardFrameInScreen {
+            let windowFrame = window.convert(keyboardFrame, from: window.screen.coordinateSpace)
+            let occlusion = drawingView.convert(windowFrame, from: window)
+            if viewport.intersects(occlusion) {
+                viewport.size.height = max(0, min(viewport.maxY, occlusion.minY) - viewport.minY)
+            }
+        }
+        return viewport.isEmpty ? nil : viewport
+    }
+
+    func hasSelectionHandle(at point: CGPoint) -> Bool {
+        guard actionableHandle(at: convert(point, to: drawingView)) != nil else { return false }
+        return true
+    }
+
+    private func actionableHandle(at point: CGPoint) -> (
+        handle: TableSelectionHandle, adapter: EditorV2Adapter,
+        admission: EditorV2Adapter.TableCellSelectionAdmission
+    )? {
+        guard let host = interactionHost,
+              host.window != nil,
+              host.editorId != 0,
+              let adapter = EditorV2Registry.adapter(forLegacyId: host.editorId),
+              host.hasTableCellBindingAuthority(adapter),
+              host.isUserInteractionEnabled, host.textView.isUserInteractionEnabled,
+              host.textView.isEditable,
+              !host.hasPendingCompositionForExternalRefresh,
+              host.textView.selectedTextRange?.isEmpty != false,
+              activeCell == nil, host.activeTextInput === host.textView,
+              let ownerID = adapter.nativeOwnerId,
+              let ownerToken = adapter.nativeOwnerToken,
+              let epoch = adapter.positionEpoch,
+              let viewport = handleViewport(),
+              let handle = drawingView.hitSelectionHandle(at: point, visibleIn: viewport),
+              let endpoints = drawingView.selectedTableCellEndpoints,
+              endpoints.tableID == handle.tableID
+        else { return nil }
+        let admission = EditorV2Adapter.TableCellSelectionAdmission(
+            tableID: endpoints.tableID,
+            documentRevision: adapter.baseDocumentRevision,
+            positionEpoch: epoch,
+            presentationGeneration: adapter.tableResetGeneration,
+            ownerID: ownerID,
+            ownerToken: ownerToken,
+            anchor: endpoints.anchor,
+            head: endpoints.head
+        )
+        guard adapter.admitsTableCellSelection(admission) else { return nil }
+        return (handle, adapter, admission)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer === selectionGesture else { return false }
+        if handleDrag != nil { return true }
+        guard touch.tapCount == 1,
+              touch.view?.window === interactionHost?.window
+        else { return false }
+        return actionableHandle(at: touch.location(in: drawingView)) != nil
+    }
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer === selectionGesture
+            && actionableHandle(at: gestureRecognizer.location(in: drawingView)) != nil
+    }
+
+    @objc private func handleSelectionGesture(_ recognizer: TableSelectionHandleGestureRecognizer) {
+        guard recognizer === selectionGesture, let host = interactionHost else { return }
+        let point = recognizer.location(in: host)
+        switch recognizer.state {
+        case .began:
+            _ = beginHandleDrag(at: point)
+        case .changed:
+            updateHandleDrag(at: point)
+        case .ended:
+            updateHandleDrag(at: point)
+            cancelHandleDrag()
+        case .cancelled, .failed:
+            cancelHandleDrag()
+        default:
+            break
+        }
+    }
+
+    @discardableResult
+    func beginHandleDrag(at hostPoint: CGPoint) -> Bool {
+        guard let host = interactionHost,
+              let actionable = actionableHandle(at: drawingView.convert(hostPoint, from: host))
+        else { return false }
+        cancelHandleDrag()
+        drawingView.cancelTableMotion()
+        let point = drawingView.convert(hostPoint, from: host)
+        let offset = CGPoint(x: point.x - actionable.handle.center.x,
+                             y: point.y - actionable.handle.center.y)
+        guard let window = host.window else { return false }
+        handleDrag = HandleDrag(adapter: actionable.adapter, admission: actionable.admission,
+                                role: actionable.handle.role, touchOffset: offset,
+                                windowPoint: host.convert(hostPoint, to: window))
+        scheduleHandleFrame()
+        return true
+    }
+
+    func updateHandleDrag(at hostPoint: CGPoint) {
+        guard let drag = handleDrag else { return }
+        guard let host = interactionHost, let window = host.window else { cancelHandleDrag(); return }
+        drag.windowPoint = host.convert(hostPoint, to: window)
+        retargetHandleDrag(drag)
+        if handleDrag === drag { scheduleHandleFrame() }
+    }
+
+    private func validHandleDrag(_ drag: HandleDrag) -> Bool {
+        guard let host = interactionHost,
+              host.window != nil,
+              host.editorId != 0,
+              EditorV2Registry.adapter(forLegacyId: host.editorId) === drag.adapter,
+              host.hasTableCellBindingAuthority(drag.adapter),
+              host.isUserInteractionEnabled, host.textView.isUserInteractionEnabled,
+              host.textView.isEditable,
+              !host.hasPendingCompositionForExternalRefresh,
+              host.textView.selectedTextRange?.isEmpty != false,
+              activeCell == nil, host.activeTextInput === host.textView,
+              drawingView.selectedTableCellEndpoints == TableSelectionEndpoints(
+                tableID: drag.admission.tableID,
+                anchor: drag.admission.anchor,
+                head: drag.admission.head
+              )
+        else { return false }
+        return drag.adapter.admitsTableCellSelection(drag.admission)
+    }
+
+    private func retargetHandleDrag(_ drag: HandleDrag) {
+        guard !submittingHandleSelection else { return }
+        guard validHandleDrag(drag), let host = interactionHost, let window = host.window else {
+            cancelHandleDrag()
+            return
+        }
+        let point = drawingView.convert(drag.windowPoint, from: window)
+        let targetPoint = CGPoint(x: point.x - drag.touchOffset.x,
+                                  y: point.y - drag.touchOffset.y)
+        guard let viewport = handleViewport(),
+              let target = drawingView.selectedTableCell(
+                at: targetPoint, tableID: drag.admission.tableID, visibleIn: viewport
+              )
+        else { return }
+        let anchor = drag.role == .anchor ? target : drag.admission.anchor
+        let head = drag.role == .head ? target : drag.admission.head
+        guard anchor != drag.admission.anchor || head != drag.admission.head else { return }
+        submittingHandleSelection = true
+        defer { submittingHandleSelection = false }
+        guard let update = drag.adapter.selectExactTableCells(
+            anchor: anchor, head: head, admission: drag.admission
+        ), let nextEpoch = drag.adapter.positionEpoch else {
+            cancelHandleDrag()
+            return
+        }
+        drag.admission.anchor = anchor
+        drag.admission.head = head
+        drag.admission.positionEpoch = nextEpoch
+        guard host.textView.applyUpdateJSON(update),
+              handleDrag === drag, validHandleDrag(drag)
+        else { cancelHandleDrag(); return }
+    }
+
+    private func scheduleHandleFrame() {
+        guard handleDrag != nil, handleFrameLink == nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(stepHandleFrame(_:)))
+        handleFrameLink = link
+        link.add(to: .main, forMode: .common)
+    }
+
+    @objc private func stepHandleFrame(_ link: CADisplayLink) {
+        guard link === handleFrameLink, !runningHandleFrame,
+              let drag = handleDrag, validHandleDrag(drag),
+              let host = interactionHost, let window = host.window, let viewport = handleViewport()
+        else {
+            cancelHandleDrag()
+            return
+        }
+        runningHandleFrame = true
+        defer { runningHandleFrame = false }
+        let point = drawingView.convert(drag.windowPoint, from: window)
+        var scrolled = false
+        if let table = drawingView.mountedTablePresentation()?.tables.first(where: {
+            $0.surface.identity == drag.admission.tableID
+        }) {
+            let tableViewport = viewport.intersection(table.clip)
+            if !tableViewport.isNull, !tableViewport.isEmpty {
+                let horizontal: CGFloat = point.x < tableViewport.minX + HandleScrollMetrics.edgeBand
+                    ? HandleScrollMetrics.stepPerFrame
+                    : point.x > tableViewport.maxX - HandleScrollMetrics.edgeBand
+                        ? -HandleScrollMetrics.stepPerFrame : 0
+                if horizontal != 0 {
+                    scrolled = drawingView.scrollTables(
+                        in: [table.surface.scrollIdentity], by: horizontal
+                    ) != horizontal
+                }
+            }
+        }
+        guard handleDrag === drag, validHandleDrag(drag) else { cancelHandleDrag(); return }
+        let vertical: CGFloat = point.y < viewport.minY + HandleScrollMetrics.edgeBand
+            ? -HandleScrollMetrics.stepPerFrame
+            : point.y > viewport.maxY - HandleScrollMetrics.edgeBand
+                ? HandleScrollMetrics.stepPerFrame : 0
+        if vertical != 0, let scroll = verticalScrollTarget(for: host) {
+            let minimum = -scroll.adjustedContentInset.top
+            let maximum = max(minimum, scroll.contentSize.height - scroll.bounds.height
+                              + scroll.adjustedContentInset.bottom)
+            let next = min(maximum, max(minimum, scroll.contentOffset.y + vertical))
+            if next != scroll.contentOffset.y {
+                scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: next), animated: false)
+                scrolled = true
+            }
+        }
+        guard handleDrag === drag, validHandleDrag(drag) else { cancelHandleDrag(); return }
+        if scrolled { retargetHandleDrag(drag) }
+        if !scrolled {
+            handleFrameLink?.invalidate()
+            handleFrameLink = nil
+        }
+    }
+
+    private func verticalScrollTarget(for host: RichTextEditorView) -> UIScrollView? {
+        if host.textView.isScrollEnabled { return host.textView }
+        var ancestor = host.superview
+        while let view = ancestor {
+            if let scroll = view as? UIScrollView, scroll.isScrollEnabled {
+                return scroll
+            }
+            ancestor = view.superview
+        }
+        return nil
+    }
+
+    func cancelHandleDrag() {
+        handleDrag = nil
+        handleFrameLink?.invalidate()
+        handleFrameLink = nil
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {

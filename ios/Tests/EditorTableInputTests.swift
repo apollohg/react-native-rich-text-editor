@@ -2,9 +2,536 @@ import CoreText
 import XCTest
 
 final class EditorTableInputTests: XCTestCase {
+    private final class UpdateSpy: EditorTextViewDelegate {
+        var updates: [String] = []
+
+        func editorTextView(_ textView: EditorTextView, selectionDidChange anchor: UInt32, head: UInt32) {}
+        func editorTextView(_ textView: EditorTextView, didReceiveUpdate updateJSON: String) {
+            updates.append(updateJSON)
+        }
+    }
+
     private let tableConfig = TableInputTestSchema.tableConfig
     private let listTableConfig = TableInputTestSchema.listTableConfig
     private let wideTwoCellDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
+    private let fourCellDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"four"}]}]}]}]}]}"#
+
+    private func tallTableDocument(rowCount: Int) throws -> String {
+        let rows: [[String: Any]] = (0..<rowCount).map { index in
+            ["type": "table_row", "content": [[
+                "type": "table_cell", "content": [[
+                    "type": "paragraph", "content": [["type": "text", "text": "row \(index)"]]
+                ]]
+            ]]]
+        }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "type": "doc", "content": [["type": "table", "content": rows]]
+        ])
+        return try XCTUnwrap(String(data: data, encoding: .utf8))
+    }
+
+    private struct MountedHandleFixture {
+        let view: RichTextEditorView
+        let adapter: EditorV2Adapter
+        let tableID: String
+        let positions: [UInt32]
+        let surface: EditorTableSurface
+        let drawing: PreparedProseDrawingView
+        let updates: UpdateSpy
+
+        func hostPoint(for role: TableSelectionHandleRole) throws -> CGPoint {
+            let handle = try XCTUnwrap(drawing.selectionHandles().first { $0.role == role })
+            return drawing.convert(handle.center, to: view)
+        }
+
+        func hostPoint(inCell index: Int) throws -> CGPoint {
+            let cell = try XCTUnwrap(drawing.mountedTablePresentation()?.cells.first {
+                $0.surface.identity == tableID && $0.sourcePosition == Int(positions[index])
+            })
+            let visible = cell.bounds.intersection(cell.clip).intersection(drawing.bounds)
+            XCTAssertFalse(visible.isEmpty)
+            return drawing.convert(CGPoint(x: visible.midX, y: visible.midY), to: view)
+        }
+
+        func selection() throws -> (UInt32, UInt32) {
+            let raw = try XCTUnwrap(adapter.cachedAtomicRenderJSON)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+            return try XCTUnwrap(EditorCellSelection.endpointPositions(object["selection"] as Any))
+        }
+
+        func engineSelection() throws -> (UInt32, UInt32) {
+            let result = editorV2RenderUpdate(editorId: adapter.editorId,
+                                              mirrorScalarAnchor: nil, mirrorScalarHead: nil)
+            XCTAssertNil(result.error)
+            let raw = try XCTUnwrap(result.value)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+            return try XCTUnwrap(EditorCellSelection.endpointPositions(object["selection"] as Any))
+        }
+
+        func publishedSelection() throws -> (UInt32, UInt32) {
+            let raw = try XCTUnwrap(updates.updates.last)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+            return try XCTUnwrap(EditorCellSelection.endpointPositions(object["selection"] as Any))
+        }
+    }
+
+    private func withMountedHandles(
+        document: String, configJSON: String? = nil, theme: EditorTheme? = nil,
+        size: CGSize = CGSize(width: 360, height: 240), anchorIndex: Int, headIndex: Int,
+        _ body: (MountedHandleFixture) throws -> Void
+    ) throws {
+        let editorId = makeV2Editor(configJson: configJSON ?? tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let window = UIWindow(frame: CGRect(origin: .zero, size: size))
+        let view = RichTextEditorView(frame: window.bounds)
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        if let theme { XCTAssertTrue(view.applyTheme(theme)) }
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        let tableID = try XCTUnwrap(adapter.cachedTableRecords.first {
+            $0.value["readOnlyDescendants"] as? Bool == false
+        }?.key)
+        let rawCells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
+        let positions = try rawCells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
+        let request = adapter.callWithEnvelope([
+            "selection": [
+                "type": "cell",
+                "anchorCell": ["kind": "document", "offset": Int(positions[anchorIndex])],
+                "headCell": ["kind": "document", "offset": Int(positions[headIndex])]
+            ]
+        ]) { editorV2SetSelection(editorId: adapter.editorId, requestJson: $0) }
+        XCTAssertNil(request.error)
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
+        view.layoutIfNeeded()
+        let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let updates = UpdateSpy()
+        view.textView.editorDelegate = updates
+        try body(MountedHandleFixture(view: view, adapter: adapter, tableID: tableID,
+                                      positions: positions, surface: surface, drawing: drawing,
+                                      updates: updates))
+    }
+
+    func testMountedHeadDragPublishesExactCellSelectionWithoutDocumentMutation() throws {
+        try withMountedHandles(document: fourCellDocument, anchorIndex: 0, headIndex: 0) { fixture in
+            let beforeDocument = try XCTUnwrap(fixture.adapter.documentJson())
+            let beforeRevision = fixture.adapter.baseDocumentRevision
+            let beforeHistory = try XCTUnwrap(fixture.adapter.cachedHistoryState)
+            XCTAssertEqual(fixture.drawing.selectionHandles().count, 2)
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
+            fixture.surface.updateHandleDrag(at: try fixture.hostPoint(inCell: 3))
+            fixture.surface.updateHandleDrag(at: try fixture.hostPoint(inCell: 1))
+            XCTAssertEqual(try fixture.selection().0, fixture.positions[0])
+            XCTAssertEqual(try fixture.selection().1, fixture.positions[1])
+            XCTAssertEqual(try fixture.engineSelection().1, fixture.positions[1])
+            XCTAssertEqual(try fixture.publishedSelection().1, fixture.positions[1])
+            XCTAssertEqual(fixture.drawing.selectedTableCellEndpoints?.head, fixture.positions[1])
+            XCTAssertEqual(try XCTUnwrap(fixture.adapter.documentJson()), beforeDocument)
+            XCTAssertEqual(fixture.adapter.baseDocumentRevision, beforeRevision)
+            XCTAssertEqual(fixture.adapter.cachedHistoryState?.canUndo, beforeHistory.canUndo)
+            XCTAssertEqual(fixture.adapter.cachedHistoryState?.canRedo, beforeHistory.canRedo)
+            fixture.surface.cancelHandleDrag()
+        }
+    }
+
+    func testMountedAnchorDragCrossesHeadAndKeepsSourceRoles() throws {
+        try withMountedHandles(document: fourCellDocument, anchorIndex: 0, headIndex: 2) { fixture in
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .anchor)))
+            fixture.surface.updateHandleDrag(at: try fixture.hostPoint(inCell: 3))
+            let selection = try fixture.selection()
+            XCTAssertEqual(selection.0, fixture.positions[3])
+            XCTAssertEqual(selection.1, fixture.positions[2])
+            XCTAssertEqual(fixture.drawing.selectionHandles().first { $0.role == .anchor }?.sourcePosition,
+                           fixture.positions[3])
+            fixture.surface.cancelHandleDrag()
+        }
+    }
+
+    func testCancelledOrForeignOwnedDragCannotRetargetSelection() throws {
+        try withMountedHandles(document: fourCellDocument, anchorIndex: 0, headIndex: 0) { fixture in
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
+            fixture.surface.cancelHandleDrag()
+            fixture.surface.updateHandleDrag(at: try fixture.hostPoint(inCell: 3))
+            XCTAssertEqual(try fixture.selection().1, fixture.positions[0])
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
+            fixture.adapter.releaseNativeBindingOwner(token: try XCTUnwrap(fixture.adapter.nativeOwnerToken))
+            fixture.surface.updateHandleDrag(at: try fixture.hostPoint(inCell: 3))
+            XCTAssertEqual(try fixture.selection().1, fixture.positions[0])
+        }
+    }
+
+    func testForeignSelectionAndDocumentResetCancelHeldHandleWithoutRestore() throws {
+        try withMountedHandles(document: fourCellDocument, anchorIndex: 0, headIndex: 0) { fixture in
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
+            let request = fixture.adapter.callWithEnvelope([
+                "selection": ["type": "cell",
+                              "anchorCell": ["kind": "document", "offset": Int(fixture.positions[1])],
+                              "headCell": ["kind": "document", "offset": Int(fixture.positions[1])]]
+            ]) { editorV2SetSelection(editorId: fixture.adapter.editorId, requestJson: $0) }
+            XCTAssertNil(request.error)
+            XCTAssertTrue(fixture.view.textView.applyUpdateJSON(
+                try XCTUnwrap(fixture.adapter.refreshFromRustState(mirrorSelection: nil))
+            ))
+            fixture.surface.updateHandleDrag(at: try fixture.hostPoint(inCell: 3))
+            XCTAssertEqual(try fixture.selection().0, fixture.positions[1])
+            XCTAssertEqual(try fixture.selection().1, fixture.positions[1])
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
+            let stalePoint = try fixture.hostPoint(inCell: 3)
+            XCTAssertTrue(fixture.view.textView.applyUpdateJSON(
+                try XCTUnwrap(fixture.adapter.setContentJson(fourCellDocument))
+            ))
+            fixture.surface.updateHandleDrag(at: stalePoint)
+            XCTAssertEqual(fixture.adapter.cachedAtomicRenderDocumentRevision,
+                           fixture.adapter.baseDocumentRevision)
+            XCTAssertNil(fixture.drawing.selectedTableCellEndpoints)
+        }
+    }
+
+    func testDetachedViewAndReboundEditorReleaseHeldHandle() throws {
+        try withMountedHandles(document: fourCellDocument, anchorIndex: 0, headIndex: 0) { fixture in
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
+            let before = try fixture.selection()
+            fixture.view.removeFromSuperview()
+            fixture.surface.updateHandleDrag(at: CGPoint(x: 300, y: 200))
+            XCTAssertEqual(try fixture.selection().0, before.0)
+            XCTAssertEqual(try fixture.selection().1, before.1)
+        }
+    }
+
+    func testRebindingAnAttachedEditorCancelsHeldHandleWithoutTouchingOldEngine() throws {
+        try withMountedHandles(document: fourCellDocument, anchorIndex: 0, headIndex: 0) { fixture in
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
+            let oldSelection = try fixture.engineSelection()
+            let reboundID = makeV2Editor(configJson: tableConfig)
+            defer { destroyV2Editor(id: reboundID) }
+            let reboundAdapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: reboundID))
+            fixture.view.bindEditor(id: reboundID,
+                                    initialUpdateJSON: try XCTUnwrap(reboundAdapter.initialUpdateJSON()))
+            fixture.surface.updateHandleDrag(at: CGPoint(x: 300, y: 200))
+            XCTAssertEqual(try fixture.engineSelection().0, oldSelection.0)
+            XCTAssertEqual(try fixture.engineSelection().1, oldSelection.1)
+            XCTAssertTrue(fixture.updates.updates.isEmpty)
+        }
+    }
+
+    func testMountedWideTableOnlyExposesHandlesAtRealVisiblePositions() throws {
+        try withMountedHandles(document: wideTwoCellDocument, anchorIndex: 0, headIndex: 1) { fixture in
+            XCTAssertEqual(fixture.drawing.selectionHandles().map(\.role), [.anchor])
+            let offscreenHead = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.first {
+                $0.surface.identity == fixture.tableID && $0.sourcePosition == Int(fixture.positions[1])
+            })
+            XCTAssertNil(fixture.drawing.hitSelectionHandle(at: CGPoint(x: offscreenHead.bounds.maxX - 8,
+                                                                          y: offscreenHead.bounds.maxY - 8)))
+            fixture.drawing.setTableLogicalOffset(350, sourceIdentity: fixture.tableID)
+            XCTAssertTrue(fixture.drawing.selectionHandles().isEmpty)
+            let table = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.tables.first {
+                $0.surface.identity == fixture.tableID
+            })
+            let maximum = table.surface.bounds.width - table.surface.hostViewportWidth
+            fixture.drawing.setTableLogicalOffset(maximum, sourceIdentity: fixture.tableID)
+            XCTAssertEqual(fixture.drawing.selectionHandles().map(\.role), [.head])
+        }
+    }
+
+    func testHandleHaloCanBeHitOutsideTableButNeverOutsideHostViewport() throws {
+        try withMountedHandles(document: wideTwoCellDocument, anchorIndex: 0, headIndex: 0) { fixture in
+            let anchor = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .anchor })
+            let halo = CGPoint(x: anchor.center.x, y: anchor.clip.minY - 4)
+            let viewport = try XCTUnwrap(fixture.drawing.tableSelectionViewport())
+            XCTAssertTrue(viewport.contains(halo))
+            XCTAssertFalse(anchor.clip.contains(halo))
+            XCTAssertEqual(fixture.drawing.hitSelectionHandle(at: halo)?.role, .anchor)
+            XCTAssertNil(fixture.drawing.selectedTableCell(at: halo, tableID: fixture.tableID))
+            let outsideHost = CGPoint(x: viewport.minX - 1, y: anchor.center.y)
+            XCTAssertNil(fixture.drawing.hitSelectionHandle(at: outsideHost))
+        }
+    }
+
+    func testOverlappingMinimumHitTargetsChooseNearestThenAnchorOnExactTie() throws {
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph"}]}]}]}]}"#
+        let theme = EditorTheme(dictionary: ["table": [
+            "minColumnWidth": 24, "cellPadding": 0, "borderWidth": 1
+        ]])
+        try withMountedHandles(document: document, theme: theme,
+                               size: CGSize(width: 40, height: 100), anchorIndex: 0, headIndex: 0) { fixture in
+            let anchor = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .anchor })
+            let head = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .head })
+            let midpoint = CGPoint(x: (anchor.center.x + head.center.x) / 2,
+                                   y: (anchor.center.y + head.center.y) / 2)
+            XCTAssertLessThan(hypot(head.center.x - anchor.center.x,
+                                    head.center.y - anchor.center.y), 44)
+            XCTAssertEqual(fixture.drawing.hitSelectionHandle(at: midpoint)?.role, .anchor)
+            let towardHead = CGPoint(x: (midpoint.x + head.center.x) / 2,
+                                     y: (midpoint.y + head.center.y) / 2)
+            XCTAssertEqual(fixture.drawing.hitSelectionHandle(at: towardHead)?.role, .head)
+        }
+    }
+
+    func testOffscreenRealRowsDoNotCreateViewportEdgeHandles() throws {
+        try withMountedHandles(document: tallTableDocument(rowCount: 25),
+                               anchorIndex: 0, headIndex: 24) { fixture in
+            XCTAssertEqual(fixture.drawing.selectionHandles().map(\.role), [.anchor])
+            let last = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.first {
+                $0.surface.identity == fixture.tableID
+                    && $0.sourcePosition == Int(fixture.positions[24])
+            })
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .anchor)))
+            fixture.surface.updateHandleDrag(at: fixture.drawing.convert(
+                CGPoint(x: last.bounds.midX, y: last.bounds.midY), to: fixture.view
+            ))
+            XCTAssertEqual(try fixture.engineSelection().0, fixture.positions[0],
+                           "offscreen real row must not be a drag target")
+            fixture.surface.cancelHandleDrag()
+            fixture.view.textView.setContentOffset(
+                CGPoint(x: 0, y: fixture.view.textView.contentSize.height - fixture.view.textView.bounds.height),
+                animated: false
+            )
+            fixture.surface.updateGeometry(from: fixture.view.textView)
+            XCTAssertEqual(fixture.drawing.selectionHandles().map(\.role), [.head])
+            XCTAssertEqual(try fixture.engineSelection().0, fixture.positions[0])
+            XCTAssertEqual(try fixture.engineSelection().1, fixture.positions[24])
+        }
+    }
+
+    func testMountedMergedRTLHandlesMirrorPhysicalCornersButKeepEndpointRoles() throws {
+        let config = tableConfig.replacingOccurrences(
+            of: #""tableRole":"table","attrs":{"class":{"default":null}}"#,
+            with: #""tableRole":"table","attrs":{"class":{"default":null},"dir":{"default":null}}"#
+        )
+        let document = #"{"type":"doc","content":[{"type":"table","attrs":{"dir":"rtl"},"content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"next"}]}]}]}]}]}"#
+        try withMountedHandles(document: document, configJSON: config, anchorIndex: 0, headIndex: 1) { fixture in
+            let anchor = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .anchor })
+            let head = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .head })
+            XCTAssertEqual(anchor.sourcePosition, fixture.positions[0])
+            XCTAssertEqual(head.sourcePosition, fixture.positions[1])
+            XCTAssertGreaterThan(anchor.center.x, head.center.x)
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
+            fixture.surface.updateHandleDrag(at: try fixture.hostPoint(inCell: 0))
+            XCTAssertEqual(try fixture.selection().1, fixture.positions[0])
+            fixture.surface.cancelHandleDrag()
+        }
+    }
+
+    func testIrregularMergedTableUsesOccupiedRealCellCornersAndRejectsSyntheticGap() throws {
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"later"}]}]}]}]}]}"#
+        try withMountedHandles(document: document, anchorIndex: 0, headIndex: 2) { fixture in
+            let cells = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.filter {
+                $0.surface.identity == fixture.tableID && $0.cell.sourceCellIndex != nil
+            })
+            XCTAssertEqual(cells.count, 3)
+            let first = try XCTUnwrap(cells.first { $0.sourcePosition == Int(fixture.positions[0]) })
+            let last = try XCTUnwrap(cells.first { $0.sourcePosition == Int(fixture.positions[2]) })
+            let anchor = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .anchor })
+            let head = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .head })
+            XCTAssertEqual(anchor.center.x, first.bounds.minX + 8, accuracy: 1)
+            XCTAssertEqual(anchor.center.y, first.bounds.minY + 8, accuracy: 1)
+            XCTAssertEqual(head.center.x, last.bounds.maxX - 8, accuracy: 1)
+            XCTAssertEqual(head.center.y, last.bounds.maxY - 8, accuracy: 1)
+            let gap = CGPoint(x: head.clip.maxX - 8, y: last.bounds.midY)
+            XCTAssertNil(fixture.drawing.selectedTableCell(at: gap, tableID: fixture.tableID))
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
+            fixture.surface.updateHandleDrag(at: fixture.drawing.convert(gap, to: fixture.view))
+            XCTAssertEqual(try fixture.engineSelection().1, fixture.positions[2])
+            fixture.surface.cancelHandleDrag()
+        }
+    }
+
+    func testNestedOnlyOuterCellIsTheDragTarget() throws {
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"outer"}]}]}]}]}]}"#
+        try withMountedHandles(document: document, anchorIndex: 1, headIndex: 1) { fixture in
+            let nested = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.first {
+                $0.surface.identity != fixture.tableID && $0.cell.sourceCellIndex != nil
+            })
+            let point = CGPoint(x: nested.bounds.midX, y: nested.bounds.midY)
+            XCTAssertEqual(fixture.drawing.selectedTableCell(at: point, tableID: fixture.tableID),
+                           fixture.positions[0])
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
+            fixture.surface.updateHandleDrag(at: fixture.drawing.convert(point, to: fixture.view))
+            XCTAssertEqual(try fixture.selection().1, fixture.positions[0])
+            fixture.surface.cancelHandleDrag()
+        }
+    }
+
+    func testDisabledAndComposingRootCannotAcquireOrContinueHandleDrag() throws {
+        try withMountedHandles(document: fourCellDocument, anchorIndex: 0, headIndex: 0) { fixture in
+            let head = try fixture.hostPoint(for: .head)
+            fixture.view.textView.isEditable = false
+            XCTAssertFalse(fixture.surface.beginHandleDrag(at: head))
+            fixture.view.textView.isEditable = true
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: head))
+            fixture.view.textView.isComposing = true
+            fixture.surface.updateHandleDrag(at: try fixture.hostPoint(inCell: 3))
+            XCTAssertEqual(try fixture.selection().1, fixture.positions[0])
+            fixture.view.textView.isComposing = false
+        }
+    }
+
+    func testHeldPointerRetargetsAfterHorizontalTableScrollWithRoomRemaining() throws {
+        try withMountedHandles(document: wideTwoCellDocument, anchorIndex: 0, headIndex: 1) { fixture in
+            let table = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.tables.first {
+                $0.surface.identity == fixture.tableID
+            })
+            let initialDocument = try XCTUnwrap(fixture.adapter.documentJson())
+            let anchor = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .anchor })
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: fixture.drawing.convert(anchor.center, to: fixture.view)))
+            let edgePoint = CGPoint(x: table.clip.maxX - 6, y: anchor.center.y)
+            fixture.surface.updateHandleDrag(at: fixture.drawing.convert(edgePoint, to: fixture.view))
+            XCTAssertEqual(try fixture.selection().0, fixture.positions[0])
+            RunLoop.main.run(until: Date().addingTimeInterval(0.7))
+            let offset = fixture.drawing.tableLogicalOffset(for: fixture.tableID)
+            XCTAssertGreaterThan(offset, 150)
+            XCTAssertLessThan(offset, table.surface.bounds.width - table.surface.hostViewportWidth)
+            XCTAssertEqual(try fixture.selection().0, fixture.positions[1],
+                           "held pointer must re-hit after each frame's table scroll")
+            XCTAssertEqual(try XCTUnwrap(fixture.adapter.documentJson()), initialDocument)
+            fixture.surface.cancelHandleDrag()
+        }
+    }
+
+    func testHeldPointerRetargetsAfterVerticalDocumentScrollAndStopsOnCancel() throws {
+        let rowCount = 25
+        let document = try tallTableDocument(rowCount: rowCount)
+        try withMountedHandles(document: document, anchorIndex: 0, headIndex: 0) { fixture in
+            let initialDocument = try XCTUnwrap(fixture.adapter.documentJson())
+            let head = try fixture.hostPoint(for: .head)
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: head))
+            let viewport = try XCTUnwrap(fixture.drawing.tableSelectionViewport())
+            let edgePoint = CGPoint(x: fixture.drawing.convert(head, from: fixture.view).x,
+                                    y: viewport.maxY - 6)
+            let window = try XCTUnwrap(fixture.view.window)
+            let edgeInWindow = fixture.drawing.convert(edgePoint, to: window)
+            fixture.surface.updateHandleDrag(at: fixture.drawing.convert(edgePoint, to: fixture.view))
+            let beforeFrame = try fixture.selection().1
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            let afterFrame = try fixture.selection().1
+            let scroll = fixture.view.textView
+            let maximum = scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
+            XCTAssertGreaterThan(scroll.contentOffset.y, 0)
+            XCTAssertLessThan(scroll.contentOffset.y, maximum)
+            XCTAssertNotEqual(afterFrame, beforeFrame,
+                              "stationary pointer must select a newly reached real row")
+            let pointedCell = fixture.drawing.selectedTableCell(
+                at: fixture.drawing.convert(edgeInWindow, from: window), tableID: fixture.tableID
+            )
+            XCTAssertEqual(afterFrame, pointedCell)
+            XCTAssertEqual(try fixture.engineSelection().0, fixture.positions[0])
+            XCTAssertEqual(try fixture.engineSelection().1, afterFrame)
+            XCTAssertEqual(try fixture.publishedSelection().1, afterFrame)
+            fixture.surface.cancelHandleDrag()
+            let stoppedOffset = scroll.contentOffset.y
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            XCTAssertEqual(scroll.contentOffset.y, stoppedOffset, accuracy: 1)
+            XCTAssertEqual(try XCTUnwrap(fixture.adapter.documentJson()), initialDocument)
+        }
+    }
+
+    func testAutoGrowHostRetargetsStationaryWindowPointerThroughScrollAncestor() throws {
+        try withMountedHandles(document: tallTableDocument(rowCount: 25),
+                               anchorIndex: 0, headIndex: 0) { fixture in
+            let window = try XCTUnwrap(fixture.view.window)
+            let scroll = UIScrollView(frame: window.bounds)
+            let contentHeight: CGFloat = 1_400
+            fixture.view.removeFromSuperview()
+            fixture.view.frame = CGRect(x: 0, y: 0, width: window.bounds.width, height: contentHeight)
+            fixture.view.heightBehavior = .autoGrow
+            scroll.contentSize = CGSize(width: window.bounds.width, height: contentHeight)
+            scroll.addSubview(fixture.view)
+            window.addSubview(scroll)
+            fixture.view.layoutIfNeeded()
+            let head = try fixture.hostPoint(for: .head)
+            XCTAssertFalse(fixture.view.textView.isScrollEnabled)
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: head))
+            let visible = try XCTUnwrap(fixture.drawing.tableSelectionViewport())
+            let edgeInDrawing = CGPoint(x: fixture.drawing.convert(head, from: fixture.view).x,
+                                        y: visible.maxY - 6)
+            let edgeInWindow = fixture.drawing.convert(edgeInDrawing, to: window)
+            fixture.surface.updateHandleDrag(at: fixture.view.convert(edgeInWindow, from: window))
+            let before = try fixture.engineSelection().1
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            let after = try fixture.engineSelection().1
+            XCTAssertGreaterThan(scroll.contentOffset.y, 0)
+            XCTAssertLessThan(scroll.contentOffset.y,
+                              scroll.contentSize.height - scroll.bounds.height)
+            XCTAssertNotEqual(after, before)
+            XCTAssertEqual(after, fixture.drawing.selectedTableCell(
+                at: fixture.drawing.convert(edgeInWindow, from: window), tableID: fixture.tableID
+            ))
+            XCTAssertEqual(try fixture.engineSelection().0, fixture.positions[0])
+            fixture.surface.cancelHandleDrag()
+        }
+    }
+
+    func testLiveCellHandleGestureChangesEngineSelection() throws {
+        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
+            throw XCTSkip("Live simulator gesture probe is opt in")
+        }
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.backgroundColor = .systemBackground
+        let view = RichTextEditorView(frame: CGRect(x: 20, y: 160, width: 360, height: 240))
+        window.addSubview(view)
+        let status = UILabel(frame: CGRect(x: 0, y: 80, width: window.bounds.width, height: 40))
+        status.textAlignment = .center
+        status.backgroundColor = .systemYellow
+        window.addSubview(status)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(fourCellDocument))))
+        let tableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
+        let rawCells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
+        let positions = try rawCells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
+        let request = adapter.callWithEnvelope([
+            "selection": ["type": "cell",
+                          "anchorCell": ["kind": "document", "offset": Int(positions[0])],
+                          "headCell": ["kind": "document", "offset": Int(positions[0])]]
+        ]) { editorV2SetSelection(editorId: adapter.editorId, requestJson: $0) }
+        XCTAssertNil(request.error)
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
+        view.layoutIfNeeded()
+        let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let head = try XCTUnwrap(drawing.selectionHandles().first { $0.role == .head })
+        let target = try XCTUnwrap(drawing.mountedTablePresentation()?.cells.first {
+            $0.surface.identity == tableID && $0.sourcePosition == Int(positions[3])
+        })
+        let start = drawing.convert(head.center, to: window)
+        let end = drawing.convert(CGPoint(x: target.bounds.midX, y: target.bounds.midY), to: window)
+        let beforeDocument = try XCTUnwrap(adapter.documentJson())
+        let beforeRevision = adapter.baseDocumentRevision
+        status.text = "HANDLE READY \(Int(start.x)),\(Int(start.y)) TO \(Int(end.x)),\(Int(end.y))"
+        print("CELL_HANDLE_GESTURE_START \(start.x) \(start.y) END \(end.x) \(end.y)")
+        let before = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image {
+            window.layer.render(in: $0.cgContext)
+        })
+        before.name = "Cell handle before real gesture"
+        before.lifetime = .keepAlways
+        add(before)
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let raw = adapter.cachedAtomicRenderJSON,
+                  let object = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+                  let endpoints = EditorCellSelection.endpointPositions(object["selection"] as Any)
+            else { return false }
+            return endpoints.anchor == positions[0] && endpoints.head == positions[3]
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 90), .completed,
+                       "real handle gesture did not change the authoritative cell endpoint")
+        XCTAssertEqual(adapter.baseDocumentRevision, beforeRevision)
+        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), beforeDocument)
+        XCTAssertEqual(drawing.selectedTableCellEndpoints?.head, positions[3])
+        status.text = "HANDLE DRAG COMPLETE"
+        let after = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image {
+            window.layer.render(in: $0.cgContext)
+        })
+        after.name = "Cell handle after real gesture"
+        after.lifetime = .keepAlways
+        add(after)
+    }
 
     func testMountedOffsetFollowsSourceIdentityAcrossProseTypingAndClearsOnReset() throws {
         let editorId = makeV2Editor(configJson: tableConfig)
@@ -293,6 +820,61 @@ final class EditorTableInputTests: XCTestCase {
         attachment.name = "Native-rendered iPhone 17 light cell selection"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    func testMountedEngineCellSelectionDrawsOpaqueEndpointHandles() throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 360, height: 220))
+        let view = RichTextEditorView(frame: window.bounds)
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        XCTAssertTrue(view.applyTheme(EditorTheme(dictionary: ["table": ["selectionColor": "#FF000080"]])))
+        let tableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
+        let cells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
+        let anchor = try XCTUnwrap(cells[0]["sourcePos"] as? Int)
+        let head = try XCTUnwrap(cells[1]["sourcePos"] as? Int)
+        let request = #"{"version":1,"requestId":"991107","baseDocumentRevision":"\#(adapter.baseDocumentRevision)","selection":{"type":"cell","anchorCell":{"offset":\#(anchor),"kind":"document"},"headCell":{"offset":\#(head),"kind":"document"}}}"#
+        XCTAssertNil(editorV2SetSelection(editorId: adapter.editorId, requestJson: request).error)
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
+        view.layoutIfNeeded()
+        let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        let presentation = try XCTUnwrap(drawing.mountedTablePresentation())
+        let selected = presentation.cells.filter {
+            $0.surface.identity == tableID && drawing.selectedTableCellSourcePositions[tableID]?.contains($0.sourcePosition) == true
+        }
+        XCTAssertEqual(selected.count, 2)
+        let first = try XCTUnwrap(selected.min { $0.bounds.minX < $1.bounds.minX })
+        let last = try XCTUnwrap(selected.max { $0.bounds.maxX < $1.bounds.maxX })
+        let handleInset: CGFloat = 8
+        let points = [CGPoint(x: first.bounds.minX + handleInset, y: first.bounds.minY + handleInset),
+                      CGPoint(x: last.bounds.maxX - handleInset, y: last.bounds.maxY - handleInset)]
+        let renderer = UIGraphicsImageRenderer(size: drawing.bounds.size)
+        let image = renderer.image { _ in drawing.draw(drawing.bounds) }
+        let cgImage = try XCTUnwrap(image.cgImage)
+        var pixels = [UInt8](repeating: 0, count: cgImage.width * cgImage.height * 4)
+        let bitmap = try XCTUnwrap(CGContext(data: &pixels, width: cgImage.width, height: cgImage.height,
+                                              bitsPerComponent: 8, bytesPerRow: cgImage.width * 4,
+                                              space: CGColorSpaceCreateDeviceRGB(),
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+        bitmap.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+        for point in points {
+            let x = Int(point.x * image.scale)
+            let y = Int(point.y * image.scale)
+            XCTAssertGreaterThanOrEqual(x, 0)
+            XCTAssertGreaterThanOrEqual(y, 0)
+            XCTAssertLessThan(x, cgImage.width)
+            XCTAssertLessThan(y, cgImage.height)
+            let offset = (y * cgImage.width + x) * 4
+            XCTAssertLessThan(pixels[offset + 1], 32, "opaque selection handle green at \(point)")
+            XCTAssertGreaterThan(pixels[offset + 3], 240, "opaque selection handle alpha at \(point)")
+        }
     }
 
     func testCellSelectionPreservesFocusedCellInputAndRejectsStaleTyping() throws {

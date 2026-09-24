@@ -1,6 +1,26 @@
 import CoreText
 import UIKit
 
+enum TableSelectionHandleRole: Int {
+    case anchor
+    case head
+}
+
+struct TableSelectionHandle {
+    let role: TableSelectionHandleRole
+    let tableID: String
+    let sourcePosition: UInt32
+    let center: CGPoint
+    let clip: CGRect
+    let color: UIColor
+}
+
+struct TableSelectionEndpoints: Equatable {
+    let tableID: String
+    let anchor: UInt32
+    let head: UInt32
+}
+
 /// Mapping/reference overhead only. Decoded image allocations are owned and
 /// accounted for by the shared native image cache.
 internal enum PreparedProseImagePixelMapAccounting {
@@ -129,6 +149,16 @@ public final class PreparedProseDrawingView: UIView {
             if selectedTableCellSourcePositions != oldValue { setNeedsDisplay() }
         }
     }
+    var selectedTableCellEndpoints: TableSelectionEndpoints? {
+        didSet {
+            if selectedTableCellEndpoints != oldValue { setNeedsDisplay() }
+        }
+    }
+
+    private enum TableHandleMetrics {
+        static let radius: CGFloat = 8
+        static let hitDiameter: CGFloat = 44
+    }
 
     @objc public func install(layout: PreparedProseLayout?) {
         guard self.layout !== layout else { return }
@@ -244,6 +274,85 @@ public final class PreparedProseDrawingView: UIView {
 
     func mountedTablePresentation() -> ViewerTablePresentationSnapshot? {
         presentationSnapshot()
+    }
+
+    func tableSelectionViewport() -> CGRect? {
+        configuredVisibleRect()
+    }
+
+    func selectionHandles(visibleIn requestedViewport: CGRect? = nil) -> [TableSelectionHandle] {
+        guard let snapshot = presentationSnapshot(),
+              let endpoints = selectedTableCellEndpoints,
+              let table = snapshot.tables.first(where: { $0.surface.identity == endpoints.tableID }),
+              let selectedPositions = selectedTableCellSourcePositions[endpoints.tableID],
+              let visible = configuredVisibleRect()?.intersection(requestedViewport ?? .infinite),
+              !visible.isNull, !visible.isEmpty
+        else { return [] }
+        let cells = snapshot.cells.filter {
+            $0.surface === table.surface && $0.cell.sourceCellIndex != nil
+                && selectedPositions.contains($0.sourcePosition)
+        }
+        guard cells.contains(where: { $0.sourcePosition == Int(endpoints.anchor) }),
+              cells.contains(where: { $0.sourcePosition == Int(endpoints.head) }),
+              let first = cells.min(by: { lhs, rhs in
+                  if lhs.bounds.minY != rhs.bounds.minY { return lhs.bounds.minY < rhs.bounds.minY }
+                  let left = table.surface.direction == .rightToLeft ? -lhs.bounds.maxX : lhs.bounds.minX
+                  let right = table.surface.direction == .rightToLeft ? -rhs.bounds.maxX : rhs.bounds.minX
+                  return left == right ? lhs.sourcePosition < rhs.sourcePosition : left < right
+              }),
+              let last = cells.max(by: { lhs, rhs in
+                  if lhs.bounds.maxY != rhs.bounds.maxY { return lhs.bounds.maxY < rhs.bounds.maxY }
+                  let left = table.surface.direction == .rightToLeft ? -lhs.bounds.minX : lhs.bounds.maxX
+                  let right = table.surface.direction == .rightToLeft ? -rhs.bounds.minX : rhs.bounds.maxX
+                  return left == right ? lhs.sourcePosition < rhs.sourcePosition : left < right
+              })
+        else { return [] }
+        let inset = TableHandleMetrics.radius
+        let rtl = table.surface.direction == .rightToLeft
+        let firstCenter = CGPoint(x: rtl ? first.bounds.maxX - inset : first.bounds.minX + inset,
+                                  y: first.bounds.minY + inset)
+        let lastCenter = CGPoint(x: rtl ? last.bounds.minX + inset : last.bounds.maxX - inset,
+                                 y: last.bounds.maxY - inset)
+        let forward = endpoints.anchor <= endpoints.head
+        let handles = [
+            TableSelectionHandle(role: forward ? .anchor : .head, tableID: endpoints.tableID,
+                                 sourcePosition: forward ? endpoints.anchor : endpoints.head,
+                                 center: firstCenter, clip: table.clip,
+                                 color: table.surface.style.selectionColor.withAlphaComponent(1)),
+            TableSelectionHandle(role: forward ? .head : .anchor, tableID: endpoints.tableID,
+                                 sourcePosition: forward ? endpoints.head : endpoints.anchor,
+                                 center: lastCenter, clip: table.clip,
+                                 color: table.surface.style.selectionColor.withAlphaComponent(1))
+        ]
+        return handles.filter { handle in
+            visible.contains(handle.center) && table.clip.contains(handle.center)
+                && cells.contains(where: { $0.bounds.contains(handle.center) })
+        }
+    }
+
+    func hitSelectionHandle(at point: CGPoint, visibleIn viewport: CGRect? = nil) -> TableSelectionHandle? {
+        guard let visible = configuredVisibleRect()?.intersection(viewport ?? .infinite),
+              visible.contains(point)
+        else { return nil }
+        let radiusSquared = pow(TableHandleMetrics.hitDiameter / 2, 2)
+        return selectionHandles(visibleIn: viewport).compactMap { handle -> (TableSelectionHandle, CGFloat)? in
+            let distance = pow(point.x - handle.center.x, 2) + pow(point.y - handle.center.y, 2)
+            return distance <= radiusSquared ? (handle, distance) : nil
+        }.min { lhs, rhs in
+            lhs.1 == rhs.1 ? lhs.0.role.rawValue < rhs.0.role.rawValue : lhs.1 < rhs.1
+        }?.0
+    }
+
+    func selectedTableCell(at point: CGPoint, tableID: String, visibleIn viewport: CGRect? = nil) -> UInt32? {
+        guard let visible = configuredVisibleRect()?.intersection(viewport ?? .infinite),
+              visible.contains(point),
+              let snapshot = presentationSnapshot(),
+              let table = snapshot.tables.first(where: { $0.surface.identity == tableID })
+        else { return nil }
+        return snapshot.cells.first(where: {
+            $0.surface === table.surface && $0.cell.sourceCellIndex != nil
+                && $0.bounds.contains(point) && $0.clip.contains(point)
+        }).flatMap { UInt32(exactly: $0.sourcePosition) }
     }
 
     func tableLogicalOffset(for identity: String) -> CGFloat {
@@ -708,6 +817,21 @@ public final class PreparedProseDrawingView: UIView {
             }
         }
         context.restoreGState()
+        if let visible = configuredVisibleRect() {
+            context.saveGState()
+            context.clip(to: visible)
+            for handle in selectionHandles(visibleIn: visible) {
+                context.saveGState()
+                context.clip(to: handle.clip)
+                let radius = TableHandleMetrics.radius
+                let circle = CGRect(x: handle.center.x - radius, y: handle.center.y - radius,
+                                    width: radius * 2, height: radius * 2)
+                context.setFillColor(handle.color.cgColor)
+                context.fillEllipse(in: circle)
+                context.restoreGState()
+            }
+            context.restoreGState()
+        }
         PreparedProseInstrumentation.drew(drawStarted, visibleBlocks: visibleBlocks.count)
     }
 
