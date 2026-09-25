@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		F392D51A9C424063B3A80C01 /* PreparedProseViewerComponentViewTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = F392D51A9C424063B3A80C02 /* PreparedProseViewerComponentViewTests.mm */; settings = {COMPILER_FLAGS = "-fcxx-modules"; }; };
+		F392D51A9C424063B3A80C01 /* PreparedProseViewerComponentViewTests.mm in Sources */ = {isa = PBXBuildFile; fileRef = F392D51A9C424063B3A80C02 /* PreparedProseViewerComponentViewTests.mm */; };
 		04EE505BFE519AE7D3E38252 /* PreparedProseLayoutTests+FabricRelease.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2902C6167572AD01B250C8 /* PreparedProseLayoutTests+FabricRelease.swift */; };
 		074C9228BF8596BF4E787652 /* RenderBridgeTests+ImageAdmission.swift in Sources */ = {isa = PBXBuildFile; fileRef = 064125B308972D0D9E7C3022 /* RenderBridgeTests+ImageAdmission.swift */; };
 		075424303171E31CB0FB5971 /* RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D514F4A4442129867A82DE /* RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift */; };
