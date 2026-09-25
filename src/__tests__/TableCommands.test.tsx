@@ -6,10 +6,11 @@ import {
     createV2LocalHandle,
 } from './helpers/NativeRichTextEditorFixture';
 import { okRecord, operationError } from './helpers/nativeEditorV2FakeRecords';
-import { createRef } from 'react';
+import { createRef, type RefObject } from 'react';
 import { render, act } from '@testing-library/react-native';
 import { NativeRichTextEditor, type NativeRichTextEditorRef } from '../NativeRichTextEditor';
 import {
+    COMMAND_NOT_APPLICABLE_ERROR_CODE,
     NativeEditorEngineBoundaryError,
     NativeEditorNonRetryableError,
     NativeEditorOperationError,
@@ -267,7 +268,7 @@ function selectionOnlyOutcome(
 }
 
 async function runTableCommand(
-    ref: React.RefObject<NativeRichTextEditorRef | null>,
+    ref: RefObject<NativeRichTextEditorRef | null>,
     command: unknown
 ): Promise<unknown> {
     let thrown: unknown = null;
@@ -414,7 +415,7 @@ describe('RichTextEditorRef.runTableCommand', () => {
         const thrown = await runTableCommand(ref, { type: 'mergeTableCells' });
 
         expect(thrown).toBeInstanceOf(NativeEditorOperationError);
-        expect((thrown as NativeEditorOperationError).code).toBe('COMMAND_NOT_APPLICABLE');
+        expect((thrown as NativeEditorOperationError).code).toBe(COMMAND_NOT_APPLICABLE_ERROR_CODE);
         expect(mockNativeModule.editorV2ApplyCommand).toHaveBeenCalledTimes(1);
         expect(parsedRequests(mockNativeModule.editorV2ApplyCommand)[0]!.command).toEqual({
             type: 'mergeTableCells',

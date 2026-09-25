@@ -807,6 +807,11 @@ class RichTextEditorView @JvmOverloads constructor(
             editorTableSurface.refresh()
         }
 
+    override fun onRtlPropertiesChanged(layoutDirection: Int) {
+        super.onRtlPropertiesChanged(layoutDirection)
+        editorTableSurface.refresh()
+    }
+
     fun setImageResizingEnabled(enabled: Boolean) {
         if (imageResizingEnabled == enabled) return
         imageResizingEnabled = enabled

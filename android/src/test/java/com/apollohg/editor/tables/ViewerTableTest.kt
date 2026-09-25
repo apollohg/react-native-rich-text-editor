@@ -1,6 +1,7 @@
 package com.apollohg.editor.tables
 
 import com.apollohg.editor.ProseViewerConfiguration
+import java.util.Locale
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.ProseViewerSource
 import com.apollohg.editor.viewer.ProseLayoutKey
@@ -1865,6 +1866,37 @@ class ViewerTableTest {
                 innerFrame.top + innerCell.frame.top.toInt() + innerCell.contentOrigin.second + local.bounds.top,
             parent.bounds.top
         )
+    }
+
+    @Test
+    fun `viewer tables fall back to the platform direction through the registry cache`() {
+        val undeclared = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"table_cell","attrs":{"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}]}"""
+        val directionConfig = CONFIG.replace(
+            "\"tableRole\":\"table\",\"attrs\":{\"class\":{\"default\":null}}",
+            "\"tableRole\":\"table\",\"attrs\":{\"class\":{\"default\":null},\"dir\":{\"default\":null}}"
+        )
+        val declaredLtr = undeclared.replaceFirst("{\"type\":\"table\",", "{\"type\":\"table\",\"attrs\":{\"dir\":\"ltr\"},")
+        fun request(source: String) = ProseViewerRequest(
+            ProseViewerSource.Json(source), ProseViewerConfiguration(directionConfig, imagesEnabled = true)
+        )
+        val registry = PreparedProseLayoutRegistry(compiler = ::compileWithRust)
+        fun surface(source: String) =
+            requireNotNull(registry.measure(request(source), 390, 1f).blocks.single { it.tableSurface != null }.tableSurface)
+        val original = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.US)
+            assertFalse("an LTR platform lays undeclared tables out LTR", surface(undeclared).isRightToLeft)
+
+            Locale.setDefault(Locale("ar"))
+            val mirrored = surface(undeclared)
+            assertTrue("an RTL platform mirrors an undeclared table even after an LTR layout was cached",
+                mirrored.isRightToLeft)
+            val (first, second) = mirrored.cells.sortedBy { it.sourcePosition }.map { it.frame }
+            assertTrue("logical column 0 renders at the right", second.left + second.width <= first.left + 0.5f)
+            assertFalse("a declared direction outranks the platform", surface(declaredLtr).isRightToLeft)
+        } finally {
+            Locale.setDefault(original)
+        }
     }
 
     @Test

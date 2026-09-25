@@ -1,6 +1,7 @@
 package com.apollohg.editor
 
 import android.app.Activity
+import android.content.pm.ApplicationInfo
 import android.os.Looper
 import android.view.InputDevice
 import android.view.MotionEvent
@@ -457,6 +458,37 @@ internal class EditorTableColumnResizeTest {
                     fixture.cell(0).bounds.right <= fixture.cell(1).bounds.left + 0.5f)
         }
     }
+
+    @Test
+    fun `host view layout direction mirrors undeclared tables unless the host prop overrides it`() {
+        val applicationInfo = RuntimeEnvironment.getApplication().applicationInfo
+        val originalFlags = applicationInfo.flags
+        applicationInfo.flags = originalFlags or ApplicationInfo.FLAG_SUPPORTS_RTL
+        try {
+            withRtlHostView()
+        } finally {
+            applicationInfo.flags = originalFlags
+        }
+    }
+
+    private fun withRtlHostView() =
+        withMountedTable(fixedWidthGrid) { fixture ->
+            fixture.view.layoutDirection = View.LAYOUT_DIRECTION_RTL
+            fixture.view.measure(View.MeasureSpec.makeMeasureSpec(fixture.view.width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(fixture.view.height, View.MeasureSpec.EXACTLY))
+            fixture.view.layout(0, 0, fixture.view.width, fixture.view.height)
+
+            assertEquals(View.LAYOUT_DIRECTION_RTL, fixture.view.layoutDirection)
+            assertTrue("an RTL host view mirrors an undeclared table",
+                fixture.cell(0).surface.isRightToLeft &&
+                    fixture.cell(1).bounds.right <= fixture.cell(0).bounds.left + 0.5f)
+
+            fixture.view.tableDirection = TableLayoutDirection.LEFT_TO_RIGHT
+
+            assertTrue("a host ltr prop outranks the RTL view direction",
+                !fixture.cell(0).surface.isRightToLeft &&
+                    fixture.cell(0).bounds.right <= fixture.cell(1).bounds.left + 0.5f)
+        }
 
     @Test
     fun `selection handle takes precedence over a shared trailing edge`() =

@@ -64,6 +64,8 @@ export const NATIVE_EDITOR_OPERATION_ERROR_CODES = [
     'ENGINE_INVARIANT_FAILED',
 ] as const;
 
+export const COMMAND_NOT_APPLICABLE_ERROR_CODE = 'COMMAND_NOT_APPLICABLE';
+
 /**
  * A failure record from the native boundary, normalized for JavaScript. It is
  * carried on every {@link NativeEditorErrorBase}; the numeric fields stay

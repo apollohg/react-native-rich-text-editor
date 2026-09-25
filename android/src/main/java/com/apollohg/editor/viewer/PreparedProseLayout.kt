@@ -3,6 +3,7 @@ package com.apollohg.editor.viewer
 import android.graphics.Rect
 import android.text.StaticLayout
 import com.apollohg.editor.ProseViewerError
+import com.apollohg.editor.tables.TableLayoutDirection
 
 internal data class ProseLayoutKey(
     val semanticKey: String,
@@ -14,7 +15,8 @@ internal data class ProseLayoutKey(
     val attachmentRevision: Long,
     val generationIdentity: String,
     /** Immutable semantic diagnostic context; excludes replacement revisions. */
-    val semanticGenerationIdentity: String = semanticKey
+    val semanticGenerationIdentity: String = semanticKey,
+    val tableDirection: TableLayoutDirection = TableLayoutDirection.LEFT_TO_RIGHT
 )
 
 internal data class FabricSurfaceToken(val surfaceId: Int, val componentTag: Int)

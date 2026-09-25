@@ -82,7 +82,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
                                       val width: Int, val appearanceRevision: Long,
                                       val documentGeneration: Long,
                                       val resizePreview: TableResizePreview?,
-                                      val tableDirection: TableLayoutDirection?)
+                                      val tableDirection: TableLayoutDirection)
 
     var hostTableDirection: TableLayoutDirection? = null
 
@@ -558,8 +558,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             invalidateCell()
             input.requestFocus()
         }
+        val tableDirection = hostTableDirection
+            ?: TableLayoutDirection.fromLayoutDirection(host.layoutDirection)
         val nextKey = PreparationKey(adapter, revision, width, input.renderAppearanceRevision,
-            adapter.tablePresentationDocumentGeneration, resizePreview, hostTableDirection)
+            adapter.tablePresentationDocumentGeneration, resizePreview, tableDirection)
         if (key != nextKey) {
             val records = lowerEditorTableRecords(adapter.cachedTableRecords) ?: run { clear(); return }
             val density = input.resources.displayMetrics.density
@@ -570,7 +572,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             val preparedTheme = PreparedProseTheme.resolve(null, density,
                 semanticGeneration = "editor-table", editorTheme = theme)
                 .copy(insetTopPx = 0, insetRightPx = 0, insetBottomPx = 0, insetLeftPx = 0,
-                    tableDirection = hostTableDirection)
+                    tableDirection = tableDirection)
             val engine = StaticLayoutAndroidProseLayoutEngine()
             val presentationIdentities = adapter.cachedTableRecords.mapValues { (_, record) ->
                 "${adapter.editorId}:${adapter.tablePresentationDocumentGeneration}:${record.getString("sourceId")}"
@@ -592,9 +594,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
                     listOf(ViewerBlock("table", 0, false, null, null, emptyList(), table = table)),
                     false, 256, tableAttributes = adapter.cachedTableAttributes,
                     tableRecords = records, tablePresentationIdentities = presentationIdentities)
-                val layoutKey = ProseLayoutKey(semantic, width,
-                    "editor-table-${input.renderAppearanceRevision}-$hostTableDirection",
-                    0, 0, density.toBits().toLong(), revision.toLong(), semantic)
+                val layoutKey = ProseLayoutKey(semantic, width, "editor-table-${input.renderAppearanceRevision}",
+                    0, 0, density.toBits().toLong(), revision.toLong(), semantic,
+                    tableDirection = tableDirection)
                 val result = engine.prepare(document, layoutKey, preparedTheme, width, density, false)
                 val block = result.blocks.firstOrNull { it.tableSurface != null }
                     ?: return@mapNotNull null

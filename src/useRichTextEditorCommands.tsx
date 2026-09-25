@@ -2,7 +2,7 @@ import { useCallback, useImperativeHandle, useRef } from 'react';
 import { type AtomAttrsUpdate } from './atoms';
 import { AtomUpdateAttrsError, type AtomInstance } from './atomInstances';
 import { resolveAtomAttrsUpdate } from './atomUpdates';
-import { NativeEditorErrorBase } from './NativeEditorBoundaryError';
+import { COMMAND_NOT_APPLICABLE_ERROR_CODE, NativeEditorErrorBase } from './NativeEditorBoundaryError';
 import {
     destroyedHandleError,
     invalidV2ResultError,
@@ -343,7 +343,10 @@ export function useRichTextEditorCommands(
             }
 
             if (outcome.type === 'notApplicable') {
-                throw localOperationError('COMMAND_NOT_APPLICABLE', TABLE_COMMAND_NOT_APPLICABLE_MESSAGE);
+                throw localOperationError(
+                    COMMAND_NOT_APPLICABLE_ERROR_CODE,
+                    TABLE_COMMAND_NOT_APPLICABLE_MESSAGE
+                );
             }
 
             if (outcome.type !== 'transaction') {

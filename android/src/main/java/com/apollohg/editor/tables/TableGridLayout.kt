@@ -1,8 +1,11 @@
 package com.apollohg.editor.tables
 
+import android.text.TextUtils
+import android.view.View
 import uniffi.editor_core.FfiViewerTable
 import uniffi.editor_core.TableCompatibilityDiagnostic
 import uniffi.editor_core.TableRenderFailure
+import java.util.Locale
 import kotlin.math.ceil
 
 internal enum class TableLayoutDirection {
@@ -16,8 +19,14 @@ internal enum class TableLayoutDirection {
             else -> null
         }
 
-        fun isRightToLeft(declared: String?, host: TableLayoutDirection?): Boolean =
-            (fromRaw(declared) ?: host) == RIGHT_TO_LEFT
+        fun fromLayoutDirection(layoutDirection: Int): TableLayoutDirection =
+            if (layoutDirection == View.LAYOUT_DIRECTION_RTL) RIGHT_TO_LEFT else LEFT_TO_RIGHT
+
+        fun fromDefaultLocale(): TableLayoutDirection =
+            fromLayoutDirection(TextUtils.getLayoutDirectionFromLocale(Locale.getDefault()))
+
+        fun isRightToLeft(declared: String?, fallback: TableLayoutDirection): Boolean =
+            (fromRaw(declared) ?: fallback) == RIGHT_TO_LEFT
     }
 }
 

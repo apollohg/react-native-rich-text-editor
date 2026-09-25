@@ -1,6 +1,7 @@
 package com.apollohg.editor.viewer
 
 import com.apollohg.editor.ProseViewerError
+import com.apollohg.editor.tables.TableLayoutDirection
 import java.security.MessageDigest
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
@@ -195,7 +196,7 @@ internal class PreparedProseLayoutRegistry(
                 return invalidWidthArtifact(request)
             }
             val theme = resolveTheme(request, density, fontScale)
-            val key = layoutKey(document, request, widthPx, densityBits)
+            val key = layoutKey(document, request, widthPx, densityBits, theme.tableDirection)
             layoutCache.valueWithCellShapeContext(key, ownedGeneration, shouldCreateFabricLease = {
                 ownedGeneration == null ||
                     (
@@ -733,7 +734,8 @@ internal class PreparedProseLayoutRegistry(
         document: ViewerDocument,
         request: ProseViewerRequest,
         widthPx: Int,
-        densityBits: Long
+        densityBits: Long,
+        tableDirection: TableLayoutDirection
     ) = ProseLayoutKey(
         semanticKey = document.semanticKey,
         widthPx = widthPx,
@@ -743,7 +745,8 @@ internal class PreparedProseLayoutRegistry(
         densityBits = densityBits,
         attachmentRevision = request.attachmentRevision,
         generationIdentity = request.generationIdentity,
-        semanticGenerationIdentity = request.semanticGenerationIdentity
+        semanticGenerationIdentity = request.semanticGenerationIdentity,
+        tableDirection = tableDirection
     )
 
     private fun trimCompiledLocked() {
@@ -768,7 +771,8 @@ internal class PreparedProseLayoutRegistry(
         density: Float,
         fontScale: Float
     ): PreparedProseTheme = synchronized(compilerLock) {
-        val key = "${request.generationIdentity}:${density.toRawBits()}:${fontScale.toRawBits()}"
+        val tableDirection = TableLayoutDirection.fromDefaultLocale()
+        val key = "${request.generationIdentity}:${density.toRawBits()}:${fontScale.toRawBits()}:$tableDirection"
         themes[key]?.let { return@synchronized it }
         val resolved = PreparedProseTheme.resolve(
             request.configuration.themeJson,
@@ -780,7 +784,7 @@ internal class PreparedProseLayoutRegistry(
             org.json.JSONObject(request.configuration.configJson).optJSONObject("codeHighlighting")
         )
         highlighting?.let { com.apollohg.editor.CodeHighlightingRegistry.provider(it.provider) }
-        val configured = resolved.copy(codeHighlighting = highlighting)
+        val configured = resolved.copy(codeHighlighting = highlighting, tableDirection = tableDirection)
         themes[key] = configured
         themeRetainedBytes += resolved.retainedBytes
         while ((themeRetainedBytes > themeByteBudget || themes.size > themeEntryBudget) &&

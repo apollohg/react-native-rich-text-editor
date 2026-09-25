@@ -286,6 +286,7 @@ export {
 } from './ResourceLimits';
 
 export {
+    COMMAND_NOT_APPLICABLE_ERROR_CODE,
     NATIVE_EDITOR_BOUNDARY_ERROR_CODES,
     NATIVE_EDITOR_NON_RETRYABLE_CODES,
     NativeEditorBoundaryError,

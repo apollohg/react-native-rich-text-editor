@@ -130,7 +130,7 @@ internal data class PreparedProseTheme(
     val viewerAtoms: ViewerAtomConfiguration? = null,
     val sourceTheme: EditorTheme? = null,
     val codeHighlighting: com.apollohg.editor.NativeCodeHighlightingConfig? = null,
-    val tableDirection: TableLayoutDirection? = null
+    val tableDirection: TableLayoutDirection = TableLayoutDirection.LEFT_TO_RIGHT
 ) {
     val tableStyle: com.apollohg.editor.tables.TableStyle
         get() = sourceTheme?.table ?: com.apollohg.editor.tables.TableStyle()
