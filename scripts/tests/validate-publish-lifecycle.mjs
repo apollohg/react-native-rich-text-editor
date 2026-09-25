@@ -326,7 +326,7 @@ assert.match(
 );
 
 for (const dependency of [
-  '@expo/vector-icons',
+  '@react-native-vector-icons/material-design-icons',
   'babel-preset-expo',
   'expo',
   'expo-modules-core',

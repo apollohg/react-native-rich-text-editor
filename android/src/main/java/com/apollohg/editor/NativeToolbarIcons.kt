@@ -34,26 +34,26 @@ internal data class NativeToolbarIcon(
             ToolbarDefaultIconId.UNDO to "↩",
             ToolbarDefaultIconId.REDO to "↪"
         )
-        private val defaultMaterialIcons = mapOf(
+         private val defaultMaterialDesignIcons = mapOf(
             ToolbarDefaultIconId.BOLD to "format-bold",
             ToolbarDefaultIconId.ITALIC to "format-italic",
-            ToolbarDefaultIconId.UNDERLINE to "format-underlined",
-            ToolbarDefaultIconId.STRIKE to "strikethrough-s",
+            ToolbarDefaultIconId.UNDERLINE to "format-underline",
+            ToolbarDefaultIconId.STRIKE to "format-strikethrough-variant",
             ToolbarDefaultIconId.LINK to "link",
             ToolbarDefaultIconId.IMAGE to "image",
-            ToolbarDefaultIconId.BLOCKQUOTE to "format-quote",
+            ToolbarDefaultIconId.BLOCKQUOTE to "format-quote-close",
             ToolbarDefaultIconId.BULLET_LIST to "format-list-bulleted",
             ToolbarDefaultIconId.ORDERED_LIST to "format-list-numbered",
             ToolbarDefaultIconId.INDENT_LIST to "format-indent-increase",
             ToolbarDefaultIconId.OUTDENT_LIST to "format-indent-decrease",
             ToolbarDefaultIconId.LINE_BREAK to "keyboard-return",
-            ToolbarDefaultIconId.HORIZONTAL_RULE to "horizontal-rule",
-            ToolbarDefaultIconId.H1 to "title",
-            ToolbarDefaultIconId.H2 to "title",
-            ToolbarDefaultIconId.H3 to "title",
-            ToolbarDefaultIconId.H4 to "title",
-            ToolbarDefaultIconId.H5 to "title",
-            ToolbarDefaultIconId.H6 to "title",
+            ToolbarDefaultIconId.HORIZONTAL_RULE to "minus",
+            ToolbarDefaultIconId.H1 to "format-title",
+            ToolbarDefaultIconId.H2 to "format-title",
+            ToolbarDefaultIconId.H3 to "format-title",
+            ToolbarDefaultIconId.H4 to "format-title",
+            ToolbarDefaultIconId.H5 to "format-title",
+            ToolbarDefaultIconId.H6 to "format-title",
             ToolbarDefaultIconId.UNDO to "undo",
             ToolbarDefaultIconId.REDO to "redo"
         )
@@ -93,7 +93,7 @@ internal data class NativeToolbarIcon(
         }
 
         fun defaultMaterialIconName(defaultId: ToolbarDefaultIconId?): String? =
-            defaultId?.let { defaultMaterialIcons[it] }
+            defaultId?.let { defaultMaterialDesignIcons[it] }
     }
 
     fun resolvedGlyphText(): String = glyphText?.takeIf { it.isNotBlank() }
@@ -106,8 +106,8 @@ internal data class NativeToolbarIcon(
 }
 
 internal object MaterialIconRegistry {
-    private const val FONT_ASSET_PATH = "editor-icons/MaterialIcons.ttf"
-    private const val GLYPHMAP_ASSET_PATH = "editor-icons/MaterialIcons.json"
+    private const val FONT_ASSET_PATH = "editor-icons/MaterialDesignIcons.ttf"
+    private const val GLYPHMAP_ASSET_PATH = "editor-icons/MaterialDesignIcons.json"
 
     @Volatile
     private var typeface: Typeface? = null
