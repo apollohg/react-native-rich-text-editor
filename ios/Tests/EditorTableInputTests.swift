@@ -15,6 +15,8 @@ final class EditorTableInputTests: XCTestCase {
     private let listTableConfig = TableInputTestSchema.listTableConfig
     private let wideTwoCellDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
     private let fourCellDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"four"}]}]}]}]}]}"#
+    private let fixedWidthFourCellDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"third"}]}]},{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"fourth"}]}]}]}]}]}"#
+    private let proseThenFixedWidthTableDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}]}"#
 
     private func tallTableDocument(rowCount: Int) throws -> String {
         let rows: [[String: Any]] = (0..<rowCount).map { index in
@@ -30,7 +32,7 @@ final class EditorTableInputTests: XCTestCase {
         return try XCTUnwrap(String(data: data, encoding: .utf8))
     }
 
-    private struct MountedHandleFixture {
+    private struct MountedTableFixture {
         let view: RichTextEditorView
         let adapter: EditorV2Adapter
         let tableID: String
@@ -73,12 +75,60 @@ final class EditorTableInputTests: XCTestCase {
             let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
             return try XCTUnwrap(EditorCellSelection.endpointPositions(object["selection"] as Any))
         }
+
+        func publishedSelectionType() throws -> String {
+            let raw = try XCTUnwrap(updates.updates.last)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+            return try XCTUnwrap((object["selection"] as? [String: Any])?["type"] as? String)
+        }
+
+        func textSelectionScalars() throws -> (UInt32, UInt32) {
+            let selection = try XCTUnwrap(adapter.cachedAtomicRenderSelection())
+            XCTAssertEqual(selection["type"] as? String, "text")
+            return (try XCTUnwrap(EditorV2Adapter.uint32Field(selection, "anchorScalar")),
+                    try XCTUnwrap(EditorV2Adapter.uint32Field(selection, "headScalar")))
+        }
+
+        func presentedCell(_ index: Int) throws -> ViewerTablePresentedCell {
+            try XCTUnwrap(drawing.mountedTablePresentation()?.cells.first {
+                $0.surface.identity == tableID && $0.sourcePosition == Int(positions[index])
+            }, "cell \(index) is not mounted")
+        }
+
+        func trailingEdgeHostPoint(cellIndex index: Int) throws -> CGPoint {
+            let cell = try presentedCell(index)
+            let x = cell.surface.direction == .rightToLeft ? cell.bounds.minX : cell.bounds.maxX
+            return drawing.convert(CGPoint(x: x, y: cell.bounds.midY), to: view)
+        }
+
+        func documentObject() throws -> NSDictionary {
+            let json = try XCTUnwrap(adapter.documentJson())
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? NSDictionary)
+        }
+
+        func columnWidths(row: Int) throws -> [[Int]?] {
+            let json = try XCTUnwrap(adapter.documentJson())
+            let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+            let table = try XCTUnwrap((root["content"] as? [[String: Any]])?.first { $0["type"] as? String == "table" })
+            let rows = try XCTUnwrap(table["content"] as? [[String: Any]])
+            let cells = try XCTUnwrap(rows[row]["content"] as? [[String: Any]])
+            return cells.map { ($0["attrs"] as? [String: Any])?["colwidth"] as? [Int] }
+        }
     }
 
     private func withMountedHandles(
         document: String, configJSON: String? = nil, theme: EditorTheme? = nil,
         size: CGSize = CGSize(width: 360, height: 240), anchorIndex: Int, headIndex: Int,
-        _ body: (MountedHandleFixture) throws -> Void
+        _ body: (MountedTableFixture) throws -> Void
+    ) throws {
+        try withMountedTable(document: document, configJSON: configJSON, theme: theme, size: size,
+                             cellSelection: (anchorIndex, headIndex), body)
+    }
+
+    private func withMountedTable(
+        document: String, configJSON: String? = nil, theme: EditorTheme? = nil,
+        size: CGSize = CGSize(width: 360, height: 240), cellSelection: (anchor: Int, head: Int)?,
+        _ body: (MountedTableFixture) throws -> Void
     ) throws {
         let editorId = makeV2Editor(configJson: configJSON ?? tableConfig)
         defer { destroyV2Editor(id: editorId) }
@@ -96,21 +146,23 @@ final class EditorTableInputTests: XCTestCase {
         }?.key)
         let rawCells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
         let positions = try rawCells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
-        let request = adapter.callWithEnvelope([
-            "selection": [
-                "type": "cell",
-                "anchorCell": ["kind": "document", "offset": Int(positions[anchorIndex])],
-                "headCell": ["kind": "document", "offset": Int(positions[headIndex])]
-            ]
-        ]) { editorV2SetSelection(editorId: adapter.editorId, requestJson: $0) }
-        XCTAssertNil(request.error)
-        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
+        if let cellSelection {
+            let request = adapter.callWithEnvelope([
+                "selection": [
+                    "type": "cell",
+                    "anchorCell": ["kind": "document", "offset": Int(positions[cellSelection.anchor])],
+                    "headCell": ["kind": "document", "offset": Int(positions[cellSelection.head])]
+                ]
+            ]) { editorV2SetSelection(editorId: adapter.editorId, requestJson: $0) }
+            XCTAssertNil(request.error)
+            XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
+        }
         view.layoutIfNeeded()
         let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let updates = UpdateSpy()
         view.textView.editorDelegate = updates
-        try body(MountedHandleFixture(view: view, adapter: adapter, tableID: tableID,
+        try body(MountedTableFixture(view: view, adapter: adapter, tableID: tableID,
                                       positions: positions, surface: surface, drawing: drawing,
                                       updates: updates))
     }
@@ -464,6 +516,325 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    func testResizeDragPreviewsLocallyThenCommitsOneUndoableColumnWidth() throws {
+        try withMountedHandles(document: fixedWidthFourCellDocument, anchorIndex: 3, headIndex: 3) { fixture in
+            let beforeDocument = try XCTUnwrap(fixture.adapter.documentJson())
+            let beforeObject = try fixture.documentObject()
+            let beforeRevision = fixture.adapter.baseDocumentRevision
+            XCTAssertEqual(fixture.adapter.cachedHistoryState?.canUndo, false)
+            let edge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
+            XCTAssertEqual(fixture.drawing.activeTableResizeEdge, TableResizeEdge(tableID: fixture.tableID, column: 0))
+            let dragged = CGPoint(x: edge.x + 60, y: edge.y)
+            fixture.surface.updateResizeDrag(at: dragged)
+            XCTAssertEqual(fixture.surface.resizePreview,
+                           TableResizePreview(edge: TableResizeEdge(tableID: fixture.tableID, column: 0), width: 180))
+            XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 180, accuracy: 0.5, "preview must remeasure the dragged column")
+            XCTAssertEqual(try fixture.presentedCell(2).bounds.width, 180, accuracy: 0.5, "every cell covering the column follows the preview")
+            XCTAssertEqual(try fixture.presentedCell(1).bounds.width, 120, accuracy: 0.5)
+            XCTAssertEqual(try fixture.presentedCell(1).bounds.minX, try fixture.presentedCell(0).bounds.maxX, accuracy: 0.5)
+            XCTAssertEqual(try XCTUnwrap(fixture.adapter.documentJson()), beforeDocument, "moves must not mutate the document")
+            XCTAssertEqual(fixture.adapter.baseDocumentRevision, beforeRevision)
+            XCTAssertEqual(fixture.adapter.cachedHistoryState?.canUndo, false)
+            XCTAssertTrue(fixture.updates.updates.isEmpty, "moves must not publish updates")
+
+            fixture.surface.endResizeDrag(at: dragged)
+            XCTAssertNil(fixture.surface.resizePreview)
+            XCTAssertNil(fixture.drawing.activeTableResizeEdge)
+            XCTAssertEqual(try fixture.columnWidths(row: 0), [[180], [120]])
+            XCTAssertEqual(try fixture.columnWidths(row: 1), [[180], [120]])
+            XCTAssertGreaterThan(fixture.adapter.baseDocumentRevision, beforeRevision)
+            XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 180, accuracy: 0.5, "authoritative geometry replaces the preview")
+            XCTAssertEqual(try fixture.selection().0, fixture.positions[3], "explicit column resize keeps the cell selection")
+            XCTAssertEqual(try fixture.selection().1, fixture.positions[3])
+            XCTAssertEqual(try fixture.publishedSelection().1, fixture.positions[3])
+            XCTAssertEqual(fixture.adapter.cachedHistoryState?.canUndo, true)
+
+            XCTAssertTrue(fixture.view.textView.applyUpdateJSON(try XCTUnwrap(fixture.adapter.undo())))
+            XCTAssertEqual(try fixture.documentObject(), beforeObject, "one undo restores the pre-resize document")
+            XCTAssertEqual(fixture.adapter.cachedHistoryState?.canUndo, false)
+            XCTAssertEqual(fixture.adapter.cachedHistoryState?.canRedo, true)
+            XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 120, accuracy: 0.5)
+        }
+    }
+
+    func testResizeFromProseCaretKeepsCaretAndAddsOneHistoryEntry() throws {
+        try withMountedTable(document: proseThenFixedWidthTableDocument, cellSelection: nil) { fixture in
+            fixture.view.textView.selectedRange = NSRange(location: 2, length: 0)
+            fixture.view.textView.syncSelectionImmediately()
+            XCTAssertEqual(try fixture.textSelectionScalars().0, 2)
+            let beforeObject = try fixture.documentObject()
+            let edge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
+            let dragged = CGPoint(x: edge.x + 40, y: edge.y)
+            fixture.surface.updateResizeDrag(at: dragged)
+            XCTAssertEqual(try fixture.textSelectionScalars().0, 2, "preview must not move the engine selection")
+            fixture.surface.endResizeDrag(at: dragged)
+            XCTAssertEqual(try fixture.columnWidths(row: 0), [[160], [120]])
+            XCTAssertEqual(try fixture.textSelectionScalars().0, 2, "an explicit table target leaves the prose caret alone")
+            XCTAssertEqual(try fixture.textSelectionScalars().1, 2)
+            XCTAssertEqual(fixture.view.textView.selectedRange, NSRange(location: 2, length: 0))
+            XCTAssertTrue(fixture.view.activeTextInput === fixture.view.textView)
+            XCTAssertEqual(try fixture.publishedSelectionType(), "text")
+            XCTAssertEqual(fixture.adapter.cachedHistoryState?.canUndo, true)
+            XCTAssertTrue(fixture.view.textView.applyUpdateJSON(try XCTUnwrap(fixture.adapter.undo())))
+            XCTAssertEqual(try fixture.documentObject(), beforeObject)
+            XCTAssertEqual(fixture.adapter.cachedHistoryState?.canUndo, false, "one resize is one history entry")
+            XCTAssertEqual(try fixture.textSelectionScalars().0, 2)
+        }
+    }
+
+    func testRTLResizeEdgeIsTheLogicalTrailingEdgeAndInvertsDelta() throws {
+        let config = tableConfig.replacingOccurrences(
+            of: #""tableRole":"table","attrs":{"class":{"default":null}}"#,
+            with: #""tableRole":"table","attrs":{"class":{"default":null},"dir":{"default":null}}"#
+        )
+        let document = #"{"type":"doc","content":[{"type":"table","attrs":{"dir":"rtl"},"content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}]}"#
+        try withMountedTable(document: document, configJSON: config, cellSelection: nil) { fixture in
+            let first = try fixture.presentedCell(0)
+            let second = try fixture.presentedCell(1)
+            XCTAssertLessThanOrEqual(second.bounds.maxX, first.bounds.minX, "logical column 0 renders at the right in RTL")
+            XCTAssertEqual(fixture.drawing.hitResizeEdge(at: CGPoint(x: first.bounds.minX, y: first.bounds.midY))?.edge.column, 0)
+            XCTAssertNil(fixture.drawing.hitResizeEdge(at: CGPoint(x: first.bounds.maxX - 1, y: first.bounds.midY)),
+                         "the table's physical right border is not a trailing edge in RTL")
+            let edge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
+            let dragged = CGPoint(x: edge.x - 40, y: edge.y)
+            fixture.surface.updateResizeDrag(at: dragged)
+            XCTAssertEqual(fixture.surface.resizePreview?.width, 160, "dragging toward the physical left widens the RTL column")
+            XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 160, accuracy: 0.5)
+            XCTAssertEqual(try fixture.presentedCell(1).bounds.width, 120, accuracy: 0.5)
+            XCTAssertLessThanOrEqual(try fixture.presentedCell(1).bounds.maxX, try fixture.presentedCell(0).bounds.minX)
+            fixture.surface.endResizeDrag(at: dragged)
+            XCTAssertEqual(try fixture.columnWidths(row: 0), [[160], [120]])
+        }
+    }
+
+    func testMergedCellTrailingEdgeResizesLastCoveredColumn() throws {
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colspan":2,"colwidth":[100,100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"left"}]}]},{"type":"table_cell","attrs":{"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"right"}]}]}]}]}]}"#
+        try withMountedHandles(document: document, anchorIndex: 1, headIndex: 1) { fixture in
+            let merged = try fixture.presentedCell(0)
+            let interior = CGPoint(x: merged.bounds.minX + 100, y: merged.bounds.midY)
+            XCTAssertNil(fixture.drawing.hitResizeEdge(at: interior), "a merged cell has no edge where column 0 ends")
+            XCTAssertEqual(fixture.drawing.hitResizeEdge(at: CGPoint(x: merged.bounds.maxX, y: merged.bounds.midY))?.edge.column, 1)
+            let edge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
+            let dragged = CGPoint(x: edge.x + 30, y: edge.y)
+            fixture.surface.updateResizeDrag(at: dragged)
+            XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 230, accuracy: 0.5)
+            XCTAssertEqual(try fixture.presentedCell(1).bounds.width, 100, accuracy: 0.5)
+            XCTAssertEqual(try fixture.presentedCell(2).bounds.width, 130, accuracy: 0.5)
+            fixture.surface.endResizeDrag(at: dragged)
+            XCTAssertEqual(try fixture.columnWidths(row: 0), [[100, 130]])
+            XCTAssertEqual(try fixture.columnWidths(row: 1), [[100], [130]])
+        }
+    }
+
+    func testResizeDragCancelsOnDocumentResetAndOwnerLossWithoutMutating() throws {
+        try withMountedTable(document: fixedWidthFourCellDocument, cellSelection: nil) { fixture in
+            let edge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
+            let dragged = CGPoint(x: edge.x + 60, y: edge.y)
+            fixture.surface.updateResizeDrag(at: dragged)
+            XCTAssertEqual(fixture.surface.resizePreview?.width, 180)
+            XCTAssertTrue(fixture.view.textView.applyUpdateJSON(
+                try XCTUnwrap(fixture.adapter.setContentJson(fixedWidthFourCellDocument))
+            ))
+            XCTAssertNil(fixture.surface.resizePreview, "a document reset discards the preview")
+            XCTAssertNil(fixture.drawing.activeTableResizeEdge)
+            XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 120, accuracy: 0.5)
+            let resetRevision = fixture.adapter.baseDocumentRevision
+            fixture.surface.endResizeDrag(at: dragged)
+            XCTAssertEqual(try fixture.columnWidths(row: 0), [[120], [120]])
+            XCTAssertEqual(fixture.adapter.baseDocumentRevision, resetRevision)
+
+            let secondEdge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: secondEdge))
+            fixture.surface.updateResizeDrag(at: CGPoint(x: secondEdge.x + 60, y: secondEdge.y))
+            XCTAssertEqual(fixture.surface.resizePreview?.width, 180)
+            let beforeDocument = try XCTUnwrap(fixture.adapter.documentJson())
+            fixture.adapter.releaseNativeBindingOwner(token: try XCTUnwrap(fixture.adapter.nativeOwnerToken))
+            fixture.surface.endResizeDrag(at: CGPoint(x: secondEdge.x + 60, y: secondEdge.y))
+            XCTAssertNil(fixture.surface.resizePreview)
+            XCTAssertEqual(try XCTUnwrap(fixture.adapter.documentJson()), beforeDocument, "a lost owner must not commit")
+        }
+    }
+
+    func testReadOnlyComposingAndActiveInputGovernResizeAdmission() throws {
+        try withMountedTable(document: fixedWidthFourCellDocument, cellSelection: nil) { fixture in
+            let edge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            fixture.view.textView.isEditable = false
+            XCTAssertFalse(fixture.surface.beginResizeDrag(at: edge))
+            fixture.view.textView.isEditable = true
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
+            fixture.view.textView.isComposing = true
+            fixture.surface.updateResizeDrag(at: CGPoint(x: edge.x + 60, y: edge.y))
+            XCTAssertNil(fixture.surface.resizePreview, "composition cancels a held resize")
+            fixture.view.textView.isComposing = false
+            fixture.surface.endResizeDrag(at: CGPoint(x: edge.x + 60, y: edge.y))
+            XCTAssertEqual(try fixture.columnWidths(row: 0), [[120], [120]])
+
+            let content = try XCTUnwrap(fixture.surface.cellFrame(tableID: fixture.tableID, cellIndex: 0))
+            XCTAssertTrue(fixture.view.bindTableCell(tableID: fixture.tableID, cellIndex: 0, contentRect: content))
+            let input = fixture.view.activeTextInput
+            XCTAssertFalse(input === fixture.view.textView)
+            let inputFrame = fixture.surface.convert(input.bounds, from: input)
+            let insideInput = CGPoint(x: inputFrame.maxX - 2, y: inputFrame.midY)
+            XCTAssertFalse(fixture.surface.beginResizeDrag(at: fixture.surface.convert(insideInput, to: fixture.view)),
+                           "touches inside the active cell input stay text gestures")
+            let border = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: border))
+            let dragged = CGPoint(x: border.x + 50, y: border.y)
+            fixture.surface.updateResizeDrag(at: dragged)
+            XCTAssertEqual(fixture.surface.resizePreview?.width, 170)
+            let previewInput = fixture.surface.convert(input.bounds, from: input)
+            XCTAssertEqual(previewInput.width, inputFrame.width + 50, accuracy: 1, "the active input follows the previewed cell")
+            fixture.surface.endResizeDrag(at: dragged)
+            XCTAssertEqual(try fixture.columnWidths(row: 0), [[170], [120]])
+            XCTAssertTrue(fixture.view.activeTextInput === input, "committing keeps the bound cell input")
+            XCTAssertEqual(fixture.surface.convert(input.bounds, from: input).width, inputFrame.width + 50, accuracy: 1)
+        }
+    }
+
+    func testSelectionHandleTakesPrecedenceOverSharedTrailingEdge() throws {
+        try withMountedHandles(document: tallTableDocument(rowCount: 6), anchorIndex: 0, headIndex: 0) { fixture in
+            let head = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .head })
+            let cornerEdge = CGPoint(x: try fixture.presentedCell(0).bounds.maxX, y: head.center.y)
+            XCTAssertNotNil(fixture.drawing.hitResizeEdge(at: cornerEdge))
+            XCTAssertFalse(fixture.surface.beginResizeDrag(at: fixture.drawing.convert(cornerEdge, to: fixture.view)))
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: fixture.drawing.convert(cornerEdge, to: fixture.view)))
+            fixture.surface.cancelHandleDrag()
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: try fixture.trailingEdgeHostPoint(cellIndex: 4)))
+            XCTAssertFalse(fixture.surface.beginHandleDrag(at: try fixture.trailingEdgeHostPoint(cellIndex: 4)),
+                           "a held resize owns the touch")
+            fixture.surface.cancelResizeDrag()
+        }
+    }
+
+    func testWideTableEdgeIsOnlyActionableWhenVisibleAndKeepsScrollAnchor() throws {
+        try withMountedTable(document: wideTwoCellDocument, cellSelection: nil) { fixture in
+            let offscreen = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            XCTAssertFalse(fixture.surface.beginResizeDrag(at: offscreen), "an edge past the host viewport is not grabbable")
+            fixture.drawing.setTableLogicalOffset(300, sourceIdentity: fixture.tableID)
+            let edge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
+            let dragged = CGPoint(x: edge.x + 50, y: edge.y)
+            fixture.surface.updateResizeDrag(at: dragged)
+            XCTAssertEqual(fixture.surface.resizePreview?.width, 550)
+            XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 550, accuracy: 0.5)
+            XCTAssertEqual(fixture.drawing.tableLogicalOffset(for: fixture.tableID), 300, accuracy: 1)
+            fixture.surface.endResizeDrag(at: dragged)
+            XCTAssertEqual(try fixture.columnWidths(row: 0), [[550], [500]])
+            XCTAssertEqual(fixture.drawing.tableLogicalOffset(for: fixture.tableID), 300, accuracy: 1,
+                           "the logical scroll anchor survives the width change")
+        }
+    }
+
+    func testStationaryPointerAtViewportEdgeAutoscrollsAndGrowsColumn() throws {
+        try withMountedTable(document: wideTwoCellDocument, cellSelection: nil) { fixture in
+            fixture.drawing.setTableLogicalOffset(300, sourceIdentity: fixture.tableID)
+            let table = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.tables.first {
+                $0.surface.identity == fixture.tableID
+            })
+            let edge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            let edgeInDrawing = fixture.drawing.convert(edge, from: fixture.view)
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
+            let held = CGPoint(x: table.clip.maxX - 6, y: edgeInDrawing.y)
+            let fingerDelta = held.x - edgeInDrawing.x
+            fixture.surface.updateResizeDrag(at: fixture.drawing.convert(held, to: fixture.view))
+            XCTAssertEqual(fixture.surface.resizePreview?.width, (500 + fingerDelta).rounded())
+            RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            let scrolled = fixture.drawing.tableLogicalOffset(for: fixture.tableID) - 300
+            XCTAssertGreaterThan(scrolled, 20, "a held pointer at the viewport edge scrolls the table")
+            XCTAssertEqual(fixture.surface.resizePreview?.width, (500 + fingerDelta + scrolled).rounded(),
+                           "scrolled distance keeps growing the column under a stationary finger")
+            fixture.surface.cancelResizeDrag()
+            XCTAssertNil(fixture.surface.resizePreview)
+            XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 500, accuracy: 0.5, "cancel restores authoritative geometry")
+            let stopped = fixture.drawing.tableLogicalOffset(for: fixture.tableID)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            XCTAssertEqual(fixture.drawing.tableLogicalOffset(for: fixture.tableID), stopped, accuracy: 0.5)
+        }
+    }
+
+    func testNoNetMovementCommitsNothingAndShrinkClampsToMinimumWidth() throws {
+        try withMountedTable(document: fixedWidthFourCellDocument, cellSelection: nil) { fixture in
+            let beforeDocument = try XCTUnwrap(fixture.adapter.documentJson())
+            let beforeRevision = fixture.adapter.baseDocumentRevision
+            let edge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
+            fixture.surface.updateResizeDrag(at: CGPoint(x: edge.x + 60, y: edge.y))
+            XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 180, accuracy: 0.5)
+            fixture.surface.endResizeDrag(at: edge)
+            XCTAssertEqual(try XCTUnwrap(fixture.adapter.documentJson()), beforeDocument)
+            XCTAssertEqual(fixture.adapter.baseDocumentRevision, beforeRevision)
+            XCTAssertEqual(fixture.adapter.cachedHistoryState?.canUndo, false)
+            XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 120, accuracy: 0.5)
+
+            let minimum = try fixture.presentedCell(0).surface.style.minColumnWidth
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
+            let dragged = CGPoint(x: edge.x - 200, y: edge.y)
+            fixture.surface.updateResizeDrag(at: dragged)
+            XCTAssertEqual(fixture.surface.resizePreview?.width, minimum)
+            fixture.surface.endResizeDrag(at: dragged)
+            XCTAssertEqual(try fixture.columnWidths(row: 0), [[Int(minimum)], [120]])
+        }
+    }
+
+    func testFrameStepCancelRestoresAuthoritativeGeometryAfterOwnerLoss() throws {
+        try withMountedTable(document: wideTwoCellDocument, cellSelection: nil) { fixture in
+            fixture.drawing.setTableLogicalOffset(300, sourceIdentity: fixture.tableID)
+            let table = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.tables.first {
+                $0.surface.identity == fixture.tableID
+            })
+            let edge = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
+            let held = CGPoint(x: table.clip.maxX - 6, y: fixture.drawing.convert(edge, from: fixture.view).y)
+            fixture.surface.updateResizeDrag(at: fixture.drawing.convert(held, to: fixture.view))
+            XCTAssertGreaterThan(try fixture.presentedCell(0).bounds.width, 500)
+            fixture.adapter.releaseNativeBindingOwner(token: try XCTUnwrap(fixture.adapter.nativeOwnerToken))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            XCTAssertNil(fixture.surface.resizePreview, "the frame step must drop a drag whose owner is gone")
+            XCTAssertNil(fixture.drawing.activeTableResizeEdge)
+            XCTAssertEqual(try fixture.presentedCell(0).bounds.width, 500, accuracy: 0.5,
+                           "a frame-step cancel must not leave previewed widths on screen")
+            let stopped = fixture.drawing.tableLogicalOffset(for: fixture.tableID)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            XCTAssertEqual(fixture.drawing.tableLogicalOffset(for: fixture.tableID), stopped, accuracy: 0.5)
+        }
+    }
+
+    func testNestedTableEdgesAndSyntheticGapsAreNeverResizeTargets() throws {
+        let nestedDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[200]},"content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"in"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"ner"}]}]}]}]}]},{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"outer"}]}]}]}]}]}"#
+        try withMountedTable(document: nestedDocument, cellSelection: nil) { fixture in
+            let nestedCells = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.filter {
+                $0.surface.identity != fixture.tableID && $0.cell.sourceCellIndex != nil
+            })
+            XCTAssertEqual(nestedCells.count, 2)
+            let innerEdge = try XCTUnwrap(nestedCells.min { $0.bounds.minX < $1.bounds.minX })
+            let point = CGPoint(x: innerEdge.bounds.maxX, y: innerEdge.bounds.midY)
+            XCTAssertNil(fixture.drawing.hitResizeEdge(at: point), "a nested table border is not a resize edge")
+            XCTAssertFalse(fixture.surface.beginResizeDrag(at: fixture.drawing.convert(point, to: fixture.view)))
+            let outer = try fixture.presentedCell(0)
+            let hit = try XCTUnwrap(fixture.drawing.hitResizeEdge(at: CGPoint(x: outer.bounds.maxX, y: outer.bounds.midY)))
+            XCTAssertEqual(hit.edge, TableResizeEdge(tableID: fixture.tableID, column: 0))
+        }
+        let irregularDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2,"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","attrs":{"colspan":2,"colwidth":[100,100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"later"}]}]}]}]}]}"#
+        try withMountedTable(document: irregularDocument, cellSelection: nil) { fixture in
+            let wide = try fixture.presentedCell(1)
+            let later = try fixture.presentedCell(2)
+            XCTAssertFalse(wide.surface.syntheticRegions.isEmpty, "the irregular fixture must project a synthetic gap")
+            XCTAssertNil(fixture.drawing.hitResizeEdge(at: CGPoint(x: wide.bounds.maxX, y: later.bounds.midY)),
+                         "the gap's outer border is not a resize edge")
+            XCTAssertGreaterThan(wide.bounds.maxX, later.bounds.maxX, "the gap sits after the last real cell of row 1")
+            XCTAssertNil(fixture.drawing.hitResizeEdge(at: CGPoint(x: (later.bounds.maxX + wide.bounds.maxX) / 2,
+                                                                   y: later.bounds.midY)),
+                         "the gap interior is not a resize edge")
+            XCTAssertEqual(fixture.drawing.hitResizeEdge(at: CGPoint(x: wide.bounds.maxX, y: wide.bounds.midY))?.edge.column, 2)
+            XCTAssertEqual(fixture.drawing.hitResizeEdge(at: CGPoint(x: later.bounds.maxX, y: later.bounds.midY))?.edge.column, 1)
+        }
+    }
+
     func testLiveCellHandleGestureChangesEngineSelection() throws {
         guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
             throw XCTSkip("Live simulator gesture probe is opt in")
@@ -531,6 +902,46 @@ final class EditorTableInputTests: XCTestCase {
         after.name = "Cell handle after real gesture"
         after.lifetime = .keepAlways
         add(after)
+    }
+
+    func testLiveColumnResizeChangesFirstColumnWhileSecondCellIsSelected() throws {
+        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
+            throw XCTSkip("Live simulator gesture probe is opt in")
+        }
+        try withMountedHandles(document: fixedWidthFourCellDocument, size: CGSize(width: 360, height: 400),
+                               anchorIndex: 3, headIndex: 3) { fixture in
+            fixture.view.frame = CGRect(x: 0, y: 100, width: 360, height: 240)
+            fixture.view.layoutIfNeeded()
+            fixture.surface.updateGeometry(from: fixture.view.textView)
+            let table = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.tables.first {
+                $0.surface.identity == fixture.tableID
+            })
+            let first = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.first {
+                $0.surface.identity == fixture.tableID && $0.sourcePosition == Int(fixture.positions[0])
+            })
+            let start = fixture.drawing.convert(
+                CGPoint(x: first.bounds.maxX, y: first.bounds.midY), to: fixture.view.window
+            )
+            let end = CGPoint(x: start.x + 60, y: start.y)
+            let before = try XCTUnwrap(fixture.adapter.documentJson())
+            print("COLUMN_RESIZE_GESTURE_START \(start.x) \(start.y) END \(end.x) \(end.y)")
+            XCTAssertEqual(table.surface.layout.columnWidths[0], 120, accuracy: 1)
+            let resized = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard let json = fixture.adapter.documentJson() else { return false }
+                return json != before && json.contains(#""colwidth":[180]"#)
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [resized], timeout: 90), .completed,
+                           "real drag on first logical column edge did not resize that column")
+            let json = try XCTUnwrap(fixture.adapter.documentJson())
+            let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+            let tableNode = try XCTUnwrap((root["content"] as? [[String: Any]])?.first)
+            let row = try XCTUnwrap((tableNode["content"] as? [[String: Any]])?.first)
+            let cells = try XCTUnwrap(row["content"] as? [[String: Any]])
+            XCTAssertEqual((cells[0]["attrs"] as? [String: Any])?["colwidth"] as? [Int], [180])
+            XCTAssertEqual((cells[1]["attrs"] as? [String: Any])?["colwidth"] as? [Int], [120])
+            XCTAssertEqual(try fixture.selection().0, fixture.positions[3])
+            XCTAssertEqual(try fixture.selection().1, fixture.positions[3])
+        }
     }
 
     func testMountedOffsetFollowsSourceIdentityAcrossProseTypingAndClearsOnReset() throws {

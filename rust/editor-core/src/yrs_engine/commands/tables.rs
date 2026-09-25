@@ -18,6 +18,7 @@ use crate::tables::interchange::{
     first_editable_position_in_cell, next_outer_cell, outer_cell_containing, CellStep,
     InterchangeFailure,
 };
+use crate::tables::normalize::outer_table_positions;
 use crate::tables::selection::{cell_opening_containing, resolve_cell_rect};
 use crate::tables::types::TableError;
 use crate::yrs_engine::{
@@ -25,6 +26,7 @@ use crate::yrs_engine::{
 };
 
 const CLEAR_CELLS_FIELD: &str = "clearTableCells";
+const EXPLICIT_TABLE_COLUMN_FIELD: &str = "column";
 const UNREADABLE_GRID_IS_NOT_AVAILABLE: bool = false;
 const TABLE_COMMAND_OPERATION_INDEX: usize = 0;
 
@@ -124,12 +126,28 @@ fn scoped_action(
     selection: &Selection,
     action: &dyn TableAction,
 ) -> OperationResult<CommandPlan> {
+    prepared_action(
+        context,
+        anchor.table_pos,
+        Some(anchor.anchors),
+        selection,
+        action,
+    )
+}
+
+fn prepared_action(
+    context: &PlanningContext<'_>,
+    table_pos: u32,
+    anchors: Option<CellAnchorPair>,
+    selection: &Selection,
+    action: &dyn TableAction,
+) -> OperationResult<CommandPlan> {
     let prepared = prepare_table_action(
         &TableActionContext {
             request_id: context.request_id,
             base_document_revision: context.revision,
-            table_pos: anchor.table_pos,
-            anchors: Some(anchor.anchors),
+            table_pos,
+            anchors,
             schema: context.schema,
             resource_limits: context.resource_limits,
             editing_limits: context.editing_limits,
@@ -143,6 +161,38 @@ fn scoped_action(
         other => other?,
     };
     super::table_action_transaction(context, prepared)
+}
+
+fn explicit_table_resize(
+    context: &PlanningContext<'_>,
+    table_pos: u32,
+    column: Option<u32>,
+    width: u32,
+    selection: &Selection,
+) -> OperationResult<CommandPlan> {
+    let Some(column) = column else {
+        return Err(OperationError::operation_invalid(
+            context.request_id,
+            TABLE_COMMAND_OPERATION_INDEX,
+            EXPLICIT_TABLE_COLUMN_FIELD,
+            "an explicit table position requires an explicit column",
+        ));
+    };
+    if !outer_table_positions(context.document, context.schema, context.resource_limits)?
+        .contains(&table_pos)
+    {
+        return Ok(CommandPlan::NotApplicable);
+    }
+    prepared_action(
+        context,
+        table_pos,
+        None,
+        selection,
+        &SetColumnWidthAction {
+            width,
+            column: Some(column),
+        },
+    )
 }
 
 fn semantic(
@@ -326,9 +376,16 @@ pub(super) fn plan(
             None => Ok(CommandPlan::NotApplicable),
             Some(anchor) => scoped_action(&context, &anchor, &selection, &SplitCellAction),
         },
-        TableCommand::SetTableColumnWidth { width, column } => match anchor {
-            None => Ok(CommandPlan::NotApplicable),
-            Some(anchor) => scoped_action(
+        TableCommand::SetTableColumnWidth {
+            width,
+            column,
+            table_pos,
+        } => match (table_pos, anchor) {
+            (Some(table_pos), _) => {
+                explicit_table_resize(&context, table_pos, column, width, &selection)
+            }
+            (None, None) => Ok(CommandPlan::NotApplicable),
+            (None, Some(anchor)) => scoped_action(
                 &context,
                 &anchor,
                 &selection,

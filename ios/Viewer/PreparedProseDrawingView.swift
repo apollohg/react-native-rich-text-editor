@@ -21,6 +21,18 @@ struct TableSelectionEndpoints: Equatable {
     let head: UInt32
 }
 
+struct TableResizeEdge: Equatable {
+    let tableID: String
+    let column: Int
+}
+
+struct TableResizeEdgeHit: Equatable {
+    let edge: TableResizeEdge
+    let columnWidth: CGFloat
+    let minimumColumnWidth: CGFloat
+    let rightToLeft: Bool
+}
+
 /// Mapping/reference overhead only. Decoded image allocations are owned and
 /// accounted for by the shared native image cache.
 internal enum PreparedProseImagePixelMapAccounting {
@@ -154,10 +166,19 @@ public final class PreparedProseDrawingView: UIView {
             if selectedTableCellEndpoints != oldValue { setNeedsDisplay() }
         }
     }
+    var activeTableResizeEdge: TableResizeEdge? {
+        didSet {
+            if activeTableResizeEdge != oldValue { setNeedsDisplay() }
+        }
+    }
 
     private enum TableHandleMetrics {
         static let radius: CGFloat = 8
         static let hitDiameter: CGFloat = 44
+    }
+
+    private enum TableResizeMetrics {
+        static let indicatorWidth: CGFloat = 2
     }
 
     @objc public func install(layout: PreparedProseLayout?) {
@@ -359,6 +380,67 @@ public final class PreparedProseDrawingView: UIView {
         guard let surface = presentationSnapshot()?.tables.first(where: { $0.surface.identity == identity })?.surface
         else { return 0 }
         return tablePresentationOwner.logicalOffset(for: surface)
+    }
+
+    private func rootTable(_ identity: String, in snapshot: ViewerTablePresentationSnapshot) -> ViewerTablePresentedTable? {
+        snapshot.tables.first { $0.parentScrollIdentity == nil && $0.surface.identity == identity }
+    }
+
+    private func tableContentOriginX(_ table: ViewerTablePresentedTable) -> CGFloat {
+        table.bounds.minX - tablePresentationOwner.physicalOffset(for: table.surface)
+    }
+
+    func columnTrailingEdgeX(for edge: TableResizeEdge) -> CGFloat? {
+        guard let snapshot = presentationSnapshot(),
+              let table = rootTable(edge.tableID, in: snapshot),
+              edge.column >= 0, edge.column < table.surface.layout.columnWidths.count
+        else { return nil }
+        let logical = table.surface.layout.columnWidths.prefix(edge.column + 1).reduce(CGFloat.zero, +)
+        let origin = tableContentOriginX(table)
+        return table.surface.direction == .rightToLeft
+            ? origin + table.surface.bounds.width - logical
+            : origin + logical
+    }
+
+    func hitResizeEdge(at point: CGPoint, visibleIn viewport: CGRect? = nil) -> TableResizeEdgeHit? {
+        guard let visible = configuredVisibleRect()?.intersection(viewport ?? .infinite),
+              visible.contains(point),
+              let snapshot = presentationSnapshot()
+        else { return nil }
+        let reach = TableHandleMetrics.hitDiameter / 2
+        var best: (hit: TableResizeEdgeHit, distance: CGFloat)?
+        for table in snapshot.tables where table.parentScrollIdentity == nil {
+            guard table.clip.minY <= point.y, point.y < table.clip.maxY,
+                  let sourceCells = table.surface.sourceTable?.cells
+            else { continue }
+            let widths = table.surface.layout.columnWidths
+            let rightToLeft = table.surface.direction == .rightToLeft
+            for cell in snapshot.cells where cell.surface === table.surface {
+                guard let index = cell.cell.sourceCellIndex, index < sourceCells.count,
+                      cell.bounds.minY <= point.y, point.y < cell.bounds.maxY
+                else { continue }
+                let x = rightToLeft ? cell.bounds.minX : cell.bounds.maxX
+                let distance = abs(point.x - x)
+                guard distance <= reach,
+                      x >= table.clip.minX, x <= table.clip.maxX,
+                      x >= visible.minX, x <= visible.maxX
+                else { continue }
+                let source = sourceCells[index]
+                let column = Int(source.column + source.colspan) - 1
+                guard column >= 0, column < widths.count else { continue }
+                if let current = best,
+                   current.distance < distance || (current.distance == distance && current.hit.edge.column <= column) {
+                    continue
+                }
+                best = (TableResizeEdgeHit(
+                    edge: TableResizeEdge(tableID: table.surface.identity, column: column),
+                    columnWidth: widths[column],
+                    minimumColumnWidth: table.surface.style.minColumnWidth,
+                    rightToLeft: rightToLeft
+                ), distance)
+            }
+        }
+        return best?.hit
     }
 
     func tableChain(at point: CGPoint) -> [String] {
@@ -828,6 +910,16 @@ public final class PreparedProseDrawingView: UIView {
                                     width: radius * 2, height: radius * 2)
                 context.setFillColor(handle.color.cgColor)
                 context.fillEllipse(in: circle)
+                context.restoreGState()
+            }
+            if let edge = activeTableResizeEdge,
+               let table = rootTable(edge.tableID, in: snapshot),
+               let x = columnTrailingEdgeX(for: edge) {
+                context.saveGState()
+                context.clip(to: table.clip)
+                context.setFillColor(table.surface.style.resizeHandleColor.cgColor)
+                context.fill(CGRect(x: x - TableResizeMetrics.indicatorWidth / 2, y: table.bounds.minY,
+                                    width: TableResizeMetrics.indicatorWidth, height: table.bounds.height))
                 context.restoreGState()
             }
             context.restoreGState()

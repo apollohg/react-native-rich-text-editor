@@ -46,6 +46,10 @@ const NO_CELLS: usize = 0;
 const PROBE_COLUMN_WIDTH: u32 = 140;
 const UPDATED_COLUMN_WIDTH: u32 = 160;
 const SECOND_LOGICAL_COLUMN: u32 = 1;
+const PROSE_PREFIX_TEXT: &str = "before";
+const PROSE_PREFIX_CARET: u32 = 2;
+const PROSE_PREFIX_TABLE_POSITION: u32 = 8;
+const OPERATION_INVALID_CODE: &str = "OPERATION_INVALID";
 const OUTSIDE_RESIZE_FIXTURE: u32 = 2;
 const SHARED_SURFACE_PROJECTIONS: u64 = 1;
 const STAGED_DELETION_PROJECTIONS: u64 = 4;
@@ -1012,6 +1016,7 @@ fn column_width_availability_answers_whether_a_resize_is_possible_at_all() {
     let resize = |width| TableCommand::SetTableColumnWidth {
         width,
         column: None,
+        table_pos: None,
     };
 
     assert!(
@@ -1253,6 +1258,7 @@ const IDENTITY_EXPECTATIONS: [IdentityExpectation; 10] = [
         command: TableCommand::SetTableColumnWidth {
             width: PROBE_COLUMN_WIDTH,
             column: None,
+            table_pos: None,
         },
         selection: IdentitySelection::Cell(ANCHOR_CELL),
         surviving: &[0, 1, 2, 3, 4],
@@ -1447,10 +1453,17 @@ fn envelope_payload(command: TableCommand) -> Value {
         TableCommand::ClearTableCells => json!({ "type": "clearTableCells" }),
         TableCommand::MergeTableCells => json!({ "type": "mergeTableCells" }),
         TableCommand::SplitTableCell => json!({ "type": "splitTableCell" }),
-        TableCommand::SetTableColumnWidth { width, column } => {
+        TableCommand::SetTableColumnWidth {
+            width,
+            column,
+            table_pos,
+        } => {
             let mut payload = json!({ "type": "setTableColumnWidth", "width": width });
             if let Some(column) = column {
                 payload["column"] = json!(column);
+            }
+            if let Some(table_pos) = table_pos {
+                payload["tablePos"] = json!(table_pos);
             }
             payload
         }
@@ -1515,6 +1528,7 @@ fn every_table_command() -> Vec<TableCommand> {
         TableCommand::SetTableColumnWidth {
             width: PROBE_COLUMN_WIDTH,
             column: None,
+            table_pos: None,
         },
     ];
     for side in EVERY_TABLE_EDGE {
@@ -1795,6 +1809,7 @@ fn resizing_writes_one_logical_column_across_every_covering_cell() {
         TableCommand::SetTableColumnWidth {
             width: PROBE_COLUMN_WIDTH,
             column: None,
+            table_pos: None,
         },
     );
 
@@ -1825,6 +1840,7 @@ fn resizing_targets_the_right_edge_of_the_selected_rectangle() {
         TableCommand::SetTableColumnWidth {
             width: PROBE_COLUMN_WIDTH,
             column: None,
+            table_pos: None,
         },
     );
 
@@ -1851,6 +1867,7 @@ fn explicit_resize_targets_the_requested_column_and_preserves_the_text_caret() {
         TableCommand::SetTableColumnWidth {
             width: PROBE_COLUMN_WIDTH,
             column: Some(SECOND_LOGICAL_COLUMN),
+            table_pos: None,
         },
     );
 
@@ -1878,6 +1895,7 @@ fn explicit_resize_preserves_a_cell_rectangle_while_targeting_another_column() {
         TableCommand::SetTableColumnWidth {
             width: PROBE_COLUMN_WIDTH,
             column: Some(0),
+            table_pos: None,
         },
     );
 
@@ -1907,6 +1925,7 @@ fn explicit_logical_column_identity_is_independent_of_caret_side() {
             TableCommand::SetTableColumnWidth {
                 width: PROBE_COLUMN_WIDTH,
                 column: Some(SECOND_LOGICAL_COLUMN),
+                table_pos: None,
             },
         );
     }
@@ -1923,6 +1942,7 @@ fn explicit_resize_of_the_same_width_keeps_the_original_selection_and_state() {
         TableCommand::SetTableColumnWidth {
             width: PROBE_COLUMN_WIDTH,
             column: Some(SECOND_LOGICAL_COLUMN),
+            table_pos: None,
         },
     );
     let before_selection = engine.resolved_selection().cloned();
@@ -1936,6 +1956,7 @@ fn explicit_resize_of_the_same_width_keeps_the_original_selection_and_state() {
             TableCommand::SetTableColumnWidth {
                 width: PROBE_COLUMN_WIDTH,
                 column: Some(SECOND_LOGICAL_COLUMN),
+                table_pos: None,
             },
         ),
         Ok(None),
@@ -1964,6 +1985,7 @@ fn explicit_resize_refuses_an_out_of_bounds_column_without_mutation() {
             TableCommand::SetTableColumnWidth {
                 width: PROBE_COLUMN_WIDTH,
                 column: Some(OUTSIDE_RESIZE_FIXTURE),
+                table_pos: None,
             },
         ),
         Ok(None),
@@ -1988,6 +2010,7 @@ fn explicit_resize_updates_a_newly_filled_synthetic_target_column() {
         TableCommand::SetTableColumnWidth {
             width: PROBE_COLUMN_WIDTH,
             column: Some(SECOND_LOGICAL_COLUMN),
+            table_pos: None,
         },
     );
 
@@ -2015,6 +2038,7 @@ fn explicit_resize_accepts_gap_fill_when_source_slices_keep_their_identity() {
         TableCommand::SetTableColumnWidth {
             width: PROBE_COLUMN_WIDTH,
             column: Some(0),
+            table_pos: None,
         },
     );
 
@@ -2050,6 +2074,7 @@ fn explicit_resize_accepts_width_only_normalization_with_stable_source_cells() {
         TableCommand::SetTableColumnWidth {
             width: UPDATED_COLUMN_WIDTH,
             column: Some(0),
+            table_pos: None,
         },
     );
 
@@ -2085,6 +2110,7 @@ fn explicit_resize_refuses_a_colliding_fallback_column_without_mutation() {
             TableCommand::SetTableColumnWidth {
                 width: PROBE_COLUMN_WIDTH,
                 column: Some(OUTSIDE_RESIZE_FIXTURE),
+                table_pos: None,
             },
         ),
         Ok(None),
@@ -2109,6 +2135,7 @@ fn explicit_resize_is_one_undoable_action_across_covering_cells() {
         TableCommand::SetTableColumnWidth {
             width: PROBE_COLUMN_WIDTH,
             column: Some(SECOND_LOGICAL_COLUMN),
+            table_pos: None,
         },
     );
     assert!(engine.can_undo());
@@ -2140,6 +2167,154 @@ fn explicit_resize_is_one_undoable_action_across_covering_cells() {
     assert!(!engine.can_redo());
 }
 
+fn prose_then_resize_fixture() -> Vec<Value> {
+    let mut content = vec![json!({
+        "type": PARAGRAPH_NODE,
+        "content": [{ "type": "text", "text": PROSE_PREFIX_TEXT }],
+    })];
+    content.extend(resize_fixture());
+    content
+}
+
+fn second_block_table(engine: &YrsDocumentEngine) -> Value {
+    engine.document_json().expect("the engine is ready")["content"][1].clone()
+}
+
+fn caret_in_prose_prefix(engine: &mut YrsDocumentEngine) {
+    let map = engine.position_map().expect("the engine is ready");
+    let point = RevisionedPosition {
+        offset: map.doc_to_scalar(PROSE_PREFIX_CARET, document_of(engine)),
+        kind: EditorOffsetKind::Scalar,
+        affinity: Affinity::Before,
+    };
+    engine
+        .apply_typed_transaction(TypedTransaction {
+            request_id: REQUEST_ID,
+            base_document_revision: engine.revision(),
+            origin: TransactionOrigin::LocalApi,
+            operations: Vec::new(),
+            selection_intent: SelectionIntent::Set(SelectionInput::Text {
+                anchor: point,
+                head: point,
+            }),
+            history_policy: HistoryPolicy::Skip,
+        })
+        .expect("the prose caret applies");
+}
+
+#[test]
+fn explicit_table_resize_leaves_a_prose_caret_alone_and_undo_restores_it() {
+    let mut engine = seeded(prose_then_resize_fixture());
+    caret_in_prose_prefix(&mut engine);
+    let table_pos = crate::tables::normalize::outer_table_positions(
+        document_of(&engine),
+        &engine_schema(&engine),
+        &limits(),
+    )
+    .expect("outer tables resolve")[0];
+    assert_eq!(table_pos, PROSE_PREFIX_TABLE_POSITION);
+    let before_selection = engine.resolved_selection().cloned();
+    assert!(matches!(
+        before_selection,
+        Some(crate::yrs_engine::ResolvedSelection::Text { .. })
+    ));
+    assert!(!engine.can_undo());
+
+    applied(
+        &mut engine,
+        TableCommand::SetTableColumnWidth {
+            width: PROBE_COLUMN_WIDTH,
+            column: Some(SECOND_LOGICAL_COLUMN),
+            table_pos: Some(table_pos),
+        },
+    );
+
+    let table = second_block_table(&engine);
+    assert_eq!(
+        cell_attrs(&table, 0, 0)["colwidth"],
+        json!([0, PROBE_COLUMN_WIDTH])
+    );
+    assert_eq!(
+        cell_attrs(&table, 1, 1)["colwidth"],
+        json!([PROBE_COLUMN_WIDTH])
+    );
+    assert_eq!(
+        engine.resolved_selection().cloned(),
+        before_selection,
+        "an explicit table target never moves the caret out of the prose",
+    );
+    assert!(engine.can_undo());
+    engine
+        .undo(REQUEST_ID + 1)
+        .unwrap()
+        .expect("one undo applies");
+    let undone = second_block_table(&engine);
+    assert_eq!(cell_attrs(&undone, 0, 0)["colwidth"], Value::Null);
+    assert_eq!(cell_attrs(&undone, 1, 1)["colwidth"], Value::Null);
+    assert_eq!(
+        engine.resolved_selection().cloned(),
+        before_selection,
+        "undo restores the prose caret, not a parked table selection",
+    );
+    assert!(!engine.can_undo());
+}
+
+#[test]
+fn explicit_table_resize_declines_a_position_without_an_outer_table() {
+    let mut engine = seeded(prose_then_resize_fixture());
+    caret_in_prose_prefix(&mut engine);
+    let revision = engine.revision();
+
+    for table_pos in [
+        PROSE_PREFIX_CARET,
+        PROSE_PREFIX_TABLE_POSITION + ONE_CHARACTER,
+    ] {
+        assert_eq!(
+            run(
+                &mut engine,
+                TableCommand::SetTableColumnWidth {
+                    width: PROBE_COLUMN_WIDTH,
+                    column: Some(SECOND_LOGICAL_COLUMN),
+                    table_pos: Some(table_pos),
+                },
+            ),
+            Ok(None),
+            "position {table_pos} is not an outer table opening",
+        );
+    }
+    assert_eq!(engine.revision(), revision);
+    assert_eq!(
+        cell_attrs(&second_block_table(&engine), 1, 1)["colwidth"],
+        Value::Null
+    );
+    assert!(!engine.can_undo());
+}
+
+#[test]
+fn an_explicit_table_position_requires_an_explicit_column() {
+    let mut engine = seeded(prose_then_resize_fixture());
+    caret_in_prose_prefix(&mut engine);
+    let revision = engine.revision();
+
+    let error = run(
+        &mut engine,
+        TableCommand::SetTableColumnWidth {
+            width: PROBE_COLUMN_WIDTH,
+            column: None,
+            table_pos: Some(PROSE_PREFIX_TABLE_POSITION),
+        },
+    )
+    .expect_err("a table position without a column is a malformed request");
+    assert_eq!(error.code, OPERATION_INVALID_CODE);
+    assert!(
+        error.message.contains("explicit column"),
+        "the refusal must name the missing column, got {}",
+        error.message
+    );
+    assert_eq!(engine.revision(), revision);
+    assert!(!engine.can_undo());
+}
+
 #[test]
 fn resizing_declines_when_every_covering_cell_already_carries_the_width() {
     let mut engine = seeded(resize_fixture());
@@ -2149,6 +2324,7 @@ fn resizing_declines_when_every_covering_cell_already_carries_the_width() {
         TableCommand::SetTableColumnWidth {
             width: PROBE_COLUMN_WIDTH,
             column: None,
+            table_pos: None,
         },
     );
 
@@ -2158,6 +2334,7 @@ fn resizing_declines_when_every_covering_cell_already_carries_the_width() {
             TableCommand::SetTableColumnWidth {
                 width: PROBE_COLUMN_WIDTH,
                 column: None,
+                table_pos: None,
             },
         ),
         Ok(None),
@@ -2174,6 +2351,7 @@ fn resizing_stays_available_on_a_column_that_already_carries_the_requested_width
         TableCommand::SetTableColumnWidth {
             width: MIN_TABLE_COLUMN_WIDTH,
             column: None,
+            table_pos: None,
         },
     );
     select_cell(&mut engine, 1);
@@ -2198,6 +2376,7 @@ fn resizing_stays_available_on_a_column_that_already_carries_the_requested_width
             TableCommand::SetTableColumnWidth {
                 width: MIN_TABLE_COLUMN_WIDTH,
                 column: None,
+                table_pos: None,
             },
         ),
         Ok(None),
@@ -2237,8 +2416,54 @@ fn a_column_width_envelope_accepts_an_explicit_logical_column() {
         TypedCommand::Table(TableCommand::SetTableColumnWidth {
             width: PROBE_COLUMN_WIDTH,
             column: Some(SECOND_LOGICAL_COLUMN),
+            table_pos: None,
         })
     ));
+}
+
+#[test]
+fn a_column_width_envelope_accepts_an_explicit_table_position() {
+    let command = crate::native_transaction_bridge::table_command_envelope_for_test(
+        &json!({
+            "type": "setTableColumnWidth",
+            "width": PROBE_COLUMN_WIDTH,
+            "column": SECOND_LOGICAL_COLUMN,
+            "tablePos": PROSE_PREFIX_TABLE_POSITION,
+        })
+        .to_string(),
+    )
+    .expect("an explicit table position must parse");
+
+    assert!(matches!(
+        command,
+        TypedCommand::Table(TableCommand::SetTableColumnWidth {
+            width: PROBE_COLUMN_WIDTH,
+            column: Some(SECOND_LOGICAL_COLUMN),
+            table_pos: Some(PROSE_PREFIX_TABLE_POSITION),
+        })
+    ));
+
+    for table_pos in [
+        json!(null),
+        json!(-1),
+        json!(1.5),
+        json!("8"),
+        json!(4294967296u64),
+    ] {
+        let refusal = crate::native_transaction_bridge::table_command_envelope_for_test(
+            &json!({
+                "type": "setTableColumnWidth",
+                "width": PROBE_COLUMN_WIDTH,
+                "column": SECOND_LOGICAL_COLUMN,
+                "tablePos": table_pos,
+            })
+            .to_string(),
+        );
+        assert!(
+            refusal.is_err(),
+            "malformed table position {table_pos} must not parse"
+        );
+    }
 }
 
 #[test]
@@ -2270,6 +2495,7 @@ fn a_column_width_envelope_rejects_malformed_explicit_columns() {
         TypedCommand::Table(TableCommand::SetTableColumnWidth {
             width: PROBE_COLUMN_WIDTH,
             column: None,
+            table_pos: None,
         })
     ));
 }

@@ -270,8 +270,14 @@ enum CommandEnvelope {
     SetTableColumnWidth {
         #[serde(deserialize_with = "deserialize_table_column_width")]
         width: u32,
-        #[serde(default, deserialize_with = "deserialize_explicit_table_column")]
+        #[serde(default, deserialize_with = "deserialize_explicit_unsigned")]
         column: Option<u32>,
+        #[serde(
+            default,
+            rename = "tablePos",
+            deserialize_with = "deserialize_explicit_unsigned"
+        )]
+        table_pos: Option<u32>,
     },
     MoveToAdjacentCell {
         step: CellStepEnvelope,
@@ -310,7 +316,7 @@ where
     )))
 }
 
-fn deserialize_explicit_table_column<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+fn deserialize_explicit_unsigned<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -531,9 +537,15 @@ impl From<CommandEnvelope> for TypedCommand {
             CommandEnvelope::ClearTableCells => Self::Table(TableCommand::ClearTableCells),
             CommandEnvelope::MergeTableCells => Self::Table(TableCommand::MergeTableCells),
             CommandEnvelope::SplitTableCell => Self::Table(TableCommand::SplitTableCell),
-            CommandEnvelope::SetTableColumnWidth { width, column } => {
-                Self::Table(TableCommand::SetTableColumnWidth { width, column })
-            }
+            CommandEnvelope::SetTableColumnWidth {
+                width,
+                column,
+                table_pos,
+            } => Self::Table(TableCommand::SetTableColumnWidth {
+                width,
+                column,
+                table_pos,
+            }),
             CommandEnvelope::MoveToAdjacentCell { step, append_row } => {
                 Self::Table(TableCommand::MoveToAdjacentCell {
                     step: step.into(),

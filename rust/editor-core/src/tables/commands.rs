@@ -92,6 +92,7 @@ pub enum TableCommand {
     SetTableColumnWidth {
         width: u32,
         column: Option<u32>,
+        table_pos: Option<u32>,
     },
     MoveToAdjacentCell {
         step: crate::tables::interchange::CellStep,

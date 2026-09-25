@@ -1,6 +1,14 @@
 import Foundation
 
 extension EditorV2Adapter {
+    struct TableMutationAdmission: Equatable {
+        let tableID: String
+        let documentRevision: UInt64
+        let presentationGeneration: UInt64
+        let ownerID: UInt64
+        let ownerToken: UUID
+    }
+
     struct TableCellSelectionAdmission {
         let tableID: String
         let documentRevision: UInt64
@@ -10,30 +18,69 @@ extension EditorV2Adapter {
         let ownerToken: UUID
         var anchor: UInt32
         var head: UInt32
+
+        var mutation: TableMutationAdmission {
+            TableMutationAdmission(
+                tableID: tableID,
+                documentRevision: documentRevision,
+                presentationGeneration: presentationGeneration,
+                ownerID: ownerID,
+                ownerToken: ownerToken
+            )
+        }
+    }
+
+    func cachedAtomicRenderSelection() -> [String: Any]? {
+        guard let render = cachedAtomicRenderJSON?.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: render) as? [String: Any]
+        else { return nil }
+        return object["selection"] as? [String: Any]
+    }
+
+    func admitsTableMutation(_ admission: TableMutationAdmission) -> Bool {
+        !destroyed
+            && baseDocumentRevision == admission.documentRevision
+            && cachedAtomicRenderDocumentRevision == admission.documentRevision
+            && cachedTablePresentation?.documentRevision == admission.documentRevision
+            && tableResetGeneration == admission.presentationGeneration
+            && nativeOwnerId == admission.ownerID
+            && nativeOwnerToken == admission.ownerToken
+            && cachedTableRecords[admission.tableID]?["readOnlyDescendants"] as? Bool == false
+    }
+
+    private func cachedSelectionIsExactCells(anchor: UInt32, head: UInt32, tableID: String) -> Bool {
+        guard let selection = cachedAtomicRenderSelection(),
+              let endpoints = EditorCellSelection.endpointPositions(selection),
+              endpoints.anchor == anchor,
+              endpoints.head == head,
+              case let .drawable(selectedTableID, _) = EditorCellSelection.resolve(
+                selection, records: cachedTableRecords
+              )
+        else { return false }
+        return selectedTableID == tableID
     }
 
     func admitsTableCellSelection(_ admission: TableCellSelectionAdmission) -> Bool {
-        guard !destroyed,
-              baseDocumentRevision == admission.documentRevision,
-              cachedAtomicRenderDocumentRevision == admission.documentRevision,
-              cachedTablePresentation?.documentRevision == admission.documentRevision,
-              positionEpoch == admission.positionEpoch,
-              tableResetGeneration == admission.presentationGeneration,
-              nativeOwnerId == admission.ownerID,
-              nativeOwnerToken == admission.ownerToken,
-              cachedTableRecords[admission.tableID]?["readOnlyDescendants"] as? Bool == false,
-              let render = cachedAtomicRenderJSON?.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: render) as? [String: Any],
-              let selection = object["selection"],
-              let endpoints = EditorCellSelection.endpointPositions(selection),
-              endpoints.anchor == admission.anchor,
-              endpoints.head == admission.head,
-              case let .drawable(tableID, _) = EditorCellSelection.resolve(
-                selection, records: cachedTableRecords
-              ),
-              tableID == admission.tableID
-        else { return false }
-        return true
+        admitsTableMutation(admission.mutation)
+            && positionEpoch == admission.positionEpoch
+            && cachedSelectionIsExactCells(anchor: admission.anchor, head: admission.head,
+                                           tableID: admission.tableID)
+    }
+
+    private func applySelectionEnvelope(_ selection: [String: Any]) -> String? {
+        performMutation(adoptEngineSelection: true, publishMutation: false) {
+            self.callWithEnvelope(["selection": selection]) { requestJSON in
+                editorV2SetSelection(editorId: self.editorId, requestJson: requestJSON)
+            }
+        }
+    }
+
+    private static func exactCellSelectionEnvelope(anchor: UInt32, head: UInt32) -> [String: Any] {
+        [
+            "type": "cell",
+            "anchorCell": ["offset": Int(anchor), "kind": "document"],
+            "headCell": ["offset": Int(head), "kind": "document"]
+        ]
     }
 
     func selectExactTableCells(anchor: UInt32, head: UInt32,
@@ -45,49 +92,40 @@ extension EditorV2Adapter {
               cells.contains(where: { Self.uint32Field($0, "sourcePos") == anchor }),
               cells.contains(where: { Self.uint32Field($0, "sourcePos") == head })
         else { return nil }
-        let update = performMutation(adoptEngineSelection: true, publishMutation: false) {
-            self.callWithEnvelope([
-                "selection": [
-                    "type": "cell",
-                    "anchorCell": ["offset": Int(anchor), "kind": "document"],
-                    "headCell": ["offset": Int(head), "kind": "document"]
-                ]
-            ]) { requestJSON in
-                editorV2SetSelection(editorId: self.editorId, requestJson: requestJSON)
-            }
-        }
+        let update = applySelectionEnvelope(Self.exactCellSelectionEnvelope(anchor: anchor, head: head))
         guard let update,
-              baseDocumentRevision == admission.documentRevision,
-              cachedAtomicRenderDocumentRevision == admission.documentRevision,
-              cachedTablePresentation?.documentRevision == admission.documentRevision,
-              tableResetGeneration == admission.presentationGeneration,
-              nativeOwnerId == admission.ownerID,
-              nativeOwnerToken == admission.ownerToken,
+              admitsTableMutation(admission.mutation),
               positionEpoch != nil,
-              let render = cachedAtomicRenderJSON?.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: render) as? [String: Any],
-              let selection = object["selection"],
-              let endpoints = EditorCellSelection.endpointPositions(selection),
-              endpoints.anchor == anchor,
-              endpoints.head == head,
-              case let .drawable(tableID, _) = EditorCellSelection.resolve(
-                selection, records: cachedTableRecords
-              ),
-              tableID == admission.tableID
+              cachedSelectionIsExactCells(anchor: anchor, head: head, tableID: admission.tableID)
         else { return nil }
         return update
+    }
+
+    func resizeTableColumn(column: Int, width: Int, admission: TableMutationAdmission) -> String? {
+        guard beginRuntimeOperation() else { return nil }
+        defer { endRuntimeOperation() }
+        guard admitsTableMutation(admission),
+              column >= 0,
+              let record = cachedTableRecords[admission.tableID],
+              let tablePos = Self.uint32Field(record, "tablePos")
+        else { return nil }
+        let command: [String: Any] = [
+            "type": "setTableColumnWidth",
+            "width": width,
+            "column": column,
+            "tablePos": Int(tablePos)
+        ]
+        return performMutation(adoptEngineSelection: true) {
+            self.callWithEnvelope(["command": command]) { requestJson in
+                editorV2ApplyCommand(editorId: self.editorId, requestJson: requestJson)
+            }
+        }
     }
 
     func syncNodeSelection(docPos: UInt32) -> EditorV2SelectionSync? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
-        guard let update = performMutation(adoptEngineSelection: true, publishMutation: false, {
-            self.callWithEnvelope([
-                "selection": ["type": "atom", "docPos": Int(docPos), "edge": "node"]
-            ]) { requestJSON in
-                editorV2SetSelection(editorId: self.editorId, requestJson: requestJSON)
-            }
-        }),
+        guard let update = applySelectionEnvelope(["type": "atom", "docPos": Int(docPos), "edge": "node"]),
             let data = update.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let selection = object["selection"] as? [String: Any]
