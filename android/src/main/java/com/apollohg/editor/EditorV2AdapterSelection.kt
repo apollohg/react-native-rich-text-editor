@@ -78,7 +78,7 @@ internal fun EditorV2Adapter.resizeTableColumn(
         ?: return null
     val command = JSONObject().put("type", "setTableColumnWidth").put("width", width)
         .put("column", column).put("tablePos", tablePos)
-    return performMutation(adoptEngineSelection = true, retainRenderPatchBase = true) {
+    return performMutation(adoptEngineSelection = true) {
         callWithEnvelope(JSONObject().put("command", command)) { requestJson ->
             backend.applyCommand(editorId, requestJson)
         }
@@ -113,7 +113,6 @@ internal fun EditorV2Adapter.invalidateCachedAtomicState(selection: IntArray?) {
     cachedHistoryState = null
     cachedViewUpdateJson = null
     cachedAtomicRenderJson = null
-    cachedSemanticRenderBlocks = null
     cachedTableAttributes = emptyMap()
     cachedTableRecords = emptyMap()
     cachedTableInputMappings = null
@@ -158,13 +157,10 @@ internal fun EditorV2Adapter.ensureSelection(anchor: Int, head: Int): SelectionS
             val synchronizedSelection = intArrayOf(clampedAnchor, clampedHead)
             lastSyncedScalarSelection = synchronizedSelection
             cachedAuthoritativeScalarSelection = synchronizedSelection.copyOf()
-            // Selection changes can affect active state and state revision,
-            // but retain the last atomic history result until a document
-            // mutation supplies its next locked snapshot.
+            // Keep the last history result until a document mutation replaces it.
             cachedActiveState = null
             cachedViewUpdateJson = null
             cachedAtomicRenderJson = null
-            cachedSemanticRenderBlocks = null
             cachedTableAttributes = emptyMap()
             cachedTableRecords = emptyMap()
             cachedTableInputMappings = null

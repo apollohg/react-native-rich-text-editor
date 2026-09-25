@@ -19,7 +19,7 @@ internal fun EditorV2Adapter.adopt(
         val retained = cachedSemanticRenderBlocks
         val start = patch.optLong("startIndex", -1)
         val delete = patch.optLong("deleteCount", -1)
-        if (retained != null && patch.optString("baseDocumentVersion").toULongOrNull() == cachedAtomicRenderDocumentRevision &&
+        if (retained != null && patch.optString("baseDocumentVersion").toULongOrNull() == cachedSemanticRenderBlocksRevision &&
             start >= 0 && delete >= 0 && start + delete <= retained.size) {
             candidate = retained.take(start.toInt()) + blocks(patch.getJSONArray("renderBlocks")) + retained.drop((start + delete).toInt())
         } else if (snapshot.renderObject.has("tableAttributes") || snapshot.renderObject.has("tableRecords") || cachedTableAttributes.isNotEmpty() || cachedTableRecords.isNotEmpty()) {
@@ -42,6 +42,7 @@ internal fun EditorV2Adapter.adopt(
     cachedAtomicRenderJson = snapshot.atomicRenderJson
     cachedAtomicRenderDocumentRevision = snapshot.documentRevision
     cachedSemanticRenderBlocks = candidate
+    cachedSemanticRenderBlocksRevision = snapshot.documentRevision
     cachedTableAttributes = snapshot.tableAttributes
     cachedTableRecords = snapshot.tableRecords
     cachedTableInputMappings = snapshot.tableInputMappings

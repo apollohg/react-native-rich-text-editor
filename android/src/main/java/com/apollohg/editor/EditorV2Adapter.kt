@@ -61,6 +61,7 @@ internal class EditorV2Adapter private constructor(
     internal var cachedViewUpdateJson: String? = null
     internal var cachedAtomicRenderJson: String? = null
     internal var cachedSemanticRenderBlocks: List<List<Any?>>? = null
+    internal var cachedSemanticRenderBlocksRevision: ULong? = null
     internal var cachedTableAttributes: Map<String, JSONObject> = emptyMap()
     internal var cachedTableRecords: Map<String, JSONObject> = emptyMap()
     internal var tablePresentationDocumentGeneration: Long = 0
@@ -122,6 +123,7 @@ internal class EditorV2Adapter private constructor(
         positionEpoch = null
         destroyed = true
         cachedSemanticRenderBlocks = null
+        cachedSemanticRenderBlocksRevision = null
         cachedTableAttributes = emptyMap()
         cachedTableRecords = emptyMap()
         cachedTableInputMappings = null

@@ -73,14 +73,6 @@ internal class EditorTableColumnResizeTest {
             }
         }
 
-        fun undoThroughEngineHistory(): String {
-            val undone = adapter.callWithEnvelope(JSONObject(), includeBaseRevision = false) {
-                UniffiEditorV2Backend.undo(adapter.editorId, it)
-            }
-            assertTrue("engine undo failed: $undone", undone is EditorV2CallResult.Ok)
-            return requireNotNull(adapter.recoverNativeRender())
-        }
-
         fun documentObject(): JSONObject = JSONObject(requireNotNull(adapter.documentJson()))
 
         fun engineSelection(): JSONObject {
@@ -249,7 +241,7 @@ internal class EditorTableColumnResizeTest {
                 JSONObject(fixture.published.last()).getJSONObject("selection").getInt("headCell"))
             assertEquals(true, fixture.adapter.historyCanUndo())
 
-            assertTrue(fixture.view.editorEditText.applyUpdateJSON(fixture.undoThroughEngineHistory()))
+            assertTrue(fixture.view.editorEditText.applyUpdateJSON(requireNotNull(fixture.adapter.undo()) { "adapter undo returned no update" }))
             assertEquals("one undo restores the pre-resize document", beforeDocument,
                 fixture.documentObject().toString())
             assertEquals(false, fixture.adapter.historyCanUndo())
@@ -281,7 +273,7 @@ internal class EditorTableColumnResizeTest {
             assertTrue(fixture.view.activeTextInput === root)
             assertEquals("text", JSONObject(fixture.published.last()).getJSONObject("selection").getString("type"))
             assertEquals(true, fixture.adapter.historyCanUndo())
-            assertTrue(root.applyUpdateJSON(fixture.undoThroughEngineHistory()))
+            assertTrue(root.applyUpdateJSON(requireNotNull(fixture.adapter.undo()) { "adapter undo returned no update" }))
             assertEquals(beforeDocument, fixture.documentObject().toString())
             assertEquals("one resize is one history entry", false, fixture.adapter.historyCanUndo())
             assertEquals(caret.toString(), fixture.engineSelection().toString())
@@ -571,6 +563,25 @@ internal class EditorTableColumnResizeTest {
             assertEquals(1, fixture.drawing.hitResizeEdge(later.bounds.right, later.bounds.centerY())?.column)
         }
     }
+
+    @Test
+    fun `owned paste in a table document returns an applicable update and undoes through the adapter`() =
+        withMountedTable(proseThenFixedWidthTable) { fixture ->
+            val root = fixture.view.editorEditText
+            assertNotNull("fixture must hold a native owner", fixture.adapter.nativeOwnerId)
+            val before = fixture.documentObject().toString()
+            val pasted = fixture.adapter.pasteAtSelection(null, null, "X", true, 2, 2, false)
+            assertNotNull("owned paste must return an update: notes=${fixture.adapter.debugNotes}", pasted)
+            assertTrue(root.applyUpdateJSON(requireNotNull(pasted)))
+            assertEquals("beXfore", root.text.toString().substringBefore('\n').trim { it.isWhitespace() || it == '\uFFFC' })
+            assertEquals(fixture.adapter.baseDocumentRevision.toString(), root.lastAppliedDocumentVersion)
+            assertEquals(fixture.adapter.baseDocumentRevision, fixture.adapter.cachedAtomicRenderDocumentRevision)
+            val undone = fixture.adapter.undo()
+            assertNotNull("owned undo must return an update: notes=${fixture.adapter.debugNotes}", undone)
+            assertTrue(root.applyUpdateJSON(requireNotNull(undone)))
+            assertEquals(before, fixture.documentObject().toString())
+            assertEquals(fixture.adapter.baseDocumentRevision.toString(), root.lastAppliedDocumentVersion)
+        }
 
     @Test
     fun `second pointer cancels a held resize`() =
