@@ -86,6 +86,8 @@ targets:
         BUNDLE_LOADER: $(TEST_HOST)
         INFOPLIST_KEY_CFBundleDisplayName: NativeEditorTests
         SWIFT_OBJC_INTERFACE_HEADER_NAME: ReactNativeProseEditor-Swift.h
+        GCC_PREFIX_HEADER: $(SRCROOT)/NativeEditorTests-Prefix.pch
+        CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES: YES
         LD_RUNPATH_SEARCH_PATHS:
           - $(inherited)
           - "@loader_path/Frameworks"
@@ -94,6 +96,7 @@ targets:
           - $(inherited)
           - $(SRCROOT)/../ios/editor_coreFFI
           - $(SRCROOT)/../common/cpp
+          - $(PODS_CONFIGURATION_BUILD_DIR)/ExpoModulesCore/Swift Compatibility Header
         OTHER_SWIFT_FLAGS:
           - $(inherited)
           - -Xcc

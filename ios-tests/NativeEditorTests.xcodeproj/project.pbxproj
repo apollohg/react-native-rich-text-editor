@@ -7,8 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A16E00000000000000000011 /* PreparedProseViewerFabricEventHarness.mm in Sources */ = {isa = PBXBuildFile; fileRef = A16E00000000000000000002 /* PreparedProseViewerFabricEventHarness.mm */; settings = {COMPILER_FLAGS = "-fcxx-modules"; }; };
-		A16E00000000000000000012 /* PreparedProseViewerFabricEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16E00000000000000000003 /* PreparedProseViewerFabricEventTests.swift */; };
 		04EE505BFE519AE7D3E38252 /* PreparedProseLayoutTests+FabricRelease.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2902C6167572AD01B250C8 /* PreparedProseLayoutTests+FabricRelease.swift */; };
 		074C9228BF8596BF4E787652 /* RenderBridgeTests+ImageAdmission.swift in Sources */ = {isa = PBXBuildFile; fileRef = 064125B308972D0D9E7C3022 /* RenderBridgeTests+ImageAdmission.swift */; };
 		075424303171E31CB0FB5971 /* RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1D514F4A4442129867A82DE /* RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift */; };
@@ -29,7 +27,7 @@
 		11B79D58536EC7B11B8E6215 /* EditorV2AdapterTests+RenderAdmission.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEDA91A6289181CA8E9586AB /* EditorV2AdapterTests+RenderAdmission.swift */; };
 		123459689BD4E3D7E551343B /* RichTextEditorViewTests+LayoutRenderingTests+CaretBaselines.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15F28FA5F2FB4A1C5E55F14E /* RichTextEditorViewTests+LayoutRenderingTests+CaretBaselines.swift */; };
 		15DF0E47EE9EC526F7D5052F /* PreparedProseViewerShadowNode.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AD2EDD1353EF86CAD0E419CB /* PreparedProseViewerShadowNode.cpp */; };
-		191425460B07769B3AE268AC /* PREPPreparedProseViewerComponentView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 9B53E618A4451AF063C952EB /* PREPPreparedProseViewerComponentView.mm */; settings = {COMPILER_FLAGS = "-fcxx-modules"; }; };
+		191425460B07769B3AE268AC /* PREPPreparedProseViewerComponentView.mm in Sources */ = {isa = PBXBuildFile; fileRef = 9B53E618A4451AF063C952EB /* PREPPreparedProseViewerComponentView.mm */; };
 		1933536E590A4B38B1616959 /* CoreTextProseLayoutEngine+Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 547349DA43A5D34740CE919E /* CoreTextProseLayoutEngine+Models.swift */; };
 		19D09F38AFFB4BC2F1597B19 /* NativeEditorExpoView+MentionRetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55F47322DF3AEC3235280BE3 /* NativeEditorExpoView+MentionRetry.swift */; };
 		1AE884276C0C5A69EDD431B7 /* NativeToolbar+Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F459F18A84DA6EF8AA1575F /* NativeToolbar+Diagnostics.swift */; };
@@ -58,7 +56,7 @@
 		3E7691BD09A616262AD0EECE /* PreparedProseRevisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9572B3EEFB6B7316A05D6C88 /* PreparedProseRevisionTests.swift */; };
 		3E9AD7067FB6F90FEF4436C6 /* RichTextEditorViewTests+UpdatesLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9A9EAAAD9B0AE0BD12F7176 /* RichTextEditorViewTests+UpdatesLifecycleTests.swift */; };
 		3EF6CBD973DB380368F88204 /* EditorTextView+NativeInputLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBE3E5CD32ADEC31746FCCED /* EditorTextView+NativeInputLifecycle.swift */; };
-		40373230CB2B4D39BD5350B6 /* PreparedProseMeasurementsManager.mm in Sources */ = {isa = PBXBuildFile; fileRef = A183A542FD912C410D3A2B03 /* PreparedProseMeasurementsManager.mm */; settings = {COMPILER_FLAGS = "-fcxx-modules"; }; };
+		40373230CB2B4D39BD5350B6 /* PreparedProseMeasurementsManager.mm in Sources */ = {isa = PBXBuildFile; fileRef = A183A542FD912C410D3A2B03 /* PreparedProseMeasurementsManager.mm */; };
 		408339E7E0B80F1F36E719D7 /* NativeEditorModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C79AD6B373E7B39BF9C2584 /* NativeEditorModule.swift */; };
 		4141A2733D97DE17FBA74A2E /* NativeCollaborationTransport+Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 442B3EE8B0EB6AD8144B003D /* NativeCollaborationTransport+Protocol.swift */; };
 		4161D5D3C37840E4282CEDEC /* RenderBridgeTests+AttachmentsAndMeasurement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6719498D45D63EEA11945D9A /* RenderBridgeTests+AttachmentsAndMeasurement.swift */; };
@@ -131,6 +129,23 @@
 		9C9E0DA191DA7D5ACC454713 /* PreparedProseInstrumentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 073AA28E404CB1E78224E266 /* PreparedProseInstrumentation.swift */; };
 		9E0E70548BFAF02E1EF711DE /* NativeCollaborationTransportRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2261CB51C233C88B5737A00A /* NativeCollaborationTransportRegistry.swift */; };
 		9E7DACEBB0DD1AD90F33066C /* EditorV2AdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80892297FFD41613BE083EF1 /* EditorV2AdapterTests.swift */; };
+		A15E00000000000000000011 /* TableCellMeasurementCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000001 /* TableCellMeasurementCache.swift */; };
+		A15E00000000000000000012 /* TableGridLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000002 /* TableGridLayout.swift */; };
+		A15E00000000000000000013 /* TableStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000003 /* TableStyle.swift */; };
+		A15E00000000000000000014 /* TableGridLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000004 /* TableGridLayoutTests.swift */; };
+		A16000000000000000000011 /* ViewerTableSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16000000000000000000001 /* ViewerTableSurface.swift */; };
+		A16000000000000000000013 /* ViewerTableTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16000000000000000000003 /* ViewerTableTests.swift */; };
+		A16E00000000000000000011 /* PreparedProseViewerFabricEventHarness.mm in Sources */ = {isa = PBXBuildFile; fileRef = A16E00000000000000000002 /* PreparedProseViewerFabricEventHarness.mm */; };
+		A16E00000000000000000012 /* PreparedProseViewerFabricEventTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16E00000000000000000003 /* PreparedProseViewerFabricEventTests.swift */; };
+		A17000000000000000000011 /* TableCellPositionMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000001 /* TableCellPositionMap.swift */; };
+		A17000000000000000000012 /* EditorTableInputCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000002 /* EditorTableInputCoordinator.swift */; };
+		A17000000000000000000013 /* EditorTableSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000003 /* EditorTableSurface.swift */; };
+		A17000000000000000000014 /* EditorTableInputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000004 /* EditorTableInputTests.swift */; };
+		A17100000000000000000011 /* TableCellPositionMapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17100000000000000000001 /* TableCellPositionMapTests.swift */; };
+		A17200000000000000000011 /* EditorCellSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17200000000000000000001 /* EditorCellSelection.swift */; };
+		A17900000000000000000011 /* TableInteractionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17900000000000000000001 /* TableInteractionController.swift */; };
+		A18000000000000000000011 /* EditorTableNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000001 /* EditorTableNavigationTests.swift */; };
+		A18000000000000000000012 /* EditorTableArrowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000002 /* EditorTableArrowTests.swift */; };
 		A1FDE75D46491CC308103AEB /* NativeCollaborationTransport+Socket.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAEB95008867BEACFCE6D79C /* NativeCollaborationTransport+Socket.swift */; };
 		A2C0EC2E33ED65750D0AADD6 /* SharedNativeImagePipeline+Cache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CAA13163533CC9538155141 /* SharedNativeImagePipeline+Cache.swift */; };
 		A32E5AB4114BF5FA5BF1C3C6 /* RichTextEditorViewTests+MentionsImagesTests+ImageSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71A0E8D1B006EAA4500650E8 /* RichTextEditorViewTests+MentionsImagesTests+ImageSelection.swift */; };
@@ -140,7 +155,6 @@
 		A82FEB7C023E95364769B61A /* PreparedProseLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E81F40EDFFF4ED5A11F4DF0C /* PreparedProseLayoutTests.swift */; };
 		AB5CAC4B09DAD54C06464938 /* EditorTextView+Selection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CEE31BAAA7114F56D4EE442 /* EditorTextView+Selection.swift */; };
 		AC4EC346C4C73FCADFCEB1F4 /* PreparedProseLayoutCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCF83BC143D0A11E95F2C7A2 /* PreparedProseLayoutCache.swift */; };
-		F1616CE115E0C001CE115E00 /* PreparedCellShapeCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1616CE015E0C001CE115E00 /* PreparedCellShapeCatalog.swift */; };
 		AD2C3C3122F65AC5B3DB5A4C /* RichTextEditorViewTests+SelectionSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C78D7AEBA74C421F4F1BD9A /* RichTextEditorViewTests+SelectionSync.swift */; };
 		AF76728670EF4A4348B68A12 /* RenderBridgeTests+ParagraphStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F28640B7FE2CC558A1ED598 /* RenderBridgeTests+ParagraphStyle.swift */; };
 		B00799A53950C3943412AAB6 /* NativeCollaborationTransport+Validation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54EE655A428C231774962F7A /* NativeCollaborationTransport+Validation.swift */; };
@@ -149,21 +163,6 @@
 		B12A78E28B80F26628E8F4D5 /* EditorV2Adapter+Registry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3811F3A57B903BC5833205C5 /* EditorV2Adapter+Registry.swift */; };
 		B38018A935CF0A1BFA0AF72E /* NativeEditorExpoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 786BFC8DCAD00895F167F944 /* NativeEditorExpoView.swift */; };
 		B449DB726B51D7148CBF6B43 /* NativeSVGImageDecoder.mm in Sources */ = {isa = PBXBuildFile; fileRef = 10A10ADFCF589EAD534657FC /* NativeSVGImageDecoder.mm */; };
-		A15E00000000000000000011 /* TableCellMeasurementCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000001 /* TableCellMeasurementCache.swift */; };
-		A15E00000000000000000012 /* TableGridLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000002 /* TableGridLayout.swift */; };
-		A15E00000000000000000013 /* TableStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000003 /* TableStyle.swift */; };
-		A15E00000000000000000014 /* TableGridLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000004 /* TableGridLayoutTests.swift */; };
-		A16000000000000000000011 /* ViewerTableSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16000000000000000000001 /* ViewerTableSurface.swift */; };
-		A16000000000000000000013 /* ViewerTableTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16000000000000000000003 /* ViewerTableTests.swift */; };
-		A17000000000000000000011 /* TableCellPositionMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000001 /* TableCellPositionMap.swift */; };
-		A17000000000000000000012 /* EditorTableInputCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000002 /* EditorTableInputCoordinator.swift */; };
-		A17000000000000000000013 /* EditorTableSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000003 /* EditorTableSurface.swift */; };
-		A17900000000000000000011 /* TableInteractionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17900000000000000000001 /* TableInteractionController.swift */; };
-		A17000000000000000000014 /* EditorTableInputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000004 /* EditorTableInputTests.swift */; };
-		A18000000000000000000011 /* EditorTableNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000001 /* EditorTableNavigationTests.swift */; };
-		A18000000000000000000012 /* EditorTableArrowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000002 /* EditorTableArrowTests.swift */; };
-		A17200000000000000000011 /* EditorCellSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17200000000000000000001 /* EditorCellSelection.swift */; };
-		A17100000000000000000011 /* TableCellPositionMapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17100000000000000000001 /* TableCellPositionMapTests.swift */; };
 		B4F9AA2B05BFD1623A26870B /* EditorV2AdapterTests+Destroy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D651415D399FE0F5164ABE /* EditorV2AdapterTests+Destroy.swift */; };
 		B66C05B49F6A20001A9AD417 /* RichTextEditorViewTests+MentionsImagesTests+SuggestionPreflight.swift in Sources */ = {isa = PBXBuildFile; fileRef = 527D8571146395F1F95D3A0E /* RichTextEditorViewTests+MentionsImagesTests+SuggestionPreflight.swift */; };
 		B6A44BA703B87E4D9C3AF335 /* RichTextEditorViewTests+LayoutRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 732E5EBF40F9EB2B798C8EC8 /* RichTextEditorViewTests+LayoutRenderingTests.swift */; };
@@ -208,6 +207,7 @@
 		EC68D727A0BFA6BF675CF98B /* EditorV2Adapter+RenderState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCA4DD25B57D0B6C5EE54FAB /* EditorV2Adapter+RenderState.swift */; };
 		ED0B535AAFF2BA8A6E70E137 /* EditorTextView+Reconciliation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55744E3BADA98D4A83EDC87C /* EditorTextView+Reconciliation.swift */; };
 		ED499271D47BBC23905FBF95 /* Generated_editor_core.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B2DD21676DB1880CDE24021 /* Generated_editor_core.swift */; };
+		F1616CE115E0C001CE115E00 /* PreparedCellShapeCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1616CE015E0C001CE115E00 /* PreparedCellShapeCatalog.swift */; };
 		F791E0FE55F7A074E7F619AB /* EditorV2Adapter+Commands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4154ED326138B8F2724F08DE /* EditorV2Adapter+Commands.swift */; };
 		F7F4B49D089C692653630625 /* EditorV2Adapter+Envelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = B75249CC3E301548DC68AFFB /* EditorV2Adapter+Envelope.swift */; };
 		F913BCDA0D10B47230945E51 /* NativeEditorExpoView+Updates.swift in Sources */ = {isa = PBXBuildFile; fileRef = C66D7D4E81FDA1189694F8A8 /* NativeEditorExpoView+Updates.swift */; };
@@ -232,9 +232,6 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		A16E00000000000000000001 /* PreparedProseViewerFabricEventHarness.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PreparedProseViewerFabricEventHarness.h; sourceTree = "<group>"; };
-		A16E00000000000000000002 /* PreparedProseViewerFabricEventHarness.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PreparedProseViewerFabricEventHarness.mm; sourceTree = "<group>"; };
-		A16E00000000000000000003 /* PreparedProseViewerFabricEventTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedProseViewerFabricEventTests.swift; sourceTree = "<group>"; };
 		064125B308972D0D9E7C3022 /* RenderBridgeTests+ImageAdmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RenderBridgeTests+ImageAdmission.swift"; sourceTree = "<group>"; };
 		06F86AE85C62B4D81ED463F7 /* RichTextEditorViewTests+UpdatesLifecycleTests+EnvelopeAdmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RichTextEditorViewTests+UpdatesLifecycleTests+EnvelopeAdmission.swift"; sourceTree = "<group>"; };
 		073AA28E404CB1E78224E266 /* PreparedProseInstrumentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedProseInstrumentation.swift; sourceTree = "<group>"; };
@@ -243,21 +240,6 @@
 		0A70A1000000000000000002 /* AtomMountingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomMountingTests.swift; sourceTree = "<group>"; };
 		0EFA8A680C8F4919611EBF8C /* PreparedProseLayoutTests+MountReuse.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PreparedProseLayoutTests+MountReuse.swift"; sourceTree = "<group>"; };
 		10A10ADFCF589EAD534657FC /* NativeSVGImageDecoder.mm */ = {isa = PBXFileReference; includeInIndex = 1; path = NativeSVGImageDecoder.mm; sourceTree = "<group>"; };
-		A15E00000000000000000001 /* TableCellMeasurementCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellMeasurementCache.swift; sourceTree = "<group>"; };
-		A15E00000000000000000002 /* TableGridLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGridLayout.swift; sourceTree = "<group>"; };
-		A15E00000000000000000003 /* TableStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableStyle.swift; sourceTree = "<group>"; };
-		A15E00000000000000000004 /* TableGridLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGridLayoutTests.swift; sourceTree = "<group>"; };
-		A16000000000000000000001 /* ViewerTableSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerTableSurface.swift; sourceTree = "<group>"; };
-		A16000000000000000000003 /* ViewerTableTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerTableTests.swift; sourceTree = "<group>"; };
-		A17000000000000000000001 /* TableCellPositionMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellPositionMap.swift; sourceTree = "<group>"; };
-		A17000000000000000000002 /* EditorTableInputCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableInputCoordinator.swift; sourceTree = "<group>"; };
-		A17000000000000000000003 /* EditorTableSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableSurface.swift; sourceTree = "<group>"; };
-		A17900000000000000000001 /* TableInteractionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableInteractionController.swift; sourceTree = "<group>"; };
-		A17000000000000000000004 /* EditorTableInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableInputTests.swift; sourceTree = "<group>"; };
-		A18000000000000000000001 /* EditorTableNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableNavigationTests.swift; sourceTree = "<group>"; };
-		A18000000000000000000002 /* EditorTableArrowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableArrowTests.swift; sourceTree = "<group>"; };
-		A17200000000000000000001 /* EditorCellSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorCellSelection.swift; sourceTree = "<group>"; };
-		A17100000000000000000001 /* TableCellPositionMapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellPositionMapTests.swift; sourceTree = "<group>"; };
 		10A13C02E22F5783115D5F8B /* EditorV2Adapter+TextCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorV2Adapter+TextCommands.swift"; sourceTree = "<group>"; };
 		1183AB931D0AC2A077A5ADC2 /* EditorTextView+ExternalComposition.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorTextView+ExternalComposition.swift"; sourceTree = "<group>"; };
 		1341B6C86B51251F514D5879 /* RichTextEditorViewTests+UpdatesLifecycleTests+AccessoryRetries.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RichTextEditorViewTests+UpdatesLifecycleTests+AccessoryRetries.swift"; sourceTree = "<group>"; };
@@ -376,6 +358,24 @@
 		A08B480A2FFBF236ACB3E6B4 /* RichTextEditorViewTests+UpdatesLifecycleTests+BindingLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RichTextEditorViewTests+UpdatesLifecycleTests+BindingLifecycle.swift"; sourceTree = "<group>"; };
 		A11CE551A11CE551A11CE551 /* NativeEditorViewRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeEditorViewRegistry.swift; sourceTree = "<group>"; };
 		A11CE700A11CE700A11CE700 /* NativeToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeToolbar.swift; sourceTree = "<group>"; };
+		A15E00000000000000000001 /* TableCellMeasurementCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellMeasurementCache.swift; sourceTree = "<group>"; };
+		A15E00000000000000000002 /* TableGridLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGridLayout.swift; sourceTree = "<group>"; };
+		A15E00000000000000000003 /* TableStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableStyle.swift; sourceTree = "<group>"; };
+		A15E00000000000000000004 /* TableGridLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGridLayoutTests.swift; sourceTree = "<group>"; };
+		A16000000000000000000001 /* ViewerTableSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerTableSurface.swift; sourceTree = "<group>"; };
+		A16000000000000000000003 /* ViewerTableTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerTableTests.swift; sourceTree = "<group>"; };
+		A16E00000000000000000001 /* PreparedProseViewerFabricEventHarness.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PreparedProseViewerFabricEventHarness.h; sourceTree = "<group>"; };
+		A16E00000000000000000002 /* PreparedProseViewerFabricEventHarness.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PreparedProseViewerFabricEventHarness.mm; sourceTree = "<group>"; };
+		A16E00000000000000000003 /* PreparedProseViewerFabricEventTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedProseViewerFabricEventTests.swift; sourceTree = "<group>"; };
+		A17000000000000000000001 /* TableCellPositionMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellPositionMap.swift; sourceTree = "<group>"; };
+		A17000000000000000000002 /* EditorTableInputCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableInputCoordinator.swift; sourceTree = "<group>"; };
+		A17000000000000000000003 /* EditorTableSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableSurface.swift; sourceTree = "<group>"; };
+		A17000000000000000000004 /* EditorTableInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableInputTests.swift; sourceTree = "<group>"; };
+		A17100000000000000000001 /* TableCellPositionMapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellPositionMapTests.swift; sourceTree = "<group>"; };
+		A17200000000000000000001 /* EditorCellSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorCellSelection.swift; sourceTree = "<group>"; };
+		A17900000000000000000001 /* TableInteractionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableInteractionController.swift; sourceTree = "<group>"; };
+		A18000000000000000000001 /* EditorTableNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableNavigationTests.swift; sourceTree = "<group>"; };
+		A18000000000000000000002 /* EditorTableArrowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableArrowTests.swift; sourceTree = "<group>"; };
 		A183A542FD912C410D3A2B03 /* PreparedProseMeasurementsManager.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PreparedProseMeasurementsManager.mm; sourceTree = "<group>"; };
 		A1D514F4A4442129867A82DE /* RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift"; sourceTree = "<group>"; };
 		A268B84E57FD4C181DAB868B /* PreparedProseRevisionTests+Fonts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PreparedProseRevisionTests+Fonts.swift"; sourceTree = "<group>"; };
@@ -408,7 +408,6 @@
 		C66D7D4E81FDA1189694F8A8 /* NativeEditorExpoView+Updates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NativeEditorExpoView+Updates.swift"; sourceTree = "<group>"; };
 		CA17728099475A1BA3392F9D /* EditorAddons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorAddons.swift; sourceTree = "<group>"; };
 		CCF83BC143D0A11E95F2C7A2 /* PreparedProseLayoutCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedProseLayoutCache.swift; sourceTree = "<group>"; };
-		F1616CE015E0C001CE115E00 /* PreparedCellShapeCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedCellShapeCatalog.swift; sourceTree = "<group>"; };
 		CEE0A05184542F0FF88EB2B4 /* RichTextEditorViewTests+NativeMutationTests+UnicodeAndMapping.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RichTextEditorViewTests+NativeMutationTests+UnicodeAndMapping.swift"; sourceTree = "<group>"; };
 		D06C968B02FC0671EAA37B07 /* EditorTextView+KeyboardInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorTextView+KeyboardInput.swift"; sourceTree = "<group>"; };
 		D1328844263588FCBC7E2493 /* RenderBridgeTests+ImageTimeoutsAndCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RenderBridgeTests+ImageTimeoutsAndCache.swift"; sourceTree = "<group>"; };
@@ -441,6 +440,7 @@
 		EE4C4C5D4FC3F55C32B754E3 /* ViewerFontEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerFontEnvironment.swift; sourceTree = "<group>"; };
 		F02BC3E8518DDD70F1D31135 /* RenderBridgeTests+ThemeAndAtoms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RenderBridgeTests+ThemeAndAtoms.swift"; sourceTree = "<group>"; };
 		F038CC531E8DF503AC6E106C /* EditorV2StagingViewTests+AtomSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorV2StagingViewTests+AtomSelection.swift"; sourceTree = "<group>"; };
+		F1616CE015E0C001CE115E00 /* PreparedCellShapeCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreparedCellShapeCatalog.swift; sourceTree = "<group>"; };
 		F6AC301589F2274C084EDB0B /* NativeEditorExpoView+Focus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NativeEditorExpoView+Focus.swift"; sourceTree = "<group>"; };
 		F75CAFD6EDB9B56164227CB6 /* PositionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PositionBridge.swift; sourceTree = "<group>"; };
 		F8BACCE9B0678BEDB0ED7EE0 /* RenderBridgeTests+ImageOwnership.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RenderBridgeTests+ImageOwnership.swift"; sourceTree = "<group>"; };
@@ -683,6 +683,22 @@
 			path = TestHost;
 			sourceTree = "<group>";
 		};
+		A15E00000000000000000005 /* Tables */ = {
+			isa = PBXGroup;
+			children = (
+				A15E00000000000000000001 /* TableCellMeasurementCache.swift */,
+				A15E00000000000000000002 /* TableGridLayout.swift */,
+				A15E00000000000000000003 /* TableStyle.swift */,
+				A16000000000000000000001 /* ViewerTableSurface.swift */,
+				A17000000000000000000001 /* TableCellPositionMap.swift */,
+				A17000000000000000000002 /* EditorTableInputCoordinator.swift */,
+				A17000000000000000000003 /* EditorTableSurface.swift */,
+				A17900000000000000000001 /* TableInteractionController.swift */,
+				A17200000000000000000001 /* EditorCellSelection.swift */,
+			);
+			path = Tables;
+			sourceTree = "<group>";
+		};
 		A1B0488D87C3F2E91B9D51E8 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
@@ -786,22 +802,6 @@
 				0B99925A94C2BFE2F54819D1 /* Fixtures */,
 			);
 			path = Tests;
-			sourceTree = "<group>";
-		};
-		A15E00000000000000000005 /* Tables */ = {
-			isa = PBXGroup;
-			children = (
-				A15E00000000000000000001 /* TableCellMeasurementCache.swift */,
-				A15E00000000000000000002 /* TableGridLayout.swift */,
-				A15E00000000000000000003 /* TableStyle.swift */,
-				A16000000000000000000001 /* ViewerTableSurface.swift */,
-				A17000000000000000000001 /* TableCellPositionMap.swift */,
-				A17000000000000000000002 /* EditorTableInputCoordinator.swift */,
-				A17000000000000000000003 /* EditorTableSurface.swift */,
-				A17900000000000000000001 /* TableInteractionController.swift */,
-				A17200000000000000000001 /* EditorCellSelection.swift */,
-			);
-			path = Tables;
 			sourceTree = "<group>";
 		};
 		AD5DDF42BF333A2B2879EFA3 = {
@@ -1323,8 +1323,8 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = NativeEditorTestHost;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1350,6 +1350,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/../ios/editor_coreFFI",
 					"$(SRCROOT)/../common/cpp",
+					"$(PODS_CONFIGURATION_BUILD_DIR)/ExpoModulesCore/Swift Compatibility Header",
 				);
 				INFOPLIST_FILE = ../ios/EditorCore.xcframework/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = NativeEditorTests;
@@ -1376,6 +1377,8 @@
 				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/../ios/editor_coreFFI";
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/NativeEditorTests-Bridging-Header.h";
 				SWIFT_OBJC_INTERFACE_HEADER_NAME = "ReactNativeProseEditor-Swift.h";
+				GCC_PREFIX_HEADER = "$(SRCROOT)/NativeEditorTests-Prefix.pch";
+				CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NativeEditorTestHost.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NativeEditorTestHost";
 				TEST_TARGET_NAME = NativeEditorTestHost;
@@ -1390,8 +1393,8 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = NativeEditorTestHost;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1578,6 +1581,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/../ios/editor_coreFFI",
 					"$(SRCROOT)/../common/cpp",
+					"$(PODS_CONFIGURATION_BUILD_DIR)/ExpoModulesCore/Swift Compatibility Header",
 				);
 				INFOPLIST_FILE = ../ios/EditorCore.xcframework/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = NativeEditorTests;
@@ -1604,6 +1608,8 @@
 				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/../ios/editor_coreFFI";
 				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/NativeEditorTests-Bridging-Header.h";
 				SWIFT_OBJC_INTERFACE_HEADER_NAME = "ReactNativeProseEditor-Swift.h";
+				GCC_PREFIX_HEADER = "$(SRCROOT)/NativeEditorTests-Prefix.pch";
+				CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES = YES;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NativeEditorTestHost.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NativeEditorTestHost";
 				TEST_TARGET_NAME = NativeEditorTestHost;
