@@ -9,25 +9,40 @@ internal sealed interface SelectionSyncOutcome {
     object Failed : SelectionSyncOutcome
 }
 
+internal data class TableMutationAdmission(
+    val tableId: String,
+    val documentRevision: ULong,
+    val presentationGeneration: Long,
+    val ownerId: String?,
+    val ownerToken: Long?
+)
+
+internal fun EditorV2Adapter.tableMutationAdmission(tableId: String): TableMutationAdmission =
+    TableMutationAdmission(tableId, baseDocumentRevision, tablePresentationDocumentGeneration,
+        nativeOwnerId, currentNativeOwnerToken)
+
+internal fun EditorV2Adapter.admitsTableMutation(admission: TableMutationAdmission): Boolean =
+    !destroyed && baseDocumentRevision == admission.documentRevision &&
+        cachedAtomicRenderDocumentRevision == admission.documentRevision &&
+        tablePresentationDocumentGeneration == admission.presentationGeneration &&
+        nativeOwnerId == admission.ownerId && currentNativeOwnerToken == admission.ownerToken &&
+        cachedTableRecords[admission.tableId]?.optBoolean("readOnlyDescendants", true) == false
+
+internal fun EditorV2Adapter.cachedAtomicRenderSelection(): JSONObject? =
+    cachedAtomicRenderJson?.let { raw ->
+        runCatching { JSONObject(raw).getJSONObject("selection") }.getOrNull()
+    }
+
 internal fun EditorV2Adapter.selectExactTableCells(
     anchorCell: Int,
     headCell: Int,
-    expectedRevision: ULong,
+    admission: TableMutationAdmission,
     expectedEpoch: String,
-    expectedGeneration: Long,
-    expectedOwnerId: String?,
-    expectedOwnerToken: Long?,
     expectedAnchor: Int,
     expectedHead: Int
 ): String? {
-    if (destroyed || baseDocumentRevision != expectedRevision ||
-        cachedAtomicRenderDocumentRevision != expectedRevision ||
-        positionEpoch != expectedEpoch ||
-        tablePresentationDocumentGeneration != expectedGeneration ||
-        nativeOwnerId != expectedOwnerId || currentNativeOwnerToken != expectedOwnerToken) return null
-    val current = cachedAtomicRenderJson?.let { raw ->
-        runCatching { JSONObject(raw).getJSONObject("selection") }.getOrNull()
-    } ?: return null
+    if (!admitsTableMutation(admission) || positionEpoch != expectedEpoch) return null
+    val current = cachedAtomicRenderSelection() ?: return null
     if (current.optString("type") != "cell" ||
         exactV2ScalarInt(current.opt("anchorCell") as? Number) != expectedAnchor ||
         exactV2ScalarInt(current.opt("headCell") as? Number) != expectedHead) return null
@@ -49,11 +64,25 @@ internal fun EditorV2Adapter.selectExactTableCells(
     if (admitted.optString("type") != "cell" ||
         exactV2ScalarInt(admitted.opt("anchorCell") as? Number) != anchorCell ||
         exactV2ScalarInt(admitted.opt("headCell") as? Number) != headCell ||
-        baseDocumentRevision != expectedRevision ||
-        tablePresentationDocumentGeneration != expectedGeneration ||
-        nativeOwnerId != expectedOwnerId || currentNativeOwnerToken != expectedOwnerToken ||
-        positionEpoch == null) return null
+        !admitsTableMutation(admission) || positionEpoch == null) return null
     return update
+}
+
+internal fun EditorV2Adapter.resizeTableColumn(
+    column: Int,
+    width: Int,
+    admission: TableMutationAdmission
+): String? {
+    if (!admitsTableMutation(admission) || column < 0) return null
+    val tablePos = exactV2ScalarInt(cachedTableRecords[admission.tableId]?.opt("tablePos") as? Number)
+        ?: return null
+    val command = JSONObject().put("type", "setTableColumnWidth").put("width", width)
+        .put("column", column).put("tablePos", tablePos)
+    return performMutation(adoptEngineSelection = true, retainRenderPatchBase = true) {
+        callWithEnvelope(JSONObject().put("command", command)) { requestJson ->
+            backend.applyCommand(editorId, requestJson)
+        }
+    }
 }
 
 internal fun EditorV2Adapter.clampScalar(scalar: Int): Int {

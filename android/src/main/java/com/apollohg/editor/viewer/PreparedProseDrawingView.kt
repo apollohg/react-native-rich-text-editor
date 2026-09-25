@@ -50,6 +50,8 @@ internal data class TableSelectionHandle(
     val y: Float
 )
 
+internal data class TableResizeEdge(val tableId: String, val column: Int)
+
 /** Rendering-only consumer of fully prepared StaticLayout and geometry fragments. */
 internal class PreparedProseDrawingView @JvmOverloads constructor(
     context: Context,
@@ -84,6 +86,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             invalidate()
         }
     internal var selectedTableCellEndpoints: Triple<String, Int, Int>? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
+    internal var activeTableResizeEdge: TableResizeEdge? = null
         set(value) {
             if (field == value) return
             field = value
@@ -150,6 +158,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         private const val HANDLE_RADIUS_DP = 8f
         private const val HANDLE_INSET_DP = 8f
         private const val HANDLE_HIT_SIZE_DP = 48f
+        private const val RESIZE_INDICATOR_WIDTH_DP = 2f
         const val IMAGE_PIXEL_MAP_RETAINED_BYTES = 48L
         const val IMAGE_PIXEL_ENTRY_RETAINED_BYTES = 48L
 
@@ -317,10 +326,60 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     internal fun selectionHandles(): List<TableSelectionHandle> =
         presentationSnapshot()?.let(::selectionHandles).orEmpty()
 
+    private val ViewerTableSurface.editorTableId: String?
+        get() = sourceTable?.tablePos?.let { position -> "t$position" }
+
     private fun ViewerTablePresentationSnapshot.tableWithId(tableId: String): ViewerTablePresentedSurface? =
-        tables.firstOrNull {
-            it.surface.sourceTable?.tablePos?.let { position -> "t$position" } == tableId
+        tables.firstOrNull { it.surface.editorTableId == tableId }
+
+    private fun ViewerTablePresentationSnapshot.rootTables(): List<ViewerTablePresentedSurface> {
+        val roots = blocks.filter { it.layout === preparedLayout }.mapNotNull { it.block.tableSurface }
+        return tables.filter { presented -> roots.any { it === presented.surface } }
+    }
+
+    private fun columnTrailingEdgeX(table: ViewerTablePresentedSurface, column: Int): Float? {
+        val widths = table.surface.layout.columnWidths
+        if (column !in widths.indices) return null
+        val logical = widths.take(column + 1).sum()
+        val origin = table.bounds.left - tablePresentationOwner.physicalOffset(table.surface)
+        return if (table.surface.isRightToLeft) origin + table.surface.bounds.width() - logical
+        else origin + logical
+    }
+
+    internal fun hitResizeEdge(x: Float, y: Float): TableResizeEdge? {
+        val snapshot = presentationSnapshot() ?: return null
+        val visible = (presentationViewport() as? ViewerTablePresentationViewport.Known)?.rect
+        if (visible != null && (x < visible.left || x >= visible.right ||
+                y < visible.top || y >= visible.bottom)) return null
+        val reach = HANDLE_HIT_SIZE_DP * resources.displayMetrics.density / 2f
+        var best: Pair<TableResizeEdge, Float>? = null
+        snapshot.rootTables().forEach { table ->
+            if (y < table.clip.top || y >= table.clip.bottom) return@forEach
+            val tableId = table.surface.editorTableId ?: return@forEach
+            val sourceCells = table.surface.sourceTable?.cells ?: return@forEach
+            val columns = table.surface.layout.columnWidths.size
+            snapshot.cells.filter { it.surface === table.surface }.forEach { cell ->
+                val source = cell.cell.sourceCellIndex?.let(sourceCells::getOrNull) ?: return@forEach
+                if (y < cell.bounds.top || y >= cell.bounds.bottom) return@forEach
+                val edgeX = if (table.surface.isRightToLeft) cell.bounds.left else cell.bounds.right
+                val distance = kotlin.math.abs(x - edgeX)
+                if (distance > reach || edgeX < table.clip.left || edgeX > table.clip.right ||
+                    (visible != null && (edgeX < visible.left || edgeX > visible.right))) return@forEach
+                val column = (source.column + source.colspan).toInt() - 1
+                if (column !in 0 until columns) return@forEach
+                val current = best
+                if (current != null && (current.second < distance ||
+                        (current.second == distance && current.first.column <= column))) return@forEach
+                best = TableResizeEdge(tableId, column) to distance
+            }
         }
+        return best?.first
+    }
+
+    internal fun tableLogicalOffset(tableId: String): Float? {
+        val surface = presentationSnapshot()?.tableWithId(tableId)?.surface ?: return null
+        return tablePresentationOwner.logicalOffset(surface)
+    }
 
     private fun selectionHandles(snapshot: ViewerTablePresentationSnapshot): List<TableSelectionHandle> {
         val (tableId, anchor, head) = selectedTableCellEndpoints ?: return emptyList()
@@ -503,7 +562,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                 // an earlier quote border, and text/labels always remain foreground.
                 drawHierarchicalBackgrounds(canvas, artifact, snapshot, mountedLayouts, paintClip)
                 snapshot.mountedCells.forEach { cell ->
-                    val tableId = cell.surface.sourceTable?.tablePos?.let { "t$it" }
+                    val tableId = cell.surface.editorTableId
                     if (tableId != null && cell.sourcePosition in
                         selectedTableCellSourcePositions[tableId].orEmpty()) {
                         val selected = canvas.save()
@@ -546,6 +605,21 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                         canvas.drawCircle(handle.x, handle.y, radius, paint)
                     }
                     canvas.restoreToCount(handleClip)
+                }
+                val resizeEdge = activeTableResizeEdge
+                val resizeTable = resizeEdge?.let { edge ->
+                    snapshot.rootTables().firstOrNull { it.surface.editorTableId == edge.tableId }
+                }
+                val resizeX = resizeTable?.let { columnTrailingEdgeX(it, requireNotNull(resizeEdge).column) }
+                if (resizeTable != null && resizeX != null) {
+                    val halfWidth = RESIZE_INDICATOR_WIDTH_DP * resources.displayMetrics.density / 2f
+                    val indicatorClip = canvas.save()
+                    canvas.clipRect(resizeTable.clip)
+                    paint.style = Paint.Style.FILL
+                    paint.color = resizeTable.surface.style.resizeHandleColor
+                    canvas.drawRect(resizeX - halfWidth, resizeTable.bounds.top,
+                        resizeX + halfWidth, resizeTable.bounds.bottom, paint)
+                    canvas.restoreToCount(indicatorClip)
                 }
                 visible.size
             }

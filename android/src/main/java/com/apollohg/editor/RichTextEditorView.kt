@@ -99,6 +99,8 @@ class RichTextEditorView @JvmOverloads constructor(
                 }
                 pendingAtomAnchor = null
             }
+            if (ev.actionMasked != MotionEvent.ACTION_DOWN &&
+                editorTableSurface.resizeClaimsGesture(ev, ev.x - downX, ev.y - downY)) return false
             if (atomDown && ev.actionMasked == MotionEvent.ACTION_MOVE) {
                 val dx = kotlin.math.abs(ev.x - downX)
                 val dy = kotlin.math.abs(ev.y - downY)
@@ -141,10 +143,14 @@ class RichTextEditorView @JvmOverloads constructor(
         private var nativeTableSelectionGesture = false
 
         override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
-            if (editorTableSurface.handleDragActive()) return true
+            if (editorTableSurface.dragActive()) return true
+            if (event.actionMasked != MotionEvent.ACTION_DOWN &&
+                editorTableSurface.resizeClaimsGesture(event, event.x - tableDownX, event.y - tableDownY)) {
+                return editorTableSurface.dragActive()
+            }
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    if (editorTableSurface.startHandleDrag(event)) return true
+                    if (editorTableSurface.beginFrameGesture(event)) return true
                     tableDownX = event.x
                     tableDownY = event.y
                     routingTableDrag = false
@@ -173,7 +179,10 @@ class RichTextEditorView @JvmOverloads constructor(
         }
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
-            if (editorTableSurface.handleDragActive()) return editorTableSurface.onHandleTouch(event)
+            if (event.actionMasked != MotionEvent.ACTION_DOWN &&
+                editorTableSurface.resizeClaimsGesture(event, event.x - tableDownX, event.y - tableDownY) &&
+                !editorTableSurface.dragActive()) return true
+            if (editorTableSurface.dragActive()) return editorTableSurface.onDragTouch(event)
             if (routingTableDrag) {
                 val handled = if (event.actionMasked == MotionEvent.ACTION_MOVE &&
                     event.eventTime == forwardedMoveTime) true else forwardTableGesture(event)
@@ -919,7 +928,7 @@ class RichTextEditorView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
-        editorTableSurface.cancelHandleDrag()
+        editorTableSurface.cancelActiveDrag()
         invalidateAtomMeasurements()
         editorTableSurface.clear()
         onBeforeDetachedFromWindow?.invoke()

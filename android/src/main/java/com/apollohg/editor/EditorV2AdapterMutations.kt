@@ -161,6 +161,7 @@ internal fun EditorV2Adapter.performMutation(
     postSelectionMirror: IntArray? = null,
     includeSelectionInUpdate: Boolean = false,
     adoptEngineSelection: Boolean = false,
+    retainRenderPatchBase: Boolean = false,
     call: () -> EditorV2CallResult<String>
 ): String? {
     if (destroyed) {
@@ -192,7 +193,7 @@ internal fun EditorV2Adapter.performMutation(
             val changed = when (outcome) {
                 is MutationOutcome.Transaction -> {
                     baseDocumentRevision = outcome.revision
-                    invalidateCachedAtomicState(post ?: pre)
+                    if (!retainRenderPatchBase) invalidateCachedAtomicState(post ?: pre)
                     outcome.changed
                 }
 
