@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import com.apollohg.editor.tables.EditorTableSurface
 import com.apollohg.editor.tables.TableGestureAxis
+import com.apollohg.editor.tables.TableLayoutDirection
 import kotlin.math.roundToInt
 
 internal data class AtomLayoutPosition(
@@ -797,6 +798,14 @@ class RichTextEditorView @JvmOverloads constructor(
         refreshOverlays()
         requestLayout()
     }
+
+    internal var tableDirection: TableLayoutDirection? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            editorTableSurface.hostTableDirection = value
+            editorTableSurface.refresh()
+        }
 
     fun setImageResizingEnabled(enabled: Boolean) {
         if (imageResizingEnabled == enabled) return

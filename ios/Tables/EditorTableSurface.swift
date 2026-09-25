@@ -99,6 +99,12 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private var presentationRevision: UInt64?
     private var preparedWidth: CGFloat = 0
     private var appearanceRevision: UInt64 = 0
+    var hostTableDirection: TableLayoutDirection? {
+        didSet {
+            guard oldValue != hostTableDirection else { return }
+            invalidateAppearance()
+        }
+    }
     private var preparedAppearanceRevision: UInt64?
     private var mountedTableFrames: [String: CGRect] = [:]
     private var mountedSurfaces: [String: ViewerTableSurface] = [:]
@@ -805,6 +811,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         guard host.textView.applyUpdateJSON(update),
               activeDrag === drag, validHandleDrag(drag)
         else { cancelHandleDrag(); return }
+        host.textView.editorDelegate?.editorTextView(host.textView, selectionDidChange: anchor, head: head)
     }
 
     private func retargetResizeDrag(_ drag: ResizeDrag) {
@@ -949,6 +956,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             semanticGeneration: "editor-table"
         )
         theme.contentInsets = .zero
+        theme.tableDirection = hostTableDirection
         let appearanceDigest = "editor-table-\(appearanceRevision)-\(textView.renderAppearanceRevision)"
         return tableIDs.reduce(into: [:]) { entries, tableID in
             guard var table = presentation.tableRecords[tableID] else { return }

@@ -169,7 +169,7 @@ final class CoreTextProseLayoutEngine {
                     record: record,
                     viewportWidth: tableWidth,
                     style: theme.tableStyle,
-                    direction: table.direction == "rtl" ? .rightToLeft : (table.direction == "ltr" ? .leftToRight : UIView.userInterfaceLayoutDirection(for: .unspecified) == .rightToLeft ? .rightToLeft : .leftToRight),
+                    direction: TableLayoutDirection.resolve(declared: table.direction, host: theme.tableDirection),
                     displayScale: displayScale,
                     themeDigest: key.themeDigest,
                     fontEnvironmentRevision: Int(key.fontEnvironmentRevision),

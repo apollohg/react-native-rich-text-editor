@@ -4,8 +4,11 @@ import XCTest
 final class EditorTableInputTests: XCTestCase {
     private final class UpdateSpy: EditorTextViewDelegate {
         var updates: [String] = []
+        var selections: [[UInt32]] = []
 
-        func editorTextView(_ textView: EditorTextView, selectionDidChange anchor: UInt32, head: UInt32) {}
+        func editorTextView(_ textView: EditorTextView, selectionDidChange anchor: UInt32, head: UInt32) {
+            selections.append([anchor, head])
+        }
         func editorTextView(_ textView: EditorTextView, didReceiveUpdate updateJSON: String) {
             updates.append(updateJSON)
         }
@@ -187,6 +190,73 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(fixture.adapter.cachedHistoryState?.canRedo, beforeHistory.canRedo)
             fixture.surface.cancelHandleDrag()
         }
+    }
+
+    func testHandleDragReportsTheCellRectangleThroughTheSelectionDelegate() throws {
+        try withMountedHandles(document: fourCellDocument, anchorIndex: 0, headIndex: 0) { fixture in
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
+            fixture.surface.updateHandleDrag(at: try fixture.hostPoint(inCell: 3))
+            fixture.surface.cancelHandleDrag()
+
+            XCTAssertEqual(fixture.updates.selections, [[fixture.positions[0], fixture.positions[3]]],
+                           "the delegate receives the new cell endpoints in document positions")
+            let state = try XCTUnwrap(fixture.adapter.currentStateJSON())
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(state.utf8)) as? [String: Any])
+            let selection = try XCTUnwrap(object["selection"] as? [String: Any])
+            XCTAssertEqual(selection["type"] as? String, "cell", "the state published beside the event keeps the rectangle")
+            XCTAssertEqual(try XCTUnwrap(EditorCellSelection.endpointPositions(selection)).0, fixture.positions[0])
+            XCTAssertEqual(try XCTUnwrap(EditorCellSelection.endpointPositions(selection)).1, fixture.positions[3])
+        }
+    }
+
+    func testHostTableDirectionMirrorsUndeclaredTablesAndYieldsToDeclaredDirection() throws {
+        try withMountedTable(document: fixedWidthFourCellDocument, cellSelection: nil) { fixture in
+            XCTAssertEqual(try fixture.presentedCell(0).surface.direction, .leftToRight)
+            XCTAssertLessThanOrEqual(try fixture.presentedCell(0).bounds.maxX, try fixture.presentedCell(1).bounds.minX + 0.5)
+
+            fixture.view.tableDirection = .rightToLeft
+            fixture.view.layoutIfNeeded()
+
+            XCTAssertEqual(try fixture.presentedCell(0).surface.direction, .rightToLeft)
+            XCTAssertLessThanOrEqual(try fixture.presentedCell(1).bounds.maxX, try fixture.presentedCell(0).bounds.minX + 0.5,
+                                     "the host direction lays logical column 0 out on the right")
+            let first = try fixture.presentedCell(0)
+            XCTAssertEqual(fixture.drawing.hitResizeEdge(at: CGPoint(x: first.bounds.minX, y: first.bounds.midY))?.edge.column, 0)
+
+            fixture.view.tableDirection = nil
+            fixture.view.layoutIfNeeded()
+
+            XCTAssertLessThanOrEqual(try fixture.presentedCell(0).bounds.maxX, try fixture.presentedCell(1).bounds.minX + 0.5,
+                                     "clearing the host direction restores the platform direction")
+        }
+        let config = tableConfig.replacingOccurrences(
+            of: #""tableRole":"table","attrs":{"class":{"default":null}}"#,
+            with: #""tableRole":"table","attrs":{"class":{"default":null},"dir":{"default":null}}"#
+        )
+        let declaredLTR = fixedWidthFourCellDocument.replacingOccurrences(
+            of: #"{"type":"table","content""#, with: #"{"type":"table","attrs":{"dir":"ltr"},"content""#
+        )
+        try withMountedTable(document: declaredLTR, configJSON: config, cellSelection: nil) { fixture in
+            fixture.view.tableDirection = .rightToLeft
+            fixture.view.layoutIfNeeded()
+
+            XCTAssertEqual(try fixture.presentedCell(0).surface.direction, .leftToRight,
+                           "a declared table direction outranks the host direction")
+        }
+    }
+
+    func testTableDirectionPropReachesTheEditorAndIgnoresUnknownValues() {
+        let view = NativeEditorExpoView(appContext: nil)
+        XCTAssertNil(view.richTextView.tableDirection)
+        view.setTableDirection("rtl")
+        XCTAssertEqual(view.richTextView.tableDirection, .rightToLeft)
+        view.setTableDirection("ltr")
+        XCTAssertEqual(view.richTextView.tableDirection, .leftToRight)
+        view.setTableDirection("auto")
+        XCTAssertNil(view.richTextView.tableDirection)
+        view.setTableDirection("rtl")
+        view.setTableDirection(nil)
+        XCTAssertNil(view.richTextView.tableDirection)
     }
 
     func testMountedAnchorDragCrossesHeadAndKeepsSourceRoles() throws {

@@ -302,7 +302,7 @@ func preparedCellShapeKey(
         contentKey: contentKey,
         widthPixels: widthPixels,
         scaleBits: key.displayScaleBits,
-        styleDigest: "\(theme.cellShapeStyleDigest):\(key.nativeFontRevision):\(key.fontEnvironmentRevision):\(Double(theme.fontScale).bitPattern)",
+        styleDigest: "\(theme.cellShapeStyleDigest):\(key.nativeFontRevision):\(key.fontEnvironmentRevision):\(Double(theme.fontScale).bitPattern):\(theme.tableDirection?.rawValue ?? "")",
         atomGeometryDigest: atoms.joined(separator: "|"),
         imageGeometryDigest: images.joined(separator: "|")
     )

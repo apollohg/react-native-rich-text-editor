@@ -789,6 +789,9 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
             Prop("allowImageResizing") { (view: NativeEditorExpoView, allowImageResizing: Bool) in
                 view.setAllowImageResizing(allowImageResizing)
             }
+            Prop("tableDirection") { (view: NativeEditorExpoView, tableDirection: String?) in
+                view.setTableDirection(tableDirection)
+            }
             Prop("imageLoadingPolicyJson") { (view: NativeEditorExpoView, json: String?) in
                 view.setImageLoadingPolicyJson(json)
             }

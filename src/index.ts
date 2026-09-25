@@ -303,6 +303,15 @@ export {
     type NativeEditorError,
 } from './NativeEditorBoundaryError';
 
+export type {
+    TableCellSelection,
+    TableCellStep,
+    TableCommand,
+    TableDirection,
+    TableEdge,
+    TableHeaderTarget,
+} from './TableTypes';
+
 export type { AtomViewport } from './AtomHost';
 
 export {

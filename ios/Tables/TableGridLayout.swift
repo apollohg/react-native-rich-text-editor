@@ -1,6 +1,13 @@
 import UIKit
 
-enum TableLayoutDirection { case leftToRight, rightToLeft }
+enum TableLayoutDirection: String {
+    case leftToRight = "ltr", rightToLeft = "rtl"
+
+    static func resolve(declared: String?, host: TableLayoutDirection?) -> TableLayoutDirection {
+        declared.flatMap(TableLayoutDirection.init(rawValue:)) ?? host
+            ?? (UIView.userInterfaceLayoutDirection(for: .unspecified) == .rightToLeft ? .rightToLeft : .leftToRight)
+    }
+}
 
 func tablePhysicalX(logicalX: CGFloat, width: CGFloat, totalWidth: CGFloat, rtl: Bool) -> CGFloat {
     rtl ? totalWidth - logicalX - width : logicalX

@@ -6,6 +6,7 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
+import com.apollohg.editor.tables.TableLayoutDirection
 import com.apollohg.editor.tables.TableStyle
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import com.apollohg.editor.viewer.TableResizeEdge
@@ -49,6 +50,7 @@ internal class EditorTableColumnResizeTest {
     ) {
         private var eventTime = 0L
         val published = mutableListOf<String>()
+        val selections = mutableListOf<Pair<Int, Int>>()
 
         fun cell(index: Int): ViewerTablePresentedCell = drawing.presentedTableCells().first {
             it.surface.sourceTable?.tablePos?.let { position -> "t$position" } == tableId &&
@@ -187,7 +189,9 @@ internal class EditorTableColumnResizeTest {
                 override fun onEditorUpdate(updateJSON: String) {
                     fixture.published += updateJSON
                 }
-                override fun onSelectionChanged(anchor: Int, head: Int) = Unit
+                override fun onSelectionChanged(anchor: Int, head: Int) {
+                    fixture.selections += anchor to head
+                }
             }
             block(fixture)
         } finally {
@@ -406,6 +410,53 @@ internal class EditorTableColumnResizeTest {
             assertTrue("committing keeps the bound cell input", fixture.view.activeTextInput === input)
             assertEquals(inputWidth + 50, input.layoutParams.width)
         }
+
+    @Test
+    fun `handle drag reports the cell rectangle through the selection listener`() =
+        withMountedTable(fixedWidthGrid, cellSelection = 0 to 0) { fixture ->
+            val head = fixture.drawing.selectionHandles().single { it.role == TableSelectionHandleRole.HEAD }
+            val target = fixture.cell(3).bounds
+
+            fixture.drag(head.x to head.y, target.centerX() to target.centerY())
+
+            assertEquals("the listener receives the new cell endpoints in document positions",
+                listOf(fixture.positions[0] to fixture.positions[3]), fixture.selections)
+            val state = JSONObject(requireNotNull(fixture.adapter.currentStateJson()))
+                .getJSONObject("selection")
+            assertEquals("the state published beside the event keeps the rectangle",
+                listOf("cell", fixture.positions[0], fixture.positions[3]),
+                listOf(state.getString("type"), state.getInt("anchorCell"), state.getInt("headCell")))
+        }
+
+    @Test
+    fun `host table direction mirrors undeclared tables and yields to a declared direction`() {
+        withMountedTable(fixedWidthGrid) { fixture ->
+            assertTrue("an undeclared table defaults to LTR", fixture.cell(0).bounds.right <= fixture.cell(1).bounds.left + 0.5f)
+
+            fixture.view.tableDirection = TableLayoutDirection.RIGHT_TO_LEFT
+
+            assertTrue("the host direction lays logical column 0 out on the right",
+                fixture.cell(0).surface.isRightToLeft &&
+                    fixture.cell(1).bounds.right <= fixture.cell(0).bounds.left + 0.5f)
+            val edge = fixture.trailingEdge(0)
+            assertEquals(TableResizeEdge(fixture.tableId, 0),
+                fixture.drawing.hitResizeEdge(edge.first, edge.second))
+
+            fixture.view.tableDirection = null
+
+            assertTrue("clearing the host direction restores LTR",
+                !fixture.cell(0).surface.isRightToLeft &&
+                    fixture.cell(0).bounds.right <= fixture.cell(1).bounds.left + 0.5f)
+        }
+        val declaredLtr = fixedWidthGrid.replaceFirst("{\"type\":\"table\",", "{\"type\":\"table\",\"attrs\":{\"dir\":\"ltr\"},")
+        withMountedTable(declaredLtr, schemaConfig = rtlConfig) { fixture ->
+            fixture.view.tableDirection = TableLayoutDirection.RIGHT_TO_LEFT
+
+            assertTrue("a declared table direction outranks the host direction",
+                !fixture.cell(0).surface.isRightToLeft &&
+                    fixture.cell(0).bounds.right <= fixture.cell(1).bounds.left + 0.5f)
+        }
+    }
 
     @Test
     fun `selection handle takes precedence over a shared trailing edge`() =

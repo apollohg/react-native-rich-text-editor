@@ -11,14 +11,13 @@ use crate::selection::Selection;
 use crate::tables::commands::{
     TableCommand, TableEdge, TableHeaderTarget, DEFAULT_INSERTED_TABLE_COLUMNS,
     DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS, DEFAULT_TAB_APPENDS_A_ROW,
-    UNSPECIFIED_TABLE_COLUMN_WIDTH,
 };
 use crate::tables::interchange::CellStep;
 use crate::transform::{Step, Transaction};
 
 const FIXED_COMMAND_ENTRIES: usize = 8;
 const HEADING_COMMAND_LEVELS: u8 = 6;
-const TABLE_COMMAND_ENTRIES: usize = 19;
+const TABLE_COMMAND_ENTRIES: usize = 18;
 pub(crate) const ACTIVE_COMMAND_ENTRIES: usize =
     FIXED_COMMAND_ENTRIES + HEADING_COMMAND_LEVELS as usize + TABLE_COMMAND_ENTRIES;
 
@@ -338,14 +337,6 @@ fn table_command_surface() -> [(&'static str, TableCommand); TABLE_COMMAND_ENTRI
         ("selectTableColumns", TableCommand::SelectTableColumns),
         ("mergeTableCells", TableCommand::MergeTableCells),
         ("splitTableCell", TableCommand::SplitTableCell),
-        (
-            "setTableColumnWidth",
-            TableCommand::SetTableColumnWidth {
-                width: UNSPECIFIED_TABLE_COLUMN_WIDTH,
-                column: None,
-                table_pos: None,
-            },
-        ),
         (
             "moveToNextTableCell",
             TableCommand::MoveToAdjacentCell {

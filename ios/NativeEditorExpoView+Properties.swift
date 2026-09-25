@@ -199,6 +199,10 @@ extension NativeEditorExpoView {
         richTextView.allowImageResizing = allowImageResizing
     }
 
+    func setTableDirection(_ tableDirection: String?) {
+        richTextView.tableDirection = tableDirection.flatMap(TableLayoutDirection.init(rawValue:))
+    }
+
     func emitContentHeightIfNeeded(force: Bool = false, measuredHeight: CGFloat? = nil) {
         let originatingEditorId = richTextView.editorId
         guard heightBehavior == .autoGrow else { return }

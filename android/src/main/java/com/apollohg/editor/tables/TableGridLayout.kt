@@ -5,6 +5,22 @@ import uniffi.editor_core.TableCompatibilityDiagnostic
 import uniffi.editor_core.TableRenderFailure
 import kotlin.math.ceil
 
+internal enum class TableLayoutDirection {
+    LEFT_TO_RIGHT,
+    RIGHT_TO_LEFT;
+
+    companion object {
+        fun fromRaw(value: String?): TableLayoutDirection? = when (value) {
+            "ltr" -> LEFT_TO_RIGHT
+            "rtl" -> RIGHT_TO_LEFT
+            else -> null
+        }
+
+        fun isRightToLeft(declared: String?, host: TableLayoutDirection?): Boolean =
+            (fromRaw(declared) ?: host) == RIGHT_TO_LEFT
+    }
+}
+
 internal fun tablePhysicalX(logicalX: Float, width: Float, totalWidth: Float, rtl: Boolean): Float =
     if (rtl) totalWidth - logicalX - width else logicalX
 

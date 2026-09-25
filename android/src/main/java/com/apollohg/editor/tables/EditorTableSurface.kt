@@ -81,7 +81,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
     private data class PreparationKey(val adapter: EditorV2Adapter, val revision: ULong,
                                       val width: Int, val appearanceRevision: Long,
                                       val documentGeneration: Long,
-                                      val resizePreview: TableResizePreview?)
+                                      val resizePreview: TableResizePreview?,
+                                      val tableDirection: TableLayoutDirection?)
+
+    var hostTableDirection: TableLayoutDirection? = null
 
     val drawingView = PreparedProseDrawingView(host.context).apply {
         isFocusable = false
@@ -430,7 +433,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         drag.epoch = requireNotNull(drag.adapter.positionEpoch)
         if (!host.editorEditText.applyUpdateJSON(update) || !validHandleDrag(drag)) {
             cancelActiveDrag()
+            return
         }
+        host.editorEditText.editorListener?.onSelectionChanged(anchor, head)
     }
 
     private fun updateResizePreview(drag: ResizeDrag) {
@@ -554,7 +559,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             input.requestFocus()
         }
         val nextKey = PreparationKey(adapter, revision, width, input.renderAppearanceRevision,
-            adapter.tablePresentationDocumentGeneration, resizePreview)
+            adapter.tablePresentationDocumentGeneration, resizePreview, hostTableDirection)
         if (key != nextKey) {
             val records = lowerEditorTableRecords(adapter.cachedTableRecords) ?: run { clear(); return }
             val density = input.resources.displayMetrics.density
@@ -564,7 +569,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
                 ?: com.apollohg.editor.EditorTheme(text = base)
             val preparedTheme = PreparedProseTheme.resolve(null, density,
                 semanticGeneration = "editor-table", editorTheme = theme)
-                .copy(insetTopPx = 0, insetRightPx = 0, insetBottomPx = 0, insetLeftPx = 0)
+                .copy(insetTopPx = 0, insetRightPx = 0, insetBottomPx = 0, insetLeftPx = 0,
+                    tableDirection = hostTableDirection)
             val engine = StaticLayoutAndroidProseLayoutEngine()
             val presentationIdentities = adapter.cachedTableRecords.mapValues { (_, record) ->
                 "${adapter.editorId}:${adapter.tablePresentationDocumentGeneration}:${record.getString("sourceId")}"
@@ -586,7 +592,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
                     listOf(ViewerBlock("table", 0, false, null, null, emptyList(), table = table)),
                     false, 256, tableAttributes = adapter.cachedTableAttributes,
                     tableRecords = records, tablePresentationIdentities = presentationIdentities)
-                val layoutKey = ProseLayoutKey(semantic, width, "editor-table-${input.renderAppearanceRevision}",
+                val layoutKey = ProseLayoutKey(semantic, width,
+                    "editor-table-${input.renderAppearanceRevision}-$hostTableDirection",
                     0, 0, density.toBits().toLong(), revision.toLong(), semantic)
                 val result = engine.prepare(document, layoutKey, preparedTheme, width, density, false)
                 val block = result.blocks.firstOrNull { it.tableSurface != null }

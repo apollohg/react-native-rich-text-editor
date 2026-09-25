@@ -2343,17 +2343,8 @@ fn resizing_declines_when_every_covering_cell_already_carries_the_width() {
 }
 
 #[test]
-fn resizing_stays_available_on_a_column_that_already_carries_the_requested_width() {
+fn the_published_surface_makes_no_width_free_resize_claim() {
     let mut engine = seeded(resize_fixture());
-    select_cell(&mut engine, 1);
-    applied(
-        &mut engine,
-        TableCommand::SetTableColumnWidth {
-            width: MIN_TABLE_COLUMN_WIDTH,
-            column: None,
-            table_pos: None,
-        },
-    );
     select_cell(&mut engine, 1);
     let openings = cell_openings(&engine);
     let selection = Selection::cell(openings[1], openings[1]);
@@ -2367,20 +2358,8 @@ fn resizing_stays_available_on_a_column_that_already_carries_the_requested_width
 
     assert_eq!(
         commands.get("setTableColumnWidth"),
-        Some(&true),
-        "a resizable column stays advertised even when the advertised width is a no-op",
-    );
-    assert_eq!(
-        run(
-            &mut engine,
-            TableCommand::SetTableColumnWidth {
-                width: MIN_TABLE_COLUMN_WIDTH,
-                column: None,
-                table_pos: None,
-            },
-        ),
-        Ok(None),
-        "the planner still declines the width the column already carries",
+        None,
+        "a resize targets an explicit table, column and width, so the selection cannot vouch for it",
     );
 }
 

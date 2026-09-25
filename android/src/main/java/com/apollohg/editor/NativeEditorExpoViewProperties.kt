@@ -4,6 +4,7 @@ import android.graphics.RectF
 import android.os.Build
 import android.widget.LinearLayout.LayoutParams
 import com.apollohg.editor.NativeEditorExpoView.ToolbarPlacement
+import com.apollohg.editor.tables.TableLayoutDirection
 import org.json.JSONObject
 
 private fun NativeEditorExpoView.forEachTextInput(block: (EditorEditText) -> Unit) {
@@ -192,6 +193,10 @@ internal fun NativeEditorExpoView.setToolbarPlacementImpl(rawToolbarPlacement: S
 
 internal fun NativeEditorExpoView.setAllowImageResizingImpl(allowImageResizing: Boolean) {
     richTextView.setImageResizingEnabled(allowImageResizing)
+}
+
+internal fun NativeEditorExpoView.setTableDirectionImpl(tableDirection: String?) {
+    richTextView.tableDirection = TableLayoutDirection.fromRaw(tableDirection)
 }
 
 internal fun NativeEditorExpoView.setToolbarItemsJsonImpl(toolbarItemsJson: String?) {

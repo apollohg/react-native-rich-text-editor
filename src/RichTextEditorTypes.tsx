@@ -6,6 +6,7 @@ import {
     type Selection,
 } from './NativeEditorBridge';
 import { type ImageNodeAttributes } from './schemas';
+import { type TableCommand, type TableDirection } from './TableTypes';
 import { type EditorToolbarHeadingLevel, type EditorToolbarItem } from './EditorToolbar';
 import { type EditorImageLoadingPolicy } from './ImageLoadingPolicy';
 import { type RichTextEditorFocusPreservingRefs } from './useFocusPreservingFrames';
@@ -204,6 +205,7 @@ export interface RichTextEditorProps {
     atomViewport?: AtomViewport;
     /** Remote awareness selections rendered as native overlays. */
     remoteSelections?: readonly RemoteSelectionDecoration[];
+    tableDirection?: TableDirection;
     /**
      * Shared v2 document session : the only construction path. The native
      * view binds to the same session (its editorId is passed straight to the
@@ -287,6 +289,7 @@ export interface RichTextEditorRef {
     canUndo(): boolean;
     /** Check if redo is available. */
     canRedo(): boolean;
+    runTableCommand(command: TableCommand): Promise<void>;
 }
 
 export interface RichTextEditorCaretRect {

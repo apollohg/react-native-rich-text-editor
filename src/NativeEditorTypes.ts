@@ -364,6 +364,12 @@ export interface NativeEditorPositionEnvelope {
     affinity?: NativeEditorPositionAffinity;
 }
 
+export interface NativeEditorCellPositionEnvelope {
+    offset: number;
+    kind: NativeEditorOffsetKind | 'document';
+    affinity?: NativeEditorPositionAffinity;
+}
+
 export type NativeEditorSelectionEnvelope =
     | {
           type: 'text';
@@ -371,6 +377,11 @@ export type NativeEditorSelectionEnvelope =
           head: NativeEditorPositionEnvelope;
       }
     | { type: 'node'; at: NativeEditorPositionEnvelope }
+    | {
+          type: 'cell';
+          anchorCell: NativeEditorCellPositionEnvelope;
+          headCell: NativeEditorCellPositionEnvelope;
+      }
     | { type: 'atom'; docPos: number; edge: 'node' | 'before' | 'after' }
     | { type: 'all' };
 

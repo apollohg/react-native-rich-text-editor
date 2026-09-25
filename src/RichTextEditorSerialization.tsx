@@ -9,6 +9,7 @@ import {
     type ReadonlyActiveState,
     type Selection,
 } from './NativeEditorBridge';
+import { nativeEditorV2U32 } from './NativeEditorResultNormalization';
 import { atomSelected, type AtomInstance } from './atomInstances';
 import { type EditorToolbarFrame, type EditorToolbarGroupChildItem, type EditorToolbarItem } from './EditorToolbar';
 import { IMAGE_NODE_NAME } from './schemas';
@@ -133,12 +134,11 @@ export function parseSelectionFromUpdate(value: unknown): Selection | null {
         return { type: 'text', anchor: value.anchor, head: value.head };
     }
 
-    if (
-        value.type === 'cell' &&
-        typeof value.anchorCell === 'number' &&
-        typeof value.headCell === 'number'
-    ) {
-        return { type: 'cell', anchorCell: value.anchorCell, headCell: value.headCell };
+    if (value.type === 'cell') {
+        const anchorCell = nativeEditorV2U32(value.anchorCell);
+        const headCell = nativeEditorV2U32(value.headCell);
+
+        return anchorCell == null || headCell == null ? null : { type: 'cell', anchorCell, headCell };
     }
 
     return null;

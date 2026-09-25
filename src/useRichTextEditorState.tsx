@@ -74,6 +74,7 @@ export function useRichTextEditorState(
         virtualizeAtoms = false,
         atomViewport,
         remoteSelections,
+        tableDirection,
         allowImageResizing = true,
         onContentChange,
         onContentChangeJSON,
@@ -654,6 +655,7 @@ export function useRichTextEditorState(
         autoCorrect,
         keyboardType,
         allowImageResizing,
+        tableDirection,
         onToolbarAction,
     };
 }

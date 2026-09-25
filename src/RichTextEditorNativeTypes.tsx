@@ -12,6 +12,7 @@ import {
     type RichTextEditorToolbarPlacement,
     type RichTextEditorHeightBehavior,
 } from './RichTextEditorTypes';
+import { type TableDirection } from './TableTypes';
 
 export interface NativeExternalTextCompositionEvent {
     editorId: string;
@@ -50,6 +51,7 @@ export interface NativeEditorViewProps {
     toolbarItemsJson?: string;
     toolbarFrameJson?: string;
     remoteSelectionsJson?: string;
+    tableDirection?: TableDirection;
     editorUpdateJson?: string;
     editorUpdateResetJson?: string;
     editorUpdateEditorId?: string;

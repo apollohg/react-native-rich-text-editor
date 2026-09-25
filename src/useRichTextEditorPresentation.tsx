@@ -78,6 +78,7 @@ export function useRichTextEditorPresentation(
         | 'autoCorrect'
         | 'keyboardType'
         | 'allowImageResizing'
+        | 'tableDirection'
         | 'toolbarFrameOwnerId'
         | 'onToolbarAction'
     > &
@@ -163,6 +164,7 @@ export function useRichTextEditorPresentation(
         autoCorrect,
         keyboardType,
         allowImageResizing,
+        tableDirection,
         handleEditorUpdate,
         handleEditorError,
         handleExternalTextCompositionEnd,
@@ -510,6 +512,7 @@ export function useRichTextEditorPresentation(
                 toolbarItemsJson={toolbarItemsJson}
                 toolbarFrameJson={toolbarFrameJson}
                 remoteSelectionsJson={remoteSelectionsJson}
+                tableDirection={tableDirection}
                 editorUpdateJson={currentPushedUpdate?.json}
                 editorUpdateResetJson={currentPushedUpdate?.resetJson}
                 editorUpdateEditorId={currentPushedUpdate?.editorId}

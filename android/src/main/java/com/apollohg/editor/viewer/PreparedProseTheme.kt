@@ -26,6 +26,7 @@ import com.apollohg.editor.EditorTextStyle
 import com.apollohg.editor.EditorTheme
 import com.apollohg.editor.OrderedListMarkerFormatter
 import com.apollohg.editor.ProseViewerError
+import com.apollohg.editor.tables.TableLayoutDirection
 import java.text.Bidi
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -128,7 +129,8 @@ internal data class PreparedProseTheme(
     val atomPaddingVerticalPx: Int,
     val viewerAtoms: ViewerAtomConfiguration? = null,
     val sourceTheme: EditorTheme? = null,
-    val codeHighlighting: com.apollohg.editor.NativeCodeHighlightingConfig? = null
+    val codeHighlighting: com.apollohg.editor.NativeCodeHighlightingConfig? = null,
+    val tableDirection: TableLayoutDirection? = null
 ) {
     val tableStyle: com.apollohg.editor.tables.TableStyle
         get() = sourceTheme?.table ?: com.apollohg.editor.tables.TableStyle()

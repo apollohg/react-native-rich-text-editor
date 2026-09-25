@@ -559,6 +559,9 @@ class NativeEditorModule : Module() {
             Prop("allowImageResizing") { view: NativeEditorExpoView, allowImageResizing: Boolean ->
                 view.setAllowImageResizing(allowImageResizing)
             }
+            Prop("tableDirection") { view: NativeEditorExpoView, tableDirection: String? ->
+                view.setTableDirection(tableDirection)
+            }
             Prop("imageLoadingPolicyJson") { view: NativeEditorExpoView, policyJson: String? ->
                 view.setImageLoadingPolicyJson(policyJson)
             }

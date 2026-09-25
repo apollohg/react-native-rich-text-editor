@@ -455,6 +455,8 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     fun setAllowImageResizing(allowImageResizing: Boolean) =
         setAllowImageResizingImpl(allowImageResizing)
 
+    fun setTableDirection(tableDirection: String?) = setTableDirectionImpl(tableDirection)
+
     fun setToolbarItemsJson(toolbarItemsJson: String?) = setToolbarItemsJsonImpl(toolbarItemsJson)
 
     fun setToolbarFrameJson(toolbarFrameJson: String?) = setToolbarFrameJsonImpl(toolbarFrameJson)

@@ -2,6 +2,8 @@ import type { RenderElement } from './NativeEditorTypes';
 
 export type TableRole = 'table' | 'row' | 'cell' | 'header_cell';
 
+export type TableDirection = 'ltr' | 'rtl';
+
 export type TableRenderFailure =
     | 'gridLimit'
     | 'workLimit'
@@ -49,7 +51,7 @@ export interface TableRenderRecord {
     rows: number;
     columns: number;
     columnWidths: Array<number | null>;
-    direction: 'ltr' | 'rtl' | null;
+    direction: TableDirection | null;
     irregular: boolean;
     readOnlyDescendants: boolean;
     attrsKey: string;
@@ -112,6 +114,29 @@ export interface TableCellSelection {
     anchorCell: number;
     headCell: number;
 }
+
+export type TableEdge = 'before' | 'after';
+
+export type TableHeaderTarget = 'row' | 'column' | 'cell';
+
+export type TableCellStep = -1 | 1;
+
+export type TableCommand =
+    | { type: 'insertTable'; rows?: number; columns?: number; withHeaderRow?: boolean }
+    | { type: 'deleteTable' }
+    | { type: 'addTableRow'; side: TableEdge }
+    | { type: 'deleteTableRows' }
+    | { type: 'addTableColumn'; side: TableEdge }
+    | { type: 'deleteTableColumns' }
+    | { type: 'toggleTableHeader'; target: TableHeaderTarget }
+    | { type: 'mergeTableCells' }
+    | { type: 'splitTableCell' }
+    | { type: 'resizeTableColumn'; tablePos: number; column: number; width: number }
+    | { type: 'selectTableCells'; anchorCell: number; headCell: number }
+    | { type: 'selectTableRows' }
+    | { type: 'selectTableColumns' }
+    | { type: 'clearTableCells' }
+    | { type: 'goToTableCell'; direction: TableCellStep; appendRow: boolean };
 
 export function assertCellPosition(value: number): void {
     if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {

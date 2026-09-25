@@ -193,6 +193,14 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
+    var tableDirection: TableLayoutDirection? {
+        didSet {
+            guard oldValue != tableDirection else { return }
+            tableSurface.hostTableDirection = tableDirection
+            refreshTablePresentation()
+        }
+    }
+
     var heightBehavior: EditorHeightBehavior = .fixed {
         didSet {
             guard oldValue != heightBehavior else { return }

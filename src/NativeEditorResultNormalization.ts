@@ -1,6 +1,8 @@
 import {
+    type NativeEditorBoundaryErrorCode,
     NativeEditorEngineBoundaryError,
     NativeEditorNonRetryableError,
+    NativeEditorOperationError,
     nativeEditorV2ErrorToException,
     normalizeNativeEditorV2Error,
 } from './NativeEditorBoundaryError';
@@ -573,6 +575,22 @@ export function destroyedHandleError(): NativeEditorNonRetryableError {
         domain: 'lifecycle',
         code: 'ENGINE_DESTROYED',
         message: ERR_V2_DESTROYED,
+        requestId: null,
+        operationIndex: null,
+        limit: null,
+        actual: null,
+        details: null,
+    });
+}
+
+export function localOperationError(
+    code: NativeEditorBoundaryErrorCode,
+    message: string,
+): NativeEditorOperationError {
+    return new NativeEditorOperationError({
+        domain: 'operation',
+        code,
+        message,
         requestId: null,
         operationIndex: null,
         limit: null,

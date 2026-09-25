@@ -142,6 +142,7 @@ struct PreparedProseTheme {
     let link: EditorLinkTheme?
     let mention: EditorMentionTheme?
     let mentionOverrides: [String: Any]?
+    var tableDirection: TableLayoutDirection? = nil
 
     static func resolve(
         themeJSON: String?,

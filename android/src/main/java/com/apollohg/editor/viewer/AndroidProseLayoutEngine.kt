@@ -31,6 +31,7 @@ import com.apollohg.editor.OrderedListMarkerFormatter
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.applyPhysicalTextAlignment
 import com.apollohg.editor.tables.TableGridRecord
+import com.apollohg.editor.tables.TableLayoutDirection
 import com.apollohg.editor.tables.physical
 import com.apollohg.editor.tables.ViewerTableSurface
 import java.text.Bidi
@@ -424,7 +425,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     TableGridRecord.from(table, document.semanticKey).physical(density),
                     tableWidth.toFloat(),
                     theme.tableStyle.physical(density),
-                    table.direction == "rtl",
+                    TableLayoutDirection.isRightToLeft(table.direction, theme.tableDirection),
                     displayScale = 1f,
                     sourceTable = table,
                     sourceAttributes = document.tableAttributes
@@ -796,7 +797,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     TableGridRecord.from(table, document.semanticKey).physical(density),
                     tableBounds.width().toFloat(),
                     theme.tableStyle.physical(density),
-                    table.direction == "rtl",
+                    TableLayoutDirection.isRightToLeft(table.direction, theme.tableDirection),
                     displayScale = 1f,
                     sourceTable = table,
                     sourceAttributes = document.tableAttributes

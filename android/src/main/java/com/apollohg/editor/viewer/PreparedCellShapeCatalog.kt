@@ -61,7 +61,8 @@ internal fun cellShapeKey(
         theme.orderedListMarker?.let { marker ->
             marker.schemes.joinToString(",") { it.name } + ":${marker.suffix}"
         },
-        theme.sourceTheme?.styleSheet?.shapingDigest()
+        theme.sourceTheme?.styleSheet?.shapingDigest(),
+        theme.tableDirection
     ).joinToString("|") + "|$nativeFontRevision|$fontEnvironmentRevision"
     return PreparedCellShapeKey(
         contentKey,
