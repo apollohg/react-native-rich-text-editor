@@ -69,6 +69,8 @@ pub(crate) struct TableActionContext<'a> {
 
 pub(crate) struct TableActionCandidate<'a> {
     pub document: &'a Document,
+    pub source_document: &'a Document,
+    pub pre_map: &'a StepMap,
     pub table_pos: u32,
     pub anchors: Option<CellAnchorPair>,
     pub selection: Selection,
@@ -121,6 +123,8 @@ pub(crate) fn prepare_table_action(
     let planned = action.plan(
         &TableActionCandidate {
             document: &candidate,
+            source_document: context.document,
+            pre_map: &pre_map,
             table_pos: context.table_pos,
             anchors,
             selection: context.selection.map(&pre_map),

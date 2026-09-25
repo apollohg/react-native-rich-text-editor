@@ -91,6 +91,7 @@ pub enum TableCommand {
     SplitTableCell,
     SetTableColumnWidth {
         width: u32,
+        column: Option<u32>,
     },
     MoveToAdjacentCell {
         step: crate::tables::interchange::CellStep,
@@ -239,6 +240,23 @@ impl<'a> TableTarget<'a> {
             self.projected.cells.get(index)?,
             *self.cell_nodes.get(index)?,
         ))
+    }
+
+    pub(crate) fn synthetic_at(
+        &self,
+        row: u32,
+        column: u32,
+    ) -> Option<&crate::tables::projection::SyntheticRegion> {
+        self.projected.synthetic.iter().find(|region| {
+            row >= region.rect.row
+                && row < region.rect.row.saturating_add(region.rect.rowspan)
+                && column >= region.rect.column
+                && column < region.rect.column.saturating_add(region.rect.colspan)
+        })
+    }
+
+    pub(crate) fn source_cell_positions(&self) -> impl Iterator<Item = u32> + '_ {
+        self.projected.cells.iter().map(|cell| cell.source_pos)
     }
 
     pub(crate) fn covers_same_cell(&self, left: (u32, u32), right: (u32, u32)) -> bool {
@@ -727,6 +745,7 @@ impl TableAction for SplitCellAction {
 
 pub(crate) struct SetColumnWidthAction {
     pub width: u32,
+    pub column: Option<u32>,
 }
 
 impl TableAction for SetColumnWidthAction {
@@ -740,10 +759,28 @@ impl TableAction for SetColumnWidthAction {
         schema: &Schema,
         limits: &ResourceLimits,
     ) -> OperationResult<Option<TableActionOutcome>> {
-        let Some(target) = regular_target(candidate, schema, limits) else {
-            return Ok(None);
-        };
-        resize::plan_set_column_width(&target, self.width).map_err(|error| {
+        let planned = (|| {
+            let Some(target) = regular_target(candidate, schema, limits) else {
+                return Ok(None);
+            };
+            if let Some(column) = self.column {
+                let Some(original) = TableTarget::resolve(
+                    candidate.source_document,
+                    candidate.table_pos,
+                    None,
+                    schema,
+                    limits,
+                    GridRequirement::AsProjected,
+                ) else {
+                    return Ok(None);
+                };
+                if !resize::same_column_sources(&original, &target, column, candidate.pre_map)? {
+                    return Ok(None);
+                }
+            }
+            resize::plan_set_column_width(&target, self.width, self.column, &candidate.selection)
+        })();
+        planned.map_err(|error| {
             crate::tables::command_context::table_shape_operation_error(
                 error,
                 crate::tables::normalize::UNCORRELATED_REQUEST_ID,

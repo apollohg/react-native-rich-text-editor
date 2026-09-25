@@ -342,6 +342,7 @@ fn table_command_surface() -> [(&'static str, TableCommand); TABLE_COMMAND_ENTRI
             "setTableColumnWidth",
             TableCommand::SetTableColumnWidth {
                 width: UNSPECIFIED_TABLE_COLUMN_WIDTH,
+                column: None,
             },
         ),
         (

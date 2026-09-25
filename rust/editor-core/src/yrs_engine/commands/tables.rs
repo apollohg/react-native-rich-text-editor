@@ -326,13 +326,13 @@ pub(super) fn plan(
             None => Ok(CommandPlan::NotApplicable),
             Some(anchor) => scoped_action(&context, &anchor, &selection, &SplitCellAction),
         },
-        TableCommand::SetTableColumnWidth { width } => match anchor {
+        TableCommand::SetTableColumnWidth { width, column } => match anchor {
             None => Ok(CommandPlan::NotApplicable),
             Some(anchor) => scoped_action(
                 &context,
                 &anchor,
                 &selection,
-                &SetColumnWidthAction { width },
+                &SetColumnWidthAction { width, column },
             ),
         },
         TableCommand::MoveToAdjacentCell { step, append_row } => {
