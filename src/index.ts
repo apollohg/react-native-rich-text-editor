@@ -304,3 +304,8 @@ export {
 } from './NativeEditorBoundaryError';
 
 export type { AtomViewport } from './AtomHost';
+
+export {
+    useEditorToolbarMentionState,
+    type EditorToolbarMentionState,
+} from './EditorToolbarRegistry';

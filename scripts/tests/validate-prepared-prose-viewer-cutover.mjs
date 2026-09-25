@@ -225,6 +225,20 @@ for (const path of [
     assert.ok(exists(path), `Fabric implementation header must remain packaged and compiled: ${path}`);
 }
 const measurementsManagerHeader = read('common/cpp/react/renderer/components/PreparedProseViewer/PreparedProseMeasurementsManager.h');
+const androidMeasurements = read('android/src/main/jni/PreparedProseViewerMeasurementsManager.cpp');
+const androidFinalLayout = androidMeasurements.slice(
+    androidMeasurements.indexOf('void PreparedProseMeasurementsManager::prepareFinalLayout('),
+);
+assert.match(
+    androidFinalLayout,
+    /const auto width = static_cast<jfloat>\(contentWidthPx\) \/ pointScaleFactor;/,
+    'final Android layout must convert physical pixels to DIP before FabricUIManager scales them',
+);
+assert.match(
+    androidFinalLayout,
+    /stateMap\.get\(\),\s*width,\s*width,/,
+    'both final Fabric width constraints must use DIP',
+);
 assert.match(
     measurementsManagerHeader,
     /#include <react\/renderer\/core\/ReactPrimitives\.h>/,

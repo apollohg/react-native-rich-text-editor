@@ -203,6 +203,7 @@ int64_t ComponentTagFromState(
 - (instancetype)initWithFrame:(CGRect)frame
 {
   if (self = [super initWithFrame:frame]) {
+    _props = PreparedProseViewerShadowNode::defaultSharedProps();
     _drawingView = [PREPPreparedProseDrawingView new];
     __weak PREPPreparedProseViewerComponentView *weakSelf = self;
     _drawingView.interactionDelegate = self;

@@ -2,6 +2,41 @@ import ExpoModulesCore
 import XCTest
 
 extension RichTextEditorViewTests {
+    func testMentionInsertedFirstKeepsCaretBesideChip() throws {
+        let editorId = makeV2Editor(configJson: mentionEditorConfigJson())
+        defer { destroyV2Editor(id: editorId) }
+        let view = NativeEditorExpoView()
+        view.frame = CGRect(x: 0, y: 0, width: 320, height: 480)
+        let window = hostNativeEditorExpoView(view)
+        defer { window.isHidden = true }
+        view.setEditorId(editorId)
+        view.setThemeJson(#"{"version":1,"styles":{"text":{"fontSize":17,"lineHeight":26},"mention":{"borderRadius":6}}}"#)
+        view.setAddonsJson(aliceMentionAddonsJson())
+        let textView = view.richTextView.textView
+        textView.becomeFirstResponder()
+        textView.insertText("@al")
+        let query = try XCTUnwrap(view.currentMentionQueryStateForTesting(trigger: "@"))
+        view.setMentionQueryStateForTesting(query)
+        view.setMentionSuggestionsForTesting([aliceMentionSuggestion()])
+        view.triggerMentionSuggestionTapForTesting(at: 0)
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
+
+        var range = NSRange()
+        let chip = try XCTUnwrap(textView.textStorage.attribute(
+            editorMentionBoxAttribute, at: 0, longestEffectiveRange: &range,
+            in: NSRange(location: 0, length: textView.textStorage.length)
+        ) as? EditorMentionRenderedBox)
+        let glyph = textView.layoutManager.glyphIndexForCharacter(at: 0)
+        let fragment = textView.layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let location = textView.layoutManager.location(forGlyphAt: glyph)
+        let chipEnd = textView.textContainerInset.left + fragment.minX + location.x + chip.size.width
+        let position = try XCTUnwrap(textView.selectedTextRange?.end)
+        let caret = textView.caretRect(for: position)
+        let trailingRange = NSRange(location: NSMaxRange(range), length: textView.selectedRange.location - NSMaxRange(range))
+        let trailing = textView.textStorage.attributedSubstring(from: trailingRange).size().width
+        XCTAssertEqual(caret.minX, chipEnd + trailing, accuracy: 1)
+    }
+
     func testMentionSuggestionTapInsertsMentionNode() {
         let editorId = makeV2Editor(configJson: mentionEditorConfigJson())
         defer { destroyV2Editor(id: editorId) }

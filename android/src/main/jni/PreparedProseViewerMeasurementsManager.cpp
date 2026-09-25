@@ -259,7 +259,7 @@ void PreparedProseMeasurementsManager::prepareFinalLayout(
     int32_t contentWidthPx,
     int32_t contentOriginXPx,
     int32_t contentOriginYPx,
-    Float /*pointScaleFactor*/,
+    Float pointScaleFactor,
     uint64_t attachmentRevision,
     uint64_t nativeFontRevision,
     double nativeFontScale,
@@ -308,6 +308,8 @@ void PreparedProseMeasurementsManager::prepareFinalLayout(
     const auto stateMap = make_local(
         reinterpret_cast<ReadableMap::javaobject>(stateNative.get()));
     const auto componentName = make_jstring("PreparedProseViewer");
+    // FabricUIManager converts DIP constraints to physical pixels.
+    const auto width = static_cast<jfloat>(contentWidthPx) / pointScaleFactor;
     auto& leaseBridge = AndroidLeaseLifecycleBridge::processLifetime();
     leaseBridge.beginNativeFinalLayout(
         leaseHandle, contentOriginXPx, contentOriginYPx);
@@ -319,8 +321,8 @@ void PreparedProseMeasurementsManager::prepareFinalLayout(
           localDataMap.get(),
           propsMap.get(),
           stateMap.get(),
-          static_cast<jfloat>(contentWidthPx),
-          static_cast<jfloat>(contentWidthPx),
+          width,
+          width,
           0,
           std::numeric_limits<Float>::infinity());
       leaseBridge.endNativeMeasure();

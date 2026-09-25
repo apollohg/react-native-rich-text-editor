@@ -6,6 +6,13 @@
 # names to the Rust library. Keep these names stable in consuming release builds.
 -keep class com.sun.jna.** { *; }
 -keep class uniffi.editor_core.** { *; }
+-keep class com.apollohg.editor.viewer.FabricLeaseHandleBridge {
+    public static void registerNativeLease(int, int, long);
+    public static void finalizeNativeLease(int, int, long);
+    public static void beginNativeMeasure(long);
+    public static void beginNativeFinalLayout(long, int, int);
+    public static void endNativeMeasure();
+}
 -keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*
 
 # Preserve native editor View class names in consuming release builds so Android

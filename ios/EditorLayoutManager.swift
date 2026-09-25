@@ -17,12 +17,12 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
 
     func layoutManager(_ layoutManager: NSLayoutManager, shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>, properties props: UnsafePointer<NSLayoutManager.GlyphProperty>, characterIndexes: UnsafePointer<Int>, font: UIFont, forGlyphRange glyphRange: NSRange) -> Int {
         guard let storage = textStorage else { return 0 }
-        // Reserve one chip glyph while retaining every canonical UTF-16 offset.
+        // Other attributes can split a chip into runs; reserve its width only once.
         var properties = Array(UnsafeBufferPointer(start: props, count: glyphRange.length))
         var changed = false
         for index in 0..<glyphRange.length {
             var range = NSRange()
-            guard storage.attribute(editorMentionBoxAttribute, at: characterIndexes[index], effectiveRange: &range) is EditorMentionRenderedBox else { continue }
+            guard storage.attribute(editorMentionBoxAttribute, at: characterIndexes[index], longestEffectiveRange: &range, in: NSRange(location: 0, length: storage.length)) is EditorMentionRenderedBox else { continue }
             properties[index] = characterIndexes[index] == range.location && (index == 0 || characterIndexes[index - 1] != range.location) ? .controlCharacter : .null
             changed = true
         }
@@ -43,7 +43,7 @@ final class EditorLayoutManager: NSLayoutManager, NSLayoutManagerDelegate {
     func layoutManager(_ layoutManager: NSLayoutManager, shouldBreakLineByWordBeforeCharacterAt charIndex: Int) -> Bool {
         guard let storage = textStorage, charIndex < storage.length else { return true }
         var range = NSRange()
-        guard storage.attribute(editorMentionBoxAttribute, at: charIndex, effectiveRange: &range) is EditorMentionRenderedBox else { return true }
+        guard storage.attribute(editorMentionBoxAttribute, at: charIndex, longestEffectiveRange: &range, in: NSRange(location: 0, length: storage.length)) is EditorMentionRenderedBox else { return true }
         return charIndex == range.location
     }
 

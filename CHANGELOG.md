@@ -1,5 +1,41 @@
 # Changelog
 
+## [2.0.11] - 2026-09-24
+
+### Added
+
+- Added optional `snapshotScope` to `localHtml` initialization, enabling scoped local snapshot export and restore while keeping the editor detached from collaboration.
+
+## [2.0.10] - 2026-09-24
+
+### Fixed
+
+- Fixed Android viewers rendering with no text or height in minified release builds by preserving the JNI bridge class and native entry points during R8 optimisation.
+
+## [2.0.9] - 2026-09-23
+
+### Fixed
+
+- Fixed Android viewer text overflowing its available width by correcting display-density conversion during final layout. Text now wraps to the parent width and matches the measured height without an explicit viewer width.
+
+## [2.0.8] - 2026-09-22
+
+### Fixed
+
+- Exported `useEditorToolbarMentionState` and `EditorToolbarMentionState` from the package entry point so custom mention suggestion components can subscribe to mention state independently of the rest of the toolbar state.
+
+## [2.0.7] - 2026-09-22
+
+### Fixed
+
+- Fixed the iOS caret appearing an extra mention-width after a styled mention inserted at the start of an empty editor.
+
+## [2.0.6] - 2026-09-19
+
+### Fixed
+
+- Fixed an iOS Debug-build assertion crash when a rich-text viewer first appears by initialising its default Fabric props in the constructor.
+
 ## [2.0.5]
 
 ### Added
@@ -667,6 +703,12 @@ This is a hard cutover to shared native document, collaboration, and viewer boun
 - Controlled and uncontrolled content modes (HTML and JSON).
 - Undo/redo history.
 
+[2.0.11]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.10...2.0.11
+[2.0.10]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.9...2.0.10
+[2.0.9]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.8...2.0.9
+[2.0.8]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.7...2.0.8
+[2.0.7]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.6...2.0.7
+[2.0.6]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.5...2.0.6
 [2.0.5]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.4...2.0.5
 [2.0.4]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.3...2.0.4
 [2.0.3]: https://github.com/apollohg/react-native-rich-text-editor/compare/2.0.2...2.0.3
