@@ -13,6 +13,7 @@ import {
     withAtomsSchema,
     withImagesSchema,
     withMentionsSchema,
+    withTablesSchema,
     type EditorAddons,
     createMentionsAddon,
     type EditorTheme,
@@ -43,7 +44,7 @@ const PICKED_IMAGE_COMPRESSION = 0.8;
 const NEW_COUNTER_TITLE = 'New counter';
 
 const documentSchema = withAtomsSchema(
-    withTaskListSchema(withImagesSchema(withMentionsSchema(defaultSchema))),
+    withTaskListSchema(withImagesSchema(withMentionsSchema(withTablesSchema(defaultSchema)))),
     [ counterCardAtom ]
 );
 

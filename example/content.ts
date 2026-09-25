@@ -1,7 +1,8 @@
-import type {
-    DocumentJSON,
-    EditorToolbarItem,
-    MentionSuggestion,
+import {
+    TABLE_NODE_NAMES,
+    type DocumentJSON,
+    type EditorToolbarItem,
+    type MentionSuggestion,
 } from '@apollohg/react-native-rich-text-editor';
 
 import { TASK_ITEM_NODE_NAME, TASK_LIST_NODE_NAME } from './taskList';
@@ -16,6 +17,10 @@ export const MENTION_TRIGGER = '@';
 export const SAMPLE_IMAGE_URL = 'https://picsum.photos/seed/native-editor/1200/800';
 
 const REPOSITORY_URL = 'https://github.com/apollohg/react-native-rich-text-editor';
+const TABLE_NAMES = TABLE_NODE_NAMES.prosemirror;
+const MERGED_HEADER_COLSPAN = 2;
+const MERGED_GROUP_ROWSPAN = 2;
+const WIDE_TABLE_COLUMN_WIDTH = 180;
 
 type MarkJSON = { type: string; attrs?: Record<string, unknown> };
 
@@ -47,6 +52,30 @@ function taskItem(checked: boolean, label: string): DocumentJSON {
     return { type: TASK_ITEM_NODE_NAME, attrs: { checked }, content: [ paragraph(text(label)) ] };
 }
 
+function tableCell(
+    kind: 'cell' | 'headerCell',
+    label: string | null,
+    attrs?: Record<string, unknown>
+): DocumentJSON {
+    return {
+        type: TABLE_NAMES[kind],
+        ...(attrs === undefined ? {} : { attrs }),
+        content: [ label === null ? paragraph() : paragraph(text(label)) ],
+    };
+}
+
+function wideTableCell(kind: 'cell' | 'headerCell', label: string): DocumentJSON {
+    return tableCell(kind, label, { colwidth: [ WIDE_TABLE_COLUMN_WIDTH ] });
+}
+
+function tableRow(...cells: readonly DocumentJSON[]): DocumentJSON {
+    return { type: TABLE_NAMES.row, content: cells };
+}
+
+function table(...rows: readonly DocumentJSON[]): DocumentJSON {
+    return { type: TABLE_NAMES.table, content: rows };
+}
+
 /**
  * The initial document is JSON rather than HTML: the HTML importer maps every
  * `<ul>` to a bullet list, so a checklist can only be seeded this way.
@@ -67,6 +96,57 @@ export const INITIAL_DOCUMENT: DocumentJSON = {
             text(', and '),
             text('links', REPOSITORY_LINK),
             text('.')
+        ),
+        heading(2, 'Tables'),
+        heading(3, 'Basic'),
+        table(
+            tableRow(
+                tableCell('headerCell', 'Task'),
+                tableCell('headerCell', 'Owner'),
+                tableCell('headerCell', 'Status')
+            ),
+            tableRow(
+                tableCell('cell', 'Outline'),
+                tableCell('cell', 'Alice'),
+                tableCell('cell', 'In progress')
+            ),
+            tableRow(
+                tableCell('cell', 'Review'),
+                tableCell('cell', null),
+                tableCell('cell', 'Ready')
+            )
+        ),
+        heading(3, 'Merged cells'),
+        table(
+            tableRow(
+                tableCell('headerCell', 'Release plan', { colspan: MERGED_HEADER_COLSPAN }),
+                tableCell('headerCell', 'Status')
+            ),
+            tableRow(
+                tableCell('cell', 'Core editor', { rowspan: MERGED_GROUP_ROWSPAN }),
+                tableCell('cell', 'iOS'),
+                tableCell('cell', 'Ready')
+            ),
+            tableRow(tableCell('cell', 'Android'), tableCell('cell', 'In review'))
+        ),
+        heading(3, 'Wide table'),
+        table(
+            tableRow(
+                wideTableCell('headerCell', 'Phase'),
+                wideTableCell('headerCell', 'Owner'),
+                wideTableCell('headerCell', 'Platform'),
+                wideTableCell('headerCell', 'Priority'),
+                wideTableCell('headerCell', 'Due date'),
+                wideTableCell('headerCell', 'Status')
+            ),
+            tableRow(
+                wideTableCell('cell', 'Design'),
+                wideTableCell('cell', 'Chloe'),
+                wideTableCell('cell', 'iOS + Android'),
+                wideTableCell('cell', 'High'),
+                wideTableCell('cell', 'Friday'),
+                wideTableCell('cell', 'In progress')
+            )
         ),
         {
             type: 'blockquote',
