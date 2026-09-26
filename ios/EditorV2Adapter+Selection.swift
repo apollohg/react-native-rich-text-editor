@@ -123,32 +123,43 @@ extension EditorV2Adapter {
         return update
     }
 
-    private func applyTableCommand(_ command: [String: Any], admission: TableMutationAdmission) -> String? {
+    private func applyAdmittedTableCommand(
+        _ command: [String: Any],
+        admission: TableMutationAdmission,
+        targetsTable: Bool
+    ) -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
-        guard admitsTableMutation(admission),
-              let record = cachedTableRecords[admission.tableID],
-              let tablePos = Self.uint32Field(record, "tablePos")
-        else { return nil }
-        var targeted = command
-        targeted["tablePos"] = Int(tablePos)
+        guard admitsTableMutation(admission) else { return nil }
+        var request = command
+        if targetsTable {
+            guard let record = cachedTableRecords[admission.tableID],
+                  let tablePos = Self.uint32Field(record, "tablePos")
+            else { return nil }
+            request["tablePos"] = Int(tablePos)
+        }
         return performMutation(adoptEngineSelection: true) {
-            self.callWithEnvelope(["command": targeted]) { requestJson in
+            self.callWithEnvelope(["command": request]) { requestJson in
                 editorV2ApplyCommand(editorId: self.editorId, requestJson: requestJson)
             }
         }
     }
 
+    func applyTableCommandAtSelection(_ command: [String: String], admission: TableMutationAdmission) -> String? {
+        applyAdmittedTableCommand(command, admission: admission, targetsTable: false)
+    }
+
     func resizeTableColumn(column: Int, width: Int, admission: TableMutationAdmission) -> String? {
         guard column >= 0 else { return nil }
-        return applyTableCommand(
+        return applyAdmittedTableCommand(
             ["type": "setTableColumnWidth", "width": width, "column": column],
-            admission: admission
+            admission: admission,
+            targetsTable: true
         )
     }
 
     func deleteTable(admission: TableMutationAdmission) -> String? {
-        applyTableCommand(["type": "deleteTable"], admission: admission)
+        applyAdmittedTableCommand(["type": "deleteTable"], admission: admission, targetsTable: true)
     }
 
     func syncNodeSelection(docPos: UInt32) -> EditorV2SelectionSync? {

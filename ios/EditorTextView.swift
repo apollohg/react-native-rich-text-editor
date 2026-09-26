@@ -20,6 +20,13 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
 
     override var undoManager: UndoManager? { nil }
 
+    var tableAccessibilityCell: TableAccessibilityActiveCell?
+
+    override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get { tableAccessibilityCell.map { $0.actions() } ?? super.accessibilityCustomActions }
+        set { super.accessibilityCustomActions = newValue }
+    }
+
     // MARK: - Properties
 
     /// The Rust editor instance ID (from editor_create / editor_create_with_max_length).

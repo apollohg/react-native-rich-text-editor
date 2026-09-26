@@ -229,6 +229,8 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         visibilityChanged: { [weak self] in self?.onSelectionGeometryMayChange?() }
     )
     private var cellEditMenuEndpoints: TableSelectionEndpoints?
+    private var detachedFrameElements: (revision: UInt64, unanchored: Set<String>,
+                                        elements: [TableAccessibilityFrameElement])?
     var isCellEditMenuVisible: Bool { cellEditMenu.isVisible }
 
     private enum HandleScrollMetrics {
@@ -256,6 +258,12 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             self?.refreshActiveInputFrame()
             self?.selectionGeometryMayChange()
         }
+        drawingView.tableAccessibilityEditing = self
+    }
+
+    override var accessibilityElements: [Any]? {
+        get { [drawingView] + detachedTableFrameElements() }
+        set { }
     }
 
     required init?(coder: NSCoder) {
@@ -312,6 +320,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     func clearPresentation() {
         defer { selectionGeometryMayChange() }
         discardActiveDrag()
+        detachedFrameElements = nil
         drawingView.setTableOwnerIdentity(nil)
         entries.removeAll()
         latestPresentation = nil
@@ -523,6 +532,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
 
     func hideActiveInput() {
         activeCell = nil
+        inputCoordinator.cellInput.tableAccessibilityCell = nil
         drawingView.excludedTableCellContentLayout = nil
         inputCoordinator.cellInput.isHidden = true
         activeCellClipView.frame = .zero
@@ -1311,5 +1321,121 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     ) -> Bool {
         guard left.count == right.count else { return false }
         return left.allSatisfy { tableID, surface in right[tableID] === surface }
+    }
+}
+
+extension EditorTableSurface: TableAccessibilityEditing {
+    private func accessibilityMutationContext(tableID: String) -> (
+        host: RichTextEditorView, adapter: EditorV2Adapter, admission: EditorV2Adapter.TableMutationAdmission
+    )? {
+        guard let host = interactionHost, host.window != nil, host.editorId != 0,
+              let adapter = EditorV2Registry.adapter(forLegacyId: host.editorId),
+              host.hasTableCellBindingAuthority(adapter),
+              host.textView.isEditable,
+              !host.hasPendingCompositionForExternalRefresh,
+              let admission = adapter.tableMutationAdmission(tableID: tableID),
+              adapter.admitsTableMutation(admission)
+        else { return nil }
+        return (host, adapter, admission)
+    }
+
+    private func ownsAccessibilitySelection(_ cell: TableAccessibilityCell, tableID: String) -> Bool {
+        if let activeCell {
+            return activeCell.tableID == tableID && Int(activeCell.cellIndex) == cell.sourceCellIndex
+        }
+        return drawingView.selectedTableCellSourcePositions[tableID]?.contains(cell.sourcePosition) == true
+    }
+
+    func tableAccessibilityActions(for cell: TableAccessibilityCell, tableID: String) -> [TableAccessibilityAction] {
+        guard ownsAccessibilitySelection(cell, tableID: tableID),
+              let context = accessibilityMutationContext(tableID: tableID),
+              let commands = context.adapter.cachedActiveState?["commands"] as? [String: Any]
+        else { return [] }
+        return TableAccessibilityAction.all.filter { commands[$0.applicability] as? Bool == true }
+    }
+
+    func performTableAccessibilityAction(_ action: TableAccessibilityAction, for cell: TableAccessibilityCell,
+                                         tableID: String) -> Bool {
+        guard tableAccessibilityActions(for: cell, tableID: tableID).contains(action),
+              let context = accessibilityMutationContext(tableID: tableID),
+              let update = context.adapter.applyTableCommandAtSelection(action.command, admission: context.admission)
+        else { return false }
+        return context.host.activeTextInput.applyUpdateJSON(update)
+    }
+
+    func activateTableAccessibilityCell(_ cell: TableAccessibilityCell, tableID: String) -> Bool {
+        guard let host = interactionHost,
+              let index = UInt32(exactly: cell.sourceCellIndex),
+              let presented = presentedCell(tableID: tableID, cellIndex: index)
+        else { return false }
+        let visible = presented.bounds.intersection(presented.clip)
+        guard !visible.isNull, !visible.isEmpty,
+              host.activateTableCell(at: drawingView.convert(CGPoint(x: visible.midX, y: visible.midY), to: self))
+        else { return false }
+        UIAccessibility.post(notification: .layoutChanged, argument: inputCoordinator.cellInput)
+        return true
+    }
+
+    func activeTableAccessibilityElement(for cell: TableAccessibilityCell, tableID: String) -> EditorTextView? {
+        let input = inputCoordinator.cellInput
+        guard let activeCell, activeCell.tableID == tableID,
+              Int(activeCell.cellIndex) == cell.sourceCellIndex, !input.isHidden
+        else { return nil }
+        input.tableAccessibilityCell = TableAccessibilityActiveCell(rows: cell.rows, columns: cell.columns) {
+            [weak self] in TableAccessibility.customActions(for: cell, tableID: tableID, editing: self)
+        }
+        return input
+    }
+
+    private func detachedTableFrameElements() -> [TableAccessibilityFrameElement] {
+        guard let presentation = latestPresentation,
+              let host = interactionHost, host.editorId != 0,
+              let mappings = EditorV2Registry.adapter(forLegacyId: host.editorId)?.cachedTableInputMappings?.tables
+        else { return [] }
+        let unanchored = Set(mappings.filter { $0.value.extent == nil }.keys)
+        if let cached = detachedFrameElements,
+           cached.revision == presentation.documentRevision, cached.unanchored == unanchored {
+            return cached.elements
+        }
+        let elements = presentation.tableRecords
+            .filter { !$0.value.readOnlyDescendants && unanchored.contains($0.key) }
+            .sorted { $0.value.tablePos < $1.value.tablePos }
+            .map { tableID, record -> TableAccessibilityFrameElement in
+                let unfilled = record.failure == nil && (record.rows == 0 || record.columns == 0)
+                let tablePos = record.tablePos
+                return TableAccessibilityFrameElement(
+                    container: self, tableID: tableID, frame: unfilled ? .empty : .failed,
+                    editing: { [weak self] in self },
+                    screenFrame: { [weak self] in self?.detachedFrameScreenRect(tablePos: tablePos) ?? .zero }
+                )
+            }
+        detachedFrameElements = (presentation.documentRevision, unanchored, elements)
+        return elements
+    }
+
+    private func detachedFrameScreenRect(tablePos: UInt32) -> CGRect {
+        guard let host = interactionHost, host.editorId != 0,
+              let adapter = EditorV2Registry.adapter(forLegacyId: host.editorId),
+              let scalar = adapter.scalarPosition(forDoc: tablePos)
+        else { return .zero }
+        let textView = host.textView
+        let caret = textView.caretRect(for: PositionBridge.scalarToTextView(scalar, in: textView))
+        guard !caret.isNull, caret.minX.isFinite, caret.minY.isFinite, caret.height.isFinite else { return .zero }
+        let insets = textView.textContainerInset
+        let line = CGRect(x: insets.left, y: caret.minY,
+                          width: max(caret.width, textView.bounds.width - insets.left - insets.right),
+                          height: caret.height)
+        return UIAccessibility.convertToScreenCoordinates(line, in: textView)
+    }
+
+    func canDeleteTableAccessibilityFrame(tableID: String) -> Bool {
+        accessibilityMutationContext(tableID: tableID) != nil
+    }
+
+    func deleteTableAccessibilityFrame(tableID: String) -> Bool {
+        guard let context = accessibilityMutationContext(tableID: tableID),
+              let update = context.adapter.deleteTable(admission: context.admission)
+        else { return false }
+        return context.host.activeTextInput.applyUpdateJSON(update)
     }
 }

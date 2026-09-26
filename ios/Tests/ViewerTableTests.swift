@@ -635,29 +635,149 @@ final class ViewerTableTests: XCTestCase {
 
     func testCompilerBackedTableAccessibilityUsesCurrentRootAndClipsOffsetElements() throws {
         let config = Self.config.replacingOccurrences(of: "\"marks\":[{\"name\":\"bold\"}]", with: "\"marks\":[{\"name\":\"bold\"},{\"name\":\"link\",\"attrs\":{\"href\":{\"default\":\"\"}}}]")
-        func link(_ href: String) -> [String: Any] {
-            ["type": "paragraph", "content": [["type": "text", "text": "same", "marks": [["type": "link", "attrs": ["href": href]]]]]]
-        }
-        let table: [String: Any] = ["type": "table", "content": [["type": "table_row", "content": [
-            ["type": "table_cell", "attrs": ["colwidth": [300]], "content": [link("https://cell-one.example")]],
-            ["type": "table_cell", "attrs": ["colwidth": [300]], "content": [link("https://cell-two.example")]]
-        ]]]]
-        let layout = try prepare(jsonSource(["type": "doc", "content": [link("https://before.example"), table, link("https://after.example")]]), configJSON: config)
+        let layout = try prepare(try twoLinkCellSource(), configJSON: config)
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
         let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
         drawing.install(layout: layout)
         var activated: String?
         drawing.onActivateInteraction = { activated = $0.href; return true }
-        let cell = try XCTUnwrap(drawing.accessibilityElement(at: 1) as? UIAccessibilityElement)
-        XCTAssertEqual(drawing.index(ofAccessibilityElement: cell), 1)
-        XCTAssertTrue(cell.accessibilityActivate())
+        XCTAssertEqual(drawing.accessibilityElementCount(), 3, "before link, one table element, after link")
+        let table = try XCTUnwrap(drawing.accessibilityElement(at: 1) as? TableAccessibilityTableElement)
+        XCTAssertEqual(drawing.index(ofAccessibilityElement: table), 1)
+        let cell = try XCTUnwrap(table.cellElements.first)
+        XCTAssertEqual(cell.accessibilityLabel, "same")
+        let open = try action(named: TableAccessibilityText.openLink("same").localized, on: cell)
+        XCTAssertTrue(perform(open))
         XCTAssertEqual(activated, "https://cell-one.example")
+
         drawing.setTableLogicalOffset(surface.bounds.width - surface.hostViewportWidth, sourceIdentity: surface.identity)
         activated = nil
-        XCTAssertFalse(cell.accessibilityActivate())
+        XCTAssertEqual(drawing.index(ofAccessibilityElement: table), NSNotFound)
+        XCTAssertFalse(perform(open), "an action captured before the scroll belongs to a stale presentation")
+        let clippedCell = try XCTUnwrap(try tableElement(in: drawing).cellElements.first)
+        XCTAssertFalse(perform(try action(named: TableAccessibilityText.openLink("same").localized, on: clippedCell)),
+                       "a link scrolled out of its cell clip must not activate")
         XCTAssertNil(activated)
+
         drawing.linkInteractionsEnabled = false
-        XCTAssertEqual((drawing.accessibilityElement(at: 1) as? UIAccessibilityElement)?.accessibilityTraits, .staticText)
+        let readOnlyCell = try XCTUnwrap(try tableElement(in: drawing).cellElements.first)
+        XCTAssertEqual(readOnlyCell.accessibilityLabel, "same", "disabled links stay readable")
+        XCTAssertEqual(readOnlyCell.accessibilityCustomActions?.count, 0)
+        XCTAssertEqual((drawing.accessibilityElement(at: 0) as? UIAccessibilityElement)?.accessibilityTraits, .staticText)
+    }
+
+    func testTableCellLinksStayReachableThroughTheLinksRotor() throws {
+        let config = Self.config.replacingOccurrences(of: "\"marks\":[{\"name\":\"bold\"}]", with: "\"marks\":[{\"name\":\"bold\"},{\"name\":\"link\",\"attrs\":{\"href\":{\"default\":\"\"}}}]")
+        let layout = try prepare(try twoLinkCellSource(), configJSON: config)
+        let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+        drawing.install(layout: layout)
+        let rotor = try XCTUnwrap(drawing.accessibilityCustomRotors?.first { $0.systemRotorType == .link })
+        let table = try tableElement(in: drawing)
+        let expected: [NSObject] = [
+            try XCTUnwrap(drawing.accessibilityElement(at: 0) as? NSObject),
+            table.cellElements[0],
+            table.cellElements[1],
+            try XCTUnwrap(drawing.accessibilityElement(at: 2) as? NSObject)
+        ]
+        var visited: [NSObject] = []
+        var current: NSObjectProtocol = NSObject()
+        while let result = rotor.itemSearchBlock(predicate(.next, from: current)),
+              let target = result.targetElement as? NSObject {
+            visited.append(target)
+            current = target
+        }
+        XCTAssertEqual(visited.count, expected.count, "every root and in-cell link must be a rotor stop: \(visited)")
+        XCTAssertTrue(zip(visited, expected).allSatisfy { $0 === $1 }, "rotor order must follow document order")
+        let back = rotor.itemSearchBlock(predicate(.previous, from: table.cellElements[1]))
+        XCTAssertTrue(back?.targetElement === table.cellElements[0])
+    }
+
+    func testViewerTableAccessibilityExposesGridSpansHeadersAndLogicalOrderInBothDirections() throws {
+        let source = try jsonSource(["type": "doc", "content": [["type": "table", "content": [
+            ["type": "table_row", "content": [header("A"), header("B"), header("C")]],
+            ["type": "table_row", "content": [cell("D", colspan: 2), cell("E", rowspan: 2)]],
+            ["type": "table_row", "content": [cell("F"), cell("G")]]
+        ]]]])
+        var compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json, source: source, configJson: Self.config, imagesEnabled: true, mentionPrefix: nil
+        ))
+        let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value))
+        compiled.value = nil
+        var leftToRightFrames: [CGRect] = []
+        for direction in [TableLayoutDirection.leftToRight, .rightToLeft] {
+            let layout = try prepare(document, tableDirection: direction)
+            let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+            let window = UIWindow(frame: CGRect(origin: .zero, size: layout.size))
+            window.addSubview(drawing)
+            window.isHidden = false
+            defer { window.isHidden = true }
+            drawing.install(layout: layout)
+            let table = try tableElement(in: drawing)
+            XCTAssertEqual(table.accessibilityContainerType, .dataTable)
+            XCTAssertEqual(table.accessibilityRowCount(), 3)
+            XCTAssertEqual(table.accessibilityColumnCount(), 3)
+            let cells = table.cellElements
+            XCTAssertEqual(cells.compactMap(\.accessibilityLabel), ["A", "B", "C", "D", "E", "F", "G"],
+                           "\(direction): traversal follows document order")
+            XCTAssertEqual(cells.map { [$0.accessibilityRowRange().location, $0.accessibilityRowRange().length,
+                                        $0.accessibilityColumnRange().location, $0.accessibilityColumnRange().length] },
+                           [[0, 1, 0, 1], [0, 1, 1, 1], [0, 1, 2, 1], [1, 1, 0, 2], [1, 2, 2, 1], [2, 1, 0, 1], [2, 1, 1, 1]])
+            XCTAssertEqual(cells[3].accessibilityValue, TableAccessibilityText.columnSpan(2).localized)
+            XCTAssertEqual(cells[4].accessibilityValue, TableAccessibilityText.rowSpan(2).localized)
+            XCTAssertNil(cells[5].accessibilityValue)
+            XCTAssertTrue(cells[0].accessibilityTraits.contains(.header))
+            XCTAssertFalse(cells[3].accessibilityTraits.contains(.header))
+            XCTAssertTrue(table.accessibilityDataTableCellElement(forRow: 1, column: 1) === cells[3],
+                          "a slot covered by a colspan resolves to the spanning cell")
+            XCTAssertTrue(table.accessibilityDataTableCellElement(forRow: 2, column: 2) === cells[4],
+                          "a slot covered by a rowspan resolves to the spanning cell")
+            XCTAssertTrue(table.accessibilityHeaderElements(forColumn: 1)?.first === cells[1])
+            XCTAssertEqual(table.accessibilityHeaderElements(forColumn: 1)?.count, 1)
+            XCTAssertEqual(table.accessibilityHeaderElements(forRow: 1)?.count, 0, "no header column exists")
+            XCTAssertEqual(cells[0].accessibilityCustomActions?.count, 0, "viewer tables are read-only")
+            XCTAssertFalse(cells[0].accessibilityActivate())
+            let frames = cells.map(\.accessibilityFrame)
+            if direction == .leftToRight {
+                leftToRightFrames = frames
+                XCTAssertLessThan(frames[0].minX, frames[1].minX)
+            } else {
+                XCTAssertGreaterThan(frames[0].minX, frames[1].minX, "RTL mirrors geometry, not order")
+                XCTAssertEqual(frames.map(\.width), leftToRightFrames.map(\.width))
+            }
+        }
+    }
+
+    func testViewerTableAccessibilityLeavesSyntheticSlotsWithoutAnElement() throws {
+        let layout = try prepare(#"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"later"}]}]}]}]}]}"#)
+        let surface = try XCTUnwrap(layout.blocks.first?.tableSurface)
+        XCTAssertFalse(surface.syntheticRegions.isEmpty, "the fixture must contain a synthetic slot")
+        let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+        drawing.install(layout: layout)
+        let table = try tableElement(in: drawing)
+        XCTAssertEqual(table.cellElements.compactMap(\.accessibilityLabel), ["tall", "wide", "later"])
+        XCTAssertEqual(table.accessibilityElements?.count, 3, "synthetic slots expose no element")
+        for region in surface.syntheticRegions {
+            XCTAssertNil(table.accessibilityDataTableCellElement(forRow: Int(region.row), column: Int(region.column)),
+                         "synthetic slot \(region.row),\(region.column) must not resolve to a cell")
+        }
+        XCTAssertTrue(table.accessibilityDataTableCellElement(forRow: 1, column: 0) === table.cellElements[0])
+    }
+
+    func testViewerTableAccessibilityReadsNestedContentWithoutNestedElementsOrActions() throws {
+        let nested: [String: Any] = ["type": "table", "content": [["type": "table_row", "content": [cell("inner")]]]]
+        let source = try jsonSource(["type": "doc", "content": [["type": "table", "content": [["type": "table_row", "content": [
+            ["type": "table_cell", "attrs": ["colwidth": [200]], "content": [paragraph("outer"), nested]],
+            cell("sibling")
+        ]]]]]])
+        let layout = try prepare(source)
+        let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+        drawing.install(layout: layout)
+        XCTAssertEqual(drawing.accessibilityElementCount(), 1, "the nested table is not a separate element")
+        let table = try tableElement(in: drawing)
+        XCTAssertEqual(table.cellElements.count, 2)
+        XCTAssertEqual(table.cellElements[0].accessibilityLabel, "outer inner", "nested content is read inside its cell")
+        XCTAssertEqual(table.cellElements[0].accessibilityCustomActions?.count, 0)
+        XCTAssertFalse(table.cellElements[0].accessibilityActivate())
     }
 
     func testCompilerBackedTableInteractionsAndAccessibilityRejectClippedAndStalePresentation() throws {
@@ -699,31 +819,30 @@ final class ViewerTableTests: XCTestCase {
         drawing.install(layout: layout)
         let nestedLayout = try XCTUnwrap(surface.cells[1].content.blocks.first { $0.tableSurface != nil }?.tableSurface?.cells.first?.content)
         let expectedMention = try XCTUnwrap(nestedLayout.interactions.first { $0.kind == .mention })
+        let initial = ViewerTablePresentation.project(layout: layout, owner: ViewerTablePresentationOwner(), viewport: .unknown)
+        let mentionLabel = try XCTUnwrap(initial.accessibilityNodes.first { $0.node.role == .mention }?.node.label)
+        let openLink = TableAccessibilityText.openLink("same").localized
+        let openMention = TableAccessibilityText.openMention(mentionLabel).localized
 
         var activated: [PreparedProseInteraction] = []
         drawing.onActivateInteraction = { interaction in
             activated.append(interaction)
             return true
         }
-        func elements(named label: String) throws -> [UIAccessibilityElement] {
-            try (0..<drawing.accessibilityElementCount()).compactMap { index in
-                let element = try XCTUnwrap(drawing.accessibilityElement(at: index) as? UIAccessibilityElement)
-                return element.accessibilityLabel == label ? element : nil
-            }
-        }
 
-        let before = try XCTUnwrap(elements(named: "same").first)
-        XCTAssertEqual(drawing.index(ofAccessibilityElement: before), 0)
+        let before = try XCTUnwrap(drawing.accessibilityElement(at: 0) as? UIAccessibilityElement)
+        XCTAssertEqual(before.accessibilityLabel, "same")
         XCTAssertTrue(before.accessibilityActivate())
         XCTAssertEqual(activated.last?.href, "https://before.example")
-        let initialSame = try elements(named: "same")
-        XCTAssertGreaterThanOrEqual(initialSame.count, 4)
-        XCTAssertTrue(initialSame[1].accessibilityActivate())
+        let initialTable = try tableElement(in: drawing)
+        XCTAssertEqual(drawing.index(ofAccessibilityElement: initialTable), 1)
+        XCTAssertEqual(initialTable.cellElements.count, 3, "nested cells fold into their outer cell")
+        XCTAssertTrue(perform(try action(named: openLink, on: initialTable.cellElements[0])))
         XCTAssertEqual(activated.last?.href, "https://cell-one.example")
-        XCTAssertTrue((try XCTUnwrap(elements(named: "same").last)).accessibilityActivate())
+        let after = try XCTUnwrap(drawing.accessibilityElement(at: 2) as? UIAccessibilityElement)
+        XCTAssertTrue(after.accessibilityActivate())
         XCTAssertEqual(activated.last?.href, "https://after.example")
 
-        let initial = ViewerTablePresentation.project(layout: layout, owner: ViewerTablePresentationOwner(), viewport: .unknown)
         let firstCell = try XCTUnwrap(initial.cells.first { $0.surface === surface })
         let offset = firstCell.bounds.width
         let initialFirst = try XCTUnwrap(initial.interactions.first { $0.interaction.href == "https://cell-one.example" })
@@ -736,16 +855,13 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertFalse(partialFrame.isNull || partialFrame.isEmpty)
         XCTAssertLessThan(partialFrame.width, initialFirst.rects.reduce(CGRect.null) { $0.union($1) }.width)
         drawing.setTableLogicalOffset(partialOffset, sourceIdentity: surface.identity)
-        let partiallyVisible = try elements(named: "same")[1]
+        let partialCell = try XCTUnwrap(partiallyShifted.cells.first { $0.surface === surface })
+        let partiallyVisible = try tableElement(in: drawing).cellElements[0]
         XCTAssertEqual(
             partiallyVisible.accessibilityFrame,
-            UIAccessibility.convertToScreenCoordinates(partialFrame, in: drawing)
+            UIAccessibility.convertToScreenCoordinates(partialCell.bounds.intersection(partialCell.clip), in: drawing)
         )
-        XCTAssertEqual(
-            partiallyVisible.accessibilityPath?.bounds,
-            UIAccessibility.convertToScreenCoordinates(partialFrame, in: drawing)
-        )
-        XCTAssertTrue(partiallyVisible.accessibilityActivate())
+        XCTAssertTrue(perform(try action(named: openLink, on: partiallyVisible)))
         XCTAssertEqual(activated.last?.href, "https://cell-one.example")
 
         let owner = ViewerTablePresentationOwner()
@@ -764,47 +880,44 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(drawing.interaction(at: center(exposedSecond.rects[0]))?.href, "https://cell-two.example")
         XCTAssertEqual(drawing.interaction(at: center(nestedMention.rects[0]))?.kind, .mention)
 
-        let shiftedSame = try elements(named: "same")
-        let clippedElement = shiftedSame[1]
-        XCTAssertEqual(drawing.index(ofAccessibilityElement: clippedElement), 1)
-        XCTAssertEqual(clippedElement.accessibilityFrame, .zero)
-        XCTAssertNil(clippedElement.accessibilityPath)
-        XCTAssertFalse(clippedElement.accessibilityActivate())
+        XCTAssertEqual(drawing.index(ofAccessibilityElement: initialTable), NSNotFound)
+        let shiftedTable = try tableElement(in: drawing)
+        let clippedElement = shiftedTable.cellElements[0]
+        let callbacksBeforeClippedActivation = activated.count
+        XCTAssertFalse(perform(try action(named: openLink, on: clippedElement)))
+        XCTAssertEqual(activated.count, callbacksBeforeClippedActivation)
 
-        let freshSecond = shiftedSame[2]
-        XCTAssertTrue(freshSecond.accessibilityActivate())
+        let freshSecond = shiftedTable.cellElements[1]
+        XCTAssertTrue(freshSecond.accessibilityLabel?.contains(mentionLabel) == true, "nested mention text is readable")
+        XCTAssertTrue(perform(try action(named: openLink, on: freshSecond)))
         XCTAssertEqual(activated.last?.href, "https://cell-two.example")
-        let mention = try XCTUnwrap((0..<drawing.accessibilityElementCount()).compactMap { index -> UIAccessibilityElement? in
-            let element = drawing.accessibilityElement(at: index) as? UIAccessibilityElement
-            return element?.accessibilityTraits.contains(.button) == true ? element : nil
-        }.first)
-        XCTAssertTrue(mention.accessibilityActivate())
+        XCTAssertTrue(perform(try action(named: openMention, on: freshSecond)))
         XCTAssertEqual(activated.last?.kind, .mention)
         XCTAssertEqual(activated.last?.label, "Nested")
         XCTAssertEqual(activated.last?.docPos, expectedMention.docPos)
         XCTAssertEqual(activated.last?.attrsJSON, expectedMention.attrsJSON)
+        let staleLink = try action(named: openLink, on: freshSecond)
 
         drawing.linkInteractionsEnabled = false
-        XCTAssertEqual(drawing.index(ofAccessibilityElement: freshSecond), NSNotFound)
+        XCTAssertEqual(drawing.index(ofAccessibilityElement: shiftedTable), NSNotFound)
         let callbacksBeforeStaleCapabilityActivation = activated.count
-        XCTAssertFalse(freshSecond.accessibilityActivate())
+        XCTAssertFalse(perform(staleLink))
         XCTAssertEqual(activated.count, callbacksBeforeStaleCapabilityActivation)
-        XCTAssertEqual((try XCTUnwrap(elements(named: "same").first)).accessibilityTraits, .staticText)
-        let enabledMention = try XCTUnwrap((0..<drawing.accessibilityElementCount()).compactMap { index -> UIAccessibilityElement? in
-            let element = drawing.accessibilityElement(at: index) as? UIAccessibilityElement
-            return element?.accessibilityTraits.contains(.button) == true ? element : nil
-        }.first)
-        XCTAssertTrue(enabledMention.accessibilityActivate())
+        XCTAssertEqual((drawing.accessibilityElement(at: 0) as? UIAccessibilityElement)?.accessibilityTraits, .staticText)
+        let enabledMentionCell = try tableElement(in: drawing).cellElements[1]
+        XCTAssertEqual(enabledMentionCell.accessibilityCustomActions?.map(\.name), [openMention])
+        XCTAssertTrue(perform(try action(named: openMention, on: enabledMentionCell)))
         XCTAssertEqual(activated.last?.kind, .mention)
 
         drawing.linkInteractionsEnabled = true
-        let staleRoot = try XCTUnwrap(elements(named: "same").first)
+        let staleRoot = try XCTUnwrap(drawing.accessibilityElement(at: 0) as? UIAccessibilityElement)
         drawing.install(layout: try prepare(source, configJSON: config))
         XCTAssertEqual(drawing.index(ofAccessibilityElement: staleRoot), NSNotFound)
         let callbacksBeforeStaleRootActivation = activated.count
         XCTAssertFalse(staleRoot.accessibilityActivate())
         XCTAssertEqual(activated.count, callbacksBeforeStaleRootActivation)
     }
+
     func testCompilerBackedGlobalImageAdmissionCountsFlatTableCellsBeforeLayoutPreparation() throws {
         let admittedCounter = PreparationCounter()
         let admittedRegistry = admissionRegistry(counter: admittedCounter)
@@ -1033,6 +1146,10 @@ final class ViewerTableTests: XCTestCase {
         format.scale = 1
         let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
         drawing.install(layout: layout)
+        XCTAssertEqual(drawing.accessibilityElementCount(), 3, "prose, the failure frame, prose")
+        let failureFrame = try XCTUnwrap(drawing.accessibilityElement(at: 1) as? TableAccessibilityFrameElement)
+        XCTAssertEqual(failureFrame.accessibilityLabel, TableAccessibilityText.failedTable.localized)
+        XCTAssertEqual(failureFrame.accessibilityCustomActions?.count, 0, "a viewer frame offers no delete")
         let rendered = try XCTUnwrap(UIGraphicsImageRenderer(size: layout.size, format: format).image { _ in
             drawing.draw(drawing.bounds)
         }.cgImage)
@@ -2327,9 +2444,11 @@ final class ViewerTableTests: XCTestCase {
         _ document: ViewerDocument,
         themeJSON: String? = nil,
         engine: CoreTextProseLayoutEngine = CoreTextProseLayoutEngine(),
-        widthPoints: CGFloat = 320
+        widthPoints: CGFloat = 320,
+        tableDirection: TableLayoutDirection? = nil
     ) throws -> PreparedProseLayout {
-        let theme = PreparedProseTheme.resolve(themeJSON: themeJSON)
+        var theme = PreparedProseTheme.resolve(themeJSON: themeJSON)
+        theme.tableDirection = tableDirection
         let key = ProseLayoutKey(semanticKey: document.semanticKey, widthPixels: Int(widthPoints * 2), themeDigest: "table", nativeFontRevision: 0, fontEnvironmentRevision: 0, displayScale: 2, attachmentRevision: 0, generationIdentity: "table", semanticGenerationIdentity: "table")
         return try engine.prepare(document: document.withPreparedTheme(theme), key: key, widthPoints: widthPoints, displayScale: 2)
     }
@@ -2387,6 +2506,49 @@ final class ViewerTableTests: XCTestCase {
 
     private func paragraph(_ text: String) -> [String: Any] {
         ["type": "paragraph", "content": [["type": "text", "text": text]]]
+    }
+
+    private func twoLinkCellSource() throws -> String {
+        func link(_ href: String) -> [String: Any] {
+            ["type": "paragraph", "content": [["type": "text", "text": "same", "marks": [["type": "link", "attrs": ["href": href]]]]]]
+        }
+        let table: [String: Any] = ["type": "table", "content": [["type": "table_row", "content": [
+            ["type": "table_cell", "attrs": ["colwidth": [300]], "content": [link("https://cell-one.example")]],
+            ["type": "table_cell", "attrs": ["colwidth": [300]], "content": [link("https://cell-two.example")]]
+        ]]]]
+        return try jsonSource(["type": "doc", "content": [link("https://before.example"), table, link("https://after.example")]])
+    }
+
+    private func cell(_ text: String, colspan: Int = 1, rowspan: Int = 1) -> [String: Any] {
+        ["type": "table_cell", "attrs": ["colspan": colspan, "rowspan": rowspan], "content": [paragraph(text)]]
+    }
+
+    private func header(_ text: String) -> [String: Any] {
+        ["type": "table_header", "content": [paragraph(text)]]
+    }
+
+    private func tableElement(in drawing: PreparedProseDrawingView) throws -> TableAccessibilityTableElement {
+        try XCTUnwrap((0..<drawing.accessibilityElementCount()).lazy.compactMap {
+            drawing.accessibilityElement(at: $0) as? TableAccessibilityTableElement
+        }.first, "the drawing view must expose a data table element")
+    }
+
+    private func action(named name: String, on element: NSObject) throws -> UIAccessibilityCustomAction {
+        try XCTUnwrap(element.accessibilityCustomActions?.first { $0.name == name },
+                      "missing action \(name) in \(element.accessibilityCustomActions?.map(\.name) ?? [])")
+    }
+
+    private func perform(_ action: UIAccessibilityCustomAction) -> Bool {
+        action.actionHandler?(action) ?? false
+    }
+
+    private func predicate(
+        _ direction: UIAccessibilityCustomRotor.Direction, from element: NSObjectProtocol
+    ) -> UIAccessibilityCustomRotorSearchPredicate {
+        let predicate = UIAccessibilityCustomRotorSearchPredicate()
+        predicate.searchDirection = direction
+        predicate.currentItem = UIAccessibilityCustomRotorItemResult(targetElement: element, targetRange: nil)
+        return predicate
     }
 
     private func jsonSource(_ object: [String: Any]) throws -> String {
