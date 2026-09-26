@@ -47,6 +47,12 @@ pub(crate) enum NormalizationFailure {
     Unplannable,
 }
 
+impl From<TableError> for NormalizationFailure {
+    fn from(error: TableError) -> Self {
+        Self::Shape(error)
+    }
+}
+
 impl NormalizationFailure {
     pub(crate) fn into_operation_error(self, request_id: u64) -> OperationError {
         match self {
@@ -122,16 +128,17 @@ pub(crate) fn outer_table_positions(
     schema: &Schema,
     limits: &ResourceLimits,
 ) -> OperationResult<Vec<u32>> {
-    collect_outer_table_positions(document, schema, limits)
-        .map_err(|failure| failure.into_operation_error(UNCORRELATED_REQUEST_ID))
+    collect_outer_table_positions(document, schema, limits).map_err(|error| {
+        NormalizationFailure::from(error).into_operation_error(UNCORRELATED_REQUEST_ID)
+    })
 }
 
-fn collect_outer_table_positions(
+pub(crate) fn collect_outer_table_positions(
     document: &Document,
     schema: &Schema,
     limits: &ResourceLimits,
-) -> Result<Vec<u32>, NormalizationFailure> {
-    let Some(roles) = TableRoles::resolve(schema).map_err(NormalizationFailure::Shape)? else {
+) -> Result<Vec<u32>, TableError> {
+    let Some(roles) = TableRoles::resolve(schema)? else {
         return Ok(Vec::new());
     };
     let mut positions = Vec::new();
@@ -145,7 +152,7 @@ fn collect_outer_table_positions(
         for child in content.iter() {
             visited = visited.saturating_add(1);
             if visited > limits.max_document_nodes {
-                return Err(NormalizationFailure::Shape(TableError::WorkLimit));
+                return Err(TableError::WorkLimit);
             }
             if child.node_type() == roles.table {
                 positions.push(position);
@@ -447,8 +454,6 @@ fn filler_cell(row: &Node, schema: &Schema) -> Result<Node, NormalizationFailure
     crate::tables::reference_grid::filler_cell(row, schema).ok_or(NormalizationFailure::Unplannable)
 }
 
-fn advance(position: u32, amount: u32) -> Result<u32, NormalizationFailure> {
-    position
-        .checked_add(amount)
-        .ok_or(NormalizationFailure::Shape(TableError::Allocation))
+fn advance(position: u32, amount: u32) -> Result<u32, TableError> {
+    position.checked_add(amount).ok_or(TableError::Allocation)
 }

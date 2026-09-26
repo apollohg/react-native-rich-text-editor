@@ -6,6 +6,7 @@ use crate::selection::Selection;
 use crate::tables::commands::{
     TableCommand, TableEdge, TableHeaderTarget, DEFAULT_INSERTED_TABLE_COLUMNS,
     DEFAULT_INSERTED_TABLE_HEADER_ROW, DEFAULT_INSERTED_TABLE_ROWS, MIN_TABLE_COLUMN_WIDTH,
+    NODE_OPENING_TOKENS,
 };
 use crate::tables::normalize_tests::{
     cell, cell_with, header_cell, limits, row, schema, seeded_session, table,
@@ -27,6 +28,7 @@ const CELL_NODE: &str = "table_cell";
 const HEADER_CELL_NODE: &str = "table_header";
 const PARAGRAPH_NODE: &str = "paragraph";
 pub(crate) const TABLE_POSITION: u32 = 0;
+const FIRST_ROW_POSITION: u32 = TABLE_POSITION + NODE_OPENING_TOKENS;
 const CELL_TEXT_OFFSET: u32 = 2;
 const REQUEST_ID: u64 = 7;
 const SINGLE_SPAN: u32 = 1;
@@ -1534,7 +1536,7 @@ fn every_table_command() -> Vec<TableCommand> {
             table_pos: Some(TABLE_POSITION),
         },
         TableCommand::DeleteTable {
-            table_pos: Some(TABLE_POSITION + ONE_CHARACTER),
+            table_pos: Some(FIRST_ROW_POSITION),
         },
         TableCommand::DeleteTableRows,
         TableCommand::DeleteTableColumns,

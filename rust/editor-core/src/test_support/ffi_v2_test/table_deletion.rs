@@ -1,4 +1,8 @@
 const PROSE_CARET_SCALAR: u32 = 2;
+const PROSE_DOCUMENT_POSITION: u64 = 2;
+const CELL_TEXT_DEPTH: u64 = 2;
+const FIRST_CELL: usize = 0;
+const SECOND_CELL: usize = 1;
 const DELETION_REQUEST_ID: u64 = 2201;
 const NOT_APPLICABLE_OUTCOME: &str = "notApplicable";
 const TRANSACTION_OUTCOME: &str = "transaction";
@@ -163,38 +167,69 @@ fn explicit_table_deletion_removes_regular_empty_and_cellless_frames_and_keeps_t
     }
 }
 
-#[test]
-fn explicit_table_deletion_matches_the_anchored_delete_when_the_selection_is_inside() {
-    let anchored = table_deletion_editor(vec![
-        table_deletion_prose("before"),
-        regular_deletion_table(),
-    ]);
-    let explicit = table_deletion_editor(vec![
-        table_deletion_prose("before"),
-        regular_deletion_table(),
-    ]);
-    let table_pos = table_records_by_position(&render_of(&explicit))[0]["tablePos"]
+fn scalar_of(id: &str, doc_pos: u64) -> u32 {
+    ok_json(&v2_render::editor_v2_doc_to_scalar(
+        id.to_string(),
+        u32::try_from(doc_pos).expect("fixture positions fit u32"),
+    ))["scalar"]
         .as_u64()
-        .unwrap();
-    let cell = table_records_by_position(&render_of(&anchored))[0]["cells"][1]["sourcePos"]
-        .as_u64()
-        .unwrap();
-    for id in [&anchored, &explicit] {
-        ok_json(&v2::editor_v2_set_selection(
-            id.clone(),
-            exact_cell_request(
-                revision_of(id),
-                document_cell_point(cell),
-                document_cell_point(cell),
-            )
-            .to_string(),
-        ));
-        assert_eq!(
-            render_of(id)["activeState"]["commands"]["deleteTable"],
-            true
-        );
-    }
+        .and_then(|scalar| u32::try_from(scalar).ok())
+        .expect("doc_to_scalar returns a u32 scalar")
+}
 
+fn cell_interior(record: &Value, cell: usize) -> u64 {
+    record["cells"][cell]["sourcePos"].as_u64().unwrap() + CELL_TEXT_DEPTH
+}
+
+fn select_cell_rectangle(id: &str, record: &Value) {
+    let cell = record["cells"][SECOND_CELL]["sourcePos"].clone();
+    ok_json(&v2::editor_v2_set_selection(
+        id.to_string(),
+        exact_cell_request(
+            revision_of(id),
+            document_cell_point(cell.as_u64().unwrap()),
+            document_cell_point(cell.as_u64().unwrap()),
+        )
+        .to_string(),
+    ));
+}
+
+fn select_prose_into_cell(id: &str, record: &Value) {
+    let head = scalar_of(id, cell_interior(record, SECOND_CELL));
+    ok_json(&v2::editor_v2_set_selection(
+        id.to_string(),
+        selection_envelope(
+            DELETION_REQUEST_ID,
+            revision_of(id),
+            PROSE_CARET_SCALAR,
+            head,
+        ),
+    ));
+}
+
+fn select_cell_into_prose(id: &str, record: &Value) {
+    let anchor = scalar_of(id, cell_interior(record, FIRST_CELL));
+    ok_json(&v2::editor_v2_set_selection(
+        id.to_string(),
+        selection_envelope(
+            DELETION_REQUEST_ID,
+            revision_of(id),
+            anchor,
+            PROSE_CARET_SCALAR,
+        ),
+    ));
+}
+
+#[test]
+fn explicit_table_deletion_lands_like_the_anchored_delete_when_any_endpoint_is_inside() {
+    let blocks = vec![table_deletion_prose("before"), regular_deletion_table()];
+    let anchored = table_deletion_editor(blocks.clone());
+    let record = table_records_by_position(&render_of(&anchored))[0].clone();
+    select_cell_rectangle(&anchored, &record);
+    assert_eq!(
+        render_of(&anchored)["activeState"]["commands"]["deleteTable"],
+        true
+    );
     let anchored_outcome = ok_json(&v2::editor_v2_apply_command(
         anchored.clone(),
         command_envelope(
@@ -203,26 +238,41 @@ fn explicit_table_deletion_matches_the_anchored_delete_when_the_selection_is_ins
             json!({ "type": "deleteTable" }),
         ),
     ));
-    let explicit_outcome = delete_table_at(&explicit, table_pos);
-
     assert_eq!(
         anchored_outcome["type"], TRANSACTION_OUTCOME,
         "{anchored_outcome}"
     );
-    assert_eq!(
-        explicit_outcome["type"], TRANSACTION_OUTCOME,
-        "{explicit_outcome}"
-    );
-    assert_eq!(document_json_of(&explicit), document_json_of(&anchored));
-    let landed = render_of(&explicit)["selection"].clone();
-    assert_eq!(
-        landed,
-        render_of(&anchored)["selection"],
-        "a selection inside the deleted table lands where the anchored delete puts it"
-    );
-    assert_eq!(landed["type"], "text", "{landed}");
+    let expected_document = document_json_of(&anchored);
+    let expected_selection = render_of(&anchored)["selection"].clone();
+    assert_eq!(expected_selection["type"], "text", "{expected_selection}");
     destroy_handle(&anchored);
-    destroy_handle(&explicit);
+
+    let selections: [(&str, fn(&str, &Value)); 3] = [
+        ("cell rectangle", select_cell_rectangle),
+        ("text from prose into a cell", select_prose_into_cell),
+        ("text from a cell into prose", select_cell_into_prose),
+    ];
+    for (label, select) in selections {
+        let id = table_deletion_editor(blocks.clone());
+        select(&id, &record);
+        let selected = render_of(&id)["selection"].clone();
+        assert_ne!(
+            selected, expected_selection,
+            "{label}: the fixture must start elsewhere"
+        );
+
+        let outcome = delete_table_at(&id, record["tablePos"].as_u64().unwrap());
+
+        assert_eq!(outcome["type"], TRANSACTION_OUTCOME, "{label}: {outcome}");
+        assert_eq!(document_json_of(&id), expected_document, "{label}");
+        assert_eq!(
+            render_of(&id)["selection"],
+            expected_selection,
+            "{label}: a selection {selected} touching the deleted table lands where the anchored \
+             delete puts it"
+        );
+        destroy_handle(&id);
+    }
 }
 
 #[test]
@@ -245,8 +295,11 @@ fn explicit_table_deletion_declines_nested_tables_and_positions_without_an_outer
 
     for (label, table_pos) in [
         ("nested table", nested["tablePos"].as_u64().unwrap()),
-        ("prose paragraph", u64::from(PROSE_CARET_SCALAR)),
-        ("inside the outer table", outer_pos + 1),
+        ("prose paragraph", PROSE_DOCUMENT_POSITION),
+        (
+            "inside the outer table",
+            outer_pos + u64::from(crate::tables::commands::NODE_OPENING_TOKENS),
+        ),
         ("document end", document_end),
         ("beyond the document", u64::from(u32::MAX)),
     ] {

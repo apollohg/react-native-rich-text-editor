@@ -19,7 +19,9 @@ use crate::tables::interchange::{
     first_editable_position_in_cell, next_outer_cell, outer_cell_containing, CellStep,
     InterchangeFailure,
 };
-use crate::tables::normalize::outer_table_positions;
+use crate::tables::normalize::{
+    collect_outer_table_positions, outer_table_positions, NormalizationFailure,
+};
 use crate::tables::paste::TableMatrix;
 use crate::tables::selection::{cell_opening_containing, resolve_cell_rect};
 use crate::tables::types::TableError;
@@ -229,11 +231,24 @@ fn explicit_table_deletion(
     limits: &ResourceLimits,
     table_pos: u32,
     selection: &Selection,
-) -> OperationResult<Option<SemanticCommandPlan>> {
-    if !outer_table_positions(document, schema, limits)?.contains(&table_pos) {
+) -> Result<Option<SemanticCommandPlan>, TableError> {
+    if !collect_outer_table_positions(document, schema, limits)?.contains(&table_pos) {
         return Ok(None);
     }
     Ok(plan_delete_table(document, schema, table_pos, selection))
+}
+
+fn available_when_readable(answer: Result<bool, TableError>) -> bool {
+    match answer {
+        Ok(available) => available,
+        Err(
+            TableError::GridLimit { .. }
+            | TableError::WorkLimit
+            | TableError::Allocation
+            | TableError::InvalidStructure
+            | TableError::InvalidAttributes,
+        ) => UNREADABLE_GRID_IS_NOT_AVAILABLE,
+    }
 }
 
 fn semantic(
@@ -354,7 +369,10 @@ pub(super) fn plan(
                     context.resource_limits,
                     table_pos,
                     &selection,
-                )?,
+                )
+                .map_err(|error| {
+                    NormalizationFailure::from(error).into_operation_error(context.request_id)
+                })?,
                 (None, None) => None,
                 (None, Some(anchor)) => plan_delete_table(
                     context.document,
@@ -652,14 +670,16 @@ impl<'a> TableCommandSurface<'a> {
                     .is_some()
             }
             TableCommand::DeleteTable { table_pos } => match (table_pos, &self.anchor) {
-                (Some(table_pos), _) => explicit_table_deletion(
-                    self.document,
-                    self.schema,
-                    self.limits,
-                    table_pos,
-                    self.selection,
-                )
-                .is_ok_and(|plan| plan.is_some()),
+                (Some(table_pos), _) => available_when_readable(
+                    explicit_table_deletion(
+                        self.document,
+                        self.schema,
+                        self.limits,
+                        table_pos,
+                        self.selection,
+                    )
+                    .map(|plan| plan.is_some()),
+                ),
                 (None, None) => false,
                 (None, Some(anchor)) => {
                     plan_delete_table(self.document, self.schema, anchor.table_pos, self.selection)
@@ -705,16 +725,7 @@ impl<'a> TableCommandSurface<'a> {
                 .is_some_and(|target| merge::plan_split_cell(target, self.schema).is_some()),
             TableCommand::SetTableColumnWidth { .. } => {
                 self.regular_target().is_some_and(|target| {
-                    match resize::can_set_column_width(target) {
-                        Ok(resizable) => resizable,
-                        Err(
-                            TableError::GridLimit { .. }
-                            | TableError::WorkLimit
-                            | TableError::Allocation
-                            | TableError::InvalidStructure
-                            | TableError::InvalidAttributes,
-                        ) => UNREADABLE_GRID_IS_NOT_AVAILABLE,
-                    }
+                    available_when_readable(resize::can_set_column_width(target))
                 })
             }
             TableCommand::MoveToAdjacentCell { step, append_row } => {
