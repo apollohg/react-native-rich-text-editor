@@ -35,6 +35,7 @@ import com.apollohg.editor.TableMutationAdmission
 import com.apollohg.editor.tableMutationAdmission
 import com.apollohg.editor.admitsTableMutation
 import com.apollohg.editor.cachedAtomicRenderSelection
+import com.apollohg.editor.cellSelectionEndpoints
 import com.apollohg.editor.RichTextEditorView
 import com.apollohg.editor.canonicalV2U64
 import com.apollohg.editor.exactV2U32
@@ -138,9 +139,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             selectionGeometryMayChange()
         }
         onTableTap = { downX, downY, upX, upY ->
-            val target = hitCell(downX, downY)
-            target != null && target == hitCell(upX, upY) &&
-                (tapCellSelection(target, upX, upY) || activateCell(target.first, target.second, upX, upY))
+            val target = hitCell(downX, downY)?.takeIf { it == hitCell(upX, upY) }
+            tapCellSelection(target, upX, upY) ||
+                target != null && activateCell(target.first, target.second, upX, upY)
         }
     }
     private val cellEditMenu by lazy {
@@ -585,12 +586,21 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         onSelectionGeometryMayChange?.invoke()
     }
 
+    private fun displayedCellSelection(adapter: EditorV2Adapter): Triple<String, Int, Int>? {
+        val selection = adapter.cachedAtomicRenderSelection() ?: return null
+        val cells = resolveEditorCellSelection(selection, adapter.cachedTableRecords)
+            as? EditorCellSelection.Drawable ?: return null
+        if (cells.tableId !in drawingView.selectedTableCellSourcePositions) return null
+        val (anchor, head) = cellSelectionEndpoints(selection) ?: return null
+        return Triple(cells.tableId, anchor, head)
+    }
+
     private fun cellEditMenuSelection(): Triple<String, Int, Int>? {
         val root = host.editorEditText
         val adapter = root.v2Driver as? EditorV2Adapter ?: return null
         if (adapter.destroyed || !root.isAttachedToWindow || !root.hasFocus() || activeCell != null ||
             !root.authoritativeCellSelectionActive) return null
-        return drawingView.selectedTableCellEndpoints
+        return displayedCellSelection(adapter)
     }
 
     private fun visibleSelectedCellRects(tableId: String, viewport: RectF): List<RectF>? =
@@ -635,12 +645,13 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         return drawingView.selectedTableCellRects(tableId)?.any { it.contains(x, y) } == true
     }
 
-    private fun tapCellSelection(target: Pair<String, Int>, x: Float, y: Float): Boolean {
+    private fun tapCellSelection(target: Pair<String, Int>?, x: Float, y: Float): Boolean {
         if (!cellSelectionContains(x, y)) return false
         if (pendingCellEditMenuToggle != null) {
             cancelPendingCellEditMenuToggle()
             dismissCellEditMenu()
-            return activateCell(target.first, target.second, x, y)
+            target?.let { (tableId, cellIndex) -> activateCell(tableId, cellIndex, x, y) }
+            return true
         }
         val toggle = Runnable {
             pendingCellEditMenuToggle = null
@@ -772,17 +783,11 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             is EditorCellSelection.Drawable -> mapOf(cellSelection.tableId to cellSelection.sourcePositions)
             else -> emptyMap()
         }
-        drawingView.selectedTableCellEndpoints = if (cellSelection is EditorCellSelection.Drawable &&
-            cellSelection.tableId in entries && input.isEnabled && input.isEditable &&
-            !input.hasPendingCompositionForExternalRefresh() &&
-            input.hasAuthorizedNativeTableOwner(adapter) &&
-            adapter.cachedTableRecords[cellSelection.tableId]?.optBoolean("readOnlyDescendants", true) == false
-        ) {
-            val selection = JSONObject(requireNotNull(adapter.cachedAtomicRenderJson)).getJSONObject("selection")
-            val anchor = exactV2ScalarInt(selection.opt("anchorCell") as? Number)
-            val head = exactV2ScalarInt(selection.opt("headCell") as? Number)
-            if (anchor != null && head != null) Triple(cellSelection.tableId, anchor, head) else null
-        } else null
+        drawingView.selectedTableCellEndpoints = displayedCellSelection(adapter)?.takeIf { (tableId) ->
+            tableId in entries && input.isEnabled && input.isEditable && !input.hasPendingCompositionForExternalRefresh() &&
+                input.hasAuthorizedNativeTableOwner(adapter) &&
+                adapter.cachedTableRecords[tableId]?.optBoolean("readOnlyDescendants", true) == false
+        }
         if (!applyingCellUpdate) reconcileActiveCell()
     }
 

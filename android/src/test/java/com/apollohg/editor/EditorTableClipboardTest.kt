@@ -77,16 +77,16 @@ internal class EditorTableClipboardTest {
             updates.clear()
         }
 
-        fun relayout() {
-            view.measure(
+        fun relayout(target: RichTextEditorView = view) {
+            target.measure(
                 View.MeasureSpec.makeMeasureSpec(VIEW_WIDTH, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(VIEW_HEIGHT, View.MeasureSpec.EXACTLY)
             )
-            view.layout(0, 0, VIEW_WIDTH, VIEW_HEIGHT)
-            val drawing = view.editorTableSurface.drawingView
+            target.layout(0, 0, VIEW_WIDTH, VIEW_HEIGHT)
+            val drawing = target.editorTableSurface.drawingView
             drawing.measure(
-                View.MeasureSpec.makeMeasureSpec(root.width, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.EXACTLY)
+                View.MeasureSpec.makeMeasureSpec(target.editorEditText.width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(target.editorEditText.height, View.MeasureSpec.EXACTLY)
             )
             drawing.layout(0, 0, drawing.measuredWidth, drawing.measuredHeight)
             shadowOf(Looper.getMainLooper()).idle()
@@ -565,29 +565,51 @@ internal class EditorTableClipboardTest {
         }
 
     @Test
-    fun `read only nested cells never show a cell menu or gate in cut and paste`() =
+    fun `read only nested cells show a copy only menu whose copy never mutates`() =
         withTable(EditorTableSurfaceMountTest.nestedTableDocument, attached = true) { fixture ->
             clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
             val nested = fixture.openings(NESTED_TABLE).first()
             fixture.selectCells(nested, nested)
             fixture.relayout()
-            fixture.view.editorTableSurface.presentCellEditMenu()
-            assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
-            assertEquals(listOf(android.R.id.copy), CELL_MENU_ITEMS.filter(fixture.root::canPerformCellSelectionMenuItem))
-            assertEquals(emptyList<String>(), fixture.backend.mutations)
+            val before = fixture.adapter.documentJson()
+            val drawing = drawing(fixture)
+            val selected = requireNotNull(drawing.selectedTableCellRects(
+                drawing.selectedTableCellSourcePositions.keys.single())).single()
+            val center = selected.centerX() + drawing.left to selected.centerY() + drawing.top
+            dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_DOWN to center, MotionEvent.ACTION_UP to center))
+            awaitDoubleTapTimeout()
+            assertTrue("a tap inside the read-only selection shows the menu",
+                fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertEquals(listOf(android.R.id.copy), menuItemIds(fixture))
+
+            clickMenuItem(fixture, android.R.id.copy)
+
+            assertEquals(NESTED_CELL_TEXT, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
+            assertEquals("copy must not mutate", emptyList<String>(), fixture.backend.mutations)
+            assertEquals(0, fixture.updates.size)
+            assertEquals(before, fixture.adapter.documentJson())
         }
 
     @Test
-    fun `a view that does not own the table offers only copy`() =
-        withTable(GRID_DOCUMENT) { fixture ->
+    fun `a view that does not own the table shows a copy only menu`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
             clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
             val openings = fixture.openings()
             fixture.selectCells(openings[FIRST_CELL], openings[LAST_CELL])
-            val stale = fixture.nonOwnerView().editorEditText
-            assertTrue(stale.authoritativeCellSelectionActive)
-            assertEquals(listOf(android.R.id.copy),
-                CELL_MENU_ITEMS.filter(stale::canPerformCellSelectionMenuItem))
-            assertEquals(CELL_MENU_ITEMS, CELL_MENU_ITEMS.filter(fixture.root::canPerformCellSelectionMenuItem))
+            val stale = fixture.nonOwnerView()
+            (fixture.view.parent as FrameLayout).addView(stale, FrameLayout.LayoutParams(VIEW_WIDTH, VIEW_HEIGHT))
+            fixture.relayout(stale)
+            assertTrue(stale.editorEditText.requestFocus())
+            assertTrue(stale.editorEditText.authoritativeCellSelectionActive)
+
+            stale.editorTableSurface.presentCellEditMenu()
+
+            assertTrue(stale.editorTableSurface.isCellEditMenuVisible)
+            val mode = requireNotNull(stale.editorEditText.selectionActionMode)
+            assertEquals(listOf(android.R.id.copy), (0 until mode.menu.size()).map { mode.menu.getItem(it).itemId })
+            assertTrue(mode.menu.performIdentifierAction(android.R.id.copy, 0))
+            assertEquals(FIRST_ROW_TSV + "\n" + "C\tD", requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
+            assertEquals("a non-owner copy never mutates", emptyList<String>(), fixture.backend.mutations)
         }
 
     @Test

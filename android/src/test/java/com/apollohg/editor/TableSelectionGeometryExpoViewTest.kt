@@ -4,6 +4,7 @@ import android.app.Activity
 import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Looper
+import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
 import androidx.core.graphics.Insets
@@ -39,6 +40,7 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         const val STATUS_BAR_PX = 48
         const val NAVIGATION_BAR_PX = 96
         const val KEYBOARD_PX = 600
+        const val OUTSIDE_TOUCH_INSET = 4f
     }
 
     private val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
@@ -204,6 +206,34 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         assertFalse("no keyboard is reported while the IME is hidden", payload.containsKey("keyboard"))
         assertEquals("no native edit menu is showing", false, payload["editMenuVisible"])
     }
+
+    @Test
+    fun `a window touch outside the editor closes the cell edit menu`() =
+        withFocusedTable(fourCellTable) { fixture ->
+            fixture.selectCells(0, 3)
+            fixture.nextFrame()
+            val surface = fixture.view.richTextView.editorTableSurface
+            surface.presentCellEditMenu()
+            assertTrue(surface.isCellEditMenuVisible)
+
+            fun windowTouch(x: Float, y: Float): NativeEditorOutsideTapDecision {
+                val event = MotionEvent.obtain(0L, 0L, MotionEvent.ACTION_DOWN, x, y, 0)
+                try {
+                    val decision = fixture.view.prepareOutsideTapDecisionForWindowEvent(event)
+                    fixture.view.handleOutsideTapDecisionFromWindowDispatcher(decision)
+                    return decision
+                } finally { event.recycle() }
+            }
+            val inside = IntArray(2).also(fixture.view.richTextView::getLocationOnScreen)
+            assertEquals(NativeEditorOutsideTapDecision.PRESERVE_FOCUS,
+                windowTouch(inside[0] + OUTSIDE_TOUCH_INSET, inside[1] + OUTSIDE_TOUCH_INSET))
+            assertTrue("a touch inside the editor keeps the menu", surface.isCellEditMenuVisible)
+
+            assertEquals(NativeEditorOutsideTapDecision.OUTSIDE_EDITOR,
+                windowTouch(OUTSIDE_TOUCH_INSET, OUTSIDE_TOUCH_INSET))
+            assertFalse("a touch outside the editor closes the menu", surface.isCellEditMenuVisible)
+            fixture.view.cancelOutsideTapBlurFromWindowDispatcher()
+        }
 
     @Test
     fun `native cell edit menu visibility is republished so the toolbar yields`() =

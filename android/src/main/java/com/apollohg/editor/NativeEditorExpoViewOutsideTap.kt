@@ -87,6 +87,7 @@ internal fun NativeEditorExpoView.handleOutsideTapDecisionFromWindowDispatcherIm
         NativeEditorOutsideTapDecision.PRESERVE_FOCUS -> cancelPendingOutsideTapBlur()
 
         NativeEditorOutsideTapDecision.OUTSIDE_EDITOR -> {
+            richTextView.editorTableSurface.dismissCellEditMenu()
             clearRecentToolbarTouch()
             cancelPendingToolbarRefocus()
             scheduleOutsideTapBlur()
