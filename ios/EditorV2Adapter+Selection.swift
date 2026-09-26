@@ -68,11 +68,15 @@ extension EditorV2Adapter {
     }
 
     private func applySelectionEnvelope(_ selection: [String: Any]) -> String? {
-        performMutation(adoptEngineSelection: true, publishMutation: false) {
+        let update = performMutation(adoptEngineSelection: true, publishMutation: false) {
             self.callWithEnvelope(["selection": selection]) { requestJSON in
                 editorV2SetSelection(editorId: self.editorId, requestJson: requestJSON)
             }
         }
+        if update != nil {
+            publishCollaborationCellsIfChanged()
+        }
+        return update
     }
 
     private static func exactCellSelectionEnvelope(anchor: UInt32, head: UInt32) -> [String: Any] {
@@ -355,7 +359,27 @@ extension EditorV2Adapter {
         return refreshedUpdateJSON
     }
 
+    private func cachedCollaborationCells() -> (anchor: UInt32, head: UInt32)? {
+        cachedAtomicRenderSelection().flatMap(EditorCellSelection.endpointPositions)
+    }
+
+    func publishCollaborationCellsIfChanged() {
+        guard roomBound else { return }
+        let cells = cachedCollaborationCells()
+        guard (cells?.anchor, cells?.head)
+                != (publishedCollaborationCells?.anchor, publishedCollaborationCells?.head)
+        else { return }
+        publishCachedCollaborationSelection()
+    }
+
     func publishCachedCollaborationSelection() {
+        if let cells = cachedCollaborationCells() {
+            publishAwarenessSelection(
+                ["type": "cell", "anchorCell": Int(cells.anchor), "headCell": Int(cells.head)],
+                cells: cells
+            )
+            return
+        }
         guard let selection = cachedAuthoritativeScalarSelection,
               let mapping = resolveSelectionMapping(
                   scalarAnchor: selection.anchor,
@@ -371,12 +395,17 @@ extension EditorV2Adapter {
     }
 
     private func publishCollaborationSelection(docAnchor: UInt32, docHead: UInt32) {
+        publishAwarenessSelection(
+            ["type": "text", "anchor": Int(docAnchor), "head": Int(docHead)],
+            cells: nil
+        )
+    }
+
+    private func publishAwarenessSelection(
+        _ selection: [String: Any],
+        cells: (anchor: UInt32, head: UInt32)?
+    ) {
         guard roomBound, let nativeEditorId = UInt64(editorId) else { return }
-        let selection: [String: Any] = [
-            "type": "text",
-            "anchor": Int(docAnchor),
-            "head": Int(docHead)
-        ]
         guard let data = try? JSONSerialization.data(withJSONObject: selection),
               let selectionJSON = String(data: data, encoding: .utf8)
         else {
@@ -397,6 +426,7 @@ extension EditorV2Adapter {
                 emit(contractError("awareness selection result violates the frozen shape"))
                 return
             }
+            publishedCollaborationCells = cells
             if outboundChanged {
                 collaborationWake(nativeEditorId, .awareness)
             }

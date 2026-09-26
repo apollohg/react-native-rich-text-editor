@@ -611,6 +611,24 @@ mod table_cell_presence {
                 .expect("the published state is retained"))
         }
 
+        fn select(&mut self, selection: Value) -> Value {
+            self.publisher_runtime
+                .set_awareness_selection(
+                    PUBLISHER_REQUEST_ID,
+                    &selection.to_string(),
+                    context(
+                        &mut self.publisher,
+                        TransportState::Disconnected,
+                        &self.limits,
+                    ),
+                )
+                .expect("the native selection update is admitted");
+            self.publisher_runtime
+                .desired_awareness()
+                .cloned()
+                .expect("the published state is retained")
+        }
+
         fn publish_cells(&mut self, anchor_cell: u32, head_cell: u32) -> Value {
             self.try_publish(cell_selection(anchor_cell, head_cell))
                 .expect("the publisher admits its own real-cell rectangle")
@@ -789,6 +807,47 @@ mod table_cell_presence {
             bounded.publisher_runtime.desired_awareness(),
             Some(&accepted),
             "a refused rectangle leaves the previous presence in place",
+        );
+    }
+
+    #[test]
+    fn a_native_selection_update_swaps_between_cell_and_text_presence() {
+        let mut peers = two_table_peers();
+        let cells = table_openings(&peers.publisher);
+        let (anchor, head) = (
+            cells[FIRST_TABLE][TOP_LEFT],
+            cells[FIRST_TABLE][BOTTOM_RIGHT],
+        );
+        peers
+            .try_publish(Value::Null)
+            .expect("presence without a cursor publishes");
+        let cell_state = peers.select(cell_selection(anchor, head));
+        assert_eq!(
+            peer_cursor_projection(&peers.publisher, &cell_state),
+            Some(AwarenessCursorProjection { anchor, head }),
+            "the fallback cursor addresses the cell openings: {cell_state}",
+        );
+        assert_eq!(
+            peers
+                .publisher
+                .resolve_awareness_cell_rectangle(&cell_state),
+            Some((anchor, head)),
+            "the extension carries the same real cells: {cell_state}",
+        );
+
+        let caret = anchor + 2;
+        let text_state = peers.select(json!({ "type": "text", "anchor": caret, "head": caret }));
+        assert_eq!(
+            text_state.get(AWARENESS_CELL_RECTANGLE_KEY),
+            None,
+            "a text selection withdraws the rectangle: {text_state}",
+        );
+        assert_eq!(
+            peer_cursor_projection(&peers.publisher, &text_state),
+            Some(AwarenessCursorProjection {
+                anchor: caret,
+                head: caret,
+            }),
         );
     }
 }

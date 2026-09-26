@@ -136,6 +136,8 @@ internal fun EditorV2Adapter.performNativeIntent(
             if (changed) {
                 publishCachedCollaborationSelection()
                 notifyCollaborationMutation()
+            } else {
+                publishCollaborationCellsIfChanged()
             }
             EditorV2NativeIntentResult.Applied(
                 EditorV2NativeMutationRender(update, changed, documentChanged)
@@ -229,6 +231,8 @@ internal fun EditorV2Adapter.performMutation(
             if (changed) {
                 publishCachedCollaborationSelection()
                 notifyCollaborationMutation()
+            } else {
+                publishCollaborationCellsIfChanged()
             }
             update
         }

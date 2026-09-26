@@ -70,6 +70,7 @@ final class EditorV2Adapter {
     var onRemoteRecoveryForTesting: (() -> Void)?
     var lastSyncedScalarSelection: (anchor: UInt32, head: UInt32)?
     var cachedAuthoritativeScalarSelection: (anchor: UInt32, head: UInt32)?
+    var publishedCollaborationCells: (anchor: UInt32, head: UInt32)?
     var cachedScalarLength: UInt32?
     var cachedActiveState: [String: Any]?
     var cachedHistoryState: (canUndo: Bool, canRedo: Bool)?

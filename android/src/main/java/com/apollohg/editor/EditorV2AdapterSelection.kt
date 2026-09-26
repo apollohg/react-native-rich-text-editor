@@ -33,6 +33,13 @@ internal fun EditorV2Adapter.cachedAtomicRenderSelection(): JSONObject? =
         runCatching { JSONObject(raw).getJSONObject("selection") }.getOrNull()
     }
 
+internal fun cellSelectionEndpoints(selection: JSONObject): Pair<Int, Int>? {
+    if (selection.optString("type") != "cell") return null
+    val anchor = exactV2ScalarInt(selection.opt("anchorCell") as? Number) ?: return null
+    val head = exactV2ScalarInt(selection.opt("headCell") as? Number) ?: return null
+    return anchor to head
+}
+
 internal fun EditorV2Adapter.selectExactTableCells(
     anchorCell: Int,
     headCell: Int,
@@ -43,9 +50,7 @@ internal fun EditorV2Adapter.selectExactTableCells(
 ): String? {
     if (!admitsTableMutation(admission) || positionEpoch != expectedEpoch) return null
     val current = cachedAtomicRenderSelection() ?: return null
-    if (current.optString("type") != "cell" ||
-        exactV2ScalarInt(current.opt("anchorCell") as? Number) != expectedAnchor ||
-        exactV2ScalarInt(current.opt("headCell") as? Number) != expectedHead) return null
+    if (cellSelectionEndpoints(current) != expectedAnchor to expectedHead) return null
     fun point(opening: Int) = JSONObject().put("kind", "document").put("offset", opening)
     val selection = JSONObject().put("type", "cell")
         .put("anchorCell", point(anchorCell)).put("headCell", point(headCell))
@@ -61,10 +66,9 @@ internal fun EditorV2Adapter.selectExactTableCells(
     val update = refreshFromRustState(null) ?: return null
     val admitted = runCatching { JSONObject(update).getJSONObject("selection") }.getOrNull()
         ?: return null
-    if (admitted.optString("type") != "cell" ||
-        exactV2ScalarInt(admitted.opt("anchorCell") as? Number) != anchorCell ||
-        exactV2ScalarInt(admitted.opt("headCell") as? Number) != headCell ||
+    if (cellSelectionEndpoints(admitted) != anchorCell to headCell ||
         !admitsTableMutation(admission) || positionEpoch == null) return null
+    publishCollaborationCellsIfChanged()
     return update
 }
 
@@ -219,20 +223,44 @@ internal fun EditorV2Adapter.resolveSelectionMapping(anchor: Int, head: Int): In
     }
 }
 
+private fun EditorV2Adapter.cachedCollaborationCells(): Pair<Int, Int>? =
+    cachedAtomicRenderSelection()?.let(::cellSelectionEndpoints)
+
+internal fun EditorV2Adapter.publishCollaborationCellsIfChanged() {
+    if (roomBound && cachedCollaborationCells() != publishedCollaborationCells) {
+        publishCachedCollaborationSelection()
+    }
+}
+
 internal fun EditorV2Adapter.publishCachedCollaborationSelection() {
     if (!roomBound) return
+    val cells = cachedCollaborationCells()
+    if (cells != null) {
+        publishAwarenessSelection(
+            JSONObject().put("type", "cell").put("anchorCell", cells.first)
+                .put("headCell", cells.second),
+            cells
+        )
+        return
+    }
     val selection = cachedAuthoritativeScalarSelection ?: return
     val mapping = resolveSelectionMapping(selection[0], selection[1]) ?: return
     publishCollaborationSelection(mapping[0], mapping[1])
 }
 
 internal fun EditorV2Adapter.publishCollaborationSelection(docAnchor: Int, docHead: Int) {
+    publishAwarenessSelection(
+        JSONObject().put("type", "text").put("anchor", docAnchor).put("head", docHead),
+        null
+    )
+}
+
+private fun EditorV2Adapter.publishAwarenessSelection(
+    selection: JSONObject,
+    cells: Pair<Int, Int>?
+) {
     if (!roomBound) return
-    val selectionJson = JSONObject()
-        .put("type", "text")
-        .put("anchor", docAnchor)
-        .put("head", docHead)
-        .toString()
+    val selectionJson = selection.toString()
     when (
         val result = backend.collaborationSetAwarenessSelection(
             editorId,
@@ -261,8 +289,11 @@ internal fun EditorV2Adapter.publishCollaborationSelection(docAnchor: Int, docHe
                         "awareness selection result violates the frozen shape"
                     )
                 )
-            } else if (outboundChanged) {
-                collaborationWake(editorId, CollaborationWakeReason.AWARENESS)
+            } else {
+                publishedCollaborationCells = cells
+                if (outboundChanged) {
+                    collaborationWake(editorId, CollaborationWakeReason.AWARENESS)
+                }
             }
         }
     }

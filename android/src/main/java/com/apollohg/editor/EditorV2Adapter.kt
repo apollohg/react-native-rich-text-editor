@@ -55,6 +55,7 @@ internal class EditorV2Adapter private constructor(
         private set
     internal var lastSyncedScalarSelection: IntArray? = null
     internal var cachedAuthoritativeScalarSelection: IntArray? = null
+    internal var publishedCollaborationCells: Pair<Int, Int>? = null
     internal var cachedScalarLength: Int? = null
     internal var cachedActiveState: JSONObject? = null
     internal var cachedHistoryState: JSONObject? = null
@@ -416,7 +417,7 @@ internal class EditorV2Adapter private constructor(
             stripViewSelection = false,
             engineOwnedSelection = true,
             resolvedPositionEpoch = pinned.positionEpoch
-        )
+        )?.also { publishCollaborationCellsIfChanged() }
     }
 
     internal fun validateExternalRender(renderJson: String): Boolean {

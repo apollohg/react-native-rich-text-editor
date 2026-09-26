@@ -67,11 +67,13 @@ internal class EditorCellSelectionAdmissionTest {
         tableStyle: TableStyle? = null,
         schemaConfig: String = config,
         exactSelection: Boolean = true,
+        backend: EditorV2Backend = UniffiEditorV2Backend,
+        roomBound: Boolean = false,
         block: (RichTextEditorView, EditorV2Adapter, PreparedProseDrawingView) -> Unit
     ) {
         val created = UniffiEditorV2Backend.create(schemaConfig, null) as EditorV2CallResult.Ok
         val adapter = requireNotNull(EditorV2Adapter.attach(
-            UniffiEditorV2Backend, JSONObject(created.value).getString("editorId"), false
+            backend, JSONObject(created.value).getString("editorId"), roomBound
         ))
         val token = EditorV2Registry.register(adapter)
         try {
@@ -236,6 +238,27 @@ internal class EditorCellSelectionAdmissionTest {
             assertTrue(handles.any { it.x < left + 20f })
             assertTrue(handles.any { it.x > right - 20f })
         }
+
+    @Test
+    fun `room head drag publishes the dragged cells as presence`() {
+        val backend = RecordingAwarenessBackend()
+        withMountedSelection(gridDocument, 600, 0, 1, backend = backend, roomBound = true) {
+            view, adapter, drawing ->
+            val cells = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+            val anchor = cells.getJSONObject(0).getInt("sourcePos")
+            val target = cells.getJSONObject(3).getInt("sourcePos")
+            val head = drawing.selectionHandles().single { it.role == TableSelectionHandleRole.HEAD }
+            val cell = drawing.presentedTableCells().first { it.sourcePosition == target }
+            backend.selections.clear()
+
+            dragHandle(view, head.x + drawing.left, head.y + drawing.top,
+                cell.bounds.centerX() + drawing.left, cell.bounds.centerY() + drawing.top)
+
+            assertEquals(target, engineSelection(adapter).getInt("headCell"))
+            assertTrue("${backend.selections}", backend.selections.isNotEmpty())
+            assertTrue("${backend.selections}", backend.selections.last().isCellPresence(anchor, target))
+        }
+    }
 
     @Test
     fun `head drag addresses nested only outer cell without selecting its descendant`() =

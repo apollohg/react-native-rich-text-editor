@@ -371,4 +371,47 @@ extension EditorV2AdapterTests {
         XCTAssertEqual(renderedText(replaced), "api")
     }
 
+    func testRoomAdoptedCellSelectionPublishesCellPresenceUntilTextReplacesIt() throws {
+        var selections: [[String: Any]] = []
+        let adapter = makeAttachedAdapter(
+            configJson: TableInputTestSchema.tableConfig,
+            roomBound: true,
+            setAwarenessSelection: { _, json in
+                let object = try? JSONSerialization.jsonObject(with: Data(json.utf8))
+                selections.append(object as? [String: Any] ?? [:])
+                return FfiJsonResult(value: #"{"outboundChanged":false}"#, error: nil)
+            },
+            file: #filePath,
+            line: #line
+        )
+        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        let cells = try XCTUnwrap(adapter.cachedTableRecords.values.first?["cells"] as? [[String: Any]])
+        let anchor = try XCTUnwrap((cells.first?["sourcePos"] as? NSNumber)?.intValue)
+        let head = try XCTUnwrap((cells.last?["sourcePos"] as? NSNumber)?.intValue)
+        let selected = adapter.callWithEnvelope([
+            "selection": [
+                "type": "cell",
+                "anchorCell": ["kind": "document", "offset": anchor],
+                "headCell": ["kind": "document", "offset": head]
+            ]
+        ]) { editorV2SetSelection(editorId: adapter.editorId, requestJson: $0) }
+        XCTAssertNil(selected.error, "engine refused the cell selection: \(String(describing: selected.error))")
+        let render = try XCTUnwrap(
+            editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value
+        )
+        selections.removeAll()
+
+        XCTAssertNotNil(adapter.adoptExternalRender(render))
+        XCTAssertNotNil(adapter.adoptExternalRender(render))
+
+        XCTAssertEqual(selections.count, 1, "cell presence publishes once per change: \(selections)")
+        XCTAssertEqual(selections.first?["type"] as? String, "cell")
+        XCTAssertEqual((selections.first?["anchorCell"] as? NSNumber)?.intValue, anchor)
+        XCTAssertEqual((selections.first?["headCell"] as? NSNumber)?.intValue, head)
+
+        XCTAssertNotNil(adapter.syncSelection(anchor: 1, head: 1))
+
+        XCTAssertEqual(selections.last?["type"] as? String, "text", "text replaces cell presence: \(selections)")
+        XCTAssertNil(adapter.publishedCollaborationCells)
+    }
 }

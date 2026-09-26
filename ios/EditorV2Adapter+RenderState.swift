@@ -232,6 +232,7 @@ extension EditorV2Adapter {
             rejectAtomicRenderSnapshot()
             return nil
         }
+        publishCollaborationCellsIfChanged()
         return adopted.updateJSON
     }
 
