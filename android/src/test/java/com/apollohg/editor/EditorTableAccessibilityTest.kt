@@ -17,6 +17,7 @@ import com.apollohg.editor.tables.TableAccessibilityNodes
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -241,6 +242,22 @@ internal class EditorTableAccessibilityTest {
             val after = Rect().also(fixture.frameNode().second::getBoundsInParent)
             assertEquals("the frame is placed from the current line", before.top + FRAME_SHIFT_PX, after.top)
         }
+
+    @Test
+    fun `a detached frame node places itself with one bounds evaluation`() = withTable(EMPTY_FRAME_DOCUMENT) { fixture ->
+        val surface = fixture.view.editorTableSurface
+        var evaluations = 0
+        surface.drawingView.tableAccessibilityEditing = object : TableAccessibilityEditing by surface {
+            override fun detachedTableAccessibilityFrames(): List<TableAccessibilityDetachedFrame> =
+                surface.detachedTableAccessibilityFrames().map { frame ->
+                    frame.copy(bounds = { evaluations += 1; frame.bounds() })
+                }
+        }
+        val (frameId) = fixture.frameNode()
+        evaluations = 0
+        assertNotNull(fixture.provider.createAccessibilityNodeInfo(frameId))
+        assertEquals("one node build measures its line once", 1, evaluations)
+    }
 
     @Test
     fun `an input without a table slot stays in the editor frame traversal`() = withTable(FOUR_CELL_DOCUMENT) { fixture ->

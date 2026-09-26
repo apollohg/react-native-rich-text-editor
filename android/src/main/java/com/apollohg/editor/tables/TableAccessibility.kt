@@ -406,10 +406,18 @@ internal class TableAccessibilityNodes(
         is Entry.Detached -> entry.frame.bounds() to null
     }
 
-    private fun visible(entry: Entry): Boolean {
-        val (bounds, clip) = if (entry is Entry.Cell) geometry(Entry.Table(entry.table)) else geometry(entry)
+    private fun visibilityGeometry(entry: Entry, own: Pair<RectF, RectF?>): Pair<RectF, RectF?> =
+        if (entry is Entry.Cell) geometry(Entry.Table(entry.table)) else own
+
+    private fun visible(geometry: Pair<RectF, RectF?>): Boolean {
+        val (bounds, clip) = geometry
         if (clip != null && !RectF(bounds).intersect(clip)) return false
         return visibleOnScreen(screenBounds(parentBounds(bounds, clip)))
+    }
+
+    private fun visible(entry: Entry): Boolean {
+        val own = geometry(entry)
+        return visible(visibilityGeometry(entry, own))
     }
 
     @Suppress("DEPRECATION")
@@ -417,14 +425,14 @@ internal class TableAccessibilityNodes(
         val entries = snapshot().entries
         val entry = entries.getOrNull(virtualId - FIRST_TABLE_NODE_ID) ?: return null
         reconcile()
-        val (bounds, clip) = geometry(entry)
-        val parent = parentBounds(bounds, clip)
+        val own = geometry(entry)
+        val parent = parentBounds(own.first, own.second)
         return AccessibilityNodeInfo.obtain().apply {
             packageName = host.context.packageName
             setSource(host, virtualId)
             setBoundsInParent(parent)
             setBoundsInScreen(screenBounds(parent))
-            isVisibleToUser = visible(entry)
+            isVisibleToUser = visible(visibilityGeometry(entry, own))
             isAccessibilityFocused = focused?.identity == identity(entry)
             addAction(
                 if (isAccessibilityFocused) AccessibilityNodeInfo.AccessibilityAction.ACTION_CLEAR_ACCESSIBILITY_FOCUS
