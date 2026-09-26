@@ -12,11 +12,13 @@ use crate::selection::Selection;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::command_context::{prepare_table_action, CellAnchorPair, TableActionContext};
 use crate::tables::commands::paste::MatrixPasteAction;
+use crate::tables::commands::CELL_INTERIOR_OFFSET;
 use crate::tables::commands_tests::{
     cell_openings, document_of, drain_document_updates, engine_schema, engine_with, geometry,
     header_fixture, place_caret, projection_of, regular_fixture, resolved_cells, row_count,
     row_texts, row_types, seeded, select_cells, session_cell_openings, session_select_rectangle,
     table_of, tall_span_fixture, wide_span_fixture, PROSE_PREFIX_TABLE_POSITION, PROSE_PREFIX_TEXT,
+    TABLE_POSITION,
 };
 use crate::tables::interchange_tests::nesting_cell;
 use crate::tables::normalize_tests::{
@@ -34,8 +36,6 @@ use crate::yrs_engine::{
 };
 
 const REQUEST_ID: u64 = 43;
-const TABLE_POSITION: u32 = 0;
-const CELL_TEXT_OFFSET: u32 = 2;
 const ONE_CHARACTER: u32 = 1;
 const SINGLE_SPAN: u32 = 1;
 const DOUBLE_SPAN: u32 = 2;
@@ -342,8 +342,8 @@ fn the_absorption_check_refuses_a_row_replacement_that_crosses_cell_boundaries()
     let document = document_of(&engine).clone();
     let openings = cell_openings(&engine);
     let crossing = vec![SemanticOperation::ReplaceRange {
-        from: openings[0] + CELL_TEXT_OFFSET + ONE_CHARACTER,
-        to: openings[1] + CELL_TEXT_OFFSET + ONE_CHARACTER,
+        from: openings[0] + CELL_INTERIOR_OFFSET + ONE_CHARACTER,
+        to: openings[1] + CELL_INTERIOR_OFFSET + ONE_CHARACTER,
         content: Fragment::empty(),
     }];
 
@@ -352,7 +352,7 @@ fn the_absorption_check_refuses_a_row_replacement_that_crosses_cell_boundaries()
         &document,
         &engine_schema(&engine),
         &crossing,
-        &Selection::cursor(openings[0] + CELL_TEXT_OFFSET),
+        &Selection::cursor(openings[0] + CELL_INTERIOR_OFFSET),
     )
     .expect("the crossing range resolves");
 
@@ -584,7 +584,7 @@ fn pasting_inside_a_nested_table_is_refused_without_mutation() {
         let map = engine.position_map().expect("the engine is ready");
         RevisionedPosition {
             offset: map.doc_to_scalar(
-                nested_cell + CELL_TEXT_OFFSET + ONE_CHARACTER,
+                nested_cell + CELL_INTERIOR_OFFSET + ONE_CHARACTER,
                 document_of(&engine),
             ),
             kind: EditorOffsetKind::Scalar,
@@ -1126,4 +1126,95 @@ fn copied_cells_round_trip_through_their_tab_separated_text() {
         vec!["one", "say \"two\""],
         "quoted in-cell line breaks come back as paragraphs: {table}",
     );
+}
+
+fn copied_text(engine: &YrsDocumentEngine, anchor: usize, head: usize) -> String {
+    let schema = engine_schema(engine);
+    let document = document_of(engine).clone();
+    let openings = cell_openings(engine);
+    let index = TableProjectionIndex::derive_or_fallback(&document, &schema, &limits());
+    let copied = crate::clipboard::export_cells(
+        &document,
+        &Selection::cell(openings[anchor], openings[head]),
+        &index,
+        &schema,
+    )
+    .expect("the rectangle copies");
+    assert_eq!(
+        copied["text"],
+        json!(
+            serde_json::from_str::<Value>(
+                copied["fragment"]
+                    .as_str()
+                    .expect("the copy carries a fragment")
+            )
+            .expect("the fragment is JSON")["text"]
+        ),
+        "both text flavours agree",
+    );
+    copied["text"]
+        .as_str()
+        .expect("the text flavour is a string")
+        .to_owned()
+}
+
+#[test]
+fn rowspan_covered_slots_copy_as_empty_fields() {
+    let source = seeded(vec![table(vec![
+        row(vec![
+            cell_with(SINGLE_SPAN, DOUBLE_SPAN, Value::Null, "tall"),
+            cell("a"),
+        ]),
+        row(vec![cell("b")]),
+    ])]);
+
+    assert_eq!(copied_text(&source, 0, 2), "tall\ta\n\tb");
+}
+
+#[test]
+fn a_single_copied_cell_is_its_plain_text_and_pastes_back_unchanged() {
+    let source = seeded(vec![table(vec![row(vec![cell("say \"hi\""), cell("x")])])]);
+
+    let text = copied_text(&source, 0, 0);
+
+    assert_eq!(text, "say \"hi\"", "a one-column copy is never quoted");
+    let mut destination = seeded(regular_fixture());
+    select_cells(&mut destination, 3, 3);
+    pasted_plain_text(&mut destination, None, &text);
+    assert_eq!(
+        texts(&table_of(&destination)),
+        vec![vec!["a0", "a1"], vec!["b0", "say \"hi\""]],
+    );
+}
+
+#[test]
+fn a_copied_column_is_plain_lines_and_pastes_as_paragraphs() {
+    let source = seeded(vec![table(vec![
+        row(vec![cell("a"), cell("x")]),
+        row(vec![multi_paragraph_cell(), cell("y")]),
+        row(vec![cell("d"), cell("z")]),
+    ])]);
+
+    let text = copied_text(&source, 0, 4);
+
+    assert_eq!(
+        text, "a\none\nsay \"two\"\nd",
+        "a one-column copy joins every cell's lines without quoting or tabs",
+    );
+    let mut destination = seeded(regular_fixture());
+    select_cells(&mut destination, 0, 0);
+    pasted_plain_text(&mut destination, None, &text);
+    let table = table_of(&destination);
+    let paragraphs: Vec<&str> = table["content"][0]["content"][0]["content"]
+        .as_array()
+        .expect("the cell holds blocks")
+        .iter()
+        .map(|block| block["content"][0]["text"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        paragraphs,
+        vec!["a", "one", "say \"two\"", "d"],
+        "tab-free text is ordinary plain text, one paragraph per line: {table}",
+    );
+    assert_eq!(row_texts(&table, 1), vec!["b0", "b1"]);
 }

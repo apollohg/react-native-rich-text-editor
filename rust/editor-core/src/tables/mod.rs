@@ -18,7 +18,7 @@ pub(crate) mod widths;
 #[cfg(test)]
 mod admission_tests;
 #[cfg(test)]
-mod commands_tests;
+pub(crate) mod commands_tests;
 #[cfg(test)]
 mod history_tests;
 #[cfg(test)]

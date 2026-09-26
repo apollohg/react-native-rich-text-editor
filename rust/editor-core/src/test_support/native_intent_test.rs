@@ -5,6 +5,8 @@ use crate::schema::presets::tiptap_schema;
 use crate::session::{
     CollaborationLimits, DocumentState, EditorSession, EditorSessionConfig, SessionPolicy,
 };
+use crate::tables::commands::CELL_INTERIOR_OFFSET;
+use crate::tables::commands_tests::TABLE_POSITION;
 use crate::yrs_engine::{
     Affinity, EditingLimits, EditorOffsetKind, InitializationMode, ReplacementHistory,
     ResolvedSelection, RevisionedPosition, SelectionInput, TransactionOrigin, TypedCommand,
@@ -126,8 +128,14 @@ fn session_audit(session: &EditorSession) -> SessionAudit {
 }
 
 const TWO_CELL_TABLE_DOCUMENT: &str = r#"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"First"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Second"}]}]}]}]}]}"#;
-const TABLE_POSITION: u32 = 0;
-const CELL_TEXT_OFFSET: u32 = 2;
+const PASTE_OWNER_ID: u64 = 81;
+const PASTE_REQUEST_ID: u64 = 82;
+const PASTE_UNDO_REQUEST_ID: u64 = 83;
+const TAB_OWNER_ID: u64 = 71;
+const TAB_REQUEST_ID: u64 = 72;
+const TAB_STALE_REQUEST_ID: &str = "73";
+const TAB_UNDO_REQUEST_ID: u64 = 74;
+const FOREIGN_OWNER_ID: u64 = 999;
 
 fn table_session() -> EditorSession {
     let config = EditorSessionConfig::local_for_test();
@@ -167,7 +175,7 @@ fn cell_text_scalar(session: &EditorSession, cell: usize) -> u32 {
         .engine
         .position_map()
         .unwrap()
-        .doc_to_scalar(opening + CELL_TEXT_OFFSET, document)
+        .doc_to_scalar(opening + CELL_INTERIOR_OFFSET, document)
 }
 
 fn table_row_texts(session: &EditorSession, row: usize) -> Vec<String> {
@@ -193,7 +201,7 @@ fn native_tsv_paste_inside_a_table_applies_as_one_trusted_matrix_paste() {
         "type": "command", "anchor": scalar, "head": scalar,
         "command": {"type": "paste", "text": "x\ty\nz\tw"},
     });
-    let request = native_intent_request(&mut session, 81, 82, intent);
+    let request = native_intent_request(&mut session, PASTE_OWNER_ID, PASTE_REQUEST_ID, intent);
 
     let outcome = NativeTransactionBridge::new(&mut session)
         .submit_native_intent(&request)
@@ -215,6 +223,21 @@ fn native_tsv_paste_inside_a_table_applies_as_one_trusted_matrix_paste() {
             .pending_document_update_count(),
         before.outbox_pending_updates + 1
     );
+
+    let (engine, outbox) = session.engine_and_outbox();
+    assert!(engine
+        .undo_with_outbox(PASTE_UNDO_REQUEST_ID, outbox)
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        session.engine.document_json().unwrap(),
+        before.document_json,
+        "one undo restores the table the paste replaced"
+    );
+    assert!(
+        !session.engine.can_undo(),
+        "the native paste must be a single undo step"
+    );
 }
 
 #[test]
@@ -226,7 +249,7 @@ fn native_table_tab_appends_one_row_with_one_trusted_commit() {
         "type": "command", "anchor": scalar, "head": scalar,
         "command": {"type": "moveToAdjacentCell", "step": "forward", "appendRow": true},
     });
-    let request = native_intent_request(&mut session, 71, 72, intent);
+    let request = native_intent_request(&mut session, TAB_OWNER_ID, TAB_REQUEST_ID, intent);
 
     let outcome = NativeTransactionBridge::new(&mut session)
         .submit_native_intent(&request)
@@ -258,19 +281,22 @@ fn native_table_tab_appends_one_row_with_one_trusted_commit() {
 
     let after = session_audit(&session);
     let mut stale: serde_json::Value = serde_json::from_str(&request).unwrap();
-    stale["requestId"] = serde_json::json!("73");
-    stale["ownerId"] = serde_json::json!("999");
+    stale["requestId"] = serde_json::json!(TAB_STALE_REQUEST_ID);
+    stale["ownerId"] = serde_json::json!(FOREIGN_OWNER_ID.to_string());
     assert!(NativeTransactionBridge::new(&mut session)
         .submit_native_intent(&stale.to_string())
         .is_err());
-    stale["ownerId"] = serde_json::json!("71");
+    stale["ownerId"] = serde_json::json!(TAB_OWNER_ID.to_string());
     assert!(NativeTransactionBridge::new(&mut session)
         .submit_native_intent(&stale.to_string())
         .is_err());
     assert_eq!(session_audit(&session), after);
 
     let (engine, outbox) = session.engine_and_outbox();
-    assert!(engine.undo_with_outbox(74, outbox).unwrap().is_some());
+    assert!(engine
+        .undo_with_outbox(TAB_UNDO_REQUEST_ID, outbox)
+        .unwrap()
+        .is_some());
     assert_eq!(
         session.engine.document_json().unwrap(),
         before.document_json

@@ -5,7 +5,8 @@ use crate::clipboard::{
 use crate::model::{Fragment, Node};
 use crate::schema::Schema;
 use crate::tables::commands::{
-    attrs_with_removed_columns, attrs_with_row_span, fresh_cell_node, ONE_SLOT,
+    attrs_with_removed_columns, attrs_with_row_span, cell_node, fresh_cell_node, FIRST_COLUMN,
+    ONE_SLOT,
 };
 use crate::tables::projection::span_attribute;
 use crate::tables::roles::{TableRoles, TABLE_CELL_COLSPAN_ATTR, TABLE_CELL_ROWSPAN_ATTR};
@@ -16,7 +17,7 @@ const FIELD_SEPARATOR_TEXT: &str = "\t";
 const QUOTE: char = '"';
 const ESCAPED_QUOTE: &str = "\"\"";
 const QUOTE_TEXT: &str = "\"";
-const ONE_DEPTH: usize = ONE_SLOT as usize;
+const ONE_OPEN_LEVEL: usize = 1;
 const UNCOVERED: u32 = 0;
 const EMPTY_WIDTH: u32 = 0;
 
@@ -49,15 +50,9 @@ impl MatrixCell {
         colspan: u32,
         rowspan: u32,
     ) -> Result<Self, TableError> {
+        let content = self.node.content().ok_or(TableError::InvalidStructure)?;
         Ok(Self {
-            node: Node::element(
-                self.node.node_type().to_owned(),
-                attrs,
-                self.node
-                    .content()
-                    .cloned()
-                    .ok_or(TableError::InvalidStructure)?,
-            ),
+            node: cell_node(self.node.node_type(), attrs, content.children().to_vec()),
             colspan,
             rowspan,
         })
@@ -92,7 +87,7 @@ fn place_spans(rows: &[Vec<(u32, u32)>]) -> Result<(Vec<Vec<u32>>, u32), TableEr
     let mut width = EMPTY_WIDTH;
     let mut placed = Vec::with_capacity(rows.len());
     for (row, spans) in (0u32..).zip(rows) {
-        let mut column = EMPTY_WIDTH;
+        let mut column = FIRST_COLUMN;
         let mut columns = Vec::with_capacity(spans.len());
         for (colspan, rowspan) in spans {
             while covered_until
@@ -156,8 +151,8 @@ pub(crate) fn matrix_from_slice(
         let Some(inner) = only.content() else {
             return Ok(None);
         };
-        open_start = open_start.saturating_sub(ONE_DEPTH);
-        open_end = open_end.saturating_sub(ONE_DEPTH);
+        open_start = open_start.saturating_sub(ONE_OPEN_LEVEL);
+        open_end = open_end.saturating_sub(ONE_OPEN_LEVEL);
         content = inner;
     }
     let Some(first) = content.children().first() else {
@@ -348,6 +343,7 @@ pub(crate) fn tab_separated_text(table: &Node, schema: &Schema) -> Result<String
         spans.push(row_spans);
     }
     let (columns, width) = place_spans(&spans)?;
+    let separates_fields = width > ONE_SLOT;
     let mut lines = Vec::with_capacity(rows.len());
     for (row, row_columns) in rows.iter().zip(&columns) {
         let mut fields = vec![String::new(); width as usize];
@@ -356,7 +352,12 @@ pub(crate) fn tab_separated_text(table: &Node, schema: &Schema) -> Result<String
             let field = fields
                 .get_mut(*column as usize)
                 .ok_or(TableError::InvalidStructure)?;
-            *field = spreadsheet_field(&node_text(cell, schema));
+            let text = node_text(cell, schema);
+            *field = if separates_fields {
+                spreadsheet_field(&text)
+            } else {
+                text
+            };
         }
         lines.push(fields.join(FIELD_SEPARATOR_TEXT));
     }
