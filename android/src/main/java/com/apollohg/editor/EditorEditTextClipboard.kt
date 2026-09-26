@@ -141,7 +141,14 @@ internal fun EditorEditText.handleCopy(): Boolean {
     return publishEngineClipboard(driver)
 }
 
+private fun EditorEditText.canMutateSelectedTableCells(): Boolean {
+    val adapter = v2Driver as? EditorV2Adapter ?: return false
+    return authoritativeCellSelectionActive && hasAuthorizedNativeTableOwner(adapter) &&
+        adapter.selectedTableCellsMutationAdmission() != null
+}
+
 private fun EditorEditText.cutSelectedTableCells() {
+    if (!canMutateSelectedTableCells()) return
     if (discardTransientInputForDestroyedEditorIfNeeded()) return
     if (!prepareForExternalInteractionMutation()) return
     val driver = v2Driver ?: return
@@ -151,6 +158,7 @@ private fun EditorEditText.cutSelectedTableCells() {
 
 internal fun EditorEditText.handlePaste(plainTextOnly: Boolean) {
     if (isTableCellInput && !canDispatchTableCellMutation()) return
+    if (authoritativeCellSelectionActive && !canMutateSelectedTableCells()) return
     val forcePlainText = plainTextOnly || pasteMode == EditorPasteMode.PLAIN_TEXT
     if (editorId == 0L) {
         baseTextContextMenuItem(

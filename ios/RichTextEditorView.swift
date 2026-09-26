@@ -747,6 +747,9 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             guard let self else { return }
             self.settleTableSelectionAfterTextSync(from: self.textView)
         }
+        textView.rootTableNativeOwnerAuthority = { [weak self] adapter in
+            self?.hasTableCellBindingAuthority(adapter) ?? false
+        }
         textView.onAuthoritativeRenderApplied = { [weak self] updateJSON in
             self?.refreshTablePresentation()
             self?.refreshActiveTableCell(after: updateJSON)

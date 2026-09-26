@@ -855,8 +855,10 @@ internal class EditorV2Adapter private constructor(
         plainText: Boolean
     ): String? = commandAdoptingEngineSelection(pasteCommand(fragment, html, text, plainText))
 
-    override fun clearSelectedTableCells(): String? =
-        commandAdoptingEngineSelection(JSONObject().put("type", "deleteBackward"))
+    override fun clearSelectedTableCells(): String? {
+        if (selectedTableCellsMutationAdmission() == null) return null
+        return commandAdoptingEngineSelection(JSONObject().put("type", "deleteBackward"))
+    }
 
     private fun pasteCommand(
         fragment: String?,

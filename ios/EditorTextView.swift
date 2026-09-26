@@ -178,6 +178,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     var rootTableSelectionInputBlocked = false
     var authoritativeCellSelectionActive = false
     var tableCellInputAuthority: (() -> Bool)?
+    var rootTableNativeOwnerAuthority: ((EditorV2Adapter) -> Bool)?
     var onTableCellTab: ((Bool) -> Void)?
     var onTableCellArrow: ((TableCellArrowDirection) -> Void)?
     var onProjectedUpdate: ((String, Bool) -> Bool)?
@@ -925,9 +926,12 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         case #selector(copy(_:)):
             return authoritativeCellSelectionActive || selectedTextRange?.isEmpty == false
         case #selector(cut(_:)):
-            return isEditable && (authoritativeCellSelectionActive || selectedTextRange?.isEmpty == false)
+            return authoritativeCellSelectionActive
+                ? canMutateSelectedTableCells()
+                : isEditable && selectedTextRange?.isEmpty == false
         case #selector(paste(_:)), #selector(pasteAndMatchStyle(_:)):
             return isEditable
+                && (!authoritativeCellSelectionActive || canMutateSelectedTableCells())
                 && pasteMode != .disabled
                 && EditorClipboardPaste.hasSupportedContent(in: .general)
         default:
@@ -948,7 +952,10 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             super.cut(sender)
             return
         }
-        guard isEditable, exportSelectionToPasteboard() else { return }
+        guard isEditable,
+              !authoritativeCellSelectionActive || canMutateSelectedTableCells(),
+              exportSelectionToPasteboard()
+        else { return }
         applyClipboardMutation(
             authoritativeCellSelectionActive
                 ? EditorClipboardCut.cellSelectionCommand
@@ -975,6 +982,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             return
         }
         guard isEditable, pasteMode != .disabled else { return }
+        guard !authoritativeCellSelectionActive || canMutateSelectedTableCells() else { return }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         guard prepareForExternalEditorUpdate() else { return }
         guard authoritativeCellSelectionActive || syncClipboardSelectionToRust() != nil else { return }
@@ -985,6 +993,15 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             "[paste] selection=\(self.selectionSummary(), privacy: .public) textState=\(self.textSnapshotSummary(), privacy: .public)"
         )
         applyClipboardMutation(command)
+    }
+
+    func canMutateSelectedTableCells() -> Bool {
+        guard isEditable,
+              authoritativeCellSelectionActive,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              rootTableNativeOwnerAuthority?(adapter) ?? ownsNativeBinding(adapter)
+        else { return false }
+        return adapter.selectedTableCellsMutationAdmission() != nil
     }
 
     private func applyClipboardMutation(_ command: [String: Any]) {

@@ -41,6 +41,7 @@ internal class EditorTableClipboardTest {
     }
 
     private class Fixture(
+        val token: Long,
         val view: RichTextEditorView,
         val adapter: EditorV2Adapter,
         val backend: RecordingBackend,
@@ -56,16 +57,45 @@ internal class EditorTableClipboardTest {
 
         fun selectCells(anchor: Int, head: Int) {
             fun point(opening: Int) = JSONObject().put("kind", "document").put("offset", opening)
-            val selection = JSONObject().put("type", "cell")
-                .put("anchorCell", point(anchor)).put("headCell", point(head))
-            val admitted = adapter.callWithEnvelope(JSONObject().put("selection", selection)) {
-                UniffiEditorV2Backend.setSelection(adapter.editorId, it)
-            }
-            assertTrue("engine rejected the cell selection: $admitted", admitted is EditorV2CallResult.Ok)
-            assertTrue(root.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
+            select(
+                JSONObject().put("type", CELL_SELECTION)
+                    .put("anchorCell", point(anchor)).put("headCell", point(head))
+            )
             assertTrue("root did not adopt the cell selection", root.authoritativeCellSelectionActive)
             backend.mutations.clear()
             updates.clear()
+        }
+
+        fun selectText(docPos: Int) {
+            val point = JSONObject().put("kind", "scalar")
+                .put("offset", requireNotNull(adapter.scalarPositionForDoc(docPos)))
+            select(JSONObject().put("type", TEXT_SELECTION).put("anchor", point).put("head", point))
+            backend.mutations.clear()
+            updates.clear()
+        }
+
+        private fun select(selection: JSONObject) {
+            val admitted = adapter.callWithEnvelope(JSONObject().put("selection", selection)) {
+                UniffiEditorV2Backend.setSelection(adapter.editorId, it)
+            }
+            assertTrue("engine rejected the selection: $admitted", admitted is EditorV2CallResult.Ok)
+            assertTrue(root.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
+        }
+
+        fun nonOwnerView(): RichTextEditorView {
+            val view = RichTextEditorView(RuntimeEnvironment.getApplication())
+            view.editorId = token
+            assertTrue(view.editorEditText.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
+            view.measure(
+                View.MeasureSpec.makeMeasureSpec(VIEW_WIDTH, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(VIEW_HEIGHT, View.MeasureSpec.EXACTLY)
+            )
+            view.layout(0, 0, VIEW_WIDTH, VIEW_HEIGHT)
+            assertFalse(view.editorEditText.ownsNativeBinding(adapter))
+            assertTrue(root.ownsNativeBinding(adapter))
+            backend.mutations.clear()
+            updates.clear()
+            return view
         }
 
         fun engineSelection(): JSONObject {
@@ -124,7 +154,7 @@ internal class EditorTableClipboardTest {
                 override fun onSelectionChanged(anchor: Int, head: Int) = Unit
             }
             assertFalse("fixture must start without history", requireNotNull(adapter.historyCanUndo()))
-            block(Fixture(view, adapter, backend, updates))
+            block(Fixture(token, view, adapter, backend, updates))
         } finally {
             EditorV2Registry.remove(adapter.editorId)
             adapter.destroy()
@@ -249,25 +279,67 @@ internal class EditorTableClipboardTest {
         }
 
     @Test
-    fun `nested read only cells copy but refuse cut and paste without mutation`() =
+    fun `nested read only cells copy but never reach the planner for cut or paste`() =
         withTable(EditorTableSurfaceMountTest.nestedTableDocument) { fixture ->
             val nested = fixture.openings(NESTED_TABLE)
             fixture.selectCells(nested[FIRST_CELL], nested[FIRST_CELL])
             val before = fixture.adapter.documentJson()
+            val notesBefore = fixture.adapter.debugNotes.size
 
             assertTrue(fixture.root.onTextContextMenuItem(android.R.id.copy))
             assertEquals(NESTED_CELL_TEXT, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
-            assertTrue(fixture.root.onTextContextMenuItem(android.R.id.cut))
             clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
+            assertTrue(fixture.root.onTextContextMenuItem(android.R.id.cut))
+            assertEquals(
+                "a refused cut must keep the clipboard",
+                PASTED_GRID_TSV,
+                requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString()
+            )
             assertTrue(fixture.root.onTextContextMenuItem(android.R.id.paste))
 
+            assertEquals(emptyList<String>(), fixture.backend.mutations)
             assertEquals(
-                "both mutations must reach the planner and be refused there",
-                listOf("$APPLY_COMMAND:$DELETE_BACKWARD_COMMAND", "$APPLY_COMMAND:$PASTE_COMMAND"),
-                fixture.backend.mutations
+                "a refused edit must not emit an error",
+                emptyList<String>(),
+                fixture.adapter.debugNotes.drop(notesBefore).filter { it.startsWith(EMITTED_ERROR_NOTE) }
             )
+            assertEquals(0, fixture.updates.size)
             assertEquals(before, fixture.adapter.documentJson())
             assertFalse(requireNotNull(fixture.adapter.historyCanUndo()))
+        }
+
+    @Test
+    fun `a view that does not own the table cannot cut or paste its cell selection`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            val openings = fixture.openings()
+            fixture.selectCells(openings[FIRST_CELL], openings[LAST_CELL])
+            val stale = fixture.nonOwnerView().editorEditText
+            assertTrue("the stale view adopted the cell selection", stale.authoritativeCellSelectionActive)
+            val before = fixture.adapter.documentJson()
+            clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
+
+            assertTrue(stale.onTextContextMenuItem(android.R.id.cut))
+            assertTrue(stale.dispatchKeyEvent(shortcut(KeyEvent.KEYCODE_V)))
+
+            assertEquals(emptyList<String>(), fixture.backend.mutations)
+            assertEquals(PASTED_GRID_TSV, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
+            assertEquals(before, fixture.adapter.documentJson())
+            assertFalse(requireNotNull(fixture.adapter.historyCanUndo()))
+
+            assertTrue(fixture.root.onTextContextMenuItem(android.R.id.paste))
+            assertEquals(listOf("$APPLY_COMMAND:$PASTE_COMMAND"), fixture.backend.mutations)
+        }
+
+    @Test
+    fun `clearing selected cells refuses a text selection without a mutation`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            fixture.selectText(fixture.openings()[FIRST_CELL] + CELL_TEXT_OFFSET)
+            val before = fixture.adapter.documentJson()
+
+            assertEquals(null, fixture.adapter.clearSelectedTableCells())
+
+            assertEquals(emptyList<String>(), fixture.backend.mutations)
+            assertEquals(before, fixture.adapter.documentJson())
         }
 
     @Test
@@ -300,6 +372,9 @@ internal class EditorTableClipboardTest {
         const val PASTE_COMMAND = "paste"
         const val DELETE_BACKWARD_COMMAND = "deleteBackward"
         const val CELL_SELECTION = "cell"
+        const val TEXT_SELECTION = "text"
+        const val EMITTED_ERROR_NOTE = "emit "
+        const val CELL_TEXT_OFFSET = 2
         const val TABLE_NODE = "table"
         const val TEXT_NODE = "text"
         const val VIEW_WIDTH = 900

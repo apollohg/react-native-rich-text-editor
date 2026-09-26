@@ -26,6 +26,8 @@ extension EditorTableInputTests {
         static let secondCell = 1
         static let thirdCell = 2
         static let lastCell = 3
+        static let editorSize = CGSize(width: 480, height: 320)
+        static let emittedErrorNote = "emit "
     }
 
     private func withClipboardTable(
@@ -35,7 +37,7 @@ extension EditorTableInputTests {
         UIPasteboard.general.items = []
         defer { UIPasteboard.general.items = [] }
         try withMountedTable(document: document, configJSON: TableClipboard.config,
-                             size: CGSize(width: 480, height: 320), cellSelection: nil) { fixture in
+                             size: TableClipboard.editorSize, cellSelection: nil) { fixture in
             XCTAssertEqual(fixture.adapter.historyFlags()?.canUndo, false, "fixture must start without history")
             if let anchorIndex, let headIndex {
                 try select(fixture, anchor: fixture.positions[anchorIndex], head: fixture.positions[headIndex])
@@ -164,7 +166,7 @@ extension EditorTableInputTests {
         }
     }
 
-    func testNestedReadOnlyCellsCopyButRefuseCutAndPasteWithoutMutation() throws {
+    func testNestedReadOnlyCellsCopyButNeverReachThePlannerForCutOrPaste() throws {
         try withClipboardTable(TableClipboard.nestedDocument) { fixture in
             let nested = try XCTUnwrap(fixture.adapter.cachedTableRecords.values.first {
                 $0["readOnlyDescendants"] as? Bool == true
@@ -174,15 +176,61 @@ extension EditorTableInputTests {
             try select(fixture, anchor: opening, head: opening)
             let root = fixture.view.textView
             let before = try fixture.documentObject()
+            let revision = fixture.adapter.baseDocumentRevision
+            let notesBefore = fixture.adapter.debugNotes.count
 
             root.copy(nil)
             XCTAssertEqual(UIPasteboard.general.string, TableClipboard.nestedCellText)
-            root.cut(nil)
             UIPasteboard.general.string = TableClipboard.pastedGridTSV
+            XCTAssertFalse(root.canPerformAction(#selector(UIResponderStandardEditActions.cut(_:)), withSender: nil))
+            XCTAssertFalse(root.canPerformAction(#selector(UIResponderStandardEditActions.paste(_:)), withSender: nil))
+            root.cut(nil)
+            XCTAssertEqual(UIPasteboard.general.string, TableClipboard.pastedGridTSV, "a refused cut must keep the clipboard")
             root.paste(nil)
 
+            XCTAssertTrue(fixture.updates.updates.isEmpty, "a refused edit must not publish an update")
+            XCTAssertEqual(fixture.adapter.debugNotes.dropFirst(notesBefore).filter {
+                $0.hasPrefix(TableClipboard.emittedErrorNote)
+            }, [], "a refused edit must not reach the engine or emit an error")
+            XCTAssertEqual(fixture.adapter.baseDocumentRevision, revision)
             XCTAssertEqual(try fixture.documentObject(), before)
             XCTAssertEqual(fixture.adapter.historyFlags()?.canUndo, false)
+        }
+    }
+
+    func testAViewThatDoesNotOwnTheTableCannotCutOrPasteItsCellSelection() throws {
+        try withClipboardTable(TableClipboard.gridDocument, anchorIndex: TableClipboard.firstCell,
+                               headIndex: TableClipboard.lastCell) { fixture in
+            let stale = RichTextEditorView(frame: CGRect(origin: .zero, size: TableClipboard.editorSize))
+            fixture.view.window?.addSubview(stale)
+            defer { stale.removeFromSuperview() }
+            stale.bindEditor(id: fixture.view.editorId,
+                             initialUpdateJSON: try XCTUnwrap(fixture.adapter.initialUpdateJSON()))
+            XCTAssertTrue(stale.textView.applyUpdateJSON(
+                try XCTUnwrap(fixture.adapter.refreshFromRustState(mirrorSelection: nil))
+            ))
+            XCTAssertTrue(fixture.view.textView.ownsNativeBinding(fixture.adapter))
+            XCTAssertFalse(stale.textView.ownsNativeBinding(fixture.adapter))
+            XCTAssertTrue(stale.textView.authoritativeCellSelectionActive, "the stale view adopted the cell selection")
+            let staleUpdates = UpdateSpy()
+            stale.textView.editorDelegate = staleUpdates
+            let before = try fixture.documentObject()
+            let revision = fixture.adapter.baseDocumentRevision
+            UIPasteboard.general.string = TableClipboard.pastedGridTSV
+
+            XCTAssertFalse(stale.textView.canPerformAction(#selector(UIResponderStandardEditActions.cut(_:)), withSender: nil))
+            XCTAssertFalse(stale.textView.canPerformAction(#selector(UIResponderStandardEditActions.paste(_:)), withSender: nil))
+            stale.textView.cut(nil)
+            stale.textView.paste(nil)
+
+            XCTAssertTrue(staleUpdates.updates.isEmpty)
+            XCTAssertEqual(UIPasteboard.general.string, TableClipboard.pastedGridTSV)
+            XCTAssertEqual(fixture.adapter.baseDocumentRevision, revision)
+            XCTAssertEqual(try fixture.documentObject(), before)
+            XCTAssertEqual(fixture.adapter.historyFlags()?.canUndo, false)
+
+            fixture.view.textView.paste(nil)
+            XCTAssertEqual(try cellTexts(fixture), [["w", "x"], ["y", "z"]])
         }
     }
 

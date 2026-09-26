@@ -1,5 +1,7 @@
 package com.apollohg.editor
 
+import com.apollohg.editor.tables.EditorCellSelection
+import com.apollohg.editor.tables.resolveEditorCellSelection
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -27,6 +29,13 @@ internal fun EditorV2Adapter.admitsTableMutation(admission: TableMutationAdmissi
         tablePresentationDocumentGeneration == admission.presentationGeneration &&
         nativeOwnerId == admission.ownerId && currentNativeOwnerToken == admission.ownerToken &&
         cachedTableRecords[admission.tableId]?.optBoolean("readOnlyDescendants", true) == false
+
+internal fun EditorV2Adapter.selectedTableCellsMutationAdmission(): TableMutationAdmission? {
+    val selection = cachedAtomicRenderSelection() ?: return null
+    val cells = resolveEditorCellSelection(selection, cachedTableRecords)
+        as? EditorCellSelection.Drawable ?: return null
+    return tableMutationAdmission(cells.tableId).takeIf(::admitsTableMutation)
+}
 
 internal fun EditorV2Adapter.cachedAtomicRenderSelection(): JSONObject? =
     cachedAtomicRenderJson?.let { raw ->
