@@ -24,6 +24,11 @@ import androidx.core.view.ViewCompat
 import com.apollohg.editor.AndroidApiCompat
 import com.apollohg.editor.DecodedBitmapBudget
 import com.apollohg.editor.DecodedBitmapLease
+import com.apollohg.editor.tables.TableAccessibility
+import com.apollohg.editor.tables.TableAccessibilityCell
+import com.apollohg.editor.tables.TableAccessibilityEditing
+import com.apollohg.editor.tables.TableAccessibilityItem
+import com.apollohg.editor.tables.TableAccessibilityNodes
 import com.apollohg.editor.tables.ViewerTablePresentation
 import com.apollohg.editor.tables.ViewerTablePresentationOwner
 import com.apollohg.editor.tables.ViewerTablePresentationViewport
@@ -34,6 +39,7 @@ import com.apollohg.editor.tables.ViewerTablePresentedCell
 import com.apollohg.editor.tables.ViewerTablePresentedSurface
 import com.apollohg.editor.tables.ViewerTablePresentationSnapshot
 import com.apollohg.editor.tables.ViewerTableSurface
+import com.apollohg.editor.tables.editorTableId
 import kotlin.math.pow
 import java.util.Collections
 import java.util.IdentityHashMap
@@ -141,6 +147,16 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     private var pendingTap: PendingTap? = null
     private var pendingTableTap: Pair<Float, Float>? = null
     private var focusedVirtualNode: FocusedVirtualNode? = null
+    private val tableAccessibility = TableAccessibilityNodes(
+        this, this, { contentOriginXPx to contentOriginYPx },
+        { bounds -> accessibilityVisibilityForTesting?.invoke(bounds) ?: accessibilityNodeVisibleOnScreen(bounds) },
+        { clearVirtualAccessibilityFocus() }
+    )
+    internal var tableAccessibilityEditing: TableAccessibilityEditing?
+        get() = tableAccessibility.editing
+        set(value) {
+            tableAccessibility.editing = value
+        }
     private var contentOriginXPx = 0
     private var contentOriginYPx = 0
     private val scrollChangedListener = ViewTreeObserver.OnScrollChangedListener {
@@ -324,9 +340,6 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     internal fun selectionHandles(): List<TableSelectionHandle> =
         presentationSnapshot()?.let(::selectionHandles).orEmpty()
-
-    private val ViewerTableSurface.editorTableId: String?
-        get() = sourceTable?.tablePos?.let { position -> "t$position" }
 
     private fun ViewerTablePresentationSnapshot.tableWithId(tableId: String): ViewerTablePresentedSurface? =
         tables.firstOrNull { it.surface.editorTableId == tableId }
@@ -1047,8 +1060,36 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
         super.onInitializeAccessibilityNodeInfo(info)
         info.className = android.widget.TextView::class.java.name
-        nodes().indices.forEach { info.addChild(this, it + 1) }
+        val nodes = nodes()
+        tableAccessibility.hostChildren(tableAccessibilityItems(nodes)) { virtualId(nodes, it) }
+            .forEach { info.addChild(this, it) }
     }
+
+    internal fun tableAccessibilityItems(): List<TableAccessibilityItem> = tableAccessibilityItems(nodes())
+
+    private fun tableAccessibilityItems(
+        nodes: List<ViewerTablePresentedAccessibilityNode>
+    ): List<TableAccessibilityItem> {
+        val artifact = preparedLayout ?: return emptyList()
+        val snapshot = presentationSnapshot() ?: return emptyList()
+        return TableAccessibility.items(snapshot, artifact, nodes)
+    }
+
+    internal fun revealTableAccessibilityCell(cell: TableAccessibilityCell) {
+        val presented = cell.presented
+        val visible = RectF(presented.bounds)
+        val fullyVisible = visible.intersect(presented.clip) &&
+            visible.width() >= minOf(presented.bounds.width(), presented.clip.width())
+        if (fullyVisible) return
+        val surface = presented.surface
+        val logical = surface.layout.columnWidths.take(cell.column).sum()
+        if (tablePresentationOwner.logicalOffset(surface) == logical) return
+        tablePresentationOwner.setLogicalOffset(logical, surface)
+        tableOffsetChanged()
+    }
+
+    private fun virtualId(nodes: List<ViewerTablePresentedAccessibilityNode>, node: ViewerTablePresentedAccessibilityNode): Int? =
+        nodes.indexOfFirst { it.sourceIdentity == node.sourceIdentity }.takeIf { it >= 0 }?.plus(1)
 
     override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = provider
 
@@ -1065,8 +1106,13 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                     this@PreparedProseDrawingView
                 ).also(::onInitializeAccessibilityNodeInfo)
             }
-            val presented = nodes().getOrNull(id - 1) ?: return null
+            val nodes = nodes()
+            if (tableAccessibility.isTableNode(id)) {
+                return tableAccessibility.create(tableAccessibilityItems(nodes), id) { virtualId(nodes, it) }
+            }
+            val presented = nodes.getOrNull(id - 1) ?: return null
             val node = presented.node
+            val parentCell = tableAccessibility.parentOf(tableAccessibilityItems(nodes), presented)
             val parentBounds = accessibilityParentBounds(presented)
             val screen = accessibilityScreenBounds(parentBounds)
             val visibleToUser = accessibilityNodeVisible(presented)
@@ -1076,7 +1122,8 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                 packageName = context.packageName
                 className = android.widget.Button::class.java.name
                 setSource(this@PreparedProseDrawingView, id)
-                setParent(this@PreparedProseDrawingView)
+                if (parentCell != null) setParent(this@PreparedProseDrawingView, parentCell)
+                else setParent(this@PreparedProseDrawingView)
                 text = node.label
                 contentDescription = node.label
                 isClickable = true
@@ -1100,6 +1147,9 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         }
 
         override fun performAction(id: Int, action: Int, arguments: Bundle?): Boolean {
+            if (tableAccessibility.isTableNode(id)) {
+                return tableAccessibility.perform(tableAccessibilityItems(nodes()), id, action)
+            }
             val node = nodes().getOrNull(id - 1) ?: return false
             return when (action) {
                 AccessibilityNodeInfo.ACTION_CLICK -> if (accessibilityNodeVisible(node)) {
@@ -1138,6 +1188,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         val identity = identity(node)
         if (focusedVirtualNode?.identity == identity) return false
         clearVirtualAccessibilityFocus()
+        tableAccessibility.clearFocus()
         focusedVirtualNode = FocusedVirtualNode(id, identity)
         invalidate()
         sendVirtualAccessibilityEvent(id, AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED)
@@ -1156,6 +1207,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     private fun reconcileVirtualAccessibilityFocus() {
+        tableAccessibility.reconcile { tableAccessibilityItems(nodes()) }
         val focused = focusedVirtualNode ?: return
         val nodes = nodes()
         val index = nodes.indexOfFirst { identity(it) == focused.identity }

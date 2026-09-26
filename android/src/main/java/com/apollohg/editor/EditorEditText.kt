@@ -17,6 +17,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
+import com.apollohg.editor.tables.TableCellAccessibility
 import com.apollohg.editor.tables.TableCellPositionMap
 
 /**
@@ -369,9 +370,12 @@ class EditorEditText @JvmOverloads constructor(
 
     fun setEditorAccessibilityHint(hint: CharSequence?) = setEditorAccessibilityHintImpl(hint)
 
+    internal var tableCellAccessibility: TableCellAccessibility? = null
+
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
         super.onInitializeAccessibilityNodeInfo(info)
         AccessibilityNodeInfoCompat.wrap(info).tooltipText = editorAccessibilityHint
+        tableCellAccessibility?.populate(this, info)
     }
 
     internal fun nativeCursorDrawRect(): RectF? = nativeCursorDrawRectImpl()
@@ -884,6 +888,7 @@ class EditorEditText @JvmOverloads constructor(
      * Selection and copy actions remain available.
      */
     override fun performAccessibilityAction(action: Int, arguments: android.os.Bundle?): Boolean {
+        if (tableCellAccessibility?.perform(action) == true) return true
         if (isTableCellInput && (
                 action == android.view.accessibility.AccessibilityNodeInfo.ACTION_PASTE ||
                     action == android.view.accessibility.AccessibilityNodeInfo.ACTION_CUT

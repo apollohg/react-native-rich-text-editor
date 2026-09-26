@@ -909,6 +909,12 @@ class ViewerTableTest {
         assertTrue(frame.left < frame.right && frame.top < frame.bottom)
 
         withMountedDrawing(layout) { drawing ->
+            val failureFrame = tableNodes(drawing).single()
+            assertEquals(
+                drawing.context.getString(com.apollohg.editor.R.string.table_accessibility_failed_table),
+                failureFrame.text.toString()
+            )
+            assertEquals("a viewer frame offers no delete", emptyList<Int>(), tableActionIds(failureFrame))
             val rendered = Bitmap.createBitmap(327, layout.heightPx + 11, Bitmap.Config.ARGB_8888)
             drawing.draw(Canvas(rendered))
             val paintedFrame = Rect(frame).apply { offset(7, 11) }
@@ -945,6 +951,91 @@ class ViewerTableTest {
                     }
                 }
             )
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `viewer table exposes grid spans headers and logical order in both directions`() {
+        val source = """{"type":"doc","content":[{"type":"table","content":[
+            {"type":"table_row","content":[${tableHeader("A")},${tableHeader("B")},${tableHeader("C")}]},
+            {"type":"table_row","content":[${tableCell("D", colspan = 2)},${tableCell("E", rowspan = 2)}]},
+            {"type":"table_row","content":[${tableCell("F")},${tableCell("G")}]}
+        ]}]}"""
+        listOf(TableLayoutDirection.LEFT_TO_RIGHT, TableLayoutDirection.RIGHT_TO_LEFT).forEach { direction ->
+            withMountedDrawing(prepare(source, direction = direction)) { view ->
+                val nodes = tableNodes(view)
+                val table = nodes.first()
+                assertEquals(3, table.collectionInfo.rowCount)
+                assertEquals(3, table.collectionInfo.columnCount)
+                val cells = nodes.drop(1)
+                assertEquals("$direction traversal follows document order",
+                    listOf("A", "B", "C", "D", "E", "F", "G"), cells.map { it.text.toString() })
+                assertEquals(
+                    listOf(listOf(0, 1, 0, 1), listOf(0, 1, 1, 1), listOf(0, 1, 2, 1), listOf(1, 1, 0, 2),
+                        listOf(1, 2, 2, 1), listOf(2, 1, 0, 1), listOf(2, 1, 1, 1)),
+                    cells.map { cell ->
+                        cell.collectionItemInfo.let { listOf(it.rowIndex, it.rowSpan, it.columnIndex, it.columnSpan) }
+                    }
+                )
+                assertEquals(listOf(true, true, true, false, false, false, false), cells.map { it.collectionItemInfo.isHeading })
+                assertEquals("A", cells[5].collectionItemInfo.columnTitle)
+                assertEquals("a spanning cell names every covered header", "A B", cells[3].collectionItemInfo.columnTitle)
+                assertNull("a header is not its own title", cells[0].collectionItemInfo.columnTitle)
+                assertNull("no header column exists", cells[5].collectionItemInfo.rowTitle)
+                assertEquals(view.context.getString(com.apollohg.editor.R.string.table_accessibility_column_span, 2),
+                    cells[3].stateDescription?.toString())
+                assertEquals(view.context.getString(com.apollohg.editor.R.string.table_accessibility_row_span, 2),
+                    cells[4].stateDescription?.toString())
+                assertNull(cells[5].stateDescription)
+                assertTrue("viewer cells are read-only", cells.all { tableActionIds(it).isEmpty() })
+                assertTrue(cells.none { cell -> cell.actionList.any { it.id == AccessibilityNodeInfo.ACTION_CLICK } })
+                val bounds = cells.map { Rect().also(it::getBoundsInParent) }
+                if (direction == TableLayoutDirection.LEFT_TO_RIGHT) {
+                    assertTrue(bounds[0].left < bounds[1].left)
+                } else {
+                    assertTrue("RTL mirrors geometry, not order", bounds[0].left > bounds[1].left)
+                }
+            }
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `viewer table leaves synthetic slots without a node`() {
+        val layout = prepare(
+            """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[${tableCell("tall", rowspan = 2)},${tableCell("wide", colspan = 2)}]},{"type":"table_row","content":[${tableCell("later")}]}]}]}"""
+        )
+        val surface = requireNotNull(layout.blocks.first { it.tableSurface != null }.tableSurface)
+        assertTrue("the fixture must contain a synthetic slot", requireNotNull(surface.sourceTable).syntheticRegions.isNotEmpty())
+        withMountedDrawing(layout) { view ->
+            val cells = tableNodes(view).drop(1)
+            assertEquals(listOf("tall", "wide", "later"), cells.map { it.text.toString() })
+            val occupied = cells.flatMap { cell ->
+                cell.collectionItemInfo.let { item ->
+                    (item.rowIndex until item.rowIndex + item.rowSpan).flatMap { row ->
+                        (item.columnIndex until item.columnIndex + item.columnSpan).map { row to it }
+                    }
+                }
+            }.toSet()
+            surface.sourceTable!!.syntheticRegions.forEach { region ->
+                assertFalse("synthetic slot ${region.row},${region.column} must not be a cell",
+                    (region.row.toInt() to region.column.toInt()) in occupied)
+            }
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `viewer table reads nested content inside its cell without nested nodes or actions`() {
+        val layout = prepare(
+            """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[200]},"content":[{"type":"paragraph","content":[{"type":"text","text":"outer"}]},{"type":"table","content":[{"type":"table_row","content":[${tableCell("inner")}]}]}]},${tableCell("sibling")}]}]}]}"""
+        )
+        withMountedDrawing(layout) { view ->
+            val nodes = tableNodes(view)
+            assertEquals("one table and its two outer cells", 3, nodes.size)
+            assertEquals(listOf("outer inner", "sibling"), nodes.drop(1).map { it.text.toString() })
+            assertTrue(nodes.all { tableActionIds(it).isEmpty() })
         }
     }
 
@@ -1121,7 +1212,10 @@ class ViewerTableTest {
             view.mentionInteractionsEnabled = false
             assertFalse(tap(nestedMention))
             assertEquals(activationCountBeforeCapabilities, activated.size)
-            assertEquals(5, requireNotNull(provider.createAccessibilityNodeInfo(android.view.View.NO_ID)).childCount)
+            assertEquals(
+                "before link, the table, after link; in-cell links live under their cell",
+                3, requireNotNull(provider.createAccessibilityNodeInfo(android.view.View.NO_ID)).childCount
+            )
             view.mentionInteractionsEnabled = true
             assertTrue(tap(nestedMention))
             assertTrue(provider.performAction(cellOneId, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
@@ -2092,6 +2186,20 @@ class ViewerTableTest {
         return count
     }
 
+    private fun tableNodes(view: PreparedProseDrawingView): List<AccessibilityNodeInfo> =
+        generateSequence(TableAccessibilityNodes.FIRST_TABLE_NODE_ID) { it + 1 }
+            .map { view.accessibilityNodeProvider.createAccessibilityNodeInfo(it) }
+            .takeWhile { it != null }.filterNotNull().toList()
+
+    private fun tableActionIds(info: AccessibilityNodeInfo): List<Int> =
+        info.actionList.map { it.id }.filter { id -> TableAccessibilityAction.ALL.any { it.id == id } }
+
+    private fun tableCell(text: String, colspan: Int = 1, rowspan: Int = 1): String =
+        """{"type":"table_cell","attrs":{"colspan":$colspan,"rowspan":$rowspan},"content":[{"type":"paragraph","content":[{"type":"text","text":"$text"}]}]}"""
+
+    private fun tableHeader(text: String): String =
+        """{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"$text"}]}]}"""
+
     private fun tap(view: PreparedProseDrawingView, x: Float, y: Float): Boolean {
         val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
         val up = MotionEvent.obtain(0, 1, MotionEvent.ACTION_UP, x, y, 0)
@@ -2113,22 +2221,28 @@ class ViewerTableTest {
             "\"marks\":[{\"name\":\"bold\"},{\"name\":\"link\",\"attrs\":{\"href\":{}}}]"
         )
 
-    private fun prepare(source: String, theme: String? = null, config: String = CONFIG) = compileWithRust(
+    private fun prepare(
+        source: String,
+        theme: String? = null,
+        config: String = CONFIG,
+        direction: TableLayoutDirection = TableLayoutDirection.LEFT_TO_RIGHT
+    ) = compileWithRust(
         ProseViewerRequest(ProseViewerSource.Json(source), ProseViewerConfiguration(config, themeJson = theme, imagesEnabled = true))
     ).let { document ->
-        prepare(document, theme)
+        prepare(document, theme, direction = direction)
     }
 
     private fun prepare(
         document: ViewerDocument,
         theme: String? = null,
-        engine: StaticLayoutAndroidProseLayoutEngine = StaticLayoutAndroidProseLayoutEngine()
+        engine: StaticLayoutAndroidProseLayoutEngine = StaticLayoutAndroidProseLayoutEngine(),
+        direction: TableLayoutDirection = TableLayoutDirection.LEFT_TO_RIGHT
     ): PreparedProseLayout {
-        val key = ProseLayoutKey(document.semanticKey, 320, "table", 0, 0, 1L, 0, "table")
+        val key = ProseLayoutKey(document.semanticKey, 320, "table", 0, 0, 1L, 0, "table", tableDirection = direction)
         return engine.prepare(
             document,
             key,
-            PreparedProseTheme.resolve(theme, 1f),
+            PreparedProseTheme.resolve(theme, 1f).copy(tableDirection = direction),
             320,
             1f,
             false,

@@ -124,6 +124,9 @@ internal class ViewerTableSurface(
     }
 }
 
+internal val ViewerTableSurface.editorTableId: String?
+    get() = sourceTable?.tablePos?.let { position -> "t$position" }
+
 /** Mutable mounted state deliberately kept outside the immutable prepared surface. */
 internal class ViewerTablePresentationOwner {
     companion object {

@@ -31,6 +31,8 @@ import com.apollohg.editor.commandAtSelection
 import com.apollohg.editor.RenderBridge
 import com.apollohg.editor.selectExactTableCells
 import com.apollohg.editor.resizeTableColumn
+import com.apollohg.editor.deleteTable
+import com.apollohg.editor.applyTableCommandAtSelection
 import com.apollohg.editor.TableMutationAdmission
 import com.apollohg.editor.tableMutationAdmission
 import com.apollohg.editor.admitsTableMutation
@@ -110,7 +112,7 @@ internal data class TableSelectionGeometry(
     }
 }
 
-internal class EditorTableSurface(private val host: RichTextEditorView) {
+internal class EditorTableSurface(private val host: RichTextEditorView) : TableAccessibilityEditing {
     private companion object {
         const val HANDLE_EDGE_BAND_DP = 48f
         const val HANDLE_SCROLL_STEP_DP = 12f
@@ -132,7 +134,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         isFocusable = false
         linkInteractionsEnabled = false
         mentionInteractionsEnabled = false
-        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        tableAccessibilityEditing = this@EditorTableSurface
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
         onTableGeometryChanged = {
             positionActiveInput()
@@ -703,6 +705,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
                 drawingView.selectedTableCellEndpoints = null
             }
             if (restoreCellSelectionFocus) input.requestFocus()
+            mountDetachedFrameAccessibility()
             return
         }
         val cellSelection = adapter.cachedAtomicRenderJson?.let { raw ->
@@ -770,6 +773,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             drawingView.selectedTableCellEndpoints = null
             drawingView.install(null)
             (drawingView.parent as? ViewGroup)?.removeView(drawingView)
+            mountDetachedFrameAccessibility()
             return
         }
         if (drawingView.parent !== host.editorContentFrame) {
@@ -1272,6 +1276,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         activeAppearanceRevision = null
         coordinator?.invalidateBinding()
         coordinator?.cellInput?.let { input ->
+            input.tableCellAccessibility = null
             input.onTableCellSelectionSynced = null
             input.onTableCellTab = null
             input.onTableCellArrow = null
@@ -1279,6 +1284,100 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             (input.parent as? ViewGroup)?.removeView(input)
         }
         drawingView.suppressedTableCellSourcePosition = null
+    }
+
+    private fun tableIdFor(surface: ViewerTableSurface): String? =
+        entries.entries.firstOrNull { it.value.surface === surface }?.key
+
+    private fun accessibilityAdmission(tableId: String): Pair<EditorV2Adapter, TableMutationAdmission>? {
+        val root = host.editorEditText
+        val adapter = root.v2Driver as? EditorV2Adapter ?: return null
+        if (!root.isEnabled || !root.isEditable || root.hasPendingCompositionForExternalRefresh() ||
+            activeInput?.hasPendingCompositionForExternalRefresh() == true ||
+            !root.hasAuthorizedNativeTableOwner(adapter)) return null
+        val admission = adapter.tableMutationAdmission(tableId).takeIf(adapter::admitsTableMutation) ?: return null
+        return adapter to admission
+    }
+
+    private fun ownsAccessibilitySelection(tableId: String, cell: TableAccessibilityCell): Boolean {
+        activeCell?.let { return it.tableId == tableId && it.cellIndex == cell.sourceCellIndex }
+        return drawingView.selectedTableCellSourcePositions[tableId]?.contains(cell.sourcePosition) == true
+    }
+
+    private fun applyAccessibilityUpdate(update: String): Boolean {
+        val applied = if (activeCell != null) applyCellUpdate(update, notify = true, external = false)
+        else host.editorEditText.applyUpdateJSON(update)
+        refresh()
+        return applied
+    }
+
+    override fun tableAccessibilityActions(cell: TableAccessibilityCell): List<TableAccessibilityAction> {
+        val tableId = tableIdFor(cell.presented.surface) ?: return emptyList()
+        if (!ownsAccessibilitySelection(tableId, cell)) return emptyList()
+        val (adapter) = accessibilityAdmission(tableId) ?: return emptyList()
+        val commands = adapter.cachedActiveState?.optJSONObject("commands") ?: return emptyList()
+        return TableAccessibilityAction.ALL.filter { commands.optBoolean(it.applicability, false) }
+    }
+
+    override fun performTableAccessibilityAction(action: TableAccessibilityAction, cell: TableAccessibilityCell): Boolean {
+        if (action !in tableAccessibilityActions(cell)) return false
+        val tableId = tableIdFor(cell.presented.surface) ?: return false
+        val (adapter, admission) = accessibilityAdmission(tableId) ?: return false
+        val update = adapter.applyTableCommandAtSelection(action.commandJson(), admission) ?: return false
+        return applyAccessibilityUpdate(update)
+    }
+
+    override fun activateTableAccessibilityCell(cell: TableAccessibilityCell): Boolean {
+        val tableId = tableIdFor(cell.presented.surface) ?: return false
+        val visible = RectF(cell.presented.bounds)
+        if (!visible.intersect(cell.presented.clip)) return false
+        return activateCell(tableId, cell.sourceCellIndex, visible.centerX(), visible.centerY())
+    }
+
+    override fun activeTableAccessibilityInput(cell: TableAccessibilityCell): EditorEditText? {
+        val active = activeCell ?: return null
+        if (active.tableId != tableIdFor(cell.presented.surface) || active.cellIndex != cell.sourceCellIndex) return null
+        return activeInput
+    }
+
+    override fun detachedTableAccessibilityFrames(): List<TableAccessibilityDetachedFrame> {
+        val input = host.editorEditText
+        val adapter = input.v2Driver as? EditorV2Adapter ?: return emptyList()
+        val layout = input.layout ?: return emptyList()
+        val text = input.text.toString()
+        val mappings = adapter.cachedTableInputMappings?.tables ?: return emptyList()
+        return adapter.cachedTableRecords.mapNotNull { (tableId, record) ->
+            val mapping = mappings[tableId] ?: return@mapNotNull null
+            if (mapping.extent != null || record.optBoolean("readOnlyDescendants", true)) return@mapNotNull null
+            val tablePos = exactV2ScalarInt(record.opt("tablePos") as? Number) ?: return@mapNotNull null
+            val scalar = adapter.scalarPositionForDoc(tablePos) ?: return@mapNotNull null
+            val line = layout.getLineForOffset(PositionBridge.scalarToUtf16(scalar, text).coerceIn(0, text.length))
+            val top = (input.top + input.totalPaddingTop + layout.getLineTop(line)).toFloat()
+            val bottom = (input.top + input.totalPaddingTop + layout.getLineBottom(line)).toFloat()
+            val unfilled = record.isNull("failure") &&
+                (record.optInt("rows", 0) == 0 || record.optInt("columns", 0) == 0)
+            tablePos to TableAccessibilityDetachedFrame(
+                tableId,
+                if (unfilled) TableAccessibilityTable.Frame.EMPTY else TableAccessibilityTable.Frame.FAILED,
+                RectF((input.left + input.totalPaddingLeft).toFloat(), top,
+                    (input.right - input.totalPaddingRight).toFloat(), bottom)
+            )
+        }.sortedBy { it.first }.map { it.second }
+    }
+
+    override fun canDeleteTableAccessibilityFrame(tableId: String): Boolean = accessibilityAdmission(tableId) != null
+
+    override fun deleteTableAccessibilityFrame(tableId: String): Boolean {
+        val (adapter, admission) = accessibilityAdmission(tableId) ?: return false
+        val update = adapter.deleteTable(admission) ?: return false
+        return applyAccessibilityUpdate(update)
+    }
+
+    private fun mountDetachedFrameAccessibility() {
+        if (detachedTableAccessibilityFrames().isEmpty() || drawingView.parent === host.editorContentFrame) return
+        (drawingView.parent as? ViewGroup)?.removeView(drawingView)
+        host.editorContentFrame.addView(drawingView,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
     private fun markers(input: EditorEditText): Map<String, Int> = markers(input.text)

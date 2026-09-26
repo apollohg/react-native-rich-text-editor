@@ -27,6 +27,8 @@ import com.apollohg.editor.viewer.ViewerFontEnvironment
 import com.apollohg.editor.viewer.ViewerImageAttachment
 import com.apollohg.editor.viewer.ViewerImagePipeline
 import com.apollohg.editor.viewer.accessibilityNodeVisibleOnScreen
+import com.apollohg.editor.tables.TableAccessibilityNodes
+import com.apollohg.editor.tables.ViewerTablePresentedAccessibilityNode
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -141,6 +143,11 @@ class ProseViewerView @JvmOverloads constructor(
     private val viewerImagePipeline = ViewerImagePipeline()
 
     private var accessibilityFocusedNode: FocusedVirtualNode? = null
+    private val tableAccessibility = TableAccessibilityNodes(
+        this, preparedDrawingView, { preparedDrawingView.left to preparedDrawingView.top },
+        { bounds -> accessibilityVisibilityForTesting?.invoke(bounds) ?: accessibilityNodeVisibleOnScreen(bounds) },
+        { clearVirtualAccessibilityFocus() }
+    )
     private var preparedAccessibilityGeneration: String? = null
     private val scrollChangedListener = ViewTreeObserver.OnScrollChangedListener {
         reconcileVirtualAccessibilityFocus()
@@ -610,9 +617,14 @@ class ProseViewerView @JvmOverloads constructor(
         super.onInitializeAccessibilityNodeInfo(info)
         info.className = android.widget.TextView::class.java.name
         info.text = preparedAccessibleNodes().joinToString(" ") { it.label }
-        repeat(preparedAccessibleNodes().size) { index ->
-            info.addChild(this, index + FIRST_VIRTUAL_ANNOTATION_ID)
-        }
+        tableAccessibility.hostChildren(preparedDrawingView.tableAccessibilityItems(), ::annotationId)
+            .forEach { info.addChild(this, it) }
+    }
+
+    private fun annotationId(presented: ViewerTablePresentedAccessibilityNode): Int? {
+        if (presented.layout !== preparedArtifact) return null
+        return preparedAccessibleNodes().indexOf(presented.node).takeIf { it >= 0 }
+            ?.plus(FIRST_VIRTUAL_ANNOTATION_ID)
     }
 
     override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = annotationNodeProvider
@@ -627,11 +639,20 @@ class ProseViewerView @JvmOverloads constructor(
                     onInitializeAccessibilityNodeInfo(it)
                 }
             }
+            if (tableAccessibility.isTableNode(virtualViewId)) {
+                return tableAccessibility.create(
+                    preparedDrawingView.tableAccessibilityItems(), virtualViewId, ::annotationId
+                )
+            }
             return preparedAccessibilityNodeInfo(virtualViewId)
         }
 
         override fun performAction(virtualViewId: Int, action: Int, arguments: Bundle?): Boolean =
-            performPreparedAccessibilityAction(virtualViewId, action)
+            if (tableAccessibility.isTableNode(virtualViewId)) {
+                tableAccessibility.perform(preparedDrawingView.tableAccessibilityItems(), virtualViewId, action)
+            } else {
+                performPreparedAccessibilityAction(virtualViewId, action)
+            }
     }
 
     private fun preparedAccessibleNodes() = preparedArtifact?.accessibilityNodes.orEmpty().filter {
@@ -720,6 +741,7 @@ class ProseViewerView @JvmOverloads constructor(
         if (!preparedAccessibilityNodeVisible(node)) return false
         val identity = accessibilityIdentity(node)
         if (accessibilityFocusedNode?.identity == identity) return false
+        tableAccessibility.clearFocus()
         accessibilityFocusedNode?.let { previous ->
             accessibilityFocusedNode = null
             sendVirtualAccessibilityEvent(
@@ -751,6 +773,7 @@ class ProseViewerView @JvmOverloads constructor(
     }
 
     private fun reconcileVirtualAccessibilityFocus() {
+        tableAccessibility.reconcile { preparedDrawingView.tableAccessibilityItems() }
         val focused = accessibilityFocusedNode ?: return
         val nodes = preparedAccessibleNodes()
         val index = nodes.indexOfFirst { accessibilityIdentity(it) == focused.identity }
