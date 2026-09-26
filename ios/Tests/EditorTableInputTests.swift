@@ -1785,23 +1785,89 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
-    func testOnScreenKeyboardIsReportedFromTheUndockedKeyboardLayoutGuide() throws {
+    private final class StubKeyboardGuide {
+        let guide = UILayoutGuide()
+        private let origin: CGPoint
+        private let top: NSLayoutConstraint
+        private let leading: NSLayoutConstraint
+        private let width: NSLayoutConstraint
+        private let height: NSLayoutConstraint
+
+        init(in host: UIView, window: UIWindow, frame: CGRect) {
+            host.addLayoutGuide(guide)
+            origin = host.convert(CGPoint.zero, to: window)
+            top = guide.topAnchor.constraint(equalTo: window.topAnchor, constant: origin.y + frame.minY)
+            leading = guide.leadingAnchor.constraint(equalTo: window.leadingAnchor, constant: origin.x + frame.minX)
+            width = guide.widthAnchor.constraint(equalToConstant: frame.width)
+            height = guide.heightAnchor.constraint(equalToConstant: frame.height)
+            NSLayoutConstraint.activate([top, leading, width, height])
+        }
+
+        func move(to frame: CGRect) {
+            top.constant = origin.y + frame.minY
+            leading.constant = origin.x + frame.minX
+            width.constant = frame.width
+            height.constant = frame.height
+        }
+    }
+
+    func testKeyboardOcclusionFollowsTheUndockedKeyboardLayoutGuide() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
             XCTAssertTrue(fixture.host.keyboardLayoutGuide.followsUndockedKeyboard,
                           "the guide must follow undocked and floating keyboards")
+            XCTAssertEqual(fixture.host.keyboardOcclusionConstraints.count, 4)
+            XCTAssertTrue(fixture.host.keyboardOcclusionConstraints.allSatisfy {
+                $0.secondItem === fixture.host.keyboardLayoutGuide
+            }, "occlusion is tracked from the host keyboard layout guide")
+        }
+    }
+
+    func testAKeyboardGuideRestingBelowTheEditorPublishesNoKeyboard() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            let restingBand = CGRect(x: 0, y: 260, width: 340, height: 168)
+            let stub = StubKeyboardGuide(in: fixture.host, window: try XCTUnwrap(fixture.host.window), frame: restingBand)
+            fixture.host.trackKeyboardOcclusion(of: stub.guide)
             try fixture.selectCells(anchor: 0, head: 3)
             waitForGeometryFrame()
-            let window = try XCTUnwrap(fixture.host.window)
-            let safeArea = window.bounds.inset(by: window.safeAreaInsets)
-            let guide = fixture.host.convert(fixture.host.keyboardLayoutGuide.layoutFrame, to: window)
-                .intersection(safeArea)
-            XCTAssertFalse(guide.isNull || guide.isEmpty,
-                           "the simulator keyboard occupies the window: \(guide)")
+
+            let payload = try XCTUnwrap(fixture.recorder.payloads.last)
+            XCTAssertNil(payload["keyboard"], "a guide resting at the editor's bottom edge is no keyboard: \(payload)")
+        }
+    }
+
+    func testADockedKeyboardPublishesOnlyTheEditorBandItCovers() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            let docked = CGRect(x: 0, y: 180, width: 340, height: 200)
+            let stub = StubKeyboardGuide(in: fixture.host, window: try XCTUnwrap(fixture.host.window), frame: docked)
+            fixture.host.trackKeyboardOcclusion(of: stub.guide)
+            try fixture.selectCells(anchor: 0, head: 3)
+            waitForGeometryFrame()
 
             let payload = try XCTUnwrap(fixture.recorder.payloads.last)
             XCTAssertEqual(try GeometryRecorder.rect(try XCTUnwrap(payload["keyboard"] as? [String: Double],
                                                                    "no keyboard in \(payload)")),
-                           guide, "the keyboard rectangle comes from the layout guide in window space")
+                           CGRect(x: 24, y: 252, width: 340, height: 80))
+        }
+    }
+
+    func testMovingTheKeyboardGuideRepublishesTheOcclusionWithoutAKeyboardNotification() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            let docked = CGRect(x: 0, y: 180, width: 340, height: 200)
+            let stub = StubKeyboardGuide(in: fixture.host, window: try XCTUnwrap(fixture.host.window), frame: docked)
+            fixture.host.trackKeyboardOcclusion(of: stub.guide)
+            try fixture.selectCells(anchor: 0, head: 3)
+            waitForGeometryFrame()
+            let published = fixture.recorder.payloads.count
+
+            stub.move(to: CGRect(x: 60, y: 40, width: 120, height: 100))
+            waitForGeometryFrame()
+
+            XCTAssertEqual(fixture.recorder.payloads.count, published + 1, "\(fixture.recorder.payloads)")
+            let payload = try XCTUnwrap(fixture.recorder.payloads.last)
+            XCTAssertEqual(try GeometryRecorder.rect(try XCTUnwrap(payload["keyboard"] as? [String: Double],
+                                                                   "no keyboard in \(payload)")),
+                           CGRect(x: 84, y: 112, width: 120, height: 100),
+                           "a floating keyboard is published where the guide moved it")
         }
     }
 

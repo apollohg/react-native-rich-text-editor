@@ -149,6 +149,8 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
     var onEditorErrorForTesting: (([String: Any]) -> Void)?
     var onExternalTextCompositionEndForTesting: (([String: Any]) -> Void)?
     var onTableSelectionGeometryForTesting: (([String: Any]) -> Void)?
+    let keyboardOcclusionView = UIView()
+    var keyboardOcclusionConstraints: [NSLayoutConstraint] = []
     private(set) lazy var tableSelectionGeometryPublisher = TableSelectionGeometryPublisher(
         resolve: { [weak self] in self?.currentTableSelectionGeometry() },
         emit: { [weak self] in self?.dispatchTableSelectionGeometry($0) }
@@ -239,18 +241,13 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
             name: UITextView.textDidEndEditingNotification,
             object: richTextView.textView
         )
-        keyboardLayoutGuide.followsUndockedKeyboard = true
-        for name in [
-            UIResponder.keyboardDidShowNotification,
-            UIResponder.keyboardDidChangeFrameNotification,
-            UIResponder.keyboardDidHideNotification
-        ] {
-            NotificationCenter.default.addObserver(
-                self, selector: #selector(keyboardFrameMayChange(_:)), name: name, object: nil
-            )
-        }
-
         addSubview(richTextView)
+        keyboardLayoutGuide.followsUndockedKeyboard = true
+        keyboardOcclusionView.isHidden = true
+        keyboardOcclusionView.isUserInteractionEnabled = false
+        keyboardOcclusionView.translatesAutoresizingMaskIntoConstraints = false
+        richTextView.addSubview(keyboardOcclusionView)
+        trackKeyboardOcclusion(of: keyboardLayoutGuide)
     }
 
     deinit {

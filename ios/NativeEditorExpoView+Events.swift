@@ -65,14 +65,25 @@ extension NativeEditorExpoView {
 
     func tableSelectionObstructions(in window: UIWindow) -> TableSelectionObstructions {
         let safeArea = window.bounds.inset(by: window.safeAreaInsets)
-        let keyboard = convert(keyboardLayoutGuide.layoutFrame, to: window).intersection(safeArea)
+        let occludedEditor = keyboardOcclusionView.frame.intersection(richTextView.bounds)
+        let keyboard = occludedEditor.isNull || occludedEditor.isEmpty
+            ? CGRect.null
+            : richTextView.convert(occludedEditor, to: window).intersection(safeArea)
         return TableSelectionObstructions(
             safeArea: safeArea,
             keyboard: keyboard.isNull || keyboard.isEmpty ? nil : keyboard
         )
     }
 
-    @objc func keyboardFrameMayChange(_ notification: Notification) {
+    func trackKeyboardOcclusion(of guide: UILayoutGuide) {
+        NSLayoutConstraint.deactivate(keyboardOcclusionConstraints)
+        keyboardOcclusionConstraints = [
+            keyboardOcclusionView.topAnchor.constraint(equalTo: guide.topAnchor),
+            keyboardOcclusionView.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
+            keyboardOcclusionView.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
+            keyboardOcclusionView.trailingAnchor.constraint(equalTo: guide.trailingAnchor)
+        ]
+        NSLayoutConstraint.activate(keyboardOcclusionConstraints)
         tableSelectionGeometryPublisher.scheduleFlush()
     }
 
