@@ -9,6 +9,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import com.apollohg.editor.AndroidApiCompat
 import com.apollohg.editor.EditorEditText
+import com.apollohg.editor.LayoutConstants
 import com.apollohg.editor.R
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import com.apollohg.editor.viewer.PreparedProseFragmentKind
@@ -17,7 +18,6 @@ import java.util.IdentityHashMap
 import org.json.JSONObject
 
 internal data class TableAccessibilityAction(
-    val key: String,
     val id: Int,
     val label: Int,
     val applicability: String,
@@ -27,47 +27,47 @@ internal data class TableAccessibilityAction(
 
     companion object {
         val DELETE_TABLE = TableAccessibilityAction(
-            "deleteTable", R.id.table_accessibility_delete_table, R.string.table_accessibility_delete_table,
+            R.id.table_accessibility_delete_table, R.string.table_accessibility_delete_table,
             "deleteTable", mapOf("type" to "deleteTable")
         )
 
         val ALL = listOf(
-            TableAccessibilityAction("addRowBefore", R.id.table_accessibility_add_row_before,
+            TableAccessibilityAction(R.id.table_accessibility_add_row_before,
                 R.string.table_accessibility_add_row_before, "addTableRowBefore",
                 mapOf("type" to "addTableRow", "side" to "before")),
-            TableAccessibilityAction("addRowAfter", R.id.table_accessibility_add_row_after,
+            TableAccessibilityAction(R.id.table_accessibility_add_row_after,
                 R.string.table_accessibility_add_row_after, "addTableRowAfter",
                 mapOf("type" to "addTableRow", "side" to "after")),
-            TableAccessibilityAction("deleteRows", R.id.table_accessibility_delete_rows,
+            TableAccessibilityAction(R.id.table_accessibility_delete_rows,
                 R.string.table_accessibility_delete_rows, "deleteTableRows", mapOf("type" to "deleteTableRows")),
-            TableAccessibilityAction("selectRows", R.id.table_accessibility_select_rows,
+            TableAccessibilityAction(R.id.table_accessibility_select_rows,
                 R.string.table_accessibility_select_rows, "selectTableRows", mapOf("type" to "selectTableRows")),
-            TableAccessibilityAction("addColumnBefore", R.id.table_accessibility_add_column_before,
+            TableAccessibilityAction(R.id.table_accessibility_add_column_before,
                 R.string.table_accessibility_add_column_before, "addTableColumnBefore",
                 mapOf("type" to "addTableColumn", "side" to "before")),
-            TableAccessibilityAction("addColumnAfter", R.id.table_accessibility_add_column_after,
+            TableAccessibilityAction(R.id.table_accessibility_add_column_after,
                 R.string.table_accessibility_add_column_after, "addTableColumnAfter",
                 mapOf("type" to "addTableColumn", "side" to "after")),
-            TableAccessibilityAction("deleteColumns", R.id.table_accessibility_delete_columns,
+            TableAccessibilityAction(R.id.table_accessibility_delete_columns,
                 R.string.table_accessibility_delete_columns, "deleteTableColumns",
                 mapOf("type" to "deleteTableColumns")),
-            TableAccessibilityAction("selectColumns", R.id.table_accessibility_select_columns,
+            TableAccessibilityAction(R.id.table_accessibility_select_columns,
                 R.string.table_accessibility_select_columns, "selectTableColumns",
                 mapOf("type" to "selectTableColumns")),
-            TableAccessibilityAction("toggleHeaderRow", R.id.table_accessibility_toggle_header_row,
+            TableAccessibilityAction(R.id.table_accessibility_toggle_header_row,
                 R.string.table_accessibility_toggle_header_row, "toggleTableHeaderRow",
                 mapOf("type" to "toggleTableHeader", "target" to "row")),
-            TableAccessibilityAction("toggleHeaderColumn", R.id.table_accessibility_toggle_header_column,
+            TableAccessibilityAction(R.id.table_accessibility_toggle_header_column,
                 R.string.table_accessibility_toggle_header_column, "toggleTableHeaderColumn",
                 mapOf("type" to "toggleTableHeader", "target" to "column")),
-            TableAccessibilityAction("toggleHeaderCell", R.id.table_accessibility_toggle_header_cell,
+            TableAccessibilityAction(R.id.table_accessibility_toggle_header_cell,
                 R.string.table_accessibility_toggle_header_cell, "toggleTableHeaderCell",
                 mapOf("type" to "toggleTableHeader", "target" to "cell")),
-            TableAccessibilityAction("mergeCells", R.id.table_accessibility_merge_cells,
+            TableAccessibilityAction(R.id.table_accessibility_merge_cells,
                 R.string.table_accessibility_merge_cells, "mergeTableCells", mapOf("type" to "mergeTableCells")),
-            TableAccessibilityAction("splitCell", R.id.table_accessibility_split_cell,
+            TableAccessibilityAction(R.id.table_accessibility_split_cell,
                 R.string.table_accessibility_split_cell, "splitTableCell", mapOf("type" to "splitTableCell")),
-            TableAccessibilityAction("clearCells", R.id.table_accessibility_clear_cells,
+            TableAccessibilityAction(R.id.table_accessibility_clear_cells,
                 R.string.table_accessibility_clear_cells, "clearTableCells", mapOf("type" to "clearTableCells")),
             DELETE_TABLE
         )
@@ -101,6 +101,7 @@ internal data class TableAccessibilityTable(
 
     val surface: ViewerTableSurface get() = presented.surface
     val tableId: String? get() = surface.editorTableId
+    val tablePos: Int? get() = surface.sourceTable?.tablePos?.toInt()
 
     val frame: Frame?
         get() {
@@ -142,14 +143,20 @@ internal interface TableAccessibilityEditing {
 
 internal data class TableAccessibilityDetachedFrame(
     val tableId: String,
+    val tablePos: Int,
     val kind: TableAccessibilityTable.Frame,
     val bounds: RectF
+)
+
+internal data class TableAccessibilityLocation(
+    val tableNodeId: Int,
+    val table: TableAccessibilityTable,
+    val cell: TableAccessibilityCell
 )
 
 internal object TableAccessibility {
     private const val LABEL_SEPARATOR = " "
     private const val DESCRIPTION_SEPARATOR = ", "
-    private const val OBJECT_REPLACEMENT = "￼"
 
     fun items(
         snapshot: ViewerTablePresentationSnapshot,
@@ -220,7 +227,7 @@ internal object TableAccessibility {
                 PreparedProseFragmentKind.TEXT -> fragment.layout?.text?.toString()
                 PreparedProseFragmentKind.ATOM -> fragment.labelLayout?.text?.toString() ?: fragment.label
                 else -> null
-            }?.replace(OBJECT_REPLACEMENT, "")?.trim()?.takeIf { it.isNotEmpty() }
+            }?.replace(LayoutConstants.OBJECT_REPLACEMENT_CHARACTER, "")?.trim()?.takeIf { it.isNotEmpty() }
         } + block.tableSurface?.cells.orEmpty().flatMap { text(it.content) }
     }
 
@@ -263,19 +270,23 @@ internal object TableAccessibility {
 }
 
 internal class TableCellAccessibility(
-    private val host: View,
-    private val parentId: Int,
-    val table: TableAccessibilityTable,
-    val cell: TableAccessibilityCell,
+    private val drawing: PreparedProseDrawingView,
+    private val surface: () -> ViewerTableSurface?,
+    private val sourceCellIndex: Int,
     private val editing: TableAccessibilityEditing
 ) {
+    private fun located(): TableAccessibilityLocation? =
+        surface()?.let { drawing.tableAccessibilityLocation(it, sourceCellIndex) }
+
     fun populate(input: View, info: AccessibilityNodeInfo) {
-        info.setParent(host, parentId)
-        TableAccessibility.describeCell(input, info, table, cell)
-        TableAccessibility.addActions(input, info, editing.tableAccessibilityActions(cell))
+        val location = located() ?: return
+        info.setParent(drawing, location.tableNodeId)
+        TableAccessibility.describeCell(input, info, location.table, location.cell)
+        TableAccessibility.addActions(input, info, editing.tableAccessibilityActions(location.cell))
     }
 
     fun perform(action: Int): Boolean {
+        val cell = located()?.cell ?: return false
         val requested = editing.tableAccessibilityActions(cell).firstOrNull { it.id == action } ?: return false
         return editing.performTableAccessibilityAction(requested, cell)
     }
@@ -284,6 +295,8 @@ internal class TableCellAccessibility(
 internal class TableAccessibilityNodes(
     private val host: View,
     private val drawing: PreparedProseDrawingView,
+    private val items: () -> List<TableAccessibilityItem>,
+    private val generation: () -> Long,
     private val originInHost: () -> Pair<Int, Int>,
     private val visibleOnScreen: (Rect) -> Boolean,
     private val onFocusClaimed: () -> Unit
@@ -298,19 +311,30 @@ internal class TableAccessibilityNodes(
         data class Detached(val frame: TableAccessibilityDetachedFrame) : Entry
     }
 
+    private data class Snapshot(val items: List<TableAccessibilityItem>, val entries: List<Entry>)
     private data class Identity(val table: String, val sourcePosition: Int?)
     private data class Focused(val virtualId: Int, val identity: Identity)
 
     private val accessibilityManager = host.context.getSystemService(AccessibilityManager::class.java)
     private var focused: Focused? = null
+    private var cached: Pair<Long, Snapshot>? = null
     var editing: TableAccessibilityEditing? = null
+        set(value) {
+            field = value
+            cached = null
+        }
 
     fun isTableNode(virtualId: Int): Boolean = virtualId >= FIRST_TABLE_NODE_ID
 
-    private fun entries(items: List<TableAccessibilityItem>): List<Entry> =
-        items.filterIsInstance<TableAccessibilityItem.Table>().flatMap { item ->
+    private fun snapshot(): Snapshot {
+        val current = generation()
+        cached?.takeIf { it.first == current }?.let { return it.second }
+        val items = items()
+        val entries = items.filterIsInstance<TableAccessibilityItem.Table>().flatMap { item ->
             listOf(Entry.Table(item.table)) + item.table.cells.map { Entry.Cell(item.table, it) }
         } + editing?.detachedTableAccessibilityFrames().orEmpty().map { Entry.Detached(it) }
+        return Snapshot(items, entries).also { cached = current to it }
+    }
 
     private fun identity(entry: Entry) = when (entry) {
         is Entry.Table -> Identity(entry.table.surface.identity, null)
@@ -321,25 +345,43 @@ internal class TableAccessibilityNodes(
     private fun idOf(entries: List<Entry>, table: TableAccessibilityTable): Int =
         FIRST_TABLE_NODE_ID + entries.indexOfFirst { it is Entry.Table && it.table === table }
 
-    fun hostChildren(items: List<TableAccessibilityItem>, nodeId: (ViewerTablePresentedAccessibilityNode) -> Int?): List<Int> {
-        val entries = entries(items)
-        val ordered = items.mapNotNull { item ->
+    fun hostChildren(nodeId: (ViewerTablePresentedAccessibilityNode) -> Int?): List<Int> {
+        val (items, entries) = snapshot()
+        val detached = entries.indices.filter { entries[it] is Entry.Detached }
+            .map { (entries[it] as Entry.Detached).frame.tablePos to FIRST_TABLE_NODE_ID + it }
+            .sortedBy { it.first }.toMutableList()
+        val children = mutableListOf<Int>()
+        fun flushDetached(before: Int) {
+            while (detached.isNotEmpty() && detached.first().first < before) children += detached.removeAt(0).second
+        }
+        items.forEach { item ->
             when (item) {
-                is TableAccessibilityItem.Node -> nodeId(item.node)
-                is TableAccessibilityItem.Table -> idOf(entries, item.table)
+                is TableAccessibilityItem.Node -> nodeId(item.node)?.let { children += it }
+                is TableAccessibilityItem.Table -> {
+                    flushDetached(item.table.tablePos ?: Int.MAX_VALUE)
+                    children += idOf(entries, item.table)
+                }
             }
         }
-        val detached = entries.indices.filter { entries[it] is Entry.Detached }.map { FIRST_TABLE_NODE_ID + it }
-        return ordered + detached
+        flushDetached(Int.MAX_VALUE)
+        return children
     }
 
-    fun parentOf(items: List<TableAccessibilityItem>, node: ViewerTablePresentedAccessibilityNode): Int? {
-        entries(items).forEachIndexed { index, entry ->
+    fun parentOf(node: ViewerTablePresentedAccessibilityNode): Int? {
+        snapshot().entries.forEachIndexed { index, entry ->
             if (entry is Entry.Cell && entry.cell.interactions.any { it.sourceIdentity == node.sourceIdentity }) {
                 return FIRST_TABLE_NODE_ID + index
             }
         }
         return null
+    }
+
+    fun locate(surface: ViewerTableSurface, sourceCellIndex: Int): TableAccessibilityLocation? {
+        val entries = snapshot().entries
+        val cell = entries.filterIsInstance<Entry.Cell>().firstOrNull {
+            it.table.surface === surface && it.cell.sourceCellIndex == sourceCellIndex
+        } ?: return null
+        return TableAccessibilityLocation(idOf(entries, cell.table), cell.table, cell.cell)
     }
 
     private fun parentBounds(bounds: RectF, clip: RectF?): Rect {
@@ -363,22 +405,16 @@ internal class TableAccessibilityNodes(
     }
 
     private fun visible(entry: Entry): Boolean {
-        val tableGeometry = when (entry) {
-            is Entry.Table -> geometry(entry)
-            is Entry.Cell -> geometry(Entry.Table(entry.table))
-            is Entry.Detached -> geometry(entry)
-        }
-        val (bounds, clip) = tableGeometry
+        val (bounds, clip) = if (entry is Entry.Cell) geometry(Entry.Table(entry.table)) else geometry(entry)
         if (clip != null && !RectF(bounds).intersect(clip)) return false
         return visibleOnScreen(screenBounds(parentBounds(bounds, clip)))
     }
 
     @Suppress("DEPRECATION")
-    fun create(items: List<TableAccessibilityItem>, virtualId: Int,
-               nodeId: (ViewerTablePresentedAccessibilityNode) -> Int?): AccessibilityNodeInfo? {
-        val entries = entries(items)
+    fun create(virtualId: Int, nodeId: (ViewerTablePresentedAccessibilityNode) -> Int?): AccessibilityNodeInfo? {
+        val entries = snapshot().entries
         val entry = entries.getOrNull(virtualId - FIRST_TABLE_NODE_ID) ?: return null
-        reconcile { items }
+        reconcile()
         val (bounds, clip) = geometry(entry)
         val parent = parentBounds(bounds, clip)
         return AccessibilityNodeInfo.obtain().apply {
@@ -425,17 +461,10 @@ internal class TableAccessibilityNodes(
                 AccessibilityNodeInfoCompat.CollectionInfoCompat.SELECTION_MODE_NONE
             )
         )
-        val tableId = idOf(entries, table)
         entries.forEachIndexed { index, entry ->
             if (entry !is Entry.Cell || entry.table !== table) return@forEachIndexed
-            val editing = editing
             val input = editing?.activeTableAccessibilityInput(entry.cell)
-            if (editing != null && input != null) {
-                input.tableCellAccessibility = TableCellAccessibility(host, tableId, table, entry.cell, editing)
-                info.addChild(input)
-            } else {
-                info.addChild(host, FIRST_TABLE_NODE_ID + index)
-            }
+            if (input != null) info.addChild(input) else info.addChild(host, FIRST_TABLE_NODE_ID + index)
         }
     }
 
@@ -458,9 +487,8 @@ internal class TableAccessibilityNodes(
         TableAccessibility.addActions(host, info, editing.tableAccessibilityActions(entry.cell))
     }
 
-    fun perform(items: List<TableAccessibilityItem>, virtualId: Int, action: Int): Boolean {
-        val entries = entries(items)
-        val entry = entries.getOrNull(virtualId - FIRST_TABLE_NODE_ID) ?: return false
+    fun perform(virtualId: Int, action: Int): Boolean {
+        val entry = snapshot().entries.getOrNull(virtualId - FIRST_TABLE_NODE_ID) ?: return false
         return when (action) {
             AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS -> requestFocus(virtualId, entry)
             AccessibilityNodeInfo.ACTION_CLEAR_ACCESSIBILITY_FOCUS -> clearFocus(virtualId)
@@ -510,9 +538,9 @@ internal class TableAccessibilityNodes(
         return true
     }
 
-    fun reconcile(items: () -> List<TableAccessibilityItem>) {
+    fun reconcile() {
         val current = focused ?: return
-        val entries = entries(items())
+        val entries = snapshot().entries
         val index = entries.indexOfFirst { identity(it) == current.identity }
         if (index < 0 || FIRST_TABLE_NODE_ID + index != current.virtualId || !visible(entries[index])) {
             clearFocus(current.virtualId)

@@ -28,6 +28,7 @@ import com.apollohg.editor.tables.TableAccessibility
 import com.apollohg.editor.tables.TableAccessibilityCell
 import com.apollohg.editor.tables.TableAccessibilityEditing
 import com.apollohg.editor.tables.TableAccessibilityItem
+import com.apollohg.editor.tables.TableAccessibilityLocation
 import com.apollohg.editor.tables.TableAccessibilityNodes
 import com.apollohg.editor.tables.ViewerTablePresentation
 import com.apollohg.editor.tables.ViewerTablePresentationOwner
@@ -133,6 +134,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             if (field == value) return
             clearVirtualAccessibilityFocus()
             field = value
+            invalidateTableAccessibility()
             announceAccessibilitySubtreeChanged()
         }
     var mentionInteractionsEnabled: Boolean = false
@@ -140,6 +142,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             if (field == value) return
             clearVirtualAccessibilityFocus()
             field = value
+            invalidateTableAccessibility()
             announceAccessibilitySubtreeChanged()
         }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -147,8 +150,11 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     private var pendingTap: PendingTap? = null
     private var pendingTableTap: Pair<Float, Float>? = null
     private var focusedVirtualNode: FocusedVirtualNode? = null
+    internal var tableAccessibilityGeneration = 0L
+        private set
     private val tableAccessibility = TableAccessibilityNodes(
-        this, this, { contentOriginXPx to contentOriginYPx },
+        this, this, { tableAccessibilityItems() }, { tableAccessibilityGeneration },
+        { contentOriginXPx to contentOriginYPx },
         { bounds -> accessibilityVisibilityForTesting?.invoke(bounds) ?: accessibilityNodeVisibleOnScreen(bounds) },
         { clearVirtualAccessibilityFocus() }
     )
@@ -281,6 +287,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             pendingTableTap = null
         }
         preparedLayout = layout
+        invalidateTableAccessibility()
         if (layout != null) {
             val surfaces = ViewerTablePresentation.project(layout, tablePresentationOwner,
                 ViewerTablePresentationViewport.Unknown).tables.map { it.surface }
@@ -311,7 +318,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         tableOffsetChanged()
     }
 
+    internal fun invalidateTableAccessibility() {
+        tableAccessibilityGeneration += 1
+    }
+
     private fun tableOffsetChanged() {
+        invalidateTableAccessibility()
         reportRetainedTablePresentation()
         clearVirtualAccessibilityFocus()
         onTableGeometryChanged?.invoke()
@@ -1060,20 +1072,22 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
         super.onInitializeAccessibilityNodeInfo(info)
         info.className = android.widget.TextView::class.java.name
-        val nodes = nodes()
-        tableAccessibility.hostChildren(tableAccessibilityItems(nodes)) { virtualId(nodes, it) }
-            .forEach { info.addChild(this, it) }
+        accessibilityChildIds().forEach { info.addChild(this, it) }
     }
 
-    internal fun tableAccessibilityItems(): List<TableAccessibilityItem> = tableAccessibilityItems(nodes())
+    internal fun accessibilityChildIds(): List<Int> {
+        val nodes = nodes()
+        return tableAccessibility.hostChildren { virtualId(nodes, it) }
+    }
 
-    private fun tableAccessibilityItems(
-        nodes: List<ViewerTablePresentedAccessibilityNode>
-    ): List<TableAccessibilityItem> {
+    internal fun tableAccessibilityItems(): List<TableAccessibilityItem> {
         val artifact = preparedLayout ?: return emptyList()
         val snapshot = presentationSnapshot() ?: return emptyList()
-        return TableAccessibility.items(snapshot, artifact, nodes)
+        return TableAccessibility.items(snapshot, artifact, nodes())
     }
+
+    internal fun tableAccessibilityLocation(surface: ViewerTableSurface, sourceCellIndex: Int): TableAccessibilityLocation? =
+        tableAccessibility.locate(surface, sourceCellIndex)
 
     internal fun revealTableAccessibilityCell(cell: TableAccessibilityCell) {
         val presented = cell.presented
@@ -1108,11 +1122,11 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             }
             val nodes = nodes()
             if (tableAccessibility.isTableNode(id)) {
-                return tableAccessibility.create(tableAccessibilityItems(nodes), id) { virtualId(nodes, it) }
+                return tableAccessibility.create(id) { virtualId(nodes, it) }
             }
             val presented = nodes.getOrNull(id - 1) ?: return null
             val node = presented.node
-            val parentCell = tableAccessibility.parentOf(tableAccessibilityItems(nodes), presented)
+            val parentCell = tableAccessibility.parentOf(presented)
             val parentBounds = accessibilityParentBounds(presented)
             val screen = accessibilityScreenBounds(parentBounds)
             val visibleToUser = accessibilityNodeVisible(presented)
@@ -1148,7 +1162,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
         override fun performAction(id: Int, action: Int, arguments: Bundle?): Boolean {
             if (tableAccessibility.isTableNode(id)) {
-                return tableAccessibility.perform(tableAccessibilityItems(nodes()), id, action)
+                return tableAccessibility.perform(id, action)
             }
             val node = nodes().getOrNull(id - 1) ?: return false
             return when (action) {
@@ -1207,7 +1221,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     private fun reconcileVirtualAccessibilityFocus() {
-        tableAccessibility.reconcile { tableAccessibilityItems(nodes()) }
+        tableAccessibility.reconcile()
         val focused = focusedVirtualNode ?: return
         val nodes = nodes()
         val index = nodes.indexOfFirst { identity(it) == focused.identity }

@@ -6,12 +6,16 @@ import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeProvider
 import android.widget.FrameLayout
+import android.graphics.Rect
 import com.apollohg.editor.tables.TableAccessibilityAction
+import com.apollohg.editor.tables.TableAccessibilityDetachedFrame
+import com.apollohg.editor.tables.TableAccessibilityEditing
+import java.io.File
+import org.json.JSONArray
 import com.apollohg.editor.tables.TableAccessibilityNodes
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -169,12 +173,68 @@ internal class EditorTableAccessibilityTest {
     }
 
     @Test
+    fun `native table actions match the toolbar action fixture`() {
+        val workingDirectory = requireNotNull(System.getProperty("user.dir"))
+        val fixtureFile = generateSequence(File(workingDirectory)) { it.parentFile }
+            .map { File(it, PARITY_FIXTURE) }.first { it.isFile }
+        val fixture = JSONArray(fixtureFile.readText())
+        assertEquals(fixture.length(), TableAccessibilityAction.ALL.size)
+        val resources = RuntimeEnvironment.getApplication().resources
+        TableAccessibilityAction.ALL.forEachIndexed { index, action ->
+            val expected = fixture.getJSONObject(index)
+            val name = expected.getString("action")
+            val command = expected.getJSONObject("command")
+            assertEquals(name, expected.getString("applicability"), action.applicability)
+            assertEquals(name, command.keys().asSequence().associateWith(command::getString), action.command)
+            val resourceName = RESOURCE_PREFIX + name.replace(Regex("([A-Z])")) { "_" + it.value.lowercase() }
+            assertEquals(name, resourceName, resources.getResourceEntryName(action.id))
+            assertEquals(name, resourceName, resources.getResourceEntryName(action.label))
+        }
+    }
+
+    @Test
+    fun `frames are ordered among drawn tables by document position`() =
+        withTable(FRAME_BETWEEN_TABLES_DOCUMENT) { fixture ->
+            val drawing = fixture.view.editorTableSurface.drawingView
+            val children = drawing.accessibilityChildIds().map { requireNotNull(fixture.provider.createAccessibilityNodeInfo(it)) }
+            val app = RuntimeEnvironment.getApplication()
+            assertEquals(
+                listOf(app.getString(R.string.table_accessibility_table),
+                    app.getString(R.string.table_accessibility_empty_table),
+                    app.getString(R.string.table_accessibility_table)),
+                children.map { (it.contentDescription ?: it.text).toString() }
+            )
+            val tops = children.map { Rect().also(it::getBoundsInParent).top }
+            assertEquals("children follow document position: $tops", tops.sorted(), tops)
+        }
+
+    @Test
+    fun `table accessibility nodes reuse one snapshot until the presentation changes`() =
+        withTable(FRAME_BESIDE_TABLE_DOCUMENT) { fixture ->
+            val surface = fixture.view.editorTableSurface
+            val drawing = surface.drawingView
+            var frameQueries = 0
+            drawing.tableAccessibilityEditing = object : TableAccessibilityEditing by surface {
+                override fun detachedTableAccessibilityFrames(): List<TableAccessibilityDetachedFrame> =
+                    surface.detachedTableAccessibilityFrames().also { frameQueries += 1 }
+            }
+            repeat(SNAPSHOT_READS) { fixture.tableNodes() }
+            assertEquals("repeated node reads share one snapshot", 1, frameQueries)
+
+            assertTrue(fixture.root.applyUpdateJSON(requireNotNull(fixture.adapter.setContentJson(FOUR_CELL_DOCUMENT))))
+            fixture.relayout()
+            val texts = fixture.cellNodes().map { it.second.text.toString() }
+            assertEquals("a document change rebuilds the snapshot", listOf("one", "two", "three", "four"), texts)
+            assertEquals(2, frameQueries)
+        }
+
+    @Test
     fun `selected cells expose exactly the published table actions`() = withTable(FOUR_CELL_DOCUMENT) { fixture ->
         val openings = fixture.openings()
         fixture.selectCells(openings[FIRST_CELL], openings[SECOND_CELL])
         val expected = fixture.publishedActionIds()
-        val merge = TableAccessibilityAction.ALL.single { it.key == MERGE_CELLS }
-        val split = TableAccessibilityAction.ALL.single { it.key == SPLIT_CELL }
+        val merge = TableAccessibilityAction.ALL.single { it.id == R.id.table_accessibility_merge_cells }
+        val split = TableAccessibilityAction.ALL.single { it.id == R.id.table_accessibility_split_cell }
         assertTrue("a two-cell selection must publish merge: $expected", merge.id in expected)
         assertFalse(split.id in expected)
         val cells = fixture.cellNodes().map { it.second }
@@ -190,7 +250,7 @@ internal class EditorTableAccessibilityTest {
         val openings = fixture.openings()
         fixture.selectCells(openings[FIRST_CELL], openings[FIRST_CELL])
         val before = fixture.adapter.documentJson()
-        val insertBelow = TableAccessibilityAction.ALL.single { it.key == ADD_ROW_AFTER }
+        val insertBelow = TableAccessibilityAction.ALL.single { it.id == R.id.table_accessibility_add_row_after }
         val (cellId) = fixture.cellNodes()[FIRST_CELL]
 
         assertTrue(fixture.provider.performAction(cellId, insertBelow.id, null))
@@ -244,7 +304,7 @@ internal class EditorTableAccessibilityTest {
         assertEquals(emptyList<Int>(), customActionIds(frame))
         assertFalse(fixture.provider.performAction(frameId, TableAccessibilityAction.DELETE_TABLE.id, null))
         assertFalse(fixture.provider.performAction(
-            cellId, TableAccessibilityAction.ALL.single { it.key == ADD_ROW_AFTER }.id, null))
+            cellId, TableAccessibilityAction.ALL.single { it.id == R.id.table_accessibility_add_row_after }.id, null))
         assertEquals(before, fixture.adapter.documentJson())
         assertTrue(fixture.backend.commands.isEmpty())
     }
@@ -256,8 +316,9 @@ internal class EditorTableAccessibilityTest {
             assertTrue(fixture.provider.performAction(cellId, AccessibilityNodeInfo.ACTION_CLICK, null))
             fixture.relayout()
             val input = requireNotNull(fixture.view.editorTableSurface.activeInput)
-            val (tableId) = fixture.tableNodes().first()
-            assertNotNull(fixture.provider.createAccessibilityNodeInfo(tableId))
+            val frameChildren = ArrayList<View>().also(fixture.view.editorContentFrame::addChildrenForAccessibility)
+            assertFalse("the bound input is reachable only through its grid slot", input in frameChildren)
+            assertTrue("the root editor stays a frame child", fixture.root in frameChildren)
 
             val info = input.createAccessibilityNodeInfo()
             val item = requireNotNull(info.collectionItemInfo) { "the input must carry the cell position" }
@@ -265,7 +326,7 @@ internal class EditorTableAccessibilityTest {
             val expected = fixture.publishedActionIds()
             assertTrue(expected.isNotEmpty())
             assertEquals(expected, customActionIds(info))
-            val insertBelow = TableAccessibilityAction.ALL.single { it.key == ADD_ROW_AFTER }
+            val insertBelow = TableAccessibilityAction.ALL.single { it.id == R.id.table_accessibility_add_row_after }
             val before = fixture.adapter.documentJson()
             fixture.backend.commands.clear()
             fixture.updates.clear()
@@ -284,9 +345,9 @@ internal class EditorTableAccessibilityTest {
         const val PARAGRAPH_NODE = "paragraph"
         const val ADD_TABLE_ROW = "addTableRow"
         const val DELETE_TABLE = "deleteTable"
-        const val ADD_ROW_AFTER = "addRowAfter"
-        const val MERGE_CELLS = "mergeCells"
-        const val SPLIT_CELL = "splitCell"
+        const val PARITY_FIXTURE = "scripts/tests/table-toolbar-actions.json"
+        const val RESOURCE_PREFIX = "table_accessibility_"
+        const val SNAPSHOT_READS = 3
         const val FIRST_CELL = 0
         const val SECOND_CELL = 1
         const val THIRD_CELL = 2
@@ -294,6 +355,7 @@ internal class EditorTableAccessibilityTest {
         const val TABLE_CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
         const val FOUR_CELL_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"four"}]}]}]}]}]}"""
         const val EMPTY_FRAME_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table"},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+        const val FRAME_BETWEEN_TABLES_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]},{"type":"table"},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"last"}]}]}]}]}]}"""
         const val FRAME_BESIDE_TABLE_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table"},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"keep"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
     }
 }

@@ -156,6 +156,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     private data class ActiveCell(val tableId: String, val cellIndex: Int, val sourcePos: Long)
     private var activeCell: ActiveCell? = null
     private var applyingCellUpdate = false
+    private var accessibilityKey: Triple<ULong?, Int, Int?>? = null
     private var activeAppearanceRevision: Long? = null
     private var blockedRootGesture = false
     private var coordinator: EditorTableInputCoordinator? = null
@@ -676,6 +677,11 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val width = (input.measuredWidth - input.compoundPaddingLeft - input.compoundPaddingRight)
             .coerceAtLeast(0)
         val markers = markers(input)
+        val accessibilityKey = Triple(revision, width, input.layout?.height)
+        if (accessibilityKey != this.accessibilityKey) {
+            this.accessibilityKey = accessibilityKey
+            drawingView.invalidateTableAccessibility()
+        }
         val admittedMappings = adapter?.cachedTableInputMappings?.tables
         val rootTableIds = adapter?.cachedTableRecords?.filterValues {
             !it.optBoolean("readOnlyDescendants", true)
@@ -979,6 +985,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         ) == true
         if (!bound) return false
         activeCell = ActiveCell(tableId, cellIndex, sourcePos)
+        input.tableCellAccessibility = TableCellAccessibility(drawingView, { entries[tableId]?.surface }, cellIndex, this)
         activeAppearanceRevision = root.renderAppearanceRevision
         root.retireInputConnectionForEditor()
         input.onTableCellSelectionSynced = {
@@ -1358,6 +1365,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 (record.optInt("rows", 0) == 0 || record.optInt("columns", 0) == 0)
             tablePos to TableAccessibilityDetachedFrame(
                 tableId,
+                tablePos,
                 if (unfilled) TableAccessibilityTable.Frame.EMPTY else TableAccessibilityTable.Frame.FAILED,
                 RectF((input.left + input.totalPaddingLeft).toFloat(), top,
                     (input.right - input.totalPaddingRight).toFloat(), bottom)
