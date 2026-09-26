@@ -185,6 +185,44 @@ extension EditorTableInputTests {
         }
     }
 
+    func testStructuralChangeMissedOffWindowDoesNotMoveFocusOnALaterContentChange() throws {
+        try withMountedTable(document: TableAccessibilityFixture.fourCellDocument, cellSelection: nil) { fixture in
+            let window = try XCTUnwrap(fixture.view.window)
+            XCTAssertNotNil(try accessibleTable(fixture, containing: "one"))
+            let restructure = try XCTUnwrap(fixture.adapter.setContentJson(TableAccessibilityFixture.frameBetweenTablesDocument))
+            XCTAssertTrue(fixture.view.textView.applyUpdateJSON(restructure))
+            fixture.view.layoutIfNeeded()
+            fixture.view.removeFromSuperview()
+            drainMainQueue()
+            window.addSubview(fixture.view)
+
+            let cell = try XCTUnwrap(try accessibleTable(fixture, containing: "first").cellElements.first)
+            var arguments: [Any?] = []
+            fixture.drawing.onAccessibilityLayoutChangedForTesting = { arguments.append($0) }
+            fixture.drawing.accessibilityFocusProbe = { $0 === cell }
+            try apply(TableAccessibilityFixture.frameBetweenTablesDocument
+                .replacingOccurrences(of: "\"first\"", with: "\"primero\""), to: fixture)
+
+            XCTAssertEqual(cell.accessibilityLabel, "primero")
+            XCTAssertEqual(arguments.count, 1, "announcements: \(arguments)")
+            XCTAssertTrue(arguments.first.flatMap { $0 } as AnyObject === cell,
+                          "a structural change VoiceOver never heard must not move focus later: \(arguments)")
+        }
+    }
+
+    func testCellLabelReadInTheInvalidatingTurnReflectsTheNewContent() throws {
+        try withMountedTable(document: TableAccessibilityFixture.fourCellDocument, cellSelection: nil) { fixture in
+            let cell = try XCTUnwrap(try accessibleTable(fixture, containing: "one").cellElements.first)
+            let renamed = try XCTUnwrap(fixture.adapter.setContentJson(
+                TableAccessibilityFixture.fourCellDocument.replacingOccurrences(of: "\"one\"", with: "\"uno\"")
+            ))
+            XCTAssertTrue(fixture.view.textView.applyUpdateJSON(renamed))
+            fixture.view.layoutIfNeeded()
+
+            XCTAssertEqual(cell.accessibilityLabel, "uno", "the label is read before any other accessibility query")
+        }
+    }
+
     func testSelectedCellsOfferExactlyThePublishedTableActions() throws {
         try withMountedTable(document: TableAccessibilityFixture.fourCellDocument, cellSelection: (0, 1)) { fixture in
             let expected = try publishedActionLabels(fixture)

@@ -158,7 +158,7 @@ enum TableAccessibilityStructure: Equatable {
         let isHeader: Bool
     }
 
-    case node(role: PreparedProseAccessibilityNode.Role, label: String)
+    case node(role: PreparedProseAccessibilityNode.Role)
     case table(rows: Int, columns: Int, frame: TableAccessibilityTable.Frame?, cells: [Cell])
     case detachedFrame(TableAccessibilityTable.Frame)
 }
@@ -277,7 +277,7 @@ enum TableAccessibility {
         items.map { item in
             switch item {
             case let .node(node):
-                return .node(role: node.node.role, label: node.node.label)
+                return .node(role: node.node.role)
             case let .table(table):
                 return .table(rows: table.rowCount, columns: table.columnCount, frame: table.frame,
                               cells: table.cells.map {
@@ -354,7 +354,7 @@ class TableAccessibilityGeneratedElement: UIAccessibilityElement {
     var isCurrent: Bool { drawingView?.isLiveAccessibilityElement(self) == true }
 
     func screenFrame(_ rect: CGRect, clip: CGRect) -> CGRect {
-        guard isCurrent, let drawingView else { return .zero }
+        guard let drawingView else { return .zero }
         return drawingView.accessibilityScreenFrame(rect, clip: clip)
     }
 }
@@ -385,7 +385,10 @@ final class TableAccessibilityTableElement: TableAccessibilityGeneratedElement, 
     }
 
     override var accessibilityFrame: CGRect {
-        get { screenFrame(table.presented.bounds, clip: table.presented.clip) }
+        get {
+            guard isCurrent else { return .zero }
+            return screenFrame(table.presented.bounds, clip: table.presented.clip)
+        }
         set { }
     }
 
@@ -439,8 +442,6 @@ final class TableAccessibilityCellElement: TableAccessibilityGeneratedElement, U
     func refresh(_ cell: TableAccessibilityCell, tableID: String) {
         self.cell = cell
         self.tableID = tableID
-        accessibilityLabel = cell.label.isEmpty ? TableAccessibilityText.emptyCell.localized : cell.label
-        accessibilityValue = cell.spanDescription
         accessibilityTraits = cell.isHeader ? [.staticText, .header] : .staticText
     }
 
@@ -452,8 +453,25 @@ final class TableAccessibilityCellElement: TableAccessibilityGeneratedElement, U
         cell.interactions.filter { $0.node.role == .link }
     }
 
+    override var accessibilityLabel: String? {
+        get {
+            drawingView?.reconcileAccessibilityElementsIfNeeded()
+            return cell.label.isEmpty ? TableAccessibilityText.emptyCell.localized : cell.label
+        }
+        set { }
+    }
+
+    override var accessibilityValue: String? {
+        get {
+            drawingView?.reconcileAccessibilityElementsIfNeeded()
+            return cell.spanDescription
+        }
+        set { }
+    }
+
     override var accessibilityFrame: CGRect {
         get {
+            guard isCurrent else { return .zero }
             let visible = screenFrame(cell.presented.bounds, clip: cell.presented.clip)
             return visible.isEmpty ? screenFrame(cell.presented.bounds, clip: .infinite) : visible
         }

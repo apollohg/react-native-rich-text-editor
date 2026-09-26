@@ -765,7 +765,7 @@ public final class PreparedProseDrawingView: UIView {
         let element: NSObject
         switch items[index] {
         case let .node(presented):
-            element = PreparedProseDrawingAccessibilityElement(container: self, index: index, presented: presented)
+            element = PreparedProseDrawingAccessibilityElement(container: self, presented: presented)
         case let .table(table) where table.frame != nil:
             element = TableAccessibilityFrameElement(drawingView: self, source: .drawn(table))
         case let .table(table):
@@ -778,7 +778,7 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     public override func index(ofAccessibilityElement element: Any) -> Int {
-        _ = accessibilityItems
+        reconcileAccessibilityElementsIfNeeded()
         guard let element = element as? NSObject,
               let index = accessibilityElementsByIndex.first(where: { $0.value === element })?.key
         else { return NSNotFound }
@@ -786,8 +786,12 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     func isLiveAccessibilityElement(_ element: NSObject) -> Bool {
-        _ = accessibilityItems
+        reconcileAccessibilityElementsIfNeeded()
         return layout != nil && accessibilityElementsByIndex.values.contains { $0 === element }
+    }
+
+    func reconcileAccessibilityElementsIfNeeded() {
+        _ = accessibilityItems
     }
 
     private func refreshAccessibilityElement(_ element: NSObject, with item: TableAccessibilityItem) {
@@ -817,16 +821,19 @@ public final class PreparedProseDrawingView: UIView {
         guard !accessibilityElementsByIndex.isEmpty else { return }
         guard structure == materializedAccessibilityStructure else {
             accessibilityElementsByIndex.removeAll(keepingCapacity: true)
-            pendingAccessibilityAnnouncement = .structure
+            if accessibilityAnnouncementScheduled { pendingAccessibilityAnnouncement = .structure }
             return
         }
         let before = focusableAccessibilityElements().map { ($0, $0.accessibilityLabel, $0.accessibilityValue) }
         for (index, element) in accessibilityElementsByIndex {
             refreshAccessibilityElement(element, with: items[index])
         }
-        guard let changed = before.first(where: { element, label, value in
-            accessibilityFocusProbe(element) && (element.accessibilityLabel != label || element.accessibilityValue != value)
-        })?.0, pendingAccessibilityAnnouncement == nil else { return }
+        guard accessibilityAnnouncementScheduled, pendingAccessibilityAnnouncement == nil,
+              let changed = before.first(where: { element, label, value in
+                  accessibilityFocusProbe(element)
+                      && (element.accessibilityLabel != label || element.accessibilityValue != value)
+              })?.0
+        else { return }
         pendingAccessibilityAnnouncement = .content(changed)
     }
 
@@ -984,20 +991,21 @@ public final class PreparedProseDrawingView: UIView {
     private func invalidateAccessibilityNodes() {
         accessibilityPresentationGeneration &+= 1
         accessibilityItemsCache = nil
-        guard window != nil, !accessibilityElementsByIndex.isEmpty, !accessibilityAnnouncementScheduled else { return }
+        guard window != nil else {
+            accessibilityElementsByIndex.removeAll()
+            return
+        }
+        guard !accessibilityElementsByIndex.isEmpty, !accessibilityAnnouncementScheduled else { return }
         accessibilityAnnouncementScheduled = true
         DispatchQueue.main.async { [weak self] in self?.announceAccessibilityChange() }
     }
 
     private func announceAccessibilityChange() {
-        accessibilityAnnouncementScheduled = false
-        guard window != nil else {
-            pendingAccessibilityAnnouncement = nil
-            return
-        }
-        _ = accessibilityItems
-        guard let announcement = pendingAccessibilityAnnouncement else { return }
+        if window != nil { reconcileAccessibilityElementsIfNeeded() }
+        let pending = pendingAccessibilityAnnouncement
         pendingAccessibilityAnnouncement = nil
+        accessibilityAnnouncementScheduled = false
+        guard window != nil, let announcement = pending else { return }
         let argument: Any?
         switch announcement {
         case .structure: argument = nil
@@ -1321,12 +1329,10 @@ public final class PreparedProseDrawingView: UIView {
 
 private final class PreparedProseDrawingAccessibilityElement: UIAccessibilityElement {
     weak var drawingView: PreparedProseDrawingView?
-    let index: Int
     var presented: ViewerTablePresentedAccessibilityNode
 
-    init(container: PreparedProseDrawingView, index: Int, presented: ViewerTablePresentedAccessibilityNode) {
+    init(container: PreparedProseDrawingView, presented: ViewerTablePresentedAccessibilityNode) {
         drawingView = container
-        self.index = index
         self.presented = presented
         super.init(accessibilityContainer: container)
     }
@@ -1334,7 +1340,10 @@ private final class PreparedProseDrawingAccessibilityElement: UIAccessibilityEle
     private var isCurrent: Bool { drawingView?.isLiveAccessibilityElement(self) == true }
 
     override var accessibilityLabel: String? {
-        get { presented.node.label }
+        get {
+            drawingView?.reconcileAccessibilityElementsIfNeeded()
+            return presented.node.label
+        }
         set { }
     }
     override var accessibilityTraits: UIAccessibilityTraits {

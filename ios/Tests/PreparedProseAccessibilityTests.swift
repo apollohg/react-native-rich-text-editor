@@ -250,15 +250,7 @@ final class PreparedProseAccessibilityTests: XCTestCase {
     }
 
     func testPlainParagraphIsExposedAsStaticText() throws {
-        let layout = try prepare(
-            ViewerDocument(
-                semanticKey: "plain-accessibility-fixture",
-                paragraphs: [ViewerParagraph(text: "Readable plain prose")],
-                isEmpty: false,
-                retainedBytes: 64
-            ),
-            width: 180
-        )
+        let layout = try prepare(plainDocument("Readable plain prose"), width: 180)
         let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: 180, height: 80))
         drawing.install(layout: layout)
 
@@ -269,6 +261,52 @@ final class PreparedProseAccessibilityTests: XCTestCase {
         )
         XCTAssertEqual(element.accessibilityLabel, "Readable plain prose")
         XCTAssertTrue(element.accessibilityTraits.contains(.staticText))
+    }
+
+    func testRootProseLabelChangeRefreshesTheFocusedNodeInPlace() throws {
+        let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: 180, height: 80))
+        let window = UIWindow(frame: drawing.frame)
+        window.addSubview(drawing)
+        window.isHidden = false
+        defer { window.isHidden = true }
+        drawing.install(layout: try prepare(plainDocument("Readable plain prose"), width: 180))
+        let element = try XCTUnwrap(drawing.accessibilityElement(at: 0) as? UIAccessibilityElement)
+        var arguments: [Any?] = []
+        drawing.onAccessibilityLayoutChangedForTesting = { arguments.append($0) }
+        drawing.accessibilityFocusProbe = { $0 === element }
+
+        drawing.install(layout: try prepare(plainDocument("Rewritten plain prose"), width: 180))
+
+        XCTAssertEqual(element.accessibilityLabel, "Rewritten plain prose",
+                       "a label read in the installing turn reflects the new layout")
+        flushMainQueue()
+        XCTAssertEqual(drawing.index(ofAccessibilityElement: element), 0, "a label change keeps the element")
+        XCTAssertEqual(arguments.count, 1, "announcements: \(arguments)")
+        XCTAssertTrue(arguments.first.flatMap { $0 } as AnyObject === element,
+                      "VoiceOver re-reads the focused node without moving: \(arguments)")
+    }
+
+    func testInvalidatingOffWindowReleasesTheSupersededLayout() throws {
+        let drawing = PreparedProseDrawingView(frame: CGRect(x: 0, y: 0, width: 180, height: 80))
+        let window = UIWindow(frame: drawing.frame)
+        window.addSubview(drawing)
+        window.isHidden = false
+        defer { window.isHidden = true }
+        weak var superseded: PreparedProseLayout?
+        try autoreleasepool {
+            let layout = try prepare(plainDocument("Readable plain prose"), width: 180)
+            superseded = layout
+            drawing.install(layout: layout)
+            XCTAssertNotNil(drawing.accessibilityElement(at: 0))
+        }
+        XCTAssertEqual(drawing.materializedAccessibilityElementCountForTesting, 1)
+
+        drawing.removeFromSuperview()
+        drawing.install(layout: try prepare(plainDocument("Rewritten plain prose"), width: 180))
+
+        XCTAssertEqual(drawing.materializedAccessibilityElementCountForTesting, 0,
+                       "an off-window view drops elements on invalidation")
+        XCTAssertNil(superseded, "materialized elements must not keep a superseded layout alive")
     }
 
     func testHeadingBlocksAreExposedWithHeaderTrait() throws {
@@ -395,6 +433,15 @@ final class PreparedProseAccessibilityTests: XCTestCase {
 
         XCTAssertFalse(staleElement.accessibilityActivate())
         XCTAssertNil(activatedHref)
+    }
+
+    private func plainDocument(_ text: String) -> ViewerDocument {
+        ViewerDocument(
+            semanticKey: "plain-accessibility-fixture",
+            paragraphs: [ViewerParagraph(text: text)],
+            isEmpty: false,
+            retainedBytes: 64
+        )
     }
 
     private func prepare(_ document: ViewerDocument, width: CGFloat) throws -> PreparedProseLayout {

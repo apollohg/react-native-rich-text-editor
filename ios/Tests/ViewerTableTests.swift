@@ -634,10 +634,14 @@ final class ViewerTableTests: XCTestCase {
     }
 
     func testCompilerBackedTableAccessibilityUsesCurrentRootAndClipsOffsetElements() throws {
-        let config = Self.config.replacingOccurrences(of: "\"marks\":[{\"name\":\"bold\"}]", with: "\"marks\":[{\"name\":\"bold\"},{\"name\":\"link\",\"attrs\":{\"href\":{\"default\":\"\"}}}]")
+        let config = Self.linkConfig
         let layout = try prepare(try twoLinkCellSource(), configJSON: config)
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
         let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+        let window = UIWindow(frame: drawing.frame)
+        window.addSubview(drawing)
+        window.isHidden = false
+        defer { window.isHidden = true }
         drawing.install(layout: layout)
         var activated: String?
         drawing.onActivateInteraction = { activated = $0.href; return true }
@@ -667,8 +671,42 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual((drawing.accessibilityElement(at: 0) as? UIAccessibilityElement)?.accessibilityTraits, .staticText)
     }
 
+    func testCellFrameReadInTheScrollingTurnUsesTheScrolledGeometry() throws {
+        let layout = try prepare(try twoLinkCellSource(), configJSON: Self.linkConfig)
+        let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
+        let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
+        let window = UIWindow(frame: drawing.frame)
+        window.addSubview(drawing)
+        window.isHidden = false
+        defer { window.isHidden = true }
+        drawing.install(layout: layout)
+        let table = try tableElement(in: drawing)
+        let cell = try XCTUnwrap(table.cellElements.first)
+        let initialCellFrame = cell.accessibilityFrame
+        let initialTableFrame = table.accessibilityFrame
+        let offset = (surface.bounds.width - surface.hostViewportWidth) / 2
+        XCTAssertGreaterThan(offset, 0, "the fixture table must scroll")
+        let owner = ViewerTablePresentationOwner()
+        owner.setLogicalOffset(offset, for: surface)
+        let scrolled = ViewerTablePresentation.project(layout: layout, owner: owner, viewport: .unknown)
+        let scrolledCell = try XCTUnwrap(scrolled.cells.first { $0.surface === surface })
+        let scrolledTable = try XCTUnwrap(scrolled.tables.first { $0.surface === surface })
+        let visible = scrolledCell.bounds.intersection(scrolledCell.clip)
+        XCTAssertFalse(visible.isNull || visible.isEmpty, "the first cell stays partly visible at \(offset)")
+
+        drawing.setTableLogicalOffset(offset, sourceIdentity: surface.identity)
+
+        let cellFrame = cell.accessibilityFrame
+        XCTAssertEqual(cellFrame, UIAccessibility.convertToScreenCoordinates(visible, in: drawing),
+                       "initial \(initialCellFrame), read \(cellFrame)")
+        XCTAssertNotEqual(cellFrame, initialCellFrame)
+        XCTAssertEqual(table.accessibilityFrame, UIAccessibility.convertToScreenCoordinates(
+            scrolledTable.bounds.intersection(scrolledTable.clip), in: drawing
+        ), "initial table frame \(initialTableFrame)")
+    }
+
     func testTableCellLinksStayReachableThroughTheLinksRotor() throws {
-        let config = Self.config.replacingOccurrences(of: "\"marks\":[{\"name\":\"bold\"}]", with: "\"marks\":[{\"name\":\"bold\"},{\"name\":\"link\",\"attrs\":{\"href\":{\"default\":\"\"}}}]")
+        let config = Self.linkConfig
         let layout = try prepare(try twoLinkCellSource(), configJSON: config)
         let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
         drawing.install(layout: layout)
@@ -2886,6 +2924,10 @@ final class ViewerTableTests: XCTestCase {
     }
 
     private static let config = #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"codeBlock","content":"inline*","group":"block","role":"textBlock","attrs":{"language":{"default":null}}},{"name":"text","content":"","group":"inline","role":"text"},{"name":"blockquote","content":"block+","group":"block","role":"block"},{"name":"bulletList","content":"listItem+","group":"block","role":"list"},{"name":"listItem","content":"block+","role":"listItem"},{"name":"image","content":"","group":"block","role":"block","isVoid":true,"attrs":{"src":{"default":""},"width":{"default":null},"height":{"default":null}}},{"name":"card","content":"","group":"block","role":"block","isVoid":true},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"class":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"class":{"default":null},"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[{"name":"bold"}]},"initialization":{"type":"localEmpty"}}"#
+    private static let linkConfig = config.replacingOccurrences(
+        of: "\"marks\":[{\"name\":\"bold\"}]",
+        with: "\"marks\":[{\"name\":\"bold\"},{\"name\":\"link\",\"attrs\":{\"href\":{\"default\":\"\"}}}]"
+    )
 }
 
 private final class PreparationCounter {
