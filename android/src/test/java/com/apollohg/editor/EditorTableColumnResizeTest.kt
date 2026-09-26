@@ -653,7 +653,7 @@ internal class EditorTableColumnResizeTest {
             val root = fixture.view.editorEditText
             assertNotNull("fixture must hold a native owner", fixture.adapter.nativeOwnerId)
             val before = fixture.documentObject().toString()
-            val pasted = fixture.adapter.pasteAtSelection(null, null, "X", true, 2, 2, false)
+            val pasted = fixture.adapter.pasteAtSelection(null, null, "X", true, 2, 2)
             assertNotNull("owned paste must return an update: notes=${fixture.adapter.debugNotes}", pasted)
             assertTrue(root.applyUpdateJSON(requireNotNull(pasted)))
             assertEquals("beXfore", root.text.toString().substringBefore('\n').trim { it.isWhitespace() || it == '\uFFFC' })

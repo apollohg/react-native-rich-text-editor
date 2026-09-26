@@ -842,21 +842,42 @@ internal class EditorV2Adapter private constructor(
         text: String?,
         plainText: Boolean,
         anchor: Int,
-        head: Int,
-        preserveEngineSelection: Boolean
-    ): String? {
+        head: Int
+    ): String? = commandAdoptingEngineSelection(
+        pasteCommand(fragment, html, text, plainText),
+        preSelection = intArrayOf(anchor, head)
+    )
+
+    override fun pasteAtEngineSelection(
+        fragment: String?,
+        html: String?,
+        text: String?,
+        plainText: Boolean
+    ): String? = commandAdoptingEngineSelection(pasteCommand(fragment, html, text, plainText))
+
+    override fun clearSelectedTableCells(): String? =
+        commandAdoptingEngineSelection(JSONObject().put("type", "deleteBackward"))
+
+    private fun pasteCommand(
+        fragment: String?,
+        html: String?,
+        text: String?,
+        plainText: Boolean
+    ): JSONObject {
         val command = JSONObject().put("type", "paste")
         fragment?.let { command.put("fragment", it) }
         html?.let { command.put("html", it) }
         text?.let { command.put("text", it) }
         if (plainText) command.put("plainText", true)
-        return performMutation(
-            preSelection = if (preserveEngineSelection) null else intArrayOf(anchor, head),
-            adoptEngineSelection = true
-        ) {
-            callWithEnvelope(JSONObject().put("command", command)) { requestJson ->
-                backend.applyCommand(editorId, requestJson)
-            }
+        return command
+    }
+
+    private fun commandAdoptingEngineSelection(
+        command: JSONObject,
+        preSelection: IntArray? = null
+    ): String? = performMutation(preSelection = preSelection, adoptEngineSelection = true) {
+        callWithEnvelope(JSONObject().put("command", command)) { requestJson ->
+            backend.applyCommand(editorId, requestJson)
         }
     }
 

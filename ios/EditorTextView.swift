@@ -923,9 +923,9 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         }
         switch action {
         case #selector(copy(_:)):
-            return selectedTextRange?.isEmpty == false
+            return authoritativeCellSelectionActive || selectedTextRange?.isEmpty == false
         case #selector(cut(_:)):
-            return isEditable && selectedTextRange?.isEmpty == false
+            return isEditable && (authoritativeCellSelectionActive || selectedTextRange?.isEmpty == false)
         case #selector(paste(_:)), #selector(pasteAndMatchStyle(_:)):
             return isEditable
                 && pasteMode != .disabled
@@ -949,9 +949,11 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
             return
         }
         guard isEditable, exportSelectionToPasteboard() else { return }
-        performInterceptedInput {
-            applyClipboardCommand(["type": "paste", "text": "", "plainText": true])
-        }
+        applyClipboardMutation(
+            authoritativeCellSelectionActive
+                ? EditorClipboardCut.cellSelectionCommand
+                : EditorClipboardCut.textSelectionCommand
+        )
     }
 
     override func paste(_ sender: Any?) {
@@ -975,13 +977,21 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         guard isEditable, pasteMode != .disabled else { return }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return }
         guard prepareForExternalEditorUpdate() else { return }
-        guard syncClipboardSelectionToRust() != nil else { return }
+        guard authoritativeCellSelectionActive || syncClipboardSelectionToRust() != nil else { return }
         let mode: EditorPasteMode = forcePlainText ? .plainText : pasteMode
         guard let command = EditorClipboardPaste.command(from: .general, mode: mode) else { return }
 
         Self.inputLog.debug(
             "[paste] selection=\(self.selectionSummary(), privacy: .public) textState=\(self.textSnapshotSummary(), privacy: .public)"
         )
+        applyClipboardMutation(command)
+    }
+
+    private func applyClipboardMutation(_ command: [String: Any]) {
+        guard !authoritativeCellSelectionActive else {
+            applyClipboardCommand(command)
+            return
+        }
         performInterceptedInput {
             applyClipboardCommand(command)
         }

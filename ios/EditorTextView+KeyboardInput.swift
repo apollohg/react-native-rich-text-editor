@@ -75,6 +75,11 @@ struct EditorClipboardPayload {
     }
 }
 
+enum EditorClipboardCut {
+    static let textSelectionCommand: [String: Any] = ["type": "paste", "text": "", "plainText": true]
+    static let cellSelectionCommand: [String: Any] = ["type": "deleteBackward"]
+}
+
 enum EditorClipboardPaste {
     static let maximumRTFBytes = 64 * 1_024 * 1_024
 
@@ -361,7 +366,9 @@ extension EditorTextView {
         guard editorId != 0 else { return false }
         guard finishExternalTextCompositionBeforeInteractionIfNeeded() else { return false }
         guard prepareForExternalEditorUpdate() else { return false }
-        guard syncClipboardSelectionToRust(requiresRange: true) != nil else { return false }
+        guard authoritativeCellSelectionActive
+            || syncClipboardSelectionToRust(requiresRange: true) != nil
+        else { return false }
         guard let payload = EditorV2Shadow.clipboardPayload(id: editorId) else { return false }
         return payload.write(to: pasteboard)
     }

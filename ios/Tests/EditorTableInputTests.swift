@@ -2,7 +2,7 @@ import CoreText
 import XCTest
 
 final class EditorTableInputTests: XCTestCase {
-    private final class UpdateSpy: EditorTextViewDelegate {
+    final class UpdateSpy: EditorTextViewDelegate {
         var updates: [String] = []
         var selections: [[UInt32]] = []
 
@@ -35,7 +35,7 @@ final class EditorTableInputTests: XCTestCase {
         return try XCTUnwrap(String(data: data, encoding: .utf8))
     }
 
-    private struct MountedTableFixture {
+    struct MountedTableFixture {
         let view: RichTextEditorView
         let adapter: EditorV2Adapter
         let tableID: String
@@ -129,7 +129,7 @@ final class EditorTableInputTests: XCTestCase {
                              cellSelection: (anchorIndex, headIndex), roomAwareness: roomAwareness, body)
     }
 
-    private func withMountedTable(
+    func withMountedTable(
         document: String, configJSON: String? = nil, theme: EditorTheme? = nil,
         size: CGSize = CGSize(width: 360, height: 240), cellSelection: (anchor: Int, head: Int)?,
         roomAwareness: ((String, String) -> FfiJsonResult)? = nil,
@@ -152,15 +152,8 @@ final class EditorTableInputTests: XCTestCase {
         let rawCells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
         let positions = try rawCells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
         if let cellSelection {
-            let request = adapter.callWithEnvelope([
-                "selection": [
-                    "type": "cell",
-                    "anchorCell": ["kind": "document", "offset": Int(positions[cellSelection.anchor])],
-                    "headCell": ["kind": "document", "offset": Int(positions[cellSelection.head])]
-                ]
-            ]) { editorV2SetSelection(editorId: adapter.editorId, requestJson: $0) }
-            XCTAssertNil(request.error)
-            XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
+            try Self.selectCells(anchor: positions[cellSelection.anchor], head: positions[cellSelection.head],
+                                 adapter: adapter, view: view)
         }
         view.layoutIfNeeded()
         let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
@@ -170,6 +163,19 @@ final class EditorTableInputTests: XCTestCase {
         try body(MountedTableFixture(view: view, adapter: adapter, tableID: tableID,
                                       positions: positions, surface: surface, drawing: drawing,
                                       updates: updates))
+    }
+
+    static func selectCells(anchor: UInt32, head: UInt32, adapter: EditorV2Adapter,
+                            view: RichTextEditorView) throws {
+        let request = adapter.callWithEnvelope([
+            "selection": [
+                "type": "cell",
+                "anchorCell": ["kind": "document", "offset": Int(anchor)],
+                "headCell": ["kind": "document", "offset": Int(head)]
+            ]
+        ]) { editorV2SetSelection(editorId: adapter.editorId, requestJson: $0) }
+        XCTAssertNil(request.error)
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
     }
 
     func testMountedHeadDragPublishesExactCellSelectionWithoutDocumentMutation() throws {
