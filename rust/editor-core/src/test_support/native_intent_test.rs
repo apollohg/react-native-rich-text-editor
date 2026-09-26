@@ -125,8 +125,11 @@ fn session_audit(session: &EditorSession) -> SessionAudit {
     }
 }
 
-#[test]
-fn native_table_tab_appends_one_row_with_one_trusted_commit() {
+const TWO_CELL_TABLE_DOCUMENT: &str = r#"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"First"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Second"}]}]}]}]}]}"#;
+const TABLE_POSITION: u32 = 0;
+const CELL_TEXT_OFFSET: u32 = 2;
+
+fn table_session() -> EditorSession {
     let config = EditorSessionConfig::local_for_test();
     let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
         schema: prosemirror_table_schema(),
@@ -138,10 +141,9 @@ fn native_table_tab_appends_one_row_with_one_trusted_commit() {
         scope: None,
     })
     .unwrap();
-    engine.import_json(
-        r#"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"First"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Second"}]}]}]}]}]}"#,
-        TransactionOrigin::DocumentImport,
-    ).unwrap();
+    engine
+        .import_json(TWO_CELL_TABLE_DOCUMENT, TransactionOrigin::DocumentImport)
+        .unwrap();
     let mut session = EditorSession::new(
         engine,
         SessionPolicy::from_config(&config),
@@ -150,18 +152,75 @@ fn native_table_tab_appends_one_row_with_one_trusted_commit() {
     )
     .unwrap();
     session.attach_collaboration_runtime();
+    session
+}
+
+fn cell_text_scalar(session: &EditorSession, cell: usize) -> u32 {
     let document = session.engine.document().unwrap();
     let index = crate::tables::admission::TableProjectionIndex::derive_or_fallback(
         document,
         &prosemirror_table_schema(),
         &ResourceLimits::default(),
     );
-    let last = index.table_at(0).unwrap().cells.last().unwrap().source_pos + 2;
-    let scalar = session
+    let opening = index.table_at(TABLE_POSITION).unwrap().cells[cell].source_pos;
+    session
         .engine
         .position_map()
         .unwrap()
-        .doc_to_scalar(last, document);
+        .doc_to_scalar(opening + CELL_TEXT_OFFSET, document)
+}
+
+fn table_row_texts(session: &EditorSession, row: usize) -> Vec<String> {
+    session.engine.document_json().unwrap()["content"][0]["content"][row]["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|cell| {
+            cell["content"][0]["content"][0]["text"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn native_tsv_paste_inside_a_table_applies_as_one_trusted_matrix_paste() {
+    let mut session = table_session();
+    let scalar = cell_text_scalar(&session, 0);
+    let before = session_audit(&session);
+    let intent = serde_json::json!({
+        "type": "command", "anchor": scalar, "head": scalar,
+        "command": {"type": "paste", "text": "x\ty\nz\tw"},
+    });
+    let request = native_intent_request(&mut session, 81, 82, intent);
+
+    let outcome = NativeTransactionBridge::new(&mut session)
+        .submit_native_intent(&request)
+        .unwrap();
+
+    let outcome: serde_json::Value = serde_json::from_str(&outcome).unwrap();
+    assert_eq!(outcome["type"], "transaction", "{outcome}");
+    assert_eq!(outcome["documentChanged"], true);
+    assert_eq!(table_row_texts(&session, 0), vec!["x", "y"]);
+    assert_eq!(table_row_texts(&session, 1), vec!["z", "w"]);
+    assert_eq!(
+        session.engine.last_committed_origin(),
+        Some(TransactionOrigin::LocalCommand)
+    );
+    assert_eq!(
+        session
+            .collaboration_outbox()
+            .unwrap()
+            .pending_document_update_count(),
+        before.outbox_pending_updates + 1
+    );
+}
+
+#[test]
+fn native_table_tab_appends_one_row_with_one_trusted_commit() {
+    let mut session = table_session();
+    let scalar = cell_text_scalar(&session, 1);
     let before = session_audit(&session);
     let intent = serde_json::json!({
         "type": "command", "anchor": scalar, "head": scalar,

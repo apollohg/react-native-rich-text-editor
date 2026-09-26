@@ -942,8 +942,8 @@ mod engine_round_trip {
         );
         assert_eq!(
             copied["text"].as_str(),
-            Some("alpha\nbeta\ngamma\ndelta"),
-            "the plain text of the copy reads the rectangle in source order: {copied}"
+            Some("alpha\tbeta\ngamma\tdelta"),
+            "the plain text of the copy is tab-separated columns and newline-separated rows: {copied}"
         );
         assert!(
             !html.contains(LEADING_PARAGRAPH_TEXT),

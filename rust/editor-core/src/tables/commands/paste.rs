@@ -7,9 +7,9 @@ use crate::tables::command_context::{
     table_shape_operation_error, TableAction, TableActionCandidate, TableActionOutcome,
 };
 use crate::tables::commands::{
-    attrs_with_removed_columns, attrs_with_row_span, default_text_block_node, fresh_cell_node,
-    GridRequirement, TableTarget, FIRST_COLUMN, FIRST_ROW, FIRST_WIDTH_SLICE, NODE_CLOSING_TOKENS,
-    NODE_OPENING_TOKENS, ONE_SLOT,
+    attrs_with_removed_columns, attrs_with_row_span, cell_node, default_text_block_node,
+    fresh_cell_node, GridRequirement, TableTarget, FIRST_COLUMN, FIRST_ROW, FIRST_WIDTH_SLICE,
+    NODE_CLOSING_TOKENS, NODE_OPENING_TOKENS, ONE_SLOT,
 };
 use crate::tables::normalize::UNCORRELATED_REQUEST_ID;
 use crate::tables::paste::{clip_matrix, MatrixCell, TableMatrix};
@@ -35,8 +35,6 @@ const PASTE_STAGES: [PasteStage; 6] = [
     PasteStage::IsolateRight,
     PasteStage::Write,
 ];
-
-const NEXT_INDEX: usize = 1;
 
 #[derive(Clone, Copy, Debug)]
 struct PasteArea {
@@ -95,10 +93,7 @@ fn plan_matrix_paste(
                 .bottom
                 .checked_sub(rect.top)
                 .ok_or(TableError::Allocation)?;
-            let Some(clipped) = clip_matrix(matrix, width, height) else {
-                return Ok(None);
-            };
-            clipped
+            clip_matrix(matrix, width, height)?
         }
         Selection::Text { .. } => matrix.clone(),
         Selection::Node { .. } | Selection::All => return Ok(None),
@@ -116,9 +111,7 @@ fn plan_matrix_paste(
             .ok_or(TableError::Allocation)?,
     };
     admit_grown_grid(&target, &area, limits)?;
-    let Some(columns) = placed.cell_columns() else {
-        return Ok(None);
-    };
+    let columns = placed.cell_columns()?;
 
     let mut document = candidate.document.clone();
     let mut operations = Vec::new();
@@ -202,7 +195,7 @@ fn admit_grown_grid(
 
 fn fresh_cells(schema: &Schema, cell_type: &str, count: u32) -> Option<Vec<Node>> {
     let cell = fresh_cell_node(schema, cell_type)?;
-    Some((FIRST_COLUMN..count).map(|_| cell.clone()).collect())
+    Some(std::iter::repeat_n(cell, count as usize).collect())
 }
 
 fn plan_growth(
@@ -233,7 +226,8 @@ fn plan_growth(
             default_attrs(schema, &roles.row)?,
             Fragment::from(cells),
         );
-        let appended = (rows..area.bottom).map(|_| row.clone()).collect::<Vec<_>>();
+        let appended =
+            std::iter::repeat_n(row, area.bottom.checked_sub(rows)? as usize).collect::<Vec<_>>();
         let table_end = target.row_start(rows)?;
         operations.push(SemanticOperation::ReplaceRange {
             from: table_end,
@@ -275,10 +269,10 @@ fn remainder_cell(
     node: &Node,
     attrs: std::collections::HashMap<String, serde_json::Value>,
 ) -> Option<Node> {
-    Some(Node::element(
-        node.node_type().to_owned(),
+    Some(cell_node(
+        node.node_type(),
         attrs,
-        Fragment::from(vec![default_text_block_node(schema)?]),
+        vec![default_text_block_node(schema)?],
     ))
 }
 
@@ -430,15 +424,12 @@ fn plan_row_write(
     let mut run_start = target.position_at(row, area.left)?;
     let mut run_replaces = false;
     let mut inserted: Vec<Node> = Vec::new();
-    let mut destination_index = 0usize;
-    let mut source_index = 0usize;
+    let mut destinations = destinations.into_iter().peekable();
+    let mut sources = placed.into_iter().peekable();
     loop {
-        match (
-            destinations.get(destination_index),
-            placed.get(source_index),
-        ) {
+        match (destinations.peek().copied(), sources.peek().copied()) {
             (Some((cell, node)), Some((column, source)))
-                if cell.rect.column == *column && keeps_destination(cell, node, source) =>
+                if cell.rect.column == column && keeps_destination(cell, node, source) =>
             {
                 replace_run(
                     run_start,
@@ -450,27 +441,26 @@ fn plan_row_write(
                 rewrite_cell(cell, node, source, operations)?;
                 run_start = cell.source_end;
                 run_replaces = false;
-                destination_index = destination_index.checked_add(NEXT_INDEX)?;
-                source_index = source_index.checked_add(NEXT_INDEX)?;
+                destinations.next();
+                sources.next();
             }
             (Some((cell, _)), Some((column, source))) => {
-                let destination_column = cell.rect.column;
-                if destination_column <= *column {
+                if cell.rect.column <= column {
                     run_replaces = true;
-                    destination_index = destination_index.checked_add(NEXT_INDEX)?;
+                    destinations.next();
                 }
-                if *column <= destination_column {
+                if column <= cell.rect.column {
                     inserted.push(source.node.clone());
-                    source_index = source_index.checked_add(NEXT_INDEX)?;
+                    sources.next();
                 }
             }
             (Some(_), None) => {
                 run_replaces = true;
-                destination_index = destination_index.checked_add(NEXT_INDEX)?;
+                destinations.next();
             }
             (None, Some((_, source))) => {
                 inserted.push(source.node.clone());
-                source_index = source_index.checked_add(NEXT_INDEX)?;
+                sources.next();
             }
             (None, None) => break,
         }

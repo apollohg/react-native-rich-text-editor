@@ -16,7 +16,7 @@ use crate::tables::commands_tests::{
     cell_openings, document_of, drain_document_updates, engine_schema, engine_with, geometry,
     header_fixture, place_caret, projection_of, regular_fixture, resolved_cells, row_count,
     row_texts, row_types, seeded, select_cells, session_cell_openings, session_select_rectangle,
-    table_of, tall_span_fixture, wide_span_fixture,
+    table_of, tall_span_fixture, wide_span_fixture, PROSE_PREFIX_TABLE_POSITION, PROSE_PREFIX_TEXT,
 };
 use crate::tables::interchange_tests::nesting_cell;
 use crate::tables::normalize_tests::{
@@ -145,13 +145,47 @@ fn destinations(cells: usize) -> Vec<Destination> {
     destinations
 }
 
-fn generated_fixtures() -> Vec<(&'static str, Vec<Value>)> {
+fn prose_prefixed(fixture: Vec<Value>) -> Vec<Value> {
+    let mut content = vec![json!({
+        "type": PARAGRAPH_NODE,
+        "content": [{ "type": "text", "text": PROSE_PREFIX_TEXT }],
+    })];
+    content.extend(fixture);
+    content
+}
+
+fn header_column_fixture() -> Vec<Value> {
+    vec![table(vec![
+        row(vec![header_cell("h0"), cell("a1"), cell("a2")]),
+        row(vec![header_cell("h1"), cell("b1"), cell("b2")]),
+    ])]
+}
+
+fn generated_fixtures() -> Vec<(&'static str, u32, Vec<Value>)> {
     vec![
-        ("regular", regular_fixture()),
-        ("tall span", tall_span_fixture()),
-        ("wide span", wide_span_fixture()),
-        ("header row", header_fixture()),
-        ("merged", vec![merged_fixture_table()]),
+        ("regular", TABLE_POSITION, regular_fixture()),
+        ("tall span", TABLE_POSITION, tall_span_fixture()),
+        ("wide span", TABLE_POSITION, wide_span_fixture()),
+        ("header row", TABLE_POSITION, header_fixture()),
+        ("header column", TABLE_POSITION, header_column_fixture()),
+        ("merged", TABLE_POSITION, vec![merged_fixture_table()]),
+        (
+            "prose then tall span",
+            PROSE_PREFIX_TABLE_POSITION,
+            prose_prefixed(tall_span_fixture()),
+        ),
+        (
+            "prose then merged",
+            PROSE_PREFIX_TABLE_POSITION,
+            prose_prefixed(vec![merged_fixture_table()]),
+        ),
+    ]
+}
+
+fn lone_merged_source() -> Vec<Value> {
+    vec![
+        row(vec![cell_with(DOUBLE_SPAN, DOUBLE_SPAN, Value::Null, "m")]),
+        row(Vec::new()),
     ]
 }
 
@@ -218,7 +252,7 @@ fn every_generated_matrix_paste_plan_absorbs_into_one_sealed_batch() {
     let limits = limits();
     let editing_limits = EditingLimits::default();
     let mut checked = 0usize;
-    for (fixture_name, fixture) in generated_fixtures() {
+    for (fixture_name, table_pos, fixture) in generated_fixtures() {
         let cells = cell_openings(&seeded(fixture.clone())).len();
         for destination in destinations(cells) {
             for (matrix_name, matrix_rows) in generated_matrices() {
@@ -231,7 +265,7 @@ fn every_generated_matrix_paste_plan_absorbs_into_one_sealed_batch() {
                     &TableActionContext {
                         request_id: REQUEST_ID,
                         base_document_revision: engine.revision(),
-                        table_pos: TABLE_POSITION,
+                        table_pos,
                         anchors: Some(anchors),
                         schema: &schema,
                         resource_limits: &limits,
@@ -264,7 +298,7 @@ fn every_generated_matrix_paste_plan_absorbs_into_one_sealed_batch() {
                 );
                 assert!(
                     !simulated
-                        .table_at(TABLE_POSITION)
+                        .table_at(table_pos)
                         .unwrap_or_else(|| panic!("{label}: the pasted table survives"))
                         .irregular,
                     "{label}: the pasted table is irregular: {:?}",
@@ -915,4 +949,181 @@ fn pasting_the_cells_already_there_rewrites_nothing() {
         "an identical matrix is not a document change"
     );
     assert_eq!(engine.encoded_state().expect("the state encodes"), before);
+}
+
+fn pasted_plain_text(engine: &mut YrsDocumentEngine, html: Option<&str>, text: &str) {
+    engine
+        .apply_command(
+            REQUEST_ID,
+            TypedCommand::Paste {
+                fragment: None,
+                html: html.map(str::to_owned),
+                text: Some(text.to_owned()),
+                plain_text: true,
+                allow_base64_images: false,
+                input_filter: None,
+            },
+        )
+        .unwrap_or_else(|error| panic!("pasting {text:?} as plain text plans: {error:?}"))
+        .unwrap_or_else(|| panic!("pasting {text:?} as plain text produced no transaction"));
+}
+
+#[test]
+fn a_plain_text_paste_into_a_cell_selection_ignores_the_rich_table() {
+    let mut engine = engine_with(prosemirror_table_schema(), three_by_three());
+    select_cells(&mut engine, 0, 4);
+
+    pasted_plain_text(
+        &mut engine,
+        Some("<table><tr><td>rich</td></tr></table>"),
+        "p\tq",
+    );
+
+    assert_eq!(
+        texts(&table_of(&engine)),
+        vec![
+            vec!["p", "q", "a2"],
+            vec!["p", "q", "b2"],
+            vec!["c0", "c1", "c2"],
+        ],
+        "plain-text mode must tile the text matrix, not the rich table",
+    );
+}
+
+#[test]
+fn a_lone_merged_source_tiles_its_covered_row_instead_of_doing_nothing() {
+    let mut engine = seeded(three_by_three());
+    select_cells(&mut engine, 0, 8);
+    let schema = engine_schema(&engine);
+    let source = crate::serialize::from_prosemirror_json(
+        &json!({ "type": "doc", "content": [table(lone_merged_source())] }),
+        &schema,
+        crate::serialize::UnknownTypeMode::Error,
+    )
+    .expect("the merged source parses");
+    let index =
+        TableProjectionIndex::derive_or_fallback(&source, &schema, &ResourceLimits::default());
+    let merged = index
+        .table_at(TABLE_POSITION)
+        .expect("the source projects")
+        .cells[0]
+        .source_pos;
+    let copied =
+        crate::clipboard::export_cells(&source, &Selection::cell(merged, merged), &index, &schema)
+            .expect("the merged cell copies");
+    let revision = engine.revision();
+
+    engine
+        .apply_command(
+            REQUEST_ID,
+            TypedCommand::Paste {
+                fragment: copied["fragment"].as_str().map(str::to_owned),
+                html: None,
+                text: None,
+                plain_text: false,
+                allow_base64_images: false,
+                input_filter: None,
+            },
+        )
+        .expect("the merged source pastes")
+        .expect("the merged source produced a transaction");
+
+    assert_ne!(
+        engine.revision(),
+        revision,
+        "the paste must change the table"
+    );
+    let table = table_of(&engine);
+    assert_eq!(row_texts(&table, 0), vec!["m", "m"], "{table}");
+    assert!(
+        table["content"][1]["content"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "the middle row stays fully covered by the repeated spans: {table}",
+    );
+    assert_eq!(
+        row_texts(&table, 2),
+        vec!["m", "m"],
+        "the 2x2 cell repeats down the selection and is cut at its bottom: {table}",
+    );
+    assert_eq!(
+        declared_colspan(&table["content"][0]["content"][0]),
+        DOUBLE_SPAN
+    );
+    assert_eq!(
+        declared_colspan(&table["content"][0]["content"][1]),
+        SINGLE_SPAN
+    );
+    assert_eq!(
+        table["content"][0]["content"][0]["attrs"]["rowspan"],
+        json!(DOUBLE_SPAN)
+    );
+    assert_eq!(geometry(&projection_of(&engine)), (3, 3, false));
+}
+
+fn multi_paragraph_cell() -> Value {
+    json!({
+        "type": CELL_NODE,
+        "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": Value::Null },
+        "content": [
+            { "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": "one" }] },
+            { "type": PARAGRAPH_NODE, "content": [{ "type": "text", "text": "say \"two\"" }] },
+        ],
+    })
+}
+
+#[test]
+fn copied_cells_round_trip_through_their_tab_separated_text() {
+    let source = seeded(vec![table(vec![
+        row(vec![
+            cell_with(DOUBLE_SPAN, SINGLE_SPAN, Value::Null, "wide"),
+            cell("x"),
+        ]),
+        row(vec![multi_paragraph_cell(), cell("tab\there"), cell("")]),
+    ])]);
+    let schema = engine_schema(&source);
+    let document = document_of(&source).clone();
+    let openings = cell_openings(&source);
+    let index = TableProjectionIndex::derive_or_fallback(&document, &schema, &limits());
+    let copied = crate::clipboard::export_cells(
+        &document,
+        &Selection::cell(openings[0], openings[4]),
+        &index,
+        &schema,
+    )
+    .expect("the rectangle copies");
+    let expected = "wide\t\tx\n\"one\nsay \"\"two\"\"\"\t\"tab\there\"\t";
+    assert_eq!(copied["text"], json!(expected), "the text flavour is TSV");
+
+    let mut destination = seeded(three_by_three());
+    place_caret(&mut destination, 0);
+    pasted_plain_text(
+        &mut destination,
+        None,
+        copied["text"]
+            .as_str()
+            .expect("the text flavour is a string"),
+    );
+
+    let table = table_of(&destination);
+    assert_eq!(
+        texts(&table),
+        vec![
+            vec!["wide", "", "x"],
+            vec!["one", "tab\there", ""],
+            vec!["c0", "c1", "c2"]
+        ],
+        "a span flattens to its first slot and leaves covered slots empty: {table}",
+    );
+    let paragraphs: Vec<&str> = table["content"][1]["content"][0]["content"]
+        .as_array()
+        .expect("the cell holds blocks")
+        .iter()
+        .map(|block| block["content"][0]["text"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        paragraphs,
+        vec!["one", "say \"two\""],
+        "quoted in-cell line breaks come back as paragraphs: {table}",
+    );
 }

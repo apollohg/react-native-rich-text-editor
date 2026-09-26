@@ -1,21 +1,22 @@
 use crate::boundary::ResourceLimits;
-use crate::clipboard::{normalized_line_breaks, LINE_BREAK};
+use crate::clipboard::{
+    node_text, normalized_line_breaks, CLOSED_FRAGMENT_DEPTH, LINE_BREAK, LINE_BREAK_TEXT,
+};
 use crate::model::{Fragment, Node};
 use crate::schema::Schema;
-use crate::tables::commands::{attrs_with_removed_columns, attrs_with_row_span, fresh_cell_node};
+use crate::tables::commands::{
+    attrs_with_removed_columns, attrs_with_row_span, fresh_cell_node, ONE_SLOT,
+};
 use crate::tables::projection::span_attribute;
 use crate::tables::roles::{TableRoles, TABLE_CELL_COLSPAN_ATTR, TABLE_CELL_ROWSPAN_ATTR};
 use crate::tables::types::{try_resize, TableError};
 
 const FIELD_SEPARATOR: char = '\t';
+const FIELD_SEPARATOR_TEXT: &str = "\t";
 const QUOTE: char = '"';
-const NEXT_CHARACTER: usize = 1;
-const NEXT_CELL: usize = 1;
-const ONE_LEVEL: usize = 1;
-const ONLY_CHILD: usize = 1;
-const FIRST_CHILD: usize = 0;
-const CLOSED_DEPTH: usize = 0;
-const ONE_SPAN: u32 = 1;
+const ESCAPED_QUOTE: &str = "\"\"";
+const QUOTE_TEXT: &str = "\"";
+const ONE_DEPTH: usize = ONE_SLOT as usize;
 const UNCOVERED: u32 = 0;
 const EMPTY_WIDTH: u32 = 0;
 
@@ -47,63 +48,91 @@ impl MatrixCell {
         attrs: std::collections::HashMap<String, serde_json::Value>,
         colspan: u32,
         rowspan: u32,
-    ) -> Option<Self> {
-        Some(Self {
+    ) -> Result<Self, TableError> {
+        Ok(Self {
             node: Node::element(
                 self.node.node_type().to_owned(),
                 attrs,
-                self.node.content().cloned()?,
+                self.node
+                    .content()
+                    .cloned()
+                    .ok_or(TableError::InvalidStructure)?,
             ),
             colspan,
             rowspan,
         })
     }
 
-    fn without_trailing_columns(&self, count: u32) -> Option<Self> {
+    fn without_trailing_columns(&self, count: u32) -> Result<Self, TableError> {
         self.with_attrs(
-            attrs_with_removed_columns(&self.node, self.colspan, count)?,
-            self.colspan.checked_sub(count)?,
+            attrs_with_removed_columns(&self.node, self.colspan, count)
+                .ok_or(TableError::InvalidAttributes)?,
+            self.colspan
+                .checked_sub(count)
+                .ok_or(TableError::InvalidAttributes)?,
             self.rowspan,
         )
     }
 
-    fn with_row_span(&self, rowspan: u32) -> Option<Self> {
+    fn with_row_span(&self, rowspan: u32) -> Result<Self, TableError> {
         self.with_attrs(
             attrs_with_row_span(&self.node, rowspan),
             self.colspan,
             rowspan,
         )
     }
+
+    fn spans(&self) -> (u32, u32) {
+        (self.colspan, self.rowspan)
+    }
+}
+
+fn place_spans(rows: &[Vec<(u32, u32)>]) -> Result<(Vec<Vec<u32>>, u32), TableError> {
+    let mut covered_until: Vec<u32> = Vec::new();
+    let mut width = EMPTY_WIDTH;
+    let mut placed = Vec::with_capacity(rows.len());
+    for (row, spans) in (0u32..).zip(rows) {
+        let mut column = EMPTY_WIDTH;
+        let mut columns = Vec::with_capacity(spans.len());
+        for (colspan, rowspan) in spans {
+            while covered_until
+                .get(column as usize)
+                .is_some_and(|until| *until > row)
+            {
+                column = column.checked_add(ONE_SLOT).ok_or(TableError::Allocation)?;
+            }
+            let end = column.checked_add(*colspan).ok_or(TableError::Allocation)?;
+            if covered_until.len() < end as usize {
+                try_resize(&mut covered_until, end as usize, UNCOVERED)?;
+            }
+            let until = row.checked_add(*rowspan).ok_or(TableError::Allocation)?;
+            for slot in covered_until
+                .get_mut(column as usize..end as usize)
+                .ok_or(TableError::Allocation)?
+            {
+                *slot = until;
+            }
+            columns.push(column);
+            width = width.max(end);
+            column = end;
+        }
+        placed.push(columns);
+    }
+    Ok((placed, width))
 }
 
 impl TableMatrix {
-    pub(crate) fn cell_columns(&self) -> Option<Vec<Vec<u32>>> {
-        let mut covered_until: Vec<u32> = vec![UNCOVERED; self.width as usize];
-        let mut placed = Vec::with_capacity(self.rows.len());
-        for (row, cells) in (0u32..).zip(self.rows.iter()) {
-            let mut column = 0u32;
-            let mut columns = Vec::with_capacity(cells.len());
-            for cell in cells {
-                while covered_until
-                    .get(column as usize)
-                    .is_some_and(|until| *until > row)
-                {
-                    column = column.checked_add(ONE_SPAN)?;
-                }
-                let end = column.checked_add(cell.colspan)?;
-                if end > self.width {
-                    return None;
-                }
-                let until = row.checked_add(cell.rowspan)?;
-                for slot in covered_until.get_mut(column as usize..end as usize)? {
-                    *slot = until;
-                }
-                columns.push(column);
-                column = end;
-            }
-            placed.push(columns);
+    pub(crate) fn cell_columns(&self) -> Result<Vec<Vec<u32>>, TableError> {
+        let spans: Vec<Vec<(u32, u32)>> = self
+            .rows
+            .iter()
+            .map(|cells| cells.iter().map(MatrixCell::spans).collect())
+            .collect();
+        let (columns, width) = place_spans(&spans)?;
+        if width > self.width {
+            return Err(TableError::InvalidStructure);
         }
-        Some(placed)
+        Ok(columns)
     }
 }
 
@@ -118,22 +147,20 @@ pub(crate) fn matrix_from_slice(
     let mut content = content;
     let mut open_start = open_start;
     let mut open_end = open_end;
-    while content.child_count() == ONLY_CHILD {
-        let Some(only) = content.child(FIRST_CHILD) else {
-            return Ok(None);
-        };
-        let open_on_both_sides = open_start > CLOSED_DEPTH && open_end > CLOSED_DEPTH;
+    while let [only] = content.children() {
+        let open_on_both_sides =
+            open_start > CLOSED_FRAGMENT_DEPTH && open_end > CLOSED_FRAGMENT_DEPTH;
         if !open_on_both_sides && only.node_type() != roles.table {
             break;
         }
         let Some(inner) = only.content() else {
             return Ok(None);
         };
-        open_start = open_start.saturating_sub(ONE_LEVEL);
-        open_end = open_end.saturating_sub(ONE_LEVEL);
+        open_start = open_start.saturating_sub(ONE_DEPTH);
+        open_end = open_end.saturating_sub(ONE_DEPTH);
         content = inner;
     }
-    let Some(first) = content.child(FIRST_CHILD) else {
+    let Some(first) = content.children().first() else {
         return Ok(None);
     };
     let is_cell =
@@ -231,59 +258,119 @@ pub(crate) fn matrix_from_rows(
     }))
 }
 
-pub(crate) fn clip_matrix(matrix: &TableMatrix, width: u32, height: u32) -> Option<TableMatrix> {
+pub(crate) fn clip_matrix(
+    matrix: &TableMatrix,
+    width: u32,
+    height: u32,
+) -> Result<TableMatrix, TableError> {
     let mut rows = matrix.rows.clone();
     if matrix.width != width {
         let mut added: Vec<u32> = vec![UNCOVERED; rows.len()];
         let mut clipped_rows = Vec::with_capacity(rows.len());
         for (row, source) in rows.iter().enumerate() {
+            let mut repeated = source.iter().cycle();
             let mut cells = Vec::new();
-            let mut column = added.get(row).copied()?;
-            let mut index = 0usize;
+            let mut column = added.get(row).copied().ok_or(TableError::Allocation)?;
             while column < width {
-                let repeated = source.get(index.checked_rem(source.len())?)?;
-                let overhang = column.checked_add(repeated.colspan)?.saturating_sub(width);
+                let next = repeated.next().ok_or(TableError::InvalidStructure)?;
+                let overhang = column
+                    .checked_add(next.colspan)
+                    .ok_or(TableError::Allocation)?
+                    .saturating_sub(width);
                 let cell = if overhang > EMPTY_WIDTH {
-                    repeated.without_trailing_columns(overhang)?
+                    next.without_trailing_columns(overhang)?
                 } else {
-                    repeated.clone()
+                    next.clone()
                 };
-                column = column.checked_add(cell.colspan)?;
-                for below in ONE_SPAN..cell.rowspan {
-                    if let Some(slot) = added.get_mut(row.checked_add(below as usize)?) {
-                        *slot = slot.checked_add(cell.colspan)?;
+                column = column
+                    .checked_add(cell.colspan)
+                    .ok_or(TableError::Allocation)?;
+                for below in ONE_SLOT..cell.rowspan {
+                    let covered = row
+                        .checked_add(below as usize)
+                        .ok_or(TableError::Allocation)?;
+                    if let Some(slot) = added.get_mut(covered) {
+                        *slot = slot
+                            .checked_add(cell.colspan)
+                            .ok_or(TableError::Allocation)?;
                     }
                 }
                 cells.push(cell);
-                index = index.checked_add(NEXT_CELL)?;
             }
             clipped_rows.push(cells);
         }
         rows = clipped_rows;
     }
     if matrix.height != height {
-        let source_height = rows.len();
+        if rows.is_empty() {
+            return Err(TableError::InvalidStructure);
+        }
         let mut repeated_rows = Vec::with_capacity(height as usize);
-        for row in 0..height {
-            let source = rows.get((row as usize).checked_rem(source_height)?)?;
+        for (row, source) in (0..height).zip(rows.iter().cycle()) {
             let mut cells = Vec::with_capacity(source.len());
             for cell in source {
-                let fits = row.checked_add(cell.rowspan)? <= height;
+                let fits = row
+                    .checked_add(cell.rowspan)
+                    .ok_or(TableError::Allocation)?
+                    <= height;
                 cells.push(if fits {
                     cell.clone()
                 } else {
-                    cell.with_row_span(height.checked_sub(row)?)?
+                    cell.with_row_span(height.checked_sub(row).ok_or(TableError::Allocation)?)?
                 });
             }
             repeated_rows.push(cells);
         }
         rows = repeated_rows;
     }
-    Some(TableMatrix {
+    Ok(TableMatrix {
         width,
         height,
         rows,
     })
+}
+
+pub(crate) fn tab_separated_text(table: &Node, schema: &Schema) -> Result<String, TableError> {
+    let rows: Vec<&Node> = table
+        .content()
+        .ok_or(TableError::InvalidStructure)?
+        .iter()
+        .collect();
+    let mut spans = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let mut row_spans = Vec::with_capacity(row.child_count());
+        for cell in row.content().ok_or(TableError::InvalidStructure)?.iter() {
+            row_spans.push((
+                span_attribute(cell, TABLE_CELL_COLSPAN_ATTR)?,
+                span_attribute(cell, TABLE_CELL_ROWSPAN_ATTR)?,
+            ));
+        }
+        spans.push(row_spans);
+    }
+    let (columns, width) = place_spans(&spans)?;
+    let mut lines = Vec::with_capacity(rows.len());
+    for (row, row_columns) in rows.iter().zip(&columns) {
+        let mut fields = vec![String::new(); width as usize];
+        let cells = row.content().ok_or(TableError::InvalidStructure)?.iter();
+        for (cell, column) in cells.zip(row_columns) {
+            let field = fields
+                .get_mut(*column as usize)
+                .ok_or(TableError::InvalidStructure)?;
+            *field = spreadsheet_field(&node_text(cell, schema));
+        }
+        lines.push(fields.join(FIELD_SEPARATOR_TEXT));
+    }
+    Ok(lines.join(LINE_BREAK_TEXT))
+}
+
+fn spreadsheet_field(text: &str) -> String {
+    if !text.contains([FIELD_SEPARATOR, LINE_BREAK, QUOTE]) {
+        return text.to_owned();
+    }
+    format!(
+        "{QUOTE_TEXT}{}{QUOTE_TEXT}",
+        text.replace(QUOTE_TEXT, ESCAPED_QUOTE)
+    )
 }
 
 pub(crate) fn tab_separated_fields(text: &str) -> Option<Vec<Vec<String>>> {
@@ -294,64 +381,61 @@ pub(crate) fn tab_separated_fields(text: &str) -> Option<Vec<Vec<String>>> {
     let body = normalized
         .strip_suffix(LINE_BREAK)
         .unwrap_or(normalized.as_str());
-    let characters: Vec<char> = body.chars().collect();
+    let mut characters = body.chars().peekable();
     let mut rows = Vec::new();
     let mut fields = Vec::new();
-    let mut start = 0usize;
     loop {
-        let (field, end) = match characters.get(start) {
-            Some(&QUOTE) => quoted_field(&characters, start)
-                .unwrap_or_else(|| literal_field(&characters, start)),
-            Some(_) | None => literal_field(&characters, start),
+        let field = if characters.peek() == Some(&QUOTE) {
+            let mut attempt = characters.clone();
+            match quoted_field(&mut attempt) {
+                Some(field) => {
+                    characters = attempt;
+                    field
+                }
+                None => literal_field(&mut characters),
+            }
+        } else {
+            literal_field(&mut characters)
         };
         fields.push(field);
-        match characters.get(end) {
-            Some(&FIELD_SEPARATOR) => {}
+        match characters.next() {
+            Some(FIELD_SEPARATOR) => {}
             Some(_) => rows.push(std::mem::take(&mut fields)),
             None => {
                 rows.push(fields);
                 return Some(rows);
             }
         }
-        start = end.checked_add(NEXT_CHARACTER)?;
     }
 }
 
-fn ends_field(character: Option<&char>) -> bool {
-    matches!(character, None | Some(&FIELD_SEPARATOR) | Some(&LINE_BREAK))
+type Characters<'a> = std::iter::Peekable<std::str::Chars<'a>>;
+
+fn ends_field(character: &char) -> bool {
+    *character == FIELD_SEPARATOR || *character == LINE_BREAK
 }
 
-fn literal_field(characters: &[char], start: usize) -> (String, usize) {
-    let mut end = start;
-    while !ends_field(characters.get(end)) {
-        end = end.saturating_add(NEXT_CHARACTER);
-    }
-    (
-        characters
-            .get(start..end)
-            .unwrap_or_default()
-            .iter()
-            .collect(),
-        end,
-    )
-}
-
-fn quoted_field(characters: &[char], start: usize) -> Option<(String, usize)> {
+fn literal_field(characters: &mut Characters<'_>) -> String {
     let mut field = String::new();
-    let mut cursor = start.checked_add(NEXT_CHARACTER)?;
+    while let Some(character) = characters.next_if(|character| !ends_field(character)) {
+        field.push(character);
+    }
+    field
+}
+
+fn quoted_field(characters: &mut Characters<'_>) -> Option<String> {
+    characters.next_if_eq(&QUOTE)?;
+    let mut field = String::new();
     loop {
-        let character = *characters.get(cursor)?;
-        let next = cursor.checked_add(NEXT_CHARACTER)?;
+        let character = characters.next()?;
         if character != QUOTE {
             field.push(character);
-            cursor = next;
             continue;
         }
-        if characters.get(next) == Some(&QUOTE) {
+        if characters.next_if_eq(&QUOTE).is_some() {
             field.push(QUOTE);
-            cursor = next.checked_add(NEXT_CHARACTER)?;
             continue;
         }
-        return ends_field(characters.get(next)).then_some((field, next));
+        return characters.peek().is_none_or(ends_field).then_some(field);
     }
 }

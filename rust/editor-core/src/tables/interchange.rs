@@ -133,7 +133,7 @@ pub(crate) fn table_clipboard_fragment(
     )]))
 }
 
-fn unreadable_grid(error: TableError) -> InterchangeFailure {
+pub(crate) fn unreadable_grid(error: TableError) -> InterchangeFailure {
     match error {
         TableError::GridLimit { .. }
         | TableError::WorkLimit

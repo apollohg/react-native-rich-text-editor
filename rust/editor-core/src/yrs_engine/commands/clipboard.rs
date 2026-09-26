@@ -1,5 +1,6 @@
 use super::{text::semantic_transaction, CommandPlan, PlanningContext, TypedCommand};
 use crate::clipboard::{self, ClipboardSlice};
+use crate::command_planner::default_attrs;
 use crate::model::{Document, Fragment, Node};
 use crate::selection::Selection;
 use crate::tables::command_context::table_shape_operation_error;
@@ -170,12 +171,12 @@ fn pasted_matrix(
         Selection::Cell { .. } => true,
         Selection::Text { .. } | Selection::Node { .. } | Selection::All => false,
     };
+    let Some(cell_attrs) = default_attrs(context.schema, &roles.cell) else {
+        return Ok(None);
+    };
     let single_cell = |blocks: Vec<Node>| -> OperationResult<Option<TableMatrix>> {
-        let Some(cell) = cell_node(context.schema, &roles.cell, blocks) else {
-            return Ok(None);
-        };
         matrix_from_rows(
-            vec![vec![cell]],
+            vec![vec![cell_node(&roles.cell, cell_attrs.clone(), blocks)]],
             &roles,
             context.schema,
             context.resource_limits,
@@ -208,12 +209,10 @@ fn pasted_matrix(
         for row in fields {
             let mut cells = Vec::with_capacity(row.len());
             for field in row {
-                let Some(cell) = text_blocks(context, &field)
-                    .and_then(|blocks| cell_node(context.schema, &roles.cell, blocks))
-                else {
+                let Some(blocks) = text_blocks(context, &field) else {
                     return Ok(None);
                 };
-                cells.push(cell);
+                cells.push(cell_node(&roles.cell, cell_attrs.clone(), blocks));
             }
             rows.push(cells);
         }

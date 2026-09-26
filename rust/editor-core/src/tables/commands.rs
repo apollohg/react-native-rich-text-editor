@@ -393,15 +393,15 @@ pub(crate) fn default_text_block_node(schema: &Schema) -> Option<Node> {
 }
 
 pub(crate) fn fresh_cell_node(schema: &Schema, cell_type: &str) -> Option<Node> {
-    cell_node(schema, cell_type, vec![default_text_block_node(schema)?])
+    Some(cell_node(
+        cell_type,
+        default_attrs(schema, cell_type)?,
+        vec![default_text_block_node(schema)?],
+    ))
 }
 
-pub(crate) fn cell_node(schema: &Schema, cell_type: &str, blocks: Vec<Node>) -> Option<Node> {
-    Some(Node::element(
-        cell_type.to_owned(),
-        default_attrs(schema, cell_type)?,
-        Fragment::from(blocks),
-    ))
+pub(crate) fn cell_node(cell_type: &str, attrs: HashMap<String, Value>, blocks: Vec<Node>) -> Node {
+    Node::element(cell_type.to_owned(), attrs, Fragment::from(blocks))
 }
 
 pub(crate) fn caret_in_cell(cell_pos: u32) -> Option<Selection> {

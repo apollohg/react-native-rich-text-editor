@@ -20,7 +20,9 @@ pub(crate) const CLIPBOARD_UNSUPPORTED_CELL_SELECTION: &str = "cellSelection";
 pub(crate) const CLIPBOARD_UNSUPPORTED_TABLE_GRID: &str = "tableGrid";
 pub(crate) const CLOSED_FRAGMENT_DEPTH: usize = 0;
 pub(crate) const LINE_BREAK: char = '\n';
-const LINE_BREAK_TEXT: &str = "\n";
+pub(crate) const LINE_BREAK_TEXT: &str = "\n";
+const HARD_BREAK_HTML_TAG: &str = "br";
+const VOID_TEXT_ATTRS: [&str; 4] = ["label", "alt", "name", "title"];
 const CARRIAGE_RETURN: char = '\r';
 const WINDOWS_LINE_BREAK: &str = "\r\n";
 
@@ -117,6 +119,7 @@ pub(crate) fn export(document: &Document, selection: &Selection, schema: &Schema
         &selected,
         boundary_depth(document, from),
         boundary_depth(document, to),
+        &readable_text(&selected, schema),
         schema,
     ))
 }
@@ -133,6 +136,13 @@ pub(crate) fn export_cells(
         projection_index,
         schema,
     )?;
+    let text = fragment
+        .children()
+        .iter()
+        .map(|table| crate::tables::paste::tab_separated_text(table, schema))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(crate::tables::interchange::unreadable_grid)?
+        .join(LINE_BREAK_TEXT);
     let copied = Document::new(Node::element(
         document.root().node_type().into(),
         Default::default(),
@@ -142,6 +152,7 @@ pub(crate) fn export_cells(
         &copied,
         CLOSED_FRAGMENT_DEPTH,
         CLOSED_FRAGMENT_DEPTH,
+        &text,
         schema,
     ))
 }
@@ -150,49 +161,51 @@ fn clipboard_payload(
     selected: &Document,
     open_start: usize,
     open_end: usize,
+    text: &str,
     schema: &Schema,
 ) -> Value {
     json!({
-        "fragment": json!({"version":1,"schema":crate::schema::schema_fingerprint(schema),"openStart":open_start,"openEnd":open_end,"document":to_prosemirror_json(selected, schema),"text":readable_text(selected, schema)}).to_string(),
+        "fragment": json!({"version":1,"schema":crate::schema::schema_fingerprint(schema),"openStart":open_start,"openEnd":open_end,"document":to_prosemirror_json(selected, schema),"text":text}).to_string(),
         "html": to_html(selected, schema),
-        "text": readable_text(selected, schema)
+        "text": text
     })
 }
 
 pub(crate) fn readable_text(document: &Document, schema: &Schema) -> String {
-    fn text(node: &Node, schema: &Schema) -> String {
-        if let Some(text) = node.text_str() {
-            return text.into();
-        }
-        if node.is_void() {
-            if schema
-                .node(node.node_type())
-                .is_some_and(|spec| spec.html_tag.as_deref() == Some("br"))
-            {
-                return "\n".into();
-            }
-            return ["label", "alt", "name", "title"]
-                .iter()
-                .find_map(|key| node.attrs().get(*key).and_then(Value::as_str))
-                .unwrap_or("")
-                .to_string();
-        }
-        let children = node.content().map(Fragment::children).unwrap_or(&[]);
-        let block_children = children.iter().any(|child| {
-            schema.node(child.node_type()).is_some_and(|spec| {
-                !matches!(
-                    spec.role,
-                    NodeRole::Inline | NodeRole::HardBreak | NodeRole::Text
-                )
-            })
-        });
-        children
-            .iter()
-            .map(|child| text(child, schema))
-            .collect::<Vec<_>>()
-            .join(if block_children { "\n" } else { "" })
+    node_text(document.root(), schema)
+}
+
+pub(crate) fn node_text(node: &Node, schema: &Schema) -> String {
+    if let Some(text) = node.text_str() {
+        return text.into();
     }
-    text(document.root(), schema)
+    if node.is_void() {
+        if schema
+            .node(node.node_type())
+            .is_some_and(|spec| spec.html_tag.as_deref() == Some(HARD_BREAK_HTML_TAG))
+        {
+            return LINE_BREAK_TEXT.into();
+        }
+        return VOID_TEXT_ATTRS
+            .iter()
+            .find_map(|key| node.attrs().get(*key).and_then(Value::as_str))
+            .unwrap_or_default()
+            .to_string();
+    }
+    let children = node.content().map(Fragment::children).unwrap_or(&[]);
+    let block_children = children.iter().any(|child| {
+        schema.node(child.node_type()).is_some_and(|spec| {
+            !matches!(
+                spec.role,
+                NodeRole::Inline | NodeRole::HardBreak | NodeRole::Text
+            )
+        })
+    });
+    children
+        .iter()
+        .map(|child| node_text(child, schema))
+        .collect::<Vec<_>>()
+        .join(if block_children { LINE_BREAK_TEXT } else { "" })
 }
 
 pub(crate) fn decode(

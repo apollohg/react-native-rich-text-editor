@@ -199,7 +199,10 @@ impl<'session> NativeTransactionBridge<'session> {
                             (*allow_base64_images, *input_filter) =
                                 self.session.policy.clipboard_options();
                         }
-                        let origin = if matches!(command, TypedCommand::Table(_)) {
+                        let origin = if matches!(
+                            command,
+                            TypedCommand::Table(_) | TypedCommand::Paste { .. }
+                        ) {
                             TransactionOrigin::LocalCommand
                         } else {
                             TransactionOrigin::LocalInput

@@ -46,9 +46,9 @@ const NO_CELLS: usize = 0;
 const PROBE_COLUMN_WIDTH: u32 = 140;
 const UPDATED_COLUMN_WIDTH: u32 = 160;
 const SECOND_LOGICAL_COLUMN: u32 = 1;
-const PROSE_PREFIX_TEXT: &str = "before";
+pub(crate) const PROSE_PREFIX_TEXT: &str = "before";
 const PROSE_PREFIX_CARET: u32 = 2;
-const PROSE_PREFIX_TABLE_POSITION: u32 = 8;
+pub(crate) const PROSE_PREFIX_TABLE_POSITION: u32 = 8;
 const OPERATION_INVALID_CODE: &str = "OPERATION_INVALID";
 const OUTSIDE_RESIZE_FIXTURE: u32 = 2;
 const SHARED_SURFACE_PROJECTIONS: u64 = 1;
@@ -106,7 +106,13 @@ pub(crate) fn projection_of(engine: &YrsDocumentEngine) -> ProjectedTable {
 }
 
 pub(crate) fn cell_openings(engine: &YrsDocumentEngine) -> Vec<u32> {
-    projection_of(engine)
+    let index = engine
+        .table_projection_index()
+        .expect("the engine is ready");
+    let outer = index.positions().min().expect("the fixture holds a table");
+    index
+        .table_at(outer)
+        .expect("the outer table projects")
         .cells
         .iter()
         .map(|cell| cell.source_pos)

@@ -4,8 +4,9 @@ use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::command_context::TableActionOutcome;
 use crate::tables::commands::{
-    attrs_with_merged_span, attrs_with_unit_span, cell_holds_no_content, default_text_block_node,
-    TableTarget, FIRST_WIDTH_SLICE, NODE_CLOSING_TOKENS, NODE_OPENING_TOKENS, ONE_SLOT,
+    attrs_with_merged_span, attrs_with_unit_span, cell_holds_no_content, cell_node,
+    default_text_block_node, TableTarget, FIRST_WIDTH_SLICE, NODE_CLOSING_TOKENS,
+    NODE_OPENING_TOKENS, ONE_SLOT,
 };
 
 const MERGE_SOURCE_MINIMUM: usize = 2;
@@ -109,11 +110,7 @@ pub(crate) fn plan_split_cell(
             if row == rect.top && offset == FIRST_WIDTH_SLICE as usize {
                 continue;
             }
-            fresh.push(Node::element(
-                cell_type.clone(),
-                attrs.clone(),
-                Fragment::from(vec![block.clone()]),
-            ));
+            fresh.push(cell_node(&cell_type, attrs.clone(), vec![block.clone()]));
         }
         if fresh.is_empty() {
             continue;
