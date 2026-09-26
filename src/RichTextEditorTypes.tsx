@@ -87,6 +87,7 @@ export interface RemoteSelectionDecoration {
     /** Whether that peer's editor holds focus. The caret bar is drawn only when
      *  true; the highlighted range is drawn either way. Absent counts as false. */
     isFocused?: boolean;
+    cellRectangle?: { anchorCell: number; headCell: number };
 }
 
 export interface LinkRequestContext {

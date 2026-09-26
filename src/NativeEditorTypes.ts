@@ -48,8 +48,18 @@ export class NativeEditorLocalAwarenessSelectionValue {
     ) {}
 }
 
+export class NativeEditorLocalAwarenessCellSelectionValue {
+    private readonly _nativeEditorLocalAwarenessCellSelectionBrand!: undefined;
+
+    constructor(
+        readonly anchorCell: number,
+        readonly headCell: number,
+    ) {}
+}
+
 export type NativeEditorLocalAwarenessSelection =
-    NativeEditorLocalAwarenessSelectionValue;
+    | NativeEditorLocalAwarenessSelectionValue
+    | NativeEditorLocalAwarenessCellSelectionValue;
 
 /** What this client publishes to other peers in one awareness update. */
 export interface NativeEditorLocalAwarenessIntent {

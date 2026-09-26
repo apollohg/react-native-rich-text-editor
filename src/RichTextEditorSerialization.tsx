@@ -329,6 +329,20 @@ export function serializeRemoteSelections(
             clientId,
             anchor: requireNativeEditorV2U32(selection.anchor, 'remote selection anchor'),
             head: requireNativeEditorV2U32(selection.head, 'remote selection head'),
+            ...(selection.cellRectangle === undefined
+                ? {}
+                : {
+                    cellRectangle: {
+                        anchorCell: requireNativeEditorV2U32(
+                            selection.cellRectangle.anchorCell,
+                            'remote selection anchor cell'
+                        ),
+                        headCell: requireNativeEditorV2U32(
+                            selection.cellRectangle.headCell,
+                            'remote selection head cell'
+                        ),
+                    },
+                }),
         };
     });
 

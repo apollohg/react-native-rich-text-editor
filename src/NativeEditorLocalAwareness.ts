@@ -2,19 +2,48 @@ import { NativeEditorEngineBoundaryError } from './NativeEditorBoundaryError';
 import { invalidV2RequestError, nativeEditorV2U32 } from './NativeEditorResultNormalization';
 import {
     type NativeEditorLocalAwarenessSelection,
+    NativeEditorLocalAwarenessCellSelectionValue,
     NativeEditorLocalAwarenessSelectionValue,
 } from './NativeEditorTypes';
 import { normalizeV2JsonValue, serializeV2CreateEnvelope } from './NativeEditorCreateJson';
 
 export const LOCAL_AWARENESS_INTENT_KEYS = new Set([ 'state', 'focused', 'selection' ]);
 
+export const LOCAL_AWARENESS_TEXT_SELECTION = 'text';
+export const LOCAL_AWARENESS_CELL_SELECTION = 'cell';
+
+export type NativeEditorLocalAwarenessWireSelection =
+    | { type: typeof LOCAL_AWARENESS_TEXT_SELECTION; anchor: number; head: number }
+    | { type: typeof LOCAL_AWARENESS_CELL_SELECTION; anchorCell: number; headCell: number };
+
 export const LOCAL_AWARENESS_SELECTION_VALUES = new WeakMap<
     object,
-    Readonly<{ anchor: number; head: number }>
+    Readonly<NativeEditorLocalAwarenessWireSelection>
 >();
 
 export function invalidLocalAwarenessIntent(message = 'invalid local awareness intent'): never {
     throw invalidV2RequestError(`NativeEditorBridge: ${message}`);
+}
+
+function acceptedLocalAwarenessPositions(first: number, second: number): [number, number] {
+    const acceptedFirst = nativeEditorV2U32(first);
+    const acceptedSecond = nativeEditorV2U32(second);
+
+    if (acceptedFirst == null || acceptedSecond == null) {
+        invalidLocalAwarenessIntent();
+    }
+
+    return [ acceptedFirst, acceptedSecond ];
+}
+
+function registerLocalAwarenessSelection<Selection extends NativeEditorLocalAwarenessSelection>(
+    selection: Selection,
+    wire: NativeEditorLocalAwarenessWireSelection
+): Selection {
+    Object.freeze(selection);
+    LOCAL_AWARENESS_SELECTION_VALUES.set(selection, Object.freeze(wire));
+
+    return selection;
 }
 
 /**
@@ -26,20 +55,31 @@ export function createNativeEditorLocalAwarenessSelection(
     anchor: number,
     head: number
 ): NativeEditorLocalAwarenessSelection {
-    const acceptedAnchor = nativeEditorV2U32(anchor);
-    const acceptedHead = nativeEditorV2U32(head);
+    const [ acceptedAnchor, acceptedHead ] = acceptedLocalAwarenessPositions(anchor, head);
 
-    if (acceptedAnchor == null || acceptedHead == null) {
-        invalidLocalAwarenessIntent();
-    }
+    return registerLocalAwarenessSelection(
+        new NativeEditorLocalAwarenessSelectionValue(acceptedAnchor, acceptedHead),
+        { type: LOCAL_AWARENESS_TEXT_SELECTION, anchor: acceptedAnchor, head: acceptedHead }
+    );
+}
 
-    const selection: NativeEditorLocalAwarenessSelection =
-        new NativeEditorLocalAwarenessSelectionValue(acceptedAnchor, acceptedHead);
+export function createNativeEditorLocalAwarenessCellSelection(
+    anchorCell: number,
+    headCell: number
+): NativeEditorLocalAwarenessSelection {
+    const [ acceptedAnchorCell, acceptedHeadCell ] = acceptedLocalAwarenessPositions(
+        anchorCell,
+        headCell
+    );
 
-    Object.freeze(selection);
-    LOCAL_AWARENESS_SELECTION_VALUES.set(selection, selection);
-
-    return selection;
+    return registerLocalAwarenessSelection(
+        new NativeEditorLocalAwarenessCellSelectionValue(acceptedAnchorCell, acceptedHeadCell),
+        {
+            type: LOCAL_AWARENESS_CELL_SELECTION,
+            anchorCell: acceptedAnchorCell,
+            headCell: acceptedHeadCell,
+        }
+    );
 }
 
 export function isLocalAwarenessRecord(value: unknown): value is Record<string, unknown> {
@@ -62,10 +102,9 @@ export function localAwarenessOwnDataValue(record: Record<string, unknown>, key:
     return descriptor.value;
 }
 
-export function validateLocalAwarenessSelection(selection: unknown): {
-    anchor: number;
-    head: number;
-} {
+export function validateLocalAwarenessSelection(
+    selection: unknown
+): Readonly<NativeEditorLocalAwarenessWireSelection> {
     if (selection == null || typeof selection !== 'object') {
         invalidLocalAwarenessIntent();
     }
@@ -79,14 +118,7 @@ export function validateLocalAwarenessSelection(selection: unknown): {
         invalidLocalAwarenessIntent();
     }
 
-    const anchor = nativeEditorV2U32(factoryValue.anchor);
-    const head = nativeEditorV2U32(factoryValue.head);
-
-    if (anchor == null || head == null) {
-        invalidLocalAwarenessIntent();
-    }
-
-    return { anchor, head };
+    return factoryValue;
 }
 
 /** Reject caller-owned sticky cursor data before a native call can occur. */
@@ -150,7 +182,7 @@ export interface NativeEditorLocalAwarenessWireIntent {
     state: Record<string, unknown>;
     focused: boolean;
     /** Absent retains the Rust-owned cursor; `null` clears it. */
-    selection?: { type: 'text'; anchor: number; head: number } | null;
+    selection?: Readonly<NativeEditorLocalAwarenessWireSelection> | null;
 }
 
 export function validateLocalAwarenessIntent(
@@ -186,9 +218,7 @@ export function validateLocalAwarenessIntent(
             return { state, focused, selection: null };
         }
 
-        const selection = validateLocalAwarenessSelection(rawSelection);
-
-        return { state, focused, selection: { type: 'text', ...selection } };
+        return { state, focused, selection: validateLocalAwarenessSelection(rawSelection) };
     } catch (error) {
         if (error instanceof NativeEditorEngineBoundaryError) {
             throw error;
@@ -209,11 +239,7 @@ export function serializeLocalAwarenessIntent(
         if (intent.selection === null) {
             wire.selection = null;
         } else if (intent.selection !== undefined) {
-            const selection = Object.create(null) as Record<string, unknown>;
-            selection.type = intent.selection.type;
-            selection.anchor = intent.selection.anchor;
-            selection.head = intent.selection.head;
-            wire.selection = selection;
+            wire.selection = Object.assign(Object.create(null), intent.selection);
         }
 
         return serializeV2CreateEnvelope(wire);

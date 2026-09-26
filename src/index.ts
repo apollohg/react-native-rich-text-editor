@@ -243,6 +243,7 @@ export type {
 
 export {
     createNativeEditorDocumentHandle,
+    createNativeEditorLocalAwarenessCellSelection,
     createNativeEditorLocalAwarenessSelection,
     type NativeEditorDocumentHandle,
     type NativeCollaborationProtocolAdapter,

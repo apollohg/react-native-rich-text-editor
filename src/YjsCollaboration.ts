@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
     _assertNativeEditorDocumentHandle,
+    createNativeEditorLocalAwarenessCellSelection,
     createNativeEditorLocalAwarenessSelection,
     type DocumentJSON,
     type NativeCollaborationProtocolAdapter,
@@ -53,7 +54,7 @@ export interface LocalAwarenessUser {
 /** The full local awareness record: who this client is, and where its caret sits. */
 export interface LocalAwarenessState {
     user: LocalAwarenessUser;
-    /** Local caret. Only a text selection is published; anything else clears the cursor. */
+    /** Local caret. Text and cell selections are published; anything else clears the cursor. */
     selection?: Selection;
     /** Whether the editor currently holds focus. */
     focused?: boolean;
@@ -225,28 +226,40 @@ function peersToRemoteSelections(
                         ? user.avatarUrl
                         : undefined,
                 isFocused: peer.state?.focused !== false,
+                ...(peer.cellRectangle == null ? {} : { cellRectangle: peer.cellRectangle }),
             },
         ];
     });
 }
 
 /**
- * Narrow a caller selection to the text-only cursor awareness carries.
+ * Narrow a caller selection to the text or cell cursor awareness carries.
  * Anything else : a node or all-document selection, or an absent one : is
  * an explicit "no cursor", never a silently retained stale position.
  */
 function normalizeAwarenessSelection(
     selection: Selection | undefined
 ): NativeEditorLocalAwarenessSelection | undefined {
-    if (selection === undefined || selection.type !== 'text') {
-        return undefined;
+    if (
+        selection?.type === 'text' &&
+        selection.anchor !== undefined &&
+        selection.head !== undefined
+    ) {
+        return createNativeEditorLocalAwarenessSelection(selection.anchor, selection.head);
     }
 
-    if (selection.anchor === undefined || selection.head === undefined) {
-        return undefined;
+    if (
+        selection?.type === 'cell' &&
+        selection.anchorCell !== undefined &&
+        selection.headCell !== undefined
+    ) {
+        return createNativeEditorLocalAwarenessCellSelection(
+            selection.anchorCell,
+            selection.headCell
+        );
     }
 
-    return createNativeEditorLocalAwarenessSelection(selection.anchor, selection.head);
+    return undefined;
 }
 
 /**

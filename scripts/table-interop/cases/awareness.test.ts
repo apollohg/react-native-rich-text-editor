@@ -29,12 +29,30 @@ const UNKNOWN_EXTENSION_VERSION = 2;
 const AWARENESS_CELL_RECTANGLE_KEY = 'nativeEditorTableSelection';
 const NOT_BASE64 = 'not base64!!';
 const ONE_AWARENESS_UPDATE = 1;
+const AWARENESS_CELL_RECTANGLE_VERSION = 1;
+const AWARENESS_CELL_RECTANGLE_FIELDS = ['anchor', 'head', 'version'];
+const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const DOC_NODE = 'doc';
+const RICH_CELL_PARAGRAPHS = ['lead', 'second line'];
+const RICH_CURSOR_OFFSET = 2;
+const RICH_CURSOR_LENGTH = 4;
 
 function cell(text: string): Record<string, unknown> {
     return {
         type: CELL_NODE,
         attrs: { colspan: 1, rowspan: 1, colwidth: null },
         content: [{ type: PARAGRAPH_NODE, content: [{ type: TEXT_NODE, text }] }],
+    };
+}
+
+function richCell(texts: string[]): Record<string, unknown> {
+    return {
+        type: CELL_NODE,
+        attrs: { colspan: 1, rowspan: 1, colwidth: null },
+        content: texts.map((text) => ({
+            type: PARAGRAPH_NODE,
+            content: [{ type: TEXT_NODE, text }],
+        })),
     };
 }
 
@@ -109,6 +127,22 @@ async function seedTable(web: Peer, native: Peer): Promise<number[]> {
     await exchangeUntilIdle([web, native]);
     const shared = await snapshot(native);
     assert.deepEqual(shared.documentJson, (await snapshot(web)).documentJson);
+    return cellOpenings(shared.documentJson);
+}
+
+async function seedNativeTable(
+    source: Peer,
+    target: Peer,
+    tableJson: Record<string, unknown>,
+): Promise<number[]> {
+    await call(source, 'command', {
+        type: 'insertContentJson',
+        json: { type: DOC_NODE, content: [tableJson] },
+    });
+    await seedFrom(source, [target]);
+    await exchangeUntilIdle([source, target]);
+    const shared = await snapshot(target);
+    assert.deepEqual(shared.documentJson, (await snapshot(source)).documentJson);
     return cellOpenings(shared.documentJson);
 }
 
@@ -273,6 +307,131 @@ test('TBL-14 malformed extension metadata drops only the rectangle', async () =>
         assert.equal(remote.state['user'], 'web');
     });
 });
+
+test('TBL-14 a native rectangle reaches another native peer as the same real cells', async () => {
+    await withNativeTablePeers(async (publisher, observer) => {
+        const cells = await seedNativeTable(publisher, observer, regularTable());
+        const anchorCell = cells[TOP_LEFT] ?? 0;
+        const headCell = cells[BOTTOM_RIGHT] ?? 0;
+
+        const update = await publishNativeRectangle(publisher, anchorCell, headCell);
+        const documentBefore = await snapshot(observer);
+        await applyAwareness(observer, update);
+
+        assert.equal(
+            (await snapshot(observer)).documentRevision,
+            documentBefore.documentRevision,
+            'presence must never persist into the document',
+        );
+        const remote = remotePeer(await awarenessPeers(observer));
+        assert.deepEqual(remote.cellRectangle, { anchorCell, headCell });
+        assert.deepEqual(
+            remote.cursor,
+            { anchor: anchorCell, head: headCell },
+            'the ordinary relative cursor fallback addresses the same cell openings',
+        );
+        const extension = remote.state[AWARENESS_CELL_RECTANGLE_KEY];
+        assert.ok(
+            extension !== null && typeof extension === 'object',
+            `the published state carries no rectangle extension: ${JSON.stringify(remote.state)}`,
+        );
+        const fields = extension as Record<string, unknown>;
+        assert.deepEqual(Object.keys(fields).sort(), AWARENESS_CELL_RECTANGLE_FIELDS);
+        assert.equal(fields['version'], AWARENESS_CELL_RECTANGLE_VERSION);
+        for (const point of [fields['anchor'], fields['head']]) {
+            assert.ok(
+                typeof point === 'string' && point.length > 0 && BASE64_PATTERN.test(point),
+                `a relative cell position is not base64: ${JSON.stringify(point)}`,
+            );
+        }
+    });
+});
+
+test('TBL-14 a native rectangle whose anchor cell is deleted degrades to its cursor', async () => {
+    await withNativeTablePeers(async (publisher, observer) => {
+        const cells = await seedNativeTable(publisher, observer, regularTable());
+        const anchorCell = cells[TOP_LEFT] ?? 0;
+        const headCell = cells[BOTTOM_RIGHT] ?? 0;
+        await applyAwareness(observer, await publishNativeRectangle(publisher, anchorCell, headCell));
+
+        await call(observer, 'command', {
+            type: 'deleteTableColumns',
+            at: anchorCell + CELL_TEXT_OFFSET,
+        });
+        await exchangeUntilIdle([publisher, observer]);
+
+        const remaining = cellOpenings((await snapshot(observer)).documentJson);
+        assert.equal(remaining.length, cells.length / 2, 'one column of the fixture remains');
+        const remote = remotePeer(await awarenessPeers(observer));
+        assert.equal(
+            remote.cellRectangle,
+            null,
+            `a deleted anchor cell must not slide onto a surviving cell of ${JSON.stringify(remaining)}`,
+        );
+        assert.notEqual(remote.cursor, null, 'the valid cursor fallback is still drawn');
+    });
+});
+
+test('TBL-14 a native text cursor inside a rich cell reaches a stock web peer', async () => {
+    await withTablePeers(async (web, native) => {
+        await seedFrom(web, [native]);
+        await call(web, 'command', {
+            type: 'insertNode',
+            node: {
+                type: TABLE_NODE,
+                content: [
+                    {
+                        type: ROW_NODE,
+                        content: [richCell(RICH_CELL_PARAGRAPHS), cell(CELL_TEXTS[TOP_RIGHT] ?? '')],
+                    },
+                ],
+            },
+        });
+        await exchangeUntilIdle([web, native]);
+        const shared = await snapshot(native);
+        assert.deepEqual(shared.documentJson, (await snapshot(web)).documentJson);
+        const [richCellOpening] = cellOpenings(shared.documentJson);
+        const [leadParagraph = ''] = RICH_CELL_PARAGRAPHS;
+        const secondParagraphText =
+            (richCellOpening ?? 0) +
+            VOID_NODE_SIZE +
+            nodeSize({ type: PARAGRAPH_NODE, content: [{ type: TEXT_NODE, text: leadParagraph }] }) +
+            VOID_NODE_SIZE;
+        const anchor = secondParagraphText + RICH_CURSOR_OFFSET;
+        const head = anchor + RICH_CURSOR_LENGTH;
+
+        const [update] = await setAwareness(native, {
+            state: { user: 'native' },
+            focused: true,
+            selection: { type: 'text', anchor, head },
+        });
+        if (update === undefined) {
+            throw new Error('the native peer published no awareness update');
+        }
+        await applyAwareness(web, update.bytesBase64);
+
+        const remote = remotePeer(await awarenessPeers(web));
+        assert.deepEqual(remote.cursor, { anchor, head });
+        assert.equal(remote.cellRectangle, null);
+        assert.equal(
+            remote.state[AWARENESS_CELL_RECTANGLE_KEY],
+            undefined,
+            'a text cursor publishes no rectangle extension',
+        );
+    });
+});
+
+async function withNativeTablePeers(
+    body: (publisher: Peer, observer: Peer) => Promise<void>,
+): Promise<void> {
+    await withPeers(
+        ['rust', 'rust'] as const,
+        async ([publisher, observer]) => {
+            await body(publisher, observer);
+        },
+        tableFixture('prosemirror'),
+    );
+}
 
 async function withTablePeers(
     body: (web: Peer, native: Peer) => Promise<void>,

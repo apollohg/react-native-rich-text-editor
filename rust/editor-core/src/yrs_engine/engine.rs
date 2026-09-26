@@ -335,15 +335,7 @@ impl YrsDocumentEngine {
         .then_some(())?;
         let txn = self.doc.transact();
         let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
-        let sticky = |position| {
-            super::position::doc_pos_to_sticky_index(
-                &txn,
-                &fragment,
-                position,
-                yrs::Assoc::After,
-                &self.schema,
-            )
-        };
+        let sticky = |position| cell_opening_sticky_index(&txn, &fragment, position, &self.schema);
         Some(super::awareness::encode_relative_cell_rectangle(
             &super::awareness::RelativeCellRectangle {
                 anchor: sticky(anchor)?,
@@ -359,18 +351,14 @@ impl YrsDocumentEngine {
         let rectangle = super::awareness::decode_relative_cell_rectangle(state)?;
         let txn = self.doc.transact();
         let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
-        let anchor = super::position::sticky_index_to_doc_pos(
-            &txn,
-            &fragment,
-            &rectangle.anchor,
-            &self.schema,
-        )?;
-        let head = super::position::sticky_index_to_doc_pos(
-            &txn,
-            &fragment,
-            &rectangle.head,
-            &self.schema,
-        )?;
+        let live_opening = |sticky: &yrs::StickyIndex| {
+            let position =
+                super::position::sticky_index_to_doc_pos(&txn, &fragment, sticky, &self.schema)?;
+            let current = cell_opening_sticky_index(&txn, &fragment, position, &self.schema)?;
+            (current.id() == sticky.id()).then_some(position)
+        };
+        let anchor = live_opening(&rectangle.anchor)?;
+        let head = live_opening(&rectangle.head)?;
         crate::tables::selection::cell_pair_is_usable(
             self.table_projection_index()?,
             anchor,
@@ -799,6 +787,15 @@ fn validate_config_metadata(
         );
     }
     Ok(())
+}
+
+fn cell_opening_sticky_index<T: ReadTxn>(
+    txn: &T,
+    fragment: &yrs::XmlFragmentRef,
+    position: u32,
+    schema: &Schema,
+) -> Option<yrs::StickyIndex> {
+    super::position::doc_pos_to_sticky_index(txn, fragment, position, yrs::Assoc::After, schema)
 }
 
 #[cfg(test)]
