@@ -32,7 +32,7 @@ const OVERSIZED_ROWSPAN: u32 = 3;
 const REPLACEMENT_REQUEST_ID: u64 = 23;
 const FRAGMENT_NAME: &str = "prosemirror";
 
-fn nesting_cell() -> serde_json::Value {
+pub(crate) fn nesting_cell() -> serde_json::Value {
     json!({
         "type": "table_cell",
         "attrs": { "colspan": SINGLE_SPAN, "rowspan": SINGLE_SPAN, "colwidth": serde_json::Value::Null },

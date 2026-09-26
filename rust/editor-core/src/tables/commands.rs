@@ -26,6 +26,7 @@ use crate::yrs_engine::OperationResult;
 pub(crate) mod columns;
 pub(crate) mod headers;
 pub(crate) mod merge;
+pub(crate) mod paste;
 pub(crate) mod resize;
 pub(crate) mod rows;
 
@@ -392,10 +393,14 @@ pub(crate) fn default_text_block_node(schema: &Schema) -> Option<Node> {
 }
 
 pub(crate) fn fresh_cell_node(schema: &Schema, cell_type: &str) -> Option<Node> {
+    cell_node(schema, cell_type, vec![default_text_block_node(schema)?])
+}
+
+pub(crate) fn cell_node(schema: &Schema, cell_type: &str, blocks: Vec<Node>) -> Option<Node> {
     Some(Node::element(
         cell_type.to_owned(),
         default_attrs(schema, cell_type)?,
-        Fragment::from(vec![default_text_block_node(schema)?]),
+        Fragment::from(blocks),
     ))
 }
 
@@ -428,22 +433,25 @@ pub(crate) fn attrs_with_added_column(cell: &Node, offset: u32) -> Option<HashMa
     Some(attrs)
 }
 
-pub(crate) fn attrs_with_removed_column(
+pub(crate) fn attrs_with_removed_columns(
     cell: &Node,
     offset: u32,
+    count: u32,
 ) -> Option<HashMap<String, Value>> {
     let Ok(colspan) = span_attribute(cell, TABLE_CELL_COLSPAN_ATTR) else {
         return None;
     };
     let narrowed = colspan
-        .checked_sub(ONE_SLOT)
+        .checked_sub(count)
         .filter(|span| u64::from(*span) >= MIN_TABLE_CELL_SPAN)?;
     let mut attrs = cell.attrs().clone();
     attrs.insert(TABLE_CELL_COLSPAN_ATTR.to_string(), Value::from(narrowed));
     if let Some(Value::Array(widths)) = cell.attrs().get(TABLE_CELL_COLWIDTH_ATTR) {
         let mut remaining = widths.clone();
-        if (offset as usize) < remaining.len() {
-            remaining.remove(offset as usize);
+        let start = offset as usize;
+        if start < remaining.len() {
+            let end = start.saturating_add(count as usize).min(remaining.len());
+            remaining.drain(start..end);
         }
         let keeps_a_width = remaining
             .iter()

@@ -54,7 +54,7 @@ const OUTSIDE_RESIZE_FIXTURE: u32 = 2;
 const SHARED_SURFACE_PROJECTIONS: u64 = 1;
 const STAGED_DELETION_PROJECTIONS: u64 = 4;
 
-fn engine_with(schema: Schema, content: Vec<Value>) -> YrsDocumentEngine {
+pub(crate) fn engine_with(schema: Schema, content: Vec<Value>) -> YrsDocumentEngine {
     let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
         schema,
         fragment_name: FRAGMENT_NAME.into(),
@@ -74,23 +74,23 @@ fn engine_with(schema: Schema, content: Vec<Value>) -> YrsDocumentEngine {
     engine
 }
 
-fn seeded(content: Vec<Value>) -> YrsDocumentEngine {
+pub(crate) fn seeded(content: Vec<Value>) -> YrsDocumentEngine {
     engine_with(schema(), content)
 }
 
-fn document_of(engine: &YrsDocumentEngine) -> &Document {
+pub(crate) fn document_of(engine: &YrsDocumentEngine) -> &Document {
     engine.document().expect("the engine is ready")
 }
 
-fn table_of(engine: &YrsDocumentEngine) -> Value {
+pub(crate) fn table_of(engine: &YrsDocumentEngine) -> Value {
     engine.document_json().expect("the engine is ready")["content"][0].clone()
 }
 
-fn engine_schema(engine: &YrsDocumentEngine) -> Schema {
+pub(crate) fn engine_schema(engine: &YrsDocumentEngine) -> Schema {
     engine.schema().clone()
 }
 
-fn projection_of(engine: &YrsDocumentEngine) -> ProjectedTable {
+pub(crate) fn projection_of(engine: &YrsDocumentEngine) -> ProjectedTable {
     let document = document_of(engine);
     let table = document
         .node_at(&[0])
@@ -105,7 +105,7 @@ fn projection_of(engine: &YrsDocumentEngine) -> ProjectedTable {
     .expect("the fixture projects")
 }
 
-fn cell_openings(engine: &YrsDocumentEngine) -> Vec<u32> {
+pub(crate) fn cell_openings(engine: &YrsDocumentEngine) -> Vec<u32> {
     projection_of(engine)
         .cells
         .iter()
@@ -143,7 +143,7 @@ fn after_first_character(engine: &YrsDocumentEngine, index: usize) -> Revisioned
     }
 }
 
-fn select_cells(engine: &mut YrsDocumentEngine, anchor: usize, head: usize) {
+pub(crate) fn select_cells(engine: &mut YrsDocumentEngine, anchor: usize, head: usize) {
     let anchor = inside_cell(engine, anchor);
     let head = inside_cell(engine, head);
     engine
@@ -165,7 +165,7 @@ fn select_cell(engine: &mut YrsDocumentEngine, index: usize) {
     select_cells(engine, index, index);
 }
 
-fn resolved_cells(engine: &YrsDocumentEngine) -> Option<(u32, u32)> {
+pub(crate) fn resolved_cells(engine: &YrsDocumentEngine) -> Option<(u32, u32)> {
     match engine.resolved_selection()? {
         crate::yrs_engine::ResolvedSelection::Cell { anchor, head } => {
             Some((anchor.document, head.document))
@@ -191,7 +191,7 @@ fn applied(engine: &mut YrsDocumentEngine, command: TableCommand) {
     );
 }
 
-fn row_types(table: &Value, row: usize) -> Vec<String> {
+pub(crate) fn row_types(table: &Value, row: usize) -> Vec<String> {
     table["content"][row]["content"]
         .as_array()
         .expect("the row holds cells")
@@ -205,7 +205,7 @@ fn row_types(table: &Value, row: usize) -> Vec<String> {
         .collect()
 }
 
-fn row_texts(table: &Value, row: usize) -> Vec<String> {
+pub(crate) fn row_texts(table: &Value, row: usize) -> Vec<String> {
     table["content"][row]["content"]
         .as_array()
         .expect("the row holds cells")
@@ -219,7 +219,7 @@ fn row_texts(table: &Value, row: usize) -> Vec<String> {
         .collect()
 }
 
-fn row_count(table: &Value) -> usize {
+pub(crate) fn row_count(table: &Value) -> usize {
     table["content"]
         .as_array()
         .expect("the table holds rows")
@@ -234,18 +234,18 @@ fn spans_at(engine: &YrsDocumentEngine, row: u32, column: u32) -> (u32, u32) {
     (rect.rowspan, rect.colspan)
 }
 
-fn geometry(projected: &ProjectedTable) -> (u32, u32, bool) {
+pub(crate) fn geometry(projected: &ProjectedTable) -> (u32, u32, bool) {
     (projected.rows, projected.columns, projected.irregular)
 }
 
-fn regular_fixture() -> Vec<Value> {
+pub(crate) fn regular_fixture() -> Vec<Value> {
     vec![table(vec![
         row(vec![cell("a0"), cell("a1")]),
         row(vec![cell("b0"), cell("b1")]),
     ])]
 }
 
-fn tall_span_fixture() -> Vec<Value> {
+pub(crate) fn tall_span_fixture() -> Vec<Value> {
     vec![table(vec![
         row(vec![
             cell_with(SINGLE_SPAN, 2, Value::Null, "tall"),
@@ -256,14 +256,14 @@ fn tall_span_fixture() -> Vec<Value> {
     ])]
 }
 
-fn wide_span_fixture() -> Vec<Value> {
+pub(crate) fn wide_span_fixture() -> Vec<Value> {
     vec![table(vec![
         row(vec![cell_with(2, SINGLE_SPAN, json!([120, 160]), "wide")]),
         row(vec![cell("b0"), cell("b1")]),
     ])]
 }
 
-fn header_fixture() -> Vec<Value> {
+pub(crate) fn header_fixture() -> Vec<Value> {
     vec![table(vec![
         row(vec![header_cell("h0"), header_cell("h1")]),
         row(vec![cell("b0"), cell("b1")]),
@@ -2514,7 +2514,7 @@ fn a_header_toggle_maps_its_selection_through_the_normalization_it_triggers() {
     );
 }
 
-fn place_caret(engine: &mut YrsDocumentEngine, index: usize) {
+pub(crate) fn place_caret(engine: &mut YrsDocumentEngine, index: usize) {
     let point = after_first_character(engine, index);
     engine
         .apply_typed_transaction(TypedTransaction {

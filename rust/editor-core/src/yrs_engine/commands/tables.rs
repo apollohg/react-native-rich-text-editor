@@ -8,6 +8,7 @@ use crate::tables::admission::TableProjectionIndex;
 use crate::tables::command_context::{
     is_action_unavailable, prepare_table_action, CellAnchorPair, TableAction, TableActionContext,
 };
+use crate::tables::commands::paste::MatrixPasteAction;
 use crate::tables::commands::{
     columns, headers, merge, plan_clear_cells, plan_delete_table, plan_insert_table,
     plan_select_columns, plan_select_rows, resize, rows, DeleteColumnsAction, DeleteRowsAction,
@@ -19,6 +20,7 @@ use crate::tables::interchange::{
     InterchangeFailure,
 };
 use crate::tables::normalize::outer_table_positions;
+use crate::tables::paste::TableMatrix;
 use crate::tables::selection::{cell_opening_containing, resolve_cell_rect};
 use crate::tables::types::TableError;
 use crate::yrs_engine::{
@@ -161,6 +163,32 @@ fn prepared_action(
         other => other?,
     };
     super::table_action_transaction(context, prepared)
+}
+
+pub(super) fn outer_paste_anchor(
+    context: &PlanningContext<'_>,
+    selection: &Selection,
+) -> OperationResult<Option<TableAnchor>> {
+    let Some(anchor) = anchor_from_selection(
+        context.document,
+        context.schema,
+        context.resource_limits,
+        selection,
+    ) else {
+        return Ok(None);
+    };
+    let outer = outer_table_positions(context.document, context.schema, context.resource_limits)?
+        .contains(&anchor.table_pos);
+    Ok(outer.then_some(anchor))
+}
+
+pub(super) fn paste_matrix(
+    context: &PlanningContext<'_>,
+    anchor: &TableAnchor,
+    selection: &Selection,
+    matrix: TableMatrix,
+) -> OperationResult<CommandPlan> {
+    scoped_action(context, anchor, selection, &MatrixPasteAction { matrix })
 }
 
 fn explicit_table_resize(

@@ -221,6 +221,23 @@ pub(crate) fn table_action_transaction(
 }
 
 #[cfg(test)]
+pub(crate) fn structural_edit_batch_for_test(
+    request_id: u64,
+    document: &Document,
+    schema: &Schema,
+    operations: &[crate::command_planner::SemanticOperation],
+    selection_after: &Selection,
+) -> OperationResult<Option<crate::yrs_engine::StructuralEditBatch>> {
+    structural_batch::structural_edit_batch(
+        request_id,
+        document,
+        schema,
+        operations,
+        selection_after,
+    )
+}
+
+#[cfg(test)]
 pub(crate) struct TableActionTestRequest<'a> {
     pub document: &'a Document,
     pub schema: &'a Schema,

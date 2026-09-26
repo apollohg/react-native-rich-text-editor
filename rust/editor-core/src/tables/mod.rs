@@ -6,6 +6,7 @@ pub(crate) mod interchange;
 pub(crate) mod mutation_guard;
 #[allow(dead_code)]
 pub(crate) mod normalize;
+pub(crate) mod paste;
 pub(crate) mod projection;
 pub(crate) mod reference_grid;
 pub(crate) mod render;
@@ -26,6 +27,8 @@ mod interchange_tests;
 mod navigation_tests;
 #[cfg(test)]
 pub(crate) mod normalize_tests;
+#[cfg(test)]
+mod paste_tests;
 #[cfg(test)]
 mod projection_tests;
 #[cfg(test)]

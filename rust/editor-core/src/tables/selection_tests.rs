@@ -985,29 +985,6 @@ mod engine_round_trip {
     }
 
     #[test]
-    fn a_paste_over_a_cell_rectangle_does_not_mutate_the_document() {
-        let mut engine = seeded();
-        let anchor = inside_cell(&engine, TOP_LEFT);
-        let head = inside_cell(&engine, BOTTOM_RIGHT);
-        select_cells(&mut engine, 1, anchor, head).expect("the rectangle is admitted");
-        let document_before = engine.document().expect("the engine is ready").clone();
-        let revision_before = engine.revision();
-
-        let outcome = engine.apply_command(2, paste_text(PASTED_TEXT));
-
-        assert!(
-            matches!(outcome, Ok(None)),
-            "a paste over a cell rectangle must not apply: {outcome:?}"
-        );
-        assert_eq!(engine.revision(), revision_before);
-        assert_eq!(
-            engine.document().expect("the engine is ready"),
-            &document_before,
-            "a paste over a cell rectangle must leave the table intact"
-        );
-    }
-
-    #[test]
     fn a_paste_over_a_text_selection_still_mutates_the_document() {
         let mut engine = seeded();
         let openings = cell_openings(&engine);

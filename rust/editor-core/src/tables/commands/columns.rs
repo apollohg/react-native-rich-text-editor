@@ -4,7 +4,7 @@ use crate::model::{Document, Fragment};
 use crate::schema::Schema;
 use crate::tables::command_context::TableActionOutcome;
 use crate::tables::commands::{
-    attrs_with_added_column, attrs_with_removed_column, caret_in_cell, fresh_cell_node,
+    attrs_with_added_column, attrs_with_removed_columns, caret_in_cell, fresh_cell_node,
     GridRequirement, TableEdge, TableTarget, FIRST_COLUMN, FIRST_ROW, MINIMUM_SURVIVING_COLUMNS,
     ONE_SLOT,
 };
@@ -137,7 +137,11 @@ fn plan_delete_one_column(target: &TableTarget<'_>, column: u32) -> Option<Vec<S
         if spans_left || spans_right {
             operations.push(SemanticOperation::UpdateNodeAttrs {
                 pos: cell.source_pos,
-                attrs: attrs_with_removed_column(node, column.checked_sub(cell.rect.column)?)?,
+                attrs: attrs_with_removed_columns(
+                    node,
+                    column.checked_sub(cell.rect.column)?,
+                    ONE_SLOT,
+                )?,
             });
         } else {
             operations.push(SemanticOperation::ReplaceRange {

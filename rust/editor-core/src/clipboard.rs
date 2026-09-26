@@ -19,6 +19,15 @@ pub(crate) const CLIPBOARD_UNSUPPORTED_KEY: &str = "unsupported";
 pub(crate) const CLIPBOARD_UNSUPPORTED_CELL_SELECTION: &str = "cellSelection";
 pub(crate) const CLIPBOARD_UNSUPPORTED_TABLE_GRID: &str = "tableGrid";
 pub(crate) const CLOSED_FRAGMENT_DEPTH: usize = 0;
+pub(crate) const LINE_BREAK: char = '\n';
+const LINE_BREAK_TEXT: &str = "\n";
+const CARRIAGE_RETURN: char = '\r';
+const WINDOWS_LINE_BREAK: &str = "\r\n";
+
+pub(crate) fn normalized_line_breaks(text: &str) -> String {
+    text.replace(WINDOWS_LINE_BREAK, LINE_BREAK_TEXT)
+        .replace(CARRIAGE_RETURN, LINE_BREAK_TEXT)
+}
 
 pub(crate) fn unsupported_selection(selection: &Selection) -> Option<&'static str> {
     match selection {
