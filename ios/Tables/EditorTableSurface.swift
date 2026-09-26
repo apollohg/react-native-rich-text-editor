@@ -498,11 +498,14 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         cellEditMenu.dismiss()
     }
 
-    func toggleCellEditMenu(at point: CGPoint, touchedAt timestamp: TimeInterval) -> Bool {
+    func cellSelectionContains(_ point: CGPoint) -> Bool {
         let drawingPoint = convert(point, to: drawingView)
-        guard cellEditMenuTextView() != nil,
-              visibleSelectedCellRects()?.contains(where: { $0.contains(drawingPoint) }) == true
-        else { return false }
+        return cellEditMenuTextView() != nil
+            && visibleSelectedCellRects()?.contains(where: { $0.contains(drawingPoint) }) == true
+    }
+
+    func toggleCellEditMenu(at point: CGPoint, touchedAt timestamp: TimeInterval) -> Bool {
+        guard cellSelectionContains(point) else { return false }
         if cellEditMenu.wasVisible(since: timestamp) {
             dismissCellEditMenu()
         } else {
@@ -788,7 +791,8 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         case .changed:
             updateHandleDrag(at: point)
         case .ended:
-            endHandleDrag(at: point)
+            updateHandleDrag(at: point)
+            cancelHandleDrag()
         case .cancelled, .failed:
             cancelHandleDrag()
         default:
@@ -838,14 +842,6 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         drag.windowPoint = host.convert(hostPoint, to: window)
         retargetHandleDrag(drag)
         if activeDrag === drag { scheduleDragFrame() }
-    }
-
-    func endHandleDrag(at hostPoint: CGPoint) {
-        guard handleDrag != nil else { return }
-        updateHandleDrag(at: hostPoint)
-        guard handleDrag != nil else { return }
-        cancelHandleDrag()
-        presentCellEditMenu()
     }
 
     @discardableResult

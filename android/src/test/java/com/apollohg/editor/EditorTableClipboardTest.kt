@@ -5,11 +5,14 @@ import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
+import android.net.Uri
 import android.os.Looper
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.widget.FrameLayout
+import java.time.Duration
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -427,18 +430,31 @@ internal class EditorTableClipboardTest {
             fixture.openings()[toCell], fixture.engineSelection().getInt("headCell"))
     }
 
+    private fun awaitDoubleTapTimeout() =
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ViewConfiguration.getDoubleTapTimeout().toLong()))
+
     private fun tapCell(fixture: Fixture, cell: Int) {
         val center = cellCenter(fixture, cell)
         dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_DOWN to center, MotionEvent.ACTION_UP to center))
     }
 
-    private fun showMenuByDraggingHead(fixture: Fixture, anchor: Int, head: Int, toCell: Int) {
+    private fun tapCellAndSettle(fixture: Fixture, cell: Int) {
+        tapCell(fixture, cell)
+        awaitDoubleTapTimeout()
+    }
+
+    private fun selectCellsForMenu(fixture: Fixture, anchor: Int, head: Int) {
         val openings = fixture.openings()
         fixture.selectCells(openings[anchor], openings[head])
         fixture.relayout()
-        dragHead(fixture, toCell)
-        assertTrue("a completed handle drag shows the cell menu",
+    }
+
+    private fun showMenuByTappingSelection(fixture: Fixture, anchor: Int, head: Int) {
+        selectCellsForMenu(fixture, anchor, head)
+        tapCellAndSettle(fixture, anchor)
+        assertTrue("a tap inside the selection shows the cell menu",
             fixture.view.editorTableSurface.isCellEditMenuVisible)
+        assertTrue("the tap keeps the cell selection", fixture.root.authoritativeCellSelectionActive)
         fixture.backend.mutations.clear()
         fixture.updates.clear()
     }
@@ -455,11 +471,43 @@ internal class EditorTableClipboardTest {
         assertFalse("an item closes the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
     }
 
+    private fun assertCellMenuReplacesTextMenu(clip: ClipData?, expected: List<Int>) =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            if (clip == null) clipboard().clearPrimaryClip() else clipboard().setPrimaryClip(clip)
+            val text = requireNotNull(fixture.root.text).toString()
+            val after = text.indexOf(AFTER_TEXT)
+            fixture.relayout()
+            fixture.root.setSelection(after, after + AFTER_TEXT.length)
+            fixture.root.interaction.startSelectionActionMode()
+            val textMenu = requireNotNull(fixture.root.selectionActionMode)
+            assertTrue(textMenu.tag === TextSelectionActionMode)
+
+            val openings = fixture.openings()
+            fixture.selectCells(openings[FIRST_CELL], openings[SECOND_CELL])
+            assertTrue("the cell menu replaces the text menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertTrue(fixture.root.selectionActionMode !== textMenu)
+            assertEquals(expected, menuItemIds(fixture))
+
+            fixture.root.interaction.startSelectionActionMode()
+            assertFalse("a text menu closes the cell menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertTrue(requireNotNull(fixture.root.selectionActionMode).tag === TextSelectionActionMode)
+        }
+
     @Test
-    fun `handle drag end shows a floating cell menu with cut copy and paste`() =
+    fun `handle drag end keeps the menu closed and a tap inside shows cut copy and paste`() =
         withTable(GRID_DOCUMENT, attached = true) { fixture ->
             clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
-            showMenuByDraggingHead(fixture, FIRST_CELL, FIRST_CELL, LAST_CELL)
+            selectCellsForMenu(fixture, FIRST_CELL, FIRST_CELL)
+            dragHead(fixture, LAST_CELL)
+            assertFalse("a handle drag leaves the toolbar in charge",
+                fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertEquals(null, fixture.root.selectionActionMode)
+
+            tapCell(fixture, FIRST_CELL)
+            assertFalse("the menu waits for a possible double tap",
+                fixture.view.editorTableSurface.isCellEditMenuVisible)
+            awaitDoubleTapTimeout()
+            assertTrue(fixture.view.editorTableSurface.isCellEditMenuVisible)
             assertEquals(CELL_MENU_ITEMS, menuItemIds(fixture))
             val menu = requireNotNull(fixture.root.selectionActionMode).menu
             assertTrue((0 until menu.size()).all { !menu.getItem(it).title.isNullOrEmpty() })
@@ -468,7 +516,7 @@ internal class EditorTableClipboardTest {
     @Test
     fun `copy menu item copies the cells without a mutation`() =
         withTable(GRID_DOCUMENT, attached = true) { fixture ->
-            showMenuByDraggingHead(fixture, FIRST_CELL, FIRST_CELL, SECOND_CELL)
+            showMenuByTappingSelection(fixture, FIRST_CELL, SECOND_CELL)
             val before = fixture.adapter.documentJson()
             clickMenuItem(fixture, android.R.id.copy)
             assertEquals(FIRST_ROW_TSV, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
@@ -480,7 +528,7 @@ internal class EditorTableClipboardTest {
     @Test
     fun `cut menu item clears the cells in one undoable mutation`() =
         withTable(GRID_DOCUMENT, attached = true) { fixture ->
-            showMenuByDraggingHead(fixture, FIRST_CELL, FIRST_CELL, SECOND_CELL)
+            showMenuByTappingSelection(fixture, FIRST_CELL, SECOND_CELL)
             val before = fixture.adapter.documentJson()
             clickMenuItem(fixture, android.R.id.cut)
             assertEquals(FIRST_ROW_TSV, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
@@ -492,7 +540,7 @@ internal class EditorTableClipboardTest {
     fun `paste menu item fills the selection in one undoable mutation`() =
         withTable(GRID_DOCUMENT, attached = true) { fixture ->
             clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
-            showMenuByDraggingHead(fixture, FIRST_CELL, FIRST_CELL, LAST_CELL)
+            showMenuByTappingSelection(fixture, FIRST_CELL, LAST_CELL)
             val before = fixture.adapter.documentJson()
             clickMenuItem(fixture, android.R.id.paste)
             assertEquals(listOf(listOf("w", "x"), listOf("y", "z")), fixture.cellTexts())
@@ -503,19 +551,29 @@ internal class EditorTableClipboardTest {
     fun `paste menu item is absent with an empty clipboard`() =
         withTable(GRID_DOCUMENT, attached = true) { fixture ->
             clipboard().clearPrimaryClip()
-            showMenuByDraggingHead(fixture, FIRST_CELL, FIRST_CELL, SECOND_CELL)
+            showMenuByTappingSelection(fixture, FIRST_CELL, SECOND_CELL)
             assertEquals(listOf(android.R.id.cut, android.R.id.copy), menuItemIds(fixture))
         }
 
     @Test
-    fun `read only nested cells offer only copy in the cell menu`() =
+    fun `paste menu item is offered for a clip that only coerces to text`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            clipboard().setPrimaryClip(ClipData(ClipDescription(STALE_LABEL, arrayOf(IMAGE_MIME_TYPE)),
+                ClipData.Item(Uri.parse(CONTENT_URI))))
+            showMenuByTappingSelection(fixture, FIRST_CELL, SECOND_CELL)
+            assertEquals(CELL_MENU_ITEMS, menuItemIds(fixture))
+        }
+
+    @Test
+    fun `read only nested cells never show a cell menu or gate in cut and paste`() =
         withTable(EditorTableSurfaceMountTest.nestedTableDocument, attached = true) { fixture ->
             clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
             val nested = fixture.openings(NESTED_TABLE).first()
             fixture.selectCells(nested, nested)
             fixture.relayout()
             fixture.view.editorTableSurface.presentCellEditMenu()
-            assertEquals(listOf(android.R.id.copy), menuItemIds(fixture))
+            assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertEquals(listOf(android.R.id.copy), CELL_MENU_ITEMS.filter(fixture.root::canPerformCellSelectionMenuItem))
             assertEquals(emptyList<String>(), fixture.backend.mutations)
         }
 
@@ -533,54 +591,62 @@ internal class EditorTableClipboardTest {
         }
 
     @Test
-    fun `a text action mode is replaced by the cell menu and the two never coexist`() =
-        withTable(GRID_DOCUMENT, attached = true) { fixture ->
-            val text = requireNotNull(fixture.root.text).toString()
-            val after = text.indexOf(AFTER_TEXT)
-            fixture.relayout()
-            fixture.root.setSelection(after, after + AFTER_TEXT.length)
-            fixture.root.interaction.startSelectionActionMode()
-            val textMenu = requireNotNull(fixture.root.selectionActionMode)
-            assertTrue(textMenu.tag === TextSelectionActionMode)
+    fun `a text action mode is replaced by the full cell menu when the clipboard has text`() =
+        assertCellMenuReplacesTextMenu(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV), CELL_MENU_ITEMS)
 
-            val openings = fixture.openings()
-            fixture.selectCells(openings[FIRST_CELL], openings[SECOND_CELL])
-            assertTrue("the cell menu replaces the text menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
-            assertTrue(fixture.root.selectionActionMode !== textMenu)
-            assertEquals(CELL_MENU_ITEMS.filter { it != android.R.id.paste || clipboard().hasPrimaryClip() },
-                menuItemIds(fixture))
-
-            fixture.root.interaction.startSelectionActionMode()
-            assertFalse("a text menu closes the cell menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
-            assertTrue(requireNotNull(fixture.root.selectionActionMode).tag === TextSelectionActionMode)
-        }
+    @Test
+    fun `a text action mode is replaced by a cell menu without paste when the clipboard is empty`() =
+        assertCellMenuReplacesTextMenu(null, listOf(android.R.id.cut, android.R.id.copy))
 
     @Test
     fun `tap inside the selection toggles the menu and a tap outside edits that cell`() =
         withTable(GRID_DOCUMENT, attached = true) { fixture ->
-            val openings = fixture.openings()
-            fixture.selectCells(openings[FIRST_CELL], openings[SECOND_CELL])
-            fixture.relayout()
-            tapCell(fixture, FIRST_CELL)
+            selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
+            tapCellAndSettle(fixture, FIRST_CELL)
             assertTrue(fixture.view.editorTableSurface.isCellEditMenuVisible)
-            assertTrue("the tap keeps the cell selection", fixture.root.authoritativeCellSelectionActive)
-            tapCell(fixture, SECOND_CELL)
+            tapCellAndSettle(fixture, SECOND_CELL)
             assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
-            tapCell(fixture, FIRST_CELL)
+            tapCellAndSettle(fixture, FIRST_CELL)
             assertTrue(fixture.view.editorTableSurface.isCellEditMenuVisible)
 
-            tapCell(fixture, LAST_CELL)
-            assertFalse("leaving the cell selection closes the menu",
+            tapCellAndSettle(fixture, LAST_CELL)
+            assertFalse("a touch outside the selection closes the menu",
                 fixture.view.editorTableSurface.isCellEditMenuVisible)
             assertTrue("the outside tap edits that cell", fixture.view.activeTextInput !== fixture.root)
             assertEquals(emptyList<String>(), fixture.backend.mutations.filter { it.startsWith(APPLY_COMMAND) })
         }
 
     @Test
+    fun `a touch outside the table closes the menu`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            showMenuByTappingSelection(fixture, FIRST_CELL, SECOND_CELL)
+            val drawing = drawing(fixture)
+            val below = drawing.selectedTableCellRects(requireNotNull(drawing.selectedTableCellEndpoints).first)
+                .orEmpty().maxOf { it.bottom } + drawing.top + OUTSIDE_TOUCH_OFFSET
+            dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_DOWN to (cellCenter(fixture, FIRST_CELL).first to below)))
+            assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
+        }
+
+    @Test
+    fun `double tap inside the selection edits the tapped cell without flashing the menu`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            selectCellsForMenu(fixture, FIRST_CELL, LAST_CELL)
+            tapCell(fixture, LAST_CELL)
+            tapCell(fixture, LAST_CELL)
+            assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
+            awaitDoubleTapTimeout()
+            assertFalse("the double tap never opens the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            val input = fixture.view.activeTextInput
+            assertTrue("the double tap edits a cell", input !== fixture.root)
+            assertEquals(fixture.openings()[LAST_CELL].toLong(),
+                requireNotNull(input.tableCellPositionMap).binding.cellSourcePos)
+        }
+
+    @Test
     fun `selection change blur and editor destroy close the cell menu`() =
         withTable(GRID_DOCUMENT, attached = true) { fixture ->
             val openings = fixture.openings()
-            showMenuByDraggingHead(fixture, FIRST_CELL, FIRST_CELL, SECOND_CELL)
+            showMenuByTappingSelection(fixture, FIRST_CELL, SECOND_CELL)
             fixture.selectCells(openings[FIRST_CELL], openings[LAST_CELL])
             assertFalse("a different rectangle closes the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
 
@@ -606,6 +672,9 @@ internal class EditorTableClipboardTest {
         const val CELL_SELECTION = "cell"
         const val TOUCH_STEP_MS = 20L
         const val AFTER_TEXT = "after"
+        const val IMAGE_MIME_TYPE = "image/png"
+        const val CONTENT_URI = "content://com.apollohg.editor.test/image"
+        const val OUTSIDE_TOUCH_OFFSET = 200f
         val CELL_MENU_ITEMS = listOf(android.R.id.cut, android.R.id.copy, android.R.id.paste)
         const val TEXT_SELECTION = "text"
         const val EMITTED_ERROR_NOTE = "emit "

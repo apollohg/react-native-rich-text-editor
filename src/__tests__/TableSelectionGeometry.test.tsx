@@ -95,6 +95,25 @@ describe('native table selection geometry events', () => {
         handle.destroy();
     });
 
+    it('does not redeliver geometry when only the edit menu, safe area, or keyboard changes', () => {
+        const handle = createV2LocalHandle(V2_INITIAL_DOC);
+        const listener: GeometryListener = jest.fn();
+        const { emit } = renderEditor(handle, listener);
+
+        emit(nativeGeometry(handle.editorId));
+        emit(nativeGeometry(handle.editorId, { editMenuVisible: true }));
+        emit(nativeGeometry(handle.editorId, { editMenuVisible: false }));
+        emit(nativeGeometry(handle.editorId, { safeArea: { ...SAFE_AREA, height: SAFE_AREA.height - 1 } }));
+        emit(nativeGeometry(handle.editorId, { keyboard: KEYBOARD }));
+        emit(nativeGeometry(handle.editorId, { rects: [ SCROLLED_RECT ] }));
+
+        expect(listener.mock.calls.map(([ geometry ]) => geometry?.rects)).toEqual([
+            [ SELECTED_RECT ],
+            [ SCROLLED_RECT ],
+        ]);
+        handle.destroy();
+    });
+
     it('gives two views of one document the same editorId but distinct owners', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const first: GeometryListener = jest.fn();

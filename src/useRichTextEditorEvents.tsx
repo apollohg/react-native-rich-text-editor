@@ -19,7 +19,10 @@ import {
     type NativeTableSelectionGeometryEvent,
 } from './RichTextEditorNativeTypes';
 import { describeRejectedV2Record } from './NativeEditorResultNormalization';
-import { normalizeNativeTableSelectionGeometry } from './TableNormalization';
+import {
+    isSameTableSelectionGeometry,
+    normalizeNativeTableSelectionGeometry,
+} from './TableNormalization';
 import { type TableSelectionGeometry } from './TableTypes';
 import {
     acceptNativeCommitPayload,
@@ -290,17 +293,23 @@ export function useRichTextEditorEvents(
                 return;
             }
 
-            const geometry: TableSelectionGeometry = {
+            const received: TableSelectionGeometry = {
                 ...payload.geometry,
                 ownerId: toolbarFrameOwnerId,
             };
+            const delivered = deliveredTableSelectionGeometryRef.current;
+            const unchanged = delivered != null && isSameTableSelectionGeometry(delivered, received);
+            const geometry = unchanged ? delivered : received;
             deliveredTableSelectionGeometryRef.current = geometry;
             setTableSelection({
                 geometry,
                 obstructions: payload.obstructions,
                 editMenuVisible: payload.editMenuVisible,
             });
-            onTableSelectionGeometryChangeRef.current?.(geometry);
+
+            if (!unchanged) {
+                onTableSelectionGeometryChangeRef.current?.(geometry);
+            }
         },
         [ documentHandle.isDestroyed,
             isForThisEditor,

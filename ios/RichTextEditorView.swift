@@ -122,6 +122,12 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         recognizer.delegate = self
         return recognizer
     }()
+    private lazy var tableCellDoubleTapRecognizer: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTableCellDoubleTap(_:)))
+        recognizer.numberOfTapsRequired = 2
+        recognizer.delegate = self
+        return recognizer
+    }()
     private var tableCellTapTimestamp: TimeInterval = 0
     var tableCellBindingAuthority: ((EditorV2Adapter) -> Bool)?
 
@@ -760,6 +766,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         }
         addSubview(textView)
         textView.addGestureRecognizer(tableCellTapRecognizer)
+        textView.addGestureRecognizer(tableCellDoubleTapRecognizer)
         addSubview(tableSurface)
         tableSurface.installTableInteraction(on: self)
         addSubview(remoteSelectionOverlayView)
@@ -1314,19 +1321,41 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        guard gestureRecognizer === tableCellTapRecognizer,
-              touch.tapCount == 1
-        else { return false }
         let point = touch.location(in: tableSurface)
-        guard !tableSurface.hasSelectionHandle(at: point), tableSurface.cellHit(at: point) != nil else { return false }
+        guard !tableSurface.hasSelectionHandle(at: point) else { return false }
+        if gestureRecognizer === tableCellDoubleTapRecognizer {
+            return tableSurface.cellSelectionContains(point)
+        }
+        guard gestureRecognizer === tableCellTapRecognizer,
+              touch.tapCount == 1,
+              tableSurface.cellHit(at: point) != nil
+        else { return false }
         tableCellTapTimestamp = touch.timestamp
         return true
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        gestureRecognizer === tableCellTapRecognizer && otherGestureRecognizer === tableCellDoubleTapRecognizer
     }
 
     @objc
     private func handleTableCellTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended else { return }
         tapTableCell(at: recognizer.location(in: tableSurface), touchedAt: tableCellTapTimestamp)
+    }
+
+    @objc
+    private func handleTableCellDoubleTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        doubleTapTableCell(at: recognizer.location(in: tableSurface))
+    }
+
+    func doubleTapTableCell(at point: CGPoint) {
+        tableSurface.dismissCellEditMenu()
+        _ = activateTableCell(at: point)
     }
 
     func tapTableCell(at point: CGPoint, touchedAt timestamp: TimeInterval) {

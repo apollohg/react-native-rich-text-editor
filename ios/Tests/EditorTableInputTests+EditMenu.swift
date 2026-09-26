@@ -53,17 +53,22 @@ extension EditorTableInputTests {
         }
     }
 
-    private func showMenuByDraggingHead(_ fixture: MountedTableFixture, to cell: Int) throws {
-        XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
-        XCTAssertFalse(fixture.surface.isCellEditMenuVisible, "the menu must stay hidden while a handle drags")
-        fixture.surface.endHandleDrag(at: try fixture.hostPoint(inCell: cell))
-        XCTAssertEqual(try fixture.selection().1, fixture.positions[cell], "the drag must land on the target cell")
-        XCTAssertTrue(fixture.surface.isCellEditMenuVisible, "a completed handle drag shows the cell menu")
+    private func surfacePoint(_ fixture: MountedTableFixture, inCell cell: Int) throws -> CGPoint {
+        fixture.view.convert(try fixture.hostPoint(inCell: cell), to: fixture.surface)
+    }
+
+    private func showMenuByTappingSelection(_ fixture: MountedTableFixture) throws {
+        fixture.view.tapTableCell(at: try surfacePoint(fixture, inCell: CellMenu.firstCell),
+                                  touchedAt: ProcessInfo.processInfo.systemUptime)
+        XCTAssertTrue(fixture.surface.isCellEditMenuVisible, "a tap inside the selection shows the cell menu")
+        XCTAssertTrue(fixture.view.textView.authoritativeCellSelectionActive, "the tap keeps the cell selection")
         fixture.updates.updates.removeAll()
     }
 
-    private func surfacePoint(_ fixture: MountedTableFixture, inCell cell: Int) throws -> CGPoint {
-        fixture.view.convert(try fixture.hostPoint(inCell: cell), to: fixture.surface)
+    private func tableCellTapRecognizer(_ fixture: MountedTableFixture, taps: Int) throws -> UITapGestureRecognizer {
+        try XCTUnwrap(fixture.view.textView.gestureRecognizers?.compactMap { $0 as? UITapGestureRecognizer }
+            .first { $0.delegate === fixture.view && $0.numberOfTapsRequired == taps },
+            "no \(taps)-tap table cell recognizer")
     }
 
     private func perform(_ command: UICommand, fixture: MountedTableFixture) {
@@ -71,9 +76,14 @@ extension EditorTableInputTests {
                       "\(command.action) found no responder")
     }
 
-    func testHandleDragEndShowsCopyCutAndPasteForAnOwnedCellSelection() throws {
+    func testHandleDragEndLeavesTheMenuClosedAndATapInsideOffersCopyCutAndPaste() throws {
         try withCellMenuTable(head: CellMenu.firstCell) { fixture in
-            try showMenuByDraggingHead(fixture, to: CellMenu.lastCell)
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
+            fixture.surface.updateHandleDrag(at: try fixture.hostPoint(inCell: CellMenu.lastCell))
+            fixture.surface.cancelHandleDrag()
+            XCTAssertEqual(try fixture.selection().1, fixture.positions[CellMenu.lastCell])
+            XCTAssertFalse(fixture.surface.isCellEditMenuVisible, "a handle drag leaves the toolbar in charge")
+            try showMenuByTappingSelection(fixture)
             let commands = try menuCommands(for: fixture.view.textView)
             XCTAssertEqual(commands.map(\.action), CellMenu.allItems)
             XCTAssertTrue(commands.allSatisfy { !$0.title.isEmpty }, "system titles: \(commands.map(\.title))")
@@ -82,7 +92,7 @@ extension EditorTableInputTests {
 
     func testCopyItemCopiesTheCellsWithoutAMutation() throws {
         try withCellMenuTable { fixture in
-            try showMenuByDraggingHead(fixture, to: CellMenu.secondCell)
+            try showMenuByTappingSelection(fixture)
             let before = try fixture.documentObject()
             let copy = try XCTUnwrap(try menuCommands(for: fixture.view.textView).first { $0.action == CellMenu.copy })
 
@@ -97,7 +107,7 @@ extension EditorTableInputTests {
 
     func testCutItemClearsTheCellsInOneMutation() throws {
         try withCellMenuTable { fixture in
-            try showMenuByDraggingHead(fixture, to: CellMenu.secondCell)
+            try showMenuByTappingSelection(fixture)
             let before = try fixture.documentObject()
             let cut = try XCTUnwrap(try menuCommands(for: fixture.view.textView).first { $0.action == CellMenu.cut })
 
@@ -113,8 +123,8 @@ extension EditorTableInputTests {
     }
 
     func testPasteItemFillsTheSelectionInOneMutation() throws {
-        try withCellMenuTable(head: CellMenu.firstCell) { fixture in
-            try showMenuByDraggingHead(fixture, to: CellMenu.lastCell)
+        try withCellMenuTable(head: CellMenu.lastCell) { fixture in
+            try showMenuByTappingSelection(fixture)
             let before = try fixture.documentObject()
             let paste = try XCTUnwrap(try menuCommands(for: fixture.view.textView).first { $0.action == CellMenu.paste })
 
@@ -132,7 +142,7 @@ extension EditorTableInputTests {
     func testPasteItemIsAbsentWithAnEmptyClipboard() throws {
         try withCellMenuTable { fixture in
             UIPasteboard.general.items = []
-            try showMenuByDraggingHead(fixture, to: CellMenu.secondCell)
+            try showMenuByTappingSelection(fixture)
             XCTAssertEqual(try menuCommands(for: fixture.view.textView).map(\.action), [CellMenu.cut, CellMenu.copy])
         }
     }
@@ -192,9 +202,28 @@ extension EditorTableInputTests {
         }
     }
 
+    func testDoubleTapInsideTheSelectionEditsTheTappedCellWithoutFlashingTheMenu() throws {
+        try withCellMenuTable(head: CellMenu.lastCell) { fixture in
+            let single = try tableCellTapRecognizer(fixture, taps: 1)
+            let double = try tableCellTapRecognizer(fixture, taps: 2)
+            XCTAssertTrue(fixture.view.gestureRecognizer(single, shouldRequireFailureOf: double),
+                          "the menu tap must wait for a double tap to fail")
+            XCTAssertFalse(fixture.view.gestureRecognizer(double, shouldRequireFailureOf: single))
+
+            fixture.view.doubleTapTableCell(at: try surfacePoint(fixture, inCell: CellMenu.lastCell))
+
+            XCTAssertFalse(fixture.surface.isCellEditMenuVisible)
+            XCTAssertTrue(fixture.view.activeTextInput !== fixture.view.textView, "the double tap edits a cell")
+            XCTAssertTrue(fixture.view.activeTextInput.isFirstResponder)
+            let map = try XCTUnwrap(fixture.view.activeTextInput.tableCellPositionMap)
+            XCTAssertEqual(map.binding.cellSourcePosition, fixture.positions[CellMenu.lastCell],
+                           "the caret lands in the double-tapped cell")
+        }
+    }
+
     func testSelectionChangeClosesTheMenu() throws {
         try withCellMenuTable { fixture in
-            try showMenuByDraggingHead(fixture, to: CellMenu.secondCell)
+            try showMenuByTappingSelection(fixture)
             try Self.selectCells(anchor: fixture.positions[CellMenu.firstCell],
                                  head: fixture.positions[CellMenu.lastCell],
                                  adapter: fixture.adapter, view: fixture.view)
@@ -204,7 +233,7 @@ extension EditorTableInputTests {
 
     func testBlurClosesTheMenu() throws {
         try withCellMenuTable { fixture in
-            try showMenuByDraggingHead(fixture, to: CellMenu.secondCell)
+            try showMenuByTappingSelection(fixture)
             XCTAssertTrue(fixture.view.textView.resignFirstResponder())
             XCTAssertFalse(fixture.surface.isCellEditMenuVisible)
         }
@@ -212,7 +241,7 @@ extension EditorTableInputTests {
 
     func testEditorDestroyClosesTheMenu() throws {
         try withCellMenuTable { fixture in
-            try showMenuByDraggingHead(fixture, to: CellMenu.secondCell)
+            try showMenuByTappingSelection(fixture)
             fixture.view.editorId = 0
             XCTAssertFalse(fixture.surface.isCellEditMenuVisible)
         }
@@ -228,7 +257,7 @@ extension EditorTableInputTests {
         let data = try JSONSerialization.data(withJSONObject: ["type": "doc", "content": [["type": "table", "content": rows]]])
         let document = try XCTUnwrap(String(data: data, encoding: .utf8))
         try withCellMenuTable(document) { fixture in
-            try showMenuByDraggingHead(fixture, to: CellMenu.secondCell)
+            try showMenuByTappingSelection(fixture)
             let textView = fixture.view.textView
             let rowHeight = try fixture.presentedCell(CellMenu.firstCell).bounds.height
             textView.setContentOffset(CGPoint(x: 0, y: textView.contentOffset.y + rowHeight / 2), animated: false)

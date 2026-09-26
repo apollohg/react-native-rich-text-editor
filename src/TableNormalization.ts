@@ -238,6 +238,32 @@ function tableSelectionRect(value: unknown): TableSelectionRect | null {
     return { x, y, width, height };
 }
 
+function isSameTableSelectionRect(left: TableSelectionRect, right: TableSelectionRect): boolean {
+    return (
+        left.x === right.x &&
+        left.y === right.y &&
+        left.width === right.width &&
+        left.height === right.height
+    );
+}
+
+export function isSameTableSelectionGeometry(
+    left: TableSelectionGeometry,
+    right: TableSelectionGeometry
+): boolean {
+    return (
+        left.editorId === right.editorId &&
+        left.ownerId === right.ownerId &&
+        left.documentRevision === right.documentRevision &&
+        left.layoutEpoch === right.layoutEpoch &&
+        left.tablePos === right.tablePos &&
+        left.coordinateSpace === right.coordinateSpace &&
+        isSameTableSelectionRect(left.viewport, right.viewport) &&
+        left.rects.length === right.rects.length &&
+        left.rects.every((rect, index) => isSameTableSelectionRect(rect, right.rects[index]))
+    );
+}
+
 function tableSelectionRects(value: unknown): TableSelectionRect[] | null {
     if (!Array.isArray(value)) {
         return null;
