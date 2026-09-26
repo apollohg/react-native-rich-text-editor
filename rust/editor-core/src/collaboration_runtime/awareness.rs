@@ -42,6 +42,7 @@ pub const AWARENESS_EXPIRY_MILLIS: u64 = 30_000;
 
 /// Refusal code for a desired awareness state that is not valid JSON.
 pub const AWARENESS_STATE_INVALID: &str = "AWARENESS_STATE_INVALID";
+pub const AWARENESS_CELL_SELECTION_STALE: &str = "AWARENESS_CELL_SELECTION_STALE";
 /// Refusal code for a tick whose deterministic time regresses.
 pub const AWARENESS_TIME_REGRESSION: &str = "AWARENESS_TIME_REGRESSION";
 
@@ -159,21 +160,27 @@ fn published_selection_fields(
         LocalAwarenessSelection::Cell {
             anchor_cell,
             head_cell,
-        } => Ok((
-            engine
-                .awareness_sticky_cursor(anchor_cell, head_cell)
-                .ok_or_else(outside)?,
-            Some(
+        } => {
+            let stale = || {
+                let mut error = SessionError::new(
+                    ErrorDomain::Boundary,
+                    AWARENESS_CELL_SELECTION_STALE,
+                    "local awareness cell selection does not address real table cells",
+                );
+                error.request_id = Some(request_id);
+                error
+            };
+            Ok((
                 engine
-                    .awareness_cell_rectangle(anchor_cell, head_cell)
-                    .ok_or_else(|| {
-                        awareness_state_invalid(
-                            request_id,
-                            "local awareness cell selection does not address real table cells",
-                        )
-                    })?,
-            ),
-        )),
+                    .awareness_sticky_cursor(anchor_cell, head_cell)
+                    .ok_or_else(stale)?,
+                Some(
+                    engine
+                        .awareness_cell_rectangle(anchor_cell, head_cell)
+                        .ok_or_else(stale)?,
+                ),
+            ))
+        }
     }
 }
 

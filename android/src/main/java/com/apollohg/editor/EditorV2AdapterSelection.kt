@@ -33,6 +33,8 @@ internal fun EditorV2Adapter.cachedAtomicRenderSelection(): JSONObject? =
         runCatching { JSONObject(raw).getJSONObject("selection") }.getOrNull()
     }
 
+internal const val AWARENESS_CELL_SELECTION_STALE = "AWARENESS_CELL_SELECTION_STALE"
+
 internal fun cellSelectionEndpoints(selection: JSONObject): Pair<Int, Int>? {
     if (selection.optString("type") != "cell") return null
     val anchor = exactV2ScalarInt(selection.opt("anchorCell") as? Number) ?: return null
@@ -105,7 +107,13 @@ internal fun EditorV2Adapter.selectAtomNode(docPos: Int): String? {
 
         is EditorV2CallResult.Ok -> {
             invalidateCachedAtomicState(null)
-            recoverNativeRender()
+            recoverNativeRender()?.also { update ->
+                val selection = runCatching { JSONObject(update).getJSONObject("selection") }.getOrNull()
+                val pos = exactV2ScalarInt(selection?.opt("pos") as? Number)
+                if (selection?.optString("type") == "node" && pos != null) {
+                    publishCollaborationSelection(pos, pos + 1)
+                }
+            }
         }
     }
 }
@@ -267,7 +275,9 @@ private fun EditorV2Adapter.publishAwarenessSelection(
             selectionJson
         )
     ) {
-        is EditorV2CallResult.Err -> emit(result.error)
+        is EditorV2CallResult.Err -> if (result.error.code != AWARENESS_CELL_SELECTION_STALE) {
+            emit(result.error)
+        }
 
         is EditorV2CallResult.Ok -> {
             val outboundChanged = try {

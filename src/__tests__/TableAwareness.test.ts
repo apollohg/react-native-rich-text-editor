@@ -17,6 +17,7 @@ import {
     type NativeEditorLocalAwarenessIntent,
 } from '../NativeEditorBridge';
 import { serializeRemoteSelections } from '../RichTextEditorSerialization';
+import type { RemoteSelectionDecoration } from '../RichTextEditorTypes';
 
 const ANCHOR_CELL = 2;
 const HEAD_CELL = 6;
@@ -114,10 +115,6 @@ describe('table cell awareness', () => {
             focused: false,
             selection: { type: 'cell', anchorCell: ANCHOR_CELL, headCell: HEAD_CELL },
         });
-        expect(runtime.session(setup.handle.editorId).localAwarenessCursor).toEqual({
-            anchor: ANCHOR_CELL,
-            head: HEAD_CELL,
-        });
     });
 
     it('hands a resolved remote rectangle to native beside the cursor fallback', () => {
@@ -168,6 +165,24 @@ describe('table cell awareness', () => {
             headCell: HEAD_CELL,
         });
         expect(serialized[1]).not.toHaveProperty('cellRectangle');
+    });
+
+    it('drops a null remote rectangle instead of throwing', () => {
+        const serialized = JSON.parse(
+            serializeRemoteSelections([
+                {
+                    clientId: '42',
+                    anchor: ANCHOR_CELL,
+                    head: HEAD_CELL,
+                    color: ALICE.color,
+                    cellRectangle: null,
+                } as unknown as RemoteSelectionDecoration,
+            ]) ?? '[]'
+        );
+
+        expect(serialized).toEqual([
+            { clientId: '42', anchor: ANCHOR_CELL, head: HEAD_CELL, color: ALICE.color },
+        ]);
     });
 
     it('refuses a non-u32 remote rectangle before it reaches the native prop', () => {

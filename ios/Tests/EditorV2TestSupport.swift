@@ -16,6 +16,7 @@ func createdV2TestEditorHandle(_ resultJson: String) -> (handle: String, nativeV
 
 func makeV2Editor(
     configJson: String = #"{"initialization":{"type":"localEmpty"}}"#,
+    roomAwareness: ((String, String) -> FfiJsonResult)? = nil,
     file: StaticString = #filePath,
     line: UInt = #line
 ) -> UInt64 {
@@ -23,7 +24,9 @@ func makeV2Editor(
     guard let value = result.value,
         result.error == nil,
         let createdHandle = createdV2TestEditorHandle(value),
-        let adapter = EditorV2Adapter.attach(editorId: createdHandle.handle, roomBound: false)
+        let adapter = roomAwareness.map({
+            EditorV2Adapter.attach(editorId: createdHandle.handle, roomBound: true, setAwarenessSelection: $0)
+        }) ?? EditorV2Adapter.attach(editorId: createdHandle.handle, roomBound: false)
     else {
         let error = result.error
         XCTFail(

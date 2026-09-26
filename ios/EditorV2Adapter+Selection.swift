@@ -68,15 +68,11 @@ extension EditorV2Adapter {
     }
 
     private func applySelectionEnvelope(_ selection: [String: Any]) -> String? {
-        let update = performMutation(adoptEngineSelection: true, publishMutation: false) {
+        performMutation(adoptEngineSelection: true, publishMutation: false) {
             self.callWithEnvelope(["selection": selection]) { requestJSON in
                 editorV2SetSelection(editorId: self.editorId, requestJson: requestJSON)
             }
         }
-        if update != nil {
-            publishCollaborationCellsIfChanged()
-        }
-        return update
     }
 
     private static func exactCellSelectionEnvelope(anchor: UInt32, head: UInt32) -> [String: Any] {
@@ -97,6 +93,9 @@ extension EditorV2Adapter {
               cells.contains(where: { Self.uint32Field($0, "sourcePos") == head })
         else { return nil }
         let update = applySelectionEnvelope(Self.exactCellSelectionEnvelope(anchor: anchor, head: head))
+        if update != nil {
+            publishCollaborationCellsIfChanged()
+        }
         guard let update,
               admitsTableMutation(admission.mutation),
               positionEpoch != nil,
@@ -359,6 +358,8 @@ extension EditorV2Adapter {
         return refreshedUpdateJSON
     }
 
+    static let awarenessCellSelectionStaleCode = "AWARENESS_CELL_SELECTION_STALE"
+
     private func cachedCollaborationCells() -> (anchor: UInt32, head: UInt32)? {
         cachedAtomicRenderSelection().flatMap(EditorCellSelection.endpointPositions)
     }
@@ -415,6 +416,8 @@ extension EditorV2Adapter {
         switch Self.normalizeJsonResult(
             setAwarenessSelection(editorId, selectionJSON)
         ) {
+        case .failure(let error) where error.code == Self.awarenessCellSelectionStaleCode:
+            return
         case .failure(let error):
             emit(error)
         case .success(let value):

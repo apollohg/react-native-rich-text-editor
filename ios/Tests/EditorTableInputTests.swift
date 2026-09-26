@@ -122,18 +122,20 @@ final class EditorTableInputTests: XCTestCase {
     private func withMountedHandles(
         document: String, configJSON: String? = nil, theme: EditorTheme? = nil,
         size: CGSize = CGSize(width: 360, height: 240), anchorIndex: Int, headIndex: Int,
+        roomAwareness: ((String, String) -> FfiJsonResult)? = nil,
         _ body: (MountedTableFixture) throws -> Void
     ) throws {
         try withMountedTable(document: document, configJSON: configJSON, theme: theme, size: size,
-                             cellSelection: (anchorIndex, headIndex), body)
+                             cellSelection: (anchorIndex, headIndex), roomAwareness: roomAwareness, body)
     }
 
     private func withMountedTable(
         document: String, configJSON: String? = nil, theme: EditorTheme? = nil,
         size: CGSize = CGSize(width: 360, height: 240), cellSelection: (anchor: Int, head: Int)?,
+        roomAwareness: ((String, String) -> FfiJsonResult)? = nil,
         _ body: (MountedTableFixture) throws -> Void
     ) throws {
-        let editorId = makeV2Editor(configJson: configJSON ?? tableConfig)
+        let editorId = makeV2Editor(configJson: configJSON ?? tableConfig, roomAwareness: roomAwareness)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let window = UIWindow(frame: CGRect(origin: .zero, size: size))
@@ -189,6 +191,52 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(fixture.adapter.cachedHistoryState?.canUndo, beforeHistory.canUndo)
             XCTAssertEqual(fixture.adapter.cachedHistoryState?.canRedo, beforeHistory.canRedo)
             fixture.surface.cancelHandleDrag()
+        }
+    }
+
+    private final class PresenceLog {
+        var selections: [[String: Any]] = []
+
+        func record(_ json: String) -> FfiJsonResult {
+            let object = try? JSONSerialization.jsonObject(with: Data(json.utf8))
+            selections.append(object as? [String: Any] ?? [:])
+            return FfiJsonResult(value: #"{"outboundChanged":false}"#, error: nil)
+        }
+
+        func lastIsCells(_ anchor: UInt32, _ head: UInt32) -> Bool {
+            let last = selections.last
+            return last?["type"] as? String == "cell"
+                && (last?["anchorCell"] as? NSNumber)?.uint32Value == anchor
+                && (last?["headCell"] as? NSNumber)?.uint32Value == head
+        }
+    }
+
+    func testRoomHeadDragPublishesTheDraggedCellsAsPresence() throws {
+        let log = PresenceLog()
+        try withMountedHandles(document: fourCellDocument, anchorIndex: 0, headIndex: 0,
+                               roomAwareness: { _, json in log.record(json) }) { fixture in
+            log.selections.removeAll()
+            XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .head)))
+            fixture.surface.updateHandleDrag(at: try fixture.hostPoint(inCell: 3))
+            fixture.surface.cancelHandleDrag()
+
+            XCTAssertTrue(log.lastIsCells(fixture.positions[0], fixture.positions[3]), "\(log.selections)")
+        }
+    }
+
+    func testRoomNativeSelectionOnlyTableCommandPublishesCellPresence() throws {
+        let log = PresenceLog()
+        try withMountedTable(document: fourCellDocument, cellSelection: nil,
+                             roomAwareness: { _, json in log.record(json) }) { fixture in
+            XCTAssertNotNil(fixture.adapter.nativeOwnerId, "the mounted view owns native intents")
+            let caret = try XCTUnwrap(fixture.adapter.scalarPosition(forDoc: fixture.positions[0] + 2))
+            let revision = fixture.adapter.baseDocumentRevision
+            log.selections.removeAll()
+
+            XCTAssertNotNil(fixture.adapter.commandAtSelection(["type": "selectTableRows"], anchor: caret, head: caret))
+
+            XCTAssertEqual(fixture.adapter.baseDocumentRevision, revision)
+            XCTAssertTrue(log.lastIsCells(fixture.positions[0], fixture.positions[1]), "\(log.selections)")
         }
     }
 

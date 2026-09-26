@@ -371,47 +371,136 @@ extension EditorV2AdapterTests {
         XCTAssertEqual(renderedText(replaced), "api")
     }
 
-    func testRoomAdoptedCellSelectionPublishesCellPresenceUntilTextReplacesIt() throws {
+    private final class CellPresenceRecorder {
         var selections: [[String: Any]] = []
-        let adapter = makeAttachedAdapter(
-            configJson: TableInputTestSchema.tableConfig,
-            roomBound: true,
-            setAwarenessSelection: { _, json in
-                let object = try? JSONSerialization.jsonObject(with: Data(json.utf8))
-                selections.append(object as? [String: Any] ?? [:])
+        var rejection: String?
+
+        func publish(_ json: String) -> FfiJsonResult {
+            let object = try? JSONSerialization.jsonObject(with: Data(json.utf8))
+            selections.append(object as? [String: Any] ?? [:])
+            guard let rejection else {
                 return FfiJsonResult(value: #"{"outboundChanged":false}"#, error: nil)
-            },
+            }
+            return FfiJsonResult(
+                value: nil,
+                error: FfiError(domain: "boundary", code: rejection, message: rejection, requestId: nil,
+                                operationIndex: nil, limit: nil, actual: nil, detailsJson: nil)
+            )
+        }
+    }
+
+    private static let imageNode =
+        #"{"name":"image","content":"","group":"block","role":"block","isVoid":true,"attrs":{"src":{"default":""}}},"#
+    private static let textNode = #"{"name":"text","content":"","group":"inline","role":"text"},"#
+
+    private func makeCellPresenceAdapter(
+        _ recorder: CellPresenceRecorder,
+        document: String = TableInputTestSchema.twoCellDocument
+    ) throws -> (adapter: EditorV2Adapter, openings: [UInt32]) {
+        let adapter = makeAttachedAdapter(
+            configJson: TableInputTestSchema.tableConfig.replacingOccurrences(
+                of: Self.textNode, with: Self.textNode + Self.imageNode
+            ),
+            roomBound: true,
+            setAwarenessSelection: { _, json in recorder.publish(json) },
+            collaborationWake: { _, _ in },
             file: #filePath,
             line: #line
         )
-        XCTAssertNotNil(adapter.setContentJson(TableInputTestSchema.twoCellDocument))
+        XCTAssertNotNil(adapter.setContentJson(document))
         let cells = try XCTUnwrap(adapter.cachedTableRecords.values.first?["cells"] as? [[String: Any]])
-        let anchor = try XCTUnwrap((cells.first?["sourcePos"] as? NSNumber)?.intValue)
-        let head = try XCTUnwrap((cells.last?["sourcePos"] as? NSNumber)?.intValue)
+        let openings = try cells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
+        return (adapter, openings)
+    }
+
+    private func adoptEngineCellSelection(_ adapter: EditorV2Adapter, anchor: UInt32, head: UInt32) throws {
         let selected = adapter.callWithEnvelope([
             "selection": [
                 "type": "cell",
-                "anchorCell": ["kind": "document", "offset": anchor],
-                "headCell": ["kind": "document", "offset": head]
+                "anchorCell": ["kind": "document", "offset": Int(anchor)],
+                "headCell": ["kind": "document", "offset": Int(head)]
             ]
         ]) { editorV2SetSelection(editorId: adapter.editorId, requestJson: $0) }
         XCTAssertNil(selected.error, "engine refused the cell selection: \(String(describing: selected.error))")
         let render = try XCTUnwrap(
             editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value
         )
-        selections.removeAll()
-
         XCTAssertNotNil(adapter.adoptExternalRender(render))
+    }
+
+    private func isCellPresence(_ selection: [String: Any]?, _ anchor: UInt32, _ head: UInt32) -> Bool {
+        selection?["type"] as? String == "cell"
+            && (selection?["anchorCell"] as? NSNumber)?.uint32Value == anchor
+            && (selection?["headCell"] as? NSNumber)?.uint32Value == head
+    }
+
+    func testRoomAdoptedCellSelectionPublishesCellPresenceUntilTextReplacesIt() throws {
+        let recorder = CellPresenceRecorder()
+        let (adapter, openings) = try makeCellPresenceAdapter(recorder)
+        recorder.selections.removeAll()
+
+        try adoptEngineCellSelection(adapter, anchor: openings[0], head: openings[1])
+        let render = try XCTUnwrap(
+            editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil).value
+        )
         XCTAssertNotNil(adapter.adoptExternalRender(render))
 
-        XCTAssertEqual(selections.count, 1, "cell presence publishes once per change: \(selections)")
-        XCTAssertEqual(selections.first?["type"] as? String, "cell")
-        XCTAssertEqual((selections.first?["anchorCell"] as? NSNumber)?.intValue, anchor)
-        XCTAssertEqual((selections.first?["headCell"] as? NSNumber)?.intValue, head)
+        XCTAssertEqual(recorder.selections.count, 1, "cell presence publishes once per change: \(recorder.selections)")
+        XCTAssertTrue(isCellPresence(recorder.selections.first, openings[0], openings[1]), "\(recorder.selections)")
 
         XCTAssertNotNil(adapter.syncSelection(anchor: 1, head: 1))
 
-        XCTAssertEqual(selections.last?["type"] as? String, "text", "text replaces cell presence: \(selections)")
+        XCTAssertEqual(recorder.selections.last?["type"] as? String, "text", "text replaces cell presence: \(recorder.selections)")
         XCTAssertNil(adapter.publishedCollaborationCells)
+    }
+
+    func testRoomSelectionOnlyTableCommandPublishesCellPresence() throws {
+        let recorder = CellPresenceRecorder()
+        let (adapter, openings) = try makeCellPresenceAdapter(recorder)
+        let caret = try XCTUnwrap(adapter.scalarPosition(forDoc: openings[0] + 2))
+        let revision = adapter.baseDocumentRevision
+        recorder.selections.removeAll()
+
+        XCTAssertNotNil(adapter.commandAtSelection(["type": "selectTableRows"], anchor: caret, head: caret))
+
+        XCTAssertEqual(adapter.baseDocumentRevision, revision, "selecting rows must not change the document")
+        XCTAssertTrue(isCellPresence(recorder.selections.last, openings[0], openings[1]), "\(recorder.selections)")
+    }
+
+    func testRoomNodeSelectionLeavingCellsPublishesOnlyTheNodeCursor() throws {
+        let recorder = CellPresenceRecorder()
+        let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]},{"type":"image","attrs":{"src":"https://example.com/cat.png"}},{"type":"paragraph"}]}"#
+        let (adapter, openings) = try makeCellPresenceAdapter(recorder, document: document)
+        let tableEnd = try XCTUnwrap(EditorV2Adapter.uint32Field(
+            try XCTUnwrap(adapter.cachedTableRecords.values.first), "sourceEnd"
+        ))
+        try adoptEngineCellSelection(adapter, anchor: openings[0], head: openings[1])
+        XCTAssertNotNil(adapter.publishedCollaborationCells)
+        recorder.selections.removeAll()
+
+        XCTAssertNotNil(adapter.syncNodeSelection(docPos: tableEnd))
+
+        XCTAssertEqual(recorder.selections.count, 1, "one publication replaces the cells: \(recorder.selections)")
+        XCTAssertEqual(recorder.selections.first?["type"] as? String, "text")
+        XCTAssertEqual((recorder.selections.first?["anchor"] as? NSNumber)?.uint32Value, tableEnd)
+    }
+
+    func testStaleCellPresenceIsDroppedWhileGenuineRejectionsSurface() throws {
+        let recorder = CellPresenceRecorder()
+        let (adapter, openings) = try makeCellPresenceAdapter(recorder)
+        let spy = ErrorSpy()
+        adapter.onAutonomousError = spy.record
+        recorder.rejection = "AWARENESS_CELL_SELECTION_STALE"
+
+        try adoptEngineCellSelection(adapter, anchor: openings[0], head: openings[1])
+
+        XCTAssertTrue(isCellPresence(recorder.selections.last, openings[0], openings[1]), "\(recorder.selections)")
+        XCTAssertEqual(spy.errors.map(\.code), [], "a stale cell opening is not a host error")
+        XCTAssertNil(adapter.publishedCollaborationCells, "a refused publication is retried on the next change")
+
+        recorder.rejection = "TRANSPORT_RESOURCE_EXHAUSTED"
+        try adoptEngineCellSelection(adapter, anchor: openings[1], head: openings[1])
+
+        XCTAssertEqual(spy.errors.map(\.code), ["TRANSPORT_RESOURCE_EXHAUSTED"])
     }
 }

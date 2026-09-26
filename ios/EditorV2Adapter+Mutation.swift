@@ -158,8 +158,6 @@ extension EditorV2Adapter {
         if publishMutation, outcome.changed {
             publishCachedCollaborationSelection()
             notifyCollaborationMutation()
-        } else if publishMutation {
-            publishCollaborationCellsIfChanged()
         }
         return NativeMutationRender(
             updateJSON: update,
@@ -310,8 +308,6 @@ extension EditorV2Adapter {
             if changed && publishMutation {
                 publishCachedCollaborationSelection()
                 notifyCollaborationMutation()
-            } else if publishMutation {
-                publishCollaborationCellsIfChanged()
             }
             return update
         }

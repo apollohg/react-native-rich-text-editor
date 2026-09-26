@@ -317,7 +317,7 @@ export function serializeRemoteSelections(
         return undefined;
     }
 
-    const normalized = remoteSelections.map(selection => {
+    const normalized = remoteSelections.map(({ cellRectangle, ...selection }) => {
         const clientId = normalizeNativeEditorV2DecimalId(selection.clientId);
 
         if (clientId == null) {
@@ -329,16 +329,16 @@ export function serializeRemoteSelections(
             clientId,
             anchor: requireNativeEditorV2U32(selection.anchor, 'remote selection anchor'),
             head: requireNativeEditorV2U32(selection.head, 'remote selection head'),
-            ...(selection.cellRectangle === undefined
+            ...(cellRectangle == null
                 ? {}
                 : {
                     cellRectangle: {
                         anchorCell: requireNativeEditorV2U32(
-                            selection.cellRectangle.anchorCell,
+                            cellRectangle.anchorCell,
                             'remote selection anchor cell'
                         ),
                         headCell: requireNativeEditorV2U32(
-                            selection.cellRectangle.headCell,
+                            cellRectangle.headCell,
                             'remote selection head cell'
                         ),
                     },

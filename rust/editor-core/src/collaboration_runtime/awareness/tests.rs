@@ -850,4 +850,36 @@ mod table_cell_presence {
             }),
         );
     }
+
+    #[test]
+    fn stale_cell_openings_are_refused_with_the_stale_code_and_keep_presence() {
+        let mut peers = two_table_peers();
+        let cells = table_openings(&peers.publisher);
+        let (anchor, head) = (
+            cells[FIRST_TABLE][TOP_LEFT],
+            cells[FIRST_TABLE][BOTTOM_RIGHT],
+        );
+        let published = peers.publish_cells(anchor, head);
+        let shifted = anchor + 1;
+
+        let error = peers
+            .publisher_runtime
+            .set_awareness_selection(
+                PUBLISHER_REQUEST_ID,
+                &cell_selection(shifted, head).to_string(),
+                context(
+                    &mut peers.publisher,
+                    TransportState::Disconnected,
+                    &peers.limits,
+                ),
+            )
+            .expect_err("an opening that no longer starts a cell is refused");
+
+        assert_eq!(error.code, AWARENESS_CELL_SELECTION_STALE, "{error:?}");
+        assert_eq!(
+            peers.publisher_runtime.desired_awareness(),
+            Some(&published),
+            "a stale refusal leaves the published presence untouched",
+        );
+    }
 }

@@ -261,6 +261,26 @@ internal class EditorCellSelectionAdmissionTest {
     }
 
     @Test
+    fun `room native selection only table command publishes cell presence`() {
+        val backend = RecordingAwarenessBackend()
+        withMountedSelection(gridDocument, 600, 0, 0, backend = backend, roomBound = true) {
+            _, adapter, _ ->
+            assertNotNull("the mounted view owns native intents", adapter.nativeOwnerId)
+            val cells = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+            val first = cells.getJSONObject(0).getInt("sourcePos")
+            val second = cells.getJSONObject(1).getInt("sourcePos")
+            val caret = requireNotNull(adapter.scalarPositionForDoc(first + 2))
+            val before = adapter.documentJson()
+            backend.selections.clear()
+
+            assertNotNull(adapter.commandAtSelection(JSONObject().put("type", "selectTableRows"), caret, caret))
+
+            assertEquals(before, adapter.documentJson())
+            assertTrue("${backend.selections}", backend.selections.last().isCellPresence(first, second))
+        }
+    }
+
+    @Test
     fun `head drag addresses nested only outer cell without selecting its descendant`() =
         withMountedSelection(EditorTableSurfaceMountTest.nestedTableDocument, 900, 0, 2) {
             view, adapter, drawing ->
