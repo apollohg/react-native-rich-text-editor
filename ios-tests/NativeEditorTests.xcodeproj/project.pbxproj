@@ -141,12 +141,14 @@
 		A17000000000000000000011 /* TableCellPositionMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000001 /* TableCellPositionMap.swift */; };
 		A17000000000000000000012 /* EditorTableInputCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000002 /* EditorTableInputCoordinator.swift */; };
 		A17000000000000000000013 /* EditorTableSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000003 /* EditorTableSurface.swift */; };
+		A22E00000000000000000011 /* TableCellEditMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22E00000000000000000001 /* TableCellEditMenu.swift */; };
 		A17000000000000000000014 /* EditorTableInputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000004 /* EditorTableInputTests.swift */; };
 		A17100000000000000000011 /* TableCellPositionMapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17100000000000000000001 /* TableCellPositionMapTests.swift */; };
 		A17200000000000000000011 /* EditorCellSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17200000000000000000001 /* EditorCellSelection.swift */; };
 		A17900000000000000000011 /* TableInteractionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17900000000000000000001 /* TableInteractionController.swift */; };
 		A18000000000000000000011 /* EditorTableNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000001 /* EditorTableNavigationTests.swift */; };
 		A22A00000000000000000012 /* EditorTableInputTests+Clipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22A00000000000000000002 /* EditorTableInputTests+Clipboard.swift */; };
+		A22E00000000000000000012 /* EditorTableInputTests+EditMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22E00000000000000000002 /* EditorTableInputTests+EditMenu.swift */; };
 		A18000000000000000000012 /* EditorTableArrowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000002 /* EditorTableArrowTests.swift */; };
 		A1FDE75D46491CC308103AEB /* NativeCollaborationTransport+Socket.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAEB95008867BEACFCE6D79C /* NativeCollaborationTransport+Socket.swift */; };
 		A2C0EC2E33ED65750D0AADD6 /* SharedNativeImagePipeline+Cache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CAA13163533CC9538155141 /* SharedNativeImagePipeline+Cache.swift */; };
@@ -373,12 +375,14 @@
 		A17000000000000000000001 /* TableCellPositionMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellPositionMap.swift; sourceTree = "<group>"; };
 		A17000000000000000000002 /* EditorTableInputCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableInputCoordinator.swift; sourceTree = "<group>"; };
 		A17000000000000000000003 /* EditorTableSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableSurface.swift; sourceTree = "<group>"; };
+		A22E00000000000000000001 /* TableCellEditMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellEditMenu.swift; sourceTree = "<group>"; };
 		A17000000000000000000004 /* EditorTableInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableInputTests.swift; sourceTree = "<group>"; };
 		A17100000000000000000001 /* TableCellPositionMapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellPositionMapTests.swift; sourceTree = "<group>"; };
 		A17200000000000000000001 /* EditorCellSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorCellSelection.swift; sourceTree = "<group>"; };
 		A17900000000000000000001 /* TableInteractionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableInteractionController.swift; sourceTree = "<group>"; };
 		A18000000000000000000001 /* EditorTableNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableNavigationTests.swift; sourceTree = "<group>"; };
 		A22A00000000000000000002 /* EditorTableInputTests+Clipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorTableInputTests+Clipboard.swift"; sourceTree = "<group>"; };
+		A22E00000000000000000002 /* EditorTableInputTests+EditMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorTableInputTests+EditMenu.swift"; sourceTree = "<group>"; };
 		A18000000000000000000002 /* EditorTableArrowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableArrowTests.swift; sourceTree = "<group>"; };
 		A183A542FD912C410D3A2B03 /* PreparedProseMeasurementsManager.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PreparedProseMeasurementsManager.mm; sourceTree = "<group>"; };
 		A1D514F4A4442129867A82DE /* RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift"; sourceTree = "<group>"; };
@@ -697,6 +701,7 @@
 				A17000000000000000000001 /* TableCellPositionMap.swift */,
 				A17000000000000000000002 /* EditorTableInputCoordinator.swift */,
 				A17000000000000000000003 /* EditorTableSurface.swift */,
+				A22E00000000000000000001 /* TableCellEditMenu.swift */,
 				A17900000000000000000001 /* TableInteractionController.swift */,
 				A17200000000000000000001 /* EditorCellSelection.swift */,
 			);
@@ -714,6 +719,7 @@
 				A17000000000000000000004 /* EditorTableInputTests.swift */,
 				A18000000000000000000001 /* EditorTableNavigationTests.swift */,
 				A22A00000000000000000002 /* EditorTableInputTests+Clipboard.swift */,
+				A22E00000000000000000002 /* EditorTableInputTests+EditMenu.swift */,
 				A18000000000000000000002 /* EditorTableArrowTests.swift */,
 				A17100000000000000000001 /* TableCellPositionMapTests.swift */,
 				0A70A1000000000000000002 /* AtomMountingTests.swift */,
@@ -1302,11 +1308,13 @@
 				A17000000000000000000011 /* TableCellPositionMap.swift in Sources */,
 				A17000000000000000000012 /* EditorTableInputCoordinator.swift in Sources */,
 				A17000000000000000000013 /* EditorTableSurface.swift in Sources */,
+				A22E00000000000000000011 /* TableCellEditMenu.swift in Sources */,
 				A17900000000000000000011 /* TableInteractionController.swift in Sources */,
 				A17200000000000000000011 /* EditorCellSelection.swift in Sources */,
 				A17000000000000000000014 /* EditorTableInputTests.swift in Sources */,
 				A18000000000000000000011 /* EditorTableNavigationTests.swift in Sources */,
 				A22A00000000000000000012 /* EditorTableInputTests+Clipboard.swift in Sources */,
+				A22E00000000000000000012 /* EditorTableInputTests+EditMenu.swift in Sources */,
 				A18000000000000000000012 /* EditorTableArrowTests.swift in Sources */,
 				A17100000000000000000011 /* TableCellPositionMapTests.swift in Sources */,
 			);

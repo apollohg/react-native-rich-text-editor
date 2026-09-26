@@ -122,6 +122,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         recognizer.delegate = self
         return recognizer
     }()
+    private var tableCellTapTimestamp: TimeInterval = 0
     var tableCellBindingAuthority: ((EditorV2Adapter) -> Bool)?
 
     var activeTextInput: EditorTextView {
@@ -750,6 +751,9 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         textView.rootTableNativeOwnerAuthority = { [weak self] adapter in
             self?.hasTableCellBindingAuthority(adapter) ?? false
         }
+        textView.onFirstResponderResigned = { [weak self] in
+            self?.tableSurface.dismissCellEditMenu()
+        }
         textView.onAuthoritativeRenderApplied = { [weak self] updateJSON in
             self?.refreshTablePresentation()
             self?.refreshActiveTableCell(after: updateJSON)
@@ -1314,13 +1318,20 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
               touch.tapCount == 1
         else { return false }
         let point = touch.location(in: tableSurface)
-        return !tableSurface.hasSelectionHandle(at: point) && tableSurface.cellHit(at: point) != nil
+        guard !tableSurface.hasSelectionHandle(at: point), tableSurface.cellHit(at: point) != nil else { return false }
+        tableCellTapTimestamp = touch.timestamp
+        return true
     }
 
     @objc
     private func handleTableCellTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended else { return }
-        _ = activateTableCell(at: recognizer.location(in: tableSurface))
+        tapTableCell(at: recognizer.location(in: tableSurface), touchedAt: tableCellTapTimestamp)
+    }
+
+    func tapTableCell(at point: CGPoint, touchedAt timestamp: TimeInterval) {
+        guard !tableSurface.toggleCellEditMenu(at: point, touchedAt: timestamp) else { return }
+        _ = activateTableCell(at: point)
     }
 
     @discardableResult

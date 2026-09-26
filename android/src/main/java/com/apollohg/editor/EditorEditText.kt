@@ -255,6 +255,7 @@ class EditorEditText @JvmOverloads constructor(
     internal var rootTableSelectionInputBlocked = false
     internal var authoritativeCellSelectionActive = false
     internal var cellSelectionRootTouchPending = false
+    internal var cellEditMenuReplacesTextMenu = false
     internal var rootTableRenderNeedsRefresh = false
     internal var authorizedVisibleTextNeedsRebuild = false
     internal var logicalSelectionSnapshot: LogicalSelectionSnapshot? = null

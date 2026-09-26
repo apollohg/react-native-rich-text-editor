@@ -1698,7 +1698,8 @@ final class EditorTableInputTests: XCTestCase {
             let payload = try XCTUnwrap(fixture.recorder.payloads.first)
             XCTAssertEqual(Set(payload.keys).subtracting(["keyboard"]),
                            ["editorId", "documentRevision", "layoutEpoch", "tablePos",
-                            "coordinateSpace", "rects", "viewport", "safeArea"])
+                            "coordinateSpace", "rects", "viewport", "safeArea", "editMenuVisible"])
+            XCTAssertEqual(payload["editMenuVisible"] as? Bool, false, "no native edit menu is showing")
             let window = try XCTUnwrap(fixture.host.window)
             XCTAssertEqual(try GeometryRecorder.rect(try XCTUnwrap(payload["safeArea"] as? [String: Double])),
                            window.bounds.inset(by: window.safeAreaInsets),
@@ -1718,6 +1719,29 @@ final class EditorTableInputTests: XCTestCase {
             for rect in rects {
                 XCTAssertTrue(viewport.contains(rect), "\(rect) lies inside the window-space editor \(viewport)")
             }
+        }
+    }
+
+    func testNativeCellEditMenuVisibilityIsRepublishedForTheToolbarToYield() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            try fixture.selectCells(anchor: 0, head: 3)
+            waitForGeometryFrame()
+            let surface = try XCTUnwrap(fixture.host.richTextView.subviews.compactMap { $0 as? EditorTableSurface }.first)
+            XCTAssertEqual(fixture.recorder.payloads.last?["editMenuVisible"] as? Bool, false)
+
+            surface.presentCellEditMenu()
+            XCTAssertTrue(surface.isCellEditMenuVisible, "the menu presents over the focused cell selection")
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 2, "showing the menu republishes once: \(fixture.recorder.payloads)")
+            XCTAssertEqual(fixture.recorder.payloads.last?["editMenuVisible"] as? Bool, true)
+            assertRects(try fixture.recorder.rects(at: 1), try fixture.recorder.rects(at: 0),
+                        "the menu does not move the selection geometry")
+
+            surface.dismissCellEditMenu()
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 3, "\(fixture.recorder.payloads)")
+            XCTAssertEqual(fixture.recorder.payloads.last?["editMenuVisible"] as? Bool, false,
+                           "the toolbar returns once the menu closes")
         }
     }
 

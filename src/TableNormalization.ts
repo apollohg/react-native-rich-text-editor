@@ -22,6 +22,7 @@ export type NativeTableSelectionGeometry =
           kind: 'geometry';
           geometry: Omit<TableSelectionGeometry, 'ownerId'>;
           obstructions: TableToolbarObstructions;
+          editMenuVisible: boolean;
       };
 
 type TableSelectionRect = TableSelectionGeometry['viewport'];
@@ -48,6 +49,7 @@ const TABLE_SELECTION_GEOMETRY_FIELDS = [
     'rects',
     'viewport',
     'safeArea',
+    'editMenuVisible',
 ];
 const TABLE_SELECTION_KEYBOARD_FIELD = 'keyboard';
 const TABLE_HEADER_TARGETS: readonly TableHeaderTarget[] = [ 'row', 'column', 'cell' ];
@@ -304,6 +306,7 @@ export function normalizeNativeTableSelectionGeometry(
         rects == null ||
         viewport == null ||
         safeArea == null ||
+        typeof payload.editMenuVisible !== 'boolean' ||
         (reportsKeyboard && keyboard == null)
     ) {
         return null;
@@ -321,5 +324,6 @@ export function normalizeNativeTableSelectionGeometry(
             viewport,
         },
         obstructions: { safeArea, keyboard },
+        editMenuVisible: payload.editMenuVisible,
     };
 }

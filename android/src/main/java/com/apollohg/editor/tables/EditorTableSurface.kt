@@ -34,6 +34,7 @@ import com.apollohg.editor.TableMutationAdmission
 import com.apollohg.editor.tableMutationAdmission
 import com.apollohg.editor.admitsTableMutation
 import com.apollohg.editor.cachedAtomicRenderSelection
+import com.apollohg.editor.cellSelectionEndpoints
 import com.apollohg.editor.RichTextEditorView
 import com.apollohg.editor.canonicalV2U64
 import com.apollohg.editor.exactV2U32
@@ -80,7 +81,8 @@ internal data class TableSelectionGeometry(
     val tablePos: UInt,
     val rects: List<RectF>,
     val viewport: RectF,
-    val obstructions: TableSelectionObstructions
+    val obstructions: TableSelectionObstructions,
+    val editMenuVisible: Boolean
 ) {
     fun eventPayload(): Map<String, Any> = buildMap {
         put("editorId", editorId)
@@ -91,6 +93,7 @@ internal data class TableSelectionGeometry(
         put("rects", rects.map(::rectPayload))
         put("viewport", rectPayload(viewport))
         put("safeArea", rectPayload(obstructions.safeArea))
+        put("editMenuVisible", editMenuVisible)
         obstructions.keyboard?.let { put("keyboard", rectPayload(it)) }
     }
 
@@ -132,14 +135,19 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
         onTableGeometryChanged = {
             positionActiveInput()
-            onSelectionGeometryMayChange?.invoke()
+            selectionGeometryMayChange()
         }
         onTableTap = { downX, downY, upX, upY ->
             val target = hitCell(downX, downY)
             target != null && target == hitCell(upX, upY) &&
-                activateCell(target.first, target.second, upX, upY)
+                (toggleCellEditMenu(upX, upY) || activateCell(target.first, target.second, upX, upY))
         }
     }
+    private val cellEditMenu by lazy {
+        TableCellEditMenu(host.editorEditText, ::cellEditMenuAnchor) { onSelectionGeometryMayChange?.invoke() }
+    }
+    private var cellEditMenuSelection: Triple<String, Int, Int>? = null
+    val isCellEditMenuVisible: Boolean get() = cellEditMenu.isVisible
     private data class ActiveCell(val tableId: String, val cellIndex: Int, val sourcePos: Long)
     private var activeCell: ActiveCell? = null
     private var applyingCellUpdate = false
@@ -314,6 +322,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             as? EditorCellSelection.Drawable ?: return false
         if (resolved.tableId != handle.tableId) return false
         cancelActiveDrag()
+        dismissCellEditMenu()
         drawingView.cancelTableInteraction()
         activeDrag = HandleDrag(adapter, admission, handle.role, event.getPointerId(0), epoch,
             event.x - drawingView.left - handle.x, event.y - drawingView.top - handle.y,
@@ -417,8 +426,14 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
                     drag.screenY = viewportY(event.y)
                     retargetDrag(drag)
                 }
-                if (completes && drag is ResizeDrag && activeDrag === drag) commitResizeDrag(drag)
-                else cancelActiveDrag()
+                when {
+                    completes && drag is ResizeDrag && activeDrag === drag -> commitResizeDrag(drag)
+                    completes && drag is HandleDrag && activeDrag === drag -> {
+                        discardActiveDrag()
+                        presentCellEditMenu()
+                    }
+                    else -> cancelActiveDrag()
+                }
                 return true
             }
         }
@@ -550,12 +565,85 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         reserve(emptyMap())
         drawingView.install(null)
         (drawingView.parent as? ViewGroup)?.removeView(drawingView)
-        onSelectionGeometryMayChange?.invoke()
+        selectionGeometryMayChange()
     }
 
     fun refresh() {
         refreshPresentation()
+        val root = host.editorEditText
+        if (root.cellEditMenuReplacesTextMenu) {
+            root.cellEditMenuReplacesTextMenu = false
+            presentCellEditMenu()
+        }
+        selectionGeometryMayChange()
+    }
+
+    private fun selectionGeometryMayChange() {
+        refreshCellEditMenu()
         onSelectionGeometryMayChange?.invoke()
+    }
+
+    private fun currentCellSelection(root: EditorEditText): Triple<String, Int, Int>? {
+        val adapter = root.v2Driver as? EditorV2Adapter ?: return null
+        if (adapter.destroyed) return null
+        val selection = adapter.cachedAtomicRenderSelection() ?: return null
+        val (anchor, head) = cellSelectionEndpoints(selection) ?: return null
+        val tableId = drawingView.selectedTableCellSourcePositions.keys.firstOrNull() ?: return null
+        return Triple(tableId, anchor, head)
+    }
+
+    private fun cellEditMenuSelection(): Triple<String, Int, Int>? {
+        val root = host.editorEditText
+        if (!root.isAttachedToWindow || !root.hasFocus() || activeCell != null ||
+            !root.authoritativeCellSelectionActive) return null
+        return currentCellSelection(root)
+    }
+
+    private fun visibleSelectedCellRects(tableId: String, viewport: RectF): List<RectF>? =
+        drawingView.selectedTableCellRects(tableId)?.mapNotNull { rect ->
+            RectF(rect).takeIf { it.intersect(viewport) }
+        }
+
+    private fun cellEditMenuAnchor(): Rect? {
+        val root = host.editorEditText
+        val tableId = cellEditMenuSelection()?.first ?: return null
+        val visible = Rect()
+        if (!drawingView.getLocalVisibleRect(visible)) return null
+        val union = visibleSelectedCellRects(tableId, RectF(visible))
+            ?.reduceOrNull { total, rect -> total.apply { union(rect) } } ?: return null
+        val drawingOrigin = IntArray(2).also(drawingView::getLocationInWindow)
+        val rootOrigin = IntArray(2).also(root::getLocationInWindow)
+        union.offset((drawingOrigin[0] - rootOrigin[0]).toFloat(), (drawingOrigin[1] - rootOrigin[1]).toFloat())
+        return Rect().also(union::roundOut)
+    }
+
+    private fun refreshCellEditMenu() {
+        if (!cellEditMenu.isVisible) return
+        val selection = cellEditMenuSelection()
+        if (selection == null || selection != cellEditMenuSelection) {
+            dismissCellEditMenu()
+            return
+        }
+        cellEditMenu.reanchor()
+    }
+
+    fun presentCellEditMenu() {
+        if (activeDrag != null) return
+        val selection = cellEditMenuSelection() ?: return
+        cellEditMenuSelection = selection
+        cellEditMenu.present()
+    }
+
+    fun dismissCellEditMenu() = cellEditMenu.dismiss()
+
+    private fun toggleCellEditMenu(x: Float, y: Float): Boolean {
+        val tableId = cellEditMenuSelection()?.first ?: return false
+        val presented = presentedCellAt(x, y) ?: return false
+        if (entries[tableId]?.surface !== presented.surface ||
+            presented.sourcePosition !in drawingView.selectedTableCellSourcePositions[tableId].orEmpty()
+        ) return false
+        if (cellEditMenu.isVisible) dismissCellEditMenu() else presentCellEditMenu()
+        return true
     }
 
     private fun refreshPresentation() {
@@ -710,7 +798,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         drawingView.install(PreparedProseLayout(key, width, height, blocks,
             retainedBytes = blocks.sumOf { it.retainedBytes }))
         positionActiveInput()
-        onSelectionGeometryMayChange?.invoke()
+        selectionGeometryMayChange()
     }
 
     fun selectionGeometry(obstructions: TableSelectionObstructions): TableSelectionGeometry? {
@@ -720,10 +808,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         val tableId = drawingView.selectedTableCellSourcePositions.keys.firstOrNull() ?: return null
         val tablePos = exactV2U32(adapter.cachedTableRecords[tableId]?.opt("tablePos") as? Number)
             ?: return null
-        val cellRects = drawingView.selectedTableCellRects(tableId) ?: return null
         val visible = Rect()
         if (drawingView.windowToken == null || !drawingView.getLocalVisibleRect(visible)) return null
         val viewport = RectF(visible)
+        val cellRects = visibleSelectedCellRects(tableId, viewport) ?: return null
         val origin = IntArray(2).also(drawingView::getLocationInWindow)
         val density = drawingView.resources.displayMetrics.density
         fun windowRect(rect: RectF) = RectF(
@@ -735,11 +823,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             documentRevision = documentRevision.toString(),
             layoutEpoch = layoutEpoch,
             tablePos = tablePos,
-            rects = cellRects.mapNotNull { rect ->
-                RectF(rect).takeIf { it.intersect(viewport) }?.let(::windowRect)
-            },
+            rects = cellRects.map(::windowRect),
             viewport = windowRect(viewport),
-            obstructions = obstructions
+            obstructions = obstructions,
+            editMenuVisible = cellEditMenu.isVisible
         )
     }
 
@@ -779,10 +866,13 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         return !blockedRootGesture
     }
 
-    private fun hitCell(x: Float, y: Float): Pair<String, Int>? {
-        val presented = drawingView.presentedTableCells().asReversed().firstOrNull {
+    private fun presentedCellAt(x: Float, y: Float) =
+        drawingView.presentedTableCells().asReversed().firstOrNull {
             it.bounds.contains(x, y) && it.clip.contains(x, y)
-        } ?: return null
+        }
+
+    private fun hitCell(x: Float, y: Float): Pair<String, Int>? {
+        val presented = presentedCellAt(x, y) ?: return null
         val tableId = entries.entries.firstOrNull { it.value.surface === presented.surface }?.key
             ?: return null
         return tableId to (presented.cell.sourceCellIndex ?: return null)

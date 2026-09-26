@@ -1,11 +1,15 @@
 package com.apollohg.editor
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Looper
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
+import android.widget.FrameLayout
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -13,12 +17,16 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import com.apollohg.editor.viewer.PreparedProseDrawingView
+import com.apollohg.editor.viewer.TableSelectionHandleRole
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [34], qualifiers = "w960dp-h640dp")
 internal class EditorTableClipboardTest {
     private class RecordingBackend : EditorV2Backend by UniffiEditorV2Backend {
         val mutations = mutableListOf<String>()
@@ -64,6 +72,21 @@ internal class EditorTableClipboardTest {
             assertTrue("root did not adopt the cell selection", root.authoritativeCellSelectionActive)
             backend.mutations.clear()
             updates.clear()
+        }
+
+        fun relayout() {
+            view.measure(
+                View.MeasureSpec.makeMeasureSpec(VIEW_WIDTH, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(VIEW_HEIGHT, View.MeasureSpec.EXACTLY)
+            )
+            view.layout(0, 0, VIEW_WIDTH, VIEW_HEIGHT)
+            val drawing = view.editorTableSurface.drawingView
+            drawing.measure(
+                View.MeasureSpec.makeMeasureSpec(root.width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.EXACTLY)
+            )
+            drawing.layout(0, 0, drawing.measuredWidth, drawing.measuredHeight)
+            shadowOf(Looper.getMainLooper()).idle()
         }
 
         fun selectText(docPos: Int) {
@@ -128,6 +151,7 @@ internal class EditorTableClipboardTest {
     private fun withTable(
         document: String,
         schemaConfig: String = TABLE_CONFIG,
+        attached: Boolean = false,
         block: (Fixture) -> Unit
     ) {
         val created = UniffiEditorV2Backend.create(schemaConfig, null) as EditorV2CallResult.Ok
@@ -137,7 +161,11 @@ internal class EditorTableClipboardTest {
         )
         val token = EditorV2Registry.register(adapter)
         try {
-            val view = RichTextEditorView(RuntimeEnvironment.getApplication())
+            val activity = if (attached) Robolectric.buildActivity(Activity::class.java).setup() else null
+            val view = RichTextEditorView(activity?.get() ?: RuntimeEnvironment.getApplication())
+            activity?.get()?.setContentView(FrameLayout(activity.get()).apply {
+                addView(view, FrameLayout.LayoutParams(VIEW_WIDTH, VIEW_HEIGHT))
+            })
             view.editorId = token
             assertTrue(view.editorEditText.applyUpdateJSON(requireNotNull(adapter.setContentJson(document))))
             view.measure(
@@ -154,7 +182,12 @@ internal class EditorTableClipboardTest {
                 override fun onSelectionChanged(anchor: Int, head: Int) = Unit
             }
             assertFalse("fixture must start without history", requireNotNull(adapter.historyCanUndo()))
-            block(Fixture(token, view, adapter, backend, updates))
+            if (attached) shadowOf(Looper.getMainLooper()).idle()
+            try {
+                block(Fixture(token, view, adapter, backend, updates))
+            } finally {
+                activity?.pause()?.stop()?.destroy()
+            }
         } finally {
             EditorV2Registry.remove(adapter.editorId)
             adapter.destroy()
@@ -365,6 +398,205 @@ internal class EditorTableClipboardTest {
             assertOneUndoableMutation(fixture, PASTE_COMMAND, before)
         }
 
+    private fun drawing(fixture: Fixture): PreparedProseDrawingView = fixture.view.editorTableSurface.drawingView
+
+    private fun cellCenter(fixture: Fixture, cell: Int): Pair<Float, Float> {
+        val drawing = drawing(fixture)
+        val opening = fixture.openings()[cell]
+        val presented = drawing.presentedTableCells().single { it.sourcePosition == opening }
+        return presented.bounds.centerX() + drawing.left to presented.bounds.centerY() + drawing.top
+    }
+
+    private fun dispatchFrameTouches(fixture: Fixture, points: List<Pair<Int, Pair<Float, Float>>>) {
+        points.forEachIndexed { index, (action, point) ->
+            val event = MotionEvent.obtain(0, TOUCH_STEP_MS * index, action, point.first, point.second, 0)
+            try { fixture.view.editorContentFrame.dispatchTouchEvent(event) } finally { event.recycle() }
+        }
+    }
+
+    private fun dragHead(fixture: Fixture, toCell: Int) {
+        val drawing = drawing(fixture)
+        val head = drawing.selectionHandles().single { it.role == TableSelectionHandleRole.HEAD }
+        val target = cellCenter(fixture, toCell)
+        dispatchFrameTouches(fixture, listOf(
+            MotionEvent.ACTION_DOWN to (head.x + drawing.left to head.y + drawing.top),
+            MotionEvent.ACTION_MOVE to target,
+            MotionEvent.ACTION_UP to target
+        ))
+        assertEquals("the drag must land on the target cell",
+            fixture.openings()[toCell], fixture.engineSelection().getInt("headCell"))
+    }
+
+    private fun tapCell(fixture: Fixture, cell: Int) {
+        val center = cellCenter(fixture, cell)
+        dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_DOWN to center, MotionEvent.ACTION_UP to center))
+    }
+
+    private fun showMenuByDraggingHead(fixture: Fixture, anchor: Int, head: Int, toCell: Int) {
+        val openings = fixture.openings()
+        fixture.selectCells(openings[anchor], openings[head])
+        fixture.relayout()
+        dragHead(fixture, toCell)
+        assertTrue("a completed handle drag shows the cell menu",
+            fixture.view.editorTableSurface.isCellEditMenuVisible)
+        fixture.backend.mutations.clear()
+        fixture.updates.clear()
+    }
+
+    private fun menuItemIds(fixture: Fixture): List<Int> {
+        val mode = requireNotNull(fixture.root.selectionActionMode) { "no action mode is showing" }
+        assertTrue("the cell menu owns the action mode slot", mode.tag !== TextSelectionActionMode)
+        return (0 until mode.menu.size()).map { mode.menu.getItem(it).itemId }
+    }
+
+    private fun clickMenuItem(fixture: Fixture, id: Int) {
+        val mode = requireNotNull(fixture.root.selectionActionMode)
+        assertTrue("menu item $id was not handled", mode.menu.performIdentifierAction(id, 0))
+        assertFalse("an item closes the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+    }
+
+    @Test
+    fun `handle drag end shows a floating cell menu with cut copy and paste`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
+            showMenuByDraggingHead(fixture, FIRST_CELL, FIRST_CELL, LAST_CELL)
+            assertEquals(CELL_MENU_ITEMS, menuItemIds(fixture))
+            val menu = requireNotNull(fixture.root.selectionActionMode).menu
+            assertTrue((0 until menu.size()).all { !menu.getItem(it).title.isNullOrEmpty() })
+        }
+
+    @Test
+    fun `copy menu item copies the cells without a mutation`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            showMenuByDraggingHead(fixture, FIRST_CELL, FIRST_CELL, SECOND_CELL)
+            val before = fixture.adapter.documentJson()
+            clickMenuItem(fixture, android.R.id.copy)
+            assertEquals(FIRST_ROW_TSV, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
+            assertEquals("copy must not mutate", emptyList<String>(), fixture.backend.mutations)
+            assertEquals(0, fixture.updates.size)
+            assertEquals(before, fixture.adapter.documentJson())
+        }
+
+    @Test
+    fun `cut menu item clears the cells in one undoable mutation`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            showMenuByDraggingHead(fixture, FIRST_CELL, FIRST_CELL, SECOND_CELL)
+            val before = fixture.adapter.documentJson()
+            clickMenuItem(fixture, android.R.id.cut)
+            assertEquals(FIRST_ROW_TSV, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
+            assertEquals(listOf(listOf("", ""), listOf("C", "D")), fixture.cellTexts())
+            assertOneUndoableMutation(fixture, DELETE_BACKWARD_COMMAND, before)
+        }
+
+    @Test
+    fun `paste menu item fills the selection in one undoable mutation`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
+            showMenuByDraggingHead(fixture, FIRST_CELL, FIRST_CELL, LAST_CELL)
+            val before = fixture.adapter.documentJson()
+            clickMenuItem(fixture, android.R.id.paste)
+            assertEquals(listOf(listOf("w", "x"), listOf("y", "z")), fixture.cellTexts())
+            assertOneUndoableMutation(fixture, PASTE_COMMAND, before)
+        }
+
+    @Test
+    fun `paste menu item is absent with an empty clipboard`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            clipboard().clearPrimaryClip()
+            showMenuByDraggingHead(fixture, FIRST_CELL, FIRST_CELL, SECOND_CELL)
+            assertEquals(listOf(android.R.id.cut, android.R.id.copy), menuItemIds(fixture))
+        }
+
+    @Test
+    fun `read only nested cells offer only copy in the cell menu`() =
+        withTable(EditorTableSurfaceMountTest.nestedTableDocument, attached = true) { fixture ->
+            clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
+            val nested = fixture.openings(NESTED_TABLE).first()
+            fixture.selectCells(nested, nested)
+            fixture.relayout()
+            fixture.view.editorTableSurface.presentCellEditMenu()
+            assertEquals(listOf(android.R.id.copy), menuItemIds(fixture))
+            assertEquals(emptyList<String>(), fixture.backend.mutations)
+        }
+
+    @Test
+    fun `a view that does not own the table offers only copy`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            clipboard().setPrimaryClip(ClipData.newPlainText(STALE_LABEL, PASTED_GRID_TSV))
+            val openings = fixture.openings()
+            fixture.selectCells(openings[FIRST_CELL], openings[LAST_CELL])
+            val stale = fixture.nonOwnerView().editorEditText
+            assertTrue(stale.authoritativeCellSelectionActive)
+            assertEquals(listOf(android.R.id.copy),
+                CELL_MENU_ITEMS.filter(stale::canPerformCellSelectionMenuItem))
+            assertEquals(CELL_MENU_ITEMS, CELL_MENU_ITEMS.filter(fixture.root::canPerformCellSelectionMenuItem))
+        }
+
+    @Test
+    fun `a text action mode is replaced by the cell menu and the two never coexist`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            val text = requireNotNull(fixture.root.text).toString()
+            val after = text.indexOf(AFTER_TEXT)
+            fixture.relayout()
+            fixture.root.setSelection(after, after + AFTER_TEXT.length)
+            fixture.root.interaction.startSelectionActionMode()
+            val textMenu = requireNotNull(fixture.root.selectionActionMode)
+            assertTrue(textMenu.tag === TextSelectionActionMode)
+
+            val openings = fixture.openings()
+            fixture.selectCells(openings[FIRST_CELL], openings[SECOND_CELL])
+            assertTrue("the cell menu replaces the text menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertTrue(fixture.root.selectionActionMode !== textMenu)
+            assertEquals(CELL_MENU_ITEMS.filter { it != android.R.id.paste || clipboard().hasPrimaryClip() },
+                menuItemIds(fixture))
+
+            fixture.root.interaction.startSelectionActionMode()
+            assertFalse("a text menu closes the cell menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertTrue(requireNotNull(fixture.root.selectionActionMode).tag === TextSelectionActionMode)
+        }
+
+    @Test
+    fun `tap inside the selection toggles the menu and a tap outside edits that cell`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            val openings = fixture.openings()
+            fixture.selectCells(openings[FIRST_CELL], openings[SECOND_CELL])
+            fixture.relayout()
+            tapCell(fixture, FIRST_CELL)
+            assertTrue(fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertTrue("the tap keeps the cell selection", fixture.root.authoritativeCellSelectionActive)
+            tapCell(fixture, SECOND_CELL)
+            assertFalse(fixture.view.editorTableSurface.isCellEditMenuVisible)
+            tapCell(fixture, FIRST_CELL)
+            assertTrue(fixture.view.editorTableSurface.isCellEditMenuVisible)
+
+            tapCell(fixture, LAST_CELL)
+            assertFalse("leaving the cell selection closes the menu",
+                fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertTrue("the outside tap edits that cell", fixture.view.activeTextInput !== fixture.root)
+            assertEquals(emptyList<String>(), fixture.backend.mutations.filter { it.startsWith(APPLY_COMMAND) })
+        }
+
+    @Test
+    fun `selection change blur and editor destroy close the cell menu`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            val openings = fixture.openings()
+            showMenuByDraggingHead(fixture, FIRST_CELL, FIRST_CELL, SECOND_CELL)
+            fixture.selectCells(openings[FIRST_CELL], openings[LAST_CELL])
+            assertFalse("a different rectangle closes the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+
+            fixture.view.editorTableSurface.presentCellEditMenu()
+            assertTrue(fixture.view.editorTableSurface.isCellEditMenuVisible)
+            fixture.root.clearFocus()
+            assertFalse("blur closes the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+
+            assertTrue(fixture.root.requestFocus())
+            fixture.view.editorTableSurface.presentCellEditMenu()
+            assertTrue(fixture.view.editorTableSurface.isCellEditMenuVisible)
+            fixture.view.editorId = 0
+            assertFalse("destroy closes the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertEquals(null, fixture.root.selectionActionMode)
+        }
+
     private companion object {
         const val APPLY_COMMAND = "applyCommand"
         const val APPLY_INPUT = "applyInput"
@@ -372,6 +604,9 @@ internal class EditorTableClipboardTest {
         const val PASTE_COMMAND = "paste"
         const val DELETE_BACKWARD_COMMAND = "deleteBackward"
         const val CELL_SELECTION = "cell"
+        const val TOUCH_STEP_MS = 20L
+        const val AFTER_TEXT = "after"
+        val CELL_MENU_ITEMS = listOf(android.R.id.cut, android.R.id.copy, android.R.id.paste)
         const val TEXT_SELECTION = "text"
         const val EMITTED_ERROR_NOTE = "emit "
         const val CELL_TEXT_OFFSET = 2

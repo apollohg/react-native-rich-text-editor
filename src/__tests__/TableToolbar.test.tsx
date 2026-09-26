@@ -202,6 +202,7 @@ function editorDriver(view: RenderResult, handle: NativeEditorDocumentHandle, in
                         rects: [ LEFT_CELL, RIGHT_CELL ],
                         viewport: VIEWPORT,
                         safeArea: SAFE_AREA,
+                        editMenuVisible: false,
                         ...overrides,
                     },
                 });
@@ -740,6 +741,38 @@ describe('RichTextEditor table toolbar', () => {
         }).toEqual({
             offscreen: { wrapper: null, frames: [] },
             restored: hostOffset(aboveSelection(TOOLBAR_SIZE)),
+            selectionEvents: 0,
+            requests: 0,
+        });
+
+        editor.handle.destroy();
+    });
+
+    it('yields to the native cell edit menu and returns when the menu closes', () => {
+        const editor = renderTableEditor();
+        showToolbar(editor);
+        editor.onSelectionChange.mockClear();
+        const requestsBefore = tableRequestCount();
+
+        editor.driver.emitGeometry({ editMenuVisible: true });
+
+        const yielded = {
+            wrapper: editor.view.queryByTestId(WRAPPER_TEST_ID),
+            frames: editor.driver.registeredFrames(),
+        };
+
+        editor.driver.emitGeometry({ editMenuVisible: false });
+
+        expect({
+            yielded,
+            restored: placedHostFrame(editor.view),
+            restoredFrames: editor.driver.registeredFrames(),
+            selectionEvents: editor.onSelectionChange.mock.calls.length,
+            requests: tableRequestCount() - requestsBefore,
+        }).toEqual({
+            yielded: { wrapper: null, frames: [] },
+            restored: hostOffset(aboveSelection(TOOLBAR_SIZE)),
+            restoredFrames: [ aboveSelection(TOOLBAR_SIZE) ],
             selectionEvents: 0,
             requests: 0,
         });

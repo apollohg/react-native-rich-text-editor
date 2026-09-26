@@ -516,7 +516,7 @@ export function useRichTextEditorPresentation(
         activeState,
         safeViewport: tableToolbarSafeViewport,
         size: tableToolbarSize,
-        enabled: tableToolbarEnabled,
+        enabled: tableToolbarEnabled && tableSelection?.editMenuVisible !== true,
         onError: reportTableToolbarError,
     });
 

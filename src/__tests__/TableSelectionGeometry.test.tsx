@@ -33,6 +33,7 @@ function nativeGeometry(editorId: string, overrides: Record<string, unknown> = {
         rects: [ SELECTED_RECT ],
         viewport: VIEWPORT,
         safeArea: SAFE_AREA,
+        editMenuVisible: false,
         ...overrides,
     };
 }
@@ -150,6 +151,8 @@ describe('native table selection geometry events', () => {
         [ 'a safe area with a NaN height', { safeArea: { ...SAFE_AREA, height: Number.NaN } } ],
         [ 'a null keyboard', { keyboard: null } ],
         [ 'a keyboard with a negative height', { keyboard: { ...SAFE_AREA, height: -1 } } ],
+        [ 'a missing edit menu flag', { editMenuVisible: undefined } ],
+        [ 'a non-boolean edit menu flag', { editMenuVisible: 1 } ],
     ])('rejects %s without delivering anything', (_name, overrides) => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const listener: GeometryListener = jest.fn();

@@ -24,6 +24,8 @@ import android.view.inputmethod.InputMethodManager
 import java.text.BreakIterator
 import kotlin.math.abs
 
+internal object TextSelectionActionMode
+
 internal class EditorTextSurfaceInteraction(
     private val view: EditorTextSurface,
     attrs: AttributeSet? = null,
@@ -377,11 +379,13 @@ internal class EditorTextSurfaceInteraction(
             null
     }
 
-    private fun startSelectionActionMode() {
-        if (view.selectionActionMode != null) {
-            view.selectionActionMode?.invalidate()
+    internal fun startSelectionActionMode() {
+        val current = view.selectionActionMode
+        if (current?.tag === TextSelectionActionMode) {
+            current.invalidate()
             return
         }
+        current?.finish()
         view.selectionActionMode = view.startActionMode(
             object : ActionMode.Callback2() {
                 override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
@@ -424,7 +428,7 @@ internal class EditorTextSurfaceInteraction(
                     return handled
                 }
                 override fun onDestroyActionMode(mode: ActionMode) {
-                    view.selectionActionMode = null
+                    if (view.selectionActionMode === mode) view.selectionActionMode = null
                 }
                 override fun onGetContentRect(mode: ActionMode, target: View, outRect: Rect) {
                     val layout = view.layout
@@ -462,7 +466,7 @@ internal class EditorTextSurfaceInteraction(
                 }
             },
             ActionMode.TYPE_FLOATING
-        )
+        )?.apply { tag = TextSelectionActionMode }
     }
 
     fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {

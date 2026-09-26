@@ -34,7 +34,7 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         val FRAME: Duration = Duration.ofMillis(50)
         val GEOMETRY_KEYS = setOf(
             "editorId", "documentRevision", "layoutEpoch", "tablePos", "coordinateSpace", "rects", "viewport",
-            "safeArea"
+            "safeArea", "editMenuVisible"
         )
         const val STATUS_BAR_PX = 48
         const val NAVIGATION_BAR_PX = 96
@@ -202,7 +202,30 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         val safeArea = rect(payload["safeArea"])
         assertTrue("the visible editor lies inside the window safe area $safeArea", safeArea.contains(viewport))
         assertFalse("no keyboard is reported while the IME is hidden", payload.containsKey("keyboard"))
+        assertEquals("no native edit menu is showing", false, payload["editMenuVisible"])
     }
+
+    @Test
+    fun `native cell edit menu visibility is republished so the toolbar yields`() =
+        withFocusedTable(fourCellTable) { fixture ->
+            fixture.selectCells(0, 3)
+            fixture.nextFrame()
+            assertEquals(1, fixture.payloads.size)
+            val surface = fixture.view.richTextView.editorTableSurface
+
+            surface.presentCellEditMenu()
+            assertTrue("the menu presents over the focused cell selection", surface.isCellEditMenuVisible)
+            fixture.nextFrame()
+            assertEquals("showing the menu republishes once: ${fixture.payloads}", 2, fixture.payloads.size)
+            assertEquals(true, fixture.payloads[1]["editMenuVisible"])
+            assertRects("the menu does not move the selection geometry", rects(fixture.payloads[0]),
+                rects(fixture.payloads[1]))
+
+            surface.dismissCellEditMenu()
+            fixture.nextFrame()
+            assertEquals("${fixture.payloads}", 3, fixture.payloads.size)
+            assertEquals("the toolbar returns once the menu closes", false, fixture.payloads[2]["editMenuVisible"])
+        }
 
     @Test
     fun `window insets republish the safe area and the IME rectangle in dp window space`() =

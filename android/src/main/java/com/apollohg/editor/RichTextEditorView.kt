@@ -277,7 +277,7 @@ class RichTextEditorView @JvmOverloads constructor(
     }
 
     val editorEditText: EditorEditText
-    private val editorTableSurface by lazy { EditorTableSurface(this) }
+    internal val editorTableSurface by lazy { EditorTableSurface(this) }
     val activeTextInput: EditorEditText get() = editorTableSurface.activeInput ?: editorEditText
     internal var onTableCellInputCreated: ((EditorEditText) -> Unit)? = null
 

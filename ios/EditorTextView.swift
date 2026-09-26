@@ -183,6 +183,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
     var onTableCellArrow: ((TableCellArrowDirection) -> Void)?
     var onProjectedUpdate: ((String, Bool) -> Bool)?
     var onAuthoritativeRenderApplied: ((String) -> Void)?
+    var onFirstResponderResigned: (() -> Void)?
     var renderAppearanceRevision: UInt64 = 1
     var lastAppliedRenderAppearanceRevision: UInt64 = 0
 
@@ -487,6 +488,7 @@ final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragD
         }
 
         let didResignFirstResponder = super.resignFirstResponder()
+        if didResignFirstResponder { onFirstResponderResigned?() }
         if wasFirstResponder || didResignFirstResponder {
             _ = drainPendingNativeTextMutation(allowAfterBlur: true, allowWhileIntercepting: true)
             DispatchQueue.main.async { [weak self] in

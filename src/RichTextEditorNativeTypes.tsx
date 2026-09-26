@@ -122,11 +122,16 @@ export interface NativeAtomPosition {
 
 export type NativeTableSelectionGeometryEvent =
     | { editorId: string }
-    | (Omit<TableSelectionGeometry, 'ownerId'> & { safeArea: Rect; keyboard?: Rect });
+    | (Omit<TableSelectionGeometry, 'ownerId'> & {
+          safeArea: Rect;
+          keyboard?: Rect;
+          editMenuVisible: boolean;
+      });
 
 export interface TableToolbarSelection {
     geometry: TableSelectionGeometry;
     obstructions: TableToolbarObstructions;
+    editMenuVisible: boolean;
 }
 
 export interface NativeToolbarActionEvent {

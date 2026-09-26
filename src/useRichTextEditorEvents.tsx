@@ -295,7 +295,11 @@ export function useRichTextEditorEvents(
                 ownerId: toolbarFrameOwnerId,
             };
             deliveredTableSelectionGeometryRef.current = geometry;
-            setTableSelection({ geometry, obstructions: payload.obstructions });
+            setTableSelection({
+                geometry,
+                obstructions: payload.obstructions,
+                editMenuVisible: payload.editMenuVisible,
+            });
             onTableSelectionGeometryChangeRef.current?.(geometry);
         },
         [ documentHandle.isDestroyed,

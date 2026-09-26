@@ -400,7 +400,7 @@ internal fun EditorEditText.applySelectionFromJSON(
                 cellSelectionRootTouchPending = false
                 rootTableSelectionInputBlocked = true
                 retireInputConnectionForEditor()
-                selectionActionMode?.finish()
+                selectionActionMode?.takeIf { it.tag === TextSelectionActionMode }?.finish()
                 val length = text?.length ?: 0
                 setSelection(selectionEnd.coerceIn(0, length))
                 updateAtomBoundaryCursorVisibility()

@@ -82,6 +82,7 @@ struct TableSelectionGeometry: Equatable {
     let rects: [CGRect]
     let viewport: CGRect
     let obstructions: TableSelectionObstructions
+    let editMenuVisible: Bool
 
     var eventPayload: [String: Any] {
         var payload: [String: Any] = [
@@ -91,7 +92,8 @@ struct TableSelectionGeometry: Equatable {
             "coordinateSpace": Self.coordinateSpace,
             "rects": rects.map(Self.rectPayload),
             "viewport": Self.rectPayload(viewport),
-            "safeArea": Self.rectPayload(obstructions.safeArea)
+            "safeArea": Self.rectPayload(obstructions.safeArea),
+            "editMenuVisible": editMenuVisible
         ]
         if let keyboard = obstructions.keyboard {
             payload["keyboard"] = Self.rectPayload(keyboard)
@@ -222,6 +224,12 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private(set) var resizePreview: TableResizePreview?
     private var preparedResizePreview: TableResizePreview?
     var onSelectionGeometryMayChange: (() -> Void)?
+    private lazy var cellEditMenu = TableCellEditMenu(
+        anchor: { [weak self] in self?.cellEditMenuAnchor() },
+        visibilityChanged: { [weak self] in self?.onSelectionGeometryMayChange?() }
+    )
+    private var cellEditMenuEndpoints: TableSelectionEndpoints?
+    var isCellEditMenuVisible: Bool { cellEditMenu.isVisible }
 
     private enum HandleScrollMetrics {
         static let edgeBand: CGFloat = 36
@@ -246,7 +254,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         activeCellClipView.addSubview(inputCoordinator.cellInput)
         drawingView.onTableGeometryChanged = { [weak self] in
             self?.refreshActiveInputFrame()
-            self?.onSelectionGeometryMayChange?()
+            self?.selectionGeometryMayChange()
         }
     }
 
@@ -258,24 +266,28 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         discardActiveDrag()
         selectionGesture.view?.removeGestureRecognizer(selectionGesture)
         resizeGesture.view?.removeGestureRecognizer(resizeGesture)
+        cellEditMenu.interaction.view?.removeInteraction(cellEditMenu.interaction)
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window == nil { discardActiveDrag() }
+        guard window == nil else { return }
+        discardActiveDrag()
+        dismissCellEditMenu()
     }
 
     func installTableInteraction(on host: UIView) {
         interactionHost = host as? RichTextEditorView
         host.addGestureRecognizer(selectionGesture)
         host.addGestureRecognizer(resizeGesture)
+        interactionHost?.textView.addInteraction(cellEditMenu.interaction)
         drawingView.installTableInteraction(on: host)
     }
 
     func present(_ presentation: EditorV2Adapter.EditorTablePresentationSnapshot,
                  selection: EditorCellSelection?, endpoints: (anchor: UInt32, head: UInt32)?, ownerIdentity: String,
                  from textView: EditorTextView) {
-        defer { onSelectionGeometryMayChange?() }
+        defer { selectionGeometryMayChange() }
         drawingView.setTableOwnerIdentity(ownerIdentity)
         latestPresentation = presentation
         if let drag = resizeDrag, !validResizeDrag(drag) { discardActiveDrag() }
@@ -298,7 +310,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     func clearPresentation() {
-        defer { onSelectionGeometryMayChange?() }
+        defer { selectionGeometryMayChange() }
         discardActiveDrag()
         drawingView.setTableOwnerIdentity(nil)
         entries.removeAll()
@@ -319,14 +331,14 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     func clearCellSelection() {
-        defer { onSelectionGeometryMayChange?() }
+        defer { selectionGeometryMayChange() }
         cancelHandleDrag()
         drawingView.selectedTableCellSourcePositions = [:]
         drawingView.selectedTableCellEndpoints = nil
     }
 
     func updateGeometry(from textView: EditorTextView) {
-        defer { onSelectionGeometryMayChange?() }
+        defer { selectionGeometryMayChange() }
         discardInvalidDrag()
         reprepareIfNeeded(from: textView)
         guard !entries.isEmpty else {
@@ -411,10 +423,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
               let layoutEpoch = presentation.positionEpoch,
               let tableID = drawingView.selectedTableCellSourcePositions.keys.first,
               let tablePos = presentation.tableRecords[tableID]?.tablePos,
-              let cellRects = drawingView.selectedTableCellRects(tableID: tableID),
-              let visible = drawingView.tableSelectionViewport()
+              let visible = drawingView.tableSelectionViewport(),
+              let rects = selectedCellRects(tableID: tableID, visibleIn: visible)
         else { return nil }
-        let rects = cellRects.map { $0.intersection(visible) }.filter { !$0.isNull && !$0.isEmpty }
         return TableSelectionGeometry(
             editorId: host.editorId,
             documentRevision: presentation.documentRevision,
@@ -422,8 +433,82 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             tablePos: tablePos,
             rects: rects.map { drawingView.convert($0, to: nil) },
             viewport: drawingView.convert(visible, to: nil),
-            obstructions: obstructions
+            obstructions: obstructions,
+            editMenuVisible: cellEditMenu.isVisible
         )
+    }
+
+    private func selectedCellRects(tableID: String, visibleIn visible: CGRect) -> [CGRect]? {
+        drawingView.selectedTableCellRects(tableID: tableID)?
+            .map { $0.intersection(visible) }
+            .filter { !$0.isNull && !$0.isEmpty }
+    }
+
+    private func selectionGeometryMayChange() {
+        refreshCellEditMenu()
+        onSelectionGeometryMayChange?()
+    }
+
+    private func cellEditMenuTextView() -> EditorTextView? {
+        guard let host = interactionHost, host.window != nil, host.editorId != 0,
+              EditorV2Registry.adapter(forLegacyId: host.editorId) != nil,
+              host.activeTextInput === host.textView,
+              host.textView.authoritativeCellSelectionActive,
+              host.textView.isFirstResponder,
+              drawingView.selectedTableCellEndpoints != nil
+        else { return nil }
+        return host.textView
+    }
+
+    private func visibleSelectedCellRects() -> [CGRect]? {
+        guard let tableID = drawingView.selectedTableCellEndpoints?.tableID,
+              let viewport = interactionViewport(),
+              let rects = selectedCellRects(tableID: tableID, visibleIn: viewport),
+              !rects.isEmpty
+        else { return nil }
+        return rects
+    }
+
+    private func cellEditMenuAnchor() -> CGRect? {
+        guard let textView = cellEditMenuTextView(),
+              let rects = visibleSelectedCellRects()
+        else { return nil }
+        let union = rects.dropFirst().reduce(rects[0]) { $0.union($1) }
+        return drawingView.convert(union, to: textView)
+    }
+
+    private func refreshCellEditMenu() {
+        guard cellEditMenu.isVisible else { return }
+        guard cellEditMenuTextView() != nil,
+              cellEditMenuEndpoints == drawingView.selectedTableCellEndpoints
+        else {
+            dismissCellEditMenu()
+            return
+        }
+        cellEditMenu.reanchor()
+    }
+
+    func presentCellEditMenu() {
+        guard activeDrag == nil, cellEditMenuTextView() != nil else { return }
+        cellEditMenuEndpoints = drawingView.selectedTableCellEndpoints
+        cellEditMenu.present()
+    }
+
+    func dismissCellEditMenu() {
+        cellEditMenu.dismiss()
+    }
+
+    func toggleCellEditMenu(at point: CGPoint, touchedAt timestamp: TimeInterval) -> Bool {
+        let drawingPoint = convert(point, to: drawingView)
+        guard cellEditMenuTextView() != nil,
+              visibleSelectedCellRects()?.contains(where: { $0.contains(drawingPoint) }) == true
+        else { return false }
+        if cellEditMenu.wasVisible(since: timestamp) {
+            dismissCellEditMenu()
+        } else {
+            presentCellEditMenu()
+        }
+        return true
     }
 
     func placeActiveInput(tableID: String, cellIndex: UInt32, fallback contentRect: CGRect) {
@@ -641,22 +726,14 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     )? {
         guard activeDrag == nil,
               let (_, adapter) = hostAllowsTableInteraction(),
-              let ownerID = adapter.nativeOwnerId,
-              let ownerToken = adapter.nativeOwnerToken,
               let viewport = interactionViewport(),
               drawingView.hitSelectionHandle(at: point, visibleIn: viewport) == nil,
               !activeInputContains(point),
               let hit = drawingView.hitResizeEdge(at: point, visibleIn: viewport),
-              entries[hit.edge.tableID] != nil
+              entries[hit.edge.tableID] != nil,
+              let admission = adapter.tableMutationAdmission(tableID: hit.edge.tableID),
+              adapter.admitsTableMutation(admission)
         else { return nil }
-        let admission = EditorV2Adapter.TableMutationAdmission(
-            tableID: hit.edge.tableID,
-            documentRevision: adapter.baseDocumentRevision,
-            presentationGeneration: adapter.tableResetGeneration,
-            ownerID: ownerID,
-            ownerToken: ownerToken
-        )
-        guard adapter.admitsTableMutation(admission) else { return nil }
         return (hit, adapter, admission)
     }
 
@@ -711,8 +788,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         case .changed:
             updateHandleDrag(at: point)
         case .ended:
-            updateHandleDrag(at: point)
-            cancelHandleDrag()
+            endHandleDrag(at: point)
         case .cancelled, .failed:
             cancelHandleDrag()
         default:
@@ -743,6 +819,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         guard let host = interactionHost else { return false }
         cancelActiveDrag()
         guard let actionable = actionableHandle(at: drawingView.convert(hostPoint, from: host)) else { return false }
+        dismissCellEditMenu()
         drawingView.cancelTableMotion()
         let point = drawingView.convert(hostPoint, from: host)
         let offset = CGPoint(x: point.x - actionable.handle.center.x,
@@ -761,6 +838,14 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         drag.windowPoint = host.convert(hostPoint, to: window)
         retargetHandleDrag(drag)
         if activeDrag === drag { scheduleDragFrame() }
+    }
+
+    func endHandleDrag(at hostPoint: CGPoint) {
+        guard handleDrag != nil else { return }
+        updateHandleDrag(at: hostPoint)
+        guard handleDrag != nil else { return }
+        cancelHandleDrag()
+        presentCellEditMenu()
     }
 
     @discardableResult

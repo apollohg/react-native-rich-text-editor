@@ -29,6 +29,7 @@ internal data class EditorClipboardPayload(
 
 internal object EditorClipboard {
     const val MIME_TYPE_FRAGMENT = "application/vnd.apollohg.native-editor.fragment+json"
+    const val MIME_TYPE_ANY_TEXT = "text/*"
     const val EXTRA_FRAGMENT = "com.apollohg.editor.clipboard.FRAGMENT"
 
     fun fromExportJson(json: String): EditorClipboardPayload? = try {
@@ -139,6 +140,21 @@ internal fun EditorEditText.handleCopy(): Boolean {
     if (!prepareForExternalInteractionMutation()) return false
     if (!authoritativeCellSelectionActive) syncCurrentSelectionToRust()
     return publishEngineClipboard(driver)
+}
+
+internal fun EditorEditText.canPerformCellSelectionMenuItem(id: Int): Boolean = when (id) {
+    android.R.id.copy -> authoritativeCellSelectionActive
+    android.R.id.cut -> isEditable && canMutateSelectedTableCells()
+    android.R.id.paste -> isEditable && pasteMode != EditorPasteMode.DISABLED &&
+        canMutateSelectedTableCells() && hasPasteableClip()
+    else -> false
+}
+
+private fun EditorEditText.hasPasteableClip(): Boolean {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return false
+    val description = clipboard.primaryClipDescription ?: return false
+    return description.hasMimeType(EditorClipboard.MIME_TYPE_ANY_TEXT) ||
+        description.hasMimeType(EditorClipboard.MIME_TYPE_FRAGMENT)
 }
 
 private fun EditorEditText.canMutateSelectedTableCells(): Boolean {

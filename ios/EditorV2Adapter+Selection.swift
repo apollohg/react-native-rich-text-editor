@@ -48,19 +48,22 @@ extension EditorV2Adapter {
             && cachedTableRecords[admission.tableID]?["readOnlyDescendants"] as? Bool == false
     }
 
-    func selectedTableCellsMutationAdmission() -> TableMutationAdmission? {
-        guard let ownerID = nativeOwnerId,
-              let ownerToken = nativeOwnerToken,
-              let selection = cachedAtomicRenderSelection(),
-              case let .drawable(tableID, _) = EditorCellSelection.resolve(selection, records: cachedTableRecords)
-        else { return nil }
-        let admission = TableMutationAdmission(
+    func tableMutationAdmission(tableID: String) -> TableMutationAdmission? {
+        guard let ownerID = nativeOwnerId, let ownerToken = nativeOwnerToken else { return nil }
+        return TableMutationAdmission(
             tableID: tableID,
             documentRevision: baseDocumentRevision,
             presentationGeneration: tableResetGeneration,
             ownerID: ownerID,
             ownerToken: ownerToken
         )
+    }
+
+    func selectedTableCellsMutationAdmission() -> TableMutationAdmission? {
+        guard let selection = cachedAtomicRenderSelection(),
+              case let .drawable(tableID, _) = EditorCellSelection.resolve(selection, records: cachedTableRecords),
+              let admission = tableMutationAdmission(tableID: tableID)
+        else { return nil }
         return admitsTableMutation(admission) ? admission : nil
     }
 

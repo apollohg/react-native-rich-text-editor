@@ -99,6 +99,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         )
         return false
     }
+    val textSelectionMenuShowing = selectionActionMode?.tag === TextSelectionActionMode
     val tableSensitiveUpdate = rootTablePositionMap != null || rootTableRenderNeedsRefresh ||
         update.has("tableInputMappings") || containsRootTableElement(update)
     fun advanceDeferred() {
@@ -290,6 +291,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
             selection,
             updateDocumentVersion
         )
+        cellEditMenuReplacesTextMenu = textSelectionMenuShowing && authoritativeCellSelectionActive
     } else {
         logicalSelectionSnapshot = null
     }
