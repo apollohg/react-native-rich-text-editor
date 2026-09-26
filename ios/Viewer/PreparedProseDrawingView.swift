@@ -765,6 +765,17 @@ public final class PreparedProseDrawingView: UIView {
             )
         case let .table(table):
             element = tableAccessibilityElement(table)
+        case let .detachedFrame(frame):
+            let generation = accessibilityPresentationGeneration
+            element = TableAccessibilityFrameElement(
+                container: self, tableID: frame.tableID, frame: frame.frame,
+                editing: { [weak self] in
+                    self?.isCurrentAccessibilityGeneration(generation) == true ? self?.tableAccessibilityEditing : nil
+                },
+                screenFrame: { [weak self] in
+                    self?.isCurrentAccessibilityGeneration(generation) == true ? frame.screenFrame() : .zero
+                }
+            )
         }
         accessibilityElementsByIndex[index] = element
         return element
@@ -840,9 +851,23 @@ public final class PreparedProseDrawingView: UIView {
             return cached.items
         }
         guard let layout, let snapshot = presentationSnapshot() else { return [] }
-        let items = TableAccessibility.items(snapshot: snapshot, root: layout, nodes: accessibilityNodes(in: snapshot))
+        let items = TableAccessibility.items(
+            snapshot: snapshot, root: layout, nodes: accessibilityNodes(in: snapshot),
+            detachedFrames: tableAccessibilityEditing?.detachedTableAccessibilityFrames() ?? []
+        )
         accessibilityItemsCache = (accessibilityPresentationGeneration, items)
         return items
+    }
+
+    func invalidateTableAccessibility() {
+        invalidateAccessibilityNodes()
+    }
+
+    func tableAccessibilityCell(tableID: String, sourceCellIndex: Int) -> TableAccessibilityCell? {
+        accessibilityItems.lazy.compactMap { item -> TableAccessibilityCell? in
+            guard case let .table(table) = item, table.identity == tableID else { return nil }
+            return table.cells.first { $0.sourceCellIndex == sourceCellIndex }
+        }.first
     }
 
     func isCurrentAccessibilityGeneration(_ generation: Int) -> Bool {

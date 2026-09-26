@@ -120,6 +120,7 @@ struct TableAccessibilityTable {
     let cells: [TableAccessibilityCell]
 
     var identity: String { presented.surface.identity }
+    var tablePos: UInt32? { presented.surface.sourceTable?.tablePos }
 
     var frame: Frame? {
         guard cells.isEmpty else { return nil }
@@ -153,6 +154,7 @@ struct TableAccessibilityTable {
 enum TableAccessibilityItem {
     case node(ViewerTablePresentedAccessibilityNode)
     case table(TableAccessibilityTable)
+    case detachedFrame(TableAccessibilityDetachedFrame)
 }
 
 enum TableAccessibility {
@@ -160,6 +162,28 @@ enum TableAccessibility {
     static let descriptionSeparator = ", "
 
     static func items(
+        snapshot: ViewerTablePresentationSnapshot,
+        root: PreparedProseLayout,
+        nodes: [ViewerTablePresentedAccessibilityNode],
+        detachedFrames: [TableAccessibilityDetachedFrame]
+    ) -> [TableAccessibilityItem] {
+        var pendingFrames = detachedFrames.sorted { $0.tablePos < $1.tablePos }
+        var merged: [TableAccessibilityItem] = []
+        func flushFrames(before tablePos: UInt32?) {
+            while let next = pendingFrames.first, tablePos.map({ next.tablePos < $0 }) ?? true {
+                merged.append(.detachedFrame(next))
+                pendingFrames.removeFirst()
+            }
+        }
+        for item in drawnItems(snapshot: snapshot, root: root, nodes: nodes) {
+            if case let .table(table) = item { flushFrames(before: table.tablePos ?? UInt32.max) }
+            merged.append(item)
+        }
+        flushFrames(before: nil)
+        return merged
+    }
+
+    private static func drawnItems(
         snapshot: ViewerTablePresentationSnapshot,
         root: PreparedProseLayout,
         nodes: [ViewerTablePresentedAccessibilityNode]
@@ -256,24 +280,38 @@ protocol TableAccessibilityEditing: AnyObject {
     func performTableAccessibilityAction(_ action: TableAccessibilityAction, for cell: TableAccessibilityCell,
                                          tableID: String) -> Bool
     func activateTableAccessibilityCell(_ cell: TableAccessibilityCell, tableID: String) -> Bool
-    func activeTableAccessibilityElement(for cell: TableAccessibilityCell, tableID: String) -> EditorTextView?
+    func activeTableAccessibilityElement(for cell: TableAccessibilityCell, tableID: String) -> TableCellInputTextView?
+    func detachedTableAccessibilityFrames() -> [TableAccessibilityDetachedFrame]
     func canDeleteTableAccessibilityFrame(tableID: String) -> Bool
     func deleteTableAccessibilityFrame(tableID: String) -> Bool
 }
 
 struct TableAccessibilityActiveCell {
-    let rows: NSRange
-    let columns: NSRange
+    let cell: () -> TableAccessibilityCell?
     let actions: () -> [UIAccessibilityCustomAction]
 }
 
-extension EditorTextView: UIAccessibilityContainerDataTableCell {
+struct TableAccessibilityDetachedFrame {
+    let tableID: String
+    let tablePos: UInt32
+    let frame: TableAccessibilityTable.Frame
+    let screenFrame: () -> CGRect
+}
+
+final class TableCellInputTextView: EditorTextView, UIAccessibilityContainerDataTableCell {
+    var tableAccessibilityCell: TableAccessibilityActiveCell?
+
+    override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
+        get { tableAccessibilityCell.map { $0.actions() } ?? super.accessibilityCustomActions }
+        set { super.accessibilityCustomActions = newValue }
+    }
+
     func accessibilityRowRange() -> NSRange {
-        tableAccessibilityCell?.rows ?? NSRange(location: NSNotFound, length: 0)
+        tableAccessibilityCell?.cell()?.rows ?? NSRange(location: NSNotFound, length: 0)
     }
 
     func accessibilityColumnRange() -> NSRange {
-        tableAccessibilityCell?.columns ?? NSRange(location: NSNotFound, length: 0)
+        tableAccessibilityCell?.cell()?.columns ?? NSRange(location: NSNotFound, length: 0)
     }
 }
 

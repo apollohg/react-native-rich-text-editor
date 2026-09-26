@@ -3,6 +3,12 @@ import XCTest
 extension EditorTableInputTests {
     private enum TableAccessibilityFixture {
         static let fourCellDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"four"}]}]}]}]}]}"#
+        static let frameBetweenTablesDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]},{"type":"table"},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"last"}]}]}]}]}]}"#
+        static let parityFixture = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("scripts/tests/table-toolbar-actions.json")
         static let frameBesideTableDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table"},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"keep"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
     }
 
@@ -15,8 +21,9 @@ extension EditorTableInputTests {
     }
 
     private func accessibleFrame(_ fixture: MountedTableFixture) throws -> TableAccessibilityFrameElement {
-        try XCTUnwrap(fixture.surface.accessibilityElements?.compactMap { $0 as? TableAccessibilityFrameElement }.first,
-                      "an empty frame the editor cannot draw must still be an accessibility element")
+        try XCTUnwrap((0..<fixture.drawing.accessibilityElementCount()).lazy.compactMap {
+            fixture.drawing.accessibilityElement(at: $0) as? TableAccessibilityFrameElement
+        }.first, "an empty frame the editor cannot draw must still be an accessibility element")
     }
 
     private func publishedActionLabels(_ fixture: MountedTableFixture) throws -> [String] {
@@ -45,6 +52,35 @@ extension EditorTableInputTests {
             XCTAssertEqual(table.cellElements.compactMap(\.accessibilityLabel), ["one", "two", "three", "four"])
             XCTAssertEqual(table.accessibilityRowCount(), 2)
             XCTAssertEqual(table.accessibilityColumnCount(), 2)
+            XCTAssertFalse((fixture.view.textView as Any) is UIAccessibilityContainerDataTableCell,
+                           "only the cell input carries data table cell semantics")
+        }
+    }
+
+    func testNativeTableActionsMatchTheToolbarActionFixture() throws {
+        let data = try Data(contentsOf: TableAccessibilityFixture.parityFixture)
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        XCTAssertEqual(TableAccessibilityAction.all.map(\.key), fixture.compactMap { $0["action"] as? String },
+                       "native actions must list the toolbar actions in toolbar order")
+        for (action, expected) in zip(TableAccessibilityAction.all, fixture) {
+            XCTAssertEqual(action.applicability, expected["applicability"] as? String, action.key)
+            XCTAssertEqual(action.command, expected["command"] as? [String: String], action.key)
+        }
+    }
+
+    func testFramesAreOrderedAmongDrawnTablesByDocumentPosition() throws {
+        try withMountedTable(document: TableAccessibilityFixture.frameBetweenTablesDocument, cellSelection: nil) { fixture in
+            let order = (0..<fixture.drawing.accessibilityElementCount()).compactMap { index -> String? in
+                switch fixture.drawing.accessibilityElement(at: index) {
+                case let table as TableAccessibilityTableElement:
+                    return table.cellElements.first?.accessibilityLabel
+                case let frame as TableAccessibilityFrameElement:
+                    return frame.accessibilityLabel
+                default:
+                    return nil
+                }
+            }
+            XCTAssertEqual(order, ["first", TableAccessibilityText.emptyTable.localized, "last"])
         }
     }
 
@@ -125,6 +161,9 @@ extension EditorTableInputTests {
             XCTAssertTrue(table.cellElements[3].accessibilityActivate())
 
             let input = fixture.surface.inputCoordinator.cellInput
+            XCTAssertEqual(input.accessibilityRowRange(), NSRange(location: 1, length: 1),
+                           "activation binds the cell position before the table is queried")
+            XCTAssertEqual(input.accessibilityCustomActions?.map(\.name), try publishedActionLabels(fixture))
             let fresh = try accessibleTable(fixture, containing: "one")
             let slots = try XCTUnwrap(fresh.accessibilityElements)
             XCTAssertEqual(slots.count, 4)

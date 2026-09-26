@@ -12,20 +12,13 @@ import UIKit
 ///
 /// Every UITextView method runs on the main thread, and the UniFFI calls are
 /// synchronous.
-final class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegate, UITextDropDelegate {
+class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegate, UITextDropDelegate {
     static let emptyBlockPlaceholderScalar = UnicodeScalar(0x200B)!
 
     lazy var internalTextViewDelegate = EditorTextViewInternalDelegate(editor: self)
     var imageLoadOwner: RenderImageLoadOwner?
 
     override var undoManager: UndoManager? { nil }
-
-    var tableAccessibilityCell: TableAccessibilityActiveCell?
-
-    override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
-        get { tableAccessibilityCell.map { $0.actions() } ?? super.accessibilityCustomActions }
-        set { super.accessibilityCustomActions = newValue }
-    }
 
     // MARK: - Properties
 

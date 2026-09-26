@@ -19,7 +19,7 @@ final class EditorTableInputCoordinator {
         let positionMap: TableCellPositionMap
     }
 
-    let cellInput = EditorTextView(frame: .zero, textContainer: nil)
+    let cellInput = TableCellInputTextView(frame: .zero, textContainer: nil)
     private(set) var phase: TableInputPhase = .inactive
     private(set) var positionMap: TableCellPositionMap?
     private(set) var activeTableID: String?

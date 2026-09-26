@@ -229,8 +229,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         visibilityChanged: { [weak self] in self?.onSelectionGeometryMayChange?() }
     )
     private var cellEditMenuEndpoints: TableSelectionEndpoints?
-    private var detachedFrameElements: (revision: UInt64, unanchored: Set<String>,
-                                        elements: [TableAccessibilityFrameElement])?
+    private var accessibilityDocumentRevision: UInt64?
     var isCellEditMenuVisible: Bool { cellEditMenu.isVisible }
 
     private enum HandleScrollMetrics {
@@ -262,7 +261,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     override var accessibilityElements: [Any]? {
-        get { [drawingView] + detachedTableFrameElements() }
+        get { [drawingView] }
         set { }
     }
 
@@ -298,6 +297,10 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         defer { selectionGeometryMayChange() }
         drawingView.setTableOwnerIdentity(ownerIdentity)
         latestPresentation = presentation
+        if accessibilityDocumentRevision != presentation.documentRevision {
+            accessibilityDocumentRevision = presentation.documentRevision
+            drawingView.invalidateTableAccessibility()
+        }
         if let drag = resizeDrag, !validResizeDrag(drag) { discardActiveDrag() }
         if case let .drawable(tableID, sourcePositions) = selection {
             drawingView.selectedTableCellSourcePositions = [tableID: sourcePositions]
@@ -320,7 +323,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     func clearPresentation() {
         defer { selectionGeometryMayChange() }
         discardActiveDrag()
-        detachedFrameElements = nil
+        accessibilityDocumentRevision = nil
         drawingView.setTableOwnerIdentity(nil)
         entries.removeAll()
         latestPresentation = nil
@@ -525,6 +528,18 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
 
     func placeActiveInput(tableID: String, cellIndex: UInt32, fallback contentRect: CGRect) {
         activeCell = (tableID, cellIndex)
+        let sourceCellIndex = Int(cellIndex)
+        inputCoordinator.cellInput.tableAccessibilityCell = TableAccessibilityActiveCell(
+            cell: { [weak self] in
+                self?.drawingView.tableAccessibilityCell(tableID: tableID, sourceCellIndex: sourceCellIndex)
+            },
+            actions: { [weak self] in
+                guard let self,
+                      let cell = self.drawingView.tableAccessibilityCell(tableID: tableID, sourceCellIndex: sourceCellIndex)
+                else { return [] }
+                return TableAccessibility.customActions(for: cell, tableID: tableID, editing: self)
+            }
+        )
         updateExcludedCellContent()
         placeInput(in: presentedCell(tableID: tableID, cellIndex: cellIndex), fallback: contentRect)
         inputCoordinator.cellInput.isHidden = false
@@ -1376,41 +1391,29 @@ extension EditorTableSurface: TableAccessibilityEditing {
         return true
     }
 
-    func activeTableAccessibilityElement(for cell: TableAccessibilityCell, tableID: String) -> EditorTextView? {
+    func activeTableAccessibilityElement(for cell: TableAccessibilityCell, tableID: String) -> TableCellInputTextView? {
         let input = inputCoordinator.cellInput
         guard let activeCell, activeCell.tableID == tableID,
               Int(activeCell.cellIndex) == cell.sourceCellIndex, !input.isHidden
         else { return nil }
-        input.tableAccessibilityCell = TableAccessibilityActiveCell(rows: cell.rows, columns: cell.columns) {
-            [weak self] in TableAccessibility.customActions(for: cell, tableID: tableID, editing: self)
-        }
         return input
     }
 
-    private func detachedTableFrameElements() -> [TableAccessibilityFrameElement] {
+    func detachedTableAccessibilityFrames() -> [TableAccessibilityDetachedFrame] {
         guard let presentation = latestPresentation,
               let host = interactionHost, host.editorId != 0,
               let mappings = EditorV2Registry.adapter(forLegacyId: host.editorId)?.cachedTableInputMappings?.tables
         else { return [] }
-        let unanchored = Set(mappings.filter { $0.value.extent == nil }.keys)
-        if let cached = detachedFrameElements,
-           cached.revision == presentation.documentRevision, cached.unanchored == unanchored {
-            return cached.elements
-        }
-        let elements = presentation.tableRecords
-            .filter { !$0.value.readOnlyDescendants && unanchored.contains($0.key) }
-            .sorted { $0.value.tablePos < $1.value.tablePos }
-            .map { tableID, record -> TableAccessibilityFrameElement in
+        return presentation.tableRecords
+            .filter { !$0.value.readOnlyDescendants && mappings[$0.key].map { $0.extent == nil } == true }
+            .map { tableID, record in
                 let unfilled = record.failure == nil && (record.rows == 0 || record.columns == 0)
                 let tablePos = record.tablePos
-                return TableAccessibilityFrameElement(
-                    container: self, tableID: tableID, frame: unfilled ? .empty : .failed,
-                    editing: { [weak self] in self },
+                return TableAccessibilityDetachedFrame(
+                    tableID: tableID, tablePos: tablePos, frame: unfilled ? .empty : .failed,
                     screenFrame: { [weak self] in self?.detachedFrameScreenRect(tablePos: tablePos) ?? .zero }
                 )
             }
-        detachedFrameElements = (presentation.documentRevision, unanchored, elements)
-        return elements
     }
 
     private func detachedFrameScreenRect(tablePos: UInt32) -> CGRect {
