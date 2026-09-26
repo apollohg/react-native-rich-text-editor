@@ -19,7 +19,14 @@ internal fun resolveEditorCellSelection(
     ) return null
     val anchor = exactV2U32(selection.opt("anchorCell") as? Number)?.toLong() ?: return null
     val head = exactV2U32(selection.opt("headCell") as? Number)?.toLong() ?: return null
+    return resolveEditorCellSelection(anchor, head, records)
+}
 
+internal fun resolveEditorCellSelection(
+    anchor: Long,
+    head: Long,
+    records: Map<String, JSONObject>
+): EditorCellSelection? {
     data class Cell(val position: Int, val row: Int, val column: Int, val rowEnd: Int, val columnEnd: Int) {
         fun intersects(top: Int, left: Int, bottom: Int, right: Int): Boolean =
             row < bottom && rowEnd > top && column < right && columnEnd > left

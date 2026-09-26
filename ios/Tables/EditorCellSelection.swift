@@ -33,9 +33,10 @@ enum EditorCellSelection: Equatable {
     static func resolve(_ value: Any, records: [String: [String: Any]]) -> EditorCellSelection? {
         guard let endpoints = endpointPositions(value)
         else { return nil }
-        let anchor = endpoints.anchor
-        let head = endpoints.head
+        return resolve(anchor: endpoints.anchor, head: endpoints.head, records: records)
+    }
 
+    static func resolve(anchor: UInt32, head: UInt32, records: [String: [String: Any]]) -> EditorCellSelection? {
         var drawable: [EditorCellSelection] = []
         var unavailable: [(extent: UInt32, selection: EditorCellSelection)] = []
         for (tableID, record) in records {

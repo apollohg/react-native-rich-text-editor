@@ -1,0 +1,640 @@
+package com.apollohg.editor.tables
+
+import android.app.Activity
+import android.content.ClipboardManager
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.RectF
+import android.os.Looper
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewConfiguration
+import android.view.inputmethod.EditorInfo
+import android.widget.FrameLayout
+import com.apollohg.editor.EditorEditText
+import com.apollohg.editor.EditorV2Adapter
+import com.apollohg.editor.EditorV2CallResult
+import com.apollohg.editor.EditorV2Registry
+import com.apollohg.editor.NativeEditorExpoView
+import com.apollohg.editor.NativeEditorExpoViewTestSupport
+import com.apollohg.editor.RemoteSelectionOverlayView
+import com.apollohg.editor.UniffiEditorV2Backend
+import com.apollohg.editor.viewer.PreparedProseDrawingView
+import com.apollohg.editor.viewer.RemoteTableCellSelection
+import java.time.Duration
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
+    private data class Peer(
+        val clientId: String,
+        val color: String,
+        val anchor: Int,
+        val head: Int,
+        val cellRectangle: Pair<Int, Int>?
+    )
+
+    private class Fixture(
+        val view: NativeEditorExpoView,
+        val adapter: EditorV2Adapter,
+        val token: Long,
+        val tableId: String
+    ) {
+        private var nextRemoteRequestId = REMOTE_REQUEST_ID_BASE
+        private var nextKeyEventTime = 0L
+
+        val root: EditorEditText get() = view.richTextView.editorEditText
+        val surface: EditorTableSurface get() = view.richTextView.editorTableSurface
+        val drawing: PreparedProseDrawingView get() = surface.drawingView
+
+        fun positions(): List<Int> {
+            val cells = requireNotNull(adapter.cachedTableRecords[tableId]).getJSONArray("cells")
+            return (0 until cells.length()).map { cells.getJSONObject(it).getInt("sourcePos") }
+        }
+
+        fun tablePos(): Int = requireNotNull(adapter.cachedTableRecords[tableId]).getInt("tablePos")
+
+        fun presentedCell(position: Int): ViewerTablePresentedCell =
+            requireNotNull(drawing.presentedTableCells().firstOrNull {
+                it.surface.editorTableId == tableId && it.sourcePosition == position && it.cell.sourceCellIndex != null
+            }) { "cell $position is not presented" }
+
+        fun visibleRect(cell: ViewerTablePresentedCell): RectF? =
+            RectF(cell.bounds).takeIf { it.intersect(cell.clip) }
+
+        fun remoteRects(selection: RemoteTableCellSelection): List<RectF> =
+            requireNotNull(drawing.tableCellRects(selection.tableId, selection.sourcePositions))
+
+        fun activeCellPosition(): Long? = view.richTextView.activeTextInput.tableCellPositionMap?.binding?.cellSourcePos
+
+        fun relayout() {
+            view.measure(
+                View.MeasureSpec.makeMeasureSpec(VIEW_WIDTH, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(VIEW_HEIGHT, View.MeasureSpec.EXACTLY)
+            )
+            view.layout(0, 0, VIEW_WIDTH, VIEW_HEIGHT)
+            drawing.measure(
+                View.MeasureSpec.makeMeasureSpec(root.width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.EXACTLY)
+            )
+            drawing.layout(0, 0, drawing.measuredWidth, drawing.measuredHeight)
+            shadowOf(Looper.getMainLooper()).idle()
+        }
+
+        fun setPeers(peers: List<Peer>) {
+            val items = JSONArray()
+            peers.forEach { peer ->
+                val item = JSONObject().put("clientId", peer.clientId).put("anchor", peer.anchor)
+                    .put("head", peer.head).put("color", peer.color).put("name", PEER_NAME)
+                    .put("isFocused", true)
+                peer.cellRectangle?.let { (anchor, head) ->
+                    item.put("cellRectangle", JSONObject().put("anchorCell", anchor).put("headCell", head))
+                }
+                items.put(item)
+            }
+            view.setRemoteSelectionsJson(items.toString())
+        }
+
+        fun selectCells(anchor: Int, head: Int) {
+            val admitted = adapter.callWithEnvelope(JSONObject().put("selection", cellSelection(anchor, head))) {
+                UniffiEditorV2Backend.setSelection(adapter.editorId, it)
+            }
+            assertTrue("engine rejected the selection: $admitted", admitted is EditorV2CallResult.Ok)
+            assertTrue(root.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
+            assertTrue("root did not adopt the cell selection", root.authoritativeCellSelectionActive)
+            relayout()
+        }
+
+        private fun remoteEnvelope(payload: JSONObject): String {
+            nextRemoteRequestId += 1
+            return payload.put("version", 1).put("requestId", nextRemoteRequestId.toString())
+                .put("baseDocumentRevision", adapter.baseDocumentRevision.toString()).toString()
+        }
+
+        fun applyRemoteCommand(command: JSONObject) {
+            val result = UniffiEditorV2Backend.applyCommand(
+                adapter.editorId, remoteEnvelope(JSONObject().put("command", command))
+            )
+            assertTrue("the remote peer's change was refused: $result", result is EditorV2CallResult.Ok)
+        }
+
+        fun applyRemoteCellSelection(anchor: Int, head: Int) {
+            val result = UniffiEditorV2Backend.setSelection(
+                adapter.editorId, remoteEnvelope(JSONObject().put("selection", cellSelection(anchor, head)))
+            )
+            assertTrue("the remote peer's selection was refused: $result", result is EditorV2CallResult.Ok)
+        }
+
+        fun deliverRemoteCommit() {
+            view.applyRemoteCommitRefresh(token)
+            relayout()
+        }
+
+        fun tapCell(position: Int) {
+            val cell = presentedCell(position)
+            val x = cell.bounds.centerX() + drawing.left
+            val y = cell.bounds.centerY() + drawing.top
+            listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP).forEachIndexed { index, action ->
+                val event = MotionEvent.obtain(0, TOUCH_STEP_MS * index, action, x, y, 0)
+                try { view.richTextView.editorContentFrame.dispatchTouchEvent(event) } finally { event.recycle() }
+            }
+            shadowOf(Looper.getMainLooper())
+                .idleFor(Duration.ofMillis(ViewConfiguration.getDoubleTapTimeout().toLong()))
+        }
+
+        fun pressTab(shift: Boolean = false) {
+            val input = view.richTextView.activeTextInput
+            nextKeyEventTime += KEY_EVENT_STEP_MS
+            assertTrue(input.dispatchKeyEvent(KeyEvent(nextKeyEventTime, nextKeyEventTime, KeyEvent.ACTION_DOWN,
+                KeyEvent.KEYCODE_TAB, 0, if (shift) KeyEvent.META_SHIFT_ON else 0)))
+        }
+
+        fun menuItemIds(): List<Int> {
+            val menu = requireNotNull(root.selectionActionMode) { "no action mode is showing" }.menu
+            return (0 until menu.size()).map { menu.getItem(it).itemId }
+        }
+
+        fun clickMenuItem(id: Int) {
+            val mode = requireNotNull(root.selectionActionMode)
+            assertTrue("menu item $id was not handled", mode.menu.performIdentifierAction(id, 0))
+        }
+
+        fun render(): Bitmap {
+            val bitmap = Bitmap.createBitmap(drawing.width, drawing.height, Bitmap.Config.ARGB_8888)
+            drawing.draw(Canvas(bitmap))
+            return bitmap
+        }
+
+        private fun cellSelection(anchor: Int, head: Int): JSONObject {
+            fun point(opening: Int) = JSONObject().put("kind", "document").put("offset", opening)
+            return JSONObject().put("type", CELL_SELECTION).put("anchorCell", point(anchor)).put("headCell", point(head))
+        }
+    }
+
+    private fun fallbackClients(fixture: Fixture): List<String> =
+        fixture.view.richTextView.remoteSelectionDebugSnapshotsForTesting().map { it.clientId }
+
+    @Test
+    fun `remote rectangle fills its resolved cells in the peer color instead of the cursor fallback`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            val positions = fixture.positions()
+            val first = positions[GRID_FIRST]
+            val second = positions[GRID_SECOND]
+
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, first, second, first to second)))
+
+            val remote = fixture.drawing.remoteTableCellSelections.single()
+            assertEquals(fixture.tableId, remote.tableId)
+            assertEquals(setOf(first, second), remote.sourcePositions)
+            assertEquals(expectedPeerFill(FIRST_PEER_COLOR), remote.color)
+            assertEquals("the rectangle must use the presented cell frames",
+                listOf(first, second).mapNotNull { fixture.visibleRect(fixture.presentedCell(it)) }.toSet(),
+                fixture.remoteRects(remote).toSet())
+            assertEquals("a drawn rectangle replaces the peer's cursor fallback", emptyList<String>(), fallbackClients(fixture))
+
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, first, second, null)))
+
+            assertTrue(fixture.drawing.remoteTableCellSelections.isEmpty())
+            assertEquals("a peer without a rectangle keeps its ordinary cursor", listOf(FIRST_PEER), fallbackClients(fixture))
+        }
+
+    @Test
+    fun `unresolvable remote rectangle is dropped and only the cursor fallback remains`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            val first = fixture.positions()[GRID_FIRST]
+
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, first, first,
+                first + TEXT_OFFSET_INSIDE_CELL to first)))
+
+            assertTrue("an anchor that is not a real cell opening must not draw",
+                fixture.drawing.remoteTableCellSelections.isEmpty())
+            assertEquals(listOf(FIRST_PEER), fallbackClients(fixture))
+        }
+
+    @Test
+    fun `remote merge re-resolves the rectangle to the merged cell`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            val before = fixture.positions()
+            val first = before[GRID_FIRST]
+            val firstWidth = fixture.presentedCell(first).bounds.width()
+            val secondWidth = fixture.presentedCell(before[GRID_SECOND]).bounds.width()
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, first, first, first to first)))
+            val unmerged = fixture.remoteRects(fixture.drawing.remoteTableCellSelections.single()).single()
+            assertEquals(firstWidth, unmerged.width(), GEOMETRY_TOLERANCE)
+
+            fixture.applyRemoteCellSelection(first, before[GRID_SECOND])
+            fixture.applyRemoteCommand(JSONObject().put("type", MERGE_TABLE_CELLS))
+            fixture.deliverRemoteCommit()
+
+            val cells = requireNotNull(fixture.adapter.cachedTableRecords[fixture.tableId]).getJSONArray("cells")
+            val mergedRecord = (0 until cells.length()).map(cells::getJSONObject).single { it.getInt("sourcePos") == first }
+            assertEquals("the remote merge must land", MERGED_COLSPAN, mergedRecord.getInt("colspan"))
+            val remote = fixture.drawing.remoteTableCellSelections.single()
+            assertEquals(setOf(first), remote.sourcePositions)
+            val rect = fixture.remoteRects(remote).single()
+            assertEquals(fixture.visibleRect(fixture.presentedCell(first)), rect)
+            assertEquals("the rectangle follows the merged cell", firstWidth + secondWidth, rect.width(), GEOMETRY_TOLERANCE)
+        }
+
+    @Test
+    fun `expired peers take their rectangles with them`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            val positions = fixture.positions()
+            val first = positions[GRID_FIRST]
+            val last = positions[GRID_LAST]
+            val firstPeer = Peer(FIRST_PEER, FIRST_PEER_COLOR, first, first, first to first)
+            val secondPeer = Peer(SECOND_PEER, SECOND_PEER_COLOR, last, last, last to last)
+            fixture.setPeers(listOf(firstPeer, secondPeer))
+            assertEquals(listOf(setOf(first), setOf(last)),
+                fixture.drawing.remoteTableCellSelections.map { it.sourcePositions })
+
+            fixture.setPeers(listOf(secondPeer))
+
+            assertEquals(listOf(setOf(last)), fixture.drawing.remoteTableCellSelections.map { it.sourcePositions })
+            assertEquals(expectedPeerFill(SECOND_PEER_COLOR), fixture.drawing.remoteTableCellSelections.single().color)
+
+            fixture.setPeers(emptyList())
+
+            assertTrue(fixture.drawing.remoteTableCellSelections.isEmpty())
+            assertTrue(fallbackClients(fixture).isEmpty())
+        }
+
+    @Test
+    fun `horizontal table scroll moves the rectangle with the cell and clips it to the table`() =
+        withTable(WIDE_DOCUMENT) { fixture ->
+            val second = fixture.positions()[GRID_SECOND]
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, second, second, second to second)))
+            val remote = fixture.drawing.remoteTableCellSelections.single()
+            val before = fixture.presentedCell(second)
+            assertTrue("the second wide cell starts outside the table viewport: ${before.bounds} ${before.clip}",
+                fixture.remoteRects(remote).isEmpty())
+
+            fixture.drawing.setTableLogicalOffset(before.surface.identity, HORIZONTAL_SCROLL)
+
+            val after = fixture.presentedCell(second)
+            assertEquals(before.bounds.left - HORIZONTAL_SCROLL, after.bounds.left, GEOMETRY_TOLERANCE)
+            val rect = fixture.remoteRects(remote).single()
+            assertEquals("the rectangle moves with the scrolled cell", after.bounds.left, rect.left, GEOMETRY_TOLERANCE)
+            assertEquals("the rectangle is clipped to the table viewport", after.clip.right, rect.right, GEOMETRY_TOLERANCE)
+            assertTrue(rect.right < after.bounds.right)
+        }
+
+    @Test
+    fun `right to left table mirrors the remote rectangle`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            fixture.view.richTextView.tableDirection = TableLayoutDirection.RIGHT_TO_LEFT
+            fixture.relayout()
+            val positions = fixture.positions()
+            val first = positions[GRID_FIRST]
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, first, first, first to first)))
+
+            val firstCell = fixture.presentedCell(first)
+            val secondCell = fixture.presentedCell(positions[GRID_SECOND])
+            assertTrue(firstCell.surface.isRightToLeft)
+            assertTrue("the first column sits on the right", firstCell.bounds.left > secondCell.bounds.left)
+            assertEquals(fixture.visibleRect(firstCell),
+                fixture.remoteRects(fixture.drawing.remoteTableCellSelections.single()).single())
+        }
+
+    @Test
+    fun `owner rebinding re-resolves the rectangle against the new owner`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            val first = fixture.positions()[GRID_FIRST]
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, first, first, first to first)))
+            assertEquals(1, fixture.drawing.remoteTableCellSelections.size)
+
+            fixture.view.setEditorId(0L)
+            assertTrue("an unbound view draws no presence", fixture.drawing.remoteTableCellSelections.isEmpty())
+
+            fixture.view.setEditorId(fixture.token)
+            fixture.relayout()
+            val restored = fixture.drawing.remoteTableCellSelections.single()
+            assertEquals(setOf(first), restored.sourcePositions)
+            assertEquals(1, fixture.remoteRects(restored).size)
+
+            val created = UniffiEditorV2Backend.create(TABLE_CONFIG, null) as EditorV2CallResult.Ok
+            val other = requireNotNull(EditorV2Adapter.attach(
+                UniffiEditorV2Backend, JSONObject(created.value).getString("editorId"), false
+            ))
+            val otherToken = EditorV2Registry.register(other)
+            try {
+                val update = requireNotNull(other.setContentJson(SHIFTED_GRID_DOCUMENT))
+                fixture.view.setEditorId(otherToken)
+                assertTrue(fixture.root.applyUpdateJSON(update))
+                fixture.relayout()
+                val otherCells = other.cachedTableRecords.values.single().getJSONArray("cells")
+                val otherOpenings = (0 until otherCells.length()).map { otherCells.getJSONObject(it).getInt("sourcePos") }
+                assertFalse("the fixture must move the openings", first in otherOpenings)
+                assertTrue("the old opening addresses no cell of the new owner",
+                    fixture.drawing.remoteTableCellSelections.isEmpty())
+                assertEquals(listOf(FIRST_PEER), fallbackClients(fixture))
+            } finally {
+                fixture.view.setEditorId(fixture.token)
+                EditorV2Registry.remove(other.editorId)
+                other.destroy()
+            }
+        }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `remote rectangle is painted behind local handles and the active cell input`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            val positions = fixture.positions()
+            val first = positions[GRID_FIRST]
+            val second = positions[GRID_SECOND]
+            fixture.selectCells(first, second)
+            val handles = fixture.drawing.selectionHandles()
+            assertTrue("the local selection must show a handle", handles.isNotEmpty())
+            val cell = fixture.presentedCell(first)
+            val interiorX = cell.bounds.centerX().toInt()
+            val interiorY = (cell.bounds.bottom - PIXEL_INSET_FROM_CELL_BOTTOM).toInt()
+            val localOnly = fixture.render()
+
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, first, second, first to second)))
+            assertEquals(1, fixture.drawing.remoteTableCellSelections.size)
+            val withRemote = fixture.render()
+
+            try {
+                assertNotEquals("the remote fill must reach the cell",
+                    localOnly.getPixel(interiorX, interiorY), withRemote.getPixel(interiorX, interiorY))
+                handles.forEach { handle ->
+                    assertEquals("the ${handle.role} handle must cover the remote fill",
+                        localOnly.getPixel(handle.x.toInt(), handle.y.toInt()),
+                        withRemote.getPixel(handle.x.toInt(), handle.y.toInt()))
+                }
+            } finally {
+                localOnly.recycle()
+                withRemote.recycle()
+            }
+
+            fixture.selectCells(first, second)
+            fixture.tapCell(positions[GRID_LAST])
+            val input = fixture.view.richTextView.activeTextInput
+            assertTrue("the tap edits a cell", input !== fixture.root)
+            val frame = fixture.view.richTextView.editorContentFrame
+            assertSame(frame, input.parent)
+            assertSame(frame, fixture.drawing.parent)
+            assertTrue("the active cell input sits above the painted rectangle",
+                frame.indexOfChild(input) > frame.indexOfChild(fixture.drawing))
+        }
+
+    @Test
+    fun `keyboard composition clipboard and menu each mutate once and never select synthetic slots`() =
+        withTable(IRREGULAR_DOCUMENT) { fixture ->
+            clipboard().clearPrimaryClip()
+            var positions = fixture.positions()
+            val startRevision = fixture.adapter.baseDocumentRevision
+
+            fixture.tapCell(positions[TALL_CELL])
+            assertEquals(positions[TALL_CELL].toLong(), fixture.activeCellPosition())
+            listOf(WIDE_CELL, LATER_CELL).forEach { expected ->
+                fixture.pressTab()
+                assertEquals("Tab must reach cell $expected", positions[expected].toLong(), fixture.activeCellPosition())
+            }
+            fixture.pressTab(shift = true)
+            assertEquals(positions[WIDE_CELL].toLong(), fixture.activeCellPosition())
+            assertEquals("focus moves never mutate", startRevision, fixture.adapter.baseDocumentRevision)
+
+            val input = fixture.view.richTextView.activeTextInput
+            input.setSelection(0)
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.setComposingText(COMPOSITION_TEXT, 1))
+            assertEquals("marked text is not a mutation", startRevision, fixture.adapter.baseDocumentRevision)
+            assertTrue(connection.finishComposingText())
+            val composedRevision = fixture.adapter.baseDocumentRevision
+            assertEquals("a committed composition is exactly one mutation", startRevision + 1u, composedRevision)
+            val composed = requireNotNull(fixture.adapter.documentJson())
+            assertTrue(composed, composed.contains(textNode(COMPOSITION_TEXT + "wide")))
+
+            positions = fixture.positions()
+            val wide = positions[WIDE_CELL]
+            val later = positions[LATER_CELL]
+            fixture.root.requestFocus()
+            fixture.selectCells(wide, later)
+            val wideCell = fixture.presentedCell(wide)
+            val laterCell = fixture.presentedCell(later)
+            val gap = RectF(laterCell.bounds.right, laterCell.bounds.top, wideCell.bounds.right, laterCell.bounds.bottom)
+                .apply { inset(1f, 1f) }
+            assertFalse("the gap sits after the last real cell of the second row", gap.isEmpty)
+            val rectangle = setOf(wide, later)
+            assertEquals(rectangle, fixture.drawing.selectedTableCellSourcePositions[fixture.tableId])
+            val selectedRects = requireNotNull(fixture.drawing.selectedTableCellRects(fixture.tableId))
+            assertEquals(rectangle.size, selectedRects.size)
+            assertFalse("the gap slot is never selected", selectedRects.any { RectF.intersects(it, gap) })
+
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, wide, later, wide to later)))
+            val remote = fixture.drawing.remoteTableCellSelections.single()
+            assertEquals("presence shares the local effective rectangle", rectangle, remote.sourcePositions)
+            assertFalse(fixture.remoteRects(remote).any { RectF.intersects(it, gap) })
+
+            assertTrue(fixture.root.dispatchKeyEvent(
+                KeyEvent(0L, 0L, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_C, 0, KeyEvent.META_CTRL_ON)))
+            assertEquals(IRREGULAR_RECTANGLE_TSV, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
+            assertEquals("copy never mutates", composedRevision, fixture.adapter.baseDocumentRevision)
+
+            fixture.tapCell(later)
+            assertTrue("a tap inside the selection opens the cell menu", fixture.surface.isCellEditMenuVisible)
+            assertEquals(CELL_MENU_ITEMS, fixture.menuItemIds())
+            val beforeCut = requireNotNull(fixture.adapter.documentJson())
+
+            fixture.clickMenuItem(android.R.id.cut)
+
+            assertEquals("cut is exactly one mutation", composedRevision + 1u, fixture.adapter.baseDocumentRevision)
+            val cut = requireNotNull(fixture.adapter.documentJson())
+            assertFalse(cut, cut.contains(textNode(COMPOSITION_TEXT + "wide")) || cut.contains(textNode("later")))
+            assertTrue(cut, cut.contains(textNode("tall")))
+            assertEquals(IRREGULAR_RECTANGLE_TSV, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
+            assertTrue("cut keeps the cell selection", fixture.root.authoritativeCellSelectionActive)
+
+            fixture.relayout()
+            fixture.tapCell(fixture.positions()[LATER_CELL])
+            assertTrue(fixture.surface.isCellEditMenuVisible)
+            fixture.clickMenuItem(android.R.id.paste)
+
+            assertEquals("a paste the planner refuses over the gap is no mutation at all",
+                composedRevision + 1u, fixture.adapter.baseDocumentRevision)
+            assertEquals(cut, fixture.adapter.documentJson())
+            assertTrue(fixture.root.applyUpdateJSON(requireNotNull(fixture.adapter.undo())))
+            assertTrue("one undo restores the whole cut",
+                sameJson(JSONObject(beforeCut), JSONObject(requireNotNull(fixture.adapter.documentJson()))))
+            assertTrue("the composition entry remains", requireNotNull(fixture.adapter.historyCanUndo()))
+            fixture.relayout()
+            assertEquals(rectangle, fixture.drawing.selectedTableCellSourcePositions[fixture.tableId])
+        }
+
+    @Test
+    fun `remote table deletion under an open cell menu drops the selection and rectangle but keeps the cursor`() =
+        withTable(IRREGULAR_DOCUMENT) { fixture ->
+            val positions = fixture.positions()
+            fixture.selectCells(positions[TALL_CELL], positions[WIDE_CELL])
+            fixture.surface.presentCellEditMenu()
+            assertTrue(fixture.surface.isCellEditMenuVisible)
+            val staleRectangle = positions[WIDE_CELL] to positions[LATER_CELL]
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, staleRectangle.first, staleRectangle.second,
+                staleRectangle)))
+            assertEquals(1, fixture.drawing.remoteTableCellSelections.size)
+            val tablePos = fixture.tablePos()
+            val revision = fixture.adapter.baseDocumentRevision
+
+            fixture.applyRemoteCommand(JSONObject().put("type", DELETE_TABLE).put("tablePos", tablePos))
+            fixture.deliverRemoteCommit()
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, tablePos, tablePos, staleRectangle)))
+
+            assertTrue("the remote peer deleted the table", fixture.adapter.cachedTableRecords.isEmpty())
+            assertEquals("only the remote change was applied", revision + 1u, fixture.adapter.baseDocumentRevision)
+            assertFalse(fixture.root.authoritativeCellSelectionActive)
+            assertTrue(fixture.drawing.selectedTableCellSourcePositions.isEmpty())
+            assertFalse("the menu closes with its selection", fixture.surface.isCellEditMenuVisible)
+            assertTrue("the dead rectangle is removed", fixture.drawing.remoteTableCellSelections.isEmpty())
+            assertEquals("the peer keeps its ordinary cursor", listOf(FIRST_PEER), fallbackClients(fixture))
+        }
+
+    @Test
+    fun `remote table deletion during cell composition cancels it without a mutation`() =
+        withTable(IRREGULAR_DOCUMENT) { fixture ->
+            fixture.tapCell(fixture.positions()[TALL_CELL])
+            val input = fixture.view.richTextView.activeTextInput
+            assertTrue(input !== fixture.root)
+            input.setSelection(0)
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.setComposingText(STALE_COMPOSITION_TEXT, 1))
+            val revision = fixture.adapter.baseDocumentRevision
+
+            fixture.applyRemoteCommand(JSONObject().put("type", DELETE_TABLE).put("tablePos", fixture.tablePos()))
+            val remoteDocument = requireNotNull(fixture.adapter.documentJson())
+            fixture.deliverRemoteCommit()
+            connection.finishComposingText()
+            fixture.deliverRemoteCommit()
+
+            assertFalse(remoteDocument.contains(textNode(STALE_COMPOSITION_TEXT)))
+            assertThrows(STALE_COMPOSITION_DEFECT, AssertionError::class.java) {
+                assertEquals("the stale composition must not land anywhere", remoteDocument, fixture.adapter.documentJson())
+            }
+            assertThrows(STALE_COMPOSITION_DEFECT, AssertionError::class.java) {
+                assertEquals("only the remote change was applied", revision + 1u, fixture.adapter.baseDocumentRevision)
+            }
+            assertFalse(input.hasPendingCompositionForExternalRefresh())
+            assertSame("the dead cell input is released", fixture.root, fixture.view.richTextView.activeTextInput)
+            assertTrue(fixture.adapter.cachedTableRecords.isEmpty())
+        }
+
+    private fun withTable(document: String, block: (Fixture) -> Unit) {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup()
+        val created = UniffiEditorV2Backend.create(TABLE_CONFIG, null) as EditorV2CallResult.Ok
+        val adapter = requireNotNull(EditorV2Adapter.attach(
+            UniffiEditorV2Backend, JSONObject(created.value).getString("editorId"), false
+        ))
+        val token = EditorV2Registry.register(adapter)
+        try {
+            val expo = testExpoContext(activity.get())
+            val view = NativeEditorExpoView(expo.context, expo.appContext)
+            view.onFocusChangeForTesting = {}
+            view.onAddonEventForTesting = {}
+            view.onEditorReadyForTesting = {}
+            view.onEditorUpdateForTesting = {}
+            view.onSelectionChangeForTesting = {}
+            view.onContentHeightChangeForTesting = {}
+            view.onAtomLayoutForTesting = {}
+            view.onTableSelectionGeometryForTesting = {}
+            activity.get().setContentView(FrameLayout(activity.get()).apply {
+                addView(view, FrameLayout.LayoutParams(VIEW_WIDTH, VIEW_HEIGHT))
+            })
+            view.setAttachedToNativeWindowForTesting(true)
+            view.setEditorId(token)
+            assertTrue(view.richTextView.editorEditText.applyUpdateJSON(requireNotNull(adapter.setContentJson(document))))
+            val tableId = requireNotNull(adapter.cachedTableRecords.entries.firstOrNull {
+                !it.value.optBoolean("readOnlyDescendants", true)
+            }?.key)
+            val fixture = Fixture(view, adapter, token, tableId)
+            fixture.relayout()
+            fixture.root.requestFocus()
+            try {
+                block(fixture)
+            } finally {
+                activity.pause().stop().destroy()
+            }
+        } finally {
+            EditorV2Registry.remove(adapter.editorId)
+            adapter.destroy()
+        }
+    }
+
+    private fun expectedPeerFill(color: String): Int {
+        val opaque = Color.parseColor(color)
+        return Color.argb((COLOR_CHANNEL_MAX * RemoteSelectionOverlayView.SELECTION_ALPHA).toInt(),
+            Color.red(opaque), Color.green(opaque), Color.blue(opaque))
+    }
+
+    private fun clipboard(): ClipboardManager = RuntimeEnvironment.getApplication()
+        .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+
+    private fun textNode(text: String): String = "\"text\":\"$text\""
+
+    private fun sameJson(left: Any?, right: Any?): Boolean = when {
+        left is JSONObject && right is JSONObject ->
+            left.keys().asSequence().toSet() == right.keys().asSequence().toSet() &&
+                left.keys().asSequence().all { sameJson(left.get(it), right.get(it)) }
+        left is JSONArray && right is JSONArray ->
+            left.length() == right.length() && (0 until left.length()).all { sameJson(left.get(it), right.get(it)) }
+        left is Number && right is Number -> left.toDouble() == right.toDouble()
+        else -> left == right
+    }
+
+    private companion object {
+        const val VIEW_WIDTH = 900
+        const val VIEW_HEIGHT = 500
+        const val TOUCH_STEP_MS = 20L
+        const val KEY_EVENT_STEP_MS = 100L
+        const val REMOTE_REQUEST_ID_BASE = 22_000_000L
+        const val CELL_SELECTION = "cell"
+        const val FIRST_PEER = "7"
+        const val SECOND_PEER = "9"
+        const val FIRST_PEER_COLOR = "#FF0000"
+        const val SECOND_PEER_COLOR = "#0000FF"
+        const val PEER_NAME = "Remote"
+        const val COLOR_CHANNEL_MAX = 255f
+        const val HORIZONTAL_SCROLL = 300f
+        const val GEOMETRY_TOLERANCE = 0.5f
+        const val PIXEL_INSET_FROM_CELL_BOTTOM = 3f
+        const val COMPOSITION_TEXT = "Z"
+        const val STALE_COMPOSITION_TEXT = "Q"
+        const val STALE_COMPOSITION_DEFECT = "Known defect: a cell composition committed after a remote table " +
+            "deletion resolves through the position-epoch fallback into root prose"
+        const val IRREGULAR_RECTANGLE_TSV = "Zwide\t\nlater\t"
+        const val GRID_FIRST = 0
+        const val GRID_SECOND = 1
+        const val GRID_LAST = 3
+        const val TALL_CELL = 0
+        const val WIDE_CELL = 1
+        const val LATER_CELL = 2
+        const val MERGED_COLSPAN = 2
+        const val TEXT_OFFSET_INSIDE_CELL = 2
+        const val DELETE_TABLE = "deleteTable"
+        const val MERGE_TABLE_CELLS = "mergeTableCells"
+        val CELL_MENU_ITEMS = listOf(android.R.id.cut, android.R.id.copy, android.R.id.paste)
+        const val TABLE_CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock","htmlTag":"p"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","htmlTag":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row","htmlTag":"tr"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","htmlTag":"td","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","htmlTag":"th","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
+        const val GRID_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"A"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"B"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"C"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"D"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+        const val SHIFTED_GRID_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"shifted"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"A"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"B"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"C"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"D"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+        const val IRREGULAR_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"later"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+        const val WIDE_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[1000]},"content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","attrs":{"colwidth":[1000]},"content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+    }
+}

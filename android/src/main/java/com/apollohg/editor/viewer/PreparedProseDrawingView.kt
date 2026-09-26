@@ -57,6 +57,8 @@ internal data class TableSelectionHandle(
     val y: Float
 )
 
+internal data class RemoteTableCellSelection(val tableId: String, val sourcePositions: Set<Int>, val color: Int)
+
 internal data class TableResizeEdge(val tableId: String, val column: Int)
 
 /** Rendering-only consumer of fully prepared StaticLayout and geometry fragments. */
@@ -92,6 +94,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             invalidate()
         }
     internal var selectedTableCellEndpoints: Triple<String, Int, Int>? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
+    internal var remoteTableCellSelections: List<RemoteTableCellSelection> = emptyList()
         set(value) {
             if (field == value) return
             field = value
@@ -475,10 +483,13 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     internal fun selectedTableViewport(tableId: String): RectF? =
         presentationSnapshot()?.tableWithId(tableId)?.clip
 
-    internal fun selectedTableCellRects(tableId: String): List<RectF>? {
+    internal fun selectedTableCellRects(tableId: String): List<RectF>? =
+        tableCellRects(tableId, selectedTableCellSourcePositions[tableId].orEmpty())
+
+    internal fun tableCellRects(tableId: String, sourcePositions: Set<Int>): List<RectF>? {
         val snapshot = presentationSnapshot() ?: return null
         val table = snapshot.tableWithId(tableId) ?: return null
-        return snapshot.cells.filter { it.surface === table.surface && isSelectedTableCell(it) }
+        return snapshot.cells.filter { it.surface === table.surface && isRealTableCell(it, sourcePositions) }
             .mapNotNull { cell ->
                 RectF(cell.bounds).takeIf { it.intersect(cell.clip) }
                     ?.apply { offset(contentOriginXPx.toFloat(), contentOriginYPx.toFloat()) }
@@ -487,8 +498,11 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     private fun isSelectedTableCell(cell: ViewerTablePresentedCell): Boolean {
         val tableId = cell.surface.editorTableId ?: return false
-        return cell.sourcePosition in selectedTableCellSourcePositions[tableId].orEmpty()
+        return isRealTableCell(cell, selectedTableCellSourcePositions[tableId].orEmpty())
     }
+
+    private fun isRealTableCell(cell: ViewerTablePresentedCell, sourcePositions: Set<Int>): Boolean =
+        cell.cell.sourceCellIndex != null && cell.sourcePosition in sourcePositions
 
     internal fun atomLayoutsJson(density: Float): String {
         val artifact = preparedLayout ?: return "[]"
@@ -600,15 +614,13 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                 // Phases stay global across blocks: later code backgrounds cannot cover
                 // an earlier quote border, and text/labels always remain foreground.
                 drawHierarchicalBackgrounds(canvas, artifact, snapshot, mountedLayouts, paintClip)
-                snapshot.mountedCells.forEach { cell ->
-                    if (isSelectedTableCell(cell)) {
-                        val selected = canvas.save()
-                        canvas.clipRect(cell.clip)
-                        paint.style = Paint.Style.FILL
-                        paint.color = cell.surface.style.selectionColor
-                        canvas.drawRect(cell.bounds, paint)
-                        canvas.restoreToCount(selected)
-                    }
+                remoteTableCellSelections.forEach { remote ->
+                    snapshot.mountedCells.filter {
+                        it.surface.editorTableId == remote.tableId && isRealTableCell(it, remote.sourcePositions)
+                    }.forEach { fillTableCell(canvas, it, remote.color) }
+                }
+                snapshot.mountedCells.filter(::isSelectedTableCell).forEach {
+                    fillTableCell(canvas, it, it.surface.style.selectionColor)
                 }
                 snapshot.mountedCells.forEach { drawTableChromeBorder(canvas, it) }
                 visible.forEach { drawPresented(canvas, it, snapshot) { drawBorderOrRule(canvas, it) } }
@@ -663,6 +675,15 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         } finally {
             canvas.restoreToCount(saved)
         }
+    }
+
+    private fun fillTableCell(canvas: Canvas, cell: ViewerTablePresentedCell, color: Int) {
+        val saved = canvas.save()
+        canvas.clipRect(cell.clip)
+        paint.style = Paint.Style.FILL
+        paint.color = color
+        canvas.drawRect(cell.bounds, paint)
+        canvas.restoreToCount(saved)
     }
 
     private fun drawTableFailure(canvas: Canvas, presented: ViewerTablePresentedBlock) {

@@ -723,7 +723,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         // Add the text view as a subview. These views always track the host bounds,
         // so manual layout is cheaper than driving them through Auto Layout.
         textView.imageLoadOwner = defaultImageLoadOwner
-        remoteSelectionOverlayView.bind(textView: textView)
+        remoteSelectionOverlayView.bind(textView: textView, tableSurface: tableSurface)
         taskListMarkerTapOverlayView.bind(editorView: self)
         imageTapOverlayView.bind(editorView: self)
         imageResizeOverlayView.bind(editorView: self)
@@ -1299,6 +1299,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func refreshTablePresentation() {
+        defer { refreshRemoteSelections() }
         guard editorId != 0,
               let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
               let presentation = adapter.cachedTablePresentation

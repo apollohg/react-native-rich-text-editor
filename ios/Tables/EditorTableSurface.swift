@@ -346,6 +346,10 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         drawingView.install(layout: nil)
     }
 
+    func presentRemoteCellSelections(_ selections: [RemoteTableCellSelection]) {
+        drawingView.remoteTableCellSelections = selections
+    }
+
     func clearCellSelection() {
         defer { selectionGeometryMayChange() }
         cancelHandleDrag()

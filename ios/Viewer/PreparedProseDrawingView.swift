@@ -21,6 +21,12 @@ struct TableSelectionEndpoints: Equatable {
     let head: UInt32
 }
 
+struct RemoteTableCellSelection: Equatable {
+    let tableID: String
+    let sourcePositions: Set<Int>
+    let color: UIColor
+}
+
 struct TableResizeEdge: Equatable {
     let tableID: String
     let column: Int
@@ -165,6 +171,11 @@ public final class PreparedProseDrawingView: UIView {
             if selectedTableCellEndpoints != oldValue { setNeedsDisplay() }
         }
     }
+    var remoteTableCellSelections: [RemoteTableCellSelection] = [] {
+        didSet {
+            if remoteTableCellSelections != oldValue { setNeedsDisplay() }
+        }
+    }
     var activeTableResizeEdge: TableResizeEdge? {
         didSet {
             if activeTableResizeEdge != oldValue { setNeedsDisplay() }
@@ -301,17 +312,24 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     func selectedTableCellRects(tableID: String) -> [CGRect]? {
+        tableCellRects(tableID: tableID, sourcePositions: selectedTableCellSourcePositions[tableID] ?? [])
+    }
+
+    func tableCellRects(tableID: String, sourcePositions: Set<Int>) -> [CGRect]? {
         guard let snapshot = presentationSnapshot(),
               snapshot.tables.contains(where: { $0.surface.identity == tableID })
         else { return nil }
-        return snapshot.cells.filter { $0.surface.identity == tableID && isSelectedTableCell($0) }
+        return snapshot.cells.filter { $0.surface.identity == tableID && isRealTableCell($0, in: sourcePositions) }
             .map { $0.bounds.intersection($0.clip) }
             .filter { !$0.isNull && !$0.isEmpty }
     }
 
     private func isSelectedTableCell(_ cell: ViewerTablePresentedCell) -> Bool {
-        cell.cell.sourceCellIndex != nil
-            && selectedTableCellSourcePositions[cell.surface.identity]?.contains(cell.sourcePosition) == true
+        isRealTableCell(cell, in: selectedTableCellSourcePositions[cell.surface.identity] ?? [])
+    }
+
+    private func isRealTableCell(_ cell: ViewerTablePresentedCell, in sourcePositions: Set<Int>) -> Bool {
+        cell.cell.sourceCellIndex != nil && sourcePositions.contains(cell.sourcePosition)
     }
 
     func selectionHandles(visibleIn requestedViewport: CGRect? = nil) -> [TableSelectionHandle] {
@@ -1040,12 +1058,14 @@ public final class PreparedProseDrawingView: UIView {
         let mountedLayoutIDs = Set(snapshot.mountedCells.map { ObjectIdentifier($0.content) })
         let excludedLayoutID = excludedTableCellContentLayout.map(ObjectIdentifier.init)
         drawHierarchicalBackgrounds(snapshot, mountedLayoutIDs: mountedLayoutIDs, excludedLayoutID: excludedLayoutID, dirtyRect: rect, context: context)
+        for remote in remoteTableCellSelections {
+            for cell in snapshot.mountedCells
+            where cell.surface.identity == remote.tableID && isRealTableCell(cell, in: remote.sourcePositions) {
+                fillTableCell(cell, color: remote.color, context: context)
+            }
+        }
         for cell in snapshot.mountedCells where isSelectedTableCell(cell) {
-            context.saveGState()
-            context.clip(to: cell.clip)
-            context.setFillColor(cell.surface.style.selectionColor.cgColor)
-            context.fill(cell.bounds)
-            context.restoreGState()
+            fillTableCell(cell, color: cell.surface.style.selectionColor, context: context)
         }
         context.saveGState()
         context.translateBy(x: 0, y: bounds.height)
@@ -1111,6 +1131,14 @@ public final class PreparedProseDrawingView: UIView {
             context.restoreGState()
         }
         PreparedProseInstrumentation.drew(drawStarted, visibleBlocks: visibleBlocks.count)
+    }
+
+    private func fillTableCell(_ cell: ViewerTablePresentedCell, color: UIColor, context: CGContext) {
+        context.saveGState()
+        context.clip(to: cell.clip)
+        context.setFillColor(color.cgColor)
+        context.fill(cell.bounds)
+        context.restoreGState()
     }
 
     private func drawTableFailure(_ presented: ViewerTablePresentedBlock, context: CGContext) {

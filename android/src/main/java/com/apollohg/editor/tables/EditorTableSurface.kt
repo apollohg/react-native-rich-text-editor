@@ -49,6 +49,7 @@ import com.apollohg.editor.retireInputConnectionForEditor
 import com.apollohg.editor.updateAtomBoundaryCursorVisibility
 import com.apollohg.editor.viewer.PreparedProseBlock
 import com.apollohg.editor.viewer.PreparedProseDrawingView
+import com.apollohg.editor.viewer.RemoteTableCellSelection
 import com.apollohg.editor.viewer.TableSelectionHandleRole
 import com.apollohg.editor.viewer.TableResizeEdge
 import com.apollohg.editor.viewer.PreparedProseLayout
@@ -557,6 +558,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         hostGestureAxis.update(dx, dy) {
             drawingView.canConsumeTableDragAt(x - drawingView.left, y - drawingView.top, dx)
         }
+
+    fun presentRemoteCellSelections(selections: List<RemoteTableCellSelection>) {
+        drawingView.remoteTableCellSelections = selections
+    }
 
     fun clear() {
         cancelPendingCellEditMenuToggle()

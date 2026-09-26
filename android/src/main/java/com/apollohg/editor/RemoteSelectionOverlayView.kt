@@ -9,7 +9,22 @@ import android.graphics.RectF
 import android.util.AttributeSet
 import android.util.TypedValue
 import androidx.appcompat.content.res.AppCompatResources
+import com.apollohg.editor.tables.EditorCellSelection
+import com.apollohg.editor.tables.resolveEditorCellSelection
+import com.apollohg.editor.viewer.RemoteTableCellSelection
 import org.json.JSONArray
+import org.json.JSONObject
+
+data class RemoteCellRectangle(val anchorCell: Long, val headCell: Long) {
+    companion object {
+        fun fromJson(json: JSONObject?): RemoteCellRectangle? {
+            json ?: return null
+            val anchorCell = exactV2U32(json.opt("anchorCell") as? Number)?.toLong() ?: return null
+            val headCell = exactV2U32(json.opt("headCell") as? Number)?.toLong() ?: return null
+            return RemoteCellRectangle(anchorCell, headCell)
+        }
+    }
+}
 
 data class RemoteSelectionDecoration(
     val clientId: String,
@@ -17,7 +32,8 @@ data class RemoteSelectionDecoration(
     val head: Int,
     val color: Int,
     val name: String?,
-    val isFocused: Boolean
+    val isFocused: Boolean,
+    val cellRectangle: RemoteCellRectangle? = null
 ) {
     companion object {
         fun fromJson(context: Context, json: String?): List<RemoteSelectionDecoration> {
@@ -43,7 +59,8 @@ data class RemoteSelectionDecoration(
                             head = head,
                             color = color,
                             name = item.optString("name").takeIf { it.isNotBlank() },
-                            isFocused = item.optBoolean("isFocused", false)
+                            isFocused = item.optBoolean("isFocused", false),
+                            cellRectangle = RemoteCellRectangle.fromJson(item.optJSONObject("cellRectangle"))
                         )
                     )
                 }
@@ -107,7 +124,8 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
         val baseY: Int,
         val width: Int,
         val height: Int,
-        val selections: List<RemoteSelectionDecoration>
+        val selections: List<RemoteSelectionDecoration>,
+        val cellSelectionClientIds: Set<String>
     )
 
     private data class GeometryContext(
@@ -120,6 +138,7 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
     private var remoteSelections: List<RemoteSelectionDecoration> = emptyList()
     private var cachedSnapshot: GeometrySnapshot? = null
     private var cachedGeometry: List<CachedSelectionGeometry> = emptyList()
+    private var cellSelectionClientIds: Set<String> = emptySet()
     internal var editorIdOverrideForTesting: Long? = null
     internal var docToScalarResolver: (Long, Int) -> Int = { editorId, docPos ->
         EditorV2Registry.adapterForViewToken(editorId)?.scalarPositionForDoc(docPos) ?: 0
@@ -152,8 +171,27 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
     }
 
     fun refreshGeometry() {
+        presentRemoteCellSelections()
         ensureGeometry()
         invalidate()
+    }
+
+    private fun presentRemoteCellSelections() {
+        val editorView = editorView ?: return
+        val editorId = resolvedEditorId(editorView)
+        val records = EditorV2Registry.adapterForViewToken(editorId)?.cachedTableRecords.orEmpty()
+        val drawable = if (editorId == 0L) emptyList() else remoteSelections.mapNotNull { selection ->
+            val rectangle = selection.cellRectangle ?: return@mapNotNull null
+            val cells = resolveEditorCellSelection(rectangle.anchorCell, rectangle.headCell, records)
+                as? EditorCellSelection.Drawable ?: return@mapNotNull null
+            selection.clientId to RemoteTableCellSelection(
+                cells.tableId,
+                cells.sourcePositions,
+                withAlpha(selection.color, SELECTION_ALPHA)
+            )
+        }
+        cellSelectionClientIds = drawable.map { it.first }.toSet()
+        editorView.editorTableSurface.presentRemoteCellSelections(drawable.map { it.second })
     }
 
     fun hasSelectionsOrCachedGeometry(): Boolean =
@@ -206,7 +244,8 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
 
         val text = context.snapshot.text
         val editorId = context.snapshot.editorId
-        val geometry = remoteSelections.map { selection ->
+        val textSelections = remoteSelections.filter { it.clientId !in context.snapshot.cellSelectionClientIds }
+        val geometry = textSelections.map { selection ->
             val startDoc = minOf(selection.anchor, selection.head)
             val endDoc = maxOf(selection.anchor, selection.head)
             val startScalar = docToScalarResolver(editorId, startDoc)
@@ -229,7 +268,7 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
             CachedSelectionGeometry(
                 clientId = selection.clientId,
                 selectionPath = selectionPath,
-                selectionColor = withAlpha(selection.color, 0.18f),
+                selectionColor = withAlpha(selection.color, SELECTION_ALPHA),
                 caretRect = caretRectForOffset(
                     endUtf16 = endUtf16,
                     textLength = text.length,
@@ -273,7 +312,8 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
                 baseY = baseY,
                 width = width,
                 height = height,
-                selections = remoteSelections
+                selections = remoteSelections,
+                cellSelectionClientIds = cellSelectionClientIds
             ),
             layout = layout,
             caretWidth = caretWidth
@@ -311,4 +351,8 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
 
     private fun resolvedEditorId(editorView: RichTextEditorView): Long =
         editorIdOverrideForTesting ?: editorView.editorId
+
+    internal companion object {
+        const val SELECTION_ALPHA = 0.18f
+    }
 }
