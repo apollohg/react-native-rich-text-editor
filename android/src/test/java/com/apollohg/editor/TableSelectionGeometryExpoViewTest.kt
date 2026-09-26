@@ -220,6 +220,46 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         }
 
     @Test
+    fun `parent moving the host republishes shifted rects once`() = withFocusedTable(fourCellTable) { fixture ->
+        fixture.selectCells(0, 3)
+        fixture.nextFrame()
+        assertEquals(1, fixture.payloads.size)
+        val before = rects(fixture.payloads[0])
+        val shiftPx = 40
+        val density = fixture.view.resources.displayMetrics.density
+
+        val params = fixture.view.layoutParams as FrameLayout.LayoutParams
+        params.topMargin += shiftPx
+        fixture.view.layoutParams = params
+        fixture.nextFrame()
+
+        assertEquals("${fixture.payloads}", 2, fixture.payloads.size)
+        val after = rects(fixture.payloads[1])
+        assertRects("rects follow the moved host",
+            before.map { RectF(it).apply { offset(0f, shiftPx / density) } }, after)
+        assertRects("rects match the drawn selection", fixture.expectedRects(), after)
+        assertRects("viewport follows the moved host", listOf(fixture.expectedViewport()),
+            listOf(rect(fixture.payloads[1]["viewport"])))
+    }
+
+    @Test
+    fun `detached host stops observing window layout`() = withFocusedTable(fourCellTable) { fixture ->
+        fixture.selectCells(0, 3)
+        fixture.nextFrame()
+        val parent = fixture.view.parent as FrameLayout
+        val tree = parent.viewTreeObserver
+
+        parent.removeView(fixture.view)
+        assertEquals(mapOf("editorId" to fixture.adapter.editorId), fixture.payloads.last())
+        val published = fixture.payloads.size
+        tree.dispatchOnGlobalLayout()
+
+        assertFalse(fixture.view.tableSelectionGeometryPublisher.hasScheduledFlushForTesting)
+        fixture.nextFrame()
+        assertEquals(published, fixture.payloads.size)
+    }
+
+    @Test
     fun `unchanged geometry is never published twice`() = withFocusedTable(fourCellTable) { fixture ->
         fixture.selectCells(0, 1)
         fixture.nextFrame()

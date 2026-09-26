@@ -6,6 +6,7 @@ import com.apollohg.editor.NativeEditorExpoView.NativeCommitKey
 import com.apollohg.editor.NativeEditorExpoView.PendingEditorUpdateEvent
 import com.apollohg.editor.NativeEditorExpoView.PreflightUpdateEvent
 import android.view.View
+import android.view.ViewTreeObserver
 import com.apollohg.editor.tables.TableSelectionGeometry
 import org.json.JSONObject
 
@@ -19,6 +20,18 @@ internal class TableSelectionGeometryPublisher(
     private val scheduledFlush = Runnable {
         flushPosted = false
         flush()
+    }
+    private val layoutListener = ViewTreeObserver.OnGlobalLayoutListener { scheduleFlush() }
+    private var observedTree: ViewTreeObserver? = null
+
+    fun observeWindowLayout() {
+        if (observedTree?.isAlive == true) return
+        observedTree = frameHost.viewTreeObserver.also { it.addOnGlobalLayoutListener(layoutListener) }
+    }
+
+    fun stopObservingWindowLayout() {
+        observedTree?.takeIf { it.isAlive }?.removeOnGlobalLayoutListener(layoutListener)
+        observedTree = null
     }
 
     val hasScheduledFlushForTesting: Boolean get() = flushPosted

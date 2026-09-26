@@ -511,6 +511,7 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         handleAttachedToWindow()
+        tableSelectionGeometryPublisher.observeWindowLayout()
     }
 
     internal fun handleEditorDestroyed(editorId: Long) {
@@ -523,6 +524,7 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         richTextView.activeTextInput.retireInputConnectionForHostDetach()
         super.onDetachedFromWindow()
         handleDetachedFromWindow()
+        tableSelectionGeometryPublisher.stopObservingWindowLayout()
         tableSelectionGeometryPublisher.flush()
     }
 

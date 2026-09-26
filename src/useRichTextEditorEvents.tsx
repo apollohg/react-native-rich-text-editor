@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { PixelRatio, Platform, type NativeSyntheticEvent } from 'react-native';
 import { normalizeNativeEditorV2DecimalId, type Selection } from './NativeEditorBridge';
 import { setActiveEditorToolbarFrameOwnerForEditor } from './EditorToolbar';
@@ -242,6 +242,18 @@ export function useRichTextEditorEvents(
     );
 
     const deliveredTableSelectionGeometryRef = useRef<TableSelectionGeometry | null>(null);
+
+    useEffect(
+        () => () => {
+            if (deliveredTableSelectionGeometryRef.current == null) {
+                return;
+            }
+
+            deliveredTableSelectionGeometryRef.current = null;
+            onTableSelectionGeometryChangeRef.current?.(null);
+        },
+        [ onTableSelectionGeometryChangeRef ]
+    );
 
     const handleTableSelectionGeometry = useCallback(
         (event: NativeSyntheticEvent<NativeTableSelectionGeometryEvent>) => {

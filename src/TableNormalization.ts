@@ -4,7 +4,7 @@ import {
     invalidV2RequestError,
     isPlainRecord,
     nativeEditorV2U32,
-    normalizeNativeEditorV2DecimalId,
+    normalizeRevisionField,
     requireNativeEditorV2U32,
 } from './NativeEditorResultNormalization';
 import { type NativeEditorSelectionEnvelope } from './NativeEditorTypes';
@@ -204,12 +204,6 @@ export function normalizeTableCommand(command: unknown): TableCommandRequest {
     }
 }
 
-function canonicalDecimal(value: unknown): string | null {
-    return typeof value === 'string' && normalizeNativeEditorV2DecimalId(value) === value
-        ? value
-        : null;
-}
-
 function isFiniteExtent(value: unknown): value is number {
     return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
@@ -262,7 +256,7 @@ export function normalizeNativeTableSelectionGeometry(
         return null;
     }
 
-    const editorId = canonicalDecimal(payload.editorId);
+    const editorId = normalizeRevisionField(payload, 'editorId');
 
     if (editorId == null) {
         return null;
@@ -279,8 +273,8 @@ export function normalizeNativeTableSelectionGeometry(
         return null;
     }
 
-    const documentRevision = canonicalDecimal(payload.documentRevision);
-    const layoutEpoch = canonicalDecimal(payload.layoutEpoch);
+    const documentRevision = normalizeRevisionField(payload, 'documentRevision');
+    const layoutEpoch = normalizeRevisionField(payload, 'layoutEpoch');
     const tablePos = nativeEditorV2U32(payload.tablePos);
     const rects = tableSelectionRects(payload.rects);
     const viewport = tableSelectionRect(payload.viewport);

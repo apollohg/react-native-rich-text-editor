@@ -1684,6 +1684,29 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    func testParentMovingTheHostRepublishesShiftedRectsOnce() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            try fixture.selectCells(anchor: 0, head: 3)
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 1)
+            let before = try fixture.recorder.rects(at: 0)
+            let shift: CGFloat = 40
+
+            fixture.host.frame = fixture.host.frame.offsetBy(dx: 0, dy: shift)
+            XCTAssertTrue(fixture.host.tableSelectionGeometryPublisher.hasScheduledFlushForTesting,
+                          "moving the host schedules a geometry frame")
+            XCTAssertEqual(fixture.recorder.payloads.count, 1, "the move is published on the next frame")
+            waitForGeometryFrame()
+
+            XCTAssertEqual(fixture.recorder.payloads.count, 2, "\(fixture.recorder.payloads)")
+            let after = try fixture.recorder.rects(at: 1)
+            assertRects(after, before.map { $0.offsetBy(dx: 0, dy: shift) }, "rects follow the moved host")
+            assertRects(after, try fixture.expectedWindowRects())
+            let viewport = try GeometryRecorder.rect(try XCTUnwrap(fixture.recorder.payloads[1]["viewport"] as? [String: Double]))
+            XCTAssertEqual(viewport, fixture.host.frame)
+        }
+    }
+
     func testUnchangedGeometryIsNeverPublishedTwice() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
             try fixture.selectCells(anchor: 0, head: 1)

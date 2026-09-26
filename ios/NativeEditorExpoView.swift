@@ -315,8 +315,17 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
         return richTextView.intrinsicContentSize
     }
 
+    override var frame: CGRect {
+        didSet { tableSelectionGeometryPublisher.scheduleFlush() }
+    }
+
+    override var center: CGPoint {
+        didSet { tableSelectionGeometryPublisher.scheduleFlush() }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
+        tableSelectionGeometryPublisher.scheduleFlush()
         richTextView.frame = bounds
         guard heightBehavior == .autoGrow else { return }
         let currentWidth = bounds.width.rounded(.towardZero)

@@ -245,6 +245,37 @@ describe('native table selection geometry events', () => {
         ]);
     });
 
+    it('delivers null when the editor unmounts while geometry is shown', () => {
+        const handle = createV2LocalHandle(V2_INITIAL_DOC);
+        const listener: GeometryListener = jest.fn();
+        const { view, emit } = renderEditor(handle, listener);
+
+        emit(nativeGeometry(handle.editorId));
+        view.unmount();
+
+        expect(listener.mock.calls.map(([ geometry ]) => geometry?.tablePos ?? null)).toEqual([
+            TABLE_POS,
+            null,
+        ]);
+        handle.destroy();
+    });
+
+    it('delivers nothing on unmount when no geometry is shown', () => {
+        const handle = createV2LocalHandle(V2_INITIAL_DOC);
+        const listener: GeometryListener = jest.fn();
+        const { view, emit } = renderEditor(handle, listener);
+
+        emit(nativeGeometry(handle.editorId));
+        emit({ editorId: handle.editorId });
+        view.unmount();
+
+        expect(listener.mock.calls.map(([ geometry ]) => geometry?.tablePos ?? null)).toEqual([
+            TABLE_POS,
+            null,
+        ]);
+        handle.destroy();
+    });
+
     it('never creates or changes an engine selection', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const listener: GeometryListener = jest.fn();
