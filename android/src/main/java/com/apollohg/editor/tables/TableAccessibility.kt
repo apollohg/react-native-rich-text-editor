@@ -145,7 +145,7 @@ internal data class TableAccessibilityDetachedFrame(
     val tableId: String,
     val tablePos: Int,
     val kind: TableAccessibilityTable.Frame,
-    val bounds: RectF
+    val bounds: () -> RectF
 )
 
 internal data class TableAccessibilityLocation(
@@ -278,6 +278,8 @@ internal class TableCellAccessibility(
     private fun located(): TableAccessibilityLocation? =
         surface()?.let { drawing.tableAccessibilityLocation(it, sourceCellIndex) }
 
+    fun isPlacedInTable(): Boolean = located() != null
+
     fun populate(input: View, info: AccessibilityNodeInfo) {
         val location = located() ?: return
         info.setParent(drawing, location.tableNodeId)
@@ -401,7 +403,7 @@ internal class TableAccessibilityNodes(
     private fun geometry(entry: Entry): Pair<RectF, RectF?> = when (entry) {
         is Entry.Table -> entry.table.presented.bounds to entry.table.presented.clip
         is Entry.Cell -> entry.cell.presented.bounds to entry.table.presented.clip
-        is Entry.Detached -> entry.frame.bounds to null
+        is Entry.Detached -> entry.frame.bounds() to null
     }
 
     private fun visible(entry: Entry): Boolean {

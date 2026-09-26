@@ -139,7 +139,7 @@ class RichTextEditorView @JvmOverloads constructor(
     private inner class EditorContentFrame(context: Context) : FrameLayout(context) {
         override fun addChildrenForAccessibility(outChildren: ArrayList<View>) {
             super.addChildrenForAccessibility(outChildren)
-            outChildren.removeAll { it is EditorEditText && it.tableCellAccessibility != null }
+            outChildren.removeAll { it is EditorEditText && it.tableCellAccessibility?.isPlacedInTable() == true }
         }
 
         private var tableDownX = 0f

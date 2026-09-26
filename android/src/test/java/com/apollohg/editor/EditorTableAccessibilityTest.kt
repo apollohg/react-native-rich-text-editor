@@ -10,6 +10,7 @@ import android.graphics.Rect
 import com.apollohg.editor.tables.TableAccessibilityAction
 import com.apollohg.editor.tables.TableAccessibilityDetachedFrame
 import com.apollohg.editor.tables.TableAccessibilityEditing
+import com.apollohg.editor.tables.TableCellAccessibility
 import java.io.File
 import org.json.JSONArray
 import com.apollohg.editor.tables.TableAccessibilityNodes
@@ -178,7 +179,7 @@ internal class EditorTableAccessibilityTest {
         val fixtureFile = generateSequence(File(workingDirectory)) { it.parentFile }
             .map { File(it, PARITY_FIXTURE) }.first { it.isFile }
         val fixture = JSONArray(fixtureFile.readText())
-        assertEquals(fixture.length(), TableAccessibilityAction.ALL.size)
+        assertEquals("native actions cover every toolbar action", TableAccessibilityAction.ALL.size, fixture.length())
         val resources = RuntimeEnvironment.getApplication().resources
         TableAccessibilityAction.ALL.forEachIndexed { index, action ->
             val expected = fixture.getJSONObject(index)
@@ -227,6 +228,29 @@ internal class EditorTableAccessibilityTest {
             assertEquals("a document change rebuilds the snapshot", listOf("one", "two", "three", "four"), texts)
             assertEquals(2, frameQueries)
         }
+
+    @Test
+    fun `a detached frame follows its line without a presentation change`() =
+        withTable(EMPTY_FRAME_DOCUMENT) { fixture ->
+            val before = Rect().also(fixture.frameNode().second::getBoundsInParent)
+            val generation = fixture.view.editorTableSurface.drawingView.tableAccessibilityGeneration
+            fixture.root.setPadding(0, FRAME_SHIFT_PX, 0, 0)
+            fixture.relayout()
+            assertEquals("padding alone must not rebuild the snapshot", generation,
+                fixture.view.editorTableSurface.drawingView.tableAccessibilityGeneration)
+            val after = Rect().also(fixture.frameNode().second::getBoundsInParent)
+            assertEquals("the frame is placed from the current line", before.top + FRAME_SHIFT_PX, after.top)
+        }
+
+    @Test
+    fun `an input without a table slot stays in the editor frame traversal`() = withTable(FOUR_CELL_DOCUMENT) { fixture ->
+        val surface = fixture.view.editorTableSurface
+        val orphan = EditorEditText(fixture.view.context)
+        orphan.tableCellAccessibility = TableCellAccessibility(surface.drawingView, { null }, FIRST_CELL, surface)
+        fixture.view.editorContentFrame.addView(orphan)
+        val children = ArrayList<View>().also(fixture.view.editorContentFrame::addChildrenForAccessibility)
+        assertTrue("an input with no virtual parent must not be orphaned", orphan in children)
+    }
 
     @Test
     fun `selected cells expose exactly the published table actions`() = withTable(FOUR_CELL_DOCUMENT) { fixture ->
@@ -348,6 +372,7 @@ internal class EditorTableAccessibilityTest {
         const val PARITY_FIXTURE = "scripts/tests/table-toolbar-actions.json"
         const val RESOURCE_PREFIX = "table_accessibility_"
         const val SNAPSHOT_READS = 3
+        const val FRAME_SHIFT_PX = 40
         const val FIRST_CELL = 0
         const val SECOND_CELL = 1
         const val THIRD_CELL = 2

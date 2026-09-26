@@ -1348,29 +1348,32 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     }
 
     override fun detachedTableAccessibilityFrames(): List<TableAccessibilityDetachedFrame> {
-        val input = host.editorEditText
-        val adapter = input.v2Driver as? EditorV2Adapter ?: return emptyList()
-        val layout = input.layout ?: return emptyList()
-        val text = input.text.toString()
+        val adapter = host.editorEditText.v2Driver as? EditorV2Adapter ?: return emptyList()
         val mappings = adapter.cachedTableInputMappings?.tables ?: return emptyList()
         return adapter.cachedTableRecords.mapNotNull { (tableId, record) ->
             val mapping = mappings[tableId] ?: return@mapNotNull null
             if (mapping.extent != null || record.optBoolean("readOnlyDescendants", true)) return@mapNotNull null
             val tablePos = exactV2ScalarInt(record.opt("tablePos") as? Number) ?: return@mapNotNull null
-            val scalar = adapter.scalarPositionForDoc(tablePos) ?: return@mapNotNull null
-            val line = layout.getLineForOffset(PositionBridge.scalarToUtf16(scalar, text).coerceIn(0, text.length))
-            val top = (input.top + input.totalPaddingTop + layout.getLineTop(line)).toFloat()
-            val bottom = (input.top + input.totalPaddingTop + layout.getLineBottom(line)).toFloat()
             val unfilled = record.isNull("failure") &&
                 (record.optInt("rows", 0) == 0 || record.optInt("columns", 0) == 0)
-            tablePos to TableAccessibilityDetachedFrame(
+            TableAccessibilityDetachedFrame(
                 tableId,
                 tablePos,
-                if (unfilled) TableAccessibilityTable.Frame.EMPTY else TableAccessibilityTable.Frame.FAILED,
-                RectF((input.left + input.totalPaddingLeft).toFloat(), top,
-                    (input.right - input.totalPaddingRight).toFloat(), bottom)
-            )
-        }.sortedBy { it.first }.map { it.second }
+                if (unfilled) TableAccessibilityTable.Frame.EMPTY else TableAccessibilityTable.Frame.FAILED
+            ) { detachedFrameBounds(adapter, tablePos) }
+        }.sortedBy { it.tablePos }
+    }
+
+    private fun detachedFrameBounds(adapter: EditorV2Adapter, tablePos: Int): RectF {
+        val input = host.editorEditText
+        val layout = input.layout ?: return RectF()
+        val scalar = adapter.scalarPositionForDoc(tablePos) ?: return RectF()
+        val text = input.text.toString()
+        val line = layout.getLineForOffset(PositionBridge.scalarToUtf16(scalar, text).coerceIn(0, text.length))
+        val top = (input.top + input.totalPaddingTop + layout.getLineTop(line)).toFloat()
+        val bottom = (input.top + input.totalPaddingTop + layout.getLineBottom(line)).toFloat()
+        return RectF((input.left + input.totalPaddingLeft).toFloat(), top,
+            (input.right - input.totalPaddingRight).toFloat(), bottom)
     }
 
     override fun canDeleteTableAccessibilityFrame(tableId: String): Boolean = accessibilityAdmission(tableId) != null
