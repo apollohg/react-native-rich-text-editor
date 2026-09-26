@@ -3,6 +3,8 @@ import XCTest
 extension EditorTableInputTests {
     private enum TableAccessibilityFixture {
         static let fourCellDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"four"}]}]}]}]}]}"#
+        static let proseThenTableDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]}]}"#
+        static let proseTableAndFrameDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]},{"type":"table"}]}"#
         static let frameBetweenTablesDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]}]}]},{"type":"table"},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"last"}]}]}]}]}]}"#
         static let parityFixture = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -29,6 +31,12 @@ extension EditorTableInputTests {
     private func publishedActionLabels(_ fixture: MountedTableFixture) throws -> [String] {
         let commands = try XCTUnwrap(fixture.adapter.cachedActiveState?["commands"] as? [String: Any])
         return TableAccessibilityAction.all.filter { commands[$0.applicability] as? Bool == true }.map(\.label)
+    }
+
+    private func drainMainQueue() {
+        let drained = expectation(description: "drain main queue")
+        DispatchQueue.main.async { drained.fulfill() }
+        wait(for: [drained], timeout: 1)
     }
 
     private func perform(_ label: String, on element: NSObject) throws -> Bool {
@@ -81,6 +89,37 @@ extension EditorTableInputTests {
                 }
             }
             XCTAssertEqual(order, ["first", TableAccessibilityText.emptyTable.localized, "last"])
+        }
+    }
+
+    func testTypingOutsideTablesKeepsVoiceOverStillWhileStructuralChangesAnnounce() throws {
+        try withMountedTable(document: TableAccessibilityFixture.proseThenTableDocument, cellSelection: nil) { fixture in
+            XCTAssertEqual(try accessibleTable(fixture, containing: "cell").cellElements.count, 1)
+            var announcements = 0
+            fixture.drawing.onAccessibilityLayoutChangedForTesting = { announcements += 1 }
+            let revision = fixture.adapter.baseDocumentRevision
+
+            for (offset, character) in ["x", "y", "z"].enumerated() {
+                let update = try XCTUnwrap(fixture.adapter.insertText(character, atScalar: UInt32(1 + offset)))
+                XCTAssertTrue(fixture.view.textView.applyUpdateJSON(update))
+                fixture.view.layoutIfNeeded()
+                drainMainQueue()
+            }
+            XCTAssertEqual(fixture.adapter.baseDocumentRevision, revision + 3, "three root keystrokes were applied")
+            XCTAssertEqual(announcements, 0, "typing in a root paragraph must not post layoutChanged")
+
+            let withFrame = try XCTUnwrap(fixture.adapter.setContentJson(TableAccessibilityFixture.proseTableAndFrameDocument))
+            XCTAssertTrue(fixture.view.textView.applyUpdateJSON(withFrame))
+            fixture.view.layoutIfNeeded()
+            drainMainQueue()
+            XCTAssertEqual(announcements, 1, "adding a frame changes the structure")
+            XCTAssertNotNil(try accessibleFrame(fixture))
+
+            let withoutFrame = try XCTUnwrap(fixture.adapter.setContentJson(TableAccessibilityFixture.proseThenTableDocument))
+            XCTAssertTrue(fixture.view.textView.applyUpdateJSON(withoutFrame))
+            fixture.view.layoutIfNeeded()
+            drainMainQueue()
+            XCTAssertEqual(announcements, 2, "removing a frame changes the structure")
         }
     }
 

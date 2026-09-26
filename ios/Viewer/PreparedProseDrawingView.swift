@@ -603,6 +603,9 @@ public final class PreparedProseDrawingView: UIView {
     }
     private var accessibilityElementsByIndex: [Int: NSObject] = [:]
     private var accessibilityItemsCache: (generation: Int, items: [TableAccessibilityItem])?
+    private var announcedAccessibilityStructure: [String]?
+    private var accessibilityAnnouncementScheduled = false
+    var onAccessibilityLayoutChangedForTesting: (() -> Void)?
     weak var tableAccessibilityEditing: TableAccessibilityEditing?
     internal var materializedAccessibilityElementCountForTesting: Int { accessibilityElementsByIndex.count }
 
@@ -856,6 +859,9 @@ public final class PreparedProseDrawingView: UIView {
             detachedFrames: tableAccessibilityEditing?.detachedTableAccessibilityFrames() ?? []
         )
         accessibilityItemsCache = (accessibilityPresentationGeneration, items)
+        if announcedAccessibilityStructure == nil {
+            announcedAccessibilityStructure = TableAccessibility.structure(of: items)
+        }
         return items
     }
 
@@ -967,6 +973,18 @@ public final class PreparedProseDrawingView: UIView {
         accessibilityPresentationGeneration &+= 1
         accessibilityElementsByIndex.removeAll(keepingCapacity: true)
         accessibilityItemsCache = nil
+        guard announcedAccessibilityStructure != nil, !accessibilityAnnouncementScheduled else { return }
+        accessibilityAnnouncementScheduled = true
+        DispatchQueue.main.async { [weak self] in self?.announceAccessibilityStructureChange() }
+    }
+
+    private func announceAccessibilityStructureChange() {
+        accessibilityAnnouncementScheduled = false
+        guard let announced = announcedAccessibilityStructure else { return }
+        let current = TableAccessibility.structure(of: accessibilityItems)
+        announcedAccessibilityStructure = current
+        guard current != announced else { return }
+        onAccessibilityLayoutChangedForTesting?()
         UIAccessibility.post(notification: .layoutChanged, argument: nil)
     }
 

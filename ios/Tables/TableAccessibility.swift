@@ -261,6 +261,23 @@ enum TableAccessibility {
         )
     }
 
+    static func structure(of items: [TableAccessibilityItem]) -> [String] {
+        items.map { item in
+            switch item {
+            case let .node(node):
+                return "node:\(node.node.role):\(node.node.label)"
+            case let .table(table):
+                let cells = table.cells.map {
+                    "\($0.rows.location),\($0.rows.length),\($0.columns.location),\($0.columns.length),\($0.isHeader)"
+                }
+                return "table:\(table.rowCount)x\(table.columnCount):\(String(describing: table.frame)):"
+                    + cells.joined(separator: descriptionSeparator)
+            case let .detachedFrame(frame):
+                return "frame:\(frame.frame)"
+            }
+        }
+    }
+
     static func customActions(
         for cell: TableAccessibilityCell,
         tableID: String,

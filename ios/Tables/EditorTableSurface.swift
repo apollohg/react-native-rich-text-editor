@@ -230,6 +230,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     )
     private var cellEditMenuEndpoints: TableSelectionEndpoints?
     private var accessibilityDocumentRevision: UInt64?
+    private var accessibilityUnanchoredTables: Set<String> = []
     var isCellEditMenuVisible: Bool { cellEditMenu.isVisible }
 
     private enum HandleScrollMetrics {
@@ -297,8 +298,10 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         defer { selectionGeometryMayChange() }
         drawingView.setTableOwnerIdentity(ownerIdentity)
         latestPresentation = presentation
-        if accessibilityDocumentRevision != presentation.documentRevision {
+        let unanchored = unanchoredTableIDs()
+        if accessibilityDocumentRevision != presentation.documentRevision || accessibilityUnanchoredTables != unanchored {
             accessibilityDocumentRevision = presentation.documentRevision
+            accessibilityUnanchoredTables = unanchored
             drawingView.invalidateTableAccessibility()
         }
         if let drag = resizeDrag, !validResizeDrag(drag) { discardActiveDrag() }
@@ -324,6 +327,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         defer { selectionGeometryMayChange() }
         discardActiveDrag()
         accessibilityDocumentRevision = nil
+        accessibilityUnanchoredTables = []
         drawingView.setTableOwnerIdentity(nil)
         entries.removeAll()
         latestPresentation = nil
@@ -1399,13 +1403,18 @@ extension EditorTableSurface: TableAccessibilityEditing {
         return input
     }
 
-    func detachedTableAccessibilityFrames() -> [TableAccessibilityDetachedFrame] {
-        guard let presentation = latestPresentation,
-              let host = interactionHost, host.editorId != 0,
+    private func unanchoredTableIDs() -> Set<String> {
+        guard let host = interactionHost, host.editorId != 0,
               let mappings = EditorV2Registry.adapter(forLegacyId: host.editorId)?.cachedTableInputMappings?.tables
         else { return [] }
+        return Set(mappings.filter { $0.value.extent == nil }.keys)
+    }
+
+    func detachedTableAccessibilityFrames() -> [TableAccessibilityDetachedFrame] {
+        guard let presentation = latestPresentation else { return [] }
+        let unanchored = unanchoredTableIDs()
         return presentation.tableRecords
-            .filter { !$0.value.readOnlyDescendants && mappings[$0.key].map { $0.extent == nil } == true }
+            .filter { !$0.value.readOnlyDescendants && unanchored.contains($0.key) }
             .map { tableID, record in
                 let unfilled = record.failure == nil && (record.rows == 0 || record.columns == 0)
                 let tablePos = record.tablePos
