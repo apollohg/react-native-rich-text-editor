@@ -250,7 +250,14 @@ enum CommandEnvelope {
         #[serde(default, rename = "withHeaderRow")]
         with_header_row: Option<bool>,
     },
-    DeleteTable,
+    DeleteTable {
+        #[serde(
+            default,
+            rename = "tablePos",
+            deserialize_with = "deserialize_explicit_unsigned"
+        )]
+        table_pos: Option<u32>,
+    },
     AddTableRow {
         side: TableEdgeEnvelope,
     },
@@ -518,7 +525,9 @@ impl From<CommandEnvelope> for TypedCommand {
                 columns: columns.unwrap_or(DEFAULT_INSERTED_TABLE_COLUMNS),
                 with_header_row: with_header_row.unwrap_or(DEFAULT_INSERTED_TABLE_HEADER_ROW),
             }),
-            CommandEnvelope::DeleteTable => Self::Table(TableCommand::DeleteTable),
+            CommandEnvelope::DeleteTable { table_pos } => {
+                Self::Table(TableCommand::DeleteTable { table_pos })
+            }
             CommandEnvelope::AddTableRow { side } => Self::Table(TableCommand::AddTableRow {
                 side: side.into(),
             }),

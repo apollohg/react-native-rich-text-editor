@@ -83,22 +83,35 @@ internal fun EditorV2Adapter.selectExactTableCells(
     return update
 }
 
-internal fun EditorV2Adapter.resizeTableColumn(
-    column: Int,
-    width: Int,
+private fun EditorV2Adapter.applyTableCommand(
+    command: JSONObject,
     admission: TableMutationAdmission
 ): String? {
-    if (!admitsTableMutation(admission) || column < 0) return null
+    if (!admitsTableMutation(admission)) return null
     val tablePos = exactV2ScalarInt(cachedTableRecords[admission.tableId]?.opt("tablePos") as? Number)
         ?: return null
-    val command = JSONObject().put("type", "setTableColumnWidth").put("width", width)
-        .put("column", column).put("tablePos", tablePos)
+    command.put("tablePos", tablePos)
     return performMutation(adoptEngineSelection = true) {
         callWithEnvelope(JSONObject().put("command", command)) { requestJson ->
             backend.applyCommand(editorId, requestJson)
         }
     }
 }
+
+internal fun EditorV2Adapter.resizeTableColumn(
+    column: Int,
+    width: Int,
+    admission: TableMutationAdmission
+): String? {
+    if (column < 0) return null
+    return applyTableCommand(
+        JSONObject().put("type", "setTableColumnWidth").put("width", width).put("column", column),
+        admission
+    )
+}
+
+internal fun EditorV2Adapter.deleteTable(admission: TableMutationAdmission): String? =
+    applyTableCommand(JSONObject().put("type", "deleteTable"), admission)
 
 internal fun EditorV2Adapter.clampScalar(scalar: Int): Int {
     val extent = cachedScalarLength ?: return scalar

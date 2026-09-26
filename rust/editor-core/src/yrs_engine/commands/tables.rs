@@ -223,6 +223,19 @@ fn explicit_table_resize(
     )
 }
 
+fn explicit_table_deletion(
+    document: &Document,
+    schema: &Schema,
+    limits: &ResourceLimits,
+    table_pos: u32,
+    selection: &Selection,
+) -> OperationResult<Option<SemanticCommandPlan>> {
+    if !outer_table_positions(document, schema, limits)?.contains(&table_pos) {
+        return Ok(None);
+    }
+    Ok(plan_delete_table(document, schema, table_pos, selection))
+}
+
 fn semantic(
     context: &PlanningContext<'_>,
     selection: &Selection,
@@ -333,13 +346,25 @@ pub(super) fn plan(
             );
             semantic(&context, &selection, plan)
         }
-        TableCommand::DeleteTable => match anchor {
-            None => Ok(CommandPlan::NotApplicable),
-            Some(anchor) => {
-                let plan = plan_delete_table(context.document, context.schema, anchor.table_pos);
-                semantic(&context, &selection, plan)
-            }
-        },
+        TableCommand::DeleteTable { table_pos } => {
+            let plan = match (table_pos, anchor) {
+                (Some(table_pos), _) => explicit_table_deletion(
+                    context.document,
+                    context.schema,
+                    context.resource_limits,
+                    table_pos,
+                    &selection,
+                )?,
+                (None, None) => None,
+                (None, Some(anchor)) => plan_delete_table(
+                    context.document,
+                    context.schema,
+                    anchor.table_pos,
+                    &selection,
+                ),
+            };
+            semantic(&context, &selection, plan)
+        }
         TableCommand::AddTableRow { side } => match anchor {
             None => Ok(CommandPlan::NotApplicable),
             Some(anchor) => scoped_action(&context, &anchor, &selection, &InsertRowAction { side }),
@@ -626,9 +651,21 @@ impl<'a> TableCommandSurface<'a> {
                     )
                     .is_some()
             }
-            TableCommand::DeleteTable => self.anchor.as_ref().is_some_and(|anchor| {
-                plan_delete_table(self.document, self.schema, anchor.table_pos).is_some()
-            }),
+            TableCommand::DeleteTable { table_pos } => match (table_pos, &self.anchor) {
+                (Some(table_pos), _) => explicit_table_deletion(
+                    self.document,
+                    self.schema,
+                    self.limits,
+                    table_pos,
+                    self.selection,
+                )
+                .is_ok_and(|plan| plan.is_some()),
+                (None, None) => false,
+                (None, Some(anchor)) => {
+                    plan_delete_table(self.document, self.schema, anchor.table_pos, self.selection)
+                        .is_some()
+                }
+            },
             TableCommand::AddTableRow { side } => self
                 .regular_target()
                 .is_some_and(|target| rows::plan_insert_row(target, side, self.schema).is_some()),

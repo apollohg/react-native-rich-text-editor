@@ -287,7 +287,7 @@ fn table_command_surface() -> [(&'static str, TableCommand); TABLE_COMMAND_ENTRI
                 with_header_row: DEFAULT_INSERTED_TABLE_HEADER_ROW,
             },
         ),
-        ("deleteTable", TableCommand::DeleteTable),
+        ("deleteTable", TableCommand::DeleteTable { table_pos: None }),
         (
             "addTableRowBefore",
             TableCommand::AddTableRow {

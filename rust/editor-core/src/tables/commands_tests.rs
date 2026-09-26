@@ -524,7 +524,7 @@ fn the_whole_table_goes_only_on_an_explicit_table_deletion() {
     let mut engine = seeded(regular_fixture());
     select_cell(&mut engine, 0);
 
-    applied(&mut engine, TableCommand::DeleteTable);
+    applied(&mut engine, TableCommand::DeleteTable { table_pos: None });
 
     let json = engine.document_json().expect("the engine is ready");
     assert!(
@@ -1442,7 +1442,13 @@ fn envelope_payload(command: TableCommand) -> Value {
             "columns": columns,
             "withHeaderRow": with_header_row,
         }),
-        TableCommand::DeleteTable => json!({ "type": "deleteTable" }),
+        TableCommand::DeleteTable { table_pos } => {
+            let mut payload = json!({ "type": "deleteTable" });
+            if let Some(table_pos) = table_pos {
+                payload["tablePos"] = json!(table_pos);
+            }
+            payload
+        }
         TableCommand::AddTableRow { side } => {
             json!({ "type": "addTableRow", "side": edge_payload(side) })
         }
@@ -1514,7 +1520,7 @@ const EVERY_CELL_STEP: [crate::tables::interchange::CellStep; 2] = [
     crate::tables::interchange::CellStep::Backward,
 ];
 const EVERY_TAB_ROW_APPEND: [bool; 2] = [true, false];
-const TABLE_COMMAND_ENVELOPE_CASES: usize = 21;
+const TABLE_COMMAND_ENVELOPE_CASES: usize = 23;
 
 fn every_table_command() -> Vec<TableCommand> {
     let mut commands = vec![
@@ -1523,7 +1529,13 @@ fn every_table_command() -> Vec<TableCommand> {
             columns: DEFAULT_INSERTED_TABLE_COLUMNS,
             with_header_row: DEFAULT_INSERTED_TABLE_HEADER_ROW,
         },
-        TableCommand::DeleteTable,
+        TableCommand::DeleteTable { table_pos: None },
+        TableCommand::DeleteTable {
+            table_pos: Some(TABLE_POSITION),
+        },
+        TableCommand::DeleteTable {
+            table_pos: Some(TABLE_POSITION + ONE_CHARACTER),
+        },
         TableCommand::DeleteTableRows,
         TableCommand::DeleteTableColumns,
         TableCommand::SelectTableRows,
@@ -2447,6 +2459,25 @@ fn a_column_width_envelope_accepts_an_explicit_table_position() {
         assert!(
             refusal.is_err(),
             "malformed table position {table_pos} must not parse"
+        );
+    }
+}
+
+#[test]
+fn a_delete_table_envelope_rejects_malformed_table_positions() {
+    for table_pos in [
+        json!(null),
+        json!(-1),
+        json!(1.5),
+        json!("8"),
+        json!(4294967296u64),
+    ] {
+        let refusal = crate::native_transaction_bridge::table_command_envelope_for_test(
+            &json!({ "type": "deleteTable", "tablePos": table_pos }).to_string(),
+        );
+        assert!(
+            refusal.is_err(),
+            "malformed table position {table_pos} must not parse, got {refusal:?}"
         );
     }
 }

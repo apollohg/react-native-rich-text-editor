@@ -123,25 +123,32 @@ extension EditorV2Adapter {
         return update
     }
 
-    func resizeTableColumn(column: Int, width: Int, admission: TableMutationAdmission) -> String? {
+    private func applyTableCommand(_ command: [String: Any], admission: TableMutationAdmission) -> String? {
         guard beginRuntimeOperation() else { return nil }
         defer { endRuntimeOperation() }
         guard admitsTableMutation(admission),
-              column >= 0,
               let record = cachedTableRecords[admission.tableID],
               let tablePos = Self.uint32Field(record, "tablePos")
         else { return nil }
-        let command: [String: Any] = [
-            "type": "setTableColumnWidth",
-            "width": width,
-            "column": column,
-            "tablePos": Int(tablePos)
-        ]
+        var targeted = command
+        targeted["tablePos"] = Int(tablePos)
         return performMutation(adoptEngineSelection: true) {
-            self.callWithEnvelope(["command": command]) { requestJson in
+            self.callWithEnvelope(["command": targeted]) { requestJson in
                 editorV2ApplyCommand(editorId: self.editorId, requestJson: requestJson)
             }
         }
+    }
+
+    func resizeTableColumn(column: Int, width: Int, admission: TableMutationAdmission) -> String? {
+        guard column >= 0 else { return nil }
+        return applyTableCommand(
+            ["type": "setTableColumnWidth", "width": width, "column": column],
+            admission: admission
+        )
+    }
+
+    func deleteTable(admission: TableMutationAdmission) -> String? {
+        applyTableCommand(["type": "deleteTable"], admission: admission)
     }
 
     func syncNodeSelection(docPos: UInt32) -> EditorV2SelectionSync? {

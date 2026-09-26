@@ -72,7 +72,9 @@ pub enum TableCommand {
         columns: u32,
         with_header_row: bool,
     },
-    DeleteTable,
+    DeleteTable {
+        table_pos: Option<u32>,
+    },
     AddTableRow {
         side: TableEdge,
     },
@@ -869,6 +871,7 @@ pub(crate) fn plan_delete_table(
     document: &Document,
     schema: &Schema,
     table_pos: u32,
+    selection: &Selection,
 ) -> Option<SemanticCommandPlan> {
     let Ok(Some(roles)) = TableRoles::resolve(schema) else {
         return None;
@@ -891,13 +894,18 @@ pub(crate) fn plan_delete_table(
     } else {
         table_pos
     };
+    let table_end = table_pos.checked_add(table.node_size())?;
+    let rests_in_table = !matches!(selection, Selection::All)
+        && [selection.anchor(document), selection.head(document)]
+            .iter()
+            .any(|position| (table_pos..table_end).contains(position));
     Some(SemanticCommandPlan {
         operations: vec![SemanticOperation::ReplaceRange {
             from: table_pos,
-            to: table_pos.checked_add(table.node_size())?,
+            to: table_end,
             content: Fragment::from(replacement),
         }],
-        selection_after: Some(Selection::cursor(caret)),
+        selection_after: rests_in_table.then(|| Selection::cursor(caret)),
         history: SemanticCommandHistory::InputBoundary,
     })
 }

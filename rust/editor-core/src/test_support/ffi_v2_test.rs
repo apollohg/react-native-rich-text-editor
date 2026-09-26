@@ -201,3 +201,5 @@ include!("ffi_v2_test/snapshots.rs");
 include!("ffi_v2_test/render_state.rs");
 
 include!("ffi_v2_test/mark_import.rs");
+
+include!("ffi_v2_test/table_deletion.rs");

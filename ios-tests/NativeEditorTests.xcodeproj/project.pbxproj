@@ -149,6 +149,7 @@
 		A18000000000000000000011 /* EditorTableNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000001 /* EditorTableNavigationTests.swift */; };
 		A22A00000000000000000012 /* EditorTableInputTests+Clipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22A00000000000000000002 /* EditorTableInputTests+Clipboard.swift */; };
 		A22E00000000000000000012 /* EditorTableInputTests+EditMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22E00000000000000000002 /* EditorTableInputTests+EditMenu.swift */; };
+		A22F00000000000000000012 /* EditorTableInputTests+Deletion.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22F00000000000000000002 /* EditorTableInputTests+Deletion.swift */; };
 		A18000000000000000000012 /* EditorTableArrowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000002 /* EditorTableArrowTests.swift */; };
 		A1FDE75D46491CC308103AEB /* NativeCollaborationTransport+Socket.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAEB95008867BEACFCE6D79C /* NativeCollaborationTransport+Socket.swift */; };
 		A2C0EC2E33ED65750D0AADD6 /* SharedNativeImagePipeline+Cache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CAA13163533CC9538155141 /* SharedNativeImagePipeline+Cache.swift */; };
@@ -383,6 +384,7 @@
 		A18000000000000000000001 /* EditorTableNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableNavigationTests.swift; sourceTree = "<group>"; };
 		A22A00000000000000000002 /* EditorTableInputTests+Clipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorTableInputTests+Clipboard.swift"; sourceTree = "<group>"; };
 		A22E00000000000000000002 /* EditorTableInputTests+EditMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorTableInputTests+EditMenu.swift"; sourceTree = "<group>"; };
+		A22F00000000000000000002 /* EditorTableInputTests+Deletion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorTableInputTests+Deletion.swift"; sourceTree = "<group>"; };
 		A18000000000000000000002 /* EditorTableArrowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableArrowTests.swift; sourceTree = "<group>"; };
 		A183A542FD912C410D3A2B03 /* PreparedProseMeasurementsManager.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PreparedProseMeasurementsManager.mm; sourceTree = "<group>"; };
 		A1D514F4A4442129867A82DE /* RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift"; sourceTree = "<group>"; };
@@ -720,6 +722,7 @@
 				A18000000000000000000001 /* EditorTableNavigationTests.swift */,
 				A22A00000000000000000002 /* EditorTableInputTests+Clipboard.swift */,
 				A22E00000000000000000002 /* EditorTableInputTests+EditMenu.swift */,
+				A22F00000000000000000002 /* EditorTableInputTests+Deletion.swift */,
 				A18000000000000000000002 /* EditorTableArrowTests.swift */,
 				A17100000000000000000001 /* TableCellPositionMapTests.swift */,
 				0A70A1000000000000000002 /* AtomMountingTests.swift */,
@@ -1315,6 +1318,7 @@
 				A18000000000000000000011 /* EditorTableNavigationTests.swift in Sources */,
 				A22A00000000000000000012 /* EditorTableInputTests+Clipboard.swift in Sources */,
 				A22E00000000000000000012 /* EditorTableInputTests+EditMenu.swift in Sources */,
+				A22F00000000000000000012 /* EditorTableInputTests+Deletion.swift in Sources */,
 				A18000000000000000000012 /* EditorTableArrowTests.swift in Sources */,
 				A17100000000000000000011 /* TableCellPositionMapTests.swift in Sources */,
 			);
