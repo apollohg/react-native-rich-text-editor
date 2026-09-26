@@ -311,6 +311,7 @@ export type {
     TableDirection,
     TableEdge,
     TableHeaderTarget,
+    TableSelectionGeometry,
 } from './TableTypes';
 
 export type { AtomViewport } from './AtomHost';

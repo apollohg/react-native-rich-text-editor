@@ -1,7 +1,74 @@
 import ExpoModulesCore
 import UIKit
 
+final class TableSelectionGeometryPublisher: NSObject {
+    private let resolve: () -> TableSelectionGeometry?
+    private let emit: ([String: Any]) -> Void
+    private var published: TableSelectionGeometry?
+    private var frameLink: CADisplayLink?
+
+    init(resolve: @escaping () -> TableSelectionGeometry?, emit: @escaping ([String: Any]) -> Void) {
+        self.resolve = resolve
+        self.emit = emit
+    }
+
+    var hasScheduledFlushForTesting: Bool { frameLink != nil }
+
+    func scheduleFlush() {
+        guard frameLink == nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(flushScheduledFrame(_:)))
+        frameLink = link
+        link.add(to: .main, forMode: .common)
+    }
+
+    func flush() {
+        cancelScheduledFlush()
+        let current = resolve()
+        if let previous = published, current?.editorId != previous.editorId || current == nil {
+            published = nil
+            if let cleared = NativeEditorExpoView.editorScopedEventPayload(
+                [:], originatingEditorId: previous.editorId
+            ) {
+                emit(cleared)
+            }
+        }
+        guard let current, current != published,
+              let payload = NativeEditorExpoView.editorScopedEventPayload(
+                current.eventPayload, originatingEditorId: current.editorId
+              )
+        else { return }
+        published = current
+        emit(payload)
+    }
+
+    func cancelScheduledFlush() {
+        frameLink?.invalidate()
+        frameLink = nil
+    }
+
+    @objc private func flushScheduledFrame(_ link: CADisplayLink) {
+        guard link === frameLink else { return }
+        flush()
+    }
+}
+
 extension NativeEditorExpoView {
+    func currentTableSelectionGeometry() -> TableSelectionGeometry? {
+        guard window != nil, richTextView.activeTextInput.isFirstResponder,
+              let geometry = richTextView.tableSelectionGeometry(),
+              geometry.editorId == richTextView.editorId
+        else { return nil }
+        return geometry
+    }
+
+    func dispatchTableSelectionGeometry(_ payload: [String: Any]) {
+        if let onTableSelectionGeometryForTesting {
+            onTableSelectionGeometryForTesting(payload)
+        } else {
+            onTableSelectionGeometry(payload)
+        }
+    }
+
     func editorTextView(
         _ textView: EditorTextView,
         didEndExternalTextComposition resultJSON: String

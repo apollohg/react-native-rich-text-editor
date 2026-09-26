@@ -115,6 +115,17 @@ export interface TableCellSelection {
     headCell: number;
 }
 
+export interface TableSelectionGeometry {
+    editorId: string;
+    ownerId: number;
+    documentRevision: string;
+    layoutEpoch: string;
+    tablePos: number;
+    coordinateSpace: 'window';
+    rects: Array<{ x: number; y: number; width: number; height: number }>;
+    viewport: { x: number; y: number; width: number; height: number };
+}
+
 export type TableEdge = 'before' | 'after';
 
 export type TableHeaderTarget = 'row' | 'column' | 'cell';

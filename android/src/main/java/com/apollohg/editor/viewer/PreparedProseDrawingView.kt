@@ -68,7 +68,6 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     var onFontConfigurationChanged: ((Configuration) -> Unit)? = null
     var onInteractionActivated: ((PreparedProseInteraction) -> Boolean)? = null
     internal var onTableTap: ((Float, Float, Float, Float) -> Boolean)? = null
-    /** Geometry-only notification for the later atom/event transport phase. */
     var onTableGeometryChanged: (() -> Unit)? = null
     internal var onMountedTableCellsDrawnForTesting: ((Int) -> Unit)? = null
     internal var onTableChromeDrawnForTesting: ((Int) -> Unit)? = null
@@ -451,6 +450,21 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     internal fun selectedTableViewport(tableId: String): RectF? =
         presentationSnapshot()?.tableWithId(tableId)?.clip
 
+    internal fun selectedTableCellRects(tableId: String): List<RectF>? {
+        val snapshot = presentationSnapshot() ?: return null
+        val table = snapshot.tableWithId(tableId) ?: return null
+        return snapshot.cells.filter { it.surface === table.surface && isSelectedTableCell(it) }
+            .mapNotNull { cell ->
+                RectF(cell.bounds).takeIf { it.intersect(cell.clip) }
+                    ?.apply { offset(contentOriginXPx.toFloat(), contentOriginYPx.toFloat()) }
+            }
+    }
+
+    private fun isSelectedTableCell(cell: ViewerTablePresentedCell): Boolean {
+        val tableId = cell.surface.editorTableId ?: return false
+        return cell.sourcePosition in selectedTableCellSourcePositions[tableId].orEmpty()
+    }
+
     internal fun atomLayoutsJson(density: Float): String {
         val artifact = preparedLayout ?: return "[]"
         if (!density.isFinite() || density <= 0f) return "[]"
@@ -562,9 +576,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                 // an earlier quote border, and text/labels always remain foreground.
                 drawHierarchicalBackgrounds(canvas, artifact, snapshot, mountedLayouts, paintClip)
                 snapshot.mountedCells.forEach { cell ->
-                    val tableId = cell.surface.editorTableId
-                    if (tableId != null && cell.sourcePosition in
-                        selectedTableCellSourcePositions[tableId].orEmpty()) {
+                    if (isSelectedTableCell(cell)) {
                         val selected = canvas.save()
                         canvas.clipRect(cell.clip)
                         paint.style = Paint.Style.FILL

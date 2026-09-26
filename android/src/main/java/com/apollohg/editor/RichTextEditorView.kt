@@ -18,6 +18,7 @@ import android.widget.ScrollView
 import com.apollohg.editor.tables.EditorTableSurface
 import com.apollohg.editor.tables.TableGestureAxis
 import com.apollohg.editor.tables.TableLayoutDirection
+import com.apollohg.editor.tables.TableSelectionGeometry
 import kotlin.math.roundToInt
 
 internal data class AtomLayoutPosition(
@@ -798,6 +799,14 @@ class RichTextEditorView @JvmOverloads constructor(
         refreshOverlays()
         requestLayout()
     }
+
+    internal var onTableSelectionGeometryMayChange: (() -> Unit)?
+        get() = editorTableSurface.onSelectionGeometryMayChange
+        set(value) {
+            editorTableSurface.onSelectionGeometryMayChange = value
+        }
+
+    internal fun tableSelectionGeometry(): TableSelectionGeometry? = editorTableSurface.selectionGeometry()
 
     internal var tableDirection: TableLayoutDirection? = null
         set(value) {

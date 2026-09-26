@@ -79,6 +79,7 @@ export function useRichTextEditorState(
         onContentChange,
         onContentChangeJSON,
         onSelectionChange,
+        onTableSelectionGeometryChange,
         onActiveStateChange,
         onHistoryStateChange,
         onFocus,
@@ -354,6 +355,10 @@ export function useRichTextEditorState(
 
     onSelectionChangeRef.current = onSelectionChange;
 
+    const onTableSelectionGeometryChangeRef = useRef(onTableSelectionGeometryChange);
+
+    onTableSelectionGeometryChangeRef.current = onTableSelectionGeometryChange;
+
     const onActiveStateChangeRef = useRef(onActiveStateChange);
 
     onActiveStateChangeRef.current = onActiveStateChange;
@@ -603,6 +608,7 @@ export function useRichTextEditorState(
         nativeErrorBindingRef,
         nativeErrorBinding,
         onSelectionChangeRef,
+        onTableSelectionGeometryChangeRef,
         isFocusedRef,
         setIsFocused,
         onBlurRef,

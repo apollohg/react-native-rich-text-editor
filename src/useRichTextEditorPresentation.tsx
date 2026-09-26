@@ -107,6 +107,7 @@ export function useRichTextEditorPresentation(
             | 'handleEditorError'
             | 'handleExternalTextCompositionEnd'
             | 'handleSelectionChange'
+            | 'handleTableSelectionGeometry'
             | 'handleFocusChange'
             | 'handleContentHeightChange'
             | 'handleAtomLayout'
@@ -169,6 +170,7 @@ export function useRichTextEditorPresentation(
         handleEditorError,
         handleExternalTextCompositionEnd,
         handleSelectionChange,
+        handleTableSelectionGeometry,
         handleFocusChange,
         handleContentHeightChange,
         handleAtomLayout,
@@ -524,6 +526,7 @@ export function useRichTextEditorPresentation(
                 onFocusChange={handleFocusChange}
                 onContentHeightChange={handleContentHeightChange}
                 onAtomLayout={handleAtomLayout}
+                onTableSelectionGeometry={handleTableSelectionGeometry}
                 onToolbarAction={handleToolbarAction}
                 onAddonEvent={handleAddonEvent}
             >

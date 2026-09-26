@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.text.Annotation
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -35,6 +36,7 @@ import com.apollohg.editor.admitsTableMutation
 import com.apollohg.editor.cachedAtomicRenderSelection
 import com.apollohg.editor.RichTextEditorView
 import com.apollohg.editor.canonicalV2U64
+import com.apollohg.editor.exactV2U32
 import com.apollohg.editor.applyRenderedSpannable
 import com.apollohg.editor.applySelectionFromJSON
 import com.apollohg.editor.isAuthorizedForRootTableInput
@@ -69,6 +71,36 @@ internal class RootTableHeightSpan(val heightPx: Int) : ReplacementSpan() {
                       x: Float, top: Int, y: Int, bottom: Int, paint: Paint) = Unit
 }
 
+internal data class TableSelectionGeometry(
+    val editorId: String,
+    val documentRevision: String,
+    val layoutEpoch: String,
+    val tablePos: UInt,
+    val rects: List<RectF>,
+    val viewport: RectF
+) {
+    fun eventPayload(): Map<String, Any> = mapOf(
+        "editorId" to editorId,
+        "documentRevision" to documentRevision,
+        "layoutEpoch" to layoutEpoch,
+        "tablePos" to tablePos.toLong(),
+        "coordinateSpace" to COORDINATE_SPACE,
+        "rects" to rects.map(::rectPayload),
+        "viewport" to rectPayload(viewport)
+    )
+
+    private fun rectPayload(rect: RectF): Map<String, Double> = mapOf(
+        "x" to rect.left.toDouble(),
+        "y" to rect.top.toDouble(),
+        "width" to rect.width().toDouble(),
+        "height" to rect.height().toDouble()
+    )
+
+    private companion object {
+        const val COORDINATE_SPACE = "window"
+    }
+}
+
 internal class EditorTableSurface(private val host: RichTextEditorView) {
     private companion object {
         const val HANDLE_EDGE_BAND_DP = 48f
@@ -85,6 +117,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
                                       val tableDirection: TableLayoutDirection)
 
     var hostTableDirection: TableLayoutDirection? = null
+    var onSelectionGeometryMayChange: (() -> Unit)? = null
 
     val drawingView = PreparedProseDrawingView(host.context).apply {
         isFocusable = false
@@ -92,7 +125,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         mentionInteractionsEnabled = false
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
-        onTableGeometryChanged = { positionActiveInput() }
+        onTableGeometryChanged = {
+            positionActiveInput()
+            onSelectionGeometryMayChange?.invoke()
+        }
         onTableTap = { downX, downY, upX, upY ->
             val target = hitCell(downX, downY)
             target != null && target == hitCell(upX, upY) &&
@@ -509,9 +545,15 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         reserve(emptyMap())
         drawingView.install(null)
         (drawingView.parent as? ViewGroup)?.removeView(drawingView)
+        onSelectionGeometryMayChange?.invoke()
     }
 
     fun refresh() {
+        refreshPresentation()
+        onSelectionGeometryMayChange?.invoke()
+    }
+
+    private fun refreshPresentation() {
         val input = host.editorEditText
         val adapter = input.v2Driver as? EditorV2Adapter
         val revision = adapter?.cachedAtomicRenderDocumentRevision
@@ -663,6 +705,36 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         drawingView.install(PreparedProseLayout(key, width, height, blocks,
             retainedBytes = blocks.sumOf { it.retainedBytes }))
         positionActiveInput()
+        onSelectionGeometryMayChange?.invoke()
+    }
+
+    fun selectionGeometry(): TableSelectionGeometry? {
+        val adapter = host.editorEditText.v2Driver as? EditorV2Adapter ?: return null
+        val documentRevision = adapter.cachedAtomicRenderDocumentRevision ?: return null
+        val layoutEpoch = canonicalV2U64(adapter.positionEpoch) ?: return null
+        val tableId = drawingView.selectedTableCellSourcePositions.keys.firstOrNull() ?: return null
+        val tablePos = exactV2U32(adapter.cachedTableRecords[tableId]?.opt("tablePos") as? Number)
+            ?: return null
+        val cellRects = drawingView.selectedTableCellRects(tableId) ?: return null
+        val visible = Rect()
+        if (drawingView.windowToken == null || !drawingView.getLocalVisibleRect(visible)) return null
+        val viewport = RectF(visible)
+        val origin = IntArray(2).also(drawingView::getLocationInWindow)
+        val density = drawingView.resources.displayMetrics.density
+        fun windowRect(rect: RectF) = RectF(
+            (rect.left + origin[0]) / density, (rect.top + origin[1]) / density,
+            (rect.right + origin[0]) / density, (rect.bottom + origin[1]) / density
+        )
+        return TableSelectionGeometry(
+            editorId = adapter.editorId,
+            documentRevision = documentRevision.toString(),
+            layoutEpoch = layoutEpoch,
+            tablePos = tablePos,
+            rects = cellRects.mapNotNull { rect ->
+                RectF(rect).takeIf { it.intersect(viewport) }?.let(::windowRect)
+            },
+            viewport = windowRect(viewport)
+        )
     }
 
     fun onRootTouch(event: MotionEvent): Boolean {

@@ -6,7 +6,7 @@ import {
     type Selection,
 } from './NativeEditorBridge';
 import { type ImageNodeAttributes } from './schemas';
-import { type TableCommand, type TableDirection } from './TableTypes';
+import { type TableCommand, type TableDirection, type TableSelectionGeometry } from './TableTypes';
 import { type EditorToolbarHeadingLevel, type EditorToolbarItem } from './EditorToolbar';
 import { type EditorImageLoadingPolicy } from './ImageLoadingPolicy';
 import { type RichTextEditorFocusPreservingRefs } from './useFocusPreservingFrames';
@@ -177,6 +177,7 @@ export interface RichTextEditorProps {
     onContentChangeJSON?: (json: DocumentJSON) => void;
     /** Called when selection changes (engine doc positions). */
     onSelectionChange?: (selection: Selection) => void;
+    onTableSelectionGeometryChange?: (geometry: TableSelectionGeometry | null) => void;
     /** Called when active formatting state changes. */
     onActiveStateChange?: (state: ReadonlyActiveState) => void;
     /** Called when undo/redo availability changes. */

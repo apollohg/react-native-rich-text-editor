@@ -151,6 +151,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             view.onSelectionChangeForTesting = {}
             view.onContentHeightChangeForTesting = {}
             view.onAtomLayoutForTesting = {}
+            view.onTableSelectionGeometryForTesting = {}
             val host = FrameLayout(activity)
             activity.setContentView(host)
             host.addView(view, FrameLayout.LayoutParams(600, 500))

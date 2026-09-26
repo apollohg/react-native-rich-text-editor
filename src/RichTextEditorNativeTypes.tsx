@@ -12,7 +12,7 @@ import {
     type RichTextEditorToolbarPlacement,
     type RichTextEditorHeightBehavior,
 } from './RichTextEditorTypes';
-import { type TableDirection } from './TableTypes';
+import { type TableDirection, type TableSelectionGeometry } from './TableTypes';
 
 export interface NativeExternalTextCompositionEvent {
     editorId: string;
@@ -65,6 +65,9 @@ export interface NativeEditorViewProps {
     onFocusChange: (event: NativeSyntheticEvent<NativeFocusEvent>) => void;
     onContentHeightChange: (event: NativeSyntheticEvent<NativeContentHeightEvent>) => void;
     onAtomLayout: (event: NativeSyntheticEvent<NativeAtomLayoutEvent>) => void;
+    onTableSelectionGeometry: (
+        event: NativeSyntheticEvent<NativeTableSelectionGeometryEvent>
+    ) => void;
     onToolbarAction: (event: NativeSyntheticEvent<NativeToolbarActionEvent>) => void;
     onAddonEvent: (event: NativeSyntheticEvent<NativeAddonEvent>) => void;
 }
@@ -115,6 +118,10 @@ export interface NativeAtomPosition {
     x: number;
     y: number;
 }
+
+export type NativeTableSelectionGeometryEvent =
+    | { editorId: string }
+    | Omit<TableSelectionGeometry, 'ownerId'>;
 
 export interface NativeToolbarActionEvent {
     key: string;

@@ -40,6 +40,7 @@ extension NativeEditorExpoView {
         installOutsideTapRecognizerIfNeeded()
         richTextView.textView.refreshSelectionVisualState()
         refreshMentionQuery()
+        tableSelectionGeometryPublisher.scheduleFlush()
         guard let event = Self.editorScopedEventPayload(
             ["isFocused": true],
             originatingEditorId: originatingEditorId
@@ -59,6 +60,7 @@ extension NativeEditorExpoView {
         uninstallOutsideTapRecognizer()
         richTextView.textView.refreshSelectionVisualState()
         clearMentionQueryStateAndHidePopover()
+        tableSelectionGeometryPublisher.flush()
         guard let event = Self.editorScopedEventPayload(
             ["isFocused": false],
             originatingEditorId: originatingEditorId

@@ -499,7 +499,8 @@ class NativeEditorModule : Module() {
                 "onEditorReady",
                 "onToolbarAction",
                 "onAddonEvent",
-                "onExternalTextCompositionEnd"
+                "onExternalTextCompositionEnd",
+                "onTableSelectionGeometry"
             )
 
             GroupView<NativeEditorExpoView> {

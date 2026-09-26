@@ -5,7 +5,58 @@ import com.apollohg.editor.NativeEditorExpoView.Companion.nanosToMicros
 import com.apollohg.editor.NativeEditorExpoView.NativeCommitKey
 import com.apollohg.editor.NativeEditorExpoView.PendingEditorUpdateEvent
 import com.apollohg.editor.NativeEditorExpoView.PreflightUpdateEvent
+import android.view.View
+import com.apollohg.editor.tables.TableSelectionGeometry
 import org.json.JSONObject
+
+internal class TableSelectionGeometryPublisher(
+    private val frameHost: View,
+    private val resolve: () -> TableSelectionGeometry?,
+    private val emit: (Map<String, Any>) -> Unit
+) {
+    private var published: TableSelectionGeometry? = null
+    private var flushPosted = false
+    private val scheduledFlush = Runnable {
+        flushPosted = false
+        flush()
+    }
+
+    val hasScheduledFlushForTesting: Boolean get() = flushPosted
+
+    fun scheduleFlush() {
+        if (flushPosted) return
+        flushPosted = true
+        frameHost.postOnAnimation(scheduledFlush)
+    }
+
+    fun flush() {
+        cancelScheduledFlush()
+        val current = resolve()
+        val previous = published
+        if (previous != null && current?.editorId != previous.editorId) {
+            published = null
+            emit(mapOf("editorId" to previous.editorId))
+        }
+        if (current == null || current == published) return
+        published = current
+        emit(current.eventPayload())
+    }
+
+    fun cancelScheduledFlush() {
+        if (flushPosted) frameHost.removeCallbacks(scheduledFlush)
+        flushPosted = false
+    }
+}
+
+internal fun NativeEditorExpoView.currentTableSelectionGeometry(): TableSelectionGeometry? {
+    if (!isAttachedToNativeWindow || !richTextView.activeTextInput.hasFocus()) return null
+    return richTextView.tableSelectionGeometry()
+        ?.takeIf { it.editorId == eventEditorId(richTextView.editorId) }
+}
+
+internal fun NativeEditorExpoView.dispatchTableSelectionGeometry(payload: Map<String, Any>) {
+    onTableSelectionGeometryForTesting?.invoke(payload) ?: onTableSelectionGeometry(payload)
+}
 
 internal fun NativeEditorExpoView.documentVersionFromUpdateJSON(updateJSON: String?): String? =
     try {

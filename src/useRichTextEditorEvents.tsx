@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { PixelRatio, Platform, type NativeSyntheticEvent } from 'react-native';
 import { normalizeNativeEditorV2DecimalId, type Selection } from './NativeEditorBridge';
 import { setActiveEditorToolbarFrameOwnerForEditor } from './EditorToolbar';
@@ -16,7 +16,11 @@ import {
     type NativeAtomLayoutEvent,
     type NativeAtomPosition,
     type NativeToolbarActionEvent,
+    type NativeTableSelectionGeometryEvent,
 } from './RichTextEditorNativeTypes';
+import { describeRejectedV2Record } from './NativeEditorResultNormalization';
+import { normalizeNativeTableSelectionGeometry } from './TableNormalization';
+import { type TableSelectionGeometry } from './TableTypes';
 import {
     acceptNativeCommitPayload,
     isRecord,
@@ -41,6 +45,7 @@ export function useRichTextEditorEvents(
         | 'scalarSelectionRef'
         | 'selectionRef'
         | 'onSelectionChangeRef'
+        | 'onTableSelectionGeometryChangeRef'
         | 'isFocusedRef'
         | 'toolbarFrameOwnerId'
         | 'setIsFocused'
@@ -79,6 +84,7 @@ export function useRichTextEditorEvents(
         selectionRef,
         updateAtomSelection,
         onSelectionChangeRef,
+        onTableSelectionGeometryChangeRef,
         isFocusedRef,
         toolbarFrameOwnerId,
         setIsFocused,
@@ -233,6 +239,51 @@ export function useRichTextEditorEvents(
             scalarSelectionRef,
             selectionRef,
             updateAtomSelection ]
+    );
+
+    const deliveredTableSelectionGeometryRef = useRef<TableSelectionGeometry | null>(null);
+
+    const handleTableSelectionGeometry = useCallback(
+        (event: NativeSyntheticEvent<NativeTableSelectionGeometryEvent>) => {
+            const payload = normalizeNativeTableSelectionGeometry(event?.nativeEvent);
+
+            if (payload == null) {
+                if (__DEV__) {
+                    console.error(
+                        'NativeEditorBridge: native table selection geometry was rejected',
+                        describeRejectedV2Record(event?.nativeEvent)
+                    );
+                }
+
+                return;
+            }
+
+            if (payload.kind === 'cleared') {
+                if (deliveredTableSelectionGeometryRef.current?.editorId !== payload.editorId) {
+                    return;
+                }
+
+                deliveredTableSelectionGeometryRef.current = null;
+                onTableSelectionGeometryChangeRef.current?.(null);
+
+                return;
+            }
+
+            if (documentHandle.isDestroyed || !isForThisEditor(payload.geometry)) {
+                return;
+            }
+
+            const geometry: TableSelectionGeometry = {
+                ...payload.geometry,
+                ownerId: toolbarFrameOwnerId,
+            };
+            deliveredTableSelectionGeometryRef.current = geometry;
+            onTableSelectionGeometryChangeRef.current?.(geometry);
+        },
+        [ documentHandle.isDestroyed,
+            isForThisEditor,
+            onTableSelectionGeometryChangeRef,
+            toolbarFrameOwnerId ]
     );
 
     const handleFocusChange = useCallback(
@@ -436,6 +487,7 @@ export function useRichTextEditorEvents(
         handleEditorError,
         handleExternalTextCompositionEnd,
         handleSelectionChange,
+        handleTableSelectionGeometry,
         handleFocusChange,
         handleContentHeightChange,
         handleAtomLayout,

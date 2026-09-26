@@ -28,6 +28,7 @@ extension NativeEditorExpoView {
         accessoryToolbar.apply(state: .empty)
         uninstallOutsideTapRecognizer()
         refreshSystemAssistantToolbarIfNeeded()
+        tableSelectionGeometryPublisher.flush()
     }
 
     func setEditorId(_ id: UInt64) {
@@ -107,6 +108,7 @@ extension NativeEditorExpoView {
         }
         refreshSystemAssistantToolbarIfNeeded()
         refreshMentionQuery()
+        tableSelectionGeometryPublisher.flush()
     }
 
     func ownsNativeBinding(editorId: UInt64) -> Bool {

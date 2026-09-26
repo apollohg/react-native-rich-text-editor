@@ -744,7 +744,8 @@ public class NativeEditorModule: BaseModule, @preconcurrency AnyModule {
                 "onToolbarAction",
                 "onAddonEvent",
                 "onEditorError",
-                "onExternalTextCompositionEnd"
+                "onExternalTextCompositionEnd",
+                "onTableSelectionGeometry"
             )
 
             Prop("editorId") { (view: NativeEditorExpoView, id: String) in

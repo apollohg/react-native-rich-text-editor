@@ -3,10 +3,23 @@ import {
     hasOnlyOwnKeys,
     invalidV2RequestError,
     isPlainRecord,
+    nativeEditorV2U32,
+    normalizeNativeEditorV2DecimalId,
     requireNativeEditorV2U32,
 } from './NativeEditorResultNormalization';
 import { type NativeEditorSelectionEnvelope } from './NativeEditorTypes';
-import { type TableCellStep, type TableEdge, type TableHeaderTarget } from './TableTypes';
+import {
+    type TableCellStep,
+    type TableEdge,
+    type TableHeaderTarget,
+    type TableSelectionGeometry,
+} from './TableTypes';
+
+export type NativeTableSelectionGeometry =
+    | { kind: 'cleared'; editorId: string }
+    | { kind: 'geometry'; geometry: Omit<TableSelectionGeometry, 'ownerId'> };
+
+type TableSelectionRect = TableSelectionGeometry['viewport'];
 
 export type TableCommandRequest =
     | { kind: 'command'; command: Record<string, unknown> }
@@ -18,6 +31,18 @@ const CELL_POSITION_KIND = 'document';
 const RESIZE_COLUMN_WIRE_TYPE = 'setTableColumnWidth';
 const ADJACENT_CELL_WIRE_TYPE = 'moveToAdjacentCell';
 const TABLE_EDGES: readonly TableEdge[] = [ 'before', 'after' ];
+const TABLE_SELECTION_COORDINATE_SPACE = 'window';
+const TABLE_SELECTION_RECT_FIELDS = [ 'x', 'y', 'width', 'height' ];
+const TABLE_SELECTION_CLEARED_FIELDS = [ 'editorId' ];
+const TABLE_SELECTION_GEOMETRY_FIELDS = [
+    'editorId',
+    'documentRevision',
+    'layoutEpoch',
+    'tablePos',
+    'coordinateSpace',
+    'rects',
+    'viewport',
+];
 const TABLE_HEADER_TARGETS: readonly TableHeaderTarget[] = [ 'row', 'column', 'cell' ];
 
 const TABLE_CELL_STEPS = new Map<unknown, string>([
@@ -177,4 +202,109 @@ export function normalizeTableCommand(command: unknown): TableCommandRequest {
         default:
             return invalidTableCommand('type');
     }
+}
+
+function canonicalDecimal(value: unknown): string | null {
+    return typeof value === 'string' && normalizeNativeEditorV2DecimalId(value) === value
+        ? value
+        : null;
+}
+
+function isFiniteExtent(value: unknown): value is number {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function tableSelectionRect(value: unknown): TableSelectionRect | null {
+    if (!isPlainRecord(value) || !hasExactOwnKeys(value, TABLE_SELECTION_RECT_FIELDS)) {
+        return null;
+    }
+
+    const { x, y, width, height } = value;
+
+    if (
+        typeof x !== 'number' ||
+        !Number.isFinite(x) ||
+        typeof y !== 'number' ||
+        !Number.isFinite(y) ||
+        !isFiniteExtent(width) ||
+        !isFiniteExtent(height)
+    ) {
+        return null;
+    }
+
+    return { x, y, width, height };
+}
+
+function tableSelectionRects(value: unknown): TableSelectionRect[] | null {
+    if (!Array.isArray(value)) {
+        return null;
+    }
+
+    const rects: TableSelectionRect[] = [];
+
+    for (const candidate of value) {
+        const rect = tableSelectionRect(candidate);
+
+        if (rect == null) {
+            return null;
+        }
+
+        rects.push(rect);
+    }
+
+    return rects;
+}
+
+export function normalizeNativeTableSelectionGeometry(
+    payload: unknown
+): NativeTableSelectionGeometry | null {
+    if (!isPlainRecord(payload)) {
+        return null;
+    }
+
+    const editorId = canonicalDecimal(payload.editorId);
+
+    if (editorId == null) {
+        return null;
+    }
+
+    if (hasExactOwnKeys(payload, TABLE_SELECTION_CLEARED_FIELDS)) {
+        return { kind: 'cleared', editorId };
+    }
+
+    if (
+        !hasExactOwnKeys(payload, TABLE_SELECTION_GEOMETRY_FIELDS) ||
+        payload.coordinateSpace !== TABLE_SELECTION_COORDINATE_SPACE
+    ) {
+        return null;
+    }
+
+    const documentRevision = canonicalDecimal(payload.documentRevision);
+    const layoutEpoch = canonicalDecimal(payload.layoutEpoch);
+    const tablePos = nativeEditorV2U32(payload.tablePos);
+    const rects = tableSelectionRects(payload.rects);
+    const viewport = tableSelectionRect(payload.viewport);
+
+    if (
+        documentRevision == null ||
+        layoutEpoch == null ||
+        tablePos == null ||
+        rects == null ||
+        viewport == null
+    ) {
+        return null;
+    }
+
+    return {
+        kind: 'geometry',
+        geometry: {
+            editorId,
+            documentRevision,
+            layoutEpoch,
+            tablePos,
+            coordinateSpace: TABLE_SELECTION_COORDINATE_SPACE,
+            rects,
+            viewport,
+        },
+    };
 }

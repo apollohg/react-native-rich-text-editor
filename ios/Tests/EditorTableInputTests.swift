@@ -1520,6 +1520,263 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertEqual(selection["headCell"] as? Int, second)
     }
 
+    private struct ExpoGeometryFixture {
+        let host: NativeEditorExpoView
+        let adapter: EditorV2Adapter
+        let tableID: String
+        let positions: [UInt32]
+        let drawing: PreparedProseDrawingView
+        let recorder: GeometryRecorder
+
+        func select(_ selection: [String: Any]) throws {
+            let request = adapter.callWithEnvelope(["selection": selection]) {
+                editorV2SetSelection(editorId: adapter.editorId, requestJson: $0)
+            }
+            XCTAssertNil(request.error)
+            XCTAssertTrue(host.richTextView.textView.applyUpdateJSON(
+                try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))
+            ))
+        }
+
+        func selectCells(anchor: Int, head: Int) throws {
+            try select([
+                "type": "cell",
+                "anchorCell": ["kind": "document", "offset": Int(positions[anchor])],
+                "headCell": ["kind": "document", "offset": Int(positions[head])]
+            ])
+        }
+
+        func expectedWindowRects() throws -> [CGRect] {
+            let visible = try XCTUnwrap(drawing.tableSelectionViewport())
+            let selected = try XCTUnwrap(drawing.selectedTableCellSourcePositions[tableID])
+            return try XCTUnwrap(drawing.mountedTablePresentation()).cells.filter {
+                $0.surface.identity == tableID && $0.cell.sourceCellIndex != nil
+                    && selected.contains($0.sourcePosition)
+            }.map { $0.bounds.intersection($0.clip).intersection(visible) }
+                .filter { !$0.isNull && !$0.isEmpty }
+                .map { windowRect(drawing.convert($0, to: host)) }
+        }
+
+        func windowRect(_ hostRect: CGRect) -> CGRect {
+            hostRect.offsetBy(dx: host.frame.minX, dy: host.frame.minY)
+        }
+    }
+
+    private final class GeometryRecorder {
+        var payloads: [[String: Any]] = []
+
+        func rects(at index: Int) throws -> [CGRect] {
+            let rects = try XCTUnwrap(payloads[index]["rects"] as? [[String: Double]])
+            return try rects.map { try Self.rect($0) }
+        }
+
+        static func rect(_ raw: [String: Double]) throws -> CGRect {
+            XCTAssertEqual(Set(raw.keys), ["x", "y", "width", "height"])
+            return CGRect(x: try XCTUnwrap(raw["x"]), y: try XCTUnwrap(raw["y"]),
+                          width: try XCTUnwrap(raw["width"]), height: try XCTUnwrap(raw["height"]))
+        }
+    }
+
+    private func assertRects(_ actual: [CGRect], _ expected: [CGRect], _ message: String = "",
+                             file: StaticString = #filePath, line: UInt = #line) {
+        let accuracy: CGFloat = 0.001
+        let matches = actual.count == expected.count && zip(actual, expected).allSatisfy { lhs, rhs in
+            abs(lhs.minX - rhs.minX) <= accuracy && abs(lhs.minY - rhs.minY) <= accuracy
+                && abs(lhs.width - rhs.width) <= accuracy && abs(lhs.height - rhs.height) <= accuracy
+        }
+        XCTAssertTrue(matches, "\(message) actual \(actual) expected \(expected)", file: file, line: line)
+    }
+
+    private func waitForGeometryFrame() {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    }
+
+    private func withExpoTableGeometry(
+        document: String, _ body: (ExpoGeometryFixture) throws -> Void
+    ) throws {
+        let editorId = makeV2Editor(configJson: tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 500))
+        let host = NativeEditorExpoView()
+        host.frame = CGRect(x: 24, y: 72, width: 340, height: 260)
+        window.addSubview(host)
+        window.makeKeyAndVisible()
+        defer {
+            host.setEditorId(0)
+            window.isHidden = true
+        }
+        host.setEditorId(editorId)
+        let recorder = GeometryRecorder()
+        host.onTableSelectionGeometryForTesting = { recorder.payloads.append($0) }
+        XCTAssertTrue(host.richTextView.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        host.layoutIfNeeded()
+        XCTAssertTrue(host.richTextView.textView.becomeFirstResponder())
+        let tableID = try XCTUnwrap(adapter.cachedTableRecords.first {
+            $0.value["readOnlyDescendants"] as? Bool == false
+        }?.key)
+        let rawCells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
+        let positions = try rawCells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
+        let surface = try XCTUnwrap(host.richTextView.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        waitForGeometryFrame()
+        try body(ExpoGeometryFixture(host: host, adapter: adapter, tableID: tableID, positions: positions,
+                                     drawing: drawing, recorder: recorder))
+    }
+
+    func testCellSelectionPublishesWindowSpaceGeometryOnTheNextFrame() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            XCTAssertTrue(fixture.recorder.payloads.isEmpty, "a caret selection has no geometry: \(fixture.recorder.payloads)")
+            try fixture.selectCells(anchor: 0, head: 3)
+            XCTAssertTrue(fixture.recorder.payloads.isEmpty, "emission waits for the next display frame")
+            waitForGeometryFrame()
+
+            XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
+            let payload = try XCTUnwrap(fixture.recorder.payloads.first)
+            XCTAssertEqual(Set(payload.keys), ["editorId", "documentRevision", "layoutEpoch", "tablePos",
+                                               "coordinateSpace", "rects", "viewport"])
+            XCTAssertEqual(payload["editorId"] as? String, fixture.adapter.editorId)
+            XCTAssertEqual(payload["documentRevision"] as? String, String(fixture.adapter.baseDocumentRevision))
+            XCTAssertEqual(payload["layoutEpoch"] as? String, try XCTUnwrap(fixture.adapter.positionEpoch).description)
+            let record = try XCTUnwrap(fixture.adapter.cachedTableRecords[fixture.tableID])
+            XCTAssertEqual(payload["tablePos"] as? Int,
+                           Int(try XCTUnwrap(EditorV2Adapter.uint32Field(record, "tablePos"))))
+            XCTAssertEqual(payload["coordinateSpace"] as? String, "window")
+            let rects = try fixture.recorder.rects(at: 0)
+            XCTAssertEqual(rects.count, 4)
+            assertRects(rects, try fixture.expectedWindowRects())
+            let viewport = try GeometryRecorder.rect(try XCTUnwrap(payload["viewport"] as? [String: Double]))
+            XCTAssertEqual(viewport, fixture.host.frame, "viewport is the visible editor in window space")
+            for rect in rects {
+                XCTAssertTrue(viewport.contains(rect), "\(rect) lies inside the window-space editor \(viewport)")
+            }
+        }
+    }
+
+    func testHorizontalTableScrollMovesPublishedRectsAtMostOncePerFrame() throws {
+        try withExpoTableGeometry(document: wideTwoCellDocument) { fixture in
+            try fixture.selectCells(anchor: 0, head: 1)
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
+            let before = try fixture.recorder.rects(at: 0)
+            let table = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.tables.first {
+                $0.surface.identity == fixture.tableID
+            })
+            let step: CGFloat = -100
+            for _ in 0..<3 {
+                XCTAssertEqual(fixture.drawing.scrollTables(in: [table.surface.scrollIdentity], by: step), 0)
+            }
+            XCTAssertEqual(fixture.drawing.tableLogicalOffset(for: fixture.tableID), 300)
+            XCTAssertEqual(fixture.recorder.payloads.count, 1, "scroll steps inside one frame stay queued")
+            waitForGeometryFrame()
+
+            XCTAssertEqual(fixture.recorder.payloads.count, 2, "three scroll steps coalesce into one event")
+            let after = try fixture.recorder.rects(at: 1)
+            assertRects(after, try fixture.expectedWindowRects())
+            XCTAssertNotEqual(after, before, "rects follow the table scroll offset")
+            let firstCell = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.first {
+                $0.surface.identity == fixture.tableID && $0.sourcePosition == Int(fixture.positions[0])
+            })
+            let scrolledEdge = fixture.windowRect(fixture.drawing.convert(firstCell.bounds, to: fixture.host)).maxX
+            XCTAssertEqual(after.first?.maxX ?? .nan, scrolledEdge, accuracy: 0.001,
+                           "the first cell's trailing edge is reported where the scrolled table draws it")
+            XCTAssertEqual(fixture.recorder.payloads[1]["tablePos"] as? Int, fixture.recorder.payloads[0]["tablePos"] as? Int)
+        }
+    }
+
+    func testUnchangedGeometryIsNeverPublishedTwice() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            try fixture.selectCells(anchor: 0, head: 1)
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 1)
+
+            fixture.host.tableSelectionGeometryPublisher.flush()
+            fixture.host.richTextView.setNeedsLayout()
+            fixture.host.richTextView.layoutIfNeeded()
+            fixture.host.tableSelectionGeometryPublisher.scheduleFlush()
+            waitForGeometryFrame()
+
+            XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
+        }
+    }
+
+    func testBlurClearsGeometryAndSuppressesItUntilRefocus() throws {
+        try withExpoTableGeometry(document: wideTwoCellDocument) { fixture in
+            try fixture.selectCells(anchor: 0, head: 1)
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 1)
+
+            XCTAssertTrue(fixture.host.richTextView.textView.resignFirstResponder())
+            XCTAssertEqual(fixture.recorder.payloads.count, 2, "blur clears synchronously")
+            XCTAssertEqual(fixture.recorder.payloads[1] as? [String: String], ["editorId": fixture.adapter.editorId])
+            let table = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.tables.first {
+                $0.surface.identity == fixture.tableID
+            })
+            fixture.drawing.scrollTables(in: [table.surface.scrollIdentity], by: -120)
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 2, "a blurred editor publishes no geometry")
+
+            XCTAssertTrue(fixture.host.richTextView.textView.becomeFirstResponder())
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 3)
+            assertRects(try fixture.recorder.rects(at: 2), try fixture.expectedWindowRects())
+        }
+    }
+
+    func testBindingChangeClearsGeometryUnderThePreviousEditor() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            try fixture.selectCells(anchor: 0, head: 3)
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 1)
+
+            fixture.host.setEditorId(0)
+
+            XCTAssertEqual(fixture.recorder.payloads.count, 2)
+            XCTAssertEqual(fixture.recorder.payloads[1] as? [String: String], ["editorId": fixture.adapter.editorId])
+            XCTAssertFalse(fixture.host.tableSelectionGeometryPublisher.hasScheduledFlushForTesting)
+        }
+    }
+
+    func testEditorDestructionClearsGeometry() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            try fixture.selectCells(anchor: 1, head: 2)
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 1)
+
+            fixture.host.handleEditorDestroyed(fixture.host.richTextView.editorId)
+
+            XCTAssertEqual(fixture.recorder.payloads.count, 2)
+            XCTAssertEqual(fixture.recorder.payloads[1] as? [String: String], ["editorId": fixture.adapter.editorId])
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 2)
+        }
+    }
+
+    func testTextSelectionsPublishNoGeometryAndEndACellSelectionsGeometry() throws {
+        try withExpoTableGeometry(document: proseThenFixedWidthTableDocument) { fixture in
+            try fixture.select([
+                "type": "text",
+                "anchor": ["kind": "scalar", "offset": 1],
+                "head": ["kind": "scalar", "offset": 4]
+            ])
+            waitForGeometryFrame()
+            XCTAssertTrue(fixture.recorder.payloads.isEmpty, "\(fixture.recorder.payloads)")
+
+            try fixture.selectCells(anchor: 0, head: 1)
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 1)
+
+            try fixture.select([
+                "type": "text",
+                "anchor": ["kind": "scalar", "offset": 2],
+                "head": ["kind": "scalar", "offset": 2]
+            ])
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 2, "\(fixture.recorder.payloads)")
+            XCTAssertEqual(fixture.recorder.payloads[1] as? [String: String], ["editorId": fixture.adapter.editorId])
+        }
+    }
+
     func testSyntheticPreservedFailureFrameAdmitsCellSelectionWithoutGeometry() throws {
         let editorId = makeV2Editor(configJson: tableConfig)
         defer { destroyV2Editor(id: editorId) }

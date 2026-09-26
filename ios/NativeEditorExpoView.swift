@@ -143,10 +143,16 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
     let onAddonEvent = EventDispatcher()
     let onEditorError = EventDispatcher()
     let onExternalTextCompositionEnd = EventDispatcher()
+    let onTableSelectionGeometry = EventDispatcher()
     /// Native integration tests capture the exact payload production sends to
     /// Expo without assigning adapter callbacks directly.
     var onEditorErrorForTesting: (([String: Any]) -> Void)?
     var onExternalTextCompositionEndForTesting: (([String: Any]) -> Void)?
+    var onTableSelectionGeometryForTesting: (([String: Any]) -> Void)?
+    private(set) lazy var tableSelectionGeometryPublisher = TableSelectionGeometryPublisher(
+        resolve: { [weak self] in self?.currentTableSelectionGeometry() },
+        emit: { [weak self] in self?.dispatchTableSelectionGeometry($0) }
+    )
     var autonomousErrorBindingAdapter: EditorV2Adapter?
     var autonomousErrorBindingEditorId: String?
     var autonomousErrorBindingToken: UUID?
@@ -212,6 +218,9 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
         richTextView.onAtomContentWidthChange = { [weak self] width in
             self?.emitAtomLayout(width: width)
         }
+        richTextView.onTableSelectionGeometryMayChange = { [weak self] in
+            self?.tableSelectionGeometryPublisher.scheduleFlush()
+        }
         richTextView.textView.editorDelegate = self
         richTextView.textView.onExternalUpdateReadinessMayChange = { [weak self] in
             self?.schedulePendingAtomsWakeIfNeeded()
@@ -235,6 +244,7 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
     }
 
     deinit {
+        tableSelectionGeometryPublisher.cancelScheduledFlush()
         richTextView.textView.editorDelegate = nil
         richTextView.textView.onExternalUpdateReadinessMayChange = nil
         if let resultJSON = richTextView.textView.discardTransientNativeInputForEditorRebind() {
@@ -330,6 +340,7 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
             ensureAutonomousErrorBinding()
             applyRemoteCommitRefresh()
         }
+        tableSelectionGeometryPublisher.flush()
         if richTextView.textView.isFirstResponder {
             installOutsideTapRecognizerIfNeeded()
         } else {

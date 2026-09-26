@@ -146,7 +146,6 @@ public final class PreparedProseDrawingView: UIView {
     }
     private var tablePresentationOwner = ViewerTablePresentationOwner()
     fileprivate var accessibilityPresentationGeneration = 0
-    /// Geometry-only hook reserved for the following atom/event transport phase.
     @objc public var onTableGeometryChanged: (() -> Void)?
     var onMountedTableCellsDrawnForTesting: ((Int) -> Void)?
     var onTableChromeDrawnForTesting: ((Int) -> Void)?
@@ -299,6 +298,20 @@ public final class PreparedProseDrawingView: UIView {
 
     func tableSelectionViewport() -> CGRect? {
         configuredVisibleRect()
+    }
+
+    func selectedTableCellRects(tableID: String) -> [CGRect]? {
+        guard let snapshot = presentationSnapshot(),
+              snapshot.tables.contains(where: { $0.surface.identity == tableID })
+        else { return nil }
+        return snapshot.cells.filter { $0.surface.identity == tableID && isSelectedTableCell($0) }
+            .map { $0.bounds.intersection($0.clip) }
+            .filter { !$0.isNull && !$0.isEmpty }
+    }
+
+    private func isSelectedTableCell(_ cell: ViewerTablePresentedCell) -> Bool {
+        cell.cell.sourceCellIndex != nil
+            && selectedTableCellSourcePositions[cell.surface.identity]?.contains(cell.sourcePosition) == true
     }
 
     func selectionHandles(visibleIn requestedViewport: CGRect? = nil) -> [TableSelectionHandle] {
@@ -853,8 +866,7 @@ public final class PreparedProseDrawingView: UIView {
         let mountedLayoutIDs = Set(snapshot.mountedCells.map { ObjectIdentifier($0.content) })
         let excludedLayoutID = excludedTableCellContentLayout.map(ObjectIdentifier.init)
         drawHierarchicalBackgrounds(snapshot, mountedLayoutIDs: mountedLayoutIDs, excludedLayoutID: excludedLayoutID, dirtyRect: rect, context: context)
-        for cell in snapshot.mountedCells where cell.cell.sourceCellIndex != nil
-            && selectedTableCellSourcePositions[cell.surface.identity]?.contains(cell.sourcePosition) == true {
+        for cell in snapshot.mountedCells where isSelectedTableCell(cell) {
             context.saveGState()
             context.clip(to: cell.clip)
             context.setFillColor(cell.surface.style.selectionColor.cgColor)

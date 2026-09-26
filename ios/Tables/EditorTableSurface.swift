@@ -67,6 +67,32 @@ final class TableResizePanGestureRecognizer: UIPanGestureRecognizer {
     }
 }
 
+struct TableSelectionGeometry: Equatable {
+    static let coordinateSpace = "window"
+
+    let editorId: UInt64
+    let documentRevision: UInt64
+    let layoutEpoch: UInt64
+    let tablePos: UInt32
+    let rects: [CGRect]
+    let viewport: CGRect
+
+    var eventPayload: [String: Any] {
+        [
+            "documentRevision": String(documentRevision),
+            "layoutEpoch": String(layoutEpoch),
+            "tablePos": Int(tablePos),
+            "coordinateSpace": Self.coordinateSpace,
+            "rects": rects.map(Self.rectPayload),
+            "viewport": Self.rectPayload(viewport)
+        ]
+    }
+
+    private static func rectPayload(_ rect: CGRect) -> [String: Double] {
+        ["x": Double(rect.minX), "y": Double(rect.minY), "width": Double(rect.width), "height": Double(rect.height)]
+    }
+}
+
 struct TableResizePreview: Equatable {
     let edge: TableResizeEdge
     let width: CGFloat
@@ -184,6 +210,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private var submittingHandleSelection = false
     private(set) var resizePreview: TableResizePreview?
     private var preparedResizePreview: TableResizePreview?
+    var onSelectionGeometryMayChange: (() -> Void)?
 
     private enum HandleScrollMetrics {
         static let edgeBand: CGFloat = 36
@@ -208,6 +235,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         activeCellClipView.addSubview(inputCoordinator.cellInput)
         drawingView.onTableGeometryChanged = { [weak self] in
             self?.refreshActiveInputFrame()
+            self?.onSelectionGeometryMayChange?()
         }
     }
 
@@ -236,6 +264,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     func present(_ presentation: EditorV2Adapter.EditorTablePresentationSnapshot,
                  selection: EditorCellSelection?, endpoints: (anchor: UInt32, head: UInt32)?, ownerIdentity: String,
                  from textView: EditorTextView) {
+        defer { onSelectionGeometryMayChange?() }
         drawingView.setTableOwnerIdentity(ownerIdentity)
         latestPresentation = presentation
         if let drag = resizeDrag, !validResizeDrag(drag) { discardActiveDrag() }
@@ -258,6 +287,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     func clearPresentation() {
+        defer { onSelectionGeometryMayChange?() }
         discardActiveDrag()
         drawingView.setTableOwnerIdentity(nil)
         entries.removeAll()
@@ -278,12 +308,14 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     func clearCellSelection() {
+        defer { onSelectionGeometryMayChange?() }
         cancelHandleDrag()
         drawingView.selectedTableCellSourcePositions = [:]
         drawingView.selectedTableCellEndpoints = nil
     }
 
     func updateGeometry(from textView: EditorTextView) {
+        defer { onSelectionGeometryMayChange?() }
         discardInvalidDrag()
         reprepareIfNeeded(from: textView)
         guard !entries.isEmpty else {
@@ -360,6 +392,26 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         }
         updateExcludedCellContent()
         refreshActiveInputFrame()
+    }
+
+    func selectionGeometry() -> TableSelectionGeometry? {
+        guard let host = interactionHost, host.editorId != 0,
+              let presentation = latestPresentation,
+              let layoutEpoch = presentation.positionEpoch,
+              let tableID = drawingView.selectedTableCellSourcePositions.keys.first,
+              let tablePos = presentation.tableRecords[tableID]?.tablePos,
+              let cellRects = drawingView.selectedTableCellRects(tableID: tableID),
+              let visible = drawingView.tableSelectionViewport()
+        else { return nil }
+        let rects = cellRects.map { $0.intersection(visible) }.filter { !$0.isNull && !$0.isEmpty }
+        return TableSelectionGeometry(
+            editorId: host.editorId,
+            documentRevision: presentation.documentRevision,
+            layoutEpoch: layoutEpoch,
+            tablePos: tablePos,
+            rects: rects.map { drawingView.convert($0, to: nil) },
+            viewport: drawingView.convert(visible, to: nil)
+        )
     }
 
     func placeActiveInput(tableID: String, cellIndex: UInt32, fallback contentRect: CGRect) {
