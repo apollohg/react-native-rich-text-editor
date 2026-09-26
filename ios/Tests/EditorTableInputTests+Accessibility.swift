@@ -96,7 +96,7 @@ extension EditorTableInputTests {
         try withMountedTable(document: TableAccessibilityFixture.proseThenTableDocument, cellSelection: nil) { fixture in
             XCTAssertEqual(try accessibleTable(fixture, containing: "cell").cellElements.count, 1)
             var announcements = 0
-            fixture.drawing.onAccessibilityLayoutChangedForTesting = { announcements += 1 }
+            fixture.drawing.onAccessibilityLayoutChangedForTesting = { _ in announcements += 1 }
             let revision = fixture.adapter.baseDocumentRevision
 
             for (offset, character) in ["x", "y", "z"].enumerated() {
@@ -120,6 +120,68 @@ extension EditorTableInputTests {
             fixture.view.layoutIfNeeded()
             drainMainQueue()
             XCTAssertEqual(announcements, 2, "removing a frame changes the structure")
+        }
+    }
+
+    private func apply(_ document: String, to fixture: MountedTableFixture) throws {
+        XCTAssertTrue(fixture.view.textView.applyUpdateJSON(try XCTUnwrap(fixture.adapter.setContentJson(document))))
+        drainMainQueue()
+    }
+
+    func testRootTypingWithoutForcedLayoutPostsNoLayoutChanged() throws {
+        try withMountedTable(document: TableAccessibilityFixture.proseThenTableDocument, cellSelection: nil) { fixture in
+            XCTAssertEqual(try accessibleTable(fixture, containing: "cell").cellElements.count, 1)
+            var announcements = 0
+            fixture.drawing.onAccessibilityLayoutChangedForTesting = { _ in announcements += 1 }
+            for (offset, character) in ["x", "y", "z"].enumerated() {
+                let update = try XCTUnwrap(fixture.adapter.insertText(character, atScalar: UInt32(1 + offset)))
+                XCTAssertTrue(fixture.view.textView.applyUpdateJSON(update))
+                drainMainQueue()
+            }
+            XCTAssertEqual(announcements, 0, "layout passes run by the run loop must not announce either")
+        }
+    }
+
+    func testContentOnlyRevisionKeepsElementsLiveAndRefreshesTheFocusedCell() throws {
+        try withMountedTable(document: TableAccessibilityFixture.fourCellDocument, cellSelection: nil) { fixture in
+            let table = try accessibleTable(fixture, containing: "one")
+            let cell = table.cellElements[0]
+            var arguments: [Any?] = []
+            fixture.drawing.onAccessibilityLayoutChangedForTesting = { arguments.append($0) }
+            fixture.drawing.accessibilityFocusProbe = { $0 === cell }
+
+            try apply(TableAccessibilityFixture.fourCellDocument.replacingOccurrences(of: "\"one\"", with: "\"uno\""),
+                      to: fixture)
+
+            XCTAssertTrue(try accessibleTable(fixture, containing: "uno") === table, "a content-only revision keeps the table element")
+            XCTAssertTrue(table.cellElements[0] === cell)
+            XCTAssertEqual(cell.accessibilityLabel, "uno", "the kept element reflects the new content")
+            XCTAssertNotEqual(fixture.drawing.index(ofAccessibilityElement: table), NSNotFound)
+            XCTAssertFalse(cell.accessibilityFrame.isEmpty, "the focused element keeps its highlight")
+            XCTAssertEqual(arguments.count, 1)
+            XCTAssertTrue(arguments.first.flatMap { $0 } as AnyObject === cell,
+                          "VoiceOver re-reads the focused cell without moving")
+            XCTAssertTrue(cell.accessibilityActivate(), "the kept element still activates its cell")
+
+            try apply(TableAccessibilityFixture.frameBetweenTablesDocument, to: fixture)
+            XCTAssertEqual(fixture.drawing.index(ofAccessibilityElement: table), NSNotFound, "a structure change replaces elements")
+            XCTAssertEqual(arguments.count, 2)
+            XCTAssertNil(arguments.last.flatMap { $0 })
+        }
+    }
+
+    func testAnnouncementsWaitForMaterializedElementsAndAWindow() throws {
+        try withMountedTable(document: TableAccessibilityFixture.proseThenTableDocument, cellSelection: nil) { fixture in
+            var announcements = 0
+            fixture.drawing.onAccessibilityLayoutChangedForTesting = { _ in announcements += 1 }
+            XCTAssertEqual(fixture.drawing.accessibilityElementCount(), 1)
+            try apply(TableAccessibilityFixture.proseTableAndFrameDocument, to: fixture)
+            XCTAssertEqual(announcements, 0, "nothing was materialized, so nobody is listening")
+
+            XCTAssertNotNil(try accessibleFrame(fixture))
+            fixture.view.removeFromSuperview()
+            try apply(TableAccessibilityFixture.proseThenTableDocument, to: fixture)
+            XCTAssertEqual(announcements, 0, "an off-window view never announces")
         }
     }
 

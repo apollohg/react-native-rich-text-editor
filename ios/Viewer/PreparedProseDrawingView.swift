@@ -603,9 +603,15 @@ public final class PreparedProseDrawingView: UIView {
     }
     private var accessibilityElementsByIndex: [Int: NSObject] = [:]
     private var accessibilityItemsCache: (generation: Int, items: [TableAccessibilityItem])?
-    private var announcedAccessibilityStructure: [String]?
+    private enum AccessibilityAnnouncement {
+        case structure
+        case content(NSObject)
+    }
+    private var materializedAccessibilityStructure: [TableAccessibilityStructure] = []
+    private var pendingAccessibilityAnnouncement: AccessibilityAnnouncement?
     private var accessibilityAnnouncementScheduled = false
-    var onAccessibilityLayoutChangedForTesting: (() -> Void)?
+    var accessibilityFocusProbe: (NSObject) -> Bool = { $0.accessibilityElementIsFocused() }
+    var onAccessibilityLayoutChangedForTesting: ((Any?) -> Void)?
     weak var tableAccessibilityEditing: TableAccessibilityEditing?
     internal var materializedAccessibilityElementCountForTesting: Int { accessibilityElementsByIndex.count }
 
@@ -759,59 +765,69 @@ public final class PreparedProseDrawingView: UIView {
         let element: NSObject
         switch items[index] {
         case let .node(presented):
-            element = PreparedProseDrawingAccessibilityElement(
-                container: self,
-                index: index,
-                rootLayout: layout,
-                generation: accessibilityPresentationGeneration,
-                presented: presented
-            )
+            element = PreparedProseDrawingAccessibilityElement(container: self, index: index, presented: presented)
+        case let .table(table) where table.frame != nil:
+            element = TableAccessibilityFrameElement(drawingView: self, source: .drawn(table))
         case let .table(table):
-            element = tableAccessibilityElement(table)
+            element = TableAccessibilityTableElement(drawingView: self, table: table)
         case let .detachedFrame(frame):
-            let generation = accessibilityPresentationGeneration
-            element = TableAccessibilityFrameElement(
-                container: self, tableID: frame.tableID, frame: frame.frame,
-                editing: { [weak self] in
-                    self?.isCurrentAccessibilityGeneration(generation) == true ? self?.tableAccessibilityEditing : nil
-                },
-                screenFrame: { [weak self] in
-                    self?.isCurrentAccessibilityGeneration(generation) == true ? frame.screenFrame() : .zero
-                }
-            )
+            element = TableAccessibilityFrameElement(drawingView: self, source: .detached(frame))
         }
         accessibilityElementsByIndex[index] = element
         return element
     }
 
-    private func tableAccessibilityElement(_ table: TableAccessibilityTable) -> NSObject {
-        let generation = accessibilityPresentationGeneration
-        guard let frame = table.frame else {
-            return TableAccessibilityTableElement(drawingView: self, generation: generation, table: table)
-        }
-        let presented = table.presented
-        return TableAccessibilityFrameElement(
-            container: self, tableID: table.identity, frame: frame,
-            editing: { [weak self] in
-                self?.isCurrentAccessibilityGeneration(generation) == true ? self?.tableAccessibilityEditing : nil
-            },
-            screenFrame: { [weak self] in
-                guard let self, self.isCurrentAccessibilityGeneration(generation) else { return .zero }
-                return self.accessibilityScreenFrame(presented.bounds, clip: presented.clip)
-            }
-        )
-    }
-
     public override func index(ofAccessibilityElement element: Any) -> Int {
-        if let element = element as? PreparedProseDrawingAccessibilityElement,
-           element.drawingView === self,
-           element.belongs(to: layout, generation: accessibilityPresentationGeneration) {
-            return element.index
-        }
+        _ = accessibilityItems
         guard let element = element as? NSObject,
               let index = accessibilityElementsByIndex.first(where: { $0.value === element })?.key
         else { return NSNotFound }
         return index
+    }
+
+    func isLiveAccessibilityElement(_ element: NSObject) -> Bool {
+        _ = accessibilityItems
+        return layout != nil && accessibilityElementsByIndex.values.contains { $0 === element }
+    }
+
+    private func refreshAccessibilityElement(_ element: NSObject, with item: TableAccessibilityItem) {
+        switch (element, item) {
+        case let (node as PreparedProseDrawingAccessibilityElement, .node(presented)):
+            node.presented = presented
+        case let (frame as TableAccessibilityFrameElement, .table(table)):
+            frame.refresh(.drawn(table))
+        case let (table as TableAccessibilityTableElement, .table(presented)):
+            table.refresh(presented)
+        case let (frame as TableAccessibilityFrameElement, .detachedFrame(detached)):
+            frame.refresh(.detached(detached))
+        default:
+            break
+        }
+    }
+
+    private func focusableAccessibilityElements() -> [NSObject] {
+        accessibilityElementsByIndex.values.flatMap { element -> [NSObject] in
+            (element as? TableAccessibilityTableElement)?.cellElements ?? [element]
+        }
+    }
+
+    private func reconcileAccessibilityElements(with items: [TableAccessibilityItem]) {
+        let structure = TableAccessibility.structure(of: items)
+        defer { materializedAccessibilityStructure = structure }
+        guard !accessibilityElementsByIndex.isEmpty else { return }
+        guard structure == materializedAccessibilityStructure else {
+            accessibilityElementsByIndex.removeAll(keepingCapacity: true)
+            pendingAccessibilityAnnouncement = .structure
+            return
+        }
+        let before = focusableAccessibilityElements().map { ($0, $0.accessibilityLabel, $0.accessibilityValue) }
+        for (index, element) in accessibilityElementsByIndex {
+            refreshAccessibilityElement(element, with: items[index])
+        }
+        guard let changed = before.first(where: { element, label, value in
+            accessibilityFocusProbe(element) && (element.accessibilityLabel != label || element.accessibilityValue != value)
+        })?.0, pendingAccessibilityAnnouncement == nil else { return }
+        pendingAccessibilityAnnouncement = .content(changed)
     }
 
     public override var accessibilityCustomRotors: [UIAccessibilityCustomRotor]? {
@@ -853,15 +869,15 @@ public final class PreparedProseDrawingView: UIView {
         if let cached = accessibilityItemsCache, cached.generation == accessibilityPresentationGeneration {
             return cached.items
         }
-        guard let layout, let snapshot = presentationSnapshot() else { return [] }
-        let items = TableAccessibility.items(
-            snapshot: snapshot, root: layout, nodes: accessibilityNodes(in: snapshot),
-            detachedFrames: tableAccessibilityEditing?.detachedTableAccessibilityFrames() ?? []
-        )
-        accessibilityItemsCache = (accessibilityPresentationGeneration, items)
-        if announcedAccessibilityStructure == nil {
-            announcedAccessibilityStructure = TableAccessibility.structure(of: items)
+        var items: [TableAccessibilityItem] = []
+        if let layout, let snapshot = presentationSnapshot() {
+            items = TableAccessibility.items(
+                snapshot: snapshot, root: layout, nodes: accessibilityNodes(in: snapshot),
+                detachedFrames: tableAccessibilityEditing?.detachedTableAccessibilityFrames() ?? []
+            )
         }
+        accessibilityItemsCache = (accessibilityPresentationGeneration, items)
+        reconcileAccessibilityElements(with: items)
         return items
     }
 
@@ -874,10 +890,6 @@ public final class PreparedProseDrawingView: UIView {
             guard case let .table(table) = item, table.identity == tableID else { return nil }
             return table.cells.first { $0.sourceCellIndex == sourceCellIndex }
         }.first
-    }
-
-    func isCurrentAccessibilityGeneration(_ generation: Int) -> Bool {
-        layout != nil && accessibilityPresentationGeneration == generation
     }
 
     func accessibilityScreenFrame(_ rect: CGRect, clip: CGRect) -> CGRect {
@@ -971,21 +983,28 @@ public final class PreparedProseDrawingView: UIView {
 
     private func invalidateAccessibilityNodes() {
         accessibilityPresentationGeneration &+= 1
-        accessibilityElementsByIndex.removeAll(keepingCapacity: true)
         accessibilityItemsCache = nil
-        guard announcedAccessibilityStructure != nil, !accessibilityAnnouncementScheduled else { return }
+        guard window != nil, !accessibilityElementsByIndex.isEmpty, !accessibilityAnnouncementScheduled else { return }
         accessibilityAnnouncementScheduled = true
-        DispatchQueue.main.async { [weak self] in self?.announceAccessibilityStructureChange() }
+        DispatchQueue.main.async { [weak self] in self?.announceAccessibilityChange() }
     }
 
-    private func announceAccessibilityStructureChange() {
+    private func announceAccessibilityChange() {
         accessibilityAnnouncementScheduled = false
-        guard let announced = announcedAccessibilityStructure else { return }
-        let current = TableAccessibility.structure(of: accessibilityItems)
-        announcedAccessibilityStructure = current
-        guard current != announced else { return }
-        onAccessibilityLayoutChangedForTesting?()
-        UIAccessibility.post(notification: .layoutChanged, argument: nil)
+        guard window != nil else {
+            pendingAccessibilityAnnouncement = nil
+            return
+        }
+        _ = accessibilityItems
+        guard let announcement = pendingAccessibilityAnnouncement else { return }
+        pendingAccessibilityAnnouncement = nil
+        let argument: Any?
+        switch announcement {
+        case .structure: argument = nil
+        case let .content(element): argument = element
+        }
+        onAccessibilityLayoutChangedForTesting?(argument)
+        UIAccessibility.post(notification: .layoutChanged, argument: argument)
     }
 
     /// Converts an artifact-top baseline to the flipped Core Graphics coordinate system.
@@ -1302,31 +1321,17 @@ public final class PreparedProseDrawingView: UIView {
 
 private final class PreparedProseDrawingAccessibilityElement: UIAccessibilityElement {
     weak var drawingView: PreparedProseDrawingView?
-    weak var rootLayout: PreparedProseLayout?
-    weak var layout: PreparedProseLayout?
     let index: Int
-    let generation: Int
-    let presented: ViewerTablePresentedAccessibilityNode
+    var presented: ViewerTablePresentedAccessibilityNode
 
-    init(
-        container: PreparedProseDrawingView,
-        index: Int,
-        rootLayout: PreparedProseLayout?,
-        generation: Int,
-        presented: ViewerTablePresentedAccessibilityNode
-    ) {
+    init(container: PreparedProseDrawingView, index: Int, presented: ViewerTablePresentedAccessibilityNode) {
         drawingView = container
         self.index = index
-        self.rootLayout = rootLayout
-        self.generation = generation
         self.presented = presented
-        self.layout = presented.layout
         super.init(accessibilityContainer: container)
     }
 
-    func belongs(to layout: PreparedProseLayout?, generation: Int) -> Bool {
-        rootLayout === layout && self.generation == generation
-    }
+    private var isCurrent: Bool { drawingView?.isLiveAccessibilityElement(self) == true }
 
     override var accessibilityLabel: String? {
         get { presented.node.label }
@@ -1351,20 +1356,20 @@ private final class PreparedProseDrawingAccessibilityElement: UIAccessibilityEle
     }
     override var accessibilityFrame: CGRect {
         get {
-            guard let drawingView, belongs(to: drawingView.layout, generation: drawingView.accessibilityPresentationGeneration) else { return .zero }
+            guard isCurrent, let drawingView else { return .zero }
             return drawingView.accessibilityFrame(for: presented)
         }
         set { }
     }
     override var accessibilityPath: UIBezierPath? {
         get {
-            guard let drawingView, belongs(to: drawingView.layout, generation: drawingView.accessibilityPresentationGeneration) else { return nil }
+            guard isCurrent, let drawingView else { return nil }
             return drawingView.accessibilityPath(for: presented)
         }
         set { }
     }
     override func accessibilityActivate() -> Bool {
-        guard let drawingView, belongs(to: drawingView.layout, generation: drawingView.accessibilityPresentationGeneration) else { return false }
+        guard isCurrent, let drawingView else { return false }
         return drawingView.activateAccessibilityNode(presented)
     }
 }

@@ -151,6 +151,18 @@ struct TableAccessibilityTable {
     }
 }
 
+enum TableAccessibilityStructure: Equatable {
+    struct Cell: Equatable {
+        let rows: NSRange
+        let columns: NSRange
+        let isHeader: Bool
+    }
+
+    case node(role: PreparedProseAccessibilityNode.Role, label: String)
+    case table(rows: Int, columns: Int, frame: TableAccessibilityTable.Frame?, cells: [Cell])
+    case detachedFrame(TableAccessibilityTable.Frame)
+}
+
 enum TableAccessibilityItem {
     case node(ViewerTablePresentedAccessibilityNode)
     case table(TableAccessibilityTable)
@@ -261,19 +273,18 @@ enum TableAccessibility {
         )
     }
 
-    static func structure(of items: [TableAccessibilityItem]) -> [String] {
+    static func structure(of items: [TableAccessibilityItem]) -> [TableAccessibilityStructure] {
         items.map { item in
             switch item {
             case let .node(node):
-                return "node:\(node.node.role):\(node.node.label)"
+                return .node(role: node.node.role, label: node.node.label)
             case let .table(table):
-                let cells = table.cells.map {
-                    "\($0.rows.location),\($0.rows.length),\($0.columns.location),\($0.columns.length),\($0.isHeader)"
-                }
-                return "table:\(table.rowCount)x\(table.columnCount):\(String(describing: table.frame)):"
-                    + cells.joined(separator: descriptionSeparator)
+                return .table(rows: table.rowCount, columns: table.columnCount, frame: table.frame,
+                              cells: table.cells.map {
+                                  TableAccessibilityStructure.Cell(rows: $0.rows, columns: $0.columns, isHeader: $0.isHeader)
+                              })
             case let .detachedFrame(frame):
-                return "frame:\(frame.frame)"
+                return .detachedFrame(frame.frame)
             }
         }
     }
@@ -334,15 +345,13 @@ final class TableCellInputTextView: EditorTextView, UIAccessibilityContainerData
 
 class TableAccessibilityGeneratedElement: UIAccessibilityElement {
     weak var drawingView: PreparedProseDrawingView?
-    let generation: Int
 
-    init(drawingView: PreparedProseDrawingView, container: Any, generation: Int) {
+    init(drawingView: PreparedProseDrawingView, container: Any) {
         self.drawingView = drawingView
-        self.generation = generation
         super.init(accessibilityContainer: container)
     }
 
-    var isCurrent: Bool { drawingView?.isCurrentAccessibilityGeneration(generation) == true }
+    var isCurrent: Bool { drawingView?.isLiveAccessibilityElement(self) == true }
 
     func screenFrame(_ rect: CGRect, clip: CGRect) -> CGRect {
         guard isCurrent, let drawingView else { return .zero }
@@ -351,19 +360,23 @@ class TableAccessibilityGeneratedElement: UIAccessibilityElement {
 }
 
 final class TableAccessibilityTableElement: TableAccessibilityGeneratedElement, UIAccessibilityContainerDataTable {
-    let table: TableAccessibilityTable
+    private(set) var table: TableAccessibilityTable
     private(set) var cellElements: [TableAccessibilityCellElement] = []
 
-    init(drawingView: PreparedProseDrawingView, generation: Int, table: TableAccessibilityTable) {
+    init(drawingView: PreparedProseDrawingView, table: TableAccessibilityTable) {
         self.table = table
-        super.init(drawingView: drawingView, container: drawingView, generation: generation)
+        super.init(drawingView: drawingView, container: drawingView)
         isAccessibilityElement = false
         accessibilityContainerType = .dataTable
         accessibilityLabel = TableAccessibilityText.table.localized
         cellElements = table.cells.map {
-            TableAccessibilityCellElement(drawingView: drawingView, container: self, generation: generation,
-                                          cell: $0, tableID: table.identity)
+            TableAccessibilityCellElement(drawingView: drawingView, tableElement: self, cell: $0, tableID: table.identity)
         }
+    }
+
+    func refresh(_ table: TableAccessibilityTable) {
+        self.table = table
+        zip(cellElements, table.cells).forEach { $0.refresh($1, tableID: table.identity) }
     }
 
     override var accessibilityElements: [Any]? {
@@ -409,19 +422,29 @@ final class TableAccessibilityTableElement: TableAccessibilityGeneratedElement, 
 }
 
 final class TableAccessibilityCellElement: TableAccessibilityGeneratedElement, UIAccessibilityContainerDataTableCell {
-    let cell: TableAccessibilityCell
-    let tableID: String
+    private weak var tableElement: TableAccessibilityTableElement?
+    private(set) var cell: TableAccessibilityCell
+    private(set) var tableID: String
 
-    init(drawingView: PreparedProseDrawingView, container: Any, generation: Int,
+    init(drawingView: PreparedProseDrawingView, tableElement: TableAccessibilityTableElement,
          cell: TableAccessibilityCell, tableID: String) {
+        self.tableElement = tableElement
         self.cell = cell
         self.tableID = tableID
-        super.init(drawingView: drawingView, container: container, generation: generation)
+        super.init(drawingView: drawingView, container: tableElement)
         isAccessibilityElement = true
+        refresh(cell, tableID: tableID)
+    }
+
+    func refresh(_ cell: TableAccessibilityCell, tableID: String) {
+        self.cell = cell
+        self.tableID = tableID
         accessibilityLabel = cell.label.isEmpty ? TableAccessibilityText.emptyCell.localized : cell.label
         accessibilityValue = cell.spanDescription
         accessibilityTraits = cell.isHeader ? [.staticText, .header] : .staticText
     }
+
+    override var isCurrent: Bool { tableElement?.isCurrent == true }
 
     private var editing: TableAccessibilityEditing? { isCurrent ? drawingView?.tableAccessibilityEditing : nil }
 
@@ -444,8 +467,9 @@ final class TableAccessibilityCellElement: TableAccessibilityGeneratedElement, U
                 let name = node.node.role == .mention
                     ? TableAccessibilityText.openMention(node.node.label).localized
                     : TableAccessibilityText.openLink(node.node.label).localized
+                let identity = node.sourceIdentity
                 return UIAccessibilityCustomAction(name: name) { [weak self] _ in
-                    self?.activate(node) ?? false
+                    self?.activateInteraction(identity) ?? false
                 }
             }
             return interactions + TableAccessibility.customActions(for: cell, tableID: tableID, editing: editing)
@@ -453,8 +477,10 @@ final class TableAccessibilityCellElement: TableAccessibilityGeneratedElement, U
         set { }
     }
 
-    private func activate(_ node: ViewerTablePresentedAccessibilityNode) -> Bool {
-        guard isCurrent, let drawingView else { return false }
+    private func activateInteraction(_ identity: String) -> Bool {
+        guard isCurrent, let drawingView,
+              let node = cell.interactions.first(where: { $0.sourceIdentity == identity })
+        else { return false }
         return drawingView.activateAccessibilityNode(node)
     }
 
@@ -472,33 +498,58 @@ final class TableAccessibilityCellElement: TableAccessibilityGeneratedElement, U
     func accessibilityColumnRange() -> NSRange { cell.columns }
 }
 
-final class TableAccessibilityFrameElement: UIAccessibilityElement {
-    let tableID: String
-    private let editing: () -> TableAccessibilityEditing?
-    private let screenFrame: () -> CGRect
+final class TableAccessibilityFrameElement: TableAccessibilityGeneratedElement {
+    enum Source {
+        case drawn(TableAccessibilityTable)
+        case detached(TableAccessibilityDetachedFrame)
+    }
 
-    init(container: Any, tableID: String, frame: TableAccessibilityTable.Frame,
-         editing: @escaping () -> TableAccessibilityEditing?, screenFrame: @escaping () -> CGRect) {
-        self.tableID = tableID
-        self.editing = editing
-        self.screenFrame = screenFrame
-        super.init(accessibilityContainer: container)
+    private(set) var source: Source
+
+    init(drawingView: PreparedProseDrawingView, source: Source) {
+        self.source = source
+        super.init(drawingView: drawingView, container: drawingView)
         isAccessibilityElement = true
+        accessibilityTraits = .staticText
+        refresh(source)
+    }
+
+    var tableID: String {
+        switch source {
+        case let .drawn(table): return table.identity
+        case let .detached(frame): return frame.tableID
+        }
+    }
+
+    func refresh(_ source: Source) {
+        self.source = source
+        let frame: TableAccessibilityTable.Frame?
+        switch source {
+        case let .drawn(table): frame = table.frame
+        case let .detached(detached): frame = detached.frame
+        }
         accessibilityLabel = frame == .empty
             ? TableAccessibilityText.emptyTable.localized
             : TableAccessibilityText.failedTable.localized
-        accessibilityTraits = .staticText
     }
 
     override var accessibilityFrame: CGRect {
-        get { screenFrame() }
+        get {
+            guard isCurrent else { return .zero }
+            switch source {
+            case let .drawn(table): return screenFrame(table.presented.bounds, clip: table.presented.clip)
+            case let .detached(frame): return frame.screenFrame()
+            }
+        }
         set { }
     }
 
     override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
         get {
-            guard let editing = editing(), editing.canDeleteTableAccessibilityFrame(tableID: tableID) else { return [] }
             let tableID = tableID
+            guard isCurrent, let editing = drawingView?.tableAccessibilityEditing,
+                  editing.canDeleteTableAccessibilityFrame(tableID: tableID)
+            else { return [] }
             return [UIAccessibilityCustomAction(name: TableAccessibilityAction.deleteTable.label) { [weak editing] _ in
                 editing?.deleteTableAccessibilityFrame(tableID: tableID) ?? false
             }]

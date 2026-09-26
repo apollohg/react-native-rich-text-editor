@@ -652,8 +652,9 @@ final class ViewerTableTests: XCTestCase {
 
         drawing.setTableLogicalOffset(surface.bounds.width - surface.hostViewportWidth, sourceIdentity: surface.identity)
         activated = nil
-        XCTAssertEqual(drawing.index(ofAccessibilityElement: table), NSNotFound)
-        XCTAssertFalse(perform(open), "an action captured before the scroll belongs to a stale presentation")
+        XCTAssertEqual(drawing.index(ofAccessibilityElement: table), 1, "a scroll keeps the same table element")
+        XCTAssertTrue(try tableElement(in: drawing) === table)
+        XCTAssertFalse(perform(open), "the reused action follows the scrolled geometry, so the clipped link refuses")
         let clippedCell = try XCTUnwrap(try tableElement(in: drawing).cellElements.first)
         XCTAssertFalse(perform(try action(named: TableAccessibilityText.openLink("same").localized, on: clippedCell)),
                        "a link scrolled out of its cell clip must not activate")
@@ -880,8 +881,9 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(drawing.interaction(at: center(exposedSecond.rects[0]))?.href, "https://cell-two.example")
         XCTAssertEqual(drawing.interaction(at: center(nestedMention.rects[0]))?.kind, .mention)
 
-        XCTAssertEqual(drawing.index(ofAccessibilityElement: initialTable), NSNotFound)
+        XCTAssertEqual(drawing.index(ofAccessibilityElement: initialTable), 1, "scrolling reuses the table element")
         let shiftedTable = try tableElement(in: drawing)
+        XCTAssertTrue(shiftedTable === initialTable)
         let clippedElement = shiftedTable.cellElements[0]
         let callbacksBeforeClippedActivation = activated.count
         XCTAssertFalse(perform(try action(named: openLink, on: clippedElement)))
@@ -910,9 +912,17 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(activated.last?.kind, .mention)
 
         drawing.linkInteractionsEnabled = true
-        let staleRoot = try XCTUnwrap(drawing.accessibilityElement(at: 0) as? UIAccessibilityElement)
-        drawing.install(layout: try prepare(source, configJSON: config))
-        XCTAssertEqual(drawing.index(ofAccessibilityElement: staleRoot), NSNotFound)
+        let keptRoot = try XCTUnwrap(drawing.accessibilityElement(at: 0) as? UIAccessibilityElement)
+        let replacement = try prepare(source, configJSON: config)
+        drawing.install(layout: replacement)
+        XCTAssertEqual(drawing.index(ofAccessibilityElement: keptRoot), 0, "an identical replacement keeps focusable elements")
+        XCTAssertTrue(keptRoot.accessibilityActivate())
+        XCTAssertEqual(activated.last?.href, "https://before.example")
+
+        let staleRoot = keptRoot
+        drawing.install(layout: try prepare(try jsonSource(["type": "doc", "content": [link("https://other.example")]]),
+                                            configJSON: config))
+        XCTAssertEqual(drawing.index(ofAccessibilityElement: staleRoot), NSNotFound, "a structural replacement drops them")
         let callbacksBeforeStaleRootActivation = activated.count
         XCTAssertFalse(staleRoot.accessibilityActivate())
         XCTAssertEqual(activated.count, callbacksBeforeStaleRootActivation)
