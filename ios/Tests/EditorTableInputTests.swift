@@ -1682,7 +1682,11 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
             let payload = try XCTUnwrap(fixture.recorder.payloads.first)
             XCTAssertEqual(Set(payload.keys), ["editorId", "documentRevision", "layoutEpoch", "tablePos",
-                                               "coordinateSpace", "rects", "viewport"])
+                                               "coordinateSpace", "rects", "viewport", "safeArea"])
+            let window = try XCTUnwrap(fixture.host.window)
+            XCTAssertEqual(try GeometryRecorder.rect(try XCTUnwrap(payload["safeArea"] as? [String: Double])),
+                           window.bounds.inset(by: window.safeAreaInsets),
+                           "the safe area is the window minus its safe-area insets")
             XCTAssertEqual(payload["editorId"] as? String, fixture.adapter.editorId)
             XCTAssertEqual(payload["documentRevision"] as? String, String(fixture.adapter.baseDocumentRevision))
             XCTAssertEqual(payload["layoutEpoch"] as? String, try XCTUnwrap(fixture.adapter.positionEpoch).description)
@@ -1768,6 +1772,40 @@ final class EditorTableInputTests: XCTestCase {
             waitForGeometryFrame()
 
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
+        }
+    }
+
+    func testKeyboardFrameChangesRepublishTheKeyboardRectangleInWindowSpace() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            try fixture.selectCells(anchor: 0, head: 3)
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 1)
+            XCTAssertNil(fixture.recorder.payloads[0]["keyboard"], "no keyboard is reported before one appears")
+            let window = try XCTUnwrap(fixture.host.window)
+            let floatingKeyboard = CGRect(x: 40, y: 180, width: 300, height: 160)
+
+            NotificationCenter.default.post(
+                name: UIResponder.keyboardWillChangeFrameNotification,
+                object: nil,
+                userInfo: [UIResponder.keyboardFrameEndUserInfoKey: NSValue(
+                    cgRect: window.convert(floatingKeyboard, to: window.screen.coordinateSpace)
+                )]
+            )
+            XCTAssertTrue(fixture.host.tableSelectionGeometryPublisher.hasScheduledFlushForTesting,
+                          "a keyboard frame change schedules a geometry frame")
+            waitForGeometryFrame()
+
+            let shown = try XCTUnwrap(fixture.recorder.payloads.last)
+            XCTAssertEqual(try GeometryRecorder.rect(try XCTUnwrap(shown["keyboard"] as? [String: Double])),
+                           floatingKeyboard,
+                           "a floating keyboard is reported as its window rectangle, not a bottom inset")
+
+            NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil)
+            waitForGeometryFrame()
+
+            let hidden = try XCTUnwrap(fixture.recorder.payloads.last)
+            XCTAssertNil(hidden["keyboard"], "a hidden keyboard no longer obstructs: \(hidden)")
+            XCTAssertNotNil(hidden["safeArea"])
         }
     }
 

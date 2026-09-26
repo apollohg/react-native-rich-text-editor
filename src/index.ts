@@ -29,6 +29,18 @@ export {
     type NativeRichTextEditorFocusPreservingElement,
     type NativeRichTextEditorFocusPreservingRef,
     type NativeRichTextEditorFocusPreservingRefs,
+    TableToolbar,
+    type TableToolbarProps,
+    TABLE_TOOLBAR_ACTIONS,
+    useTableToolbar,
+    type TableToolbarAction,
+    type TableToolbarActionSpec,
+    type TableToolbarIdentity,
+    type TableToolbarOptions,
+    type TableToolbarState,
+    placeTableToolbar,
+    type TableToolbarRect,
+    type TableToolbarSize,
 } from './NativeRichTextEditor';
 
 export type {

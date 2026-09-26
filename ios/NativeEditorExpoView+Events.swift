@@ -54,11 +54,26 @@ final class TableSelectionGeometryPublisher: NSObject {
 
 extension NativeEditorExpoView {
     func currentTableSelectionGeometry() -> TableSelectionGeometry? {
-        guard window != nil, richTextView.activeTextInput.isFirstResponder,
-              let geometry = richTextView.tableSelectionGeometry(),
+        guard let window, richTextView.activeTextInput.isFirstResponder,
+              let geometry = richTextView.tableSelectionGeometry(
+                obstructions: tableSelectionObstructions(in: window)
+              ),
               geometry.editorId == richTextView.editorId
         else { return nil }
         return geometry
+    }
+
+    func tableSelectionObstructions(in window: UIWindow) -> TableSelectionObstructions {
+        let keyboard = (richTextView.activeTextInput.keyboardFrameInScreen ?? richTextView.textView.keyboardFrameInScreen)
+            .map { window.convert($0, from: window.screen.coordinateSpace).intersection(window.bounds) }
+        return TableSelectionObstructions(
+            safeArea: window.bounds.inset(by: window.safeAreaInsets),
+            keyboard: keyboard.flatMap { $0.isNull || $0.isEmpty ? nil : $0 }
+        )
+    }
+
+    @objc func keyboardFrameMayChange(_ notification: Notification) {
+        tableSelectionGeometryPublisher.scheduleFlush()
     }
 
     func dispatchTableSelectionGeometry(_ payload: [String: Any]) {

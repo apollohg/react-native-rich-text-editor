@@ -46,6 +46,7 @@ export function useRichTextEditorEvents(
         | 'selectionRef'
         | 'onSelectionChangeRef'
         | 'onTableSelectionGeometryChangeRef'
+        | 'setTableSelection'
         | 'isFocusedRef'
         | 'toolbarFrameOwnerId'
         | 'setIsFocused'
@@ -85,6 +86,7 @@ export function useRichTextEditorEvents(
         updateAtomSelection,
         onSelectionChangeRef,
         onTableSelectionGeometryChangeRef,
+        setTableSelection,
         isFocusedRef,
         toolbarFrameOwnerId,
         setIsFocused,
@@ -271,6 +273,9 @@ export function useRichTextEditorEvents(
             }
 
             if (payload.kind === 'cleared') {
+                setTableSelection(current =>
+                    current?.geometry.editorId === payload.editorId ? null : current);
+
                 if (deliveredTableSelectionGeometryRef.current?.editorId !== payload.editorId) {
                     return;
                 }
@@ -290,11 +295,13 @@ export function useRichTextEditorEvents(
                 ownerId: toolbarFrameOwnerId,
             };
             deliveredTableSelectionGeometryRef.current = geometry;
+            setTableSelection({ geometry, obstructions: payload.obstructions });
             onTableSelectionGeometryChangeRef.current?.(geometry);
         },
         [ documentHandle.isDestroyed,
             isForThisEditor,
             onTableSelectionGeometryChangeRef,
+            setTableSelection,
             toolbarFrameOwnerId ]
     );
 

@@ -239,6 +239,15 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
             name: UITextView.textDidEndEditingNotification,
             object: richTextView.textView
         )
+        for name in [
+            UIResponder.keyboardWillChangeFrameNotification,
+            UIResponder.keyboardDidChangeFrameNotification,
+            UIResponder.keyboardWillHideNotification
+        ] {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(keyboardFrameMayChange(_:)), name: name, object: nil
+            )
+        }
 
         addSubview(richTextView)
     }

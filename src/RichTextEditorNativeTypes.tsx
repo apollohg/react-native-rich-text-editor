@@ -13,6 +13,7 @@ import {
     type RichTextEditorHeightBehavior,
 } from './RichTextEditorTypes';
 import { type TableDirection, type TableSelectionGeometry } from './TableTypes';
+import { type Rect, type TableToolbarObstructions } from './TableToolbarPlacement';
 
 export interface NativeExternalTextCompositionEvent {
     editorId: string;
@@ -121,7 +122,12 @@ export interface NativeAtomPosition {
 
 export type NativeTableSelectionGeometryEvent =
     | { editorId: string }
-    | Omit<TableSelectionGeometry, 'ownerId'>;
+    | (Omit<TableSelectionGeometry, 'ownerId'> & { safeArea: Rect; keyboard?: Rect });
+
+export interface TableToolbarSelection {
+    geometry: TableSelectionGeometry;
+    obstructions: TableToolbarObstructions;
+}
 
 export interface NativeToolbarActionEvent {
     key: string;

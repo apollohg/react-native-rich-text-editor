@@ -37,6 +37,7 @@ import {
     type ControlledValueDelivery,
     type NativeEditorErrorBinding,
     type NativeAtomPosition,
+    type TableToolbarSelection,
 } from './RichTextEditorNativeTypes';
 
 export function useRichTextEditorState(
@@ -75,6 +76,7 @@ export function useRichTextEditorState(
         atomViewport,
         remoteSelections,
         tableDirection,
+        tableToolbar,
         allowImageResizing = true,
         onContentChange,
         onContentChangeJSON,
@@ -404,6 +406,8 @@ export function useRichTextEditorState(
 
     const [ isFocused, setIsFocused ] = useState(false);
 
+    const [ tableSelection, setTableSelection ] = useState<TableToolbarSelection | null>(null);
+
     const [ mentionQuery, setMentionQuery ] = useState<MentionQueryChangeEvent | null>(null);
 
     const [ atomState, setAtomState ] = useState<AtomRenderState>({
@@ -516,6 +520,7 @@ export function useRichTextEditorState(
         activeStateKeyRef.current = null;
         toolbarItemsSerializationCacheRef.current = null;
         setActiveState(EMPTY_ACTIVE_STATE);
+        setTableSelection(null);
         setPushedUpdate(null);
         setAutoGrowHeight(null);
 
@@ -662,6 +667,9 @@ export function useRichTextEditorState(
         keyboardType,
         allowImageResizing,
         tableDirection,
+        tableToolbar,
+        tableSelection,
+        setTableSelection,
         onToolbarAction,
     };
 }

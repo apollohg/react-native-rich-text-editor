@@ -8,7 +8,9 @@ import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
 import android.view.Window
+import android.view.WindowInsets
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -184,6 +186,7 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     internal var onExternalTextCompositionEndForTesting: ((Map<String, Any>) -> Unit)? = null
     internal var onEditorReadyForTesting: ((Map<String, Any>) -> Unit)? = null
     internal var onTableSelectionGeometryForTesting: ((Map<String, Any>) -> Unit)? = null
+    internal var rootWindowInsetsForTesting: WindowInsetsCompat? = null
     internal val tableSelectionGeometryPublisher = TableSelectionGeometryPublisher(
         this, this::currentTableSelectionGeometry, this::dispatchTableSelectionGeometry
     )
@@ -526,6 +529,11 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         handleDetachedFromWindow()
         tableSelectionGeometryPublisher.stopObservingWindowLayout()
         tableSelectionGeometryPublisher.flush()
+    }
+
+    override fun onApplyWindowInsets(insets: WindowInsets): WindowInsets {
+        tableSelectionGeometryPublisher.scheduleFlush()
+        return super.onApplyWindowInsets(insets)
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {

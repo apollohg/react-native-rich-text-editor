@@ -71,23 +71,28 @@ internal class RootTableHeightSpan(val heightPx: Int) : ReplacementSpan() {
                       x: Float, top: Int, y: Int, bottom: Int, paint: Paint) = Unit
 }
 
+internal data class TableSelectionObstructions(val safeArea: RectF, val keyboard: RectF?)
+
 internal data class TableSelectionGeometry(
     val editorId: String,
     val documentRevision: String,
     val layoutEpoch: String,
     val tablePos: UInt,
     val rects: List<RectF>,
-    val viewport: RectF
+    val viewport: RectF,
+    val obstructions: TableSelectionObstructions
 ) {
-    fun eventPayload(): Map<String, Any> = mapOf(
-        "editorId" to editorId,
-        "documentRevision" to documentRevision,
-        "layoutEpoch" to layoutEpoch,
-        "tablePos" to tablePos.toLong(),
-        "coordinateSpace" to COORDINATE_SPACE,
-        "rects" to rects.map(::rectPayload),
-        "viewport" to rectPayload(viewport)
-    )
+    fun eventPayload(): Map<String, Any> = buildMap {
+        put("editorId", editorId)
+        put("documentRevision", documentRevision)
+        put("layoutEpoch", layoutEpoch)
+        put("tablePos", tablePos.toLong())
+        put("coordinateSpace", COORDINATE_SPACE)
+        put("rects", rects.map(::rectPayload))
+        put("viewport", rectPayload(viewport))
+        put("safeArea", rectPayload(obstructions.safeArea))
+        obstructions.keyboard?.let { put("keyboard", rectPayload(it)) }
+    }
 
     private fun rectPayload(rect: RectF): Map<String, Double> = mapOf(
         "x" to rect.left.toDouble(),
@@ -708,7 +713,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
         onSelectionGeometryMayChange?.invoke()
     }
 
-    fun selectionGeometry(): TableSelectionGeometry? {
+    fun selectionGeometry(obstructions: TableSelectionObstructions): TableSelectionGeometry? {
         val adapter = host.editorEditText.v2Driver as? EditorV2Adapter ?: return null
         val documentRevision = adapter.cachedAtomicRenderDocumentRevision ?: return null
         val layoutEpoch = canonicalV2U64(adapter.positionEpoch) ?: return null
@@ -733,7 +738,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) {
             rects = cellRects.mapNotNull { rect ->
                 RectF(rect).takeIf { it.intersect(viewport) }?.let(::windowRect)
             },
-            viewport = windowRect(viewport)
+            viewport = windowRect(viewport),
+            obstructions = obstructions
         )
     }
 

@@ -67,6 +67,11 @@ final class TableResizePanGestureRecognizer: UIPanGestureRecognizer {
     }
 }
 
+struct TableSelectionObstructions: Equatable {
+    let safeArea: CGRect
+    let keyboard: CGRect?
+}
+
 struct TableSelectionGeometry: Equatable {
     static let coordinateSpace = "window"
 
@@ -76,16 +81,22 @@ struct TableSelectionGeometry: Equatable {
     let tablePos: UInt32
     let rects: [CGRect]
     let viewport: CGRect
+    let obstructions: TableSelectionObstructions
 
     var eventPayload: [String: Any] {
-        [
+        var payload: [String: Any] = [
             "documentRevision": String(documentRevision),
             "layoutEpoch": String(layoutEpoch),
             "tablePos": Int(tablePos),
             "coordinateSpace": Self.coordinateSpace,
             "rects": rects.map(Self.rectPayload),
-            "viewport": Self.rectPayload(viewport)
+            "viewport": Self.rectPayload(viewport),
+            "safeArea": Self.rectPayload(obstructions.safeArea)
         ]
+        if let keyboard = obstructions.keyboard {
+            payload["keyboard"] = Self.rectPayload(keyboard)
+        }
+        return payload
     }
 
     private static func rectPayload(_ rect: CGRect) -> [String: Double] {
@@ -394,7 +405,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         refreshActiveInputFrame()
     }
 
-    func selectionGeometry() -> TableSelectionGeometry? {
+    func selectionGeometry(obstructions: TableSelectionObstructions) -> TableSelectionGeometry? {
         guard let host = interactionHost, host.editorId != 0,
               let presentation = latestPresentation,
               let layoutEpoch = presentation.positionEpoch,
@@ -410,7 +421,8 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             layoutEpoch: layoutEpoch,
             tablePos: tablePos,
             rects: rects.map { drawingView.convert($0, to: nil) },
-            viewport: drawingView.convert(visible, to: nil)
+            viewport: drawingView.convert(visible, to: nil),
+            obstructions: obstructions
         )
     }
 

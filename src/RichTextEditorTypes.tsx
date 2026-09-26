@@ -6,7 +6,9 @@ import {
     type Selection,
 } from './NativeEditorBridge';
 import { type ImageNodeAttributes } from './schemas';
+import { type ReactNode } from 'react';
 import { type TableCommand, type TableDirection, type TableSelectionGeometry } from './TableTypes';
+import { type TableToolbarState } from './useTableToolbar';
 import { type EditorToolbarHeadingLevel, type EditorToolbarItem } from './EditorToolbar';
 import { type EditorImageLoadingPolicy } from './ImageLoadingPolicy';
 import { type RichTextEditorFocusPreservingRefs } from './useFocusPreservingFrames';
@@ -208,6 +210,7 @@ export interface RichTextEditorProps {
     /** Remote awareness selections rendered as native overlays. */
     remoteSelections?: readonly RemoteSelectionDecoration[];
     tableDirection?: TableDirection;
+    tableToolbar?: false | ((state: TableToolbarState) => ReactNode);
     /**
      * Shared v2 document session : the only construction path. The native
      * view binds to the same session (its editorId is passed straight to the

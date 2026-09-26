@@ -18,6 +18,8 @@ const U32_OVERFLOW = 0x1_0000_0000;
 const SELECTED_RECT = { x: 24, y: 180, width: 120, height: 44 };
 const SCROLLED_RECT = { x: -36, y: 180, width: 120, height: 44 };
 const VIEWPORT = { x: 0, y: 96, width: 390, height: 600 };
+const SAFE_AREA = { x: 0, y: 47, width: 390, height: 763 };
+const KEYBOARD = { x: 0, y: 510, width: 390, height: 334 };
 
 type GeometryListener = jest.Mock<void, [TableSelectionGeometry | null]>;
 
@@ -30,6 +32,7 @@ function nativeGeometry(editorId: string, overrides: Record<string, unknown> = {
         coordinateSpace: 'window',
         rects: [ SELECTED_RECT ],
         viewport: VIEWPORT,
+        safeArea: SAFE_AREA,
         ...overrides,
     };
 }
@@ -75,7 +78,7 @@ describe('native table selection geometry events', () => {
         focus();
         const toolbarOwner = EditorToolbarRegistry.activeEditorToolbarFrameOwnerId;
 
-        emit(nativeGeometry(handle.editorId));
+        emit(nativeGeometry(handle.editorId, { keyboard: KEYBOARD }));
 
         expect(typeof toolbarOwner).toBe('number');
         expect(listener.mock.calls).toEqual([ [ {
@@ -143,6 +146,10 @@ describe('native table selection geometry events', () => {
         [ 'a rect with a NaN origin', { rects: [ { ...SELECTED_RECT, x: Number.NaN } ] } ],
         [ 'an infinite viewport', { viewport: { ...VIEWPORT, height: Number.POSITIVE_INFINITY } } ],
         [ 'a viewport missing its origin', { viewport: { width: 390, height: 600 } } ],
+        [ 'an undefined safe area', { safeArea: undefined } ],
+        [ 'a safe area with a NaN height', { safeArea: { ...SAFE_AREA, height: Number.NaN } } ],
+        [ 'a null keyboard', { keyboard: null } ],
+        [ 'a keyboard with a negative height', { keyboard: { ...SAFE_AREA, height: -1 } } ],
     ])('rejects %s without delivering anything', (_name, overrides) => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const listener: GeometryListener = jest.fn();
@@ -161,16 +168,18 @@ describe('native table selection geometry events', () => {
         handle.destroy();
     });
 
-    it('rejects a payload missing a required field', () => {
+    it('rejects a payload missing a required field or its safe area', () => {
         const handle = createV2LocalHandle(V2_INITIAL_DOC);
         const listener: GeometryListener = jest.fn();
         const { emit } = renderEditor(handle, listener);
         const { layoutEpoch: _omitted, ...withoutEpoch } = nativeGeometry(handle.editorId);
+        const { safeArea: _unreported, ...withoutSafeArea } = nativeGeometry(handle.editorId);
 
         emit(withoutEpoch);
+        emit(withoutSafeArea);
 
         expect(listener).not.toHaveBeenCalled();
-        expect(consoleError).toHaveBeenCalledTimes(1);
+        expect(consoleError).toHaveBeenCalledTimes(2);
         handle.destroy();
     });
 

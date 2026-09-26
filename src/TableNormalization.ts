@@ -14,10 +14,15 @@ import {
     type TableHeaderTarget,
     type TableSelectionGeometry,
 } from './TableTypes';
+import { type TableToolbarObstructions } from './TableToolbarPlacement';
 
 export type NativeTableSelectionGeometry =
     | { kind: 'cleared'; editorId: string }
-    | { kind: 'geometry'; geometry: Omit<TableSelectionGeometry, 'ownerId'> };
+    | {
+          kind: 'geometry';
+          geometry: Omit<TableSelectionGeometry, 'ownerId'>;
+          obstructions: TableToolbarObstructions;
+      };
 
 type TableSelectionRect = TableSelectionGeometry['viewport'];
 
@@ -42,7 +47,9 @@ const TABLE_SELECTION_GEOMETRY_FIELDS = [
     'coordinateSpace',
     'rects',
     'viewport',
+    'safeArea',
 ];
+const TABLE_SELECTION_KEYBOARD_FIELD = 'keyboard';
 const TABLE_HEADER_TARGETS: readonly TableHeaderTarget[] = [ 'row', 'column', 'cell' ];
 
 const TABLE_CELL_STEPS = new Map<unknown, string>([
@@ -266,8 +273,17 @@ export function normalizeNativeTableSelectionGeometry(
         return { kind: 'cleared', editorId };
     }
 
+    const reportsKeyboard = Object.prototype.hasOwnProperty.call(
+        payload,
+        TABLE_SELECTION_KEYBOARD_FIELD
+    );
+
+    const fields = reportsKeyboard
+        ? [ ...TABLE_SELECTION_GEOMETRY_FIELDS, TABLE_SELECTION_KEYBOARD_FIELD ]
+        : TABLE_SELECTION_GEOMETRY_FIELDS;
+
     if (
-        !hasExactOwnKeys(payload, TABLE_SELECTION_GEOMETRY_FIELDS) ||
+        !hasExactOwnKeys(payload, fields) ||
         payload.coordinateSpace !== TABLE_SELECTION_COORDINATE_SPACE
     ) {
         return null;
@@ -278,13 +294,17 @@ export function normalizeNativeTableSelectionGeometry(
     const tablePos = nativeEditorV2U32(payload.tablePos);
     const rects = tableSelectionRects(payload.rects);
     const viewport = tableSelectionRect(payload.viewport);
+    const safeArea = tableSelectionRect(payload.safeArea);
+    const keyboard = reportsKeyboard ? tableSelectionRect(payload.keyboard) : null;
 
     if (
         documentRevision == null ||
         layoutEpoch == null ||
         tablePos == null ||
         rects == null ||
-        viewport == null
+        viewport == null ||
+        safeArea == null ||
+        (reportsKeyboard && keyboard == null)
     ) {
         return null;
     }
@@ -300,5 +320,6 @@ export function normalizeNativeTableSelectionGeometry(
             rects,
             viewport,
         },
+        obstructions: { safeArea, keyboard },
     };
 }

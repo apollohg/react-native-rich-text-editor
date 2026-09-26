@@ -6,6 +6,8 @@ import android.graphics.RectF
 import android.os.Looper
 import android.view.View
 import android.widget.FrameLayout
+import androidx.core.graphics.Insets
+import androidx.core.view.WindowInsetsCompat
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import java.time.Duration
 import org.json.JSONObject
@@ -31,8 +33,12 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         const val RECT_TOLERANCE = 0.01
         val FRAME: Duration = Duration.ofMillis(50)
         val GEOMETRY_KEYS = setOf(
-            "editorId", "documentRevision", "layoutEpoch", "tablePos", "coordinateSpace", "rects", "viewport"
+            "editorId", "documentRevision", "layoutEpoch", "tablePos", "coordinateSpace", "rects", "viewport",
+            "safeArea"
         )
+        const val STATUS_BAR_PX = 48
+        const val NAVIGATION_BAR_PX = 96
+        const val KEYBOARD_PX = 600
     }
 
     private val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
@@ -193,7 +199,53 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         assertTrue("the host offset reaches window space: $viewport", viewport.left >= HOST_LEFT / 2f &&
             viewport.top >= HOST_TOP / 2f)
         rects.forEach { assertTrue("$it lies inside $viewport", viewport.contains(it)) }
+        val safeArea = rect(payload["safeArea"])
+        assertTrue("the visible editor lies inside the window safe area $safeArea", safeArea.contains(viewport))
+        assertFalse("no keyboard is reported while the IME is hidden", payload.containsKey("keyboard"))
     }
+
+    @Test
+    fun `window insets republish the safe area and the IME rectangle in dp window space`() =
+        withFocusedTable(fourCellTable) { fixture ->
+            fixture.selectCells(0, 3)
+            fixture.nextFrame()
+            assertEquals(1, fixture.payloads.size)
+            val window = fixture.view.rootView
+            val density = fixture.view.resources.displayMetrics.density
+            val bars = Insets.of(0, STATUS_BAR_PX, 0, NAVIGATION_BAR_PX)
+            val withKeyboard = WindowInsetsCompat.Builder()
+                .setInsets(WindowInsetsCompat.Type.systemBars(), bars)
+                .setInsets(WindowInsetsCompat.Type.ime(), Insets.of(0, 0, 0, KEYBOARD_PX))
+                .build()
+
+            fixture.view.rootWindowInsetsForTesting = withKeyboard
+            fixture.view.dispatchApplyWindowInsets(requireNotNull(withKeyboard.toWindowInsets()))
+            assertTrue("an insets change schedules a geometry frame",
+                fixture.view.tableSelectionGeometryPublisher.hasScheduledFlushForTesting)
+            fixture.nextFrame()
+
+            assertEquals("${fixture.payloads}", 2, fixture.payloads.size)
+            val shown = fixture.payloads[1]
+            assertRects("the safe area excludes the system bars",
+                listOf(RectF(0f, STATUS_BAR_PX / density, window.width / density,
+                    (window.height - NAVIGATION_BAR_PX) / density)),
+                listOf(rect(shown["safeArea"])))
+            assertRects("the keyboard is the IME rectangle at the window bottom",
+                listOf(RectF(0f, (window.height - KEYBOARD_PX) / density, window.width / density,
+                    window.height / density)),
+                listOf(rect(shown["keyboard"])))
+
+            val withoutKeyboard = WindowInsetsCompat.Builder()
+                .setInsets(WindowInsetsCompat.Type.systemBars(), bars)
+                .build()
+            fixture.view.rootWindowInsetsForTesting = withoutKeyboard
+            fixture.view.dispatchApplyWindowInsets(requireNotNull(withoutKeyboard.toWindowInsets()))
+            fixture.nextFrame()
+
+            assertEquals("${fixture.payloads}", 3, fixture.payloads.size)
+            assertFalse("a hidden IME no longer obstructs", fixture.payloads[2].containsKey("keyboard"))
+            assertEquals(GEOMETRY_KEYS, fixture.payloads[2].keys)
+        }
 
     @Test
     fun `horizontal table scroll moves rects and coalesces steps within one frame`() =

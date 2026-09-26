@@ -1,4 +1,4 @@
-import { useCallback, useImperativeHandle, useRef } from 'react';
+import { useCallback, useImperativeHandle, useMemo, useRef } from 'react';
 import { type AtomAttrsUpdate } from './atoms';
 import { AtomUpdateAttrsError, type AtomInstance } from './atomInstances';
 import { resolveAtomAttrsUpdate } from './atomUpdates';
@@ -502,8 +502,7 @@ export function useRichTextEditorCommands(
         });
     }, [ commandInsertImage, onRequestImageRef, selectionRef ]);
 
-    useImperativeHandle(
-        ref,
+    const editorHandle = useMemo(
         (): RichTextEditorRef => ({
             focus() {
                 nativeViewRef.current?.focus?.();
@@ -595,7 +594,14 @@ export function useRichTextEditorCommands(
             editable ]
     );
 
+    const editorHandleRef = useRef(editorHandle);
+
+    editorHandleRef.current = editorHandle;
+
+    useImperativeHandle(ref, () => editorHandle, [ editorHandle ]);
+
     return {
+        editorHandleRef,
         openLinkRequest,
         openImageRequest,
         editableRef,

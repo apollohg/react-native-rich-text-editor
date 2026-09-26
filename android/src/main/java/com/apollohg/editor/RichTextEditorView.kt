@@ -19,6 +19,7 @@ import com.apollohg.editor.tables.EditorTableSurface
 import com.apollohg.editor.tables.TableGestureAxis
 import com.apollohg.editor.tables.TableLayoutDirection
 import com.apollohg.editor.tables.TableSelectionGeometry
+import com.apollohg.editor.tables.TableSelectionObstructions
 import kotlin.math.roundToInt
 
 internal data class AtomLayoutPosition(
@@ -806,7 +807,8 @@ class RichTextEditorView @JvmOverloads constructor(
             editorTableSurface.onSelectionGeometryMayChange = value
         }
 
-    internal fun tableSelectionGeometry(): TableSelectionGeometry? = editorTableSurface.selectionGeometry()
+    internal fun tableSelectionGeometry(obstructions: TableSelectionObstructions): TableSelectionGeometry? =
+        editorTableSurface.selectionGeometry(obstructions)
 
     internal var tableDirection: TableLayoutDirection? = null
         set(value) {

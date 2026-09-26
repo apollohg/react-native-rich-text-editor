@@ -23,6 +23,21 @@ export {
     type NativeRichTextEditorCaretRect,
 } from './RichTextEditorTypes';
 export { RichTextEditor, NativeRichTextEditor } from './RichTextEditor';
+export { TableToolbar, type TableToolbarProps } from './TableToolbar';
+export {
+    TABLE_TOOLBAR_ACTIONS,
+    useTableToolbar,
+    type TableToolbarAction,
+    type TableToolbarActionSpec,
+    type TableToolbarIdentity,
+    type TableToolbarOptions,
+    type TableToolbarState,
+} from './useTableToolbar';
+export {
+    placeTableToolbar,
+    type Rect as TableToolbarRect,
+    type Size as TableToolbarSize,
+} from './TableToolbarPlacement';
 
 export type {
     NativeRichTextEditorFocusPreservingElement,

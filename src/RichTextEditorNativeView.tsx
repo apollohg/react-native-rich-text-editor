@@ -12,4 +12,13 @@ export const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
     },
+    placedTableToolbar: {
+        position: 'absolute',
+    },
+    measuringTableToolbar: {
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        opacity: 0,
+    },
 });

@@ -198,8 +198,8 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         set { tableSurface.onSelectionGeometryMayChange = newValue }
     }
 
-    func tableSelectionGeometry() -> TableSelectionGeometry? {
-        tableSurface.selectionGeometry()
+    func tableSelectionGeometry(obstructions: TableSelectionObstructions) -> TableSelectionGeometry? {
+        tableSurface.selectionGeometry(obstructions: obstructions)
     }
 
     var tableDirection: TableLayoutDirection? {

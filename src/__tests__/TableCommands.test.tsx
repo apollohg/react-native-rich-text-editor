@@ -5,7 +5,7 @@ import {
     V2_DOC_B,
     createV2LocalHandle,
 } from './helpers/NativeRichTextEditorFixture';
-import { okRecord, operationError } from './helpers/nativeEditorV2FakeRecords';
+import { installTableEngine, type EngineEffect } from './helpers/TableEngineFixture';
 import { createRef, type RefObject } from 'react';
 import { render, act } from '@testing-library/react-native';
 import { NativeRichTextEditor, type NativeRichTextEditorRef } from '../NativeRichTextEditor';
@@ -30,8 +30,6 @@ const SCALAR_HEAD = 5;
 const U32_OVERFLOW = 0x1_0000_0000;
 const FORWARD: 1 = 1;
 const BACKWARD: -1 = -1;
-
-type EngineEffect = 'document' | 'selection';
 
 interface DiscriminantCase {
     command: TableCommand;
@@ -197,74 +195,6 @@ function parsedRequests(mock: jest.Mock): Array<Record<string, unknown>> {
 
 function currentRevision(handle: NativeEditorDocumentHandle): string {
     return handle.bridge.getState().documentRevision;
-}
-
-function installTableEngine(handle: NativeEditorDocumentHandle, effects: Map<string, EngineEffect>) {
-    const applyCommand = mockNativeModule.editorV2ApplyCommand;
-    const fakeApplyCommand = applyCommand.getMockImplementation()!;
-
-    applyCommand.mockImplementation((editorId: string, requestJson: string) => {
-        const request = JSON.parse(requestJson) as Record<string, unknown>;
-        const command = request.command as Record<string, unknown>;
-        const effect = effects.get(String(command.type));
-
-        if (effect === undefined) {
-            return fakeApplyCommand(editorId, requestJson);
-        }
-
-        if (effect === 'document') {
-            return fakeApplyCommand(
-                editorId,
-                JSON.stringify({
-                    ...request,
-                    command: {
-                        type: 'insertContentJson',
-                        json: {
-                            type: 'doc',
-                            content: [
-                                {
-                                    type: 'paragraph',
-                                    content: [ { type: 'text', text: `[${String(command.type)}]` } ],
-                                },
-                            ],
-                        },
-                    },
-                })
-            );
-        }
-
-        return selectionOnlyOutcome(handle, request);
-    });
-
-    mockNativeModule.editorV2SetSelection.mockImplementation(
-        (_editorId: string, requestJson: string) =>
-            selectionOnlyOutcome(handle, JSON.parse(requestJson) as Record<string, unknown>)
-    );
-}
-
-function selectionOnlyOutcome(
-    handle: NativeEditorDocumentHandle,
-    request: Record<string, unknown>
-): Record<string, unknown> {
-    const state = handle.bridge.getState();
-
-    if (request.baseDocumentRevision !== state.documentRevision) {
-        return operationError('REVISION_MISMATCH', 'base document revision does not match', {
-            expectedRevision: request.baseDocumentRevision,
-            actualRevision: state.documentRevision,
-        });
-    }
-
-    return okRecord(
-        JSON.stringify({
-            type: 'transaction',
-            changed: false,
-            documentRevision: state.documentRevision,
-            stateRevision: state.stateRevision,
-            canUndo: state.canUndo,
-            canRedo: state.canRedo,
-        })
-    );
 }
 
 async function runTableCommand(
