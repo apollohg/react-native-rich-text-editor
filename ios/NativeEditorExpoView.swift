@@ -239,10 +239,11 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
             name: UITextView.textDidEndEditingNotification,
             object: richTextView.textView
         )
+        keyboardLayoutGuide.followsUndockedKeyboard = true
         for name in [
-            UIResponder.keyboardWillChangeFrameNotification,
+            UIResponder.keyboardDidShowNotification,
             UIResponder.keyboardDidChangeFrameNotification,
-            UIResponder.keyboardWillHideNotification
+            UIResponder.keyboardDidHideNotification
         ] {
             NotificationCenter.default.addObserver(
                 self, selector: #selector(keyboardFrameMayChange(_:)), name: name, object: nil

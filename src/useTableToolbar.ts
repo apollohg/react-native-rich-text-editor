@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, type RefObject } from 'react';
 import { type ReadonlyActiveState } from './NativeEditorBridge';
 import { localOperationError } from './NativeEditorResultNormalization';
+import { TABLE_SELECTION_COORDINATE_SPACE } from './TableNormalization';
 import { type RichTextEditorRef } from './RichTextEditorTypes';
 import { type TableCommand, type TableSelectionGeometry } from './TableTypes';
 import {
@@ -72,6 +73,7 @@ export interface TableToolbarState {
     compact: boolean;
     commands: Readonly<Record<TableToolbarAction, boolean>>;
     run: (command: TableCommand) => Promise<void>;
+    reportError: (error: unknown) => void;
 }
 
 export interface TableToolbarOptions {
@@ -82,9 +84,8 @@ export interface TableToolbarOptions {
     safeViewport: Rect | null;
     size: Size | null;
     enabled: boolean;
+    onError: (error: unknown) => void;
 }
-
-const TABLE_WINDOW_COORDINATE_SPACE = 'window';
 
 const STALE_TABLE_SELECTION_MESSAGE =
     'NativeRichTextEditor: the table selection changed before the toolbar action ran';
@@ -120,7 +121,7 @@ function currentGeometry({
         !enabled ||
         geometry == null ||
         identity == null ||
-        geometry.coordinateSpace !== TABLE_WINDOW_COORDINATE_SPACE ||
+        geometry.coordinateSpace !== TABLE_SELECTION_COORDINATE_SPACE ||
         !isSameIdentity(geometry, identity) ||
         !geometry.rects.every(isFiniteRect)
     ) {
@@ -138,6 +139,7 @@ export function useTableToolbar({
     safeViewport,
     size,
     enabled,
+    onError,
 }: TableToolbarOptions): TableToolbarState {
     const current = currentGeometry({ geometry, identity, enabled });
 
@@ -221,7 +223,8 @@ export function useTableToolbar({
             compact: placement?.compact ?? false,
             commands,
             run,
+            reportError: onError,
         }),
-        [ commands, placement, run ]
+        [ commands, onError, placement, run ]
     );
 }

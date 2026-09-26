@@ -30,6 +30,9 @@ const WIDE_TOOLBAR = { width: 520, height: 44 };
 const NARROW_WINDOW: Rect = { x: 0, y: 0, width: TABLE_TOOLBAR_COMPACT_MIN_WIDTH - 1, height: 600 };
 const SHORT_WINDOW: Rect = { x: 0, y: 0, width: 390, height: 30 };
 const EMPTY_RECT: Rect = { x: 10, y: 10, width: 0, height: 20 };
+const FULL_WINDOW: Rect = { x: 0, y: 0, width: 390, height: 844 };
+const EDITOR_UNDER_HEADER: Rect = { x: 16, y: 90, width: 200, height: 500 };
+const OUTSIDE_EDITOR: Rect = { x: 240, y: 300, width: 80, height: 40 };
 
 function bottom(rect: Rect): number {
     return rect.y + rect.height;
@@ -73,14 +76,14 @@ describe('placeTableToolbar', () => {
 
 describe('keyboardSafeViewport', () => {
     it('is the whole safe area without a keyboard', () => {
-        expect(keyboardSafeViewport({ safeArea: SAFE_AREA, keyboard: null }, [ SELECTION ])).toEqual(
+        expect(keyboardSafeViewport({ safeArea: SAFE_AREA, keyboard: null }, [ SELECTION ], FULL_WINDOW)).toEqual(
             SAFE_AREA
         );
     });
 
     it('excludes a docked keyboard from the region above it', () => {
         expect(
-            keyboardSafeViewport({ safeArea: SAFE_AREA, keyboard: DOCKED_KEYBOARD }, [ SELECTION ])
+            keyboardSafeViewport({ safeArea: SAFE_AREA, keyboard: DOCKED_KEYBOARD }, [ SELECTION ], FULL_WINDOW)
         ).toEqual(ABOVE_DOCKED_KEYBOARD);
     });
 
@@ -88,10 +91,10 @@ describe('keyboardSafeViewport', () => {
         expect({
             left: keyboardSafeViewport({ safeArea: SAFE_AREA, keyboard: FLOATING_KEYBOARD }, [
                 LEFT_SELECTION,
-            ]),
+            ], FULL_WINDOW),
             below: keyboardSafeViewport({ safeArea: SAFE_AREA, keyboard: FLOATING_KEYBOARD }, [
                 BELOW_SELECTION,
-            ]),
+            ], FULL_WINDOW),
         }).toEqual({ left: LEFT_OF_FLOATING_KEYBOARD, below: BELOW_FLOATING_KEYBOARD });
     });
 
@@ -99,18 +102,41 @@ describe('keyboardSafeViewport', () => {
         expect(
             keyboardSafeViewport({ safeArea: SAFE_AREA, keyboard: DOCKED_KEYBOARD }, [
                 UNDER_DOCKED_KEYBOARD,
-            ])
+            ], FULL_WINDOW)
         ).toBeNull();
     });
 
     it('has no region for a selection without a visible rectangle', () => {
-        expect(keyboardSafeViewport({ safeArea: SAFE_AREA, keyboard: null }, [ EMPTY_RECT ])).toBeNull();
+        expect(keyboardSafeViewport({ safeArea: SAFE_AREA, keyboard: null }, [ EMPTY_RECT ], FULL_WINDOW)).toBeNull();
+    });
+
+    it('is bounded by the visible editor region, not just the window safe area', () => {
+        expect({
+            inside: keyboardSafeViewport(
+                { safeArea: SAFE_AREA, keyboard: DOCKED_KEYBOARD },
+                [ SELECTION ],
+                EDITOR_UNDER_HEADER
+            ),
+            outside: keyboardSafeViewport(
+                { safeArea: SAFE_AREA, keyboard: null },
+                [ OUTSIDE_EDITOR ],
+                EDITOR_UNDER_HEADER
+            ),
+        }).toEqual({
+            inside: {
+                x: EDITOR_UNDER_HEADER.x,
+                y: EDITOR_UNDER_HEADER.y,
+                width: EDITOR_UNDER_HEADER.width,
+                height: DOCKED_KEYBOARD.y - EDITOR_UNDER_HEADER.y,
+            },
+            outside: null,
+        });
     });
 
     it('places a toolbar inside the floating keyboard gap rather than above a bottom inset', () => {
         const safe = keyboardSafeViewport({ safeArea: SAFE_AREA, keyboard: FLOATING_KEYBOARD }, [
             LEFT_SELECTION,
-        ]);
+        ], FULL_WINDOW);
 
         const placement =
             safe == null ? null : resolveTableToolbarPlacement(LEFT_SELECTION, safe, TOOLBAR);

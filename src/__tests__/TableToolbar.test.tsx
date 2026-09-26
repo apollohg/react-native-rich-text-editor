@@ -5,6 +5,7 @@ import {
     createV2LocalHandle,
 } from './helpers/NativeRichTextEditorFixture';
 import { installTableEngine, type EngineEffect } from './helpers/TableEngineFixture';
+import { operationError } from './helpers/nativeEditorV2FakeRecords';
 import { createRef } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import {
@@ -51,9 +52,9 @@ const HOST_ORIGIN = { x: 16, y: 120 };
 const SCROLLED_HOST_ORIGIN = { x: 16, y: 40 };
 const SAFE_AREA: Rect = { x: 0, y: 47, width: 390, height: 763 };
 const VIEWPORT: Rect = { x: 16, y: 120, width: 358, height: 600 };
-const LEFT_CELL: Rect = { x: 40, y: 300, width: 120, height: 44 };
-const RIGHT_CELL: Rect = { x: 160, y: 300, width: 120, height: 44 };
-const SELECTION: Rect = { x: 40, y: 300, width: 240, height: 44 };
+const LEFT_CELL: Rect = { x: 60, y: 300, width: 120, height: 44 };
+const RIGHT_CELL: Rect = { x: 180, y: 300, width: 120, height: 44 };
+const SELECTION: Rect = { x: 60, y: 300, width: 240, height: 44 };
 const TOOLBAR_SIZE = { width: 300, height: 44 };
 const MENU_SIZE = { width: 260, height: 44 };
 const WIDE_TOOLBAR_SIZE = { width: 520, height: 44 };
@@ -64,8 +65,13 @@ const SCROLLED_SELECTION: Rect = { ...SELECTION, y: SELECTION.y - SCROLL_SHIFT }
 const FLOATING_KEYBOARD: Rect = { x: 0, y: 150, width: 390, height: 140 };
 const DOCKED_KEYBOARD: Rect = { x: 0, y: 520, width: 390, height: 290 };
 const CRAMPED_KEYBOARD: Rect = { x: 0, y: 87, width: 390, height: 723 };
-const CRAMPED_CELL: Rect = { x: 40, y: 50, width: 120, height: 30 };
-const TOP_CELL: Rect = { x: 40, y: 60, width: 240, height: 44 };
+const CRAMPED_CELL: Rect = { x: 60, y: 50, width: 120, height: 30 };
+const TOP_CELL: Rect = { x: 60, y: 60, width: 240, height: 44 };
+const TALL_VIEWPORT: Rect = { x: 16, y: 0, width: 358, height: 720 };
+const HEADER_CLIPPED_VIEWPORT: Rect = { x: 16, y: 260, width: 358, height: 460 };
+const NARROW_VIEWPORT: Rect = { x: 16, y: 120, width: 200, height: 600 };
+const ENGINE_FAILURE_CODE = 'OPERATION_INVALID';
+const ENGINE_FAILURE_MESSAGE = 'the engine refused the merge';
 const THEME_BACKGROUND = '#102030';
 const THEME_RADIUS = 3;
 const THEME_BUTTON = '#aa5500';
@@ -458,12 +464,11 @@ describe('RichTextEditor table toolbar', () => {
 
             const requestsBefore = tableRequestCount();
             await pressAsync(editor.view, TABLE_TOOLBAR_ACTION_LABELS[action]);
-            const selectionOnly = SELECTION_ACTIONS.has(action);
 
             outcomes.push({
                 action,
                 requests: tableRequestCount() - requestsBefore,
-                wire: selectionOnly ? TABLE_TOOLBAR_ACTIONS[action].command : lastAppliedCommand(),
+                wire: lastAppliedCommand(),
             });
         }
 
@@ -591,7 +596,7 @@ describe('RichTextEditor table toolbar', () => {
         editor.driver.emitGeometry({ keyboard: FLOATING_KEYBOARD });
         const besideKeyboard = placedHostFrame(editor.view);
 
-        editor.driver.emitGeometry({ rects: [ TOP_CELL ] });
+        editor.driver.emitGeometry({ rects: [ TOP_CELL ], viewport: TALL_VIEWPORT });
         const belowInset = placedHostFrame(editor.view);
 
         const belowSelection = { ...aboveSelection(TOOLBAR_SIZE), y: SELECTION.y + SELECTION.height + TABLE_TOOLBAR_GAP };
@@ -613,13 +618,17 @@ describe('RichTextEditor table toolbar', () => {
     it('overflows into a compact strip when too wide, and hides when even that cannot fit', () => {
         const editor = renderTableEditor();
         showToolbar(editor, {}, WIDE_TOOLBAR_SIZE);
-        layoutToolbar(editor.view, { width: SAFE_AREA.width, height: WIDE_TOOLBAR_SIZE.height });
+        layoutToolbar(editor.view, { width: VIEWPORT.width, height: WIDE_TOOLBAR_SIZE.height });
 
         const compactWidth = flatStyle(editor.view.getByTestId(DEFAULT_TOOLBAR_TEST_ID)).width;
         const scrolls = editor.view.UNSAFE_queryAllByType(ScrollView).length;
         const compactFrames = editor.driver.registeredFrames();
 
-        editor.driver.emitGeometry({ rects: [ CRAMPED_CELL ], keyboard: CRAMPED_KEYBOARD });
+        editor.driver.emitGeometry({
+            rects: [ CRAMPED_CELL ],
+            keyboard: CRAMPED_KEYBOARD,
+            viewport: TALL_VIEWPORT,
+        });
 
         expect({
             compactWidth,
@@ -629,13 +638,13 @@ describe('RichTextEditor table toolbar', () => {
             hiddenFrames: editor.driver.registeredFrames(),
             selectionEvents: editor.onSelectionChange.mock.calls.length,
         }).toEqual({
-            compactWidth: SAFE_AREA.width,
+            compactWidth: VIEWPORT.width,
             scrolls: 1,
             compactFrames: [
                 {
-                    x: SAFE_AREA.x,
+                    x: VIEWPORT.x,
                     y: SELECTION.y - TABLE_TOOLBAR_GAP - WIDE_TOOLBAR_SIZE.height,
-                    width: SAFE_AREA.width,
+                    width: VIEWPORT.width,
                     height: WIDE_TOOLBAR_SIZE.height,
                 },
             ],
@@ -644,6 +653,67 @@ describe('RichTextEditor table toolbar', () => {
             selectionEvents: 1,
         });
 
+        editor.handle.destroy();
+    });
+
+    it('stays inside an editor whose top is clipped under a screen header', () => {
+        const editor = renderTableEditor();
+
+        showToolbar(editor, { viewport: HEADER_CLIPPED_VIEWPORT });
+
+        const below = {
+            ...aboveSelection(TOOLBAR_SIZE),
+            y: SELECTION.y + SELECTION.height + TABLE_TOOLBAR_GAP,
+        };
+
+        expect({
+            placed: placedHostFrame(editor.view),
+            focusPreserving: editor.driver.registeredFrames(),
+        }).toEqual({ placed: hostOffset(below), focusPreserving: [ below ] });
+
+        editor.handle.destroy();
+    });
+
+    it('goes compact inside an editor narrower than the toolbar but not the window', () => {
+        const editor = renderTableEditor();
+
+        showToolbar(editor, { viewport: NARROW_VIEWPORT, rects: [ LEFT_CELL ] });
+
+        const strip = {
+            x: NARROW_VIEWPORT.x,
+            y: LEFT_CELL.y - TABLE_TOOLBAR_GAP - TOOLBAR_SIZE.height,
+            width: NARROW_VIEWPORT.width,
+            height: TOOLBAR_SIZE.height,
+        };
+
+        expect({
+            width: flatStyle(editor.view.getByTestId(DEFAULT_TOOLBAR_TEST_ID)).width,
+            focusPreserving: editor.driver.registeredFrames(),
+        }).toEqual({ width: NARROW_VIEWPORT.width, focusPreserving: [ strip ] });
+
+        editor.handle.destroy();
+    });
+
+    it('reports an engine failure from a toolbar action on the editor error channel', async() => {
+        const editor = renderTableEditor();
+        const errors: unknown[] = [];
+        const removeListener = editor.handle.addErrorListener(error => errors.push(error));
+
+        showToolbar(editor);
+
+        mockNativeModule.editorV2ApplyCommand.mockImplementationOnce(() =>
+            operationError(ENGINE_FAILURE_CODE, ENGINE_FAILURE_MESSAGE));
+
+        await pressAsync(editor.view, TABLE_TOOLBAR_ACTION_LABELS.mergeCells);
+
+        expect(
+            errors.map(error =>
+                error instanceof NativeEditorOperationError
+                    ? { code: error.code, message: error.message }
+                    : error)
+        ).toEqual([ { code: ENGINE_FAILURE_CODE, message: ENGINE_FAILURE_MESSAGE } ]);
+
+        removeListener();
         editor.handle.destroy();
     });
 
@@ -880,6 +950,7 @@ describe('useTableToolbar', () => {
                 safeViewport: SAFE_AREA,
                 size: TOOLBAR_SIZE,
                 enabled: true,
+                onError: jest.fn(),
             });
 
             return ALL_ACTIONS.filter(candidate => result.current.commands[candidate]);
@@ -899,6 +970,7 @@ describe('useTableToolbar', () => {
             safeViewport: SAFE_AREA,
             size: TOOLBAR_SIZE,
             enabled: true,
+            onError: jest.fn(),
         };
 
         const visibility = [
@@ -935,6 +1007,7 @@ describe('useTableToolbar', () => {
             safeViewport: SAFE_AREA,
             size: TOOLBAR_SIZE,
             enabled: true,
+            onError: jest.fn(),
         };
 
         const { result, rerender } = renderToolbarHook(options);

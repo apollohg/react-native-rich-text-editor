@@ -121,7 +121,7 @@ function isSupersededTableActionError(error: unknown): boolean {
 }
 
 export function TableToolbar({
-    frame, compact, commands, run, theme, 
+    frame, compact, commands, run, reportError, theme,
 }: TableToolbarProps) {
     const [ menu, setMenu ] = useState<TableToolbarMenu | null>(null);
     const { toolbarHeight, buttonHeight, paddingVertical } = resolveToolbarMetrics(theme);
@@ -132,11 +132,11 @@ export function TableToolbar({
 
             void run(TABLE_TOOLBAR_ACTIONS[action].command).catch((error: unknown) => {
                 if (!isSupersededTableActionError(error)) {
-                    throw error;
+                    reportError(error);
                 }
             });
         },
-        [ run ]
+        [ reportError, run ]
     );
 
     const renderButton = (

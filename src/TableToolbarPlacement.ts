@@ -118,12 +118,13 @@ function keyboardFreeRegions(safe: Rect, keyboard: Rect): Rect[] {
 
 export function keyboardSafeViewport(
     obstructions: TableToolbarObstructions,
-    selection: readonly Rect[]
+    selection: readonly Rect[],
+    visibleRegion: Rect
 ): Rect | null {
     const anchor = unionRects(selection);
-    const { safeArea } = obstructions;
+    const safeArea = intersectRects(obstructions.safeArea, visibleRegion);
 
-    if (anchor == null || intersectRects(anchor, safeArea) == null) {
+    if (anchor == null || safeArea == null || intersectRects(anchor, safeArea) == null) {
         return null;
     }
 

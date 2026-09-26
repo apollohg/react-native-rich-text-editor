@@ -64,11 +64,11 @@ extension NativeEditorExpoView {
     }
 
     func tableSelectionObstructions(in window: UIWindow) -> TableSelectionObstructions {
-        let keyboard = (richTextView.activeTextInput.keyboardFrameInScreen ?? richTextView.textView.keyboardFrameInScreen)
-            .map { window.convert($0, from: window.screen.coordinateSpace).intersection(window.bounds) }
+        let safeArea = window.bounds.inset(by: window.safeAreaInsets)
+        let keyboard = convert(keyboardLayoutGuide.layoutFrame, to: window).intersection(safeArea)
         return TableSelectionObstructions(
-            safeArea: window.bounds.inset(by: window.safeAreaInsets),
-            keyboard: keyboard.flatMap { $0.isNull || $0.isEmpty ? nil : $0 }
+            safeArea: safeArea,
+            keyboard: keyboard.isNull || keyboard.isEmpty ? nil : keyboard
         )
     }
 

@@ -43,6 +43,7 @@ import {
     mapToolbarItemsForNative,
     stringifyCachedJson,
     serializeToolbarFrames,
+    externalCompositionErrorPayload,
 } from './RichTextEditorSerialization';
 import { styles, NativeEditorView } from './RichTextEditorNativeView';
 
@@ -478,7 +479,11 @@ export function useRichTextEditorPresentation(
         () =>
             tableSelection == null
                 ? null
-                : keyboardSafeViewport(tableSelection.obstructions, tableSelection.geometry.rects),
+                : keyboardSafeViewport(
+                    tableSelection.obstructions,
+                    tableSelection.geometry.rects,
+                    tableSelection.geometry.viewport
+                ),
         [ tableSelection ]
     );
 
@@ -497,6 +502,13 @@ export function useRichTextEditorPresentation(
         [ documentRevision, editorId, tableSelection, toolbarFrameOwnerId ]
     );
 
+    const reportTableToolbarError = useCallback(
+        (error: unknown) => {
+            documentHandle.bridge._emitAutonomousError(externalCompositionErrorPayload(error));
+        },
+        [ documentHandle ]
+    );
+
     const tableToolbarState = useTableToolbar({
         editor: editorHandleRef,
         geometry: tableSelection?.geometry ?? null,
@@ -505,6 +517,7 @@ export function useRichTextEditorPresentation(
         safeViewport: tableToolbarSafeViewport,
         size: tableToolbarSize,
         enabled: tableToolbarEnabled,
+        onError: reportTableToolbarError,
     });
 
     const tableToolbarHostFrame =

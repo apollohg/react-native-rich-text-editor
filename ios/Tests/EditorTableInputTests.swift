@@ -1640,15 +1640,24 @@ final class EditorTableInputTests: XCTestCase {
     }
 
     private func withExpoTableGeometry(
-        document: String, _ body: (ExpoGeometryFixture) throws -> Void
+        document: String, clippingAncestor: CGRect? = nil, _ body: (ExpoGeometryFixture) throws -> Void
     ) throws {
         let editorId = makeV2Editor(configJson: tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 500))
         let host = NativeEditorExpoView()
-        host.frame = CGRect(x: 24, y: 72, width: 340, height: 260)
-        window.addSubview(host)
+        let hostFrame = CGRect(x: 24, y: 72, width: 340, height: 260)
+        if let clippingAncestor {
+            let ancestor = UIView(frame: clippingAncestor)
+            ancestor.clipsToBounds = true
+            window.addSubview(ancestor)
+            host.frame = hostFrame.offsetBy(dx: -clippingAncestor.minX, dy: -clippingAncestor.minY)
+            ancestor.addSubview(host)
+        } else {
+            host.frame = hostFrame
+            window.addSubview(host)
+        }
         window.makeKeyAndVisible()
         defer {
             host.setEditorId(0)
@@ -1681,8 +1690,9 @@ final class EditorTableInputTests: XCTestCase {
 
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
             let payload = try XCTUnwrap(fixture.recorder.payloads.first)
-            XCTAssertEqual(Set(payload.keys), ["editorId", "documentRevision", "layoutEpoch", "tablePos",
-                                               "coordinateSpace", "rects", "viewport", "safeArea"])
+            XCTAssertEqual(Set(payload.keys).subtracting(["keyboard"]),
+                           ["editorId", "documentRevision", "layoutEpoch", "tablePos",
+                            "coordinateSpace", "rects", "viewport", "safeArea"])
             let window = try XCTUnwrap(fixture.host.window)
             XCTAssertEqual(try GeometryRecorder.rect(try XCTUnwrap(payload["safeArea"] as? [String: Double])),
                            window.bounds.inset(by: window.safeAreaInsets),
@@ -1775,37 +1785,40 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
-    func testKeyboardFrameChangesRepublishTheKeyboardRectangleInWindowSpace() throws {
+    func testOnScreenKeyboardIsReportedFromTheUndockedKeyboardLayoutGuide() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            XCTAssertTrue(fixture.host.keyboardLayoutGuide.followsUndockedKeyboard,
+                          "the guide must follow undocked and floating keyboards")
             try fixture.selectCells(anchor: 0, head: 3)
             waitForGeometryFrame()
-            XCTAssertEqual(fixture.recorder.payloads.count, 1)
-            XCTAssertNil(fixture.recorder.payloads[0]["keyboard"], "no keyboard is reported before one appears")
             let window = try XCTUnwrap(fixture.host.window)
-            let floatingKeyboard = CGRect(x: 40, y: 180, width: 300, height: 160)
+            let safeArea = window.bounds.inset(by: window.safeAreaInsets)
+            let guide = fixture.host.convert(fixture.host.keyboardLayoutGuide.layoutFrame, to: window)
+                .intersection(safeArea)
+            XCTAssertFalse(guide.isNull || guide.isEmpty,
+                           "the simulator keyboard occupies the window: \(guide)")
 
-            NotificationCenter.default.post(
-                name: UIResponder.keyboardWillChangeFrameNotification,
-                object: nil,
-                userInfo: [UIResponder.keyboardFrameEndUserInfoKey: NSValue(
-                    cgRect: window.convert(floatingKeyboard, to: window.screen.coordinateSpace)
-                )]
-            )
-            XCTAssertTrue(fixture.host.tableSelectionGeometryPublisher.hasScheduledFlushForTesting,
-                          "a keyboard frame change schedules a geometry frame")
+            let payload = try XCTUnwrap(fixture.recorder.payloads.last)
+            XCTAssertEqual(try GeometryRecorder.rect(try XCTUnwrap(payload["keyboard"] as? [String: Double],
+                                                                   "no keyboard in \(payload)")),
+                           guide, "the keyboard rectangle comes from the layout guide in window space")
+        }
+    }
+
+    func testViewportIsClippedByAClippingAncestor() throws {
+        let clip = CGRect(x: 0, y: 120, width: 400, height: 150)
+        try withExpoTableGeometry(document: fourCellDocument, clippingAncestor: clip) { fixture in
+            try fixture.selectCells(anchor: 0, head: 3)
             waitForGeometryFrame()
+            let payload = try XCTUnwrap(fixture.recorder.payloads.last)
+            let viewport = try GeometryRecorder.rect(try XCTUnwrap(payload["viewport"] as? [String: Double]))
+            let hostInWindow = try XCTUnwrap(fixture.host.superview).convert(fixture.host.frame, to: nil)
 
-            let shown = try XCTUnwrap(fixture.recorder.payloads.last)
-            XCTAssertEqual(try GeometryRecorder.rect(try XCTUnwrap(shown["keyboard"] as? [String: Double])),
-                           floatingKeyboard,
-                           "a floating keyboard is reported as its window rectangle, not a bottom inset")
-
-            NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil)
-            waitForGeometryFrame()
-
-            let hidden = try XCTUnwrap(fixture.recorder.payloads.last)
-            XCTAssertNil(hidden["keyboard"], "a hidden keyboard no longer obstructs: \(hidden)")
-            XCTAssertNotNil(hidden["safeArea"])
+            XCTAssertEqual(viewport, hostInWindow.intersection(clip),
+                           "the viewport excludes what a clipping ancestor hides")
+            for rect in try fixture.recorder.rects(at: fixture.recorder.payloads.count - 1) {
+                XCTAssertTrue(viewport.contains(rect), "\(rect) lies inside the clipped viewport \(viewport)")
+            }
         }
     }
 
