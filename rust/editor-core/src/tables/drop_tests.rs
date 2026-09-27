@@ -377,3 +377,28 @@ fn a_move_whose_source_is_not_a_cell_rectangle_is_refused() {
     assert_eq!(outcome, NativeBridgeOutcome::NotApplicable);
     assert_eq!(document(&session), before);
 }
+
+#[test]
+fn a_move_of_already_empty_cells_writes_them_over_the_drop_cells() {
+    let mut session = session_of(vec![table(vec![
+        row(vec![cell(""), cell("")]),
+        row(vec![cell("c0"), cell("c1")]),
+    ])]);
+    let openings = table_openings(&session, FIRST_TABLE);
+    let fragment = copied_fragment(&session, openings[0], openings[1]);
+    let before = document(&session);
+
+    let outcome = submit_drop(
+        &mut session,
+        move_command(&fragment, openings[2], openings[0], openings[1]),
+    );
+
+    assert_transaction(&outcome);
+    let after = document(&session);
+    assert_eq!(
+        texts(&after["content"][0]),
+        vec![vec!["", ""], vec!["", ""]],
+        "an empty source has nothing to clear but still moves onto the drop cells: {after}",
+    );
+    assert_single_undo_restores(&mut session, &before, &after);
+}

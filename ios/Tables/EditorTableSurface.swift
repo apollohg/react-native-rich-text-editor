@@ -512,6 +512,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         drawingView.tableCellDropTarget = target
     }
 
+    func rootTableContains(_ point: CGPoint) -> Bool {
+        let drawingPoint = convert(point, to: drawingView)
+        return drawingView.mountedTablePresentation()?.tables.contains {
+            entries[$0.surface.identity] != nil && $0.bounds.contains(drawingPoint) && $0.clip.contains(drawingPoint)
+        } == true
+    }
+
     func cellSelectionIncludes(_ target: TableCellDropTarget) -> Bool {
         drawingView.selectedTableCellSourcePositions[target.tableID]?.contains(target.sourcePosition) == true
     }

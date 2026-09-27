@@ -6,6 +6,11 @@ extension EditorTableInputTests {
         static let config = #"{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock","htmlTag":"p"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","htmlTag":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row","htmlTag":"tr"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","htmlTag":"td","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","htmlTag":"th","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"#
         static let gridDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"A"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"B"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"C"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"D"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
         static let targetDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"w"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"x"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"y"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"z"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
+        static let irregularDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2,"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","attrs":{"colspan":2,"colwidth":[100,100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"later"}]}]}]}]}]}"#
+        static let irregularWideCell = 1
+        static let irregularLaterCell = 2
+        static let cellTextOffset: UInt32 = 2
+        static let staleEdit = "!"
         static let editorSize = CGSize(width: 480, height: 320)
         static let firstCell = 0
         static let secondCell = 1
@@ -327,6 +332,62 @@ extension EditorTableInputTests {
             perform(fixture, request)
             XCTAssertEqual(try fixture.documentObject(), before)
             XCTAssertTrue(fixture.updates.updates.isEmpty)
+        }
+    }
+
+    func testADropOntoASyntheticSlotIsRefusedWithoutMutation() throws {
+        try withCellDragTable(CellDrag.irregularDocument, anchor: CellDrag.irregularLaterCell,
+                              head: CellDrag.irregularLaterCell) { fixture in
+            let wide = try fixture.presentedCell(CellDrag.irregularWideCell)
+            let later = try fixture.presentedCell(CellDrag.irregularLaterCell)
+            let gap = CGPoint(x: (later.bounds.maxX + wide.bounds.maxX) / 2, y: later.bounds.midY)
+            XCTAssertFalse(wide.surface.syntheticRegions.isEmpty, "the fixture must project a synthetic gap")
+            XCTAssertFalse(try XCTUnwrap(fixture.drawing.mountedTablePresentation()).cells.contains {
+                $0.cell.sourceCellIndex != nil && $0.bounds.contains(gap)
+            }, "the gap holds no real cell")
+            let gapInWindow = fixture.drawing.convert(gap, to: nil)
+            let drag = try startCellDrag(fixture, at: try windowPoint(fixture, inCell: CellDrag.irregularLaterCell))
+            XCTAssertFalse(drag.items.isEmpty)
+            let external = UIDragItem(itemProvider: NSItemProvider(object: CellDrag.externalTSV as NSString))
+            let before = try XCTUnwrap(fixture.adapter.documentJson())
+
+            for session in [TestTextDropSession(dragSession: drag.session, windowLocation: gapInWindow),
+                            TestTextDropSession(externalItems: [external], windowLocation: gapInWindow)] {
+                let request = dropRequest(fixture, session: session)
+                XCTAssertEqual(proposal(fixture, for: request).operation, .forbidden,
+                               "a synthetic slot never receives UIKit's text insertion")
+                XCTAssertNil(fixture.drawing.tableCellDropTarget)
+                perform(fixture, request)
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(CellDrag.lateUpdateWindow))
+
+            XCTAssertTrue(fixture.updates.updates.isEmpty)
+            XCTAssertEqual(try XCTUnwrap(fixture.adapter.documentJson()), before, "the document is byte-identical")
+        }
+    }
+
+    func testAMoveIsRefusedWhenTheDocumentChangedAfterTheDragStarted() throws {
+        try withCellDragTable { fixture in
+            let drag = try startCellDrag(fixture, at: try windowPoint(fixture, inCell: CellDrag.firstCell))
+            XCTAssertEqual((drag.session.localContext as? TableCellDragContext)?.movable, true)
+            XCTAssertTrue(fixture.view.textView.applyUpdateJSON(EditorV2Shadow.insertText(
+                id: fixture.view.editorId, pos: fixture.positions[CellDrag.lastCell] + CellDrag.cellTextOffset,
+                text: CellDrag.staleEdit
+            )))
+            XCTAssertEqual(try dragCellTexts(fixture), [["A", "B"], ["C", CellDrag.staleEdit + "D"]])
+            fixture.view.layoutIfNeeded()
+            fixture.updates.updates.removeAll()
+            let before = try fixture.documentObject()
+            let request = dropRequest(fixture, session: TestTextDropSession(
+                dragSession: drag.session, windowLocation: try windowPoint(fixture, inCell: CellDrag.thirdCell)
+            ))
+
+            XCTAssertEqual(proposal(fixture, for: request).operation, .forbidden)
+            XCTAssertNil(fixture.drawing.tableCellDropTarget)
+            perform(fixture, request)
+
+            XCTAssertTrue(fixture.updates.updates.isEmpty)
+            XCTAssertEqual(try fixture.documentObject(), before, "a stale move neither moves nor degrades to a copy")
         }
     }
 }

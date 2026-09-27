@@ -920,6 +920,16 @@ pub(crate) fn plan_select_columns(target: &TableTarget<'_>) -> Option<Selection>
     target.cell_selection_over(FIRST_ROW, rect.left, target.rows(), rect.right)
 }
 
+pub(crate) fn cells_are_cleared(target: &TableTarget<'_>, schema: &Schema) -> bool {
+    let (Some(rect), Some(default_block)) = (target.rect(), default_text_block_node(schema)) else {
+        return false;
+    };
+    target
+        .cells_in_rectangle(rect.top, rect.left, rect.bottom, rect.right)
+        .into_iter()
+        .all(|(_, node)| cell_holds_only(node, &default_block))
+}
+
 pub(crate) fn plan_clear_cells(
     target: &TableTarget<'_>,
     schema: &Schema,

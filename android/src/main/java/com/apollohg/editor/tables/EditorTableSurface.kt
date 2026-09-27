@@ -423,9 +423,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
 
     private fun resolveTableCellDrop(event: DragEvent): TableCellDropResolution? {
         val root = host.editorEditText
-        val (tableId, presented) = rootCellAt(event.x + root.left - drawingView.left,
-            event.y + root.top - drawingView.top) ?: return null
-        if (presented.cell.sourceCellIndex == null) return null
+        val x = event.x + root.left - drawingView.left
+        val y = event.y + root.top - drawingView.top
+        val (tableId, presented) = rootCellAt(x, y)?.takeIf { it.second.cell.sourceCellIndex != null }
+            ?: return if (drawingView.hasTableAt(x, y)) TableCellDropResolution.Refused else null
         val target = TableCellDropTarget(tableId, presented.sourcePosition)
         val dragged = event.localState as? TableCellDragState
         val sameEditor = dragged?.takeIf { it.editorId == root.editorId && it.adapter === root.v2Driver }

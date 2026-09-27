@@ -13,10 +13,11 @@ use crate::tables::command_context::{
 };
 use crate::tables::commands::paste::MatrixPasteAction;
 use crate::tables::commands::{
-    columns, headers, merge, plan_clear_cells, plan_delete_table, plan_insert_table,
-    plan_select_columns, plan_select_rows, resize, rows, DeleteColumnsAction, DeleteRowsAction,
-    GridRequirement, InsertColumnAction, InsertRowAction, MergeCellsAction, SetColumnWidthAction,
-    SplitCellAction, TableCommand, TableEdge, TableTarget, ToggleHeaderAction,
+    cells_are_cleared, columns, headers, merge, plan_clear_cells, plan_delete_table,
+    plan_insert_table, plan_select_columns, plan_select_rows, resize, rows, DeleteColumnsAction,
+    DeleteRowsAction, GridRequirement, InsertColumnAction, InsertRowAction, MergeCellsAction,
+    SetColumnWidthAction, SplitCellAction, TableCommand, TableEdge, TableTarget,
+    ToggleHeaderAction,
 };
 use crate::tables::interchange::{
     first_editable_position_in_cell, next_outer_cell, outer_cell_containing, CellStep,
@@ -277,9 +278,11 @@ pub(super) fn move_matrix(
     ) else {
         return Ok(CommandPlan::NotApplicable);
     };
-    let cleared = plan_clear_cells(&source_target, context.schema)
-        .map(|plan| plan.operations)
-        .unwrap_or_default();
+    let cleared = match plan_clear_cells(&source_target, context.schema) {
+        Some(plan) => plan.operations,
+        None if cells_are_cleared(&source_target, context.schema) => Vec::new(),
+        None => return Ok(CommandPlan::NotApplicable),
+    };
     let Ok((document, map)) = apply_operations_mapped(context.document, context.schema, &cleared)
     else {
         return Ok(CommandPlan::NotApplicable);

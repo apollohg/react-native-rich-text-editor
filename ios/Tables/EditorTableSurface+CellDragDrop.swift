@@ -1,3 +1,4 @@
+import os
 import UIKit
 
 struct TableCellDragSource: Equatable {
@@ -32,9 +33,14 @@ private enum TableCellDropCommand {
     static let headCellKey = "headCell"
 }
 
+enum TableCellDropLoadError: Error {
+    case unreadableRepresentation(type: String, underlying: Error)
+}
+
 private enum TableCellDropKind {
     case move(TableCellDragContext)
-    case copy(TableCellDragContext?)
+    case copy(TableCellDragContext)
+    case external(NSItemProvider)
 }
 
 private struct TableCellDrop {
@@ -92,7 +98,7 @@ extension EditorTableSurface: TableCellDropHandling {
             showTableCellDropTarget(drop.target)
             switch drop.kind {
             case .move: return .move
-            case .copy: return .copy
+            case .copy, .external: return .copy
             }
         }
     }
@@ -104,11 +110,18 @@ extension EditorTableSurface: TableCellDropHandling {
         switch drop.kind {
         case let .move(context):
             applyTableCellDrop(drop, payload: context.payload.representations, moved: context.source)
-        case let .copy(context?):
+        case let .copy(context):
             applyTableCellDrop(drop, payload: context.payload.representations, moved: nil)
-        case .copy(nil):
-            loadDroppedRepresentations(session) { [weak self] representations in
-                self?.applyTableCellDrop(drop, payload: representations, moved: nil)
+        case let .external(provider):
+            loadDroppedRepresentations(provider) { [weak self] result in
+                switch result {
+                case let .success(representations):
+                    self?.applyTableCellDrop(drop, payload: representations, moved: nil)
+                case let .failure(.unreadableRepresentation(type, underlying)):
+                    EditorTextView.inputLog.error(
+                        "[drop] refused an external cell drop: \(type, privacy: .public) failed to load: \(String(describing: underlying), privacy: .public)"
+                    )
+                }
             }
         }
         return true
@@ -119,9 +132,11 @@ extension EditorTableSurface: TableCellDropHandling {
     }
 
     private func resolveTableCellDrop(_ session: UIDropSession) -> TableCellDropResolution? {
-        guard let host = interactionHost,
-              let hit = cellHit(at: session.location(in: self))
-        else { return nil }
+        guard let host = interactionHost else { return nil }
+        let point = session.location(in: self)
+        guard let hit = cellHit(at: point) else {
+            return rootTableContains(point) ? .refused : nil
+        }
         let target = TableCellDropTarget(tableID: hit.tableID, sourcePosition: hit.sourcePosition)
         let local = session.localDragSession?.localContext as? TableCellDragContext
         let sameEditorDrag = local.flatMap { $0.editorId == host.editorId ? $0 : nil }
@@ -139,8 +154,14 @@ extension EditorTableSurface: TableCellDropHandling {
                   tableMutationContext(tableID: sameEditorDrag.source.tableID) != nil
             else { return .refused }
             kind = .move(sameEditorDrag)
-        } else {
+        } else if let local {
             kind = .copy(local)
+        } else if let provider = session.items.lazy.map(\.itemProvider).first(where: { provider in
+            EditorClipboardPaste.supportedTypes.contains(where: provider.hasItemConformingToTypeIdentifier)
+        }) {
+            kind = .external(provider)
+        } else {
+            return .refused
         }
         let pastesIntoSelection = sameEditorDrag == nil && cellSelectionIncludes(target)
             && host.textView.canMutateSelectedTableCells()
@@ -169,26 +190,29 @@ extension EditorTableSurface: TableCellDropHandling {
         mutation.host.activeTextInput.applyUpdateJSON(update)
     }
 
-    private func loadDroppedRepresentations(_ session: UIDropSession,
-                                            completion: @escaping ([String: Data]) -> Void) {
-        guard let provider = session.items.first?.itemProvider else { return }
+    private func loadDroppedRepresentations(
+        _ provider: NSItemProvider,
+        completion: @escaping (Result<[String: Data], TableCellDropLoadError>) -> Void
+    ) {
         let group = DispatchGroup()
         let lock = NSLock()
         var representations: [String: Data] = [:]
-        for type in EditorClipboardPaste.supportedTypes
-        where provider.hasItemConformingToTypeIdentifier(type) {
+        var failure: TableCellDropLoadError?
+        for type in EditorClipboardPaste.supportedTypes where provider.hasItemConformingToTypeIdentifier(type) {
             group.enter()
-            _ = provider.loadDataRepresentation(forTypeIdentifier: type) { data, _ in
+            _ = provider.loadDataRepresentation(forTypeIdentifier: type) { data, error in
+                lock.lock()
                 if let data {
-                    lock.lock()
                     representations[type] = data
-                    lock.unlock()
+                } else if let error, failure == nil {
+                    failure = .unreadableRepresentation(type: type, underlying: error)
                 }
+                lock.unlock()
                 group.leave()
             }
         }
         group.notify(queue: .main) {
-            completion(representations)
+            completion(failure.map(Result.failure) ?? .success(representations))
         }
     }
 }

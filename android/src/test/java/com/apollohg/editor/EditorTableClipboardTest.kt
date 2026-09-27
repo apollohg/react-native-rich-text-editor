@@ -965,6 +965,76 @@ internal class EditorTableClipboardTest {
         }
 
     @Test
+    fun `a drop onto a synthetic slot of an irregular table is refused without mutation`() =
+        withTable(IRREGULAR_DOCUMENT, attached = true) { fixture ->
+            selectCellsForMenu(fixture, IRREGULAR_LATER_CELL, IRREGULAR_LATER_CELL)
+            val state = startCellDrag(fixture, IRREGULAR_LATER_CELL)
+            val clip = liftedClip()
+            val drawing = drawing(fixture)
+            val openings = fixture.openings()
+            val wide = drawing.presentedTableCells().single { it.sourcePosition == openings[IRREGULAR_WIDE_CELL] }
+            val later = drawing.presentedTableCells().single { it.sourcePosition == openings[IRREGULAR_LATER_CELL] }
+            val gap = (later.bounds.right + wide.bounds.right) / 2f + drawing.left to later.bounds.centerY() + drawing.top
+            assertTrue("the gap lies inside the table", drawing.hasTableAt(gap.first - drawing.left, gap.second - drawing.top))
+            assertTrue("the gap holds no real cell", drawing.presentedTableCells().none {
+                it.cell.sourceCellIndex != null && it.bounds.contains(gap.first - drawing.left, gap.second - drawing.top)
+            })
+            val before = fixture.adapter.documentJson()
+
+            for (localState in listOf(state, Any())) {
+                assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_STARTED, gap, clip, localState))
+                assertTrue("the table claims the hover", sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, gap, clip, localState))
+                assertEquals("a synthetic slot is never highlighted", null, drawing.tableCellDropTarget)
+                assertFalse(sendDrag(fixture.root, DragEvent.ACTION_DROP, gap, clip, localState))
+            }
+
+            assertEquals(emptyList<String>(), fixture.backend.mutations)
+            assertEquals(0, fixture.updates.size)
+            assertEquals("the document is byte-identical", before, fixture.adapter.documentJson())
+        }
+
+    @Test
+    fun `a move is refused when the document changed after the drag started`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
+            val state = startCellDrag(fixture, FIRST_CELL)
+            assertTrue(state.movable)
+            val clip = liftedClip()
+            val edit = requireNotNull(fixture.adapter.scalarPositionForDoc(fixture.openings()[LAST_CELL] + CELL_TEXT_OFFSET))
+            assertTrue(fixture.root.applyUpdateJSON(requireNotNull(fixture.adapter.replaceTextRange(edit, edit, STALE_EDIT))))
+            assertEquals(listOf(listOf("A", "B"), listOf("C", STALE_EDIT + "D")), fixture.cellTexts())
+            fixture.relayout()
+            fixture.backend.mutations.clear()
+            val before = fixture.adapter.documentJson()
+            val target = cellCenter(fixture, THIRD_CELL)
+
+            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, target, clip, state))
+            assertEquals("a stale move is not offered", null, drawing(fixture).tableCellDropTarget)
+            assertFalse(sendDrag(fixture.root, DragEvent.ACTION_DROP, target, clip, state))
+
+            assertEquals(emptyList<String>(), fixture.backend.mutations)
+            assertEquals("a stale move neither moves nor degrades to a copy", before, fixture.adapter.documentJson())
+        }
+
+    @Test
+    fun `a composing editor refuses to lift its cells`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            fixture.relayout()
+            val text = requireNotNull(fixture.root.text).toString()
+            fixture.root.setSelection(text.indexOf(AFTER_TEXT))
+            fixture.root.beginExternalTextComposition(COMPOSITION_SESSION)
+            assertTrue(fixture.root.hasPendingCompositionForExternalRefresh())
+            selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
+            assertTrue("the composition outlives the cell selection", fixture.root.hasPendingCompositionForExternalRefresh())
+            val drawing = drawing(fixture)
+            val (x, y) = cellCenter(fixture, FIRST_CELL)
+            ShadowWindowManagerGlobal.clearLastDragClipData()
+
+            assertEquals(null, fixture.view.editorTableSurface.startCellDrag(x - drawing.left, y - drawing.top))
+            assertEquals("no system drag starts", null, ShadowWindowManagerGlobal.getLastDragClipData())
+        }
+
+    @Test
     fun `an active composition refuses a cell drop`() =
         withTable(GRID_DOCUMENT, attached = true) { fixture ->
             fixture.relayout()
@@ -997,6 +1067,10 @@ internal class EditorTableClipboardTest {
 
     private companion object {
         const val APPLY_COMMAND = "applyCommand"
+        const val STALE_EDIT = "!"
+        const val IRREGULAR_WIDE_CELL = 1
+        const val IRREGULAR_LATER_CELL = 2
+        const val IRREGULAR_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2,"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","attrs":{"colspan":2,"colwidth":[100,100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"later"}]}]}]}]}]}"""
         const val EXTERNAL_TSV = "e1\te2"
         const val MOVED_PREFIX = "af"
         const val COMPOSITION_SESSION = "cell-drag-composition"
