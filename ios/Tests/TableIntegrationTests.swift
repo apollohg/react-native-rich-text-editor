@@ -11,7 +11,9 @@ final class TableIntegrationTests: XCTestCase {
         static let firstPeer = "7"
         static let secondPeer = "9"
         static let firstPeerColor = "#FF0000"
+        static let firstPeerFill = UIColor(red: 1, green: 0, blue: 0, alpha: 1)
         static let secondPeerColor = "#0000FF"
+        static let secondPeerFill = UIColor(red: 0, green: 0, blue: 1, alpha: 1)
         static let peerName = "Remote"
         static let remoteRequestIdBase: UInt64 = 22_000_000
         static let horizontalScroll: CGFloat = -300
@@ -19,7 +21,9 @@ final class TableIntegrationTests: XCTestCase {
         static let geometryAccuracy: CGFloat = 0.5
         static let compositionText = "Z"
         static let staleCompositionText = "Q"
-        static let staleCompositionDefect = "Known defect: a cell composition committed after a remote table deletion resolves through the position-epoch fallback into root prose"
+        static let remoteProseText = "R"
+        static let remoteProseScalar: UInt32 = 0
+        static let remoteSelectionAffinity = "before"
         static let irregularRectangleTSV = "Zwide\t\nlater\t"
         static let tallCell = 0
         static let wideCell = 1
@@ -29,6 +33,8 @@ final class TableIntegrationTests: XCTestCase {
         static let gridLast = 3
         static let mergedColumnCount = 2
         static let deleteTable = "deleteTable"
+        static let deleteTableRows = "deleteTableRows"
+        static let insertText = "insertText"
         static let mergeTableCells = "mergeTableCells"
         static let copy = #selector(UIResponderStandardEditActions.copy(_:))
         static let cut = #selector(UIResponderStandardEditActions.cut(_:))
@@ -123,6 +129,13 @@ final class TableIntegrationTests: XCTestCase {
             try applyRemote(["command": command]) { editorV2ApplyCommand(editorId: $0, requestJson: $1) }
         }
 
+        func applyRemoteTextSelection(at scalar: UInt32) throws {
+            try applyRemote(adapter.selectionEnvelope(anchor: scalar, head: scalar,
+                                                      affinity: Integration.remoteSelectionAffinity)) {
+                editorV2SetSelection(editorId: $0, requestJson: $1)
+            }
+        }
+
         func applyRemoteCellSelection(anchor: UInt32, head: UInt32) throws {
             try applyRemote([
                 "selection": [
@@ -161,7 +174,7 @@ final class TableIntegrationTests: XCTestCase {
             XCTAssertEqual(fixture.drawing.remoteTableCellSelections.count, 1)
             XCTAssertEqual(remote.tableID, fixture.tableID)
             XCTAssertEqual(remote.sourcePositions, [Int(first), Int(second)])
-            XCTAssertEqual(rgba(remote.color), expectedPeerFill(Integration.firstPeerColor))
+            XCTAssertEqual(rgba(remote.color), expectedPeerFill(Integration.firstPeerFill))
             let expected = try [first, second].map { position -> CGRect in
                 let cell = try fixture.presentedCell(position)
                 return cell.bounds.intersection(cell.clip)
@@ -243,7 +256,7 @@ final class TableIntegrationTests: XCTestCase {
 
             XCTAssertEqual(fixture.drawing.remoteTableCellSelections.map(\.sourcePositions), [[Int(last)]])
             XCTAssertEqual(rgba(try XCTUnwrap(fixture.drawing.remoteTableCellSelections.first).color),
-                           expectedPeerFill(Integration.secondPeerColor))
+                           expectedPeerFill(Integration.secondPeerFill))
 
             try fixture.setPeers([])
 
@@ -493,32 +506,85 @@ final class TableIntegrationTests: XCTestCase {
 
     func testRemoteTableDeletionDuringCellCompositionCancelsItWithoutAMutation() throws {
         try withTable(Integration.irregularDocument) { fixture in
-            XCTAssertTrue(fixture.view.bindTableCell(tableID: fixture.tableID, cellIndex: UInt32(Integration.tallCell),
-                                                     contentRect: .zero))
-            let input = fixture.view.activeTextInput
-            XCTAssertTrue(input.becomeFirstResponder())
-            placeCaretAtCellStart(fixture)
-            input.setMarkedText(Integration.staleCompositionText, selectedRange: NSRange(location: 1, length: 0))
-            XCTAssertTrue(input.isComposing)
+            let input = try composeStaleText(in: Integration.tallCell, fixture)
             let revision = fixture.adapter.baseDocumentRevision
 
             try fixture.applyRemoteCommand(["type": Integration.deleteTable, "tablePos": Int(try fixture.tablePos())])
             let remoteDocument = try XCTUnwrap(fixture.adapter.documentJson())
             fixture.deliverRemoteCommit()
             input.unmarkText()
-            fixture.deliverRemoteCommit()
 
-            XCTAssertFalse(remoteDocument.contains(textNode(Integration.staleCompositionText)))
-            let landedDocument = try XCTUnwrap(fixture.adapter.documentJson())
-            XCTExpectFailure(Integration.staleCompositionDefect) {
-                XCTAssertEqual(landedDocument, remoteDocument, "the stale composition must not land anywhere")
-                XCTAssertEqual(fixture.adapter.baseDocumentRevision, revision + 1, "only the remote change was applied")
-            }
-            XCTAssertNil(input.markedTextRange)
-            XCTAssertFalse(input.isComposing)
-            XCTAssertTrue(fixture.view.activeTextInput === fixture.view.textView, "the dead cell input is released")
+            assertCancelledComposition(input, landedOn: remoteDocument, revision: revision, fixture)
             XCTAssertTrue(fixture.adapter.cachedTableRecords.isEmpty)
         }
+    }
+
+    func testRemoteRowDeletionDuringCellCompositionCancelsItWithoutAMutation() throws {
+        try withTable(Integration.gridDocument) { fixture in
+            let lastRowCell = try fixture.positions()[Integration.gridLast]
+            let input = try composeStaleText(in: Integration.gridLast, fixture)
+            let revision = fixture.adapter.baseDocumentRevision
+
+            try fixture.applyRemoteCellSelection(anchor: lastRowCell, head: lastRowCell)
+            try fixture.applyRemoteCommand(["type": Integration.deleteTableRows])
+            let remoteDocument = try XCTUnwrap(fixture.adapter.documentJson())
+            XCTAssertFalse(remoteDocument.contains(textNode("D")), "the remote peer removed the composing cell's row")
+            fixture.deliverRemoteCommit()
+            input.unmarkText()
+
+            assertCancelledComposition(input, landedOn: remoteDocument, revision: revision, fixture)
+            XCTAssertEqual(try fixture.positions().count, Integration.gridSecond + 1, "the first row survives")
+        }
+    }
+
+    func testRemoteEditElsewhereDuringCellCompositionKeepsComposingInTheSameCell() throws {
+        try withTable(Integration.irregularDocument) { fixture in
+            let input = try composeStaleText(in: Integration.tallCell, fixture)
+            let boundCell = fixture.activeCellPosition()
+            let revision = fixture.adapter.baseDocumentRevision
+
+            try fixture.applyRemoteTextSelection(at: Integration.remoteProseScalar)
+            try fixture.applyRemoteCommand(["type": Integration.insertText, "text": Integration.remoteProseText])
+            fixture.deliverRemoteCommit()
+
+            XCTAssertTrue(input.isComposing, "a remote edit outside the cell must not end the composition")
+            XCTAssertTrue(fixture.view.activeTextInput === input)
+            XCTAssertEqual(fixture.activeCellPosition(), boundCell)
+            input.unmarkText()
+
+            let document = try XCTUnwrap(fixture.adapter.documentJson())
+            XCTAssertTrue(document.contains(textNode(Integration.remoteProseText + "before")), document)
+            XCTAssertTrue(document.contains(textNode(Integration.staleCompositionText + "tall")),
+                          "the composition lands in its moved cell: \(document)")
+            XCTAssertEqual(fixture.adapter.baseDocumentRevision, revision + 2,
+                           "one remote edit and one composition commit")
+            XCTAssertFalse(input.isComposing)
+        }
+    }
+
+    private func composeStaleText(in cellIndex: Int, _ fixture: Fixture) throws -> EditorTextView {
+        XCTAssertTrue(fixture.view.bindTableCell(tableID: fixture.tableID, cellIndex: UInt32(cellIndex),
+                                                 contentRect: .zero))
+        let input = fixture.view.activeTextInput
+        XCTAssertFalse(input === fixture.view.textView, "a cell input must own the composition")
+        XCTAssertTrue(input.becomeFirstResponder())
+        placeCaretAtCellStart(fixture)
+        input.setMarkedText(Integration.staleCompositionText, selectedRange: NSRange(location: 1, length: 0))
+        XCTAssertTrue(input.isComposing)
+        return input
+    }
+
+    private func assertCancelledComposition(_ input: EditorTextView, landedOn remoteDocument: String,
+                                            revision: UInt64, _ fixture: Fixture) {
+        XCTAssertEqual(fixture.adapter.documentJson(), remoteDocument, "the stale composition must not land anywhere")
+        XCTAssertEqual(fixture.adapter.baseDocumentRevision, revision + 1, "only the remote change was applied")
+        XCTAssertNil(input.markedTextRange)
+        XCTAssertFalse(input.isComposing)
+        XCTAssertFalse(input.textStorage.string.contains(Integration.staleCompositionText),
+                       "the marked text is removed from the released input: \(input.textStorage.string)")
+        XCTAssertTrue(fixture.view.activeTextInput === fixture.view.textView, "the dead cell input is released")
+        XCTAssertFalse(fixture.view.textView.textStorage.string.contains(Integration.staleCompositionText),
+                       fixture.view.textView.textStorage.string)
     }
 
     private func withTable(_ document: String, size: CGSize = Integration.editorSize,
@@ -556,9 +622,8 @@ final class TableIntegrationTests: XCTestCase {
         return [red, green, blue, alpha]
     }
 
-    private func expectedPeerFill(_ hex: String) -> [CGFloat] {
-        let color: UIColor = hex == Integration.firstPeerColor ? .red : .blue
-        return rgba(color.withAlphaComponent(RemoteSelectionOverlayView.selectionAlpha))
+    private func expectedPeerFill(_ opaque: UIColor) -> [CGFloat] {
+        rgba(opaque.withAlphaComponent(RemoteSelectionOverlayView.selectionAlpha))
     }
 
     private func pixel(_ image: CGImage, at point: CGPoint, in drawing: PreparedProseDrawingView) throws -> [UInt8] {

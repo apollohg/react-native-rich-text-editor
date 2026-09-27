@@ -127,20 +127,22 @@ impl EditorSession {
                 anchor,
                 head,
                 fallback: false,
+                left_table_cell: false,
             });
         }
-        let (resolved_anchor, anchor_fallback) = self
+        let resolved_anchor = self
             .engine
             .resolve_position_epoch_boundary(anchor_boundary, affinity, anchor)
             .ok_or_else(engine_not_ready)?;
-        let (resolved_head, head_fallback) = self
+        let resolved_head = self
             .engine
             .resolve_position_epoch_boundary(head_boundary, affinity, head)
             .ok_or_else(engine_not_ready)?;
         Ok(crate::position_epoch::ResolvedEpochRange {
-            anchor: resolved_anchor,
-            head: resolved_head,
-            fallback: anchor_fallback || head_fallback,
+            anchor: resolved_anchor.offset,
+            head: resolved_head.offset,
+            fallback: resolved_anchor.fallback || resolved_head.fallback,
+            left_table_cell: resolved_anchor.left_table_cell || resolved_head.left_table_cell,
         })
     }
 

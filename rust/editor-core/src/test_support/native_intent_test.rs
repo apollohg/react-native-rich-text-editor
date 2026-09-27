@@ -5,8 +5,10 @@ use crate::schema::presets::tiptap_schema;
 use crate::session::{
     CollaborationLimits, DocumentState, EditorSession, EditorSessionConfig, SessionPolicy,
 };
-use crate::tables::commands::CELL_INTERIOR_OFFSET;
-use crate::tables::commands_tests::TABLE_POSITION;
+use crate::tables::commands::{TableCommand, CELL_INTERIOR_OFFSET};
+use crate::tables::commands_tests::{
+    PROSE_PREFIX_TABLE_POSITION, PROSE_PREFIX_TEXT, TABLE_POSITION,
+};
 use crate::yrs_engine::{
     Affinity, EditingLimits, EditorOffsetKind, InitializationMode, ReplacementHistory,
     ResolvedSelection, RevisionedPosition, SelectionInput, TransactionOrigin, TypedCommand,
@@ -137,20 +139,28 @@ const TAB_STALE_REQUEST_ID: &str = "73";
 const TAB_UNDO_REQUEST_ID: u64 = 74;
 const FOREIGN_OWNER_ID: u64 = 999;
 
-fn table_session() -> EditorSession {
-    let config = EditorSessionConfig::local_for_test();
-    let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
+fn table_engine(mode: InitializationMode) -> YrsDocumentEngine {
+    YrsDocumentEngine::new(YrsEngineConfig {
         schema: prosemirror_table_schema(),
         fragment_name: "prosemirror".into(),
-        initialization_mode: InitializationMode::LocalEmpty,
+        initialization_mode: mode,
         resource_limits: ResourceLimits::default(),
         editing_limits: EditingLimits::default(),
         max_length: None,
         scope: None,
     })
-    .unwrap();
+    .unwrap()
+}
+
+fn table_session() -> EditorSession {
+    table_session_with(TWO_CELL_TABLE_DOCUMENT)
+}
+
+fn table_session_with(document: &str) -> EditorSession {
+    let config = EditorSessionConfig::local_for_test();
+    let mut engine = table_engine(InitializationMode::LocalEmpty);
     engine
-        .import_json(TWO_CELL_TABLE_DOCUMENT, TransactionOrigin::DocumentImport)
+        .import_json(document, TransactionOrigin::DocumentImport)
         .unwrap();
     let mut session = EditorSession::new(
         engine,
@@ -164,13 +174,17 @@ fn table_session() -> EditorSession {
 }
 
 fn cell_text_scalar(session: &EditorSession, cell: usize) -> u32 {
+    cell_text_scalar_in(session, TABLE_POSITION, cell)
+}
+
+fn cell_text_scalar_in(session: &EditorSession, table_position: u32, cell: usize) -> u32 {
     let document = session.engine.document().unwrap();
     let index = crate::tables::admission::TableProjectionIndex::derive_or_fallback(
         document,
         &prosemirror_table_schema(),
         &ResourceLimits::default(),
     );
-    let opening = index.table_at(TABLE_POSITION).unwrap().cells[cell].source_pos;
+    let opening = index.table_at(table_position).unwrap().cells[cell].source_pos;
     session
         .engine
         .position_map()
@@ -702,4 +716,246 @@ fn set_selection_uses_the_pinned_multi_paragraph_scalar() {
         Some(crate::yrs_engine::ResolvedSelection::Text { anchor, head })
             if anchor.scalar == 10 && head.scalar == 10
     ));
+}
+
+const PROSE_AND_GRID_DOCUMENT: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"First"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Second"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Third"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Fourth"}]}]}]}]}]}"#;
+const CELL_OWNER_ID: u64 = 91;
+const CELL_COMMIT_REQUEST_ID: u64 = 92;
+const REMOTE_REQUEST_ID: u64 = 93;
+const REMOTE_DELIVERY_REQUEST_ID: u64 = 94;
+const FIRST_GRID_CELL: usize = 0;
+const COMPOSED_TEXT: &str = "Q";
+const REMOTE_PROSE_TEXT: &str = "R";
+const CELL_REMOVED_CODE: &str = "POSITION_EPOCH_CELL_REMOVED";
+const TWO_PARAGRAPH_CELL_DOCUMENT: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"First"}]},{"type":"paragraph","content":[{"type":"text","text":"Extra"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Second"}]}]}]}]}]}"#;
+const FIRST_PARAGRAPH_TEXT: &str = "First";
+const PARAGRAPH_BREAK_SCALARS: u32 = 1;
+
+struct PinnedCellCommit {
+    epoch: u64,
+    scalar: u32,
+}
+
+fn pin_cell_commit(session: &mut EditorSession) -> PinnedCellCommit {
+    let scalar = cell_text_scalar_in(session, PROSE_PREFIX_TABLE_POSITION, FIRST_GRID_CELL);
+    let epoch = session
+        .pin_position_epoch(CELL_OWNER_ID, session.engine.revision())
+        .unwrap();
+    PinnedCellCommit { epoch, scalar }
+}
+
+fn submit_cell_commit(
+    session: &mut EditorSession,
+    pinned: &PinnedCellCommit,
+) -> Result<serde_json::Value, crate::session::SessionError> {
+    let request = serde_json::json!({
+        "version": 1,
+        "requestId": CELL_COMMIT_REQUEST_ID.to_string(),
+        "ownerId": CELL_OWNER_ID.to_string(),
+        "positionEpoch": pinned.epoch.to_string(),
+        "intent": {
+            "type": "insertText",
+            "anchor": pinned.scalar,
+            "head": pinned.scalar,
+            "text": COMPOSED_TEXT,
+        },
+    });
+    NativeTransactionBridge::new(session)
+        .submit_native_intent(&request.to_string())
+        .map(|outcome| serde_json::from_str(&outcome).unwrap())
+}
+
+fn apply_remote_peer_edit(session: &mut EditorSession, edit: impl FnOnce(&mut YrsDocumentEngine)) {
+    let mut replica = table_engine(InitializationMode::AwaitRemote);
+    replica
+        .apply_remote_update_v1(REMOTE_REQUEST_ID, &session.engine.encoded_state().unwrap())
+        .unwrap();
+    edit(&mut replica);
+    session
+        .engine
+        .apply_remote_update_v1(
+            REMOTE_DELIVERY_REQUEST_ID,
+            &replica.encoded_state().unwrap(),
+        )
+        .unwrap();
+}
+
+fn remote_command_at(
+    replica: &mut YrsDocumentEngine,
+    anchor: u32,
+    head: u32,
+    command: TypedCommand,
+) {
+    replica
+        .apply_command_at_selection_with_outbox(
+            REMOTE_REQUEST_ID,
+            command,
+            SelectionInput::Text {
+                anchor: scalar(anchor),
+                head: scalar(head),
+            },
+            TransactionOrigin::LocalCommand,
+            None,
+        )
+        .unwrap()
+        .expect("the remote peer's edit applies");
+}
+
+fn first_grid_cell_text(session: &EditorSession) -> serde_json::Value {
+    session.engine.document_json().unwrap()["content"][1]["content"][0]["content"][0]["content"][0]
+        ["content"][0]["text"]
+        .clone()
+}
+
+fn assert_cell_commit_refused_without_mutation(
+    session: &mut EditorSession,
+    pinned: &PinnedCellCommit,
+) {
+    let remote = session_audit(session);
+    let error = submit_cell_commit(session, pinned)
+        .expect_err("a commit anchored in a removed cell must be refused");
+    assert_eq!(error.code, CELL_REMOVED_CODE, "{error:?}");
+    assert_eq!(error.request_id, Some(CELL_COMMIT_REQUEST_ID));
+    assert_eq!(
+        session_audit(session),
+        remote,
+        "the refused commit must leave the remote result untouched"
+    );
+    assert!(
+        !session
+            .engine
+            .document_json()
+            .unwrap()
+            .to_string()
+            .contains(COMPOSED_TEXT),
+        "the composed text must not land anywhere: {}",
+        session.engine.document_json().unwrap()
+    );
+}
+
+#[test]
+fn cell_commit_after_a_remote_table_deletion_is_refused_instead_of_landing_in_prose() {
+    let mut session = table_session_with(PROSE_AND_GRID_DOCUMENT);
+    let pinned = pin_cell_commit(&mut session);
+
+    apply_remote_peer_edit(&mut session, |replica| {
+        replica
+            .apply_command(
+                REMOTE_REQUEST_ID,
+                TypedCommand::Table(TableCommand::DeleteTable {
+                    table_pos: Some(PROSE_PREFIX_TABLE_POSITION),
+                }),
+            )
+            .unwrap()
+            .expect("the remote peer deletes the table");
+    });
+    assert_eq!(
+        session.engine.document_json().unwrap()["content"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "only the prose paragraph survives the remote deletion"
+    );
+
+    assert_cell_commit_refused_without_mutation(&mut session, &pinned);
+}
+
+#[test]
+fn cell_commit_after_a_remote_deletion_of_its_row_is_refused() {
+    let mut session = table_session_with(PROSE_AND_GRID_DOCUMENT);
+    let pinned = pin_cell_commit(&mut session);
+
+    apply_remote_peer_edit(&mut session, |replica| {
+        remote_command_at(
+            replica,
+            pinned.scalar,
+            pinned.scalar,
+            TypedCommand::Table(TableCommand::DeleteTableRows),
+        );
+    });
+    assert_eq!(
+        first_grid_cell_text(&session),
+        "Third",
+        "the remote peer removed the composing cell's row"
+    );
+
+    assert_cell_commit_refused_without_mutation(&mut session, &pinned);
+}
+
+#[test]
+fn cell_commit_after_a_remote_edit_elsewhere_lands_in_its_moved_cell() {
+    let mut session = table_session_with(PROSE_AND_GRID_DOCUMENT);
+    let pinned = pin_cell_commit(&mut session);
+    apply_remote_peer_edit(&mut session, |replica| {
+        remote_command_at(
+            replica,
+            0,
+            0,
+            TypedCommand::InsertText {
+                text: REMOTE_PROSE_TEXT.into(),
+            },
+        );
+    });
+    let remote_revision = session.engine.revision();
+
+    let outcome = submit_cell_commit(&mut session, &pinned).unwrap();
+
+    assert_eq!(outcome["type"], "transaction", "{outcome}");
+    assert_eq!(outcome["positionFallback"], false, "{outcome}");
+    assert_eq!(session.engine.revision(), remote_revision + 1);
+    assert_eq!(
+        session.engine.document_json().unwrap()["content"][0]["content"][0]["text"],
+        format!("{REMOTE_PROSE_TEXT}{PROSE_PREFIX_TEXT}")
+    );
+    assert_eq!(
+        first_grid_cell_text(&session),
+        format!("{COMPOSED_TEXT}First")
+    );
+}
+
+#[test]
+fn cell_commit_after_a_remote_peer_joins_its_paragraph_stays_in_that_cell() {
+    let mut session = table_session_with(TWO_PARAGRAPH_CELL_DOCUMENT);
+    let first_paragraph_end =
+        cell_text_scalar_in(&session, PROSE_PREFIX_TABLE_POSITION, FIRST_GRID_CELL)
+            + FIRST_PARAGRAPH_TEXT.chars().count() as u32;
+    let epoch = session
+        .pin_position_epoch(CELL_OWNER_ID, session.engine.revision())
+        .unwrap();
+    let pinned = PinnedCellCommit {
+        epoch,
+        scalar: first_paragraph_end + PARAGRAPH_BREAK_SCALARS,
+    };
+    apply_remote_peer_edit(&mut session, |replica| {
+        remote_command_at(
+            replica,
+            first_paragraph_end,
+            pinned.scalar,
+            TypedCommand::DeleteBackward,
+        );
+    });
+    let remote_revision = session.engine.revision();
+    let remote_cell =
+        session.engine.document_json().unwrap()["content"][1]["content"][0]["content"][0].clone();
+
+    let outcome = submit_cell_commit(&mut session, &pinned).unwrap();
+
+    assert_eq!(outcome["type"], "transaction", "{outcome}");
+    assert_eq!(
+        outcome["positionFallback"], true,
+        "the joined paragraph's text leaf is gone, so resolution goes through the cell's own ancestors: {outcome}; remote cell {remote_cell}"
+    );
+    assert_eq!(session.engine.revision(), remote_revision + 1);
+    let document = session.engine.document_json().unwrap();
+    assert_eq!(
+        document["content"][0]["content"][0]["text"],
+        PROSE_PREFIX_TEXT
+    );
+    assert!(
+        document["content"][1]["content"][0]["content"][0]
+            .to_string()
+            .contains(COMPOSED_TEXT),
+        "the composed text stays in its cell: {document}"
+    );
 }

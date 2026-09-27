@@ -10,6 +10,14 @@ pub(crate) struct BoundaryAnchors {
     pub(crate) after: StickyIndex,
     pub(crate) ancestor_before: Vec<StickyIndex>,
     pub(crate) ancestor_after: Vec<StickyIndex>,
+    pub(crate) table_cell_ancestors: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResolvedBoundary {
+    pub(crate) offset: u32,
+    pub(crate) fallback: bool,
+    pub(crate) left_table_cell: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +25,7 @@ pub(crate) struct ResolvedEpochRange {
     pub(crate) anchor: u32,
     pub(crate) head: u32,
     pub(crate) fallback: bool,
+    pub(crate) left_table_cell: bool,
 }
 
 #[derive(Debug)]
@@ -205,6 +214,16 @@ fn retained_bytes(boundaries: &[BoundaryAnchors]) -> Result<usize, SessionError>
         }
     }
     Ok(total)
+}
+
+pub(crate) fn table_cell_removed(request_id: u64) -> SessionError {
+    let mut error = SessionError::new(
+        ErrorDomain::Boundary,
+        "POSITION_EPOCH_CELL_REMOVED",
+        "the table cell addressed by this position epoch no longer exists",
+    );
+    error.request_id = Some(request_id);
+    error
 }
 
 fn invalid_epoch() -> SessionError {

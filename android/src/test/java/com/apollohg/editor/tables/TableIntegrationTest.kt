@@ -12,7 +12,9 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.widget.FrameLayout
 import com.apollohg.editor.EditorEditText
 import com.apollohg.editor.EditorV2Adapter
@@ -31,7 +33,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertSame
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -135,6 +136,14 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
                 adapter.editorId, remoteEnvelope(JSONObject().put("command", command))
             )
             assertTrue("the remote peer's change was refused: $result", result is EditorV2CallResult.Ok)
+        }
+
+        fun applyRemoteTextSelection(scalar: Int) {
+            val result = UniffiEditorV2Backend.setSelection(
+                adapter.editorId,
+                remoteEnvelope(adapter.selectionEnvelope(scalar, scalar, REMOTE_SELECTION_AFFINITY))
+            )
+            assertTrue("the remote peer's caret was refused: $result", result is EditorV2CallResult.Ok)
         }
 
         fun applyRemoteCellSelection(anchor: Int, head: Int) {
@@ -356,20 +365,23 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = WINDOW_COVERING_THE_EDITOR)
     fun `remote rectangle is painted behind local handles and the active cell input`() =
         withTable(GRID_DOCUMENT) { fixture ->
             val positions = fixture.positions()
             val first = positions[GRID_FIRST]
             val second = positions[GRID_SECOND]
-            fixture.selectCells(first, second)
+            val leftColumnBottom = positions[GRID_LEFT_COLUMN_BOTTOM]
+            fixture.selectCells(first, leftColumnBottom)
             val handles = fixture.drawing.selectionHandles()
-            assertTrue("the local selection must show a handle", handles.isNotEmpty())
+            assertEquals("both handles of the left-column selection are visible: $handles", 2, handles.size)
             val cell = fixture.presentedCell(first)
             val interiorX = cell.bounds.centerX().toInt()
             val interiorY = (cell.bounds.bottom - PIXEL_INSET_FROM_CELL_BOTTOM).toInt()
             val localOnly = fixture.render()
 
-            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, first, second, first to second)))
+            fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, first, leftColumnBottom,
+                first to leftColumnBottom)))
             assertEquals(1, fixture.drawing.remoteTableCellSelections.size)
             val withRemote = fixture.render()
 
@@ -511,31 +523,94 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
     @Test
     fun `remote table deletion during cell composition cancels it without a mutation`() =
         withTable(IRREGULAR_DOCUMENT) { fixture ->
-            fixture.tapCell(fixture.positions()[TALL_CELL])
-            val input = fixture.view.richTextView.activeTextInput
-            assertTrue(input !== fixture.root)
-            input.setSelection(0)
-            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
-            assertTrue(connection.setComposingText(STALE_COMPOSITION_TEXT, 1))
+            val composing = composeStaleText(fixture, fixture.positions()[TALL_CELL])
             val revision = fixture.adapter.baseDocumentRevision
 
             fixture.applyRemoteCommand(JSONObject().put("type", DELETE_TABLE).put("tablePos", fixture.tablePos()))
             val remoteDocument = requireNotNull(fixture.adapter.documentJson())
             fixture.deliverRemoteCommit()
-            connection.finishComposingText()
-            fixture.deliverRemoteCommit()
+            composing.connection.finishComposingText()
+            fixture.relayout()
 
-            assertFalse(remoteDocument.contains(textNode(STALE_COMPOSITION_TEXT)))
-            assertThrows(STALE_COMPOSITION_DEFECT, AssertionError::class.java) {
-                assertEquals("the stale composition must not land anywhere", remoteDocument, fixture.adapter.documentJson())
-            }
-            assertThrows(STALE_COMPOSITION_DEFECT, AssertionError::class.java) {
-                assertEquals("only the remote change was applied", revision + 1u, fixture.adapter.baseDocumentRevision)
-            }
-            assertFalse(input.hasPendingCompositionForExternalRefresh())
-            assertSame("the dead cell input is released", fixture.root, fixture.view.richTextView.activeTextInput)
+            assertCancelledComposition(fixture, composing, remoteDocument, revision)
             assertTrue(fixture.adapter.cachedTableRecords.isEmpty())
         }
+
+    @Test
+    fun `remote row deletion during cell composition cancels it without a mutation`() =
+        withTable(GRID_DOCUMENT) { fixture ->
+            val lastRowCell = fixture.positions()[GRID_LAST]
+            val composing = composeStaleText(fixture, lastRowCell)
+            val revision = fixture.adapter.baseDocumentRevision
+
+            fixture.applyRemoteCellSelection(lastRowCell, lastRowCell)
+            fixture.applyRemoteCommand(JSONObject().put("type", DELETE_TABLE_ROWS))
+            val remoteDocument = requireNotNull(fixture.adapter.documentJson())
+            assertFalse("the remote peer removed the composing cell's row: $remoteDocument",
+                remoteDocument.contains(textNode("D")))
+            fixture.deliverRemoteCommit()
+            composing.connection.finishComposingText()
+            fixture.relayout()
+
+            assertCancelledComposition(fixture, composing, remoteDocument, revision)
+            assertEquals("the first row survives", GRID_SECOND + 1, fixture.positions().size)
+        }
+
+    @Test
+    fun `remote edit elsewhere during cell composition keeps composing in the same cell`() =
+        withTable(IRREGULAR_DOCUMENT) { fixture ->
+            val tall = fixture.positions()[TALL_CELL]
+            val composing = composeStaleText(fixture, tall)
+            val revision = fixture.adapter.baseDocumentRevision
+
+            fixture.applyRemoteTextSelection(REMOTE_PROSE_SCALAR)
+            fixture.applyRemoteCommand(JSONObject().put("type", INSERT_TEXT).put("text", REMOTE_PROSE_TEXT))
+            fixture.deliverRemoteCommit()
+
+            assertTrue("a remote edit outside the cell must not end the composition",
+                composing.input.hasPendingCompositionForExternalRefresh())
+            assertSame(composing.input, fixture.view.richTextView.activeTextInput)
+            assertEquals(tall.toLong(), fixture.activeCellPosition())
+            composing.connection.finishComposingText()
+            fixture.relayout()
+
+            val document = requireNotNull(fixture.adapter.documentJson())
+            assertTrue(document, document.contains(textNode(REMOTE_PROSE_TEXT + "before")))
+            assertTrue("the composition lands in its moved cell: $document",
+                document.contains(textNode(STALE_COMPOSITION_TEXT + "tall")))
+            assertEquals("one remote edit and one composition commit", revision + 2u, fixture.adapter.baseDocumentRevision)
+            assertFalse(composing.input.hasPendingCompositionForExternalRefresh())
+        }
+
+    private class Composition(val input: EditorEditText, val connection: InputConnection)
+
+    private fun composeStaleText(fixture: Fixture, cellPosition: Int): Composition {
+        fixture.tapCell(cellPosition)
+        val input = fixture.view.richTextView.activeTextInput
+        assertTrue("a cell input must own the composition", input !== fixture.root)
+        input.setSelection(0)
+        val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+        assertTrue(connection.setComposingText(STALE_COMPOSITION_TEXT, 1))
+        assertTrue(input.hasPendingCompositionForExternalRefresh())
+        return Composition(input, connection)
+    }
+
+    private fun assertCancelledComposition(
+        fixture: Fixture,
+        composing: Composition,
+        remoteDocument: String,
+        revision: ULong
+    ) {
+        assertEquals("the stale composition must not land anywhere", remoteDocument, fixture.adapter.documentJson())
+        assertEquals("only the remote change was applied", revision + 1u, fixture.adapter.baseDocumentRevision)
+        assertFalse(composing.input.hasPendingCompositionForExternalRefresh())
+        val editable = requireNotNull(composing.input.text)
+        assertEquals("the IME composing span is finished", -1, BaseInputConnection.getComposingSpanStart(editable))
+        assertFalse("the marked text is removed from the released input: $editable",
+            editable.toString().contains(STALE_COMPOSITION_TEXT))
+        assertSame("the dead cell input is released", fixture.root, fixture.view.richTextView.activeTextInput)
+        assertFalse(fixture.root.text.toString(), fixture.root.text.toString().contains(STALE_COMPOSITION_TEXT))
+    }
 
     private fun withTable(document: String, block: (Fixture) -> Unit) {
         val activity = Robolectric.buildActivity(Activity::class.java).setup()
@@ -602,6 +677,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
     private companion object {
         const val VIEW_WIDTH = 900
         const val VIEW_HEIGHT = 500
+        const val WINDOW_COVERING_THE_EDITOR = "w1000dp-h700dp"
         const val TOUCH_STEP_MS = 20L
         const val KEY_EVENT_STEP_MS = 100L
         const val REMOTE_REQUEST_ID_BASE = 22_000_000L
@@ -617,11 +693,13 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         const val PIXEL_INSET_FROM_CELL_BOTTOM = 3f
         const val COMPOSITION_TEXT = "Z"
         const val STALE_COMPOSITION_TEXT = "Q"
-        const val STALE_COMPOSITION_DEFECT = "Known defect: a cell composition committed after a remote table " +
-            "deletion resolves through the position-epoch fallback into root prose"
+        const val REMOTE_PROSE_TEXT = "R"
+        const val REMOTE_PROSE_SCALAR = 0
+        const val REMOTE_SELECTION_AFFINITY = "before"
         const val IRREGULAR_RECTANGLE_TSV = "Zwide\t\nlater\t"
         const val GRID_FIRST = 0
         const val GRID_SECOND = 1
+        const val GRID_LEFT_COLUMN_BOTTOM = 2
         const val GRID_LAST = 3
         const val TALL_CELL = 0
         const val WIDE_CELL = 1
@@ -629,6 +707,8 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         const val MERGED_COLSPAN = 2
         const val TEXT_OFFSET_INSIDE_CELL = 2
         const val DELETE_TABLE = "deleteTable"
+        const val DELETE_TABLE_ROWS = "deleteTableRows"
+        const val INSERT_TEXT = "insertText"
         const val MERGE_TABLE_CELLS = "mergeTableCells"
         val CELL_MENU_ITEMS = listOf(android.R.id.cut, android.R.id.copy, android.R.id.paste)
         const val TABLE_CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock","htmlTag":"p"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","htmlTag":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row","htmlTag":"tr"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","htmlTag":"td","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","htmlTag":"th","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""

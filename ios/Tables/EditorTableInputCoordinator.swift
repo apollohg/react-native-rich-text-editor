@@ -201,6 +201,7 @@ final class EditorTableInputCoordinator {
         else { return nil }
         let cancellation = cellInput.discardTransientNativeInputForEditorRebind()
         cellInput.finishTransientMarkedTextMutation()
+        cellInput.restoreAuthorizedTextSnapshot()
         positionMap = nil
         cellInput.setAuthoritativeCellSelectionActive(false)
         activeTableID = nil

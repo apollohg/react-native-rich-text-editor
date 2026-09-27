@@ -1,6 +1,7 @@
 package com.apollohg.editor.tables
 
 import com.apollohg.editor.EditorEditText
+import com.apollohg.editor.restoreAuthorizedTextSnapshotForEditor
 
 internal sealed interface TableInputPhase {
     data object Inactive : TableInputPhase
@@ -81,6 +82,7 @@ internal class EditorTableInputCoordinator(val cellInput: EditorEditText) {
     fun invalidateBinding(): Boolean {
         if (phase == TableInputPhase.Inactive && positionMap == null) return false
         cellInput.discardTransientNativeInputForEditorRebind()
+        cellInput.restoreAuthorizedTextSnapshotForEditor()
         cellInput.logicalSelectionSnapshot = null
         cellInput.authoritativeNodeSelectionRange = null
         positionMap = null

@@ -400,6 +400,7 @@ fn boundary_anchors_in_sequence<'a, T: ReadTxn>(
                             after,
                             ancestor_before: Vec::new(),
                             ancestor_after: Vec::new(),
+                            table_cell_ancestors: None,
                         });
                     }
                     if doc_pos < consumed_pm + text_scalar_len {
@@ -426,6 +427,11 @@ fn boundary_anchors_in_sequence<'a, T: ReadTxn>(
                         BranchPtr::from(<XmlElementRef as AsRef<Branch>>::as_ref(element)),
                         schema,
                     )?;
+                    if anchors.table_cell_ancestors.is_none()
+                        && is_table_cell_element(element, txn, schema)
+                    {
+                        anchors.table_cell_ancestors = Some(anchors.ancestor_before.len());
+                    }
                     anchors.ancestor_before.push(sticky_at(
                         txn,
                         branch,
@@ -491,6 +497,7 @@ fn boundary_anchors_at<T: ReadTxn>(
         after: sticky_at(txn, branch, index, Assoc::After)?,
         ancestor_before: Vec::new(),
         ancestor_after: Vec::new(),
+        table_cell_ancestors: None,
     })
 }
 
@@ -616,6 +623,15 @@ fn xml_fragment_pm_content_size<T: ReadTxn>(
 ) -> Option<u32> {
     fragment.children(txn).try_fold(0u32, |size, child| {
         size.checked_add(xml_out_pm_size(txn, &child, schema)?)
+    })
+}
+
+fn is_table_cell_element<T: ReadTxn>(element: &XmlElementRef, txn: &T, schema: &Schema) -> bool {
+    super::codec::wire_element_node_spec(element, txn, schema).is_some_and(|spec| {
+        matches!(
+            spec.table_role,
+            Some(crate::tables::TableRole::Cell | crate::tables::TableRole::HeaderCell)
+        )
     })
 }
 

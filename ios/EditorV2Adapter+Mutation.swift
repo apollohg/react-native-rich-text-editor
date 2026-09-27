@@ -1,6 +1,8 @@
 import Foundation
 
 extension EditorV2Adapter {
+    static let stalePositionEpochCodes: Set<String> = ["POSITION_EPOCH_INVALID", "POSITION_EPOCH_CELL_REMOVED"]
+
     enum MutationKind {
         case transaction(changed: Bool, revision: UInt64)
         case notApplicable
@@ -91,7 +93,7 @@ extension EditorV2Adapter {
         }
         switch Self.normalizeJsonResult(result) {
         case .failure(let error):
-            if error.code == "POSITION_EPOCH_INVALID" {
+            if Self.stalePositionEpochCodes.contains(error.code) {
                 debugNotes.append(
                     refreshPositionEpochInvalid
                         ? "position-epoch-refresh"

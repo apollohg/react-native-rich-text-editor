@@ -143,6 +143,9 @@ impl<'session> NativeTransactionBridge<'session> {
             }
             intent => {
                 self.admit_writable(request_id)?;
+                if resolved.left_table_cell {
+                    return Err(crate::position_epoch::table_cell_removed(request_id));
+                }
                 let intent = match intent {
                     NativeIntentEnvelope::InsertText { anchor, head, text } => apply_input_filter(
                         self.session.policy.input_filter_regex(),

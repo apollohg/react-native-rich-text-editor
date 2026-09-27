@@ -164,6 +164,9 @@ extension EditorTextView {
             guard let adoptedUpdateJSON else { return }
             applyUpdateJSON(adoptedUpdateJSON)
         }
+        if adoptedUpdateJSON == nil {
+            restoreAuthorizedTextAfterCancelledCompositionIfNeeded()
+        }
         return adoptedUpdateJSON
     }
 
@@ -254,6 +257,15 @@ extension EditorTextView {
 
         let stateJSON = EditorV2Shadow.getCurrentState(id: editorId)
         applyUpdateJSON(stateJSON)
+    }
+
+    func restoreAuthorizedTextSnapshot() {
+        guard textStorage.string != lastAuthorizedText else { return }
+        _ = applyAttributedRender(
+            NSAttributedString(attributedString: lastAuthorizedAttributedTextStorage),
+            usedPatch: false,
+            positionCacheUpdate: .invalidate
+        )
     }
 
     func previewMarkedTextReplacementRange(

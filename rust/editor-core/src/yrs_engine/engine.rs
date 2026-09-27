@@ -560,7 +560,7 @@ impl YrsDocumentEngine {
         boundary: &crate::position_epoch::BoundaryAnchors,
         affinity: super::Affinity,
         original_offset: u32,
-    ) -> Option<(u32, bool)> {
+    ) -> Option<crate::position_epoch::ResolvedBoundary> {
         self.debug_assert_derived_revision_keys();
         let state = self.derived_state.as_ref()?;
         let txn = self.doc.transact();
@@ -579,24 +579,42 @@ impl YrsDocumentEngine {
                 &boundary.ancestor_before,
             ),
         };
-        for (fallback, sticky) in std::iter::once((false, leaf))
-            .chain(ancestors.iter().map(|sticky| (true, sticky)))
-            .chain(std::iter::once((true, opposite_leaf)))
-            .chain(opposite_ancestors.iter().map(|sticky| (true, sticky)))
+        let left_table_cell = |ancestor_depth: Option<usize>| {
+            boundary
+                .table_cell_ancestors
+                .zip(ancestor_depth)
+                .is_some_and(|(cell_depth, depth)| depth >= cell_depth)
+        };
+        for (fallback, ancestor_depth, sticky) in std::iter::once((false, None, leaf))
+            .chain(
+                ancestors
+                    .iter()
+                    .enumerate()
+                    .map(|(depth, sticky)| (true, Some(depth), sticky)),
+            )
+            .chain(std::iter::once((true, None, opposite_leaf)))
+            .chain(
+                opposite_ancestors
+                    .iter()
+                    .enumerate()
+                    .map(|(depth, sticky)| (true, Some(depth), sticky)),
+            )
         {
             if let Some(doc_pos) =
                 super::position::sticky_index_to_doc_pos(&txn, &fragment, sticky, &self.schema)
             {
-                return Some((
-                    state.position_map.doc_to_scalar(doc_pos, &state.document),
+                return Some(crate::position_epoch::ResolvedBoundary {
+                    offset: state.position_map.doc_to_scalar(doc_pos, &state.document),
                     fallback,
-                ));
+                    left_table_cell: left_table_cell(ancestor_depth),
+                });
             }
         }
-        Some((
-            original_offset.min(state.position_map.total_scalars()),
-            true,
-        ))
+        Some(crate::position_epoch::ResolvedBoundary {
+            offset: original_offset.min(state.position_map.total_scalars()),
+            fallback: true,
+            left_table_cell: boundary.table_cell_ancestors.is_some(),
+        })
     }
 
     pub fn relative_selection(&self) -> Option<&super::RelativeSelection> {
