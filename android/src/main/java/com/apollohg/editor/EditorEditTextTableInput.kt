@@ -15,6 +15,14 @@ internal fun EditorEditText.canDispatchTableCellMutation(): Boolean =
     (!isTableCellInput && !rootTableSelectionInputBlocked && isAuthorizedForRootTableInput()) ||
         (isTableCellInput && tableCellUpdateConsumer != null && isAuthorizedForTableCellInput())
 
+internal fun EditorEditText.isAuthorizedForHistoryCommand(): Boolean =
+    if (isTableCellInput) {
+        tableCellUpdateConsumer != null && tableCellInputAuthority?.invoke() == true
+    } else {
+        rootTablePositionMap == null ||
+            (v2Driver as? EditorV2Adapter)?.let(::hasAuthorizedNativeTableOwner) == true
+    }
+
 internal fun EditorEditText.hasAuthorizedNativeTableOwner(adapter: EditorV2Adapter): Boolean =
     rootTableNativeOwnerAuthority?.invoke(adapter) ?: ownsNativeBinding(adapter)
 

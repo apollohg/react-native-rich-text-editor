@@ -11,6 +11,8 @@ import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import com.apollohg.editor.tables.TableToolbarTestItems
 import com.apollohg.editor.tables.pressKeyboardToolbarButton
+import com.apollohg.editor.tables.selectTableCells
+import com.apollohg.editor.tables.tableCellPositions
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import java.time.Duration
 import org.json.JSONObject
@@ -239,6 +241,112 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             assertEquals("the toolbar marks the focused cell's text: $focused", TableToolbarTestItems.STRONG_MARK,
                 focused.optJSONArray("marks")?.getJSONObject(0)?.getString("type"))
             assertFalse("the neighbouring cell is untouched: ${runs(1)}", runs(1).getJSONObject(0).has("marks"))
+        }
+
+    private fun authoritativeSelection(adapter: EditorV2Adapter): String =
+        JSONObject(requireNotNull(adapter.cachedAtomicRenderJson)).getJSONObject("selection").toString()
+
+    private fun pressAfterPendingUpdates(view: NativeEditorExpoView, label: String) {
+        shadowOf(Looper.getMainLooper())
+            .idleFor(Duration.ofMillis(NativeEditorExpoView.EDITOR_UPDATE_EVENT_DEBOUNCE_MS))
+        view.pressKeyboardToolbarButton(label)
+    }
+
+    private fun typeAtCellEnd(input: EditorEditText, text: String) {
+        input.setSelection(input.text.length)
+        assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText(text, 1))
+    }
+
+    @Test
+    fun `keyboard toolbar undo and redo apply under a cell rectangle`() =
+        withActiveCell { view, input, adapter ->
+            view.setToolbarItemsJson(TableToolbarTestItems.HISTORY_JSON)
+            val root = view.richTextView.editorEditText
+            val originalSelection = authoritativeSelection(adapter)
+            typeAtCellEnd(input, "X")
+            val editedSelection = authoritativeSelection(adapter)
+            assertEquals("typing edits the cell", listOf("FirstX", "Second"), cellTexts(adapter))
+            val positions = adapter.tableCellPositions(adapter.cachedTableRecords.keys.single())
+            root.selectTableCells(adapter, positions.first(), positions.last())
+            assertTrue("the rectangle is authoritative on the root", root.authoritativeCellSelectionActive)
+
+            pressAfterPendingUpdates(view, TableToolbarTestItems.UNDO_LABEL)
+            assertEquals("undo under a rectangle restores the document", listOf("First", "Second"), cellTexts(adapter))
+            assertEquals("undo resolves to the selection before the edit",
+                originalSelection, authoritativeSelection(adapter))
+            assertFalse("undo leaves no stale rectangle on the root", root.authoritativeCellSelectionActive)
+
+            pressAfterPendingUpdates(view, TableToolbarTestItems.REDO_LABEL)
+            assertEquals("redo reapplies the edit", listOf("FirstX", "Second"), cellTexts(adapter))
+            assertEquals("redo resolves to the selection after the edit",
+                editedSelection, authoritativeSelection(adapter))
+
+            view.setEditable(false)
+            view.richTextView.activeTextInput.performToolbarUndo()
+            assertEquals("a read-only editor refuses undo", listOf("FirstX", "Second"), cellTexts(adapter))
+        }
+
+    @Test
+    fun `keyboard toolbar undo and redo apply through the bound cell`() =
+        withActiveCell { view, input, adapter ->
+            view.setToolbarItemsJson(TableToolbarTestItems.HISTORY_JSON)
+            val originalSelection = authoritativeSelection(adapter)
+            typeAtCellEnd(input, "X")
+            val editedSelection = authoritativeSelection(adapter)
+            assertEquals("typing edits the cell", listOf("FirstX", "Second"), cellTexts(adapter))
+
+            val authority = input.tableCellInputAuthority
+            input.tableCellInputAuthority = { false }
+            input.performToolbarUndo()
+            assertEquals("a cell without binding authority refuses undo", listOf("FirstX", "Second"), cellTexts(adapter))
+            input.tableCellInputAuthority = authority
+
+            pressAfterPendingUpdates(view, TableToolbarTestItems.UNDO_LABEL)
+            assertEquals("undo through the bound cell restores the document", listOf("First", "Second"), cellTexts(adapter))
+            assertEquals("undo resolves to the selection before the edit",
+                originalSelection, authoritativeSelection(adapter))
+            assertSame("the restored caret stays in the bound cell", input, view.richTextView.activeTextInput)
+            assertEquals("the bound cell shows the restored caret", input.text.length, input.selectionStart)
+
+            pressAfterPendingUpdates(view, TableToolbarTestItems.REDO_LABEL)
+            assertEquals("redo reapplies the edit", listOf("FirstX", "Second"), cellTexts(adapter))
+            assertEquals("redo resolves to the selection after the edit",
+                editedSelection, authoritativeSelection(adapter))
+            assertSame("the reapplied caret stays in the bound cell", input, view.richTextView.activeTextInput)
+            assertEquals("the bound cell shows the reapplied caret", input.text.length, input.selectionStart)
+        }
+
+    @Test
+    fun `keyboard toolbar undo settles the bound cell composition first`() =
+        withActiveCell { view, input, adapter ->
+            view.setToolbarItemsJson(TableToolbarTestItems.HISTORY_JSON)
+            typeAtCellEnd(input, "X")
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.setComposingText("zz", 1))
+            assertTrue("the cell is composing", input.hasPendingCompositionForExternalRefresh())
+
+            pressAfterPendingUpdates(view, TableToolbarTestItems.UNDO_LABEL)
+            assertFalse("undo commits the cell composition first", input.hasPendingCompositionForExternalRefresh())
+            assertEquals("undo reverts the committed composition as its own step",
+                listOf("FirstX", "Second"), cellTexts(adapter))
+
+            pressAfterPendingUpdates(view, TableToolbarTestItems.REDO_LABEL)
+            assertEquals("redo restores the committed composition exactly once",
+                listOf("FirstXzz", "Second"), cellTexts(adapter))
+        }
+
+    @Test
+    fun `keyboard toolbar mark press settles the bound cell composition first`() =
+        withActiveCell(editorConfig = strongMarkConfig) { view, input, adapter ->
+            view.setToolbarItemsJson(TableToolbarTestItems.STRONG_JSON)
+            input.setSelection(input.text.length)
+            val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.setComposingText("zz", 1))
+            assertTrue("the cell is composing", input.hasPendingCompositionForExternalRefresh())
+
+            pressAfterPendingUpdates(view, TableToolbarTestItems.STRONG_LABEL)
+            assertFalse("the mark press commits the cell composition first", input.hasPendingCompositionForExternalRefresh())
+            assertEquals("the composition lands in the focused cell", listOf("Firstzz", "Second"), cellTexts(adapter))
         }
 
     @Test

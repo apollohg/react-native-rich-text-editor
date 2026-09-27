@@ -340,7 +340,7 @@ internal fun EditorV2Adapter.performHistoryMutation(
                 invalidateCachedAtomicState(null)
                 lastSyncedScalarSelection = null
             }
-            val update = refreshInternal(null) ?: return null
+            val update = refreshInternal(null, stripViewSelection = false) ?: return null
             if (changed) {
                 publishCachedCollaborationSelection()
                 notifyCollaborationMutation()

@@ -26,6 +26,11 @@ internal object TableToolbarTestItems {
     const val STRONG_LABEL = "Bold"
     const val STRONG_JSON =
         """[{"type":"mark","mark":"$STRONG_MARK","label":"$STRONG_LABEL","icon":{"type":"default","id":"bold"}}]"""
+    const val UNDO_LABEL = "Undo"
+    const val REDO_LABEL = "Redo"
+    const val HISTORY_JSON =
+        """[{"type":"command","command":"undo","label":"$UNDO_LABEL","icon":{"type":"default","id":"undo"}},""" +
+            """{"type":"command","command":"redo","label":"$REDO_LABEL","icon":{"type":"default","id":"redo"}}]"""
 }
 
 internal fun NativeEditorExpoView.pressKeyboardToolbarButton(label: String) {

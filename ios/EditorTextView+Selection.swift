@@ -468,6 +468,10 @@ extension EditorTextView {
         return tableCellInputAuthority?() ?? ownsNativeBinding(adapter)
     }
 
+    func isAuthorizedForHistoryCommand() -> Bool {
+        tableCellInputAuthority?() ?? true
+    }
+
     func inputScalar(atLocalScalar localScalar: UInt32) -> UInt32? {
         guard let map = tableCellPositionMap else {
             return !rootTableSelectionInputBlocked

@@ -63,9 +63,9 @@ extension NativeEditorExpoView {
             case .outdentList:
                 input.performToolbarOutdentListItem()
             case .undo:
-                richTextView.textView.performToolbarUndo()
+                input.performToolbarUndo()
             case .redo:
-                richTextView.textView.performToolbarRedo()
+                input.performToolbarRedo()
             case .none:
                 break
             }

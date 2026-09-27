@@ -614,6 +614,16 @@ extension EditorTextView {
         _ action: () -> Void
     ) {
         guard isAuthorizedForTableCellInput() else { return }
+        performAuthorizedInterceptedInput(
+            flushPendingNativeTextMutation: flushPendingNativeTextMutation,
+            action
+        )
+    }
+
+    func performAuthorizedInterceptedInput(
+        flushPendingNativeTextMutation: Bool = true,
+        _ action: () -> Void
+    ) {
         if flushPendingNativeTextMutation, interceptedInputDepth == 0 {
             guard flushPendingNativeTextMutationCommitIfNeeded() else { return }
         }

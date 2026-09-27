@@ -1,8 +1,13 @@
 package com.apollohg.editor
 
-internal fun EditorEditText.prepareForToolbarCommandWithExternalOwner(): Boolean {
+internal fun EditorEditText.prepareForToolbarCommandWithExternalOwner(): Boolean =
+    prepareForToolbarCommand(EditorEditText::canDispatchTableCellMutation)
+
+private fun EditorEditText.prepareForToolbarCommand(
+    isAuthorized: EditorEditText.() -> Boolean
+): Boolean {
     if (!isEditable || isApplyingRustState || !hasLiveEditor()) return false
-    if (!canDispatchTableCellMutation()) return false
+    if (!isAuthorized()) return false
     if (externalTextComposition == null) return true
     return commitExternalTextCompositionBeforeInteractionIfNeeded() &&
         prepareForExternalEditorUpdate()
@@ -71,16 +76,14 @@ internal fun EditorEditText.performToolbarInsertNodeImpl(nodeType: String) {
 }
 
 internal fun EditorEditText.performToolbarUndoImpl() {
-    if (!prepareForToolbarCommandWithExternalOwner()) return
-    if (isTableCellInput) return
+    if (!prepareForToolbarCommand(EditorEditText::isAuthorizedForHistoryCommand)) return
     v2Driver?.let { driver ->
         driver.undo()?.let { applyUpdateJSON(it) }
     }
 }
 
 internal fun EditorEditText.performToolbarRedoImpl() {
-    if (!prepareForToolbarCommandWithExternalOwner()) return
-    if (isTableCellInput) return
+    if (!prepareForToolbarCommand(EditorEditText::isAuthorizedForHistoryCommand)) return
     v2Driver?.let { driver ->
         driver.redo()?.let { applyUpdateJSON(it) }
     }

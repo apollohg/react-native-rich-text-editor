@@ -38,6 +38,11 @@ enum TableToolbarTestItems {
     static let strongLabel = "Bold"
     static let strongJson =
         #"[{"type":"mark","mark":"\#(strongMark)","label":"\#(strongLabel)","icon":{"type":"default","id":"bold"}}]"#
+    static let undoLabel = "Undo"
+    static let redoLabel = "Redo"
+    static let historyJson =
+        #"[{"type":"command","command":"undo","label":"\#(undoLabel)","icon":{"type":"default","id":"undo"}},"#
+            + #"{"type":"command","command":"redo","label":"\#(redoLabel)","icon":{"type":"default","id":"redo"}}]"#
 }
 
 func documentCellSelection(anchor: UInt32, head: UInt32) -> [String: Any] {

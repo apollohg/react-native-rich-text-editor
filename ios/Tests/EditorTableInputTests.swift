@@ -2167,6 +2167,109 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    private func tableCellTexts(_ adapter: EditorV2Adapter) throws -> [String] {
+        let document = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(try XCTUnwrap(adapter.documentJson()).utf8)
+        ) as? [String: Any])
+        let table = try XCTUnwrap((document["content"] as? [[String: Any]])?.first)
+        return try XCTUnwrap(table["content"] as? [[String: Any]]).flatMap { row in
+            try XCTUnwrap(row["content"] as? [[String: Any]]).map { cell in
+                let runs = (cell["content"] as? [[String: Any]])?.first?["content"] as? [[String: Any]] ?? []
+                return runs.compactMap { $0["text"] as? String }.joined()
+            }
+        }
+    }
+
+    private func authoritativeSelection(_ adapter: EditorV2Adapter) throws -> [String: Any] {
+        let atomic = try XCTUnwrap(adapter.cachedAtomicRenderJSON)
+        let snapshot = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(atomic.utf8)) as? [String: Any])
+        return try XCTUnwrap(snapshot["selection"] as? [String: Any])
+    }
+
+    func testKeyboardToolbarUndoAndRedoApplyUnderACellRectangle() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            fixture.host.setToolbarButtonsJson(TableToolbarTestItems.historyJson)
+            let root = fixture.host.richTextView.textView
+            let original = try tableCellTexts(fixture.adapter)
+            let originalSelection = try authoritativeSelection(fixture.adapter) as NSDictionary
+            try fixture.activateCell(1).insertText("X")
+            let edited = try tableCellTexts(fixture.adapter)
+            let editedSelection = try authoritativeSelection(fixture.adapter) as NSDictionary
+            XCTAssertEqual(edited, ["one", "twoX", "three", "four"], "typing edits the cell")
+            try fixture.selectCells(anchor: 0, head: 1)
+            XCTAssertEqual(try authoritativeSelection(fixture.adapter)["type"] as? String, "cell")
+            XCTAssertTrue(root.authoritativeCellSelectionActive, "the rectangle is authoritative on the root")
+            XCTAssertTrue(fixture.host.richTextView.activeTextInput === root, "the rectangle retires the cell input")
+
+            try root.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.undoLabel)
+            XCTAssertEqual(try tableCellTexts(fixture.adapter), original, "undo under a rectangle restores the document")
+            XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, originalSelection,
+                           "undo resolves to the selection before the edit")
+            XCTAssertFalse(root.authoritativeCellSelectionActive, "undo leaves no stale rectangle on the root")
+            XCTAssertEqual(fixture.drawing.selectedTableCellSourcePositions, [:], "undo clears the drawn rectangle")
+
+            try root.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.redoLabel)
+            XCTAssertEqual(try tableCellTexts(fixture.adapter), edited, "redo reapplies the edit")
+            XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, editedSelection,
+                           "redo resolves to the selection after the edit")
+
+            fixture.host.setEditable(false)
+            root.performToolbarUndo()
+            XCTAssertEqual(try tableCellTexts(fixture.adapter), edited, "a read-only editor refuses undo")
+        }
+    }
+
+    func testKeyboardToolbarUndoAndRedoApplyThroughTheBoundCell() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            fixture.host.setToolbarButtonsJson(TableToolbarTestItems.historyJson)
+            let root = fixture.host.richTextView.textView
+            let original = try tableCellTexts(fixture.adapter)
+            let originalSelection = try authoritativeSelection(fixture.adapter) as NSDictionary
+            let input = try fixture.activateCell(1)
+            input.insertText("X")
+            let edited = try tableCellTexts(fixture.adapter)
+            let editedSelection = try authoritativeSelection(fixture.adapter) as NSDictionary
+            XCTAssertEqual(edited, ["one", "twoX", "three", "four"], "typing edits the cell")
+
+            let authority = input.tableCellInputAuthority
+            input.tableCellInputAuthority = { false }
+            input.performToolbarUndo()
+            XCTAssertEqual(try tableCellTexts(fixture.adapter), edited, "a cell without binding authority refuses undo")
+            input.tableCellInputAuthority = authority
+
+            try input.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.undoLabel)
+            XCTAssertEqual(try tableCellTexts(fixture.adapter), original, "undo through the bound cell restores the document")
+            XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, originalSelection,
+                           "undo resolves to the selection before the edit")
+            XCTAssertTrue(fixture.host.richTextView.activeTextInput === root,
+                          "the selection left the cell, so its input retires")
+
+            try root.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.redoLabel)
+            XCTAssertEqual(try tableCellTexts(fixture.adapter), edited, "redo reapplies the edit")
+            XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, editedSelection,
+                           "redo resolves to the selection after the edit")
+        }
+    }
+
+    func testKeyboardToolbarUndoSettlesTheBoundCellCompositionFirst() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            fixture.host.setToolbarButtonsJson(TableToolbarTestItems.historyJson)
+            let input = try fixture.activateCell(1)
+            input.insertText("X")
+            input.setMarkedText("zz", selectedRange: NSRange(location: 2, length: 0))
+            XCTAssertNotNil(input.markedTextRange, "the cell is composing")
+
+            try input.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.undoLabel)
+            XCTAssertNil(input.markedTextRange, "undo commits the cell composition first")
+            XCTAssertEqual(try tableCellTexts(fixture.adapter), ["one", "twoX", "three", "four"],
+                           "undo reverts the committed composition as its own step")
+
+            try fixture.host.richTextView.activeTextInput.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.redoLabel)
+            XCTAssertEqual(try tableCellTexts(fixture.adapter), ["one", "twoXzz", "three", "four"],
+                           "redo restores the committed composition exactly once")
+        }
+    }
+
     func testSyntheticPreservedFailureFrameAdmitsCellSelectionWithoutGeometry() throws {
         let editorId = makeV2Editor(configJson: tableConfig)
         defer { destroyV2Editor(id: editorId) }
