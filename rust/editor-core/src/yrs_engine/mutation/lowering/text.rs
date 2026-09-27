@@ -34,7 +34,7 @@ impl MutationCompiler {
         )?;
         let attrs = attrs_keeping_equivalent_stored_values(
             attrs,
-            run_attrs_before(&self.targets[target_index].current_runs, index_utf16),
+            insertion_neighbour_attrs(&self.targets[target_index].current_runs, index_utf16),
         );
         let missing_gap_work = match &self.targets[target_index].kind {
             ResolvedTargetKind::Missing {
@@ -700,13 +700,19 @@ fn run_utf16_len(run: &PreparedTextRun) -> u32 {
     u32::try_from(run.text.encode_utf16().count()).unwrap_or(u32::MAX)
 }
 
-fn run_attrs_before(runs: &[PreparedTextRun], index_utf16: u32) -> Option<&Attrs> {
-    runs.iter()
+fn insertion_neighbour_attrs(runs: &[PreparedTextRun], index_utf16: u32) -> [Option<&Attrs>; 2] {
+    let before = runs
+        .iter()
         .find(|run| {
             run.index_utf16 < index_utf16
                 && index_utf16 <= run.index_utf16.saturating_add(run_utf16_len(run))
         })
-        .map(|run| &run.attrs)
+        .map(|run| &run.attrs);
+    let starting_at = runs
+        .iter()
+        .find(|run| run.index_utf16 == index_utf16 && run_utf16_len(run) > 0)
+        .map(|run| &run.attrs);
+    [before, starting_at]
 }
 
 fn stored_value_is_equivalent(stored: Option<&Attrs>, key: &str, desired: &Any) -> bool {
@@ -716,16 +722,18 @@ fn stored_value_is_equivalent(stored: Option<&Attrs>, key: &str, desired: &Any) 
             .is_some_and(is_attributeless_mark_value)
 }
 
-fn attrs_keeping_equivalent_stored_values(attrs: Attrs, stored: Option<&Attrs>) -> Attrs {
+fn attrs_keeping_equivalent_stored_values(
+    attrs: Attrs,
+    neighbours: [Option<&Attrs>; 2],
+) -> Attrs {
     attrs
         .into_iter()
         .map(|(key, desired)| {
-            let value = if stored_value_is_equivalent(stored, &key, &desired) {
-                stored.and_then(|stored| stored.get(&key)).cloned().unwrap_or(desired)
-            } else {
-                desired
-            };
-            (key, value)
+            let stored = neighbours
+                .iter()
+                .find(|stored| stored_value_is_equivalent(**stored, &key, &desired))
+                .and_then(|stored| stored.and_then(|stored| stored.get(&key)).cloned());
+            (key, stored.unwrap_or(desired))
         })
         .collect()
 }

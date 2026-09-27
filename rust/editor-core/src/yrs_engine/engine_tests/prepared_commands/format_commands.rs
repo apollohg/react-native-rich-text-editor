@@ -608,37 +608,40 @@ fn engine_with_legacy_bold_word(trailing_text: &str) -> YrsDocumentEngine {
 
 #[test]
 fn typing_inside_a_legacy_true_mark_run_keeps_its_format_and_a_concurrent_unmark() {
-    const CARET: u32 = 2;
+    const INSIDE: u32 = 2;
+    const START: u32 = 0;
 
-    let mut engine = engine_with_legacy_bold_word("");
-    assert_eq!(
-        first_paragraph_bold_runs(&engine),
-        vec![(LEGACY_WORD.to_owned(), Some(yrs::Any::Bool(true)))],
-        "the fixture must hold a legacy true bold run"
-    );
-    let unmark = remote_bold_update(
-        &remote_peer_synced_to(&engine, UNMARKING_PEER),
-        LEGACY_WORD_UTF16,
-        yrs::Any::Null,
-    );
+    for (caret, typed) in [(INSIDE, "heXllo"), (START, "Xhello")] {
+        let mut engine = engine_with_legacy_bold_word("");
+        assert_eq!(
+            first_paragraph_bold_runs(&engine),
+            vec![(LEGACY_WORD.to_owned(), Some(yrs::Any::Bool(true)))],
+            "the fixture must hold a legacy true bold run"
+        );
+        let unmark = remote_bold_update(
+            &remote_peer_synced_to(&engine, UNMARKING_PEER),
+            LEGACY_WORD_UTF16,
+            yrs::Any::Null,
+        );
 
-    select_text(&mut engine, 70_030_501, CARET, CARET);
-    engine
-        .apply_command(70_030_502, TypedCommand::InsertText { text: "X".into() })
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        first_paragraph_bold_runs(&engine),
-        vec![("heXllo".to_owned(), Some(yrs::Any::Bool(true)))],
-        "typing inside a legacy run must reuse its stored true value, so no format pair splits it"
-    );
+        select_text(&mut engine, 70_030_501, caret, caret);
+        engine
+            .apply_command(70_030_502, TypedCommand::InsertText { text: "X".into() })
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            first_paragraph_bold_runs(&engine),
+            vec![(typed.to_owned(), Some(yrs::Any::Bool(true)))],
+            "typing at {caret} of a legacy run must reuse its stored true value, so no format pair splits it"
+        );
 
-    engine.apply_remote_update_v1(70_030_503, &unmark).unwrap();
-    assert_eq!(
-        first_paragraph_bold_runs(&engine),
-        vec![("heXllo".to_owned(), None)],
-        "the concurrent unbold must win across the whole run, including text typed inside it"
-    );
+        engine.apply_remote_update_v1(70_030_503, &unmark).unwrap();
+        assert_eq!(
+            first_paragraph_bold_runs(&engine),
+            vec![(typed.to_owned(), None)],
+            "the concurrent unbold must win across the whole run, including text typed at {caret}"
+        );
+    }
 }
 
 #[test]
