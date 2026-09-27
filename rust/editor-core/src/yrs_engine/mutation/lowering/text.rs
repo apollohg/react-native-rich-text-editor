@@ -32,6 +32,10 @@ impl MutationCompiler {
             &self.targets[target_index].text,
             scalar_index,
         )?;
+        let attrs = attrs_keeping_equivalent_stored_values(
+            attrs,
+            run_attrs_before(&self.targets[target_index].current_runs, index_utf16),
+        );
         let missing_gap_work = match &self.targets[target_index].kind {
             ResolvedTargetKind::Missing {
                 signature,
@@ -327,7 +331,25 @@ impl MutationCompiler {
                 "mark range crosses structural XML content",
             ));
         };
-        for span in spans {
+        let pieces = spans
+            .iter()
+            .flat_map(|span| {
+                unformatted_pieces(
+                    &self.targets[span.target].current_runs,
+                    span.index_utf16,
+                    span.len_utf16,
+                    &attrs,
+                )
+                .into_iter()
+                .map(|(index_utf16, len_utf16, attrs)| (span.target, index_utf16, len_utf16, attrs))
+            })
+            .collect::<Vec<_>>();
+        for (target_index, index_utf16, len_utf16, attrs) in pieces {
+            let span = FormatPiece {
+                target: target_index,
+                index_utf16,
+                len_utf16,
+            };
             let action_work = 1usize
                 .checked_add(usize::try_from(span.len_utf16).unwrap_or(usize::MAX))
                 .and_then(|work| work.checked_add(attrs_work(&attrs)))
@@ -666,6 +688,90 @@ fn remove_scalar_range(
         .ok_or_else(|| invalid_action_range(request_id, operation_index))?;
     target.replace_range(from_byte..to_byte, "");
     Ok(())
+}
+
+struct FormatPiece {
+    target: usize,
+    index_utf16: u32,
+    len_utf16: u32,
+}
+
+fn run_utf16_len(run: &PreparedTextRun) -> u32 {
+    u32::try_from(run.text.encode_utf16().count()).unwrap_or(u32::MAX)
+}
+
+fn run_attrs_before(runs: &[PreparedTextRun], index_utf16: u32) -> Option<&Attrs> {
+    runs.iter()
+        .find(|run| {
+            run.index_utf16 < index_utf16
+                && index_utf16 <= run.index_utf16.saturating_add(run_utf16_len(run))
+        })
+        .map(|run| &run.attrs)
+}
+
+fn stored_value_is_equivalent(stored: Option<&Attrs>, key: &str, desired: &Any) -> bool {
+    is_attributeless_mark_value(desired)
+        && stored
+            .and_then(|stored| stored.get(key))
+            .is_some_and(is_attributeless_mark_value)
+}
+
+fn attrs_keeping_equivalent_stored_values(attrs: Attrs, stored: Option<&Attrs>) -> Attrs {
+    attrs
+        .into_iter()
+        .map(|(key, desired)| {
+            let value = if stored_value_is_equivalent(stored, &key, &desired) {
+                stored.and_then(|stored| stored.get(&key)).cloned().unwrap_or(desired)
+            } else {
+                desired
+            };
+            (key, value)
+        })
+        .collect()
+}
+
+fn unformatted_pieces(
+    runs: &[PreparedTextRun],
+    index_utf16: u32,
+    len_utf16: u32,
+    attrs: &Attrs,
+) -> Vec<(u32, u32, Attrs)> {
+    let end = index_utf16.saturating_add(len_utf16);
+    let needed = |stored: Option<&Attrs>| -> Attrs {
+        attrs
+            .iter()
+            .filter(|(key, desired)| !stored_value_is_equivalent(stored, key, desired))
+            .map(|(key, desired)| (key.clone(), desired.clone()))
+            .collect()
+    };
+    let mut pieces: Vec<(u32, u32, Attrs)> = Vec::new();
+    let mut push = |from: u32, to: u32, piece: Attrs| {
+        if from >= to || piece.is_empty() {
+            return;
+        }
+        match pieces.last_mut() {
+            Some((last_from, last_len, last_attrs))
+                if last_from.saturating_add(*last_len) == from && *last_attrs == piece =>
+            {
+                *last_len = to - *last_from;
+            }
+            _ => pieces.push((from, to - from, piece)),
+        }
+    };
+    let mut cursor = index_utf16;
+    for run in runs {
+        let run_end = run.index_utf16.saturating_add(run_utf16_len(run));
+        if run_end <= cursor || run.index_utf16 >= end {
+            continue;
+        }
+        push(cursor, run.index_utf16.min(end), needed(None));
+        let from = cursor.max(run.index_utf16);
+        let to = run_end.min(end);
+        push(from, to, needed(Some(&run.attrs)));
+        cursor = to;
+    }
+    push(cursor, end, needed(None));
+    pieces
 }
 
 fn marks_to_attrs(marks: &[Mark]) -> Attrs {

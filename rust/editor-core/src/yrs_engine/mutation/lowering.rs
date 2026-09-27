@@ -15,7 +15,8 @@ use crate::schema::{NodeRole, Schema};
 
 use super::super::canonical::CanonicalArtifact;
 use super::super::codec::{
-    json_to_any, prepare_xml_nodes, PreparedTextRun, PreparedXmlChild, PreparedXmlNode,
+    is_attributeless_mark_value, json_to_any, prepare_xml_nodes, PreparedTextRun, PreparedXmlChild,
+    PreparedXmlNode,
 };
 use super::super::{EditingLimits, OperationError, OperationResult};
 use super::plan::{

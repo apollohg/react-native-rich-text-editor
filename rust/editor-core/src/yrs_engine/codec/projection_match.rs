@@ -173,10 +173,12 @@ fn any_projects_null(value: &Any) -> bool {
         || matches!(value, Any::Number(number) if !number.is_finite())
 }
 
+pub(crate) fn is_attributeless_mark_value(value: &Any) -> bool {
+    matches!(value, Any::Bool(true)) || matches!(value, Any::Map(attrs) if attrs.is_empty())
+}
+
 fn mark_value_omits_attrs(value: &Any) -> bool {
-    matches!(value, Any::Bool(true))
-        || matches!(value, Any::Map(attrs) if attrs.is_empty())
-        || any_projects_null(value)
+    is_attributeless_mark_value(value) || any_projects_null(value)
 }
 
 fn mark_value_projection_equal(left: &Any, right: &Any) -> bool {
