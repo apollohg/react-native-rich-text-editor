@@ -9,7 +9,6 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const CONFIG_PATH = path.join(repositoryRoot, 'scripts/tests/table-performance-config.json');
 const PLATFORMS = ['ios', 'android'];
 const RETAINED_PRESENTATIONS = 'retainedPresentations';
-const PRESENTATION_WINDOW_BOUND = 'presentationWindowBound';
 const RELEASE_MODE = 'release';
 const DIAGNOSTIC_MODE = 'diagnostic';
 const DEVICE_FIELDS = [
@@ -20,6 +19,8 @@ const DEVICE_FIELDS = [
     'refreshHz',
     'textScale',
     'viewportWidth',
+    'viewportHeight',
+    'overscanViewports',
     'physicalDevice',
 ];
 const RELEASE_ENVIRONMENT_FIELDS = [
@@ -28,6 +29,8 @@ const RELEASE_ENVIRONMENT_FIELDS = [
     'refreshHz',
     'textScale',
     'viewportWidth',
+    'viewportHeight',
+    'overscanViewports',
 ];
 
 export function percentile(samples, fraction) {
@@ -97,7 +100,6 @@ function requiredCounters(config, classification) {
         ...Object.keys(config.counterGates),
         ...config.reportedCounters,
         RETAINED_PRESENTATIONS,
-        PRESENTATION_WINDOW_BOUND,
         ...Object.keys(classification.gate?.countersPerSample ?? {}),
     ];
 }
@@ -128,10 +130,13 @@ function validateSample(sample, index, config) {
             throw new Error(`${label} must have a non-empty ${field}`);
         }
     }
+    if (!Number.isSafeInteger(sample.overscanViewports) || sample.overscanViewports < 0) {
+        throw new Error(`${label} overscanViewports must be a non-negative integer`);
+    }
     if (typeof sample.physicalDevice !== 'boolean') {
         throw new Error(`${label} physicalDevice must be a boolean`);
     }
-    for (const field of ['refreshHz', 'textScale', 'viewportWidth']) {
+    for (const field of ['refreshHz', 'textScale', 'viewportWidth', 'viewportHeight']) {
         if (!isPositiveFinite(sample[field])) {
             throw new Error(`${label} ${field} must be a finite positive number`);
         }
@@ -227,21 +232,25 @@ function releaseIneligibility(metadata, releaseEnvironment) {
     return reasons;
 }
 
+export function maxRetainedPresentations(config) {
+    const { viewportWidth, viewportHeight, overscanViewports } = config.releaseEnvironment;
+    const { minColumnWidth, cellPadding, borderWidth } = config.defaultTableTheme;
+    const minRowHeight = 2 * (cellPadding + borderWidth);
+    const windowViewports = 1 + 2 * overscanViewports;
+    const straddlingCells = 1;
+    const columns = Math.ceil((viewportWidth * windowViewports) / minColumnWidth) + straddlingCells;
+    const rows = Math.ceil((viewportHeight * windowViewports) / minRowHeight) + straddlingCells;
+    return columns * rows;
+}
+
 function counterFailures(sample, config) {
-    const failures = [];
-    for (const [counter, allowed] of Object.entries(config.counterGates)) {
-        if (sample.counters[counter] > allowed) {
-            failures.push(`${counter}=${sample.counters[counter]} exceeds ${allowed}`);
-        }
-    }
-    const retained = sample.counters[RETAINED_PRESENTATIONS];
-    const bound = sample.counters[PRESENTATION_WINDOW_BOUND];
-    if (retained > bound) {
-        failures.push(
-            `${RETAINED_PRESENTATIONS}=${retained} exceeds ${PRESENTATION_WINDOW_BOUND}=${bound}`
-        );
-    }
-    return failures;
+    const limits = {
+        ...config.counterGates,
+        [RETAINED_PRESENTATIONS]: maxRetainedPresentations(config),
+    };
+    return Object.entries(limits)
+        .filter(([counter, allowed]) => sample.counters[counter] > allowed)
+        .map(([counter, allowed]) => `${counter}=${sample.counters[counter]} exceeds ${allowed}`);
 }
 
 function reportedCounters(sample, config) {
@@ -261,7 +270,7 @@ function evaluateHardCase(sample, gate, config) {
         const expected = perSample * sample.samplesMs.length;
         if (sample.counters[counter] !== expected) {
             failures.push(
-                `${counter}=${sample.counters[counter]}, protocol requires ${expected} (${perSample} per edit)`
+                `${counter}=${sample.counters[counter]}, protocol requires ${expected} (${perSample} per sample)`
             );
         }
     }
@@ -364,25 +373,6 @@ function unexpectedRuns(device, config) {
         .map((sample) => caseKey(sample.metric, sample.fixture, sample.run));
 }
 
-function presentationBoundFailures(device) {
-    const boundsByFixture = new Map();
-    for (const sample of device.cases.values()) {
-        const bounds = boundsByFixture.get(sample.fixture) ?? new Set();
-        bounds.add(sample.counters[PRESENTATION_WINDOW_BOUND]);
-        boundsByFixture.set(sample.fixture, bounds);
-    }
-    const distinctBounds = new Set([...boundsByFixture.values()].flatMap((bounds) => [...bounds]));
-    if (distinctBounds.size <= 1) {
-        return [];
-    }
-    const perFixture = [...boundsByFixture]
-        .map(([fixture, bounds]) => `${fixture}=${[...bounds].join('|')}`)
-        .join(', ');
-    return [
-        `${PRESENTATION_WINDOW_BOUND} must be identical across every fixture for the same viewport and overscan: ${perFixture}`,
-    ];
-}
-
 function evaluateDevice(device, config, mode) {
     const ineligibility = releaseIneligibility(device.metadata, config.releaseEnvironment);
     const hardGates = [];
@@ -397,7 +387,6 @@ function evaluateDevice(device, config, mode) {
     }
     const failures = [
         ...missingEvidence(device, config).map((key) => `missing samples for ${key}`),
-        ...presentationBoundFailures(device),
         ...unexpectedRuns(device, config).map((key) => `unexpected extra run ${key}`),
         ...hardGates.flatMap(({ metric, fixture, run, failures: caseFailures }) =>
             caseFailures.map((failure) => `${caseKey(metric, fixture, run)}: ${failure}`)

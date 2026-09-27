@@ -8,7 +8,14 @@
         "buildType": "release",
         "refreshHz": 60,
         "textScale": 1,
-        "viewportWidth": 390
+        "viewportWidth": 390,
+        "viewportHeight": 844,
+        "overscanViewports": 1
+    },
+    "defaultTableTheme": {
+        "minColumnWidth": 80,
+        "cellPadding": 8,
+        "borderWidth": 1
     },
     "counterGates": {
         "maxCellInputInstances": 1,

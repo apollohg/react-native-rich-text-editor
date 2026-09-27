@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
     checkTablePerformance,
     loadTablePerformanceConfig,
+    maxRetainedPresentations,
     percentile,
 } from '../check-table-performance.mjs';
 
@@ -26,7 +27,8 @@ const DROPPED_FRAME_MS = 33.34;
 const SHORT_TRAVERSAL_FRAMES = 1700;
 const OVER_LIMIT_DELTA_MS = 0.01;
 const EDITS_PER_UNSIZED_CASE = 4;
-const PRESENTATION_WINDOW_BOUND = 12;
+const TYPICAL_RETAINED_PRESENTATIONS = 12;
+const DERIVED_MAX_RETAINED_PRESENTATIONS = 2272;
 
 const iphone13 = {
     platform: 'ios',
@@ -37,6 +39,8 @@ const iphone13 = {
     refreshHz: 60,
     textScale: 1,
     viewportWidth: 390,
+    viewportHeight: 844,
+    overscanViewports: 1,
 };
 const pixel7 = {
     platform: 'android',
@@ -47,6 +51,8 @@ const pixel7 = {
     refreshHz: 60,
     textScale: 1,
     viewportWidth: 390,
+    viewportHeight: 844,
+    overscanViewports: 1,
 };
 
 function counters(overrides = {}) {
@@ -57,8 +63,7 @@ function counters(overrides = {}) {
         unmountedCacheBytes: 1024,
         pinnedLayoutBytes: 2048,
         authoritativeDocumentBytes: 4096,
-        retainedPresentations: PRESENTATION_WINDOW_BOUND,
-        presentationWindowBound: PRESENTATION_WINDOW_BOUND,
+        retainedPresentations: TYPICAL_RETAINED_PRESENTATIONS,
         ...overrides,
     };
 }
@@ -261,7 +266,33 @@ test('the configuration carries the TBL-23 sampling protocol and budgets exactly
         refreshHz: 60,
         textScale: 1,
         viewportWidth: 390,
+        viewportHeight: 844,
+        overscanViewports: 1,
     });
+    assert.deepEqual(config.defaultTableTheme, {
+        minColumnWidth: 80,
+        cellPadding: 8,
+        borderWidth: 1,
+    });
+});
+
+test('the retained presentation ceiling derives from the release viewport, overscan and minimum cell', () => {
+    const windowWidth = 390 * 3;
+    const windowHeight = 844 * 3;
+    const minRowHeight = 2 * (8 + 1);
+    const columns = Math.ceil(windowWidth / 80) + 1;
+    const rows = Math.ceil(windowHeight / minRowHeight) + 1;
+
+    assert.equal(columns * rows, DERIVED_MAX_RETAINED_PRESENTATIONS);
+    assert.equal(maxRetainedPresentations(config), DERIVED_MAX_RETAINED_PRESENTATIONS);
+    assert.equal(
+        maxRetainedPresentations({
+            ...config,
+            releaseEnvironment: { ...config.releaseEnvironment, overscanViewports: 0 },
+        }),
+        (Math.ceil(390 / 80) + 1) * (Math.ceil(844 / minRowHeight) + 1),
+        'overscan widens the window on both sides of each axis'
+    );
 });
 
 test('complete eligible evidence sitting exactly on every hard boundary passes release', () => {
@@ -483,6 +514,16 @@ test('malformed samples are rejected before any gate is evaluated', async (t) =>
         ],
         ['missing os', (sample) => delete sample.os, /must have a non-empty os/],
         [
+            'missing viewport height',
+            (sample) => delete sample.viewportHeight,
+            /viewportHeight must be a finite positive number/,
+        ],
+        [
+            'fractional overscan',
+            (sample) => (sample.overscanViewports = 0.5),
+            /overscanViewports must be a non-negative integer/,
+        ],
+        [
             'non-finite refresh rate',
             (sample) => (sample.refreshHz = null),
             /refreshHz must be a finite positive number/,
@@ -527,6 +568,16 @@ test('release rejects ineligible device and build metadata that diagnostic mode 
         ['a 120 Hz display', { refreshHz: 120 }, /refreshHz is 120, release requires 60/],
         ['a scaled font', { textScale: 1.3 }, /textScale is 1\.3, release requires 1/],
         ['a wider viewport', { viewportWidth: 428 }, /viewportWidth is 428, release requires 390/],
+        [
+            'a taller viewport',
+            { viewportHeight: 915 },
+            /viewportHeight is 915, release requires 844/,
+        ],
+        [
+            'a wider overscan',
+            { overscanViewports: 2 },
+            /overscanViewports is 2, release requires 1/,
+        ],
         [
             'an android device on the ios platform',
             { device: 'Pixel 7' },
@@ -607,8 +658,8 @@ test('resource, ownership and reuse counters are hard gates on every sample', as
             'retained presentations beyond the visible window plus overscan',
             'scrollHorizontal',
             'plain-100x200',
-            { retainedPresentations: 13, presentationWindowBound: 12 },
-            /retainedPresentations=13 exceeds presentationWindowBound=12/,
+            { retainedPresentations: DERIVED_MAX_RETAINED_PRESENTATIONS + 1 },
+            /^scrollHorizontal\/plain-100x200 run 1: retainedPresentations=2273 exceeds 2272$/,
         ],
         [
             'a second cell input on a baseline-only rich fixture',
@@ -778,19 +829,38 @@ test('the npm release script passes eligible evidence and rejects a simulator ex
     assert.match(simulator.stderr, /Table performance check failed: release gates failed/);
 });
 
-test('a fixture cannot certify its own larger presentation window', () => {
-    const input = completeExport();
-    for (const sample of input.samples.filter(({ fixture }) => fixture === 'plain-1000x20')) {
-        Object.assign(sample.counters, {
-            retainedPresentations: PRESENTATION_WINDOW_BOUND * 50,
-            presentationWindowBound: PRESENTATION_WINDOW_BOUND * 50,
-        });
-    }
+test('retained presentations are gated by the derived window, not by a self-reported bound', async (t) => {
+    await t.test('honest fixtures may retain different counts under the ceiling', () => {
+        const input = completeExport();
+        for (const sample of input.samples) {
+            sample.counters.retainedPresentations = sample.fixture.startsWith('rich-merged')
+                ? TYPICAL_RETAINED_PRESENTATIONS / 2
+                : DERIVED_MAX_RETAINED_PRESENTATIONS;
+        }
+        assert.deepEqual(allFailures(check(input)), []);
+    });
 
-    assertOnlyFailure(
-        check(input),
-        /^presentationWindowBound must be identical across every fixture for the same viewport and overscan: .*plain-3x3=12, plain-1000x20=600,/
-    );
+    await t.test('a large fixture retaining beyond the ceiling fails', () => {
+        const input = completeExport();
+        findSample(input, 'scrollVertical', 'plain-1000x20').counters.retainedPresentations =
+            DERIVED_MAX_RETAINED_PRESENTATIONS * 50;
+        assertOnlyFailure(
+            check(input),
+            /^scrollVertical\/plain-1000x20 run 1: retainedPresentations=113600 exceeds 2272$/
+        );
+    });
+
+    await t.test('an inflation shared by every fixture still fails each sample', () => {
+        const input = completeExport();
+        for (const sample of input.samples) {
+            sample.counters.retainedPresentations = DERIVED_MAX_RETAINED_PRESENTATIONS + 1;
+        }
+        const failures = allFailures(check(input));
+        assert.equal(failures.length, input.samples.length);
+        assert.ok(
+            failures.every((failure) => failure.endsWith('retainedPresentations=2273 exceeds 2272'))
+        );
+    });
 });
 
 test('a single-cell change must remeasure exactly the edited cell for every edit', async (t) => {
@@ -798,12 +868,12 @@ test('a single-cell change must remeasure exactly the edited cell for every edit
         [
             'nothing remeasured',
             0,
-            /^cellChangeStart\/plain-100x200 run 1: changedCellRemeasurements=0, protocol requires 4 \(1 per edit\)$/,
+            /^cellChangeStart\/plain-100x200 run 1: changedCellRemeasurements=0, protocol requires 4 \(1 per sample\)$/,
         ],
         [
             'one edit remeasured twice',
             EDITS_PER_UNSIZED_CASE + 1,
-            /^cellChangeStart\/plain-100x200 run 1: changedCellRemeasurements=5, protocol requires 4 \(1 per edit\)$/,
+            /^cellChangeStart\/plain-100x200 run 1: changedCellRemeasurements=5, protocol requires 4 \(1 per sample\)$/,
         ],
     ]) {
         await t.test(name, () => {
