@@ -257,6 +257,12 @@ class NativeTableAcceptanceTest {
             instrumentation.waitForIdleSync()
         }
 
+        fun pressToolbarButtonAfterPendingUpdates(label: String) {
+            SystemClock.sleep(NativeEditorExpoView.EDITOR_UPDATE_EVENT_DEBOUNCE_MS)
+            instrumentation.waitForIdleSync()
+            onMain { expo.pressKeyboardToolbarButton(label) }
+        }
+
         fun commit(text: String) {
             val input = view.activeTextInput
             assertTrue("commit '$text' refused",
@@ -532,13 +538,18 @@ class NativeTableAcceptanceTest {
                 grid.map { it[0].colwidth })
             assertEquals(settled.map { row -> row.map { it.paragraphs } }, grid.map { row -> row.map { it.paragraphs } })
             assertEquals("a resize keeps the selected real cell", setOf(resizeTarget), harness.selectedCells())
-            assertTrue(harness.root.applyUpdateJSON(requireNotNull(harness.adapter.undo())))
+            harness.expo.setToolbarItemsJson(TableToolbarTestItems.HISTORY_JSON)
+            grid
+        }
+        harness.pressToolbarButtonAfterPendingUpdates(TableToolbarTestItems.UNDO_LABEL)
+        harness.onMain {
             assertEquals("one undo removes the whole resize", settled, harness.grid())
             assertEquals("undo keeps the selected real cell", setOf(resizeTarget), harness.selectedCells())
-            assertTrue(harness.root.applyUpdateJSON(requireNotNull(harness.adapter.redo())))
-            assertEquals("redo restores the resize", grid, harness.grid())
+        }
+        harness.pressToolbarButtonAfterPendingUpdates(TableToolbarTestItems.REDO_LABEL)
+        harness.onMain {
+            assertEquals("redo restores the resize", resized, harness.grid())
             assertEquals("redo keeps the selected real cell", setOf(resizeTarget), harness.selectedCells())
-            grid
         }
 
         val lastCell = harness.onMain { harness.positions().last() }

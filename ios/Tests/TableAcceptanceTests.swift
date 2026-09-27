@@ -381,13 +381,14 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(try harness.selectedCells(), [Int(try harness.positions()[Acceptance.tableColumns * 2])],
                        "a resize keeps the selected real cell")
 
-        XCTAssertTrue(harness.root.applyUpdateJSON(try XCTUnwrap(adapter.undo())))
+        harness.expo.setToolbarButtonsJson(TableToolbarTestItems.historyJson)
+        try harness.root.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.undoLabel)
         harness.expo.layoutIfNeeded()
         XCTAssertEqual(try harness.grid(), settled, "one undo removes the whole resize")
         XCTAssertEqual(try harness.presentedCell(try harness.positions()[0]).bounds.width, firstColumn.bounds.width,
                        accuracy: Acceptance.geometryAccuracy, "undo restores the column geometry")
         XCTAssertEqual(try harness.selectedCells(), [Int(resizeTarget)], "undo keeps the selected real cell")
-        XCTAssertTrue(harness.root.applyUpdateJSON(try XCTUnwrap(adapter.redo())))
+        try harness.root.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.redoLabel)
         harness.expo.layoutIfNeeded()
         XCTAssertEqual(try harness.grid(), grid, "redo restores the resize")
         XCTAssertEqual(try harness.selectedCells(), [Int(resizeTarget)], "redo keeps the selected real cell")
