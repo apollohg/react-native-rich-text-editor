@@ -81,7 +81,7 @@ internal class EditorTextSurfaceInteraction(
                     return true
                 }
                 override fun onLongPress(e: MotionEvent) {
-                    if (draggingHandle != 0 || moved) return
+                    if (draggingHandle != 0 || moved || !view.onSurfaceLongPress()) return
                     val offset = view.getOffsetForPosition(e.x, e.y)
                     val from = minOf(view.selectionStart, view.selectionEnd)
                     val to = maxOf(view.selectionStart, view.selectionEnd)

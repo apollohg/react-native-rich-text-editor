@@ -551,10 +551,7 @@ class EditorEditText @JvmOverloads constructor(
         cancel.recycle()
     }
 
-    override fun performLongClick(): Boolean {
-        if (onTableRootLongPress?.invoke() == false) return true
-        return super.performLongClick()
-    }
+    override fun onSurfaceLongPress(): Boolean = onTableRootLongPress?.invoke() != false
 
     override fun onDragEvent(event: DragEvent): Boolean {
         if (isTableCellInput) return false

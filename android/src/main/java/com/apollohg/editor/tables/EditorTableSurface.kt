@@ -11,6 +11,7 @@ import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ReplacementSpan
 import android.view.DragEvent
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.MotionEvent
@@ -948,8 +949,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         if (drawingView.parent !== host.editorContentFrame) {
             (drawingView.parent as? ViewGroup)?.removeView(drawingView)
             host.editorContentFrame.addView(drawingView,
-                FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT))
+                topLeftFrameParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
         updateGeometry()
         drawingView.selectedTableCellSourcePositions = when (cellSelection) {
@@ -1037,6 +1037,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                     pendingRootTapRelease = null
                 }
             }
+            MotionEvent.ACTION_POINTER_DOWN -> pendingRootTapRelease = null
             MotionEvent.ACTION_UP -> {
                 val root = host.editorEditText
                 if (root.cellSelectionRootTouchPending) {
@@ -1198,7 +1199,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         input.applyRenderedSpannable(projected.text, usedPatch = false)
         if (input.parent !== host.editorContentFrame) {
             (input.parent as? ViewGroup)?.removeView(input)
-            host.editorContentFrame.addView(input, FrameLayout.LayoutParams(1, 1))
+            host.editorContentFrame.addView(input, topLeftFrameParams(1, 1))
         }
         drawingView.suppressedTableCellSourcePosition = sourcePos.toInt()
         if (!positionActiveInput()) {
@@ -1316,7 +1317,11 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             return true
         }
         val projected = projection(active.tableId, target) ?: return true
-        if (!bindCell(active.tableId, target, projected)) return true
+        if (!bindCell(active.tableId, target, projected)) {
+            invalidateCell()
+            root.requestFocus()
+            return true
+        }
         val destination = if (horizontal) {
             val targetLayout = input.layout ?: return true
             val line = if (forward) 0 else targetLayout.lineCount - 1
@@ -1489,6 +1494,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         positionActiveInput()
     }
 
+    private fun topLeftFrameParams(width: Int, height: Int) =
+        FrameLayout.LayoutParams(width, height, Gravity.TOP or Gravity.LEFT)
+
     private fun applyRootAppearance(input: EditorEditText, root: EditorEditText) {
         input.setBaseStyle(root.baseFontSize, root.baseTextColor, android.graphics.Color.TRANSPARENT)
         input.applyTheme(root.theme)
@@ -1509,7 +1517,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val inset = cell.contentOrigin
         val width = (cell.frame.width - 2f * inset.first).toInt().coerceAtLeast(1)
         val height = (cell.frame.height - 2f * inset.second).toInt().coerceAtLeast(1)
-        val params = FrameLayout.LayoutParams(width, height).apply {
+        val params = topLeftFrameParams(width, height).apply {
             leftMargin = presented.contentBounds.left.toInt()
             topMargin = presented.contentBounds.top.toInt()
         }
@@ -1639,7 +1647,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         if (detachedTableAccessibilityFrames().isEmpty() || drawingView.parent === host.editorContentFrame) return
         (drawingView.parent as? ViewGroup)?.removeView(drawingView)
         host.editorContentFrame.addView(drawingView,
-            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            topLeftFrameParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         host.layoutEditorContentChild(drawingView)
     }
 

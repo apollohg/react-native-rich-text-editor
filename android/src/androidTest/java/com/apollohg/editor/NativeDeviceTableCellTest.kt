@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -77,6 +78,51 @@ class NativeDeviceTableCellTest {
             input.setSelection(input.text.length)
             assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText("!", 1))
             assertEquals(fixture.diagnostics(), listOf("Alpha", "Owner!"), fixture.cellTexts())
+        }
+    }
+
+    @Test
+    fun swipesOnShortProseKeepTheComposingCellBoundAndFocused() = withEditor { fixture ->
+        fixture.tapCell(0)
+        lateinit var input: EditorEditText
+        lateinit var connection: InputConnection
+        fixture.onActivity {
+            input = fixture.cellInput()
+            input.setSelection(input.text.length)
+            connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+            assertTrue(connection.setComposingText(COMPOSED_TEXT, 1))
+        }
+        listOf(true, false).forEach { horizontal ->
+            fixture.swipeFollowingProse(horizontal)
+            fixture.onActivity {
+                val root = fixture.editor.richTextView.editorEditText
+                val label = if (horizontal) "horizontal" else "vertical"
+                assertSame("$label swipe must keep the cell input", input, fixture.editor.richTextView.activeTextInput)
+                assertTrue("$label swipe must keep the cell focused", input.hasFocus())
+                assertFalse("$label swipe must not focus the prose", root.hasFocus())
+                assertEquals("$label swipe keeps the composition pending", listOf("Alpha", "Owner"), fixture.cellTexts())
+            }
+        }
+        fixture.onActivity {
+            assertTrue(connection.finishComposingText())
+            assertEquals(listOf("Alpha$COMPOSED_TEXT", "Owner"), fixture.cellTexts())
+        }
+    }
+
+    @Test
+    fun longPressOnProseCommitsTheCellCompositionAndFocusesTheProse() = withEditor { fixture ->
+        fixture.tapCell(0)
+        fixture.onActivity {
+            val input = fixture.cellInput()
+            input.setSelection(input.text.length)
+            assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).setComposingText(COMPOSED_TEXT, 1))
+        }
+        fixture.longPressFollowingProse()
+        fixture.onActivity {
+            val root = fixture.editor.richTextView.editorEditText
+            assertSame("a long press releases the cell", root, fixture.editor.richTextView.activeTextInput)
+            assertTrue("the prose takes focus for its long press", root.hasFocus())
+            assertEquals(listOf("Alpha$COMPOSED_TEXT", "Owner"), fixture.cellTexts())
         }
     }
 
@@ -468,6 +514,24 @@ class NativeDeviceTableCellTest {
         }
 
         fun tapFollowingProse() {
+            val (x, y) = followingProsePoint()
+            tap(x, y)
+        }
+
+        fun swipeFollowingProse(horizontal: Boolean) {
+            val (x, y) = followingProsePoint()
+            val step = ViewConfiguration.get(instrumentation.targetContext).scaledTouchSlop.toFloat()
+            gesture((0..SWIPE_STEPS).map { index ->
+                if (horizontal) x + index * step to y else x to y + index * step
+            }, SWIPE_STEP_MS)
+        }
+
+        fun longPressFollowingProse() {
+            val (x, y) = followingProsePoint()
+            gesture(listOf(x to y, x to y), ViewConfiguration.getLongPressTimeout() * LONG_PRESS_HOLD_FACTOR)
+        }
+
+        private fun followingProsePoint(): Pair<Float, Float> {
             instrumentation.waitForIdleSync()
             var x = 0f
             var y = 0f
@@ -483,7 +547,7 @@ class NativeDeviceTableCellTest {
                 y = location[1] + input.totalPaddingTop +
                     (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f
             }
-            tap(x, y)
+            return x to y
         }
 
         fun awaitCommittedFrame() {
@@ -525,18 +589,22 @@ class NativeDeviceTableCellTest {
         }
     }
 
-    private fun tap(x: Float, y: Float) {
+    private fun tap(x: Float, y: Float) = gesture(listOf(x to y, x to y), TAP_DURATION_MS)
+
+    private fun gesture(points: List<Pair<Float, Float>>, stepMs: Long) {
         val start = SystemClock.uptimeMillis()
-        val down = MotionEvent.obtain(start, start, MotionEvent.ACTION_DOWN, x, y, 0)
-        val up = MotionEvent.obtain(start, start + 40, MotionEvent.ACTION_UP, x, y, 0)
-        try {
-            instrumentation.sendPointerSync(down)
-            instrumentation.sendPointerSync(up)
-            instrumentation.waitForIdleSync()
-        } finally {
-            down.recycle()
-            up.recycle()
+        points.forEachIndexed { index, (x, y) ->
+            val action = when (index) {
+                0 -> MotionEvent.ACTION_DOWN
+                points.lastIndex -> MotionEvent.ACTION_UP
+                else -> MotionEvent.ACTION_MOVE
+            }
+            val eventTime = start + index * stepMs
+            if (index > 0) SystemClock.sleep((eventTime - SystemClock.uptimeMillis()).coerceAtLeast(0))
+            val event = MotionEvent.obtain(start, eventTime, action, x, y, 0)
+            try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
         }
+        instrumentation.waitForIdleSync()
     }
 
     private fun waitUntil(description: String, condition: () -> Boolean) {
@@ -553,6 +621,11 @@ class NativeDeviceTableCellTest {
         (value * context.resources.displayMetrics.density).toInt()
 
     companion object {
+        private const val COMPOSED_TEXT = "Z"
+        private const val SWIPE_STEPS = 4
+        private const val SWIPE_STEP_MS = 16L
+        private const val TAP_DURATION_MS = 40L
+        private const val LONG_PRESS_HOLD_FACTOR = 2L
         private const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
         private const val DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before table."}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After table."}]}]}"""
         private const val NESTED_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before table."}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Nested"}]}]}]}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After table."}]}]}"""
