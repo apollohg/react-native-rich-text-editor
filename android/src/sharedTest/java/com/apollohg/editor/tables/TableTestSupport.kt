@@ -1,13 +1,17 @@
 package com.apollohg.editor.tables
 
+import android.view.View
 import com.apollohg.editor.EditorEditText
 import com.apollohg.editor.EditorV2Adapter
 import com.apollohg.editor.EditorV2CallResult
 import com.apollohg.editor.EditorV2LeaseResult
+import com.apollohg.editor.NativeEditorExpoView
 import com.apollohg.editor.RichTextEditorView
 import com.apollohg.editor.UniffiEditorV2Backend
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import org.json.JSONObject
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 
@@ -16,6 +20,23 @@ private const val DOCUMENT_POSITION_KIND = "document"
 private const val COLLABORATION_NOW_MILLIS = "0"
 private const val MAXIMUM_RELAY_ROUNDS = 64
 private const val ROOM_INITIALIZATION_TYPE = "room"
+
+internal object TableToolbarTestItems {
+    const val STRONG_MARK = "strong"
+    const val STRONG_LABEL = "Bold"
+    const val STRONG_JSON =
+        """[{"type":"mark","mark":"$STRONG_MARK","label":"$STRONG_LABEL","icon":{"type":"default","id":"bold"}}]"""
+}
+
+internal fun NativeEditorExpoView.pressKeyboardToolbarButton(label: String) {
+    assertNotNull("the keyboard toolbar is not attached", keyboardToolbarView.parent)
+    assertNotEquals("the keyboard toolbar is dismissed", View.GONE, keyboardToolbarView.visibility)
+    val button = requireNotNull((0 until keyboardToolbarView.buttonCountForTesting())
+        .mapNotNull(keyboardToolbarView::buttonAtForTesting)
+        .firstOrNull { it.contentDescription == label }) { "the keyboard toolbar has no $label button" }
+    assertTrue("the $label button is disabled", button.isEnabled)
+    assertTrue("the $label button ignored the press", button.performClick())
+}
 
 internal class RemoteTablePeer(private val adapter: EditorV2Adapter, requestIdBase: Long) {
     private var nextRequestId = requestIdBase

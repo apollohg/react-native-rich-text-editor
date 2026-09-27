@@ -843,12 +843,14 @@ class RichTextEditorView @JvmOverloads constructor(
         viewportBottomInsetPx = clampedInset
         updateScrollContainerInsets()
         editorEditText.setViewportBottomInsetPx(clampedInset)
+        editorTableSurface.activeInput?.setViewportBottomInsetPx(clampedInset)
         refreshOverlays()
         requestLayout()
     }
 
     fun setViewportBottomOcclusionTopOnScreenPx(topPx: Int?) {
         editorEditText.setViewportBottomOcclusionTopOnScreenPx(topPx)
+        editorTableSurface.activeInput?.setViewportBottomOcclusionTopOnScreenPx(topPx)
     }
 
     internal fun viewportBottomInsetPxForTesting(): Int = viewportBottomInsetPx

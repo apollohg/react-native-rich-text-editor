@@ -15,6 +15,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -98,10 +99,10 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
                 visible.bottom / density)
         }
 
-        fun expectedRects(): List<RectF> {
+        fun expectedRects(sourcePositions: Set<Int>? = null): List<RectF> {
             val visible = Rect()
             assertTrue(drawing.getLocalVisibleRect(visible))
-            val selected = requireNotNull(drawing.selectedTableCellSourcePositions[tableId])
+            val selected = sourcePositions ?: requireNotNull(drawing.selectedTableCellSourcePositions[tableId])
             return drawing.presentedTableCells().filter {
                 it.surface.sourceTable?.tablePos?.toInt() == tablePos && it.sourcePosition in selected
             }.mapNotNull { cell ->
@@ -449,4 +450,29 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
             assertEquals("${fixture.payloads}", 2, fixture.payloads.size)
             assertEquals(mapOf("editorId" to fixture.adapter.editorId), fixture.payloads[1])
         }
+
+    @Test
+    fun `caret in a tapped cell publishes the active cell geometry`() = withFocusedTable(fourCellTable) { fixture ->
+        assertEquals("a prose caret has no geometry", emptyList<Map<String, Any>>(), fixture.payloads)
+        tapCell(fixture.view, 1)
+        val input = fixture.view.richTextView.activeTextInput
+        assertNotSame("the tapped cell owns the cell input", fixture.view.richTextView.editorEditText, input)
+        assertTrue(input.hasFocus())
+        assertEquals("activation leaves a caret", input.selectionStart, input.selectionEnd)
+        assertTrue("a caret draws no cell rectangle", fixture.drawing.selectedTableCellSourcePositions.isEmpty())
+        fixture.nextFrame()
+
+        assertEquals("${fixture.payloads}", 1, fixture.payloads.size)
+        val payload = fixture.payloads.single()
+        assertEquals(fixture.adapter.editorId, payload["editorId"])
+        assertEquals(fixture.tablePos.toLong(), payload["tablePos"])
+        assertRects("the active cell anchors the table toolbar",
+            fixture.expectedRects(setOf(fixture.positions[1])), rects(payload))
+
+        fixture.view.richTextView.editorTableSurface.invalidateCell()
+        fixture.nextFrame()
+        assertEquals("${fixture.payloads}", 2, fixture.payloads.size)
+        assertEquals("releasing the cell clears its geometry", mapOf("editorId" to fixture.adapter.editorId),
+            fixture.payloads[1])
+    }
 }

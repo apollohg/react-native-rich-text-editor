@@ -89,7 +89,7 @@ internal fun NativeEditorExpoView.updateKeyboardToolbarVisibility() {
             canFocusCurrentEditor() &&
             toolbarPlacement == ToolbarPlacement.KEYBOARD &&
             richTextView.editorEditText.isEditable &&
-            richTextView.editorEditText.hasFocus()
+            richTextView.activeTextInput.hasFocus()
 
     if (!shouldAttach) {
         keyboardToolbarView.visibility = View.GONE
@@ -108,7 +108,7 @@ internal fun NativeEditorExpoView.updateEditorViewportInset(forceMeasureToolbar:
         showsToolbar &&
             toolbarPlacement == ToolbarPlacement.KEYBOARD &&
             richTextView.editorEditText.isEditable &&
-            richTextView.editorEditText.hasFocus() &&
+            richTextView.activeTextInput.hasFocus() &&
             currentImeBottom > 0
 
     if (!shouldReserveToolbarSpace) {
@@ -192,9 +192,9 @@ internal fun NativeEditorExpoView.resolveToolbarViewportInsetPx(
     return if (foundScrollViewport) viewportInset.coerceAtLeast(0) else fallbackInset
 }
 
-internal fun NativeEditorExpoView.handleListToggle(listType: String) {
+internal fun NativeEditorExpoView.handleListToggle(listType: String, input: EditorEditText) {
     val isActive = toolbarState.nodes[listType] == true
-    richTextView.editorEditText.performToolbarToggleList(listType, isActive)
+    input.performToolbarToggleList(listType, isActive)
 }
 
 internal fun NativeEditorExpoView.handleToolbarItemPress(
@@ -238,24 +238,20 @@ internal fun NativeEditorExpoView.handleToolbarItemPress(
         clearPendingNativeActionRetry()
     }
     if (handleDestroyedCurrentEditorIfNeeded()) return
+    val input = richTextView.activeTextInput
     when (item.type) {
-        ToolbarItemKind.MARK -> item.mark?.let {
-            richTextView.editorEditText.performToolbarToggleMark(it)
-        }
+        ToolbarItemKind.MARK -> item.mark?.let { input.performToolbarToggleMark(it) }
 
-        ToolbarItemKind.HEADING -> item.headingLevel?.let {
-            richTextView.editorEditText.performToolbarToggleHeading(it)
-        }
+        ToolbarItemKind.HEADING -> item.headingLevel?.let { input.performToolbarToggleHeading(it) }
 
-        ToolbarItemKind.BLOCKQUOTE -> richTextView.editorEditText.performToolbarToggleBlockquote()
+        ToolbarItemKind.BLOCKQUOTE -> input.performToolbarToggleBlockquote()
 
-        ToolbarItemKind.LIST -> item.listType?.wireValue?.let { handleListToggle(it) }
+        ToolbarItemKind.LIST -> item.listType?.wireValue?.let { handleListToggle(it, input) }
 
         ToolbarItemKind.COMMAND -> when (item.command) {
-            ToolbarCommand.INDENT_LIST -> richTextView.editorEditText.performToolbarIndentListItem()
+            ToolbarCommand.INDENT_LIST -> input.performToolbarIndentListItem()
 
-            ToolbarCommand.OUTDENT_LIST ->
-                richTextView.editorEditText.performToolbarOutdentListItem()
+            ToolbarCommand.OUTDENT_LIST -> input.performToolbarOutdentListItem()
 
             ToolbarCommand.UNDO -> richTextView.editorEditText.performToolbarUndo()
 
@@ -264,9 +260,7 @@ internal fun NativeEditorExpoView.handleToolbarItemPress(
             null -> Unit
         }
 
-        ToolbarItemKind.NODE -> item.nodeType?.let {
-            richTextView.editorEditText.performToolbarInsertNode(it)
-        }
+        ToolbarItemKind.NODE -> item.nodeType?.let { input.performToolbarInsertNode(it) }
 
         ToolbarItemKind.ACTION -> item.key?.let {
             if (handleDestroyedCurrentEditorIfNeeded()) return

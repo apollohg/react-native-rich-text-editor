@@ -33,6 +33,11 @@ private let cellSelectionType = "cell"
 private let documentPositionKind = "document"
 private let roomInitializationType = "room"
 
+enum TableToolbarTestItems {
+    static let strongLabel = "Bold"
+    static let strongJson = #"[{"type":"mark","mark":"strong","label":"Bold","icon":{"type":"default","id":"bold"}}]"#
+}
+
 func documentCellSelection(anchor: UInt32, head: UInt32) -> [String: Any] {
     [
         "type": cellSelectionType,
@@ -153,6 +158,20 @@ extension EditorTextView {
 
     func selectTableCells(adapter: EditorV2Adapter, anchor: UInt32, head: UInt32) throws {
         try applyLocalSelection(adapter: adapter, selection: documentCellSelection(anchor: anchor, head: head))
+    }
+
+    func pressAccessoryToolbarButton(labeled label: String) throws {
+        let toolbar = try XCTUnwrap(inputAccessoryView, "the input shows no keyboard toolbar")
+        var pending: [UIView] = [toolbar]
+        var button: UIButton?
+        while button == nil, !pending.isEmpty {
+            let view = pending.removeFirst()
+            button = (view as? UIButton).flatMap { $0.accessibilityLabel == label ? $0 : nil }
+            pending.append(contentsOf: view.subviews)
+        }
+        let target = try XCTUnwrap(button, "the keyboard toolbar has no \(label) button")
+        XCTAssertTrue(target.isEnabled, "the \(label) button is disabled")
+        target.sendActions(for: .touchUpInside)
     }
 }
 

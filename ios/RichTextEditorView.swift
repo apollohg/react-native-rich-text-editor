@@ -140,6 +140,10 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
+    var textInputs: [EditorTextView] {
+        [textView, tableInputCoordinator.cellInput]
+    }
+
     var hasPendingCompositionForExternalRefresh: Bool {
         activeTextInput.hasPendingCompositionForExternalRefresh
     }
@@ -770,6 +774,11 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         textView.addGestureRecognizer(tableCellDoubleTapRecognizer)
         addSubview(tableSurface)
         tableSurface.installTableInteraction(on: self)
+        textView.focusedTableCellInput = { [weak self] in
+            guard let self, self.activeTextInput !== self.textView, self.activeTextInput.isFirstResponder
+            else { return nil }
+            return self.activeTextInput
+        }
         addSubview(remoteSelectionOverlayView)
         addSubview(taskListMarkerTapOverlayView)
         // Image touches must stay inside the scroll view's gesture hierarchy.

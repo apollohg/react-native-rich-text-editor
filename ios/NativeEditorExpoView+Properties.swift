@@ -18,8 +18,8 @@ extension NativeEditorExpoView {
         accessoryToolbar.apply(theme: theme?.toolbar)
         accessoryToolbar.apply(mentionTheme: theme?.mentions ?? addons.mentions?.theme)
         refreshSystemAssistantToolbarIfNeeded()
-        if richTextView.textView.isFirstResponder,
-           richTextView.textView.inputAccessoryView === accessoryToolbar || shouldUseSystemAssistantToolbar {
+        if richTextView.activeTextInput.isFirstResponder,
+           richTextView.activeTextInput.inputAccessoryView === accessoryToolbar || shouldUseSystemAssistantToolbar {
             reloadInputViewsAfterPreparingOrRetry()
         }
     }

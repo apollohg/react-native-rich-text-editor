@@ -449,10 +449,12 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         guard let host = interactionHost, host.editorId != 0,
               let presentation = latestPresentation,
               let layoutEpoch = presentation.positionEpoch,
-              let tableID = drawingView.selectedTableCellSourcePositions.keys.first,
-              let tablePos = presentation.tableRecords[tableID]?.tablePos,
+              let anchor = toolbarAnchorCells(),
+              let tablePos = presentation.tableRecords[anchor.tableID]?.tablePos,
               let visible = drawingView.tableSelectionViewport(),
-              let rects = selectedCellRects(tableID: tableID, visibleIn: visible)
+              let rects = clipped(drawingView.tableCellRects(tableID: anchor.tableID,
+                                                             sourcePositions: anchor.sourcePositions),
+                                  to: visible)
         else { return nil }
         return TableSelectionGeometry(
             editorId: host.editorId,
@@ -466,9 +468,18 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         )
     }
 
-    private func selectedCellRects(tableID: String, visibleIn visible: CGRect) -> [CGRect]? {
-        drawingView.selectedTableCellRects(tableID: tableID)?
-            .map { $0.intersection(visible) }
+    private func toolbarAnchorCells() -> (tableID: String, sourcePositions: Set<Int>)? {
+        if let selected = drawingView.selectedTableCellSourcePositions.first {
+            return (selected.key, selected.value)
+        }
+        guard let activeCell,
+              let presented = presentedCell(tableID: activeCell.tableID, cellIndex: activeCell.cellIndex)
+        else { return nil }
+        return (activeCell.tableID, [presented.sourcePosition])
+    }
+
+    private func clipped(_ rects: [CGRect]?, to visible: CGRect) -> [CGRect]? {
+        rects?.map { $0.intersection(visible) }
             .filter { !$0.isNull && !$0.isEmpty }
     }
 
@@ -526,7 +537,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private func visibleSelectedCellRects() -> [CGRect]? {
         guard let tableID = drawingView.selectedTableCellEndpoints?.tableID,
               let viewport = interactionViewport(),
-              let rects = selectedCellRects(tableID: tableID, visibleIn: viewport),
+              let rects = clipped(drawingView.selectedTableCellRects(tableID: tableID), to: viewport),
               !rects.isEmpty
         else { return nil }
         return rects
@@ -594,9 +605,11 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         updateExcludedCellContent()
         placeInput(in: presentedCell(tableID: tableID, cellIndex: cellIndex), fallback: contentRect)
         inputCoordinator.cellInput.isHidden = false
+        selectionGeometryMayChange()
     }
 
     func hideActiveInput() {
+        defer { selectionGeometryMayChange() }
         activeCell = nil
         inputCoordinator.cellInput.tableAccessibilityCell = nil
         drawingView.excludedTableCellContentLayout = nil

@@ -453,6 +453,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
 
     var keyboardFrameInScreen: CGRect?
     var keyboardBottomInset: CGFloat = 0
+    var focusedTableCellInput: (() -> EditorTextView?)?
 
     override var contentOffset: CGPoint {
         didSet {

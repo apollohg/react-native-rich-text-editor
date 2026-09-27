@@ -16,10 +16,10 @@ extension NativeEditorExpoView {
         } else {
             nextAccessoryView = nil
         }
-        if richTextView.textView.inputAccessoryView !== nextAccessoryView {
-            richTextView.textView.inputAccessoryView = nextAccessoryView
-            if richTextView.textView.isFirstResponder {
-                richTextView.textView.reloadInputViews()
+        for input in richTextView.textInputs where input.inputAccessoryView !== nextAccessoryView {
+            input.inputAccessoryView = nextAccessoryView
+            if input.isFirstResponder {
+                input.reloadInputViews()
             }
         }
         markAccessoryMutationSucceeded(.updateAccessoryToolbarVisibility)
@@ -28,37 +28,40 @@ extension NativeEditorExpoView {
     func refreshSystemAssistantToolbarIfNeeded() {
         guard #available(iOS 26.0, *) else { return }
 
-        let assistantItem = richTextView.textView.inputAssistantItem
-        assistantItem.allowsHidingShortcuts = false
-        assistantItem.leadingBarButtonGroups = []
-        assistantItem.trailingBarButtonGroups = []
+        for input in richTextView.textInputs {
+            let assistantItem = input.inputAssistantItem
+            assistantItem.allowsHidingShortcuts = false
+            assistantItem.leadingBarButtonGroups = []
+            assistantItem.trailingBarButtonGroups = []
+        }
     }
 
-    private func handleListToggle(_ listType: String) {
+    private func handleListToggle(_ listType: String, in input: EditorTextView) {
         let isActive = toolbarState.nodes[listType] == true
-        richTextView.textView.performToolbarToggleList(listType, isActive: isActive)
+        input.performToolbarToggleList(listType, isActive: isActive)
     }
 
     func handleToolbarItemPress(_ item: NativeToolbarItem) {
         let originatingEditorId = richTextView.editorId
+        let input = richTextView.activeTextInput
         switch item.type {
         case .mark:
             guard let mark = item.mark else { return }
-            richTextView.textView.performToolbarToggleMark(mark)
+            input.performToolbarToggleMark(mark)
         case .heading:
             guard let level = item.headingLevel else { return }
-            richTextView.textView.performToolbarToggleHeading(level)
+            input.performToolbarToggleHeading(level)
         case .blockquote:
-            richTextView.textView.performToolbarToggleBlockquote()
+            input.performToolbarToggleBlockquote()
         case .list:
             guard let listType = item.listType?.rawValue else { return }
-            handleListToggle(listType)
+            handleListToggle(listType, in: input)
         case .command:
             switch item.command {
             case .indentList:
-                richTextView.textView.performToolbarIndentListItem()
+                input.performToolbarIndentListItem()
             case .outdentList:
-                richTextView.textView.performToolbarOutdentListItem()
+                input.performToolbarOutdentListItem()
             case .undo:
                 richTextView.textView.performToolbarUndo()
             case .redo:
@@ -68,7 +71,7 @@ extension NativeEditorExpoView {
             }
         case .node:
             guard let nodeType = item.nodeType else { return }
-            richTextView.textView.performToolbarInsertNode(nodeType)
+            input.performToolbarInsertNode(nodeType)
         case .action:
             guard let key = item.key else { return }
             guard let event = Self.editorScopedEventPayload(

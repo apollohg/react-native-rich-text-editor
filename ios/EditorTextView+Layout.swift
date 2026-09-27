@@ -2,8 +2,14 @@ import os
 import UIKit
 
 extension EditorTextView {
+    private static let keyboardCaretMargin: CGFloat = 8
+
+    private var keyboardCaretInput: EditorTextView? {
+        isFirstResponder ? self : focusedTableCellInput?()
+    }
+
     @objc func handleKeyboardFrameChange(_ notification: Notification) {
-        guard isFirstResponder || keyboardFrameInScreen != nil else { return }
+        guard keyboardCaretInput != nil || keyboardFrameInScreen != nil else { return }
         if notification.name == UIResponder.keyboardWillHideNotification {
             keyboardFrameInScreen = nil
         } else {
@@ -38,10 +44,11 @@ extension EditorTextView {
         keyboardBottomInset = nextInset
         contentInset.bottom += delta
         verticalScrollIndicatorInsets.bottom += delta
-        if overlap > 0, isFirstResponder, let selection = selectedTextRange {
-            let caret = caretRect(for: selection.end)
+        if overlap > 0, let input = keyboardCaretInput, let selection = input.selectedTextRange {
+            let caret = input.caretRect(for: selection.end)
             if !caret.isEmpty {
-                scrollRectToVisible(caret.insetBy(dx: 0, dy: -8), animated: false)
+                scrollRectToVisible(convert(caret, from: input).insetBy(dx: 0, dy: -Self.keyboardCaretMargin),
+                                    animated: false)
             }
         }
     }

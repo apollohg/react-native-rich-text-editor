@@ -1582,9 +1582,20 @@ final class EditorTableInputTests: XCTestCase {
                                                             head: positions[head])
         }
 
-        func expectedWindowRects() throws -> [CGRect] {
+        func activateCell(_ index: Int) throws -> EditorTextView {
+            let surface = try XCTUnwrap(drawing.superview as? EditorTableSurface)
+            let frame = try XCTUnwrap(surface.cellFrame(tableID: tableID, cellIndex: UInt32(index)))
+            XCTAssertTrue(host.richTextView.activateTableCell(at: CGPoint(x: frame.midX, y: frame.midY)),
+                          "cell \(index) refused activation")
+            let input = host.richTextView.activeTextInput
+            XCTAssertFalse(input === host.richTextView.textView, "cell \(index) must own the cell input")
+            XCTAssertTrue(input.isFirstResponder, "activating cell \(index) focuses its input")
+            return input
+        }
+
+        func expectedWindowRects(sourcePositions: Set<Int>? = nil) throws -> [CGRect] {
             let visible = try XCTUnwrap(drawing.tableSelectionViewport())
-            let selected = try XCTUnwrap(drawing.selectedTableCellSourcePositions[tableID])
+            let selected = try sourcePositions ?? XCTUnwrap(drawing.selectedTableCellSourcePositions[tableID])
             return try XCTUnwrap(drawing.mountedTablePresentation()).cells.filter {
                 $0.surface.identity == tableID && $0.cell.sourceCellIndex != nil
                     && selected.contains($0.sourcePosition)
@@ -1628,9 +1639,10 @@ final class EditorTableInputTests: XCTestCase {
     }
 
     private func withExpoTableGeometry(
-        document: String, clippingAncestor: CGRect? = nil, _ body: (ExpoGeometryFixture) throws -> Void
+        configJson: String = TableInputTestSchema.tableConfig, document: String, clippingAncestor: CGRect? = nil,
+        _ body: (ExpoGeometryFixture) throws -> Void
     ) throws {
-        let editorId = makeV2Editor(configJson: tableConfig)
+        let editorId = makeV2Editor(configJson: configJson)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 500))
@@ -1966,6 +1978,127 @@ final class EditorTableInputTests: XCTestCase {
             waitForGeometryFrame()
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "\(fixture.recorder.payloads)")
             XCTAssertEqual(fixture.recorder.payloads[1] as? [String: String], ["editorId": fixture.adapter.editorId])
+        }
+    }
+
+    func testBoundCellInputCarriesTheKeyboardToolbar() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            XCTAssertTrue(fixture.host.richTextView.textView.inputAccessoryView === fixture.host.accessoryToolbar,
+                          "the focused root shows the keyboard toolbar")
+            let input = try fixture.activateCell(1)
+            XCTAssertTrue(input.inputAccessoryView === fixture.host.accessoryToolbar,
+                          "the focused cell input shows the keyboard toolbar, got \(String(describing: input.inputAccessoryView))")
+            XCTAssertTrue(fixture.host.isUsingAccessoryToolbarForTesting())
+        }
+    }
+
+    func testCaretInABoundCellPublishesTheActiveCellGeometry() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            XCTAssertTrue(fixture.recorder.payloads.isEmpty, "a prose caret has no geometry: \(fixture.recorder.payloads)")
+            let input = try fixture.activateCell(1)
+            XCTAssertEqual(input.selectedRange.length, 0, "activation leaves a caret")
+            XCTAssertTrue(fixture.drawing.selectedTableCellSourcePositions.isEmpty, "a caret draws no cell rectangle")
+            waitForGeometryFrame()
+
+            XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
+            let payload = try XCTUnwrap(fixture.recorder.payloads.first)
+            XCTAssertEqual(payload["editorId"] as? String, fixture.adapter.editorId)
+            let record = try XCTUnwrap(fixture.adapter.cachedTableRecords[fixture.tableID])
+            XCTAssertEqual(payload["tablePos"] as? Int,
+                           Int(try XCTUnwrap(EditorV2Adapter.uint32Field(record, "tablePos"))))
+            assertRects(try fixture.recorder.rects(at: 0),
+                        try fixture.expectedWindowRects(sourcePositions: [Int(fixture.positions[1])]),
+                        "the active cell anchors the table toolbar")
+
+            fixture.host.richTextView.invalidateTableCellBinding()
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 2, "\(fixture.recorder.payloads)")
+            XCTAssertEqual(fixture.recorder.payloads[1] as? [String: String], ["editorId": fixture.adapter.editorId],
+                           "releasing the cell clears its geometry")
+        }
+    }
+
+    func testKeyboardOverAFocusedCellInsetsTheRootAndRevealsTheCellCaret() throws {
+        let keyboardHeight: CGFloat = 140
+        try withExpoTableGeometry(document: try tallTableDocument(rowCount: 12)) { fixture in
+            let root = fixture.host.richTextView.textView
+            let surface = try XCTUnwrap(fixture.drawing.superview as? EditorTableSurface)
+            let keyboardTopInHost = fixture.host.bounds.height - keyboardHeight
+            let covered = try XCTUnwrap(fixture.positions.indices.first { index in
+                guard let frame = surface.cellFrame(tableID: fixture.tableID, cellIndex: UInt32(index)) else {
+                    return false
+                }
+                let hostFrame = surface.convert(frame, to: fixture.host)
+                return hostFrame.minY > keyboardTopInHost && hostFrame.maxY < fixture.host.bounds.height
+            }, "no visible cell lies under the keyboard")
+            let input = try fixture.activateCell(covered)
+            XCTAssertFalse(root.isFirstResponder)
+            let window = try XCTUnwrap(fixture.host.window)
+            let keyboardTop = fixture.host.convert(CGPoint(x: 0, y: keyboardTopInHost), to: window).y
+            let keyboardFrame = window.convert(
+                CGRect(x: 0, y: keyboardTop, width: window.bounds.width, height: window.bounds.maxY - keyboardTop),
+                to: window.screen.coordinateSpace
+            )
+            NotificationCenter.default.post(
+                name: UIResponder.keyboardWillChangeFrameNotification,
+                object: nil,
+                userInfo: [
+                    UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: keyboardFrame),
+                    UIResponder.keyboardAnimationDurationUserInfoKey: 0
+                ]
+            )
+            fixture.host.layoutIfNeeded()
+
+            XCTAssertGreaterThan(root.contentInset.bottom, 0, "the root reserves room for the keyboard")
+            let caret = input.caretRect(for: try XCTUnwrap(input.selectedTextRange).end)
+            let caretInWindow = input.convert(caret, to: window)
+            XCTAssertLessThanOrEqual(caretInWindow.maxY, keyboardTop,
+                                     "the focused cell's caret \(caretInWindow) scrolls above the keyboard at \(keyboardTop)")
+            NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil)
+            XCTAssertEqual(root.contentInset.bottom, 0, accuracy: 0.5)
+        }
+    }
+
+    func testFocusSurvivesTheRootToCellHandoffAndClearsOnRealBlur() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            var focusEvents: [[String: Any]] = []
+            fixture.host.onFocusChangeForTesting = { focusEvents.append($0) }
+            let input = try fixture.activateCell(1)
+            RunLoop.main.run(until: Date())
+            XCTAssertTrue(input.isFirstResponder)
+            XCTAssertEqual(focusEvents.compactMap { $0["isFocused"] as? Bool }, [],
+                           "handing focus from the root to the cell input is not a blur: \(focusEvents)")
+
+            fixture.host.blur()
+            RunLoop.main.run(until: Date())
+            XCTAssertFalse(input.isFirstResponder, "blur resigns the focused cell input")
+            XCTAssertEqual(focusEvents.compactMap { $0["isFocused"] as? Bool }, [false], "\(focusEvents)")
+            XCTAssertEqual(focusEvents.last?["editorId"] as? String, fixture.adapter.editorId)
+        }
+    }
+
+    func testKeyboardToolbarMarkPressTogglesTheMarkInTheBoundCell() throws {
+        try withExpoTableGeometry(configJson: TableInputTestSchema.strongMarkTableConfig,
+                                  document: fourCellDocument) { fixture in
+            fixture.host.setToolbarButtonsJson(TableToolbarTestItems.strongJson)
+            let input = try fixture.activateCell(1)
+            input.selectedRange = NSRange(location: 0, length: input.textStorage.length)
+            input.textViewDidChangeSelection(input)
+            try input.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.strongLabel)
+
+            let document = try XCTUnwrap(JSONSerialization.jsonObject(
+                with: Data(try XCTUnwrap(fixture.adapter.documentJson()).utf8)
+            ) as? [String: Any])
+            let table = try XCTUnwrap((document["content"] as? [[String: Any]])?.first)
+            let row = try XCTUnwrap((table["content"] as? [[String: Any]])?.first)
+            let cells = try XCTUnwrap(row["content"] as? [[String: Any]])
+            func runs(_ cell: [String: Any]) -> [[String: Any]] {
+                ((cell["content"] as? [[String: Any]])?.first?["content"] as? [[String: Any]]) ?? []
+            }
+            XCTAssertEqual(runs(cells[1]).map { $0["text"] as? String }, ["two"], "\(cells[1])")
+            XCTAssertEqual(runs(cells[1]).first?["marks"] as? [[String: String]], [["type": "strong"]],
+                           "the toolbar marks the focused cell's text: \(cells[1])")
+            XCTAssertNil(runs(cells[0]).first?["marks"], "the root's former caret cell is untouched: \(cells[0])")
         }
     }
 

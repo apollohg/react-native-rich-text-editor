@@ -374,7 +374,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val payload = adapter.clipboardJson()?.let(EditorClipboard::fromExportJson) ?: return null
         val visible = Rect()
         if (!drawingView.getLocalVisibleRect(visible)) return null
-        val cellRects = visibleSelectedCellRects(source.tableId, RectF(visible))?.takeIf { it.isNotEmpty() }
+        val cellRects = clipped(drawingView.selectedTableCellRects(source.tableId), RectF(visible))
+            ?.takeIf { it.isNotEmpty() }
             ?: return null
         val state = TableCellDragState(root.editorId, adapter, adapter.baseDocumentRevision, source, payload,
             root.isEditable && root.canMutateSelectedTableCells())
@@ -760,17 +761,21 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         return displayedCellSelection(adapter)
     }
 
-    private fun visibleSelectedCellRects(tableId: String, viewport: RectF): List<RectF>? =
-        drawingView.selectedTableCellRects(tableId)?.mapNotNull { rect ->
-            RectF(rect).takeIf { it.intersect(viewport) }
-        }
+    private fun clipped(rects: List<RectF>?, viewport: RectF): List<RectF>? =
+        rects?.mapNotNull { rect -> RectF(rect).takeIf { it.intersect(viewport) } }
+
+    private fun toolbarAnchorCells(): Pair<String, Set<Int>>? {
+        drawingView.selectedTableCellSourcePositions.entries.firstOrNull()?.let { return it.key to it.value }
+        val active = activeCell ?: return null
+        return active.tableId to setOf(active.sourcePos.toInt())
+    }
 
     private fun cellEditMenuAnchor(): Rect? {
         val root = host.editorEditText
         val tableId = cellEditMenuSelection()?.first ?: return null
         val visible = Rect()
         if (!drawingView.getLocalVisibleRect(visible)) return null
-        val union = visibleSelectedCellRects(tableId, RectF(visible))
+        val union = clipped(drawingView.selectedTableCellRects(tableId), RectF(visible))
             ?.reduceOrNull { total, rect -> total.apply { union(rect) } } ?: return null
         val drawingOrigin = IntArray(2).also(drawingView::getLocationInWindow)
         val rootOrigin = IntArray(2).also(root::getLocationInWindow)
@@ -984,13 +989,13 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val adapter = host.editorEditText.v2Driver as? EditorV2Adapter ?: return null
         val documentRevision = adapter.cachedAtomicRenderDocumentRevision ?: return null
         val layoutEpoch = canonicalV2U64(adapter.positionEpoch) ?: return null
-        val tableId = drawingView.selectedTableCellSourcePositions.keys.firstOrNull() ?: return null
+        val (tableId, sourcePositions) = toolbarAnchorCells() ?: return null
         val tablePos = exactV2U32(adapter.cachedTableRecords[tableId]?.opt("tablePos") as? Number)
             ?: return null
         val visible = Rect()
         if (drawingView.windowToken == null || !drawingView.getLocalVisibleRect(visible)) return null
         val viewport = RectF(visible)
-        val cellRects = visibleSelectedCellRects(tableId, viewport) ?: return null
+        val cellRects = clipped(drawingView.tableCellRects(tableId, sourcePositions), viewport) ?: return null
         val origin = IntArray(2).also(drawingView::getLocationInWindow)
         val density = drawingView.resources.displayMetrics.density
         fun windowRect(rect: RectF) = RectF(
@@ -1132,6 +1137,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         }
         input.setBaseStyle(root.baseFontSize, root.baseTextColor, android.graphics.Color.TRANSPARENT)
         input.isEditable = root.isEditable
+        input.setViewportBottomInsetPx(root.viewportBottomInsetPx)
+        input.setViewportBottomOcclusionTopOnScreenPx(root.viewportBottomOcclusionTopOnScreenPx)
         input.editorId = root.editorId
         input.v2Driver = adapter
         val bound = coordinator?.bind(projected.target, projected.positionMap,
@@ -1176,6 +1183,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         selection?.let { input.applySelectionFromJSON(it, adapter.baseDocumentRevision.toString()) }
         showKeyboard(input)
         reconcileActiveCell()
+        selectionGeometryMayChange()
         return true
     }
 
@@ -1448,6 +1456,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             (input.parent as? ViewGroup)?.removeView(input)
         }
         drawingView.suppressedTableCellSourcePosition = null
+        selectionGeometryMayChange()
     }
 
     private fun tableIdFor(surface: ViewerTableSurface): String? =

@@ -9,6 +9,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
+import com.apollohg.editor.tables.TableToolbarTestItems
+import com.apollohg.editor.tables.pressKeyboardToolbarButton
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import java.time.Duration
 import org.json.JSONObject
@@ -30,6 +32,8 @@ import org.robolectric.annotation.Config
 internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSupport() {
     private val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
     private val document = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"First"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Second"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+    private val strongMarkConfig = config.replace("\"marks\":[]",
+        "\"marks\":[{\"name\":\"${TableToolbarTestItems.STRONG_MARK}\"}]")
     private val wideDocument = document.replace("\"type\":\"table_cell\",\"content\"",
         "\"type\":\"table_cell\",\"attrs\":{\"colwidth\":[600]},\"content\"")
 
@@ -45,39 +49,6 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             .put("attrs", JSONObject().put("rowspan", 2))
         rows.put(JSONObject("""{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Third"}]}]}]}"""))
     }.toString()
-
-    private fun tapCell(view: NativeEditorExpoView, index: Int) {
-        val canvas = (0 until view.richTextView.editorContentFrame.childCount)
-            .map { view.richTextView.editorContentFrame.getChildAt(it) }
-            .filterIsInstance<PreparedProseDrawingView>().single()
-        val root = view.richTextView.editorEditText
-        canvas.measure(View.MeasureSpec.makeMeasureSpec(root.width, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.EXACTLY))
-        canvas.layout(0, 0, canvas.measuredWidth, canvas.measuredHeight)
-        val table = requireNotNull(canvas.preparedLayout?.blocks?.singleOrNull())
-        val cell = requireNotNull(table.tableSurface?.cells?.get(index))
-        val bounds = requireNotNull(table.tableBounds)
-        val canvasOrigin = Rect(0, 0, 1, 1)
-        view.richTextView.offsetDescendantRectToMyCoords(canvas, canvasOrigin)
-        val x = canvasOrigin.left + bounds.left + cell.frame.left + cell.contentOrigin.first + 8f
-        val y = canvasOrigin.top + bounds.top + cell.frame.top + cell.contentOrigin.second + 8f
-        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
-        val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
-        try {
-            assertTrue(view.richTextView.dispatchTouchEvent(down))
-            val handled = view.richTextView.dispatchTouchEvent(up)
-            val adapter = root.v2Driver as? EditorV2Adapter
-            assertTrue("root=${root.width}x${root.height} canvas=${canvas.width}x${canvas.height}" +
-                " origin=$canvasOrigin tap=$x,$y revision=${adapter?.baseDocumentRevision}" +
-                " applied=${root.lastAppliedDocumentVersion} epoch=${adapter?.positionEpoch}" +
-                " owns=${adapter?.let(root::ownsNativeBinding)} mappings=${adapter?.cachedTableInputMappings?.tables?.keys}" +
-                " rootMap=${root.rootTablePositionMap != null} rootTrace=${root.imeTraceSnapshotForTesting()}",
-                handled)
-        } finally {
-            down.recycle()
-            up.recycle()
-        }
-    }
 
     private fun cellTexts(adapter: EditorV2Adapter): List<String> {
         val cells = JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")
@@ -205,6 +176,70 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
         assertTrue(input.hasFocus())
         assertTrue(view.isEditorEffectivelyFocusedForNativeAction())
     }
+
+    @Test
+    fun `focused cell input keeps the keyboard toolbar attached`() = withActiveCell { view, input, _ ->
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(input.hasFocus())
+        assertFalse(view.richTextView.editorEditText.hasFocus())
+        val content = view.rootView.findViewById<View>(android.R.id.content)
+        assertSame("the keyboard toolbar stays attached while a cell has focus", content,
+            view.keyboardToolbarView.parent)
+        assertNotEquals("the keyboard toolbar is not dismissed while a cell has focus", View.GONE,
+            view.keyboardToolbarView.visibility)
+    }
+
+    private fun showKeyboard(view: NativeEditorExpoView) {
+        view.setCurrentImeBottomForTesting(KEYBOARD_HEIGHT_PX)
+        view.updateAttachedKeyboardToolbarForInsetsForTesting()
+    }
+
+    private fun assertSharesRootKeyboardClearance(view: NativeEditorExpoView, input: EditorEditText) {
+        val root = view.richTextView.editorEditText
+        assertTrue("the root reserves keyboard room: ${root.viewportBottomInsetPx}", root.viewportBottomInsetPx > 0)
+        assertEquals("the focused cell reserves the root's keyboard room",
+            root.viewportBottomInsetPx, input.viewportBottomInsetPx)
+        assertEquals("the focused cell sees the keyboard toolbar's top",
+            root.viewportBottomOcclusionTopOnScreenPx, input.viewportBottomOcclusionTopOnScreenPx)
+    }
+
+    @Test
+    fun `keyboard shown over a focused cell gives its caret the root clearance`() = withActiveCell { view, input, _ ->
+        showKeyboard(view)
+        assertSharesRootKeyboardClearance(view, input)
+        tapCell(view, 1)
+        assertSame(input, view.richTextView.activeTextInput)
+        assertSharesRootKeyboardClearance(view, input)
+    }
+
+    @Test
+    fun `cell tapped while the keyboard is up inherits the root clearance`() = withActiveCell { view, input, _ ->
+        view.richTextView.editorTableSurface.invalidateCell()
+        assertTrue(view.richTextView.editorEditText.requestFocus())
+        showKeyboard(view)
+        assertEquals("a released cell does not follow the keyboard", 0, input.viewportBottomInsetPx)
+        tapCell(view, 1)
+        assertSame(input, view.richTextView.activeTextInput)
+        assertSharesRootKeyboardClearance(view, input)
+    }
+
+    @Test
+    fun `keyboard toolbar mark press toggles the mark in the focused cell`() =
+        withActiveCell(editorConfig = strongMarkConfig) { view, input, adapter ->
+            view.setToolbarItemsJson(TableToolbarTestItems.STRONG_JSON)
+            input.setSelection(0, input.text.length)
+            view.pressKeyboardToolbarButton(TableToolbarTestItems.STRONG_LABEL)
+
+            val runs = { cell: Int ->
+                tableRows(adapter).getJSONObject(0).getJSONArray("content").getJSONObject(cell)
+                    .getJSONArray("content").getJSONObject(0).getJSONArray("content")
+            }
+            val focused = runs(0).getJSONObject(0)
+            assertEquals("$focused", "First", focused.getString("text"))
+            assertEquals("the toolbar marks the focused cell's text: $focused", TableToolbarTestItems.STRONG_MARK,
+                focused.optJSONArray("marks")?.getJSONObject(0)?.getString("type"))
+            assertFalse("the neighbouring cell is untouched: ${runs(1)}", runs(1).getJSONObject(0).has("marks"))
+        }
 
     @Test
     fun `hardware Tab moves into the next cell on the reusable input`() =
@@ -995,4 +1030,8 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             input.setSelection(0)
             assertFalse(view.isPendingNativeActionScopeCurrent(action, first))
         }
+
+    private companion object {
+        const val KEYBOARD_HEIGHT_PX = 600
+    }
 }

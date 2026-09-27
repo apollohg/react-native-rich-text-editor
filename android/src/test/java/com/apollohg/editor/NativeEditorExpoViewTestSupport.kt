@@ -2,7 +2,11 @@ package com.apollohg.editor
 
 import android.app.Activity
 import android.content.Context
+import android.graphics.Rect
+import android.view.MotionEvent
+import android.view.View
 import android.view.inputmethod.EditorInfo
+import com.apollohg.editor.viewer.PreparedProseDrawingView
 import expo.modules.core.ModuleRegistry
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.ModulesProvider
@@ -10,8 +14,42 @@ import expo.modules.kotlin.modules.Module
 import java.lang.ref.WeakReference
 import org.json.JSONArray
 import org.json.JSONObject
+import org.junit.Assert.assertTrue
 
 abstract class NativeEditorExpoViewTestSupport {
+    protected fun tapCell(view: NativeEditorExpoView, index: Int) {
+        val canvas = (0 until view.richTextView.editorContentFrame.childCount)
+            .map { view.richTextView.editorContentFrame.getChildAt(it) }
+            .filterIsInstance<PreparedProseDrawingView>().single()
+        val root = view.richTextView.editorEditText
+        canvas.measure(View.MeasureSpec.makeMeasureSpec(root.width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.EXACTLY))
+        canvas.layout(0, 0, canvas.measuredWidth, canvas.measuredHeight)
+        val table = requireNotNull(canvas.preparedLayout?.blocks?.singleOrNull())
+        val cell = requireNotNull(table.tableSurface?.cells?.get(index))
+        val bounds = requireNotNull(table.tableBounds)
+        val canvasOrigin = Rect(0, 0, 1, 1)
+        view.richTextView.offsetDescendantRectToMyCoords(canvas, canvasOrigin)
+        val x = canvasOrigin.left + bounds.left + cell.frame.left + cell.contentOrigin.first + 8f
+        val y = canvasOrigin.top + bounds.top + cell.frame.top + cell.contentOrigin.second + 8f
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+        val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
+        try {
+            assertTrue(view.richTextView.dispatchTouchEvent(down))
+            val handled = view.richTextView.dispatchTouchEvent(up)
+            val adapter = root.v2Driver as? EditorV2Adapter
+            assertTrue("root=${root.width}x${root.height} canvas=${canvas.width}x${canvas.height}" +
+                " origin=$canvasOrigin tap=$x,$y revision=${adapter?.baseDocumentRevision}" +
+                " applied=${root.lastAppliedDocumentVersion} epoch=${adapter?.positionEpoch}" +
+                " owns=${adapter?.let(root::ownsNativeBinding)} mappings=${adapter?.cachedTableInputMappings?.tables?.keys}" +
+                " rootMap=${root.rootTablePositionMap != null} rootTrace=${root.imeTraceSnapshotForTesting()}",
+                handled)
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+    }
+
     protected fun renderUpdateJson(text: String): String = JSONObject()
         .put(
             "renderBlocks",

@@ -61,6 +61,7 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
     let accessoryPlaceholder = EditorAccessoryPlaceholderView(frame: .zero)
     var toolbarFramesInWindow: [CGRect] = []
     var lastToolbarTouchUptime: TimeInterval = -Double.infinity
+    var lastEmittedFocus: (editorId: UInt64, isFocused: Bool)?
     var didApplyAutoFocus = false
     var toolbarState = NativeToolbarState.empty
     var toolbarItems: [NativeToolbarItem] = NativeToolbarItem.defaults
@@ -149,6 +150,7 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
     var onEditorErrorForTesting: (([String: Any]) -> Void)?
     var onExternalTextCompositionEndForTesting: (([String: Any]) -> Void)?
     var onTableSelectionGeometryForTesting: (([String: Any]) -> Void)?
+    var onFocusChangeForTesting: (([String: Any]) -> Void)?
     let keyboardOcclusionView = UIView()
     var keyboardOcclusionConstraints: [NSLayoutConstraint] = []
     private(set) lazy var tableSelectionGeometryPublisher = TableSelectionGeometryPublisher(
@@ -229,18 +231,20 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
         }
         configureAccessoryToolbar()
 
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(textViewDidBeginEditing(_:)),
-            name: UITextView.textDidBeginEditingNotification,
-            object: richTextView.textView
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(textViewDidEndEditing(_:)),
-            name: UITextView.textDidEndEditingNotification,
-            object: richTextView.textView
-        )
+        for input in richTextView.textInputs {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(textViewDidBeginEditing(_:)),
+                name: UITextView.textDidBeginEditingNotification,
+                object: input
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(textViewDidEndEditing(_:)),
+                name: UITextView.textDidEndEditingNotification,
+                object: input
+            )
+        }
         addSubview(richTextView)
         keyboardLayoutGuide.followsUndockedKeyboard = true
         keyboardOcclusionView.isHidden = true
@@ -357,7 +361,7 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
             applyRemoteCommitRefresh()
         }
         tableSelectionGeometryPublisher.flush()
-        if richTextView.textView.isFirstResponder {
+        if richTextView.activeTextInput.isFirstResponder {
             installOutsideTapRecognizerIfNeeded()
         } else {
             uninstallOutsideTapRecognizer()
