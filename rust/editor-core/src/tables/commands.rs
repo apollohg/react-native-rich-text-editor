@@ -12,7 +12,7 @@ use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::command_context::{
-    CellAnchorPair, TableAction, TableActionCandidate, TableActionOutcome,
+    CellAnchorPair, TableAction, TableActionCandidate, TableActionOutcome, TableSelectionAfter,
 };
 use crate::tables::projection::{span_attribute, ProjectedCell, ProjectedTable};
 use crate::tables::roles::{
@@ -606,12 +606,16 @@ impl TableAction for InsertRowAction {
         let Some(target) = regular_target(candidate, schema, limits) else {
             return Ok(None);
         };
-        Ok(rows::plan_insert_row(
-            &target,
-            self.side,
-            schema,
-            self.enters_inserted_row,
-        ))
+        let Some(mut outcome) = rows::plan_insert_row(&target, self.side, schema) else {
+            return Ok(None);
+        };
+        if self.enters_inserted_row {
+            let Some(caret) = rows::caret_in_inserted_row(&target, self.side) else {
+                return Ok(None);
+            };
+            outcome.selection_after = TableSelectionAfter::Set(caret);
+        }
+        Ok(Some(outcome))
     }
 }
 

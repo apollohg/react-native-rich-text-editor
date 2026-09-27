@@ -347,6 +347,8 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(afterRowDelete["type"] as? String, Acceptance.textSelection, "\(afterRowDelete)")
         XCTAssertEqual(afterRowDelete["head"] as? Int, Int(try harness.tableEnd()) + Acceptance.blockContentOffset,
                        "deleting the last row maps the selection forward into the paragraph after the table")
+        XCTAssertEqual(afterRowDelete["anchor"] as? Int, afterRowDelete["head"] as? Int,
+                       "the mapped selection is a caret: \(afterRowDelete)")
 
         positions = try harness.positions()
         try harness.root.selectTableCells(adapter: adapter,
@@ -371,6 +373,8 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(afterColumnDelete["head"] as? Int,
                        Int(try harness.positions()[Acceptance.tableColumns]) + Acceptance.cellTextOffset,
                        "deleting the last column maps the selection forward to the start of the next row")
+        XCTAssertEqual(afterColumnDelete["anchor"] as? Int, afterColumnDelete["head"] as? Int,
+                       "the mapped selection is a caret: \(afterColumnDelete)")
         let settled = grid
 
         positions = try harness.positions()

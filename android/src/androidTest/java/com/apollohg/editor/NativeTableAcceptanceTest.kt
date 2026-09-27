@@ -529,6 +529,8 @@ class NativeTableAcceptanceTest {
             assertEquals("$afterRowDelete", TEXT_SELECTION, afterRowDelete.getString("type"))
             assertEquals("deleting the last row maps the selection forward into the paragraph after the table",
                 harness.tableEnd() + BLOCK_CONTENT_OFFSET, afterRowDelete.getInt("head"))
+            assertEquals("the mapped selection is a caret: $afterRowDelete", afterRowDelete.getInt("head"),
+                afterRowDelete.getInt("anchor"))
 
             val lastHeader = harness.positions()[TABLE_COLUMNS - 1]
             harness.selectCells(lastHeader, lastHeader)
@@ -547,6 +549,8 @@ class NativeTableAcceptanceTest {
             assertEquals("$afterColumnDelete", TEXT_SELECTION, afterColumnDelete.getString("type"))
             assertEquals("deleting the last column maps the selection forward to the start of the next row",
                 harness.positions()[TABLE_COLUMNS] + CELL_TEXT_OFFSET, afterColumnDelete.getInt("head"))
+            assertEquals("the mapped selection is a caret: $afterColumnDelete", afterColumnDelete.getInt("head"),
+                afterColumnDelete.getInt("anchor"))
             val target = harness.positions()[TABLE_COLUMNS * 2]
             harness.selectCells(target, target)
         }
@@ -759,8 +763,8 @@ class NativeTableAcceptanceTest {
         private const val PARAGRAPH_NODE = "paragraph"
         private const val TEXT_SELECTION = "text"
         private const val CELL_SELECTION = "cell"
-private const val BLOCK_CONTENT_OFFSET = 1
-private const val CELL_TEXT_OFFSET = 2
+        private const val BLOCK_CONTENT_OFFSET = 1
+        private const val CELL_TEXT_OFFSET = 2
         private const val PARITY_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Merged header across two columns"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"A tall cell whose text wraps over several lines"}]},{"type":"paragraph","content":[{"type":"text","text":"second"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"abcdefghijkl"}]}]},{"type":"table_cell","attrs":{"colwidth":[140]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Ready"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"x"}]}]},{"type":"table_cell","content":[{"type":"paragraph"}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After"}]}]}"""
         private const val IRREGULAR_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Raw"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Wide header"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":3},"content":[{"type":"paragraph","content":[{"type":"text","text":"Overhang"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Short row"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"One"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Two"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Four"}]}]}]}]}]}"""
         private const val IRREGULAR_SHORT_ROW_CELL = 3

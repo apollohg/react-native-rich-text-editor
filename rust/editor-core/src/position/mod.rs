@@ -293,13 +293,35 @@ impl PositionMap {
 
     pub(crate) fn forward_cursor_pos(&self, doc_pos: u32, doc: &Document) -> u32 {
         let normalized = self.normalize_cursor_pos(doc_pos, doc);
-        if normalized >= doc_pos {
-            return normalized;
+        if normalized == doc_pos {
+            return doc_pos;
         }
+        self.next_block_start(doc_pos)
+            .or_else(|| self.previous_block_end(doc_pos))
+            .unwrap_or(normalized)
+    }
+
+    pub(crate) fn backward_cursor_pos(&self, doc_pos: u32, doc: &Document) -> u32 {
+        let normalized = self.normalize_cursor_pos(doc_pos, doc);
+        if normalized == doc_pos {
+            return doc_pos;
+        }
+        self.previous_block_end(doc_pos)
+            .or_else(|| self.next_block_start(doc_pos))
+            .unwrap_or(normalized)
+    }
+
+    fn next_block_start(&self, doc_pos: u32) -> Option<u32> {
         (0..self.blocks.len())
             .map(|block_idx| self.effective_doc_start(block_idx))
             .find(|start| *start >= doc_pos)
-            .unwrap_or(normalized)
+    }
+
+    fn previous_block_end(&self, doc_pos: u32) -> Option<u32> {
+        (0..self.blocks.len())
+            .rev()
+            .map(|block_idx| self.effective_doc_end(block_idx))
+            .find(|end| *end <= doc_pos)
     }
 
     /// Find the block index that contains or is nearest to the given doc position.

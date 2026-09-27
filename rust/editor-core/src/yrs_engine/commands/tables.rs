@@ -682,7 +682,7 @@ fn appendable_outer_row(
         schema,
         GridRequirement::Regular,
     )?;
-    rows::plan_insert_row(&target, TableEdge::After, schema, true).map(|_| trailing)
+    rows::plan_insert_row(&target, TableEdge::After, schema).map(|_| trailing)
 }
 
 fn move_to_adjacent_cell(
@@ -808,9 +808,9 @@ impl<'a> TableCommandSurface<'a> {
                         .is_some()
                 }
             },
-            TableCommand::AddTableRow { side } => self.regular_target().is_some_and(|target| {
-                rows::plan_insert_row(target, side, self.schema, false).is_some()
-            }),
+            TableCommand::AddTableRow { side } => self
+                .regular_target()
+                .is_some_and(|target| rows::plan_insert_row(target, side, self.schema).is_some()),
             TableCommand::DeleteTableRows => self.regular_target().is_some_and(|target| {
                 rows::plan_delete_rows(self.document, target, self.schema, self.limits).is_some()
             }),

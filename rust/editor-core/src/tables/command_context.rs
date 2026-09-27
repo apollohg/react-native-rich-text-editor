@@ -258,11 +258,7 @@ fn selection_mapped_through(
             map,
         ) {
             Selection::Text { anchor, head } => {
-                let position_map = position_map();
-                Selection::text(
-                    position_map.forward_cursor_pos(anchor, after),
-                    position_map.forward_cursor_pos(head, after),
-                )
+                text_selection_between(&position_map(), after, anchor, head)
             }
             mapped => mapped,
         },
@@ -278,6 +274,36 @@ fn selection_mapped_through(
         }
         Selection::Node { .. } | Selection::All => selection.map(map),
     }
+}
+
+fn text_selection_between(
+    position_map: &PositionMap,
+    document: &Document,
+    anchor: u32,
+    head: u32,
+) -> Selection {
+    let searches_forward = anchor >= head;
+    let near = |position: u32, forward: bool| {
+        if forward {
+            position_map.forward_cursor_pos(position, document)
+        } else {
+            position_map.backward_cursor_pos(position, document)
+        }
+    };
+    let placed_head = near(head, searches_forward);
+    if anchor == head {
+        return Selection::cursor(placed_head);
+    }
+    let placed_anchor = near(anchor, !searches_forward);
+    let crosses_head = placed_anchor != anchor && (placed_anchor < placed_head) != (anchor < head);
+    Selection::text(
+        if crosses_head {
+            placed_head
+        } else {
+            placed_anchor
+        },
+        placed_head,
+    )
 }
 
 fn advance_candidate(

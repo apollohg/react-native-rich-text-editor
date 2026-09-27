@@ -2,6 +2,7 @@ use crate::boundary::ResourceLimits;
 use crate::command_planner::{apply_operations, default_attrs, SemanticOperation};
 use crate::model::{Document, Fragment, Node};
 use crate::schema::Schema;
+use crate::selection::Selection;
 use crate::tables::command_context::{TableActionOutcome, TableSelectionAfter};
 use crate::tables::commands::{
     attrs_with_row_span, caret_in_cell, fresh_cell_node, GridRequirement, TableEdge, TableTarget,
@@ -19,20 +20,32 @@ fn reference_row(target: &TableTarget<'_>, row: u32) -> Option<u32> {
     Some(row)
 }
 
-pub(crate) fn plan_insert_row(
-    target: &TableTarget<'_>,
-    side: TableEdge,
-    schema: &Schema,
-    enters_inserted_row: bool,
-) -> Option<TableActionOutcome> {
+fn inserted_row(target: &TableTarget<'_>, side: TableEdge) -> Option<u32> {
     let rect = target.rect()?;
     let row = match side {
         TableEdge::Before => rect.top,
         TableEdge::After => rect.bottom,
     };
-    if row > target.rows() {
-        return None;
-    }
+    (row <= target.rows()).then_some(row)
+}
+
+pub(crate) fn caret_in_inserted_row(
+    target: &TableTarget<'_>,
+    side: TableEdge,
+) -> Option<Selection> {
+    caret_in_cell(
+        target
+            .row_start(inserted_row(target, side)?)?
+            .checked_add(NODE_OPENING_TOKENS)?,
+    )
+}
+
+pub(crate) fn plan_insert_row(
+    target: &TableTarget<'_>,
+    side: TableEdge,
+    schema: &Schema,
+) -> Option<TableActionOutcome> {
+    let row = inserted_row(target, side)?;
     let reference = reference_row(target, row);
 
     let mut operations = Vec::new();
@@ -73,14 +86,9 @@ pub(crate) fn plan_insert_row(
             Fragment::from(cells),
         )]),
     });
-    let selection_after = if enters_inserted_row {
-        TableSelectionAfter::Set(caret_in_cell(position.checked_add(NODE_OPENING_TOKENS)?)?)
-    } else {
-        TableSelectionAfter::Mapped
-    };
     Some(TableActionOutcome {
         operations,
-        selection_after,
+        selection_after: TableSelectionAfter::Mapped,
     })
 }
 
