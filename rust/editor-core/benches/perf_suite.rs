@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 // same render/position/active-state paths the v2 render accessor uses.
 #[path = "../src/boundary.rs"]
 mod boundary;
+#[path = "../src/clipboard.rs"]
+mod clipboard;
 #[path = "../src/collaboration_runtime/mod.rs"]
 mod collaboration_runtime;
 #[path = "command_planner_shim/command_planner.rs"]
@@ -51,6 +53,8 @@ mod selection;
 mod serialize;
 #[path = "../src/session.rs"]
 mod session;
+#[path = "../src/tables/mod.rs"]
+mod tables;
 #[path = "../src/transform/mod.rs"]
 mod transform;
 #[path = "../src/viewer/types.rs"]
