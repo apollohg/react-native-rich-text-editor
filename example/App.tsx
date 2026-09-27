@@ -42,6 +42,7 @@ import {
     EDITOR_SURFACE_LABELS,
     EDITOR_SURFACES,
     fixtureDocument,
+    viewerDocument,
     INSERT_COUNTER_ACTION_KEY,
     MENTION_SUGGESTIONS,
     MENTION_TRIGGER,
@@ -138,9 +139,14 @@ function EditorScreen() {
         useState<TableToolbarMode>(INITIAL_TABLE_TOOLBAR_MODE);
 
     const [ viewportMode, setViewportMode ] = useState<ViewportMode>(INITIAL_VIEWPORT_MODE);
-    const [ viewerDocument, setViewerDocument ] = useState<DocumentJSON | null>(null);
+    const [ editedDocument, setEditedDocument ] = useState<DocumentJSON | null>(null);
 
-    const seededDocument = useMemo(() => fixtureDocument(fixture, direction), [ fixture, direction ]);
+    const seededDocument = useMemo(() => fixtureDocument(fixture), [ fixture ]);
+
+    const viewerContent = useMemo(
+        () => viewerDocument(editedDocument ?? seededDocument, direction),
+        [ direction, editedDocument, seededDocument ]
+    );
 
     const documentHandle = useMemo(
         () =>
@@ -207,18 +213,13 @@ function EditorScreen() {
     const closeLinkRequest = useCallback(() => setLinkRequest(null), []);
 
     const selectFixture = useCallback((next: DocumentFixture) => {
-        setViewerDocument(null);
+        setEditedDocument(null);
         setFixture(next);
-    }, []);
-
-    const selectDirection = useCallback((next: TableDirection) => {
-        setViewerDocument(null);
-        setDirection(next);
     }, []);
 
     const selectSurface = useCallback((next: EditorSurface) => {
         if (next === 'viewer') {
-            setViewerDocument(editorRef.current?.getContentJson() ?? null);
+            setEditedDocument(editorRef.current?.getContentJson() ?? null);
         }
 
         setSurface(next);
@@ -275,7 +276,7 @@ function EditorScreen() {
                     options={TABLE_DIRECTIONS}
                     labels={TABLE_DIRECTION_LABELS}
                     value={direction}
-                    onChange={selectDirection}
+                    onChange={setDirection}
                 />
                 <OptionGroup
                     label={'Table toolbar'}
@@ -297,7 +298,7 @@ function EditorScreen() {
                 {surface === 'viewer' ? (
                     <ScrollView style={styles.editor}>
                         <RichTextViewer
-                            contentJSON={viewerDocument ?? seededDocument}
+                            contentJSON={viewerContent}
                             schema={contentSchema}
                             atoms={editorAtoms}
                             addons={viewerAddons}
@@ -328,6 +329,7 @@ function EditorScreen() {
                         containerStyle={styles.editorContainer}
                         style={styles.editor}
                         tableToolbar={TABLE_TOOLBAR_PROPS[tableToolbarMode]}
+                        tableDirection={direction}
                     />
                 )}
             </View>

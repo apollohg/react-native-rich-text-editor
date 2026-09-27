@@ -77,7 +77,7 @@ function counterCard(title: string, count: number): DocumentJSON {
     return { type: COUNTER_CARD_NODE_NAME, attrs: { title, count } };
 }
 
-function tableCell(
+function showcaseCell(
     kind: TableCellKind,
     label: string | null,
     attrs?: Record<string, unknown>
@@ -86,14 +86,14 @@ function tableCell(
 }
 
 function wideTableCell(kind: TableCellKind, label: string): DocumentJSON {
-    return tableCell(kind, label, { colwidth: [ WIDE_TABLE_COLUMN_WIDTH ] });
+    return showcaseCell(kind, label, { colwidth: [ WIDE_TABLE_COLUMN_WIDTH ] });
 }
 
 /**
  * The initial document is JSON rather than HTML: the HTML importer maps every
  * `<ul>` to a bullet list, so a checklist can only be seeded this way.
  */
-export const INITIAL_DOCUMENT: DocumentJSON = {
+const INITIAL_DOCUMENT: DocumentJSON = {
     type: 'doc',
     content: [
         heading(1, 'Field notes'),
@@ -116,21 +116,21 @@ export const INITIAL_DOCUMENT: DocumentJSON = {
             TABLE_NAMES,
             tableRow(
                 TABLE_NAMES,
-                tableCell('headerCell', 'Task'),
-                tableCell('headerCell', 'Owner'),
-                tableCell('headerCell', 'Status')
+                showcaseCell('headerCell', 'Task'),
+                showcaseCell('headerCell', 'Owner'),
+                showcaseCell('headerCell', 'Status')
             ),
             tableRow(
                 TABLE_NAMES,
-                tableCell('cell', 'Outline'),
-                tableCell('cell', 'Alice'),
-                tableCell('cell', 'In progress')
+                showcaseCell('cell', 'Outline'),
+                showcaseCell('cell', 'Alice'),
+                showcaseCell('cell', 'In progress')
             ),
             tableRow(
                 TABLE_NAMES,
-                tableCell('cell', 'Review'),
-                tableCell('cell', null),
-                tableCell('cell', 'Ready')
+                showcaseCell('cell', 'Review'),
+                showcaseCell('cell', null),
+                showcaseCell('cell', 'Ready')
             )
         ),
         heading(3, 'Merged cells'),
@@ -138,16 +138,16 @@ export const INITIAL_DOCUMENT: DocumentJSON = {
             TABLE_NAMES,
             tableRow(
                 TABLE_NAMES,
-                tableCell('headerCell', 'Release plan', { colspan: MERGED_HEADER_COLSPAN }),
-                tableCell('headerCell', 'Status')
+                showcaseCell('headerCell', 'Release plan', { colspan: MERGED_HEADER_COLSPAN }),
+                showcaseCell('headerCell', 'Status')
             ),
             tableRow(
                 TABLE_NAMES,
-                tableCell('cell', 'Core editor', { rowspan: MERGED_GROUP_ROWSPAN }),
-                tableCell('cell', 'iOS'),
-                tableCell('cell', 'Ready')
+                showcaseCell('cell', 'Core editor', { rowspan: MERGED_GROUP_ROWSPAN }),
+                showcaseCell('cell', 'iOS'),
+                showcaseCell('cell', 'Ready')
             ),
-            tableRow(TABLE_NAMES, tableCell('cell', 'Android'), tableCell('cell', 'In review'))
+            tableRow(TABLE_NAMES, showcaseCell('cell', 'Android'), showcaseCell('cell', 'In review'))
         ),
         heading(3, 'Wide table'),
         table(
@@ -238,7 +238,7 @@ export const DOCUMENT_FIXTURE_LABELS: Readonly<Record<DocumentFixture, string>> 
     irregular: 'Irregular',
 };
 
-function undirectedFixtureDocument(fixture: DocumentFixture): DocumentJSON {
+export function fixtureDocument(fixture: DocumentFixture): DocumentJSON {
     switch (fixture) {
         case 'showcase':
             return INITIAL_DOCUMENT;
@@ -260,8 +260,8 @@ function undirectedFixtureDocument(fixture: DocumentFixture): DocumentJSON {
     }
 }
 
-export function fixtureDocument(fixture: DocumentFixture, direction: TableDirection): DocumentJSON {
-    return withTableDirection(undirectedFixtureDocument(fixture), TABLE_NAMES, direction);
+export function viewerDocument(document: DocumentJSON, direction: TableDirection): DocumentJSON {
+    return withTableDirection(document, TABLE_NAMES, direction);
 }
 
 export const MENTION_SUGGESTIONS: readonly MentionSuggestion[] = [
