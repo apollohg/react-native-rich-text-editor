@@ -295,6 +295,8 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             assertEquals("FirstX".length, input.selectionStart)
             shadowOf(Looper.getMainLooper()).idle()
             assertFalse("the rectangle-to-cell handoff never blurs: $focus", focus.contains(false))
+            assertEquals("the cell handoff does not restart the retiring root connection", 0,
+                root.imeTraceSnapshotForTesting().count { it.startsWith(CELL_SELECTION_EXIT_RESTART) })
 
             view.setEditable(false)
             view.richTextView.activeTextInput.performToolbarUndo()
@@ -409,6 +411,42 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
         }
 
     @Test
+    fun `undo rebinding an unfocused cell leaves focus where it was`() =
+        withActiveCell { view, input, adapter ->
+            typeAtCellEnd(input, "X")
+            val positions = adapter.tableCellPositions(adapter.cachedTableRecords.keys.single())
+            tapCell(view, 1)
+            input.clearFocus()
+            assertFalse(input.hasFocus())
+
+            input.performToolbarUndo()
+            assertEquals(listOf("First", "Second"), cellTexts(adapter))
+            assertEquals("the cell holding the restored caret is bound",
+                positions[0].toLong(), view.richTextView.activeTableCellPosition)
+            assertEquals("First".length, input.selectionStart)
+            assertFalse("rebinding an unfocused cell does not grab focus", input.hasFocus())
+        }
+
+    @Test
+    fun `external update while a cell composes applies the settled commit once`() =
+        withActiveCell { view, input, adapter ->
+            val external = requireNotNull(adapter.cachedAtomicRenderJson)
+            val revision = adapter.baseDocumentRevision
+            input.setSelection(input.text.length)
+            assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).setComposingText("zz", 1))
+
+            assertTrue(view.applyEditorUpdate(external))
+            assertEquals("the composition lands once", listOf("Firstzz", "Second"), cellTexts(adapter))
+            assertEquals("the settle is the only new revision", revision + 1uL, adapter.baseDocumentRevision)
+            val root = view.richTextView.editorEditText
+            assertEquals(adapter.baseDocumentRevision.toString(), root.lastAppliedDocumentVersion)
+            assertSame("the cell stays bound", input, view.richTextView.activeTextInput)
+            assertEquals("Firstzz", input.text.toString())
+            assertEquals("Firstzz".length, input.selectionStart)
+            assertFalse(input.hasPendingCompositionForExternalRefresh())
+        }
+
+    @Test
     fun `keyboard toolbar undo from a bound cell restoring a prose caret hands focus to the root`() =
         withActiveCell { view, input, adapter ->
             view.setToolbarItemsJson(TableToolbarTestItems.HISTORY_JSON)
@@ -460,7 +498,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             assertEquals("an undrained cell refuses undo", listOf("FirstX", "Second"), cellTexts(adapter))
             assertTrue("the refused press is retried", view.hasPendingNativeActionForTesting())
             input.blockExternalEditorUpdatePreparationForTesting = false
-            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(NativeEditorExpoView.NATIVE_ACTION_RETRY_DELAY_MS))
             assertEquals("the retry applies undo once the cell drains", listOf("First", "Second"), cellTexts(adapter))
         }
 

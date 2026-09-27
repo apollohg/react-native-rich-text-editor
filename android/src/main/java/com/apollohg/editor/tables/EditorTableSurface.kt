@@ -1110,18 +1110,19 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     private fun bindCell(tableId: String, cellIndex: Int,
                          projected: EditorTableCellProjection.Projection,
                          touch: Pair<Float, Float>? = null,
-                         selection: JSONObject? = null): Boolean {
+                         selection: JSONObject? = null,
+                         focus: Boolean = true): Boolean {
         val root = host.editorEditText
         val current = activeCell
         val sourcePos = projected.target.binding.cellSourcePos
         if (current?.sourcePos == sourcePos && current.tableId == tableId) {
             activeInput?.let { input ->
-                input.requestFocus()
+                if (focus) input.requestFocus()
                 touch?.let { input.setSelection(input.getOffsetForPosition(
                     it.first - input.left, it.second - input.top)) }
                 selection?.let { input.applySelectionFromJSON(it,
                     adapterRevision(root)) }
-                showKeyboard(input)
+                if (focus) showKeyboard(input)
             }
             reconcileActiveCell()
             return true
@@ -1177,11 +1178,11 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         }
         drawingView.suppressedTableCellSourcePosition = sourcePos.toInt()
         positionActiveInput()
-        input.requestFocus()
+        if (focus) input.requestFocus()
         touch?.let { input.setSelection(input.getOffsetForPosition(
             it.first - input.left, it.second - input.top)) }
         selection?.let { input.applySelectionFromJSON(it, adapter.baseDocumentRevision.toString()) }
-        showKeyboard(input)
+        if (focus) showKeyboard(input)
         reconcileActiveCell()
         selectionGeometryMayChange()
         return true
@@ -1222,15 +1223,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             if (!input.isAuthorizedForTableCellInput()) invalidateCell()
             return true
         }
-        val table = adapter.cachedTableInputMappings?.tables?.get(active.tableId)
-        val cell = table?.cells?.firstOrNull { candidate ->
-            candidate.blocks.any { block ->
-                scalar >= block.scalarStart && scalar <= block.breakScalarEnd
-            }
-        }
-        val projected = cell?.let { projection(active.tableId, it.cellIndex) }
-        if (projected == null || projected.positionMap.localScalarForGlobalScalar(scalar) == null ||
-            !bindCell(active.tableId, cell.cellIndex, projected, selection = targetSelection)) {
+        if (!bindCell(holding = targetSelection, range = scalar to scalar, adapter = adapter, focus = true)) {
             invalidateCell()
         }
         return true
@@ -1393,7 +1386,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         adapter: EditorV2Adapter,
         cellWasFocused: Boolean
     ): Boolean {
-        if (bindCell(holding = selection, range = range, adapter = adapter)) return true
+        if (bindCell(holding = selection, range = range, adapter = adapter, focus = cellWasFocused)) return true
         invalidateCell()
         if (cellWasFocused) host.editorEditText.requestFocus()
         return true
@@ -1406,10 +1399,15 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         if (!root.hasAuthorizedNativeTableOwner(adapter)) return
         val selection = runCatching { JSONObject(update).optJSONObject("selection") }.getOrNull() ?: return
         val range = selectionScalarRange(selection) ?: return
-        bindCell(holding = selection, range = range, adapter = adapter)
+        bindCell(holding = selection, range = range, adapter = adapter, focus = root.hasFocus())
     }
 
-    private fun bindCell(holding: JSONObject, range: Pair<Int, Int>, adapter: EditorV2Adapter): Boolean {
+    private fun bindCell(
+        holding: JSONObject,
+        range: Pair<Int, Int>,
+        adapter: EditorV2Adapter,
+        focus: Boolean
+    ): Boolean {
         val target = adapter.cachedTableInputMappings?.tables?.entries?.firstNotNullOfOrNull { (tableId, table) ->
             table.cells.firstNotNullOfOrNull { cell ->
                 if (cell.blocks.none { range.first >= it.scalarStart && range.first <= it.breakScalarEnd }) {
@@ -1419,7 +1417,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                     ?.let { Triple(tableId, cell.cellIndex, it) }
             }
         } ?: return false
-        return bindCell(target.first, target.second, target.third, selection = holding)
+        return bindCell(target.first, target.second, target.third, selection = holding, focus = focus)
     }
 
     private fun reconcileActiveCell(selection: JSONObject? = null, localUpdate: Boolean = false) {

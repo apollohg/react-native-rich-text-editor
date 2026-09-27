@@ -46,6 +46,15 @@ enum TableToolbarTestItems {
 }
 
 extension EditorV2Adapter {
+    func editableTableID() throws -> String {
+        try XCTUnwrap(cachedTableRecords.first { $0.value["readOnlyDescendants"] as? Bool == false }?.key)
+    }
+
+    func tableCellPositions() throws -> [UInt32] {
+        let cells = try XCTUnwrap(cachedTableRecords[try editableTableID()]?["cells"] as? [[String: Any]])
+        return try cells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
+    }
+
     func tableCellTexts() throws -> [[String]] {
         func text(_ node: [String: Any]) -> String {
             if node["type"] as? String == "text" { return node["text"] as? String ?? "" }

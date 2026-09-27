@@ -407,7 +407,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         guard activeTextInput === input,
               case .bound = tableInputCoordinator.phase,
               input.isEditable,
-              let tableID = tableInputCoordinator.activeTableID,
+              tableInputCoordinator.activeTableID != nil,
               let currentMap = tableInputCoordinator.positionMap,
               let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
               hasTableCellBindingAuthority(adapter),
@@ -456,20 +456,13 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
               adapter.stateRevision == commandStateRevision,
               adapter.positionEpoch == commandEpoch
         else { return }
-        guard let target = adapter.cachedTableInputMappings?.tables[tableID]?.cells.first(where: { cell in
-            cell.blocks.contains { block in
-                targetScalar >= block.scalarStart && targetScalar <= block.breakScalarEnd
-            }
-        }) else {
+        let targetIsBound = activeTextInput === input
+            && tableInputCoordinator.positionMap.map { selectionFitsTableCell(targetSelection, map: $0) } == true
+        guard targetIsBound
+            || bindTableCell(holding: targetSelection, adapter: adapter, fallback: input.frame, focus: focused)
+        else {
             invalidateTableCellBinding()
             return
-        }
-        if tableInputCoordinator.activeCellIndex != target.cellIndex || activeTextInput !== input {
-            guard bindTableCell(tableID: tableID, cellIndex: target.cellIndex,
-                                contentRect: input.frame, selection: targetSelection) else {
-                invalidateTableCellBinding()
-                return
-            }
         }
         _ = input.applySelectionFromJSON(targetSelection)
         if focused { _ = input.becomeFirstResponder() }
@@ -672,41 +665,29 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
 
     private func refreshActiveTableCell(after updateJSON: String) {
         guard let tableID = tableInputCoordinator.activeTableID else { return }
-        if let data = updateJSON.data(using: .utf8),
-           let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let selection = update["selection"] as? [String: Any],
-           selection["type"] as? String == "cell" {
-            let cellWasFocused = tableInputCoordinator.cellInput.isFirstResponder
-            invalidateTableCellBinding()
-            if cellWasFocused {
-                _ = textView.becomeFirstResponder()
-            }
+        let update = updateJSON.data(using: .utf8)
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let selection = update?["selection"] as? [String: Any]
+        if selection?["type"] as? String == "cell" {
+            retireActiveTableCell(refocusingRoot: tableInputCoordinator.cellInput.isFirstResponder)
             return
         }
-        guard let cellIndex = tableInputCoordinator.activeCellIndex,
-              let boundSourcePos = tableInputCoordinator.positionMap?.binding.cellSourcePosition
+        guard isApplyingActiveTableCellUpdate,
+              let cellIndex = tableInputCoordinator.activeCellIndex,
+              let boundSourcePos = tableInputCoordinator.positionMap?.binding.cellSourcePosition,
+              let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
+              let selection
         else {
-            invalidateTableCellBinding()
-            return
-        }
-        guard isApplyingActiveTableCellUpdate else {
             invalidateTableCellBinding()
             return
         }
         let frame = tableSurface.convert(tableInputCoordinator.cellInput.bounds,
                                          from: tableInputCoordinator.cellInput)
-        guard let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
-              let cells = adapter.cachedTableInputMappings?.tables[tableID]?.cells,
+        guard let cells = adapter.cachedTableInputMappings?.tables[tableID]?.cells,
               Int(cellIndex) < cells.count,
               cells[Int(cellIndex)].sourcePos == boundSourcePos,
-              let data = updateJSON.data(using: .utf8),
-              let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let selection = update["selection"] as? [String: Any]
+              bindTableCell(tableID: tableID, cellIndex: cellIndex, contentRect: frame, selection: selection)
         else {
-            invalidateTableCellBinding()
-            return
-        }
-        guard bindTableCell(tableID: tableID, cellIndex: cellIndex, contentRect: frame, selection: selection) else {
             moveActiveTableCell(to: selection, adapter: adapter, fallback: frame)
             return
         }
@@ -718,8 +699,12 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         guard !bindTableCell(holding: selection, adapter: adapter, fallback: fallback, focus: cellWasFocused) else {
             return
         }
+        retireActiveTableCell(refocusingRoot: cellWasFocused)
+    }
+
+    private func retireActiveTableCell(refocusingRoot: Bool) {
         invalidateTableCellBinding()
-        if cellWasFocused {
+        if refocusingRoot {
             _ = textView.becomeFirstResponder()
         }
     }

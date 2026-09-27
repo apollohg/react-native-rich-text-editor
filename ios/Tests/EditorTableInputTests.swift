@@ -150,11 +150,8 @@ final class EditorTableInputTests: XCTestCase {
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         if let theme { XCTAssertTrue(view.applyTheme(theme)) }
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
-        let tableID = try XCTUnwrap(adapter.cachedTableRecords.first {
-            $0.value["readOnlyDescendants"] as? Bool == false
-        }?.key)
-        let rawCells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
-        let positions = try rawCells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
+        let tableID = try adapter.editableTableID()
+        let positions = try adapter.tableCellPositions()
         if let cellSelection {
             try view.textView.selectTableCells(adapter: adapter,
                                                anchor: positions[cellSelection.anchor], head: positions[cellSelection.head])
@@ -1671,11 +1668,8 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(host.richTextView.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         host.layoutIfNeeded()
         XCTAssertTrue(host.richTextView.textView.becomeFirstResponder())
-        let tableID = try XCTUnwrap(adapter.cachedTableRecords.first {
-            $0.value["readOnlyDescendants"] as? Bool == false
-        }?.key)
-        let rawCells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
-        let positions = try rawCells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
+        let tableID = try adapter.editableTableID()
+        let positions = try adapter.tableCellPositions()
         let surface = try XCTUnwrap(host.richTextView.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         waitForGeometryFrame()
@@ -2264,13 +2258,17 @@ final class EditorTableInputTests: XCTestCase {
             fixture.host.setToolbarButtonsJson(TableToolbarTestItems.historyJson)
             let view = fixture.host.richTextView
             let original = try fixture.adapter.tableCellTexts()
+            let input = try fixture.activateCell(0)
+            input.selectedRange = NSRange(location: input.textStorage.length, length: 0)
+            input.textViewDidChangeSelection(input)
             let originalSelection = try authoritativeSelection(fixture.adapter) as NSDictionary
-            XCTAssertEqual(originalSelection["anchorScalar"] as? Int, 0, "the caret starts in the first cell")
-            let input = try fixture.activateCell(1)
             input.insertText("X")
             let edited = try fixture.adapter.tableCellTexts()
             let editedSelection = try authoritativeSelection(fixture.adapter) as NSDictionary
-            XCTAssertEqual(edited, [["one", "twoX"], ["three", "four"]], "typing edits the cell")
+            XCTAssertEqual(edited, [["oneX", "two"], ["three", "four"]], "typing edits the first cell")
+            XCTAssertTrue(try fixture.activateCell(1) === input)
+            let editedPositions = try fixture.adapter.tableCellPositions()
+            XCTAssertEqual(view.activeTableCellPosition, editedPositions[1], "the second cell is bound")
             let focus = recordFocus(fixture.host)
 
             let authority = input.tableCellInputAuthority
@@ -2284,19 +2282,23 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, originalSelection,
                            "undo resolves to the selection before the edit")
             XCTAssertTrue(view.activeTextInput === input, "the restored caret's cell keeps the cell input")
-            XCTAssertEqual(view.activeTableCellPosition, fixture.positions[0], "the cell holding the caret is bound")
+            XCTAssertEqual(view.activeTableCellPosition, fixture.positions[0], "the earlier cell holding the caret is bound")
             XCTAssertTrue(input.isFirstResponder, "the rebound cell keeps focus")
             XCTAssertEqual(input.textStorage.string, "one")
-            XCTAssertEqual(input.selectedRange, NSRange(location: 0, length: 0), "the caret is restored in the cell")
+            let localCaret = try XCTUnwrap(input.currentScalarSelection())
+            let restoredCaret = try XCTUnwrap(input.inputScalarRange(fromLocal: localCaret.anchor, toLocal: localCaret.head))
+            XCTAssertEqual(Int(restoredCaret.from), originalSelection["anchorScalar"] as? Int, "the caret is restored in the cell")
+            XCTAssertEqual(Int(restoredCaret.to), originalSelection["headScalar"] as? Int)
 
             try input.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.redoLabel)
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), edited, "redo reapplies the edit")
             XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, editedSelection,
                            "redo resolves to the selection after the edit")
-            XCTAssertEqual(view.activeTableCellPosition, fixture.positions[1], "redo rebinds the edited cell")
+            XCTAssertEqual(view.activeTableCellPosition, editedPositions[0], "redo keeps the edited cell bound")
             XCTAssertTrue(input.isFirstResponder, "the rebound cell keeps focus")
-            XCTAssertEqual(input.textStorage.string, "twoX")
+            XCTAssertEqual(input.textStorage.string, "oneX")
             XCTAssertEqual(input.selectedRange, NSRange(location: 4, length: 0), "the caret follows the reapplied edit")
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
             XCTAssertFalse(focus.events.contains(false), "moving between cells never blurs: \(focus.events)")
         }
     }
@@ -2933,7 +2935,7 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), before)
     }
 
-    func testProjectedUpdateCannotRetargetInputAfterCellSourceMoves() throws {
+    func testProjectedUpdateAfterCellSourceMovesRebindsTheCellHoldingTheCaret() throws {
         let editorId = makeV2Editor(configJson: tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
@@ -2954,11 +2956,12 @@ final class EditorTableInputTests: XCTestCase {
         EditorV2Shadow.setSelectionScalar(id: editorId, scalarAnchor: newSelection, scalarHead: newSelection)
         XCTAssertTrue(oldInput.applyUpdateJSON(EditorV2Shadow.getCurrentState(id: editorId)))
 
-        XCTAssertTrue(view.activeTextInput === view.textView)
-        XCTAssertEqual(oldInput.editorId, 0)
-        let settled = try XCTUnwrap(adapter.documentJson())
+        XCTAssertTrue(view.activeTextInput === oldInput, "the input follows the authoritative caret")
+        XCTAssertEqual(view.activeTableCellPosition, movedCell.sourcePos, "the moved cell is bound from a fresh projection")
+        XCTAssertEqual(oldInput.textStorage.string, "replacement")
         oldInput.insertText("!")
-        XCTAssertEqual(try XCTUnwrap(adapter.documentJson()), settled)
+        XCTAssertEqual(try adapter.tableCellTexts(), [["longer", "!replacement"]],
+                       "typing lands at the authoritative caret in the moved cell")
     }
 
     func testRootInputBlocksStaleCaretWhenAuthoritativeSelectionMovesInsideTable() throws {
