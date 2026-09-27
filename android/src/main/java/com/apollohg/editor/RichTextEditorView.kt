@@ -38,6 +38,7 @@ class RichTextEditorView @JvmOverloads constructor(
 ) : LinearLayout(context, attrs, defStyleAttr) {
     val editorViewport: FrameLayout
     val editorContentFrame: FrameLayout
+    private val contentFrame: EditorContentFrame
 
     private inner class EditorScrollView(context: Context) : ScrollView(context) {
         override fun computeScrollDeltaToGetChildRectOnScreen(rect: Rect): Int {
@@ -274,6 +275,16 @@ class RichTextEditorView @JvmOverloads constructor(
             )
         }
 
+        fun layoutChildInPlace(child: View) {
+            if (!isLaidOut || child.parent !== this) return
+            measureChildWithMargins(child, MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), 0,
+                MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY), 0)
+            val params = child.layoutParams as FrameLayout.LayoutParams
+            val childLeft = paddingLeft + params.leftMargin
+            val childTop = paddingTop + params.topMargin
+            child.layout(childLeft, childTop, childLeft + child.measuredWidth, childTop + child.measuredHeight)
+        }
+
         override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
             super.onLayout(changed, left, top, right, bottom)
             restoreAtomScrollAnchor()
@@ -286,6 +297,8 @@ class RichTextEditorView @JvmOverloads constructor(
     internal val editorTableSurface by lazy { EditorTableSurface(this) }
     val activeTextInput: EditorEditText get() = editorTableSurface.activeInput ?: editorEditText
     internal var onTableCellInputCreated: ((EditorEditText) -> Unit)? = null
+
+    internal fun layoutEditorContentChild(child: View) = contentFrame.layoutChildInPlace(child)
 
     internal fun invalidateActiveTableCellInput() {
         editorTableSurface.invalidateCell()
@@ -333,7 +346,8 @@ class RichTextEditorView @JvmOverloads constructor(
         orientation = VERTICAL
 
         editorEditText = EditorEditText(context)
-        editorContentFrame = EditorContentFrame(context)
+        contentFrame = EditorContentFrame(context)
+        editorContentFrame = contentFrame
         editorScrollView = EditorScrollView(context).apply {
             clipToPadding = false
             // Short content must still fill the viewport, or taps below the

@@ -173,6 +173,40 @@ internal class NativeEditorExpoViewLifecycleTest : NativeEditorExpoViewTestFixtu
     }
 
     @Test
+    fun `editor id set before attach claims error ownership once the view attaches`() {
+        val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
+        val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
+        val adapter = attachAdapterForViewTest(FakeEditorV2Backend())
+        val viewToken = EditorV2Registry.register(adapter)
+        val errors = mutableListOf<Map<String, Any>>()
+        try {
+            view.onEditorErrorForTesting = { errors += it }
+            view.onEditorUpdateForTesting = {}
+            view.onAddonEventForTesting = {}
+            view.onEditorReadyForTesting = {}
+            view.onSelectionChangeForTesting = {}
+            view.setEditorId(viewToken)
+            assertNull("a detached view must not own the adapter", view.editorErrorCallbackTokenForTesting())
+
+            view.handleAttachedToWindowForTesting()
+
+            assertEquals("attach must bind the editor text to the view token",
+                viewToken, view.richTextView.editorEditText.editorId)
+            assertNotNull("attach must claim error ownership after binding the editor",
+                view.editorErrorCallbackTokenForTesting())
+            assertTrue("the attached view must hold table owner authority",
+                view.hasTableRootNativeOwnerAuthority(adapter))
+            adapter.destroy()
+            assertTrue(commitBoundText(view, "x"))
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals("errors: $errors", 1, errors.size)
+        } finally {
+            EditorV2Registry.remove(adapter.editorId)
+            NativeEditorViewRegistry.unregister(viewToken, view)
+        }
+    }
+
+    @Test
     fun `cleared bound view references are pruned without retaining editor history`() {
         val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)

@@ -10,6 +10,7 @@ import android.view.MotionEvent
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
+import android.widget.FrameLayout
 import com.apollohg.editor.tables.RootTableHeightSpan
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import org.json.JSONObject
@@ -41,6 +42,7 @@ internal class EditorTableSurfaceMountTest {
     private val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
     private val tableDocument = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Cell text"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
     internal companion object {
+        const val REFLOW_WIDTH = 400
         val nestedTableDocument = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Nested"}]}]}]}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
     }
     private val wideTableDocument = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Left"}]}]},{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Right"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
@@ -694,6 +696,47 @@ internal class EditorTableSurfaceMountTest {
         view.applyTheme(EditorTheme.fromJson("""{"text":{"color":"#112233"}}"""))
         assertTrue(view.activeTextInput === view.editorEditText)
     }
+
+    @Test
+    fun `table drawing mounted inside the host layout pass covers the editor`() = withMountedView { view, _, _ ->
+        val drawing = requireNotNull(drawing(view))
+        val input = view.editorEditText
+        val state = "drawing ${drawing.width}x${drawing.height} requested=${drawing.isLayoutRequested}, " +
+            "editor ${input.measuredWidth}x${input.measuredHeight}"
+        assertTrue(state, input.measuredHeight > heightSpan(view).heightPx)
+        assertEquals(state, input.measuredWidth to input.measuredHeight, drawing.width to drawing.height)
+    }
+
+    @Test
+    fun `a bound cell input follows its cell through a host layout reflow`() = withMountedView { view, _, _ ->
+        tapFirstCell(view)
+        val input = view.activeTextInput
+        assertNotSame(view.editorEditText, input)
+        val before = input.width
+        measure(view, REFLOW_WIDTH)
+        val params = input.layoutParams as FrameLayout.LayoutParams
+        val state = "input ${input.left},${input.top} ${input.width}x${input.height} before=$before, " +
+            "params ${params.leftMargin},${params.topMargin} ${params.width}x${params.height}"
+        assertNotEquals(state, before, params.width)
+        assertEquals(state, listOf(params.leftMargin, params.topMargin, params.width, params.height),
+            listOf(input.left, input.top, input.width, input.height))
+    }
+
+    @Test
+    fun `a view without table owner authority keeps drawing its table after the position epoch advances`() =
+        withMountedView { view, adapter, _ ->
+            val input = view.editorEditText
+            val reserved = heightSpan(view).heightPx
+            input.rootTableNativeOwnerAuthority = { false }
+            val advancedEpoch = (requireNotNull(adapter.positionEpoch).toLong() + 1).toString()
+            adapter.positionEpoch = advancedEpoch
+            view.editorTableSurface.refresh()
+            assertEquals("epoch map=${input.rootTableMapPositionEpoch} adapter=${adapter.positionEpoch}",
+                advancedEpoch, input.rootTableMapPositionEpoch)
+            assertNotNull("the table must stay drawn", drawing(view)?.preparedLayout?.blocks?.singleOrNull()?.tableSurface)
+            assertEquals("the table keeps its reserved height", reserved, heightSpan(view).heightPx)
+            assertTrue("presentation must not grant root table input", !input.isAuthorizedForRootTableInput())
+        }
 
     @Test
     fun `rebind retires mounted cell connection`() = withMountedView { view, adapter, _ ->

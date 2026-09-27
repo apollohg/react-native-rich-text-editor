@@ -41,6 +41,7 @@ import com.apollohg.editor.applyTableCommandAtSelection
 import com.apollohg.editor.TableMutationAdmission
 import com.apollohg.editor.tableMutationAdmission
 import com.apollohg.editor.admitsTableMutation
+import com.apollohg.editor.adoptCurrentRootTableMapEpoch
 import com.apollohg.editor.cachedAtomicRenderSelection
 import com.apollohg.editor.cellSelectionEndpoints
 import com.apollohg.editor.RichTextEditorView
@@ -849,7 +850,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             admittedMappings?.get(id)?.extent?.let { id to it }
         }?.toMap()
         if (adapter != null && input.rootTableMapPositionEpoch != adapter.positionEpoch) {
-            input.isAuthorizedForRootTableInput()
+            input.adoptCurrentRootTableMapEpoch(adapter)
         }
         if (adapter == null || revision == null ||
             input.lastAppliedDocumentVersion != revision.toString() ||
@@ -973,7 +974,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             val rect = Rect(x, y, x + entry.localBounds.width(), y + entry.localBounds.height())
             PreparedProseBlock(emptyList(), rect, tableSurface = entry.surface, tableBounds = rect)
         }.sortedBy { it.bounds.top }
-        if (blocks == positionedBlocks && drawingView.preparedLayout != null) return
+        if (blocks == positionedBlocks && drawingView.preparedLayout != null) {
+            host.layoutEditorContentChild(drawingView)
+            return
+        }
         positionedBlocks = blocks
         val width = host.editorContentFrame.width.coerceAtLeast(input.measuredWidth).coerceAtLeast(1)
         val height = host.editorContentFrame.height.coerceAtLeast(input.measuredHeight).coerceAtLeast(1)
@@ -981,6 +985,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             input.resources.displayMetrics.density.toBits().toLong(), 0, "editor-table-canvas")
         drawingView.install(PreparedProseLayout(key, width, height, blocks,
             retainedBytes = blocks.sumOf { it.retainedBytes }))
+        host.layoutEditorContentChild(drawingView)
         positionActiveInput()
         selectionGeometryMayChange()
     }
@@ -1486,6 +1491,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             current.leftMargin != params.leftMargin || current.topMargin != params.topMargin) {
             input.layoutParams = params
         }
+        host.layoutEditorContentChild(input)
         input.clipBounds = Rect(
             (presented.clip.left - params.leftMargin).toInt().coerceAtLeast(0),
             (presented.clip.top - params.topMargin).toInt().coerceAtLeast(0),
@@ -1606,6 +1612,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         (drawingView.parent as? ViewGroup)?.removeView(drawingView)
         host.editorContentFrame.addView(drawingView,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        host.layoutEditorContentChild(drawingView)
     }
 
     private fun markers(input: EditorEditText): Map<String, Int> = markers(input.text)

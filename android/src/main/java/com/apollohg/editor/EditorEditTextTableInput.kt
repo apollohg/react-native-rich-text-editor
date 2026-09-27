@@ -29,7 +29,11 @@ internal fun EditorEditText.hasAuthorizedNativeTableOwner(adapter: EditorV2Adapt
 internal fun EditorEditText.isAuthorizedForRootTableInput(): Boolean {
     if (rootTablePositionMap == null) return true
     val adapter = v2Driver as? EditorV2Adapter ?: return false
-    if (rootTableHasUnmappedExtent || !hasAuthorizedNativeTableOwner(adapter)) return false
+    return hasAuthorizedNativeTableOwner(adapter) && adoptCurrentRootTableMapEpoch(adapter)
+}
+
+internal fun EditorEditText.adoptCurrentRootTableMapEpoch(adapter: EditorV2Adapter): Boolean {
+    if (rootTablePositionMap == null || rootTableHasUnmappedExtent) return false
     if (rootTableMapDocumentVersion != adapter.baseDocumentRevision.toString()) return false
     val currentEpoch = adapter.positionEpoch ?: return false
     if (adapter.cachedAtomicRenderDocumentRevision != adapter.baseDocumentRevision) return false

@@ -93,11 +93,11 @@ internal fun NativeEditorExpoView.handleAttachedToWindow() {
         handleEditorDestroyed(editorId)
         return
     }
-    bindEditorErrorCallbackIfLive(editorId)
     richTextView.rebindEditorIfNeeded(
         notifyListener = !hasPendingEditorResetUpdateForEditor(editorId) &&
             !hasPendingEditorUpdateForEditor(editorId)
     )
+    bindEditorErrorCallbackIfLive(editorId)
     if (hasPendingTheme) {
         pendingThemeRetry.bind(editorId)
     }
