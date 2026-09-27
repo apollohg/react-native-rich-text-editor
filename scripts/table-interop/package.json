@@ -11,7 +11,7 @@
         "test:schema-admission": "tsx run.ts --suite schema-admission",
         "test:convergence": "tsx run.ts --suite convergence",
         "test:native-structural-edits": "tsx run.ts --suite native-structural-edits",
-        "test:native-acceptance-export": "node -e \"process.exitCode = process.env.NATIVE_TABLE_ACCEPTANCE_EXPORTS ? 0 : (console.error('set NATIVE_TABLE_ACCEPTANCE_EXPORTS to the native acceptance exports'), 1)\" && tsx run.ts --suite native-acceptance-export",
+        "test:native-acceptance-export": "tsx run.ts --suite native-acceptance-export",
         "test:differential": "tsx run.ts --suite differential",
         "test:upstream-mutex": "tsx run.ts --suite upstream-mutex-repair-write-back",
         "reduce": "tsx reduce.ts"

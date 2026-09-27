@@ -3,10 +3,14 @@ import { fileURLToPath } from 'node:url';
 import { buildRustPeer, runToCompletion } from './peer-build.js';
 import { readFile } from 'node:fs/promises';
 import { SUITE_CASES, verifyProvenance } from './checkpoint-io.js';
+import { requireNativeAcceptanceExportPaths } from './native-acceptance-exports.js';
 
 const SUITE_FLAG = '--suite';
 const SUITE_VALUE_OFFSET = 1;
 const SUITE_NAME_PATTERN = /^[a-z][a-z-]*$/;
+const SUITE_PRECONDITIONS: Record<string, () => unknown> = {
+    'native-acceptance-export': requireNativeAcceptanceExportPaths,
+};
 
 function requestedSuite(argv: string[]): string {
     const flagIndex = argv.indexOf(SUITE_FLAG);
@@ -33,6 +37,7 @@ if (builtPeer !== -1) {
     argv.splice(builtPeer, 2);
 }
 const suite = requestedSuite(argv);
+SUITE_PRECONDITIONS[suite]?.();
 const suiteFiles = (SUITE_CASES[suite] ?? [suite]).map((name) =>
     fileURLToPath(new URL(`./cases/${name}.test.ts`, import.meta.url)),
 );

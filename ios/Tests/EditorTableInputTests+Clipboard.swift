@@ -47,7 +47,7 @@ extension EditorTableInputTests {
     }
 
     private func select(_ fixture: MountedTableFixture, anchor: UInt32, head: UInt32) throws {
-        try Self.selectCells(anchor: anchor, head: head, adapter: fixture.adapter, view: fixture.view)
+        try fixture.view.textView.selectTableCells(adapter: fixture.adapter, anchor: anchor, head: head)
         XCTAssertTrue(fixture.view.textView.authoritativeCellSelectionActive, "root did not adopt the cell selection")
         fixture.updates.updates.removeAll()
     }

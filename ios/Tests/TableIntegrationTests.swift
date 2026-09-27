@@ -339,7 +339,7 @@ final class TableIntegrationTests: XCTestCase {
         try withTable(Integration.gridDocument) { fixture in
             let positions = try fixture.positions()
             let first = positions[Integration.gridFirst]
-            try EditorTableInputTests.selectCells(anchor: first, head: first, adapter: fixture.adapter, view: fixture.view)
+            try fixture.view.textView.selectTableCells(adapter: fixture.adapter, anchor: first, head: first)
             fixture.expo.layoutIfNeeded()
             let handles = fixture.drawing.selectionHandles()
             XCTAssertEqual(handles.count, 2)
@@ -404,7 +404,7 @@ final class TableIntegrationTests: XCTestCase {
             positions = try fixture.positions()
             let wide = positions[Integration.wideCell]
             let later = positions[Integration.laterCell]
-            try EditorTableInputTests.selectCells(anchor: wide, head: later, adapter: fixture.adapter, view: fixture.view)
+            try fixture.view.textView.selectTableCells(adapter: fixture.adapter, anchor: wide, head: later)
             let root = fixture.view.textView
             XCTAssertTrue(root.becomeFirstResponder())
             fixture.expo.layoutIfNeeded()
@@ -465,8 +465,8 @@ final class TableIntegrationTests: XCTestCase {
     func testRemoteTableDeletionUnderAnOpenCellMenuDropsTheSelectionAndRectangleButKeepsTheCursor() throws {
         try withTable(Integration.irregularDocument) { fixture in
             let positions = try fixture.positions()
-            try EditorTableInputTests.selectCells(anchor: positions[Integration.tallCell], head: positions[Integration.wideCell],
-                                                  adapter: fixture.adapter, view: fixture.view)
+            try fixture.view.textView.selectTableCells(adapter: fixture.adapter,
+                                                       anchor: positions[Integration.tallCell], head: positions[Integration.wideCell])
             XCTAssertTrue(fixture.view.textView.becomeFirstResponder())
             fixture.expo.layoutIfNeeded()
             fixture.surface.presentCellEditMenu()

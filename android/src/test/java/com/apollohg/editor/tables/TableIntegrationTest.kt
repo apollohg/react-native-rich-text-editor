@@ -119,10 +119,12 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         fun applyRemoteCommand(command: JSONObject) = remote.applyCommand(command)
 
         fun applyRemoteTextSelection(scalar: Int) =
-            remote.applySelection(adapter.selectionEnvelope(scalar, scalar, REMOTE_SELECTION_AFFINITY))
+            remote.applySelection(
+                adapter.selectionEnvelope(scalar, scalar, REMOTE_SELECTION_AFFINITY).getJSONObject("selection")
+            )
 
         fun applyRemoteCellSelection(anchor: Int, head: Int) =
-            remote.applySelection(JSONObject().put("selection", documentCellSelection(anchor, head)))
+            remote.applySelection(documentCellSelection(anchor, head))
 
         fun deliverRemoteCommit() {
             view.applyRemoteCommitRefresh(token)

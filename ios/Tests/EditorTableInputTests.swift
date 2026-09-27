@@ -154,8 +154,8 @@ final class EditorTableInputTests: XCTestCase {
         let rawCells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
         let positions = try rawCells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
         if let cellSelection {
-            try Self.selectCells(anchor: positions[cellSelection.anchor], head: positions[cellSelection.head],
-                                 adapter: adapter, view: view)
+            try view.textView.selectTableCells(adapter: adapter,
+                                               anchor: positions[cellSelection.anchor], head: positions[cellSelection.head])
         }
         view.layoutIfNeeded()
         let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
@@ -165,13 +165,6 @@ final class EditorTableInputTests: XCTestCase {
         try body(MountedTableFixture(view: view, adapter: adapter, tableID: tableID,
                                       positions: positions, surface: surface, drawing: drawing,
                                       updates: updates))
-    }
-
-    static func selectCells(anchor: UInt32, head: UInt32, adapter: EditorV2Adapter,
-                            view: RichTextEditorView) throws {
-        let request = adapter.applyLocalSelection(documentCellSelection(anchor: anchor, head: head))
-        XCTAssertNil(request.error)
-        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
     }
 
     func testMountedHeadDragPublishesExactCellSelectionWithoutDocumentMutation() throws {

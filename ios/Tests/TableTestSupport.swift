@@ -29,11 +29,15 @@ final class RemoteTablePeer {
     }
 }
 
+private let cellSelectionType = "cell"
+private let documentPositionKind = "document"
+private let roomInitializationType = "room"
+
 func documentCellSelection(anchor: UInt32, head: UInt32) -> [String: Any] {
     [
-        "type": "cell",
-        "anchorCell": ["kind": "document", "offset": Int(anchor)],
-        "headCell": ["kind": "document", "offset": Int(head)]
+        "type": cellSelectionType,
+        "anchorCell": ["kind": documentPositionKind, "offset": Int(anchor)],
+        "headCell": ["kind": documentPositionKind, "offset": Int(head)]
     ]
 }
 
@@ -105,7 +109,7 @@ struct TableRoomSeed {
         let metadata = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(snapshot.metadataJson.utf8)) as? [String: Any])
         var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(localConfigJson.utf8)) as? [String: Any])
         config["initialization"] = [
-            "type": "room",
+            "type": roomInitializationType,
             "documentId": try XCTUnwrap(metadata["documentId"]),
             "lineageId": try XCTUnwrap(metadata["lineageId"]),
             "snapshot": metadata
@@ -137,6 +141,14 @@ extension PreparedProseDrawingView {
         try XCTUnwrap(mountedTablePresentation()?.cells.first {
             $0.surface.identity == tableID && $0.sourcePosition == Int(position) && $0.cell.sourceCellIndex != nil
         }, "cell \(position) is not presented")
+    }
+}
+
+extension EditorTextView {
+    func selectTableCells(adapter: EditorV2Adapter, anchor: UInt32, head: UInt32) throws {
+        let request = adapter.applyLocalSelection(documentCellSelection(anchor: anchor, head: head))
+        XCTAssertNil(request.error, "engine rejected the selection: \(String(describing: request.error))")
+        XCTAssertTrue(applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
     }
 }
 

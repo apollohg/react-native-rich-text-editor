@@ -15,6 +15,7 @@ private const val CELL_SELECTION_TYPE = "cell"
 private const val DOCUMENT_POSITION_KIND = "document"
 private const val COLLABORATION_NOW_MILLIS = "0"
 private const val MAXIMUM_RELAY_ROUNDS = 64
+private const val ROOM_INITIALIZATION_TYPE = "room"
 
 internal class RemoteTablePeer(private val adapter: EditorV2Adapter, requestIdBase: Long) {
     private var nextRequestId = requestIdBase
@@ -31,7 +32,7 @@ internal class RemoteTablePeer(private val adapter: EditorV2Adapter, requestIdBa
         apply(JSONObject().put("command", command)) { id, request -> UniffiEditorV2Backend.applyCommand(id, request) }
 
     fun applySelection(selection: JSONObject) =
-        apply(selection) { id, request -> UniffiEditorV2Backend.setSelection(id, request) }
+        apply(JSONObject().put("selection", selection)) { id, request -> UniffiEditorV2Backend.setSelection(id, request) }
 }
 
 internal fun documentCellSelection(anchor: Int, head: Int): JSONObject {
@@ -61,7 +62,7 @@ internal fun EditorEditText.selectTableCells(adapter: EditorV2Adapter, anchor: I
     assertTrue(applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
 }
 
-private fun <T> EditorV2CallResult<T>.required(operation: String): T = when (this) {
+internal fun <T> EditorV2CallResult<T>.required(operation: String): T = when (this) {
     is EditorV2CallResult.Ok -> value
     is EditorV2CallResult.Err -> throw AssertionError("$operation failed: ${error.code}: ${error.message}")
 }
@@ -115,7 +116,7 @@ internal class TableRoomSeed(localConfigJson: String, documentJson: String) {
             val (metadataJson, state) = UniffiEditorV2Backend.snapshotExport(builderId).required("snapshot export")
             val metadata = JSONObject(metadataJson)
             configJson = JSONObject(localConfigJson).put("initialization", JSONObject()
-                .put("type", "room")
+                .put("type", ROOM_INITIALIZATION_TYPE)
                 .put("documentId", metadata.getString("documentId"))
                 .put("lineageId", metadata.getString("lineageId"))
                 .put("snapshot", metadata)).toString()

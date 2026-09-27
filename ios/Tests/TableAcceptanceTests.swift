@@ -24,6 +24,7 @@ final class TableAcceptanceTests: XCTestCase {
         static let insertTable = "insertTable"
         static let deleteTableRows = "deleteTableRows"
         static let textSelection = "text"
+        static let caretAffinity = "before"
         static let tableNode = "table"
         static let rowNode = "table_row"
         static let cellNode = "table_cell"
@@ -270,9 +271,8 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertTrue(secondBody === input, "rebinding reuses the single cell input")
         secondBody.insertText(Acceptance.bodyText)
         positions = try harness.positions()
-        try EditorTableInputTests.selectCells(anchor: positions[Acceptance.tableColumns],
-                                              head: positions[Acceptance.tableColumns + 1],
-                                              adapter: adapter, view: harness.view)
+        try harness.view.textView.selectTableCells(adapter: adapter,
+                                                   anchor: positions[Acceptance.tableColumns], head: positions[Acceptance.tableColumns + 1])
         harness.expo.layoutIfNeeded()
         let bodyPair: Set<Int> = [Int(positions[Acceptance.tableColumns]), Int(positions[Acceptance.tableColumns + 1])]
         XCTAssertEqual(try harness.selectedCells(), bodyPair)
@@ -303,9 +303,8 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(try harness.selectedCells(), [Int(positions[Acceptance.tableColumns])],
                        "split keeps the content-holding top-left cell selected")
 
-        try EditorTableInputTests.selectCells(anchor: positions[Acceptance.tableColumns * 2],
-                                              head: positions[Acceptance.tableColumns * 2 + 1],
-                                              adapter: adapter, view: harness.view)
+        try harness.view.textView.selectTableCells(adapter: adapter,
+                                                   anchor: positions[Acceptance.tableColumns * 2], head: positions[Acceptance.tableColumns * 2 + 1])
         harness.expo.layoutIfNeeded()
         XCTAssertTrue(UIApplication.shared.sendAction(#selector(UIResponderStandardEditActions.paste(_:)),
                                                       to: harness.root, from: nil, for: nil))
@@ -325,9 +324,8 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(grid[3].map(\.paragraphs), Array(repeating: [""], count: Acceptance.tableColumns))
         positions = try harness.positions()
         XCTAssertEqual(try harness.selectedCells(), [], "adding a row leaves no cell rectangle")
-        try EditorTableInputTests.selectCells(anchor: positions[Acceptance.tableColumns * 3],
-                                              head: positions[Acceptance.tableColumns * 3],
-                                              adapter: adapter, view: harness.view)
+        try harness.view.textView.selectTableCells(adapter: adapter,
+                                                   anchor: positions[Acceptance.tableColumns * 3], head: positions[Acceptance.tableColumns * 3])
         harness.expo.layoutIfNeeded()
         try harness.perform(Acceptance.deleteRowLabel, onCellAt: positions[Acceptance.tableColumns * 3])
         XCTAssertEqual(try harness.grid().count, Acceptance.tableRows)
@@ -336,9 +334,8 @@ final class TableAcceptanceTests: XCTestCase {
                        "deleting the selected row selects the first real cell of the row above")
 
         positions = try harness.positions()
-        try EditorTableInputTests.selectCells(anchor: positions[Acceptance.tableColumns - 1],
-                                              head: positions[Acceptance.tableColumns - 1],
-                                              adapter: adapter, view: harness.view)
+        try harness.view.textView.selectTableCells(adapter: adapter,
+                                                   anchor: positions[Acceptance.tableColumns - 1], head: positions[Acceptance.tableColumns - 1])
         harness.expo.layoutIfNeeded()
         try harness.perform(Acceptance.addColumnAfterLabel, onCellAt: positions[Acceptance.tableColumns - 1])
         grid = try harness.grid()
@@ -347,8 +344,7 @@ final class TableAcceptanceTests: XCTestCase {
         positions = try harness.positions()
         XCTAssertEqual(try harness.selectedCells(), [], "adding a column leaves no cell rectangle")
         let addedColumnHeader = positions[Acceptance.tableColumns]
-        try EditorTableInputTests.selectCells(anchor: addedColumnHeader, head: addedColumnHeader,
-                                              adapter: adapter, view: harness.view)
+        try harness.view.textView.selectTableCells(adapter: adapter, anchor: addedColumnHeader, head: addedColumnHeader)
         harness.expo.layoutIfNeeded()
         try harness.perform(Acceptance.deleteColumnLabel, onCellAt: addedColumnHeader)
         grid = try harness.grid()
@@ -359,7 +355,7 @@ final class TableAcceptanceTests: XCTestCase {
 
         positions = try harness.positions()
         let resizeTarget = positions[Acceptance.tableColumns * 2]
-        try EditorTableInputTests.selectCells(anchor: resizeTarget, head: resizeTarget, adapter: adapter, view: harness.view)
+        try harness.view.textView.selectTableCells(adapter: adapter, anchor: resizeTarget, head: resizeTarget)
         harness.expo.layoutIfNeeded()
         let firstColumn = try harness.presentedCell(positions[Acceptance.tableColumns])
         let edge = try harness.drawing.convert(CGPoint(x: firstColumn.bounds.maxX, y: firstColumn.bounds.midY),
@@ -422,7 +418,8 @@ final class TableAcceptanceTests: XCTestCase {
         defer { destroyV2Editor(id: remoteId) }
         let remoteAdapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: remoteId))
         let relay = try TableCollaborationRelay(editorIds: [adapter.editorId, remoteAdapter.editorId])
-        try relay.exchangeUntilIdle()
+        XCTAssertEqual(try relay.exchangeUntilIdle(), [remoteAdapter.editorId],
+                       "catching up is a remote commit on the remote peer only, so its adapter must refresh before editing")
         XCTAssertEqual(remoteAdapter.documentJson(), adapter.documentJson(), "the remote peer catches up once")
         let localBeforeRemote = try harness.engineSelection()
         XCTAssertEqual(localBeforeRemote["type"] as? String, Acceptance.textSelection,
@@ -450,20 +447,27 @@ final class TableAcceptanceTests: XCTestCase {
         let resolved = try harness.engineSelection()
         XCTAssertEqual(resolved["type"] as? String, Acceptance.textSelection, "\(resolved)")
         XCTAssertEqual(resolved["anchor"] as? Int, localBeforeRemote["anchor"] as? Int,
-                       "the local caret keeps its pre-change document offset: \(resolved) before \(localBeforeRemote)")
-        XCTAssertEqual(resolved["head"] as? Int, localBeforeRemote["head"] as? Int, "\(resolved)")
-        XCTAssertGreaterThan(resolved["anchor"] as? Int ?? 0, Int(tableEnd), "the stale offset now lies in the prose after the table")
+                       "KNOWN DEFECT: local caret not remapped after a remote row delete: \(resolved) before \(localBeforeRemote)")
+        XCTAssertEqual(resolved["head"] as? Int, localBeforeRemote["head"] as? Int,
+                       "KNOWN DEFECT: local caret not remapped after a remote row delete: \(resolved)")
+        XCTAssertGreaterThan(resolved["anchor"] as? Int ?? 0, Int(tableEnd),
+                             "KNOWN DEFECT: local caret not remapped after a remote row delete, so it lands after the table")
         XCTAssertEqual(try harness.selectedCells(), [], "no cell rectangle survives the remote deletion")
         let historyAfterRemote = try XCTUnwrap(adapter.historyFlags())
-        XCTAssertEqual(historyAfterRemote.canUndo, historyBeforeRemote.canUndo, "the remote change adds no local history")
         XCTAssertEqual(historyAfterRemote.canRedo, historyBeforeRemote.canRedo, "the remote change adds no local history")
+        XCTAssertTrue(historyAfterRemote.canUndo,
+                      "KNOWN DEFECT: canUndo stays true after a remote row delete removed the only local undo item")
         let afterRemote = try harness.documentJSON()
-        _ = adapter.undo()
+        XCTAssertNil(adapter.undo(), "KNOWN DEFECT: local undo is refused after a remote row delete while canUndo is true")
         harness.expo.layoutIfNeeded()
         XCTAssertEqual(try harness.documentJSON(), afterRemote, "local undo never restores the remote deletion")
 
-        let tableBeforeDirection = try harness.documentJSON()
         positions = try harness.positions()
+        try harness.root.selectTableCells(adapter: adapter, anchor: positions[0], head: positions[1])
+        harness.expo.layoutIfNeeded()
+        let rectangleBeforeDirection = try harness.cellsAt(0, 1)
+        XCTAssertEqual(try harness.selectedCells(), rectangleBeforeDirection)
+        let tableBeforeDirection = try harness.documentJSON()
         let ltrFirst = try harness.presentedCell(positions[0]).bounds
         let ltrSecond = try harness.presentedCell(positions[1]).bounds
         XCTAssertLessThan(ltrFirst.minX, ltrSecond.minX)
@@ -474,7 +478,17 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertGreaterThan(rtlFirst.minX, rtlSecond.minX, "right-to-left mirrors the logical columns")
         XCTAssertEqual(rtlFirst.width, ltrFirst.width, accuracy: Acceptance.geometryAccuracy)
         XCTAssertEqual(try harness.documentJSON(), tableBeforeDirection, "direction is presentation only")
-        XCTAssertEqual(try harness.selectedCells(), [], "direction never changes the selected cells")
+        XCTAssertEqual(try harness.selectedCells(), rectangleBeforeDirection, "direction never changes the selected cells")
+        let proseCaret = try XCTUnwrap(resolved["anchorScalar"] as? Int)
+        let caretRequest = adapter.callWithEnvelope(adapter.selectionEnvelope(
+            anchor: UInt32(proseCaret), head: UInt32(proseCaret), affinity: Acceptance.caretAffinity
+        )) { editorV2SetSelection(editorId: adapter.editorId, requestJson: $0) }
+        XCTAssertNil(caretRequest.error, "\(String(describing: caretRequest.error))")
+        XCTAssertTrue(harness.root.applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
+        harness.expo.layoutIfNeeded()
+        XCTAssertEqual(try harness.engineSelection()["type"] as? String, Acceptance.textSelection,
+                       "the caret returns to the trailing prose before the view is destroyed")
+        XCTAssertEqual(try harness.selectedCells(), [])
 
         let beforeRemount = try harness.documentJSON()
         harness.remount()
@@ -485,6 +499,8 @@ final class TableAcceptanceTests: XCTestCase {
         try harness.presentedCell(positions[0])
         let rebound = try harness.bind(cell: positions[Acceptance.tableColumns])
         XCTAssertEqual(harness.activeCell(), positions[Acceptance.tableColumns])
+        XCTAssertEqual(try harness.actionLabels(onCellAt: positions[Acceptance.tableColumns]), [],
+                       "KNOWN DEFECT: a bound cell offers no table actions until the first keystroke")
         rebound.insertText(Acceptance.composedText)
         let reboundLabels = try harness.actionLabels(onCellAt: positions[Acceptance.tableColumns])
         XCTAssertTrue(reboundLabels.contains(Acceptance.addRowAfterLabel),
@@ -546,7 +562,7 @@ final class TableAcceptanceTests: XCTestCase {
 
         let positions = try harness.positions()
         let shortRow = positions[Acceptance.irregularShortRowCell]
-        try EditorTableInputTests.selectCells(anchor: shortRow, head: shortRow, adapter: adapter, view: harness.view)
+        try harness.view.textView.selectTableCells(adapter: adapter, anchor: shortRow, head: shortRow)
         harness.expo.layoutIfNeeded()
         XCTAssertEqual(try harness.actionLabels(onCellAt: shortRow), Acceptance.irregularCellActions,
                        "a real cell of the raw table offers exactly these actions")
@@ -556,7 +572,7 @@ final class TableAcceptanceTests: XCTestCase {
         harness.remount()
         XCTAssertEqual(try harness.grid(), raw, "rebinding never repairs the raw table")
         XCTAssertEqual(adapter.baseDocumentRevision, revision)
-        try EditorTableInputTests.selectCells(anchor: shortRow, head: shortRow, adapter: adapter, view: harness.view)
+        try harness.view.textView.selectTableCells(adapter: adapter, anchor: shortRow, head: shortRow)
         harness.expo.layoutIfNeeded()
         XCTAssertEqual(try harness.actionLabels(onCellAt: shortRow), Acceptance.irregularCellActions,
                        "the same actions are offered after the rebind")

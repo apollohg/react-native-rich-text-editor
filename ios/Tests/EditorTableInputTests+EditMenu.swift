@@ -157,7 +157,7 @@ extension EditorTableInputTests {
             let opening = try XCTUnwrap(EditorV2Adapter.uint32Field(
                 try XCTUnwrap((nested["cells"] as? [[String: Any]])?.first), "sourcePos"
             ))
-            try Self.selectCells(anchor: opening, head: opening, adapter: fixture.adapter, view: fixture.view)
+            try fixture.view.textView.selectTableCells(adapter: fixture.adapter, anchor: opening, head: opening)
             XCTAssertTrue(fixture.view.textView.becomeFirstResponder())
             XCTAssertEqual(try menuCommands(for: fixture.view.textView).map(\.action), CellMenu.copyOnly)
         }
@@ -224,9 +224,8 @@ extension EditorTableInputTests {
     func testSelectionChangeClosesTheMenu() throws {
         try withCellMenuTable { fixture in
             try showMenuByTappingSelection(fixture)
-            try Self.selectCells(anchor: fixture.positions[CellMenu.firstCell],
-                                 head: fixture.positions[CellMenu.lastCell],
-                                 adapter: fixture.adapter, view: fixture.view)
+            try fixture.view.textView.selectTableCells(adapter: fixture.adapter,
+                                                       anchor: fixture.positions[CellMenu.firstCell], head: fixture.positions[CellMenu.lastCell])
             XCTAssertFalse(fixture.surface.isCellEditMenuVisible, "a different rectangle closes the menu")
         }
     }
