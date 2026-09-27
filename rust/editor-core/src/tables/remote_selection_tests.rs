@@ -33,11 +33,8 @@ const CELL_AFTER_MERGED_A1: usize = 1;
 const SURROUNDING_TEXT: &str = "prose";
 const LAST_ROW: usize = 2;
 const LAST_COLUMN: usize = 2;
-const PROSE_PARAGRAPHS: [&str; 4] = ["abc", "defghijk", "xyz", "uvw"];
-const INSIDE_FIRST_PARAGRAPH: u32 = 3;
 const SECOND_PARAGRAPH_START: u32 = 6;
-const INSIDE_THIRD_PARAGRAPH: u32 = 17;
-const CARET_IN_SECOND_PARAGRAPH: u32 = 8;
+const INSIDE_FIRST_PARAGRAPH: u32 = 3;
 
 fn grid() -> Value {
     table(
@@ -339,7 +336,7 @@ fn a_local_deletion_whose_row_was_restored_by_undo_stays_undoable_after_a_remote
         "undo restores the row as redone copies"
     );
     exchange(&mut local, &mut remote);
-    type_into_cell(&mut remote, A0);
+    delete_backward_in(&mut remote, A0);
     exchange(&mut remote, &mut local);
     assert!(
         local.engine.can_undo(),
@@ -425,8 +422,8 @@ fn concurrent_local_typing_into_a_remotely_removed_row_is_dropped_from_history()
     );
 }
 
-fn prose_paragraphs() -> Vec<Value> {
-    PROSE_PARAGRAPHS
+fn prose_paragraphs(texts: &[&str]) -> Vec<Value> {
+    texts
         .iter()
         .map(|text| json!({ "type": "paragraph", "content": [{ "type": "text", "text": text }] }))
         .collect()
@@ -463,47 +460,93 @@ fn remote_backspace(remote: &mut EditorSession, anchor: u32, head: u32) -> Value
     document_json(remote)
 }
 
-#[test]
-fn a_remote_paragraph_join_keeps_the_local_caret_in_the_joined_paragraph() {
-    let (mut local, mut remote) = peers(&prose_paragraphs());
-    select_text(
-        &mut local.engine,
-        CARET_IN_SECOND_PARAGRAPH,
-        CARET_IN_SECOND_PARAGRAPH,
-    );
-    let joined = remote_backspace(&mut remote, SECOND_PARAGRAPH_START, SECOND_PARAGRAPH_START);
-    assert_eq!(joined["content"][0]["content"][0]["text"], "abcdefghijk");
-    exchange(&mut remote, &mut local);
-    let joined_paragraph_end = document_of(&local.engine)
-        .node_at(&[0])
-        .expect("the joined paragraph survives")
-        .node_size()
-        - ONE_CHARACTER;
-    let (anchor, head) = resolved_caret(&local.engine).expect("a text caret");
-    assert_eq!(anchor, head);
-    assert!(
-        anchor <= joined_paragraph_end,
-        "a prose join must not push the caret into the next paragraph: {anchor} > {joined_paragraph_end}",
-    );
+struct ProseRemoval {
+    name: &'static str,
+    paragraphs: &'static [&'static str],
+    removed_from: u32,
+    removed_to: u32,
+    local_caret: u32,
+    base_caret: u32,
 }
 
 #[test]
-fn a_remote_prose_range_delete_keeps_the_pre_table_fallback() {
-    let (mut local, mut remote) = peers(&prose_paragraphs());
-    select_text(
-        &mut local.engine,
-        CARET_IN_SECOND_PARAGRAPH,
-        CARET_IN_SECOND_PARAGRAPH,
-    );
-    let remaining = remote_backspace(&mut remote, INSIDE_FIRST_PARAGRAPH, INSIDE_THIRD_PARAGRAPH);
-    assert_eq!(
-        remaining["content"][0]["content"][0]["text"], "abyz",
-        "the remote range delete joins the first and third paragraphs"
-    );
+fn remote_prose_joins_and_range_deletes_keep_the_base_fallback() {
+    for case in [
+        ProseRemoval {
+            name: "join, caret inside the joined paragraph",
+            paragraphs: &["abc", "defghijk", "xyz"],
+            removed_from: SECOND_PARAGRAPH_START,
+            removed_to: SECOND_PARAGRAPH_START,
+            local_caret: 8,
+            base_caret: 8,
+        },
+        ProseRemoval {
+            name: "join, caret at the end of the joined paragraph",
+            paragraphs: &["abc", "defghijk", "xyz"],
+            removed_from: SECOND_PARAGRAPH_START,
+            removed_to: SECOND_PARAGRAPH_START,
+            local_caret: 13,
+            base_caret: 12,
+        },
+        ProseRemoval {
+            name: "join, caret past the shortened paragraph",
+            paragraphs: &["abc", "def", "ghi"],
+            removed_from: SECOND_PARAGRAPH_START,
+            removed_to: SECOND_PARAGRAPH_START,
+            local_caret: 8,
+            base_caret: 7,
+        },
+        ProseRemoval {
+            name: "range delete across three paragraphs",
+            paragraphs: &["abc", "def", "ghi", "jkl"],
+            removed_from: INSIDE_FIRST_PARAGRAPH,
+            removed_to: 12,
+            local_caret: 6,
+            base_caret: 5,
+        },
+        ProseRemoval {
+            name: "range delete ending in the third paragraph",
+            paragraphs: &["abc", "defghijk", "xyz", "uvw"],
+            removed_from: INSIDE_FIRST_PARAGRAPH,
+            removed_to: 17,
+            local_caret: 8,
+            base_caret: 8,
+        },
+    ] {
+        let (mut local, mut remote) = peers(&prose_paragraphs(case.paragraphs));
+        select_text(&mut local.engine, case.local_caret, case.local_caret);
+        let removed = remote_backspace(&mut remote, case.removed_from, case.removed_to);
+        exchange(&mut remote, &mut local);
+        assert_eq!(
+            resolved_caret(&local.engine),
+            Some((case.base_caret, case.base_caret)),
+            "{}: prose removals without table structure keep the pre-table fallback in {removed}",
+            case.name,
+        );
+    }
+}
+
+#[test]
+fn a_local_deletion_whose_redone_row_is_removed_remotely_is_dropped() {
+    let (mut local, mut remote) = peers(&[grid(), prose()]);
+    delete_backward_in(&mut local, C2);
+    apply(&mut local, TableCommand::DeleteTableRows);
+    undo(&mut local);
+    exchange(&mut local, &mut remote);
+    place_caret(&mut remote.engine, C2);
+    apply(&mut remote, TableCommand::DeleteTableRows);
     exchange(&mut remote, &mut local);
-    assert_eq!(
-        resolved_caret(&local.engine),
-        Some((CARET_IN_SECOND_PARAGRAPH, CARET_IN_SECOND_PARAGRAPH)),
-        "removed prose without table structure keeps the base fallback instead of the table slot climb",
+    assert!(
+        !local.engine.can_undo(),
+        "the redone copy of the backspace's row is gone too, so undo cannot restore anything",
     );
+    let settled = document_json(&local);
+    let (engine, outbox) = local.engine_and_outbox();
+    assert_eq!(
+        engine
+            .undo_with_outbox(REQUEST_ID, outbox)
+            .expect("an unavailable undo is not an error"),
+        None,
+    );
+    assert_eq!(document_json(&local), settled);
 }

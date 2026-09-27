@@ -570,11 +570,16 @@ fn apply_update_bytes(
     doc: &Doc,
     bytes: &[u8],
     origin: TransactionOrigin,
-) -> OperationResult<()> {
+) -> OperationResult<bool> {
     apply_update_bytes_with_origin(request_id, doc, bytes, origin.as_yrs_origin())
 }
 
-fn update_removes_content(request_id: u64, bytes: &[u8]) -> OperationResult<bool> {
+fn apply_update_bytes_with_origin(
+    request_id: u64,
+    doc: &Doc,
+    bytes: &[u8],
+    origin: Origin,
+) -> OperationResult<bool> {
     if bytes.is_empty() {
         return Ok(false);
     }
@@ -585,34 +590,15 @@ fn update_removes_content(request_id: u64, bytes: &[u8]) -> OperationResult<bool
             format!("cannot decode bounded history replay event: {error}"),
         )
     })?;
-    Ok(!update.delete_set().is_empty())
-}
-
-fn apply_update_bytes_with_origin(
-    request_id: u64,
-    doc: &Doc,
-    bytes: &[u8],
-    origin: Origin,
-) -> OperationResult<()> {
-    if bytes.is_empty() {
-        return Ok(());
-    }
-    let update = Update::decode_v1(bytes).map_err(|error| {
+    let mut txn = doc.transact_mut_with(origin);
+    txn.apply_update(update).map_err(|error| {
         OperationError::engine_invariant_failed(
             request_id,
             None,
-            format!("cannot decode bounded history replay event: {error}"),
+            format!("cannot apply bounded history replay event: {error}"),
         )
     })?;
-    doc.transact_mut_with(origin)
-        .apply_update(update)
-        .map_err(|error| {
-            OperationError::engine_invariant_failed(
-                request_id,
-                None,
-                format!("cannot apply bounded history replay event: {error}"),
-            )
-        })
+    Ok(!txn.delete_set().is_empty())
 }
 
 fn add_id_set_units(mut total: u64, set: &IdSet, request_id: u64) -> OperationResult<u64> {

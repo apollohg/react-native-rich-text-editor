@@ -379,16 +379,17 @@ fn ids_of(set: &IdSet) -> impl Iterator<Item = ID> + '_ {
     })
 }
 
-fn was_redone<T: ReadTxn>(txn: &T, container: ID) -> bool {
+fn redone_copy_survives<T: ReadTxn>(txn: &T, container: ID) -> bool {
     StickyIndex::new(IndexScope::Nested(container), Assoc::After)
         .get_offset(txn)
-        .is_some_and(|offset| offset.branch.id() != BranchID::Nested(container))
+        .is_some_and(|offset| {
+            offset.branch.id() != BranchID::Nested(container) && !offset.branch.is_deleted()
+        })
 }
 
 fn redo_can_restore<T: ReadTxn>(
     txn: &T,
     fragment_name: &str,
-    deleted: &IdSet,
     item: &StackItem<HistoryMetadata>,
     id: ID,
 ) -> bool {
@@ -402,7 +403,7 @@ fn redo_can_restore<T: ReadTxn>(
         match offset.branch.id() {
             BranchID::Root(name) => return name.as_ref() == fragment_name,
             BranchID::Nested(parent) => {
-                if !deleted.contains(&parent) || was_redone(txn, parent) {
+                if !offset.branch.is_deleted() || redone_copy_survives(txn, parent) {
                     return true;
                 }
                 if !item.deletions().contains(&parent) || item.insertions().contains(&parent) {
@@ -442,10 +443,10 @@ impl YrsHistory {
             return false;
         }
         let txn = doc.transact();
-        let deleted = txn.snapshot().delete_set;
-        id_set_contains_all(&deleted, top.insertions())
+        (top.insertions().is_empty()
+            || id_set_contains_all(&txn.snapshot().delete_set, top.insertions()))
             && !ids_of(top.deletions())
                 .filter(|id| !top.insertions().contains(id))
-                .any(|id| redo_can_restore(&txn, &fragment_name, &deleted, top, id))
+                .any(|id| redo_can_restore(&txn, &fragment_name, top, id))
     }
 }

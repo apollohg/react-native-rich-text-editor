@@ -428,58 +428,50 @@ pub(super) fn surviving_selection<T: ReadTxn>(
     position_map: &PositionMap,
     table_index: &TableProjectionIndex,
 ) -> Selection {
-    let surviving = |point: &RelativePoint, legacy: u32| {
-        surviving_relative_point_to_doc_pos(txn, fragment, point, schema).unwrap_or(legacy)
-    };
-    match (relative, legacy) {
-        (
-            RelativeSelection::Text { anchor, head },
-            Selection::Text {
-                anchor: legacy_anchor,
-                head: legacy_head,
-            },
-        ) => text_selection_near_mapped(
-            position_map,
-            document,
-            surviving(anchor, legacy_anchor),
-            surviving(head, legacy_head),
-        ),
-        (
-            RelativeSelection::Cell { anchor, head },
-            Selection::Cell {
-                anchor: legacy_anchor,
-                head: legacy_head,
-            },
-        ) => {
-            let (anchor, head) = (
-                surviving(anchor, legacy_anchor),
-                surviving(head, legacy_head),
-            );
-            if cell_pair_is_usable(table_index, anchor, head, CellSelectionOrigin::Preserved) {
-                Selection::cell(anchor, head)
-            } else {
-                text_selection_between(position_map, document, anchor, head)
+    let surviving =
+        |point: &RelativePoint| surviving_relative_point_to_doc_pos(txn, fragment, point, schema);
+    match (relative, &legacy) {
+        (RelativeSelection::Text { anchor, head }, Selection::Text { .. }) => {
+            if let (Some(anchor), Some(head)) = (surviving(anchor), surviving(head)) {
+                return text_selection_near_mapped(position_map, document, anchor, head);
             }
         }
-        (RelativeSelection::Node { point }, Selection::Node { pos }) => {
-            affinity_aware_mapped_selection(
-                &Selection::node(surviving(point, pos)),
-                relative,
-                &StepMap::empty(),
-                document,
-                schema,
-                Some(position_map),
-            )
+        (RelativeSelection::Cell { anchor, head }, Selection::Cell { .. }) => {
+            if let (Some(anchor), Some(head)) = (surviving(anchor), surviving(head)) {
+                return if cell_pair_is_usable(
+                    table_index,
+                    anchor,
+                    head,
+                    CellSelectionOrigin::Preserved,
+                ) {
+                    Selection::cell(anchor, head)
+                } else {
+                    text_selection_between(position_map, document, anchor, head)
+                };
+            }
         }
-        (_, legacy) => affinity_aware_mapped_selection(
-            &legacy,
-            relative,
-            &StepMap::empty(),
-            document,
-            schema,
-            Some(position_map),
-        ),
+        (RelativeSelection::Node { point }, Selection::Node { .. }) => {
+            if let Some(pos) = surviving(point) {
+                return affinity_aware_mapped_selection(
+                    &Selection::node(pos),
+                    relative,
+                    &StepMap::empty(),
+                    document,
+                    schema,
+                    Some(position_map),
+                );
+            }
+        }
+        _ => {}
     }
+    affinity_aware_mapped_selection(
+        &legacy,
+        relative,
+        &StepMap::empty(),
+        document,
+        schema,
+        Some(position_map),
+    )
 }
 
 pub(super) fn cached_transition_render_update(

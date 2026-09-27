@@ -344,10 +344,8 @@ impl YrsHistory {
                     });
                 }
                 ReplayEvent::Excluded { update, origin, .. } => {
-                    apply_update_bytes(request_id, doc, update, *origin)?;
-                    if *origin == TransactionOrigin::RemoteSync
-                        && update_removes_content(request_id, update)?
-                    {
+                    let removed_content = apply_update_bytes(request_id, doc, update, *origin)?;
+                    if *origin == TransactionOrigin::RemoteSync && removed_content {
                         candidate.drop_unrevertible_stack_tops(doc, fragment);
                     }
                     replayed_events.push(event.clone());
@@ -386,7 +384,8 @@ impl YrsHistory {
             doc,
             &self.epoch_baseline,
             TransactionOrigin::RemoteSync,
-        )
+        )?;
+        Ok(())
     }
 
     pub(crate) fn can_undo(&self) -> bool {

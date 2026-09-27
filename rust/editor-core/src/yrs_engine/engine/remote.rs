@@ -647,17 +647,17 @@ impl YrsDocumentEngine {
                     next_state_revision,
                     next_epoch,
                 } = *install;
-                let removes_content = !live_update.delete_set().is_empty();
-                {
+                let removed_content = {
                     let mut txn = self.doc.transact_mut_with(history_admission.yrs_origin());
                     txn.apply_update(live_update).expect(
                         "candidate-proved remote update must apply to identical live state",
                     );
-                }
+                    !txn.delete_set().is_empty()
+                };
                 next_state.mutation_lookup_seed = prepared_live_seed;
                 self.history
                     .finish_prepared_excluded(history_admission, accepted_update);
-                if removes_content {
+                if removed_content {
                     let fragment = self
                         .doc
                         .get_or_insert_xml_fragment(self.fragment_name.as_str());
