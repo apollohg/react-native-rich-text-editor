@@ -109,7 +109,7 @@ extension EditorV2Adapter {
         if nativeOwnerId != nil {
             var intent = nativeIntent("insertText", anchor: scalarPos, head: scalarPos)
             intent["text"] = text
-            return performNativeIntent(intent)?.updateJSON
+            return performNativeIntentAdoptingStaleEpochRecovery(intent)
         }
         let postCaret = scalarPos &+ EditorV2PositionBridge.scalarLength(of: text)
         return performMutation(
@@ -131,7 +131,7 @@ extension EditorV2Adapter {
         if nativeOwnerId != nil {
             var intent = nativeIntent("replaceSelectionText", anchor: from, head: to)
             intent["text"] = text
-            return performNativeIntent(intent)?.updateJSON
+            return performNativeIntentAdoptingStaleEpochRecovery(intent)
         }
         let postCaret = from &+ EditorV2PositionBridge.scalarLength(of: text)
         // A range-replacing commit (autocorrect, paste-over-selection, IME

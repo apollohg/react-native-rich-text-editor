@@ -729,6 +729,8 @@ const REMOTE_PROSE_TEXT: &str = "R";
 const CELL_REMOVED_CODE: &str = "POSITION_EPOCH_CELL_REMOVED";
 const TWO_PARAGRAPH_CELL_DOCUMENT: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"First"}]},{"type":"paragraph","content":[{"type":"text","text":"Extra"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Second"}]}]}]}]}]}"#;
 const FIRST_PARAGRAPH_TEXT: &str = "First";
+const SECOND_PARAGRAPH_TEXT: &str = "Extra";
+const EMPTY_CELLS_DOCUMENT: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph"}]},{"type":"table_cell","content":[{"type":"paragraph"}]}]}]}]}"#;
 const PARAGRAPH_BREAK_SCALARS: u32 = 1;
 
 struct PinnedCellCommit {
@@ -952,10 +954,75 @@ fn cell_commit_after_a_remote_peer_joins_its_paragraph_stays_in_that_cell() {
         document["content"][0]["content"][0]["text"],
         PROSE_PREFIX_TEXT
     );
-    assert!(
-        document["content"][1]["content"][0]["content"][0]
-            .to_string()
-            .contains(COMPOSED_TEXT),
+    assert_eq!(
+        document["content"][1]["content"][0]["content"][0]["content"],
+        serde_json::json!([{
+            "type": "paragraph",
+            "content": [{
+                "type": "text",
+                "text": format!("{FIRST_PARAGRAPH_TEXT}{SECOND_PARAGRAPH_TEXT}{COMPOSED_TEXT}"),
+            }],
+        }]),
         "the composed text stays in its cell: {document}"
     );
+}
+
+#[test]
+fn cell_commit_after_a_remote_header_toggle_of_its_cell_stays_in_that_cell() {
+    let mut session = table_session_with(PROSE_AND_GRID_DOCUMENT);
+    let pinned = pin_cell_commit(&mut session);
+    apply_remote_peer_edit(&mut session, |replica| {
+        remote_command_at(
+            replica,
+            pinned.scalar,
+            pinned.scalar,
+            TypedCommand::Table(TableCommand::ToggleTableHeader {
+                target: crate::tables::commands::TableHeaderTarget::Cell,
+            }),
+        );
+    });
+    let remote_revision = session.engine.revision();
+    let remote_cell =
+        session.engine.document_json().unwrap()["content"][1]["content"][0]["content"][0].clone();
+    assert_eq!(remote_cell["type"], "table_header", "{remote_cell}");
+
+    let outcome = submit_cell_commit(&mut session, &pinned);
+
+    let outcome = outcome.expect("the retyped cell is the same logical cell");
+    assert_eq!(outcome["type"], "transaction", "{outcome}");
+    assert_eq!(session.engine.revision(), remote_revision + 1);
+    let cell =
+        session.engine.document_json().unwrap()["content"][1]["content"][0]["content"][0].clone();
+    assert_eq!(cell["type"], "table_header", "{cell}");
+    assert_eq!(
+        first_grid_cell_text(&session),
+        format!("{COMPOSED_TEXT}First"),
+        "{outcome}"
+    );
+}
+
+#[test]
+fn cell_commit_after_a_remote_deletion_of_its_empty_column_is_not_retargeted_to_the_identical_neighbor(
+) {
+    let mut session = table_session_with(EMPTY_CELLS_DOCUMENT);
+    let pinned = pin_cell_commit(&mut session);
+
+    apply_remote_peer_edit(&mut session, |replica| {
+        remote_command_at(
+            replica,
+            pinned.scalar,
+            pinned.scalar,
+            TypedCommand::Table(TableCommand::DeleteTableColumns),
+        );
+    });
+    assert_eq!(
+        session.engine.document_json().unwrap()["content"][1]["content"][0]["content"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "the empty neighbor now occupies the composing cell's grid slot"
+    );
+
+    assert_cell_commit_refused_without_mutation(&mut session, &pinned);
 }

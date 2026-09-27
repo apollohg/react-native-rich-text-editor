@@ -32,6 +32,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -435,7 +436,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             val composedRevision = fixture.adapter.baseDocumentRevision
             assertEquals("a committed composition is exactly one mutation", startRevision + 1u, composedRevision)
             val composed = requireNotNull(fixture.adapter.documentJson())
-            assertTrue(composed, composed.contains(textNode(COMPOSITION_TEXT + "wide")))
+            assertTrue(composed, composed.contains(textNode(COMPOSITION_TEXT + WIDE_TEXT)))
 
             positions = fixture.positions()
             val wide = positions[WIDE_CELL]
@@ -472,8 +473,8 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
 
             assertEquals("cut is exactly one mutation", composedRevision + 1u, fixture.adapter.baseDocumentRevision)
             val cut = requireNotNull(fixture.adapter.documentJson())
-            assertFalse(cut, cut.contains(textNode(COMPOSITION_TEXT + "wide")) || cut.contains(textNode("later")))
-            assertTrue(cut, cut.contains(textNode("tall")))
+            assertFalse(cut, cut.contains(textNode(COMPOSITION_TEXT + WIDE_TEXT)) || cut.contains(textNode(LATER_TEXT)))
+            assertTrue(cut, cut.contains(textNode(TALL_TEXT)))
             assertEquals(IRREGULAR_RECTANGLE_TSV, requireNotNull(clipboard().primaryClip).getItemAt(0).text.toString())
             assertTrue("cut keeps the cell selection", fixture.root.authoritativeCellSelectionActive)
 
@@ -547,7 +548,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             fixture.applyRemoteCommand(JSONObject().put("type", DELETE_TABLE_ROWS))
             val remoteDocument = requireNotNull(fixture.adapter.documentJson())
             assertFalse("the remote peer removed the composing cell's row: $remoteDocument",
-                remoteDocument.contains(textNode("D")))
+                remoteDocument.contains(textNode(GRID_LAST_TEXT)))
             fixture.deliverRemoteCommit()
             composing.connection.finishComposingText()
             fixture.relayout()
@@ -575,10 +576,34 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             fixture.relayout()
 
             val document = requireNotNull(fixture.adapter.documentJson())
-            assertTrue(document, document.contains(textNode(REMOTE_PROSE_TEXT + "before")))
+            assertTrue(document, document.contains(textNode(REMOTE_PROSE_TEXT + PROSE_BEFORE_TABLE_TEXT)))
             assertTrue("the composition lands in its moved cell: $document",
-                document.contains(textNode(STALE_COMPOSITION_TEXT + "tall")))
+                document.contains(textNode(STALE_COMPOSITION_TEXT + TALL_TEXT)))
             assertEquals("one remote edit and one composition commit", revision + 2u, fixture.adapter.baseDocumentRevision)
+            assertFalse(composing.input.hasPendingCompositionForExternalRefresh())
+        }
+
+    @Test
+    fun `remote header toggle of the composing cell keeps composing in that cell`() =
+        withTable(IRREGULAR_DOCUMENT) { fixture ->
+            val tall = fixture.positions()[TALL_CELL]
+            val composing = composeStaleText(fixture, tall)
+            val revision = fixture.adapter.baseDocumentRevision
+
+            fixture.applyRemoteCellSelection(tall, tall)
+            fixture.applyRemoteCommand(JSONObject().put("type", TOGGLE_TABLE_HEADER).put("target", HEADER_TARGET_CELL))
+            val remoteDocument = requireNotNull(fixture.adapter.documentJson())
+            assertTrue("the remote peer retyped the cell: $remoteDocument", remoteDocument.contains(HEADER_CELL_NODE))
+            fixture.deliverRemoteCommit()
+            assertTrue(composing.input.hasPendingCompositionForExternalRefresh())
+            composing.connection.finishComposingText()
+            fixture.relayout()
+
+            val document = requireNotNull(fixture.adapter.documentJson())
+            assertTrue("the composition lands in the retyped cell: $document",
+                document.contains(textNode(STALE_COMPOSITION_TEXT + TALL_TEXT)))
+            assertTrue(document, document.contains(HEADER_CELL_NODE))
+            assertEquals("one remote retype and one composition commit", revision + 2u, fixture.adapter.baseDocumentRevision)
             assertFalse(composing.input.hasPendingCompositionForExternalRefresh())
         }
 
@@ -604,10 +629,14 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         assertEquals("the stale composition must not land anywhere", remoteDocument, fixture.adapter.documentJson())
         assertEquals("only the remote change was applied", revision + 1u, fixture.adapter.baseDocumentRevision)
         assertFalse(composing.input.hasPendingCompositionForExternalRefresh())
+        assertNull("the editor retired the composing IME connection", composing.input.activeInputConnection)
+        composing.connection.setComposingText(STALE_COMPOSITION_TEXT, 1)
         val editable = requireNotNull(composing.input.text)
-        assertEquals("the IME composing span is finished", -1, BaseInputConnection.getComposingSpanStart(editable))
+        assertEquals("the released input retired its IME session, so a late composing update is ignored",
+            -1, BaseInputConnection.getComposingSpanStart(editable))
         assertFalse("the marked text is removed from the released input: $editable",
             editable.toString().contains(STALE_COMPOSITION_TEXT))
+        assertEquals("a late composing update is not a mutation", remoteDocument, fixture.adapter.documentJson())
         assertSame("the dead cell input is released", fixture.root, fixture.view.richTextView.activeTextInput)
         assertFalse(fixture.root.text.toString(), fixture.root.text.toString().contains(STALE_COMPOSITION_TEXT))
     }
@@ -709,9 +738,17 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         const val DELETE_TABLE = "deleteTable"
         const val DELETE_TABLE_ROWS = "deleteTableRows"
         const val INSERT_TEXT = "insertText"
+        const val TOGGLE_TABLE_HEADER = "toggleTableHeader"
+        const val HEADER_TARGET_CELL = "cell"
+        const val HEADER_CELL_NODE = "\"type\":\"table_header\""
         const val MERGE_TABLE_CELLS = "mergeTableCells"
         val CELL_MENU_ITEMS = listOf(android.R.id.cut, android.R.id.copy, android.R.id.paste)
         const val TABLE_CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock","htmlTag":"p"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","htmlTag":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row","htmlTag":"tr"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","htmlTag":"td","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","htmlTag":"th","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
+        const val GRID_LAST_TEXT = "D"
+        const val PROSE_BEFORE_TABLE_TEXT = "before"
+        const val TALL_TEXT = "tall"
+        const val WIDE_TEXT = "wide"
+        const val LATER_TEXT = "later"
         const val GRID_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"A"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"B"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"C"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"D"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
         const val SHIFTED_GRID_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"shifted"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"A"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"B"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"C"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"D"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
         const val IRREGULAR_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"later"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""

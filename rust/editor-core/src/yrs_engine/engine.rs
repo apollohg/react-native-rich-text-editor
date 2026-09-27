@@ -8,6 +8,7 @@ mod history_state;
 mod imports;
 mod mutation_context;
 mod outbound;
+mod position_epoch_cells;
 mod remote;
 mod selection_commit;
 mod snapshots;
@@ -515,7 +516,7 @@ impl YrsDocumentEngine {
 
     pub(crate) fn build_position_epoch_boundaries(
         &self,
-    ) -> Option<Vec<crate::position_epoch::BoundaryAnchors>> {
+    ) -> Option<crate::position_epoch::EpochBoundaries> {
         self.debug_assert_derived_revision_keys();
         let state = self.derived_state.as_ref()?;
         let txn = self.doc.transact();
@@ -525,39 +526,69 @@ impl YrsDocumentEngine {
             .checked_add(1)?;
         let mut boundaries = Vec::new();
         boundaries.try_reserve_exact(count).ok()?;
+        let spans = self.cell_pinning(state).spans();
+        let mut open_cells: Vec<usize> = Vec::new();
+        let mut next_cell = 0usize;
         let mut previous: Option<(u32, crate::position_epoch::BoundaryAnchors)> = None;
         for scalar_offset in 0..=state.position_map.total_scalars() {
             let doc_pos = state
                 .position_map
                 .scalar_to_doc(scalar_offset, &state.document);
-            let anchors = if let Some((previous_doc_pos, previous_anchors)) = &previous {
-                if *previous_doc_pos == doc_pos {
-                    previous_anchors.clone()
-                } else {
-                    super::position::boundary_anchors_from_doc_pos(
-                        &txn,
-                        &fragment,
-                        doc_pos,
-                        &self.schema,
-                    )?
+            if previous
+                .as_ref()
+                .is_some_and(|(previous_doc_pos, _)| doc_pos < *previous_doc_pos)
+            {
+                open_cells.clear();
+                next_cell = 0;
+            }
+            while let Some(span) = spans.get(next_cell).filter(|span| span.start < doc_pos) {
+                if doc_pos < span.end {
+                    open_cells.push(next_cell);
                 }
-            } else {
-                super::position::boundary_anchors_from_doc_pos(
+                next_cell += 1;
+            }
+            while open_cells
+                .last()
+                .is_some_and(|open| spans[*open].end <= doc_pos)
+            {
+                open_cells.pop();
+            }
+            let mut anchors = match &previous {
+                Some((previous_doc_pos, previous_anchors)) if *previous_doc_pos == doc_pos => {
+                    previous_anchors.clone()
+                }
+                _ => super::position::boundary_anchors_from_doc_pos(
                     &txn,
                     &fragment,
                     doc_pos,
                     &self.schema,
-                )?
+                )?,
             };
+            anchors.pinned_cell = anchors.table_cell_ancestors.and(open_cells.last().copied());
             previous = Some((doc_pos, anchors.clone()));
             boundaries.push(anchors);
         }
-        Some(boundaries)
+        Some(crate::position_epoch::EpochBoundaries {
+            anchors: boundaries,
+            cells: spans.into_iter().map(|span| span.cell).collect(),
+        })
+    }
+
+    fn cell_pinning<'state>(
+        &'state self,
+        state: &'state super::derived_state::DerivedStateCache,
+    ) -> position_epoch_cells::CellPinning<'state> {
+        position_epoch_cells::CellPinning {
+            document: &state.document,
+            schema: &self.schema,
+            index: &state.table_projection_index,
+            position_map: &state.position_map,
+        }
     }
 
     pub(crate) fn resolve_position_epoch_boundary(
         &self,
-        boundary: &crate::position_epoch::BoundaryAnchors,
+        boundary: &crate::position_epoch::EpochBoundary<'_>,
         affinity: super::Affinity,
         original_offset: u32,
     ) -> Option<crate::position_epoch::ResolvedBoundary> {
@@ -565,25 +596,20 @@ impl YrsDocumentEngine {
         let state = self.derived_state.as_ref()?;
         let txn = self.doc.transact();
         let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
+        let anchors = boundary.anchors;
         let (leaf, ancestors, opposite_leaf, opposite_ancestors) = match affinity {
             super::Affinity::Before => (
-                &boundary.before,
-                &boundary.ancestor_before,
-                &boundary.after,
-                &boundary.ancestor_after,
+                &anchors.before,
+                &anchors.ancestor_before,
+                &anchors.after,
+                &anchors.ancestor_after,
             ),
             super::Affinity::After => (
-                &boundary.after,
-                &boundary.ancestor_after,
-                &boundary.before,
-                &boundary.ancestor_before,
+                &anchors.after,
+                &anchors.ancestor_after,
+                &anchors.before,
+                &anchors.ancestor_before,
             ),
-        };
-        let left_table_cell = |ancestor_depth: Option<usize>| {
-            boundary
-                .table_cell_ancestors
-                .zip(ancestor_depth)
-                .is_some_and(|(cell_depth, depth)| depth >= cell_depth)
         };
         for (fallback, ancestor_depth, sticky) in std::iter::once((false, None, leaf))
             .chain(
@@ -600,20 +626,49 @@ impl YrsDocumentEngine {
                     .map(|(depth, sticky)| (true, Some(depth), sticky)),
             )
         {
-            if let Some(doc_pos) =
+            let Some(doc_pos) =
                 super::position::sticky_index_to_doc_pos(&txn, &fragment, sticky, &self.schema)
-            {
+            else {
+                continue;
+            };
+            let cell_ancestor = anchors
+                .table_cell_ancestors
+                .zip(ancestor_depth)
+                .filter(|(cell_depth, depth)| depth >= cell_depth);
+            let Some((cell_depth, depth)) = cell_ancestor else {
                 return Some(crate::position_epoch::ResolvedBoundary {
                     offset: state.position_map.doc_to_scalar(doc_pos, &state.document),
                     fallback,
-                    left_table_cell: left_table_cell(ancestor_depth),
+                    left_table_cell: false,
                 });
-            }
+            };
+            let retyped_cell_offset = boundary
+                .pinned_cell
+                .filter(|_| depth == cell_depth)
+                .and_then(|pinned| {
+                    self.cell_pinning(state).reanchor_in_retyped_cell(
+                        doc_pos,
+                        pinned,
+                        original_offset,
+                    )
+                });
+            return Some(match retyped_cell_offset {
+                Some(offset) => crate::position_epoch::ResolvedBoundary {
+                    offset,
+                    fallback,
+                    left_table_cell: false,
+                },
+                None => crate::position_epoch::ResolvedBoundary {
+                    offset: state.position_map.doc_to_scalar(doc_pos, &state.document),
+                    fallback,
+                    left_table_cell: true,
+                },
+            });
         }
         Some(crate::position_epoch::ResolvedBoundary {
             offset: original_offset.min(state.position_map.total_scalars()),
             fallback: true,
-            left_table_cell: boundary.table_cell_ancestors.is_some(),
+            left_table_cell: anchors.table_cell_ancestors.is_some(),
         })
     }
 

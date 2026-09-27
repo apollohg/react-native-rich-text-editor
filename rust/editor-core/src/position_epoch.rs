@@ -11,6 +11,31 @@ pub(crate) struct BoundaryAnchors {
     pub(crate) ancestor_before: Vec<StickyIndex>,
     pub(crate) ancestor_after: Vec<StickyIndex>,
     pub(crate) table_cell_ancestors: Option<usize>,
+    pub(crate) pinned_cell: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PinnedTableCell {
+    pub(crate) row: u32,
+    pub(crate) column: u32,
+    pub(crate) rowspan: u32,
+    pub(crate) colspan: u32,
+    pub(crate) table_rows: u32,
+    pub(crate) table_columns: u32,
+    pub(crate) content_scalar_start: u32,
+    pub(crate) content_fingerprint: u64,
+}
+
+#[derive(Debug)]
+pub(crate) struct EpochBoundaries {
+    pub(crate) anchors: Vec<BoundaryAnchors>,
+    pub(crate) cells: Vec<PinnedTableCell>,
+}
+
+pub(crate) struct EpochBoundary<'epoch> {
+    pub(crate) anchors: &'epoch BoundaryAnchors,
+    pub(crate) pinned_cell: Option<&'epoch PinnedTableCell>,
+    pub(crate) document_revision: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +57,7 @@ pub(crate) struct ResolvedEpochRange {
 struct PositionEpoch {
     editor_lineage: u64,
     document_revision: u64,
-    boundaries: Vec<BoundaryAnchors>,
+    boundaries: EpochBoundaries,
     retained_bytes: usize,
 }
 
@@ -89,9 +114,9 @@ impl PositionEpochStore {
         owner_id: u64,
         editor_lineage: u64,
         document_revision: u64,
-        boundaries: Vec<BoundaryAnchors>,
+        boundaries: EpochBoundaries,
     ) -> Result<u64, SessionError> {
-        self.admit_boundary_count(boundaries.len())?;
+        self.admit_boundary_count(boundaries.anchors.len())?;
         let replacing = self.owner_pins.get(&owner_id).copied();
         if replacing.is_none() && self.owner_pins.len() >= self.limits.max_owners {
             return Err(limit_error(
@@ -156,7 +181,7 @@ impl PositionEpochStore {
         epoch_id: u64,
         editor_lineage: u64,
         index: u32,
-    ) -> Result<(&BoundaryAnchors, u64), SessionError> {
+    ) -> Result<EpochBoundary<'_>, SessionError> {
         if self.owner_pins.get(&owner_id).copied() != Some(epoch_id) {
             return Err(invalid_epoch());
         }
@@ -164,8 +189,9 @@ impl PositionEpochStore {
         if epoch.editor_lineage != editor_lineage {
             return Err(invalid_epoch());
         }
-        let boundary = epoch
+        let anchors = epoch
             .boundaries
+            .anchors
             .get(usize::try_from(index).map_err(|_| invalid_epoch())?)
             .ok_or_else(|| {
                 SessionError::new(
@@ -174,7 +200,13 @@ impl PositionEpochStore {
                     "position epoch offset is outside the rendered document",
                 )
             })?;
-        Ok((boundary, epoch.document_revision))
+        Ok(EpochBoundary {
+            anchors,
+            pinned_cell: anchors
+                .pinned_cell
+                .and_then(|cell| epoch.boundaries.cells.get(cell)),
+            document_revision: epoch.document_revision,
+        })
     }
 
     pub(crate) fn release_owner(&mut self, owner_id: u64) {
@@ -193,9 +225,11 @@ impl PositionEpochStore {
     }
 }
 
-fn retained_bytes(boundaries: &[BoundaryAnchors]) -> Result<usize, SessionError> {
-    let mut total = std::mem::size_of_val(boundaries);
-    for boundary in boundaries {
+fn retained_bytes(boundaries: &EpochBoundaries) -> Result<usize, SessionError> {
+    let mut total = std::mem::size_of_val(boundaries.anchors.as_slice())
+        .checked_add(std::mem::size_of_val(boundaries.cells.as_slice()))
+        .ok_or_else(|| limit_error("maxPositionEpochRetainedBytes", usize::MAX, usize::MAX))?;
+    for boundary in &boundaries.anchors {
         for sticky in std::iter::once(&boundary.before)
             .chain(std::iter::once(&boundary.after))
             .chain(boundary.ancestor_before.iter())

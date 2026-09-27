@@ -401,6 +401,7 @@ fn boundary_anchors_in_sequence<'a, T: ReadTxn>(
                             ancestor_before: Vec::new(),
                             ancestor_after: Vec::new(),
                             table_cell_ancestors: None,
+                            pinned_cell: None,
                         });
                     }
                     if doc_pos < consumed_pm + text_scalar_len {
@@ -498,6 +499,7 @@ fn boundary_anchors_at<T: ReadTxn>(
         ancestor_before: Vec::new(),
         ancestor_after: Vec::new(),
         table_cell_ancestors: None,
+        pinned_cell: None,
     })
 }
 

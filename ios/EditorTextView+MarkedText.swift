@@ -164,9 +164,6 @@ extension EditorTextView {
             guard let adoptedUpdateJSON else { return }
             applyUpdateJSON(adoptedUpdateJSON)
         }
-        if adoptedUpdateJSON == nil {
-            restoreAuthorizedTextAfterCancelledCompositionIfNeeded()
-        }
         return adoptedUpdateJSON
     }
 

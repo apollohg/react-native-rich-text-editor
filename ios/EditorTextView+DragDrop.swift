@@ -267,13 +267,7 @@ extension EditorTextView {
     }
 
     func restoreAfterLocalTextDragCleanup() {
-        if textStorage.string != lastAuthorizedText {
-            _ = applyAttributedRender(
-                NSAttributedString(attributedString: lastAuthorizedAttributedTextStorage),
-                usedPatch: false,
-                positionCacheUpdate: .invalidate
-            )
-        }
+        restoreAuthorizedTextSnapshot()
         applyUpdateJSON(
             EditorV2Shadow.getCurrentState(id: editorId),
             notifyDelegate: false

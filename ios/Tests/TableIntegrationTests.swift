@@ -5,6 +5,11 @@ final class TableIntegrationTests: XCTestCase {
         static let gridDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"A"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"B"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"C"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"D"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
         static let shiftedGridDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"shifted"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"A"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"B"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"C"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"D"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
         static let irregularDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"later"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
+        static let gridLastText = "D"
+        static let proseBeforeTableText = "before"
+        static let tallText = "tall"
+        static let wideText = "wide"
+        static let laterText = "later"
         static let wideDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"#
         static let editorSize = CGSize(width: 480, height: 320)
         static let narrowEditorSize = CGSize(width: 360, height: 240)
@@ -35,6 +40,9 @@ final class TableIntegrationTests: XCTestCase {
         static let deleteTable = "deleteTable"
         static let deleteTableRows = "deleteTableRows"
         static let insertText = "insertText"
+        static let toggleTableHeader = "toggleTableHeader"
+        static let headerTargetCell = "cell"
+        static let headerCellNode = #""type":"table_header""#
         static let mergeTableCells = "mergeTableCells"
         static let copy = #selector(UIResponderStandardEditActions.copy(_:))
         static let cut = #selector(UIResponderStandardEditActions.cut(_:))
@@ -409,7 +417,7 @@ final class TableIntegrationTests: XCTestCase {
             let composedRevision = fixture.adapter.baseDocumentRevision
             XCTAssertEqual(composedRevision, startRevision + 1, "a committed composition is exactly one mutation")
             let composed = try XCTUnwrap(fixture.adapter.documentJson())
-            XCTAssertTrue(composed.contains(textNode(Integration.compositionText + "wide")), composed)
+            XCTAssertTrue(composed.contains(textNode(Integration.compositionText + Integration.wideText)), composed)
 
             positions = try fixture.positions()
             let wide = positions[Integration.wideCell]
@@ -453,9 +461,9 @@ final class TableIntegrationTests: XCTestCase {
 
             XCTAssertEqual(fixture.adapter.baseDocumentRevision, composedRevision + 1, "cut is exactly one mutation")
             let cutJSON = try XCTUnwrap(fixture.adapter.documentJson())
-            XCTAssertFalse(cutJSON.contains(textNode(Integration.compositionText + "wide"))
-                           || cutJSON.contains(textNode("later")), cutJSON)
-            XCTAssertTrue(cutJSON.contains(textNode("tall")), cutJSON)
+            XCTAssertFalse(cutJSON.contains(textNode(Integration.compositionText + Integration.wideText))
+                           || cutJSON.contains(textNode(Integration.laterText)), cutJSON)
+            XCTAssertTrue(cutJSON.contains(textNode(Integration.tallText)), cutJSON)
             XCTAssertEqual(UIPasteboard.general.string, Integration.irregularRectangleTSV)
             XCTAssertTrue(root.authoritativeCellSelectionActive, "cut keeps the cell selection")
             let cut = try fixture.documentObject()
@@ -528,7 +536,7 @@ final class TableIntegrationTests: XCTestCase {
             try fixture.applyRemoteCellSelection(anchor: lastRowCell, head: lastRowCell)
             try fixture.applyRemoteCommand(["type": Integration.deleteTableRows])
             let remoteDocument = try XCTUnwrap(fixture.adapter.documentJson())
-            XCTAssertFalse(remoteDocument.contains(textNode("D")), "the remote peer removed the composing cell's row")
+            XCTAssertFalse(remoteDocument.contains(textNode(Integration.gridLastText)), "the remote peer removed the composing cell's row")
             fixture.deliverRemoteCommit()
             input.unmarkText()
 
@@ -553,12 +561,39 @@ final class TableIntegrationTests: XCTestCase {
             input.unmarkText()
 
             let document = try XCTUnwrap(fixture.adapter.documentJson())
-            XCTAssertTrue(document.contains(textNode(Integration.remoteProseText + "before")), document)
-            XCTAssertTrue(document.contains(textNode(Integration.staleCompositionText + "tall")),
+            XCTAssertTrue(document.contains(textNode(Integration.remoteProseText + Integration.proseBeforeTableText)), document)
+            XCTAssertTrue(document.contains(textNode(Integration.staleCompositionText + Integration.tallText)),
                           "the composition lands in its moved cell: \(document)")
             XCTAssertEqual(fixture.adapter.baseDocumentRevision, revision + 2,
                            "one remote edit and one composition commit")
             XCTAssertFalse(input.isComposing)
+        }
+    }
+
+    func testRemoteHeaderToggleOfTheComposingCellKeepsComposingInThatCell() throws {
+        try withTable(Integration.irregularDocument) { fixture in
+            let tall = try fixture.positions()[Integration.tallCell]
+            let input = try composeStaleText(in: Integration.tallCell, fixture)
+            let revision = fixture.adapter.baseDocumentRevision
+
+            try fixture.applyRemoteCellSelection(anchor: tall, head: tall)
+            try fixture.applyRemoteCommand(["type": Integration.toggleTableHeader,
+                                            "target": Integration.headerTargetCell])
+            let remoteDocument = try XCTUnwrap(fixture.adapter.documentJson())
+            XCTAssertTrue(remoteDocument.contains(Integration.headerCellNode), "the remote peer retyped the cell")
+            fixture.deliverRemoteCommit()
+            XCTAssertTrue(input.isComposing)
+            input.unmarkText()
+
+            let document = try XCTUnwrap(fixture.adapter.documentJson())
+            XCTAssertTrue(document.contains(textNode(Integration.staleCompositionText + Integration.tallText)),
+                          "the composition lands in the retyped cell: \(document)")
+            XCTAssertTrue(document.contains(Integration.headerCellNode), document)
+            XCTAssertEqual(fixture.adapter.baseDocumentRevision, revision + 2,
+                           "one remote retype and one composition commit")
+            XCTAssertFalse(input.isComposing)
+            XCTAssertTrue(fixture.view.activeTextInput === input, "the retyped cell keeps its input")
+            XCTAssertEqual(fixture.activeCellPosition(), tall)
         }
     }
 

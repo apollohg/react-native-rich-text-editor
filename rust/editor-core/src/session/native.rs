@@ -115,14 +115,17 @@ impl EditorSession {
         } else {
             crate::yrs_engine::Affinity::Before
         };
-        let (anchor_boundary, epoch_revision) =
+        let anchor_boundary =
             self.position_epochs
                 .boundary(owner_id, epoch_id, self.engine.client_id(), anchor)?;
-        let (head_boundary, head_epoch_revision) =
+        let head_boundary =
             self.position_epochs
                 .boundary(owner_id, epoch_id, self.engine.client_id(), head)?;
-        debug_assert_eq!(epoch_revision, head_epoch_revision);
-        if epoch_revision == self.engine.revision() {
+        debug_assert_eq!(
+            anchor_boundary.document_revision,
+            head_boundary.document_revision
+        );
+        if anchor_boundary.document_revision == self.engine.revision() {
             return Ok(crate::position_epoch::ResolvedEpochRange {
                 anchor,
                 head,
@@ -132,11 +135,11 @@ impl EditorSession {
         }
         let resolved_anchor = self
             .engine
-            .resolve_position_epoch_boundary(anchor_boundary, affinity, anchor)
+            .resolve_position_epoch_boundary(&anchor_boundary, affinity, anchor)
             .ok_or_else(engine_not_ready)?;
         let resolved_head = self
             .engine
-            .resolve_position_epoch_boundary(head_boundary, affinity, head)
+            .resolve_position_epoch_boundary(&head_boundary, affinity, head)
             .ok_or_else(engine_not_ready)?;
         Ok(crate::position_epoch::ResolvedEpochRange {
             anchor: resolved_anchor.offset,
