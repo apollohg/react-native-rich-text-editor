@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { readJsonFile } from './lib/json-file.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG_PATH = path.join(repositoryRoot, 'scripts/tests/table-performance-config.json');
@@ -70,29 +71,6 @@ function parseArguments(args) {
         throw new Error('provide either --release or --diagnostic');
     }
     return { inputPath, mode };
-}
-
-function parseJson(text, label) {
-    let payload;
-    try {
-        payload = JSON.parse(text);
-    } catch (error) {
-        throw new Error(`failed to parse ${label} JSON: ${error.message}`);
-    }
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-        throw new Error(`${label} must be a JSON object`);
-    }
-    return payload;
-}
-
-function readJsonFile(filePath, label) {
-    let text;
-    try {
-        text = readFileSync(filePath, 'utf8');
-    } catch (error) {
-        throw new Error(`failed to read ${label} file ${filePath}: ${error.message}`);
-    }
-    return parseJson(text, label);
 }
 
 function percentileLabel(fraction) {
