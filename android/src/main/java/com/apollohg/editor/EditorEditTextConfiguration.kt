@@ -81,12 +81,17 @@ internal fun EditorEditText.setBaseStyleImpl(
     baseBackgroundColor = backgroundColor
     setTextSize(TypedValue.COMPLEX_UNIT_PX, fontSizePx)
     setTextColor(textColor)
-    setBackgroundColor(theme?.backgroundColor ?: backgroundColor)
+    setBackgroundColor(theme?.backgroundColor?.takeUnless { isTableCellInput } ?: backgroundColor)
 }
 
 internal fun EditorEditText.applyThemeImpl(theme: EditorTheme?) {
     this.theme = theme
     renderAppearanceRevision += 1L
+    if (isTableCellInput) {
+        requestLayout()
+        invalidate()
+        return
+    }
     setBackgroundColor(theme?.backgroundColor ?: baseBackgroundColor)
     theme?.styleSheet?.let {
         background =
@@ -97,11 +102,6 @@ internal fun EditorEditText.applyThemeImpl(theme: EditorTheme?) {
         content?.let { EditorContentInsets(it.top, it.right, it.bottom, it.left) }
             ?: theme?.contentInsets
     )
-    if (isTableCellInput) {
-        requestLayout()
-        invalidate()
-        return
-    }
     if (hasLiveEditor()) {
         val previousScrollX = scrollX
         val previousScrollY = scrollY

@@ -1141,7 +1141,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             coordinator = EditorTableInputCoordinator(this)
             host.onTableCellInputCreated?.invoke(this)
         }
-        input.setBaseStyle(root.baseFontSize, root.baseTextColor, android.graphics.Color.TRANSPARENT)
+        applyRootAppearance(input, root)
         input.isEditable = root.isEditable
         input.setViewportBottomInsetPx(root.viewportBottomInsetPx)
         input.setViewportBottomOcclusionTopOnScreenPx(root.viewportBottomOcclusionTopOnScreenPx)
@@ -1157,7 +1157,6 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         activeCell = ActiveCell(tableId, cellIndex, sourcePos)
         input.tableCellAccessibility = TableCellAccessibility(drawingView, { entries[tableId]?.surface }, cellIndex, this)
         activeAppearanceRevision = root.renderAppearanceRevision
-        root.retireInputConnectionForEditor()
         input.onTableCellSelectionSynced = {
             val latest = adapter.cachedAtomicRenderJson?.let { raw ->
                 runCatching { JSONObject(raw).optJSONObject("selection") }.getOrNull()
@@ -1182,7 +1181,11 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             host.editorContentFrame.addView(input, FrameLayout.LayoutParams(1, 1))
         }
         drawingView.suppressedTableCellSourcePosition = sourcePos.toInt()
-        positionActiveInput()
+        if (!positionActiveInput()) {
+            invalidateCell()
+            return false
+        }
+        root.retireInputConnectionForEditor()
         if (focus) input.requestFocus()
         touch?.let { input.setSelection(input.getOffsetForPosition(
             it.first - input.left, it.second - input.top)) }
@@ -1450,11 +1453,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val sameText = input.text.toString() == projected.text.toString()
         val appearanceChanged = activeAppearanceRevision != root.renderAppearanceRevision
         if (!composing && sameText && (localUpdate || appearanceChanged)) {
-            if (appearanceChanged) {
-                input.setBaseStyle(root.baseFontSize, root.baseTextColor,
-                    android.graphics.Color.TRANSPARENT)
-                input.applyTheme(root.theme)
-            }
+            if (appearanceChanged) applyRootAppearance(input, root)
             val previousStyleOnly = input.reuseImagesDuringThemeUpdate
             input.reuseImagesDuringThemeUpdate = true
             try {
@@ -1470,15 +1469,23 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         positionActiveInput()
     }
 
-    private fun positionActiveInput() {
-        val active = activeCell ?: return
+    private fun applyRootAppearance(input: EditorEditText, root: EditorEditText) {
+        input.setBaseStyle(root.baseFontSize, root.baseTextColor, android.graphics.Color.TRANSPARENT)
+        input.applyTheme(root.theme)
+    }
+
+    private fun positionActiveInput(): Boolean {
+        val active = activeCell ?: return false
         val presented = drawingView.presentedTableCells().firstOrNull {
             it.surface === entries[active.tableId]?.surface &&
                 (it.cell.sourceCellIndex == active.cellIndex || it.sourcePosition.toLong() == active.sourcePos)
-        } ?: return
+        } ?: return false
         val cell = presented.cell
-        if (cell.sourcePosition.toLong() != active.sourcePos) { invalidateCell(); return }
-        val input = coordinator?.cellInput ?: return
+        if (cell.sourcePosition.toLong() != active.sourcePos) {
+            invalidateCell()
+            return false
+        }
+        val input = coordinator?.cellInput ?: return false
         val inset = cell.contentOrigin
         val width = (cell.frame.width - 2f * inset.first).toInt().coerceAtLeast(1)
         val height = (cell.frame.height - 2f * inset.second).toInt().coerceAtLeast(1)
@@ -1498,6 +1505,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             (presented.clip.right - params.leftMargin).toInt().coerceAtMost(width),
             (presented.clip.bottom - params.topMargin).toInt().coerceAtMost(height)
         )
+        return true
     }
 
     fun invalidateCell() {

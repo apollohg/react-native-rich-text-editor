@@ -5,6 +5,7 @@ import android.text.Annotation
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.view.View
 import android.view.MotionEvent
 import android.view.InputDevice
@@ -545,6 +546,47 @@ internal class EditorTableSurfaceMountTest {
         assertTrue(view.activeTextInput === input)
         assertEquals(before, adapter.documentJson())
     }
+
+    @Test
+    fun `a bound cell input takes the root theme without the root insets or background`() =
+        withMountedView { view, _, _ ->
+            val themed = JSONObject().put("backgroundColor", "#FFFFFF")
+                .put("contentInsets", JSONObject().put("top", 24).put("right", 16).put("bottom", 24).put("left", 16))
+                .put("text", JSONObject().put("color", "#112233"))
+            view.applyTheme(EditorTheme.fromJson(themed.toString()))
+            tapFirstCell(view)
+            val input = view.activeTextInput
+            assertNotSame(view.editorEditText, input)
+            fun assertCellChrome(step: String) {
+                val background = (input.background as? ColorDrawable)?.color
+                val state = "$step: padding=${input.paddingLeft},${input.paddingTop},${input.paddingRight}," +
+                    "${input.paddingBottom} background=$background themed=${input.theme === view.editorEditText.theme}"
+                assertTrue(state, input.theme === view.editorEditText.theme)
+                assertEquals(state, listOf(0, 0, 0, 0),
+                    listOf(input.paddingLeft, input.paddingTop, input.paddingRight, input.paddingBottom))
+                assertEquals(state, Color.TRANSPARENT, background)
+            }
+            assertCellChrome("bind")
+            view.applyTheme(EditorTheme.fromJson(themed.put("text", JSONObject().put("color", "#445566")).toString()))
+            assertTrue(view.activeTextInput === input)
+            assertCellChrome("appearance change")
+        }
+
+    @Test
+    fun `a restored caret without a presented cell leaves the root input active`() =
+        withMountedView { view, adapter, _ ->
+            val cellStart = requireNotNull(adapter.cachedTableInputMappings).tables.values.single()
+                .cells.first().blocks.first().scalarStart
+            val caret = JSONObject().put("type", "text").put("anchorScalar", cellStart).put("headScalar", cellStart)
+            view.editorTableSurface.clear()
+            view.editorTableSurface.followRestoredRootSelection(JSONObject().put("selection", caret).toString())
+            val input = view.activeTextInput
+            assertTrue("bound ${input.width}x${input.height} without a presented cell",
+                input === view.editorEditText)
+            assertTrue("no cell input may stay mounted", (0 until view.editorContentFrame.childCount)
+                .map { view.editorContentFrame.getChildAt(it) }
+                .none { it is EditorEditText && it !== view.editorEditText })
+        }
 
     @Test
     fun `leaving a composing cell commits its text before root focus`() = withMountedView { view, adapter, _ ->
