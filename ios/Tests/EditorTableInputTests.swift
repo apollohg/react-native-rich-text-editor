@@ -169,13 +169,7 @@ final class EditorTableInputTests: XCTestCase {
 
     static func selectCells(anchor: UInt32, head: UInt32, adapter: EditorV2Adapter,
                             view: RichTextEditorView) throws {
-        let request = adapter.callWithEnvelope([
-            "selection": [
-                "type": "cell",
-                "anchorCell": ["kind": "document", "offset": Int(anchor)],
-                "headCell": ["kind": "document", "offset": Int(head)]
-            ]
-        ]) { editorV2SetSelection(editorId: adapter.editorId, requestJson: $0) }
+        let request = adapter.applyLocalSelection(documentCellSelection(anchor: anchor, head: head))
         XCTAssertNil(request.error)
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
     }

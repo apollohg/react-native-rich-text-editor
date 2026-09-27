@@ -23,9 +23,109 @@ final class RemoteTablePeer {
     func applyCommand(_ command: [String: Any]) throws {
         try apply(["command": command]) { editorV2ApplyCommand(editorId: $0, requestJson: $1) }
     }
+
+    func applySelection(_ selection: [String: Any]) throws {
+        try apply(["selection": selection]) { editorV2SetSelection(editorId: $0, requestJson: $1) }
+    }
+}
+
+func documentCellSelection(anchor: UInt32, head: UInt32) -> [String: Any] {
+    [
+        "type": "cell",
+        "anchorCell": ["kind": "document", "offset": Int(anchor)],
+        "headCell": ["kind": "document", "offset": Int(head)]
+    ]
+}
+
+final class TableCollaborationRelay {
+    private static let nowMillis = "0"
+    private static let maximumRounds = 64
+    private let generations: [String: String]
+
+    init(editorIds: [String]) throws {
+        var generations: [String: String] = [:]
+        for editorId in editorIds {
+            let driven = try Self.object(editorV2CollaborationDrive(editorId: editorId, nowMillis: Self.nowMillis))
+            let generation = try XCTUnwrap(driven["generationToOpen"] as? String, "\(editorId) issued no generation: \(driven)")
+            _ = try Self.object(editorV2CollaborationSocketOpen(editorId: editorId, generation: generation,
+                                                                nowMillis: Self.nowMillis))
+            generations[editorId] = generation
+        }
+        self.generations = generations
+    }
+
+    @discardableResult
+    func exchangeUntilIdle() throws -> Set<String> {
+        var committed: Set<String> = []
+        for _ in 0..<Self.maximumRounds {
+            var delivered = false
+            for (from, fromGeneration) in generations {
+                let lease = editorV2CollaborationLeaseOutbound(editorId: from, generation: fromGeneration)
+                XCTAssertNil(lease.error, "\(from) could not lease: \(String(describing: lease.error))")
+                guard let outbound = lease.value else { continue }
+                for (to, toGeneration) in generations where to != from {
+                    let received = try Self.object(editorV2CollaborationReceive(
+                        editorId: to, generation: toGeneration, message: outbound.frame, nowMillis: Self.nowMillis
+                    ))
+                    if received["remoteCommitApplied"] as? Bool == true {
+                        committed.insert(to)
+                    }
+                }
+                _ = try Self.object(editorV2CollaborationAckOutbound(editorId: from, generation: fromGeneration,
+                                                                     leaseId: outbound.leaseId))
+                delivered = true
+            }
+            if !delivered {
+                return committed
+            }
+        }
+        XCTFail("the peers never went quiet")
+        return committed
+    }
+
+    private static func object(_ result: FfiJsonResult) throws -> [String: Any] {
+        XCTAssertNil(result.error, "collaboration call failed: \(String(describing: result.error))")
+        let json = try XCTUnwrap(result.value)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+    }
+}
+
+struct TableRoomSeed {
+    let configJson: String
+    let encodedState: Data
+
+    init(localConfigJson: String, documentJson: String) throws {
+        let builder = makeV2Editor(configJson: localConfigJson)
+        defer { destroyV2Editor(id: builder) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: builder))
+        XCTAssertNotNil(adapter.setContentJson(documentJson))
+        let exported = editorV2SnapshotExport(editorId: adapter.editorId)
+        XCTAssertNil(exported.error, "snapshot export failed: \(String(describing: exported.error))")
+        let snapshot = try XCTUnwrap(exported.value)
+        let metadata = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(snapshot.metadataJson.utf8)) as? [String: Any])
+        var config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(localConfigJson.utf8)) as? [String: Any])
+        config["initialization"] = [
+            "type": "room",
+            "documentId": try XCTUnwrap(metadata["documentId"]),
+            "lineageId": try XCTUnwrap(metadata["lineageId"]),
+            "snapshot": metadata
+        ]
+        configJson = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: config), encoding: .utf8))
+        encodedState = snapshot.encodedState
+    }
+
+    func makeEditor() -> UInt64 {
+        makeV2Editor(configJson: configJson, snapshotState: encodedState) {
+            editorV2CollaborationSetAwarenessSelection(editorId: $0, selectionJson: $1)
+        }
+    }
 }
 
 extension EditorV2Adapter {
+    func applyLocalSelection(_ selection: [String: Any]) -> FfiJsonResult {
+        callWithEnvelope(["selection": selection]) { editorV2SetSelection(editorId: self.editorId, requestJson: $0) }
+    }
+
     func tableCellPositions(tableID: String) throws -> [UInt32] {
         let cells = try XCTUnwrap(cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
         return try cells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }

@@ -111,11 +111,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         }
 
         fun selectCells(anchor: Int, head: Int) {
-            val admitted = adapter.callWithEnvelope(JSONObject().put("selection", documentCellSelection(anchor, head))) {
-                UniffiEditorV2Backend.setSelection(adapter.editorId, it)
-            }
-            assertTrue("engine rejected the selection: $admitted", admitted is EditorV2CallResult.Ok)
-            assertTrue(root.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
+            root.selectTableCells(adapter, anchor, head)
             assertTrue("root did not adopt the cell selection", root.authoritativeCellSelectionActive)
             relayout()
         }

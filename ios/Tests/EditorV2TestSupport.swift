@@ -16,11 +16,12 @@ func createdV2TestEditorHandle(_ resultJson: String) -> (handle: String, nativeV
 
 func makeV2Editor(
     configJson: String = #"{"initialization":{"type":"localEmpty"}}"#,
+    snapshotState: Data? = nil,
     roomAwareness: ((String, String) -> FfiJsonResult)? = nil,
     file: StaticString = #filePath,
     line: UInt = #line
 ) -> UInt64 {
-    let result = editorV2Create(configJson: configJson, snapshotState: nil)
+    let result = editorV2Create(configJson: configJson, snapshotState: snapshotState)
     guard let value = result.value,
         result.error == nil,
         let createdHandle = createdV2TestEditorHandle(value),

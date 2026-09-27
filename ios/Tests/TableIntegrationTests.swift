@@ -134,13 +134,7 @@ final class TableIntegrationTests: XCTestCase {
         }
 
         func applyRemoteCellSelection(anchor: UInt32, head: UInt32) throws {
-            try remote.apply([
-                "selection": [
-                    "type": "cell",
-                    "anchorCell": ["kind": "document", "offset": Int(anchor)],
-                    "headCell": ["kind": "document", "offset": Int(head)]
-                ]
-            ]) { editorV2SetSelection(editorId: $0, requestJson: $1) }
+            try remote.applySelection(documentCellSelection(anchor: anchor, head: head))
         }
 
         func deliverRemoteCommit() {

@@ -19,13 +19,11 @@ final class TableAcceptanceTests: XCTestCase {
         static let paragraphBreak = "\n"
         static let resizeDelta: CGFloat = 60
         static let minimumResizedWidth = 100
-        static let remoteRequestIdBase: UInt64 = 23_000_000
         static let exportDirectoryKey = "TABLE_ACCEPTANCE_EXPORT_DIR"
         static let exportFileName = "ios-table-acceptance.json"
         static let insertTable = "insertTable"
         static let deleteTableRows = "deleteTableRows"
         static let textSelection = "text"
-        static let cellSelection = "cell"
         static let tableNode = "table"
         static let rowNode = "table_row"
         static let cellNode = "table_cell"
@@ -43,6 +41,7 @@ final class TableAcceptanceTests: XCTestCase {
         static let parityDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Merged header across two columns"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"A tall cell whose text wraps over several lines"}]},{"type":"paragraph","content":[{"type":"text","text":"second"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"abcdefghijkl"}]}]},{"type":"table_cell","attrs":{"colwidth":[140]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Ready"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"x"}]}]},{"type":"table_cell","content":[{"type":"paragraph"}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After"}]}]}"#
         static let irregularDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Raw"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Wide header"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":3},"content":[{"type":"paragraph","content":[{"type":"text","text":"Overhang"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Short row"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"One"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Two"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Four"}]}]}]}]}]}"#
         static let irregularShortRowCell = 3
+        static let irregularCellActions = ["Clear cells", "Delete table"]
         static let parityLayoutKey = "table-acceptance-parity"
     }
 
@@ -62,13 +61,11 @@ final class TableAcceptanceTests: XCTestCase {
         let editorId: UInt64
         let adapter: EditorV2Adapter
         let window: UIWindow
-        let remote: RemoteTablePeer
         private(set) var expo: NativeEditorExpoView
 
         init(editorId: UInt64, adapter: EditorV2Adapter) {
             self.editorId = editorId
             self.adapter = adapter
-            remote = RemoteTablePeer(adapter: adapter, requestIdBase: Acceptance.remoteRequestIdBase)
             window = UIWindow(frame: CGRect(origin: .zero, size: Acceptance.editorSize))
             expo = NativeEditorExpoView()
             expo.frame = window.bounds
@@ -111,8 +108,9 @@ final class TableAcceptanceTests: XCTestCase {
             try drawing.presentedRealCell(tableID: try tableID, position: position)
         }
 
-        func selection(at positions: [UInt32], _ indices: Int...) -> Set<Int> {
-            Set(indices.map { Int(positions[$0]) })
+        func cellsAt(_ indices: Int...) throws -> Set<Int> {
+            let positions = try positions()
+            return Set(indices.map { Int(positions[$0]) })
         }
 
         func engineSelection() throws -> [String: Any] {
@@ -225,13 +223,14 @@ final class TableAcceptanceTests: XCTestCase {
     func testIntegratedNativeTableWorkflowKeepsTheDocumentAndRealCellSelectionAtEveryStep() throws {
         UIPasteboard.general.items = []
         defer { UIPasteboard.general.items = [] }
-        let editorId = makeV2Editor(configJson: Acceptance.config)
+        let room = try TableRoomSeed(localConfigJson: Acceptance.config, documentJson: try seedDocument())
+        let editorId = room.makeEditor()
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
         let harness = Harness(editorId: editorId, adapter: adapter)
         defer { harness.close() }
-        XCTAssertTrue(harness.root.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(seedDocument()))))
         harness.expo.layoutIfNeeded()
+        XCTAssertEqual(try harness.blocks().count, Acceptance.trailingParagraphs + 1, "the room opens on its seed")
         XCTAssertTrue(adapter.cachedTableRecords.isEmpty, "the seed holds no table yet")
 
         harness.root.selectedRange = NSRange(location: Acceptance.introText.count, length: 0)
@@ -333,7 +332,7 @@ final class TableAcceptanceTests: XCTestCase {
         try harness.perform(Acceptance.deleteRowLabel, onCellAt: positions[Acceptance.tableColumns * 3])
         XCTAssertEqual(try harness.grid().count, Acceptance.tableRows)
         XCTAssertEqual(try harness.grid().prefix(3).map { $0.map(\.paragraphs) }, grid.prefix(3).map { $0.map(\.paragraphs) })
-        XCTAssertEqual(try harness.selectedCells(), harness.selection(at: try harness.positions(), Acceptance.tableColumns * 2),
+        XCTAssertEqual(try harness.selectedCells(), try harness.cellsAt(Acceptance.tableColumns * 2),
                        "deleting the selected row selects the first real cell of the row above")
 
         positions = try harness.positions()
@@ -354,7 +353,7 @@ final class TableAcceptanceTests: XCTestCase {
         try harness.perform(Acceptance.deleteColumnLabel, onCellAt: addedColumnHeader)
         grid = try harness.grid()
         XCTAssertEqual(grid.map(\.count), Array(repeating: Acceptance.tableColumns, count: Acceptance.tableRows), "\(grid)")
-        XCTAssertEqual(try harness.selectedCells(), harness.selection(at: try harness.positions(), Acceptance.tableColumns - 1),
+        XCTAssertEqual(try harness.selectedCells(), try harness.cellsAt(Acceptance.tableColumns - 1),
                        "deleting the selected column selects the cell before it")
         let settled = grid
 
@@ -419,25 +418,49 @@ final class TableAcceptanceTests: XCTestCase {
         harness.root.contentOffset.y = 0
         try harness.surface.updateGeometry(from: harness.root)
 
+        let remoteId = room.makeEditor()
+        defer { destroyV2Editor(id: remoteId) }
+        let remoteAdapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: remoteId))
+        let relay = try TableCollaborationRelay(editorIds: [adapter.editorId, remoteAdapter.editorId])
+        try relay.exchangeUntilIdle()
+        XCTAssertEqual(remoteAdapter.documentJson(), adapter.documentJson(), "the remote peer catches up once")
         let localBeforeRemote = try harness.engineSelection()
         XCTAssertEqual(localBeforeRemote["type"] as? String, Acceptance.textSelection,
                        "the local selection is the caret in the active cell: \(localBeforeRemote)")
         XCTAssertEqual(harness.activeCell(), lastCell)
-        try harness.remote.applyCommand(["type": Acceptance.deleteTableRows])
+        let historyBeforeRemote = try XCTUnwrap(adapter.historyFlags())
+
+        XCTAssertNotNil(remoteAdapter.refreshFromRustState(mirrorSelection: nil))
+        XCTAssertNil(remoteAdapter.applyLocalSelection(documentCellSelection(anchor: lastCell, head: lastCell)).error)
+        let remoteDelete = remoteAdapter.callWithEnvelope(["command": ["type": Acceptance.deleteTableRows]]) {
+            editorV2ApplyCommand(editorId: remoteAdapter.editorId, requestJson: $0)
+        }
+        XCTAssertNil(remoteDelete.error, "the remote peer could not delete its row: \(String(describing: remoteDelete.error))")
+        XCTAssertEqual(try relay.exchangeUntilIdle(), [adapter.editorId], "only the local editor receives a remote commit")
         harness.deliverRemoteCommit()
         grid = try harness.grid()
         XCTAssertEqual(grid.count, Acceptance.tableRows - 1, "the remote peer removed the active cell's row: \(grid)")
         XCTAssertEqual(grid, Array(resized.prefix(Acceptance.tableRows - 1)))
+        XCTAssertEqual(adapter.documentJson(), remoteAdapter.documentJson(), "both peers converge")
         XCTAssertTrue(harness.view.activeTextInput === harness.root, "the dead cell releases the input")
         XCTAssertNil(harness.activeCell())
-        positions = try harness.positions()
-        let cellAbove = positions[Acceptance.tableColumns]
-        XCTAssertEqual(try harness.selectedCells(), [Int(cellAbove)],
-                       "the local caret in the deleted row resolves to the first real cell of the row above")
+        let tableEnd = try XCTUnwrap(adapter.cachedTableRecords[try harness.tableID].flatMap {
+            EditorV2Adapter.uint32Field($0, "sourceEnd")
+        })
         let resolved = try harness.engineSelection()
-        XCTAssertEqual(resolved["type"] as? String, Acceptance.cellSelection, "\(resolved)")
-        XCTAssertEqual(resolved["anchorCell"] as? Int, Int(cellAbove), "\(resolved)")
-        XCTAssertEqual(resolved["headCell"] as? Int, Int(cellAbove), "\(resolved)")
+        XCTAssertEqual(resolved["type"] as? String, Acceptance.textSelection, "\(resolved)")
+        XCTAssertEqual(resolved["anchor"] as? Int, localBeforeRemote["anchor"] as? Int,
+                       "the local caret keeps its pre-change document offset: \(resolved) before \(localBeforeRemote)")
+        XCTAssertEqual(resolved["head"] as? Int, localBeforeRemote["head"] as? Int, "\(resolved)")
+        XCTAssertGreaterThan(resolved["anchor"] as? Int ?? 0, Int(tableEnd), "the stale offset now lies in the prose after the table")
+        XCTAssertEqual(try harness.selectedCells(), [], "no cell rectangle survives the remote deletion")
+        let historyAfterRemote = try XCTUnwrap(adapter.historyFlags())
+        XCTAssertEqual(historyAfterRemote.canUndo, historyBeforeRemote.canUndo, "the remote change adds no local history")
+        XCTAssertEqual(historyAfterRemote.canRedo, historyBeforeRemote.canRedo, "the remote change adds no local history")
+        let afterRemote = try harness.documentJSON()
+        _ = adapter.undo()
+        harness.expo.layoutIfNeeded()
+        XCTAssertEqual(try harness.documentJSON(), afterRemote, "local undo never restores the remote deletion")
 
         let tableBeforeDirection = try harness.documentJSON()
         positions = try harness.positions()
@@ -451,7 +474,7 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertGreaterThan(rtlFirst.minX, rtlSecond.minX, "right-to-left mirrors the logical columns")
         XCTAssertEqual(rtlFirst.width, ltrFirst.width, accuracy: Acceptance.geometryAccuracy)
         XCTAssertEqual(try harness.documentJSON(), tableBeforeDirection, "direction is presentation only")
-        XCTAssertEqual(try harness.selectedCells(), [Int(cellAbove)], "direction never changes the selected cells")
+        XCTAssertEqual(try harness.selectedCells(), [], "direction never changes the selected cells")
 
         let beforeRemount = try harness.documentJSON()
         harness.remount()
@@ -462,9 +485,10 @@ final class TableAcceptanceTests: XCTestCase {
         try harness.presentedCell(positions[0])
         let rebound = try harness.bind(cell: positions[Acceptance.tableColumns])
         XCTAssertEqual(harness.activeCell(), positions[Acceptance.tableColumns])
-        XCTAssertTrue(try harness.actionLabels(onCellAt: positions[Acceptance.tableColumns]).contains(Acceptance.addRowAfterLabel),
-                      "table actions are available again after the rebind")
         rebound.insertText(Acceptance.composedText)
+        let reboundLabels = try harness.actionLabels(onCellAt: positions[Acceptance.tableColumns])
+        XCTAssertTrue(reboundLabels.contains(Acceptance.addRowAfterLabel),
+                      "table actions are available again after the rebind: \(reboundLabels) \(String(describing: adapter.cachedActiveState?["commands"]))")
         try harness.perform(Acceptance.addRowAfterLabel, onCellAt: try harness.positions()[Acceptance.tableColumns])
         grid = try harness.grid()
         XCTAssertEqual(grid.count, Acceptance.tableRows, "\(grid)")
@@ -524,9 +548,8 @@ final class TableAcceptanceTests: XCTestCase {
         let shortRow = positions[Acceptance.irregularShortRowCell]
         try EditorTableInputTests.selectCells(anchor: shortRow, head: shortRow, adapter: adapter, view: harness.view)
         harness.expo.layoutIfNeeded()
-        let published = try publishedActionLabels(adapter)
-        XCTAssertEqual(try harness.actionLabels(onCellAt: shortRow), published,
-                       "the native cell actions mirror the published toolbar state")
+        XCTAssertEqual(try harness.actionLabels(onCellAt: shortRow), Acceptance.irregularCellActions,
+                       "a real cell of the raw table offers exactly these actions")
         XCTAssertEqual(try harness.grid(), raw, "rendering and selecting never repair the raw table")
         XCTAssertEqual(adapter.baseDocumentRevision, revision)
 
@@ -535,7 +558,7 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(adapter.baseDocumentRevision, revision)
         try EditorTableInputTests.selectCells(anchor: shortRow, head: shortRow, adapter: adapter, view: harness.view)
         harness.expo.layoutIfNeeded()
-        XCTAssertEqual(try harness.actionLabels(onCellAt: shortRow), published,
+        XCTAssertEqual(try harness.actionLabels(onCellAt: shortRow), Acceptance.irregularCellActions,
                        "the same actions are offered after the rebind")
 
         let input = try harness.bind(cell: shortRow)
@@ -592,11 +615,6 @@ final class TableAcceptanceTests: XCTestCase {
         let drawing = PreparedProseDrawingView(frame: CGRect(origin: .zero, size: layout.size))
         drawing.install(layout: layout)
         return drawing
-    }
-
-    private func publishedActionLabels(_ adapter: EditorV2Adapter) throws -> [String] {
-        let commands = try XCTUnwrap(adapter.cachedActiveState?["commands"] as? [String: Any])
-        return TableAccessibilityAction.all.filter { commands[$0.applicability] as? Bool == true }.map(\.label)
     }
 
     private func drainMainQueue() {
