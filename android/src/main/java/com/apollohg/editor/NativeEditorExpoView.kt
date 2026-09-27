@@ -867,8 +867,9 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
     internal fun isPointInsideStandaloneToolbarForTesting(
         rawX: Float,
         rawY: Float,
-        windowOriginOnScreen: Point
-    ): Boolean = isPointInsideStandaloneToolbarForTestingImpl(rawX, rawY, windowOriginOnScreen)
+        reactRootOnScreen: Point,
+        viewportOffset: Point
+    ): Boolean = isPointInsideStandaloneToolbarForTestingImpl(rawX, rawY, reactRootOnScreen, viewportOffset)
 
     internal companion object {
         internal const val TOOLBAR_HIT_SLOP_DP = 8f

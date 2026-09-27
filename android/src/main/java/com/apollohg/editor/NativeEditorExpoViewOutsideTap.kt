@@ -9,6 +9,8 @@ import android.graphics.RectF
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
+import com.facebook.react.uimanager.RootView
+import com.facebook.react.uimanager.RootViewUtil
 import com.apollohg.editor.NativeEditorExpoView.Companion.OUTSIDE_TAP_HANDLER_INSTALL_RETRY_DELAY_MS
 import com.apollohg.editor.NativeEditorExpoView.Companion.TOOLBAR_FOCUS_PRESERVE_MS
 import com.apollohg.editor.NativeEditorExpoView.Companion.TOOLBAR_HIT_SLOP_DP
@@ -146,39 +148,37 @@ internal fun NativeEditorExpoView.consumeToolbarFocusPreservationForBlur(): Bool
     return true
 }
 
-internal fun NativeEditorExpoView.isTouchInsideStandaloneToolbar(event: MotionEvent): Boolean =
-    isPointInsideStandaloneToolbar(event.rawX, event.rawY, windowOriginOnScreen())
-
-internal fun NativeEditorExpoView.windowOriginOnScreen(): Point {
-    val onScreen = IntArray(2)
-    val inWindow = IntArray(2)
-    getLocationOnScreen(onScreen)
-    getLocationInWindow(inWindow)
-    return Point(onScreen[0] - inWindow[0], onScreen[1] - inWindow[1])
+internal fun NativeEditorExpoView.isTouchInsideStandaloneToolbar(event: MotionEvent): Boolean {
+    val reactRoot = generateSequence(this as View) { it.parent as? View }.firstOrNull { it is RootView } ?: rootView
+    val reactRootOnScreen = IntArray(2).also(reactRoot::getLocationOnScreen)
+    return isPointInsideStandaloneToolbar(
+        event.rawX,
+        event.rawY,
+        Point(reactRootOnScreen[0], reactRootOnScreen[1]),
+        RootViewUtil.getViewportOffset(reactRoot)
+    )
 }
 
 internal fun NativeEditorExpoView.isPointInsideStandaloneToolbarForTestingImpl(
     rawX: Float,
     rawY: Float,
-    windowOriginOnScreen: Point
-): Boolean = isPointInsideStandaloneToolbar(rawX, rawY, windowOriginOnScreen)
+    reactRootOnScreen: Point,
+    viewportOffset: Point
+): Boolean = isPointInsideStandaloneToolbar(rawX, rawY, reactRootOnScreen, viewportOffset)
 
 internal fun NativeEditorExpoView.isPointInsideStandaloneToolbar(
     rawX: Float,
     rawY: Float,
-    windowOriginOnScreen: Point
+    reactRootOnScreen: Point,
+    viewportOffset: Point
 ): Boolean {
     if (toolbarFramesInWindow.isEmpty()) {
         return false
     }
-    // toolbarFrame is in DP from Fabric's measureInWindow, which offsets by
-    // the surface's getLocationInWindow. rawX/rawY are screen pixels, so
-    // normalize them into the same window space rather than the visible
-    // display frame, whose top also excludes the status bar and cutout.
     val density = resources.displayMetrics.density
     val hitSlopPx = TOOLBAR_HIT_SLOP_DP * density
-    val eventX = rawX - windowOriginOnScreen.x
-    val eventY = rawY - windowOriginOnScreen.y
+    val eventX = rawX - reactRootOnScreen.x + viewportOffset.x
+    val eventY = rawY - reactRootOnScreen.y + viewportOffset.y
     for (toolbarFrame in toolbarFramesInWindow) {
         val windowFrameInPx = RectF(
             toolbarFrame.left * density,

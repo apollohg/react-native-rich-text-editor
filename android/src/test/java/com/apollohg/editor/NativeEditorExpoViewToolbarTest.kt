@@ -34,6 +34,7 @@ internal class NativeEditorExpoViewToolbarTest : NativeEditorExpoViewTestFixture
         val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
         val density = expoContext.context.resources.displayMetrics.density
         val windowOriginOnScreen = Point(6, 24)
+        val noViewportOffset = Point(0, 0)
 
         view.setToolbarFrameJson("""{"x":20,"y":40,"width":100,"height":32}""")
 
@@ -41,14 +42,16 @@ internal class NativeEditorExpoViewToolbarTest : NativeEditorExpoViewTestFixture
             view.isPointInsideStandaloneToolbarForTesting(
                 rawX = 30f * density + windowOriginOnScreen.x,
                 rawY = 50f * density + windowOriginOnScreen.y,
-                windowOriginOnScreen = windowOriginOnScreen
+                reactRootOnScreen = windowOriginOnScreen,
+                viewportOffset = noViewportOffset
             )
         )
         assertFalse(
             view.isPointInsideStandaloneToolbarForTesting(
                 rawX = 30f * density + windowOriginOnScreen.x,
                 rawY = 90f * density + windowOriginOnScreen.y,
-                windowOriginOnScreen = windowOriginOnScreen
+                reactRootOnScreen = windowOriginOnScreen,
+                viewportOffset = noViewportOffset
             )
         )
     }
@@ -65,9 +68,39 @@ internal class NativeEditorExpoViewToolbarTest : NativeEditorExpoViewTestFixture
             view.isPointInsideStandaloneToolbarForTesting(
                 rawX = 165f * density,
                 rawY = 511f * density,
-                windowOriginOnScreen = Point(0, 0)
+                reactRootOnScreen = Point(0, 0),
+                viewportOffset = Point(0, 0)
             )
         )
+    }
+
+    @Test
+    fun `standalone toolbar hit testing follows the React viewport offset with and without edge to edge`() {
+        val expoContext = testExpoContext(RuntimeEnvironment.getApplication())
+        val view = NativeEditorExpoView(expoContext.context, expoContext.appContext)
+        val density = expoContext.context.resources.displayMetrics.density
+        val statusBarPx = STATUS_BAR_DP * density
+        view.setToolbarFrameJson(JSONObject().put("x", TOOLBAR_X_DP).put("y", TOOLBAR_Y_DP)
+            .put("width", TOOLBAR_WIDTH_DP).put("height", TOOLBAR_HEIGHT_DP).toString())
+        val toolbarCenterX = (TOOLBAR_X_DP + TOOLBAR_WIDTH_DP / 2) * density
+        val toolbarCenterFromContentTop = (TOOLBAR_Y_DP + TOOLBAR_HEIGHT_DP / 2) * density
+        val edgeToEdge = Point(0, 0) to Point(0, 0)
+        val insetContent = Point(0, statusBarPx.toInt()) to Point(0, 0)
+        val insetWindowRoot = Point(0, 0) to Point(0, -statusBarPx.toInt())
+        listOf(
+            "edge to edge" to (edgeToEdge to 0f),
+            "content below the status bar" to (insetContent to statusBarPx),
+            "window root with the status bar inset subtracted" to (insetWindowRoot to statusBarPx)
+        ).forEach { (label, layout) ->
+            val (origin, contentTop) = layout
+            val (rootOnScreen, viewportOffset) = origin
+            val rawY = contentTop + toolbarCenterFromContentTop
+            assertTrue("$label: the toolbar center must hit",
+                view.isPointInsideStandaloneToolbarForTesting(toolbarCenterX, rawY, rootOnScreen, viewportOffset))
+            assertFalse("$label: a point one toolbar height below must miss",
+                view.isPointInsideStandaloneToolbarForTesting(toolbarCenterX, rawY + TOOLBAR_HEIGHT_DP * density,
+                    rootOnScreen, viewportOffset))
+        }
     }
 
     @Test
@@ -472,5 +505,13 @@ internal class NativeEditorExpoViewToolbarTest : NativeEditorExpoViewTestFixture
         )
 
         NativeEditorViewRegistry.unregister(editorId, view)
+    }
+
+    private companion object {
+        const val STATUS_BAR_DP = 24f
+        const val TOOLBAR_X_DP = 20f
+        const val TOOLBAR_Y_DP = 40f
+        const val TOOLBAR_WIDTH_DP = 100f
+        const val TOOLBAR_HEIGHT_DP = 32f
     }
 }

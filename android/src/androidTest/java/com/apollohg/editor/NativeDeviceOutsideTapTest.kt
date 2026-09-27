@@ -17,6 +17,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
+import com.facebook.react.uimanager.RootViewUtil
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -828,13 +829,15 @@ class NativeDeviceOutsideTapTest {
         editor: NativeEditorExpoView,
         view: View
     ) {
-        val location = IntArray(2)
-        view.getLocationInWindow(location)
+        val reactRoot = activity.window.decorView
+        val location = IntArray(2).also(view::getLocationInWindow)
+        val rootInWindow = IntArray(2).also(reactRoot::getLocationInWindow)
+        val viewportOffset = RootViewUtil.getViewportOffset(reactRoot)
         val density = activity.resources.displayMetrics.density
         editor.setToolbarFrameJson(
             JSONObject()
-                .put("x", location[0] / density)
-                .put("y", location[1] / density)
+                .put("x", (location[0] - rootInWindow[0] + viewportOffset.x) / density)
+                .put("y", (location[1] - rootInWindow[1] + viewportOffset.y) / density)
                 .put("width", view.width / density)
                 .put("height", view.height / density)
                 .toString()
