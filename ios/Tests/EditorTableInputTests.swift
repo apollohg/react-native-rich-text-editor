@@ -18,6 +18,9 @@ final class EditorTableInputTests: XCTestCase {
 
     private let tableConfig = TableInputTestSchema.tableConfig
     private static let selectRowsKey = "selectRows"
+    private static let gridSize = 3
+    private static let narrowColumnWidth = 150
+    private static let bodySwipeDistance: CGFloat = 80
     private let listTableConfig = TableInputTestSchema.listTableConfig
     private let wideTwoCellDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
     private let fourCellDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"four"}]}]}]}]}]}"#
@@ -37,6 +40,27 @@ final class EditorTableInputTests: XCTestCase {
             "type": "doc", "content": [["type": "table", "content": rows]]
         ])
         return try XCTUnwrap(String(data: data, encoding: .utf8))
+    }
+
+    private func narrowColumnGridDocument(headerRow: Bool, rightToLeft: Bool = false) throws -> String {
+        let rows: [[String: Any]] = (0..<Self.gridSize).map { row in
+            let type = headerRow && row == 0 ? "table_header" : "table_cell"
+            return ["type": "table_row", "content": (0..<Self.gridSize).map { column in [
+                "type": type, "attrs": ["colwidth": [Self.narrowColumnWidth]],
+                "content": [["type": "paragraph", "content": [["type": "text", "text": "r\(row)c\(column)"]]]]
+            ] }]
+        }
+        var table: [String: Any] = ["type": "table", "content": rows]
+        if rightToLeft { table["attrs"] = ["dir": "rtl"] }
+        let data = try JSONSerialization.data(withJSONObject: ["type": "doc", "content": [table]])
+        return try XCTUnwrap(String(data: data, encoding: .utf8))
+    }
+
+    private var rightToLeftTableConfig: String {
+        tableConfig.replacingOccurrences(
+            of: #""tableRole":"table","attrs":{"class":{"default":null}}"#,
+            with: #""tableRole":"table","attrs":{"class":{"default":null},"dir":{"default":null}}"#
+        )
     }
 
     struct MountedTableFixture {
@@ -106,6 +130,16 @@ final class EditorTableInputTests: XCTestCase {
             let cell = try presentedCell(index)
             let x = cell.surface.direction == .rightToLeft ? cell.bounds.minX : cell.bounds.maxX
             return drawing.convert(CGPoint(x: x, y: cell.bounds.midY), to: view)
+        }
+
+        func assertBodyEdgeScrollsWithoutResizing(cellIndex index: Int, physicalDelta: CGFloat,
+                                                  _ message: String) throws {
+            let edge = try trailingEdgeHostPoint(cellIndex: index)
+            let point = drawing.convert(edge, from: view)
+            XCTAssertNil(drawing.hitResizeEdge(at: point), "\(message): not a resize handle")
+            XCTAssertFalse(surface.beginResizeDrag(at: edge), "\(message): a drag must not start a resize")
+            XCTAssertTrue(drawing.canScrollTables(in: drawing.tableChain(at: point), by: physicalDelta),
+                          "\(message): the table pan owns the drag")
         }
 
         func documentObject() throws -> NSDictionary {
@@ -809,15 +843,16 @@ final class EditorTableInputTests: XCTestCase {
     }
 
     func testSelectionHandleTakesPrecedenceOverSharedTrailingEdge() throws {
-        try withMountedHandles(document: tallTableDocument(rowCount: 6), anchorIndex: 0, headIndex: 0) { fixture in
+        try withMountedHandles(document: tallTableDocument(rowCount: 4), anchorIndex: 0, headIndex: 3) { fixture in
             let head = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .head })
-            let cornerEdge = CGPoint(x: try fixture.presentedCell(0).bounds.maxX, y: head.center.y)
-            XCTAssertNotNil(fixture.drawing.hitResizeEdge(at: cornerEdge))
+            let cornerEdge = CGPoint(x: try fixture.presentedCell(3).bounds.maxX, y: head.center.y)
+            XCTAssertNotNil(fixture.drawing.hitResizeEdge(at: cornerEdge),
+                            "the handle sits on a selected column's body-row resize edge")
             XCTAssertFalse(fixture.surface.beginResizeDrag(at: fixture.drawing.convert(cornerEdge, to: fixture.view)))
             XCTAssertTrue(fixture.surface.beginHandleDrag(at: fixture.drawing.convert(cornerEdge, to: fixture.view)))
             fixture.surface.cancelHandleDrag()
-            XCTAssertTrue(fixture.surface.beginResizeDrag(at: try fixture.trailingEdgeHostPoint(cellIndex: 4)))
-            XCTAssertFalse(fixture.surface.beginHandleDrag(at: try fixture.trailingEdgeHostPoint(cellIndex: 4)),
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: try fixture.trailingEdgeHostPoint(cellIndex: 1)))
+            XCTAssertFalse(fixture.surface.beginHandleDrag(at: try fixture.trailingEdgeHostPoint(cellIndex: 1)),
                            "a held resize owns the touch")
             fixture.surface.cancelResizeDrag()
         }
@@ -932,7 +967,7 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(hit.edge, TableResizeEdge(tableID: fixture.tableID, column: 0))
         }
         let irregularDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2,"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","attrs":{"colspan":2,"colwidth":[100,100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"later"}]}]}]}]}]}"#
-        try withMountedTable(document: irregularDocument, cellSelection: nil) { fixture in
+        try withMountedTable(document: irregularDocument, cellSelection: (1, 2)) { fixture in
             let wide = try fixture.presentedCell(1)
             let later = try fixture.presentedCell(2)
             XCTAssertFalse(wide.surface.syntheticRegions.isEmpty, "the irregular fixture must project a synthetic gap")
@@ -944,6 +979,71 @@ final class EditorTableInputTests: XCTestCase {
                          "the gap interior is not a resize edge")
             XCTAssertEqual(fixture.drawing.hitResizeEdge(at: CGPoint(x: wide.bounds.maxX, y: wide.bounds.midY))?.edge.column, 2)
             XCTAssertEqual(fixture.drawing.hitResizeEdge(at: CGPoint(x: later.bounds.maxX, y: later.bounds.midY))?.edge.column, 1)
+            let tall = try fixture.presentedCell(0)
+            XCTAssertEqual(fixture.drawing.hitResizeEdge(at: CGPoint(x: tall.bounds.maxX, y: wide.bounds.midY))?.edge.column, 0)
+            XCTAssertNil(fixture.drawing.hitResizeEdge(at: CGPoint(x: tall.bounds.maxX, y: later.bounds.midY)),
+                         "a first-row cell spanning into an unselected body row has no handle below the first row")
+        }
+    }
+
+    func testOnlyTheFirstRowCarriesResizeHandlesWhetherOrNotItIsAHeaderRow() throws {
+        for headerRow in [true, false] {
+            let label = headerRow ? "header row" : "first row of a table without a header row"
+            try withMountedTable(document: narrowColumnGridDocument(headerRow: headerRow), cellSelection: nil) { fixture in
+                let handle = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+                XCTAssertEqual(fixture.drawing.hitResizeEdge(at: fixture.drawing.convert(handle, from: fixture.view))?.edge,
+                               TableResizeEdge(tableID: fixture.tableID, column: 0), "the \(label) edge is a handle")
+                XCTAssertTrue(fixture.surface.beginResizeDrag(at: handle))
+                fixture.surface.endResizeDrag(at: CGPoint(x: handle.x + 40, y: handle.y))
+                XCTAssertEqual(try fixture.columnWidths(row: 0).first, [Self.narrowColumnWidth + 40],
+                               "the \(label) edge resizes")
+                try fixture.assertBodyEdgeScrollsWithoutResizing(
+                    cellIndex: Self.gridSize, physicalDelta: -Self.bodySwipeDistance,
+                    "a body-row edge below the \(label)")
+            }
+        }
+    }
+
+    func testAWholeSelectedColumnCarriesResizeHandlesInEveryRow() throws {
+        let middleColumn = [1, Self.gridSize + 1, 2 * Self.gridSize + 1]
+        try withMountedTable(document: narrowColumnGridDocument(headerRow: true),
+                             cellSelection: (middleColumn[0], middleColumn[2])) { fixture in
+            for index in middleColumn.dropFirst() {
+                let edge = fixture.drawing.convert(try fixture.trailingEdgeHostPoint(cellIndex: index), from: fixture.view)
+                XCTAssertEqual(fixture.drawing.hitResizeEdge(at: edge)?.edge,
+                               TableResizeEdge(tableID: fixture.tableID, column: 1),
+                               "the selected column's edge in body cell \(index) is a handle")
+            }
+            try fixture.assertBodyEdgeScrollsWithoutResizing(
+                cellIndex: Self.gridSize, physicalDelta: -Self.bodySwipeDistance, "an unselected column's body edge")
+            let edge = try fixture.trailingEdgeHostPoint(cellIndex: middleColumn[1])
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
+            fixture.surface.endResizeDrag(at: CGPoint(x: edge.x + 40, y: edge.y))
+            XCTAssertEqual(try fixture.columnWidths(row: Self.gridSize - 1),
+                           [[Self.narrowColumnWidth], [Self.narrowColumnWidth + 40], [Self.narrowColumnWidth]],
+                           "a selected column resizes from a body row")
+        }
+        try withMountedTable(document: narrowColumnGridDocument(headerRow: true),
+                             cellSelection: (middleColumn[1], middleColumn[2])) { fixture in
+            let edge = fixture.drawing.convert(try fixture.trailingEdgeHostPoint(cellIndex: middleColumn[1]), from: fixture.view)
+            XCTAssertNil(fixture.drawing.hitResizeEdge(at: edge),
+                         "a selection that does not reach the first row is not a column selection")
+        }
+    }
+
+    func testRTLBodyRowsScrollWhileTheFirstRowKeepsItsLogicalTrailingHandles() throws {
+        try withMountedTable(document: narrowColumnGridDocument(headerRow: false, rightToLeft: true),
+                             configJSON: rightToLeftTableConfig, cellSelection: nil) { fixture in
+            XCTAssertLessThanOrEqual(try fixture.presentedCell(1).bounds.maxX, try fixture.presentedCell(0).bounds.minX + 0.5,
+                                     "the first logical column renders at the right in RTL")
+            let handle = try fixture.trailingEdgeHostPoint(cellIndex: 0)
+            XCTAssertEqual(fixture.drawing.hitResizeEdge(at: fixture.drawing.convert(handle, from: fixture.view))?.edge,
+                           TableResizeEdge(tableID: fixture.tableID, column: 0))
+            XCTAssertTrue(fixture.surface.beginResizeDrag(at: handle))
+            fixture.surface.endResizeDrag(at: CGPoint(x: handle.x - 40, y: handle.y))
+            XCTAssertEqual(try fixture.columnWidths(row: 0).first, [Self.narrowColumnWidth + 40])
+            try fixture.assertBodyEdgeScrollsWithoutResizing(
+                cellIndex: Self.gridSize, physicalDelta: Self.bodySwipeDistance, "an RTL body-row edge")
         }
     }
 

@@ -382,8 +382,9 @@ final class TableAcceptanceTests: XCTestCase {
         positions = try harness.positions()
         let resizeTarget = positions[Acceptance.tableColumns * 2]
         try harness.root.selectTableCells(adapter: adapter, anchor: resizeTarget, head: resizeTarget)
+        harness.root.contentOffset.y = -harness.root.adjustedContentInset.top
         harness.expo.layoutIfNeeded()
-        let firstColumn = try harness.presentedCell(positions[Acceptance.tableColumns])
+        let firstColumn = try harness.presentedCell(positions[0])
         let edge = try harness.drawing.convert(CGPoint(x: firstColumn.bounds.maxX, y: firstColumn.bounds.midY),
                                                to: harness.view)
         let surface = try harness.surface

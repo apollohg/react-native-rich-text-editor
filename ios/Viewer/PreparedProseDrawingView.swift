@@ -452,22 +452,28 @@ public final class PreparedProseDrawingView: UIView {
         var best: (hit: TableResizeEdgeHit, distance: CGFloat)?
         for table in snapshot.tables where table.parentScrollIdentity == nil {
             guard table.clip.minY <= point.y, point.y < table.clip.maxY,
-                  let sourceCells = table.surface.sourceTable?.cells
+                  let sourceTable = table.surface.sourceTable
             else { continue }
+            let sourceCells = sourceTable.cells
             let widths = table.surface.layout.columnWidths
+            let rowOffsets = table.surface.layout.rowOffsets
+            let handleRowHeight = rowOffsets.count > 1 ? rowOffsets[1] - rowOffsets[0] : 0
+            let selectedColumns = selectedWholeColumns(tableID: table.surface.identity, in: sourceTable)
             let rightToLeft = table.surface.direction == .rightToLeft
             for cell in snapshot.cells where cell.surface === table.surface {
                 guard let index = cell.cell.sourceCellIndex, index < sourceCells.count,
                       cell.bounds.minY <= point.y, point.y < cell.bounds.maxY
                 else { continue }
+                let source = sourceCells[index]
+                let column = Int(source.column + source.colspan) - 1
+                let inHandleRow = source.row == 0 && point.y < cell.bounds.minY + handleRowHeight
+                guard inHandleRow || selectedColumns.contains(column) else { continue }
                 let x = rightToLeft ? cell.bounds.minX : cell.bounds.maxX
                 let distance = abs(point.x - x)
                 guard distance <= reach,
                       x >= table.clip.minX, x <= table.clip.maxX,
                       x >= visible.minX, x <= visible.maxX
                 else { continue }
-                let source = sourceCells[index]
-                let column = Int(source.column + source.colspan) - 1
                 guard column >= 0, column < widths.count else { continue }
                 if let current = best,
                    current.distance < distance || (current.distance == distance && current.hit.edge.column <= column) {
@@ -482,6 +488,17 @@ public final class PreparedProseDrawingView: UIView {
             }
         }
         return best?.hit
+    }
+
+    private func selectedWholeColumns(tableID: String, in table: FfiViewerTable) -> Range<Int> {
+        guard let positions = selectedTableCellSourcePositions[tableID] else { return 0..<0 }
+        let selected = table.cells.filter { positions.contains(Int($0.sourcePos)) }
+        guard let top = selected.map(\.row).min(), top == 0,
+              selected.map({ $0.row + $0.rowspan }).max() == table.rows,
+              let left = selected.map(\.column).min(),
+              let right = selected.map({ $0.column + $0.colspan }).max()
+        else { return 0..<0 }
+        return Int(left)..<Int(right)
     }
 
     func tableChain(at point: CGPoint) -> [String] {
