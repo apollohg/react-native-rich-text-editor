@@ -79,6 +79,7 @@
         "test:tables:interop:convergence": "npm --prefix scripts/table-interop run test:convergence",
         "test:tables:interop:native": "npm --prefix scripts/table-interop run test:native-structural-edits",
         "test:tables:interop:native-acceptance": "npm --prefix scripts/table-interop run test:native-acceptance-export",
+        "test:tables:interop:native-marks": "npm --prefix scripts/table-interop run test:native-mark-formats",
         "test:tables:interop:upstream-mutex": "npm --prefix scripts/table-interop run test:upstream-mutex",
         "typecheck": "tsc --noEmit",
         "typecheck:example": "npm --prefix example run typecheck",

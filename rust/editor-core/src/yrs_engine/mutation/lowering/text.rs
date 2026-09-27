@@ -672,11 +672,7 @@ fn marks_to_attrs(marks: &[Mark]) -> Attrs {
     marks
         .iter()
         .map(|mark| {
-            let value = if mark.attrs().is_empty() {
-                Any::Bool(true)
-            } else {
-                json_to_any(&Value::Object(mark.attrs().clone().into_iter().collect()))
-            };
+            let value = json_to_any(&Value::Object(mark.attrs().clone().into_iter().collect()));
             (Arc::<str>::from(mark.mark_type()), value)
         })
         .collect()

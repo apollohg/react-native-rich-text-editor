@@ -75,6 +75,36 @@ fn validated_json_matcher_avoids_old_value_projection() {
 }
 
 #[test]
+fn legacy_true_and_web_empty_map_mark_formats_read_as_one_attributeless_mark() {
+    let doc = utf16_doc();
+    {
+        let mut txn = doc.transact_mut();
+        let fragment = txn.get_or_insert_xml_fragment("prosemirror");
+        let paragraph = fragment.push_back(&mut txn, XmlElementPrelim::empty("paragraph"));
+        let text = paragraph.push_back(&mut txn, XmlTextPrelim::new(""));
+        text.insert_with_attributes(&mut txn, 0, "a", mark_attrs_value("bold", Any::Bool(true)));
+        text.insert_with_attributes(
+            &mut txn,
+            1,
+            "b",
+            mark_attrs_value("bold", Any::Map(Default::default())),
+        );
+    }
+    let expected = json!({
+        "type": "doc",
+        "content": [{
+            "type": "paragraph",
+            "content": [{ "type": "text", "text": "ab", "marks": [{ "type": "bold" }] }]
+        }]
+    });
+    assert_eq!(read_raw(&doc), expected);
+    assert_eq!(
+        match_raw(&doc, &expected, &ResourceLimits::default()),
+        (Ok(true), true)
+    );
+}
+
+#[test]
 fn validated_json_matcher_coalesces_text_across_diffs_nodes_and_fragments() {
     let doc = utf16_doc();
     {

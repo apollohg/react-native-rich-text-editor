@@ -309,13 +309,11 @@ fn prepare_marks_to_attrs(
             continue;
         };
         budget.charge_output(mark_type.len())?;
-        let value = match mark.get("attrs") {
-            Some(value) => prepare_json_value(value, budget, 1)?,
-            None => {
-                budget.admit_any(1, 1)?;
-                Any::Bool(true)
-            }
-        };
+        let value = prepare_json_value(
+            mark.get("attrs").unwrap_or(&Value::Object(Map::new())),
+            budget,
+            1,
+        )?;
         attrs.insert(mark_type.into(), value);
     }
     Ok(attrs)

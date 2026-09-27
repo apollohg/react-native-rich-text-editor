@@ -174,7 +174,9 @@ fn any_projects_null(value: &Any) -> bool {
 }
 
 fn mark_value_omits_attrs(value: &Any) -> bool {
-    matches!(value, Any::Bool(true)) || any_projects_null(value)
+    matches!(value, Any::Bool(true))
+        || matches!(value, Any::Map(attrs) if attrs.is_empty())
+        || any_projects_null(value)
 }
 
 fn mark_value_projection_equal(left: &Any, right: &Any) -> bool {

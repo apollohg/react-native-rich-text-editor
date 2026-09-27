@@ -469,10 +469,7 @@ fn marks_to_attrs(marks: Option<&Vec<Value>>) -> Attrs {
         let Some(mark_type) = mark.get("type").and_then(Value::as_str) else {
             continue;
         };
-        let value = mark
-            .get("attrs")
-            .map(json_to_any)
-            .unwrap_or_else(|| Any::Bool(true));
+        let value = json_to_any(mark.get("attrs").unwrap_or(&Value::Object(Map::new())));
         attrs.insert(mark_type.into(), value);
     }
     attrs

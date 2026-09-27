@@ -450,3 +450,73 @@ fn prepared_toggle_mark_exact_limits_and_one_under_errors_match_public_eager() {
     assert_eq!(prepared.can_undo(), generic.can_undo());
     assert_eq!(prepared.can_redo(), generic.can_redo());
 }
+
+#[test]
+fn native_mark_writes_store_attributeless_marks_as_empty_map_formats() {
+    use yrs::types::text::{Text, YChange};
+    use yrs::Any;
+
+    let mut engine = transaction_engine();
+    engine
+        .import_json(
+            &json!({
+                "type": "doc",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [
+                        { "type": "text", "text": "plain" },
+                        { "type": "text", "text": "bold", "marks": [{ "type": "bold" }] }
+                    ]
+                }]
+            })
+            .to_string(),
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap();
+    select_text(&mut engine, 70_030_400, 0, 2);
+    engine
+        .apply_command(
+            70_030_401,
+            TypedCommand::ToggleMark {
+                mark_type: "italic".into(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    select_text(&mut engine, 70_030_402, 7, 7);
+    engine
+        .apply_command(70_030_403, TypedCommand::InsertText { text: "X".into() })
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        engine.document_json().unwrap()["content"][0]["content"],
+        json!([
+            { "type": "text", "text": "pl", "marks": [{ "type": "italic" }] },
+            { "type": "text", "text": "ain" },
+            { "type": "text", "text": "boXld", "marks": [{ "type": "bold" }] }
+        ])
+    );
+    let txn = engine.doc.transact();
+    let fragment = txn.get_xml_fragment("prosemirror").unwrap();
+    let formats = fragment
+        .successors(&txn)
+        .filter_map(|node| match node {
+            XmlOut::Text(text) => Some(text.diff(&txn, YChange::identity)),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|diff| diff.attributes)
+        .flat_map(|attrs| attrs.into_iter())
+        .map(|(mark, value)| (mark.to_string(), value))
+        .collect::<Vec<_>>();
+    let empty_map = Any::Map(Default::default());
+    assert_eq!(
+        formats,
+        vec![
+            ("italic".to_string(), empty_map.clone()),
+            ("bold".to_string(), empty_map),
+        ],
+        "every attribute-less mark must be stored as the empty map y-prosemirror writes"
+    );
+}

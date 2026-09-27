@@ -8,9 +8,6 @@ import { EXPORTS_VARIABLE, nativeAcceptanceExportPaths } from '../native-accepta
 import { isRecord } from '../peer-protocol.js';
 
 const WEB_EDIT = { type: 'appendParagraph' };
-const MARKS_KEY = 'marks';
-const ATTRIBUTES_KEY = 'attrs';
-const ATTRIBUTELESS_MARK_FORMAT = true;
 
 type NativeAcceptanceExport = {
     readonly path: string;
@@ -44,26 +41,6 @@ function clientsOf(stateVectorBase64: string): Set<number> {
     return new Set(Y.decodeStateVector(Buffer.from(stateVectorBase64, 'base64')).keys());
 }
 
-function withAttributelessMarkFormats(value: unknown): unknown {
-    if (Array.isArray(value)) {
-        return value.map(withAttributelessMarkFormats);
-    }
-    if (!isRecord(value)) {
-        return value;
-    }
-    return Object.fromEntries(
-        Object.entries(value).map(([key, child]) => [
-            key,
-            key === MARKS_KEY && Array.isArray(child)
-                ? child.map((mark) =>
-                    isRecord(mark) && mark[ATTRIBUTES_KEY] === ATTRIBUTELESS_MARK_FORMAT
-                        ? Object.fromEntries(Object.entries(mark).filter(([field]) => field !== ATTRIBUTES_KEY))
-                        : mark)
-                : withAttributelessMarkFormats(child),
-        ]),
-    );
-}
-
 function shapeOf(document: unknown): string {
     return JSON.stringify(canonicalDocumentShape(document));
 }
@@ -83,7 +60,7 @@ async function webPeerReadsTheExport(exported: NativeAcceptanceExport): Promise<
                 `the web editor state differs from the ${exported.platform} document, so it would repair it`,
             );
             assert.equal(
-                shapeOf(withAttributelessMarkFormats(seeded.documentJson)),
+                shapeOf(seeded.documentJson),
                 nativeShape,
                 `the web peer reads a different raw document than ${exported.platform} wrote`,
             );
