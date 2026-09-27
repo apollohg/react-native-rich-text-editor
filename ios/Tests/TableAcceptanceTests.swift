@@ -24,7 +24,7 @@ final class TableAcceptanceTests: XCTestCase {
         static let insertTable = "insertTable"
         static let deleteTableRows = "deleteTableRows"
         static let textSelection = "text"
-        static let caretAffinity = "before"
+        static let cellSelection = "cell"
         static let tableNode = "table"
         static let rowNode = "table_row"
         static let cellNode = "table_cell"
@@ -43,6 +43,8 @@ final class TableAcceptanceTests: XCTestCase {
         static let irregularDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Raw"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Wide header"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":3},"content":[{"type":"paragraph","content":[{"type":"text","text":"Overhang"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Short row"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"One"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Two"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Four"}]}]}]}]}]}"#
         static let irregularShortRowCell = 3
         static let irregularCellActions = ["Clear cells", "Delete table"]
+        static let singleCellActions = TableAccessibilityAction.all.map(\.label)
+            .filter { ![mergeLabel, splitLabel].contains($0) }
         static let parityLayoutKey = "table-acceptance-parity"
     }
 
@@ -271,8 +273,8 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertTrue(secondBody === input, "rebinding reuses the single cell input")
         secondBody.insertText(Acceptance.bodyText)
         positions = try harness.positions()
-        try harness.view.textView.selectTableCells(adapter: adapter,
-                                                   anchor: positions[Acceptance.tableColumns], head: positions[Acceptance.tableColumns + 1])
+        try harness.root.selectTableCells(adapter: adapter,
+                                          anchor: positions[Acceptance.tableColumns], head: positions[Acceptance.tableColumns + 1])
         harness.expo.layoutIfNeeded()
         let bodyPair: Set<Int> = [Int(positions[Acceptance.tableColumns]), Int(positions[Acceptance.tableColumns + 1])]
         XCTAssertEqual(try harness.selectedCells(), bodyPair)
@@ -303,8 +305,8 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(try harness.selectedCells(), [Int(positions[Acceptance.tableColumns])],
                        "split keeps the content-holding top-left cell selected")
 
-        try harness.view.textView.selectTableCells(adapter: adapter,
-                                                   anchor: positions[Acceptance.tableColumns * 2], head: positions[Acceptance.tableColumns * 2 + 1])
+        try harness.root.selectTableCells(adapter: adapter,
+                                          anchor: positions[Acceptance.tableColumns * 2], head: positions[Acceptance.tableColumns * 2 + 1])
         harness.expo.layoutIfNeeded()
         XCTAssertTrue(UIApplication.shared.sendAction(#selector(UIResponderStandardEditActions.paste(_:)),
                                                       to: harness.root, from: nil, for: nil))
@@ -324,8 +326,8 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(grid[3].map(\.paragraphs), Array(repeating: [""], count: Acceptance.tableColumns))
         positions = try harness.positions()
         XCTAssertEqual(try harness.selectedCells(), [], "adding a row leaves no cell rectangle")
-        try harness.view.textView.selectTableCells(adapter: adapter,
-                                                   anchor: positions[Acceptance.tableColumns * 3], head: positions[Acceptance.tableColumns * 3])
+        try harness.root.selectTableCells(adapter: adapter,
+                                          anchor: positions[Acceptance.tableColumns * 3], head: positions[Acceptance.tableColumns * 3])
         harness.expo.layoutIfNeeded()
         try harness.perform(Acceptance.deleteRowLabel, onCellAt: positions[Acceptance.tableColumns * 3])
         XCTAssertEqual(try harness.grid().count, Acceptance.tableRows)
@@ -334,8 +336,8 @@ final class TableAcceptanceTests: XCTestCase {
                        "deleting the selected row selects the first real cell of the row above")
 
         positions = try harness.positions()
-        try harness.view.textView.selectTableCells(adapter: adapter,
-                                                   anchor: positions[Acceptance.tableColumns - 1], head: positions[Acceptance.tableColumns - 1])
+        try harness.root.selectTableCells(adapter: adapter,
+                                          anchor: positions[Acceptance.tableColumns - 1], head: positions[Acceptance.tableColumns - 1])
         harness.expo.layoutIfNeeded()
         try harness.perform(Acceptance.addColumnAfterLabel, onCellAt: positions[Acceptance.tableColumns - 1])
         grid = try harness.grid()
@@ -344,7 +346,7 @@ final class TableAcceptanceTests: XCTestCase {
         positions = try harness.positions()
         XCTAssertEqual(try harness.selectedCells(), [], "adding a column leaves no cell rectangle")
         let addedColumnHeader = positions[Acceptance.tableColumns]
-        try harness.view.textView.selectTableCells(adapter: adapter, anchor: addedColumnHeader, head: addedColumnHeader)
+        try harness.root.selectTableCells(adapter: adapter, anchor: addedColumnHeader, head: addedColumnHeader)
         harness.expo.layoutIfNeeded()
         try harness.perform(Acceptance.deleteColumnLabel, onCellAt: addedColumnHeader)
         grid = try harness.grid()
@@ -355,7 +357,7 @@ final class TableAcceptanceTests: XCTestCase {
 
         positions = try harness.positions()
         let resizeTarget = positions[Acceptance.tableColumns * 2]
-        try harness.view.textView.selectTableCells(adapter: adapter, anchor: resizeTarget, head: resizeTarget)
+        try harness.root.selectTableCells(adapter: adapter, anchor: resizeTarget, head: resizeTarget)
         harness.expo.layoutIfNeeded()
         let firstColumn = try harness.presentedCell(positions[Acceptance.tableColumns])
         let edge = try harness.drawing.convert(CGPoint(x: firstColumn.bounds.maxX, y: firstColumn.bounds.midY),
@@ -479,16 +481,6 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(rtlFirst.width, ltrFirst.width, accuracy: Acceptance.geometryAccuracy)
         XCTAssertEqual(try harness.documentJSON(), tableBeforeDirection, "direction is presentation only")
         XCTAssertEqual(try harness.selectedCells(), rectangleBeforeDirection, "direction never changes the selected cells")
-        let proseCaret = try XCTUnwrap(resolved["anchorScalar"] as? Int)
-        let caretRequest = adapter.callWithEnvelope(adapter.selectionEnvelope(
-            anchor: UInt32(proseCaret), head: UInt32(proseCaret), affinity: Acceptance.caretAffinity
-        )) { editorV2SetSelection(editorId: adapter.editorId, requestJson: $0) }
-        XCTAssertNil(caretRequest.error, "\(String(describing: caretRequest.error))")
-        XCTAssertTrue(harness.root.applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
-        harness.expo.layoutIfNeeded()
-        XCTAssertEqual(try harness.engineSelection()["type"] as? String, Acceptance.textSelection,
-                       "the caret returns to the trailing prose before the view is destroyed")
-        XCTAssertEqual(try harness.selectedCells(), [])
 
         let beforeRemount = try harness.documentJSON()
         harness.remount()
@@ -497,14 +489,24 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(positions.count, (Acceptance.tableRows - 1) * Acceptance.tableColumns)
         XCTAssertTrue(harness.view.activeTextInput === harness.root)
         try harness.presentedCell(positions[0])
-        let rebound = try harness.bind(cell: positions[Acceptance.tableColumns])
-        XCTAssertEqual(harness.activeCell(), positions[Acceptance.tableColumns])
-        XCTAssertEqual(try harness.actionLabels(onCellAt: positions[Acceptance.tableColumns]), [],
-                       "KNOWN DEFECT: a bound cell offers no table actions until the first keystroke")
-        rebound.insertText(Acceptance.composedText)
-        let reboundLabels = try harness.actionLabels(onCellAt: positions[Acceptance.tableColumns])
+        XCTAssertEqual(try harness.engineSelection()["type"] as? String, Acceptance.cellSelection,
+                       "the engine keeps the pre-remount cell rectangle, so activation must replace it")
+        let reboundCell = positions[Acceptance.tableColumns]
+        let reboundFrame = try XCTUnwrap(try harness.surface.cellFrame(
+            tableID: try harness.tableID, cellIndex: UInt32(Acceptance.tableColumns)
+        ))
+        XCTAssertTrue(harness.view.activateTableCell(at: CGPoint(x: reboundFrame.midX, y: reboundFrame.midY)))
+        drainMainQueue()
+        harness.expo.layoutIfNeeded()
+        XCTAssertEqual(harness.activeCell(), reboundCell)
+        XCTAssertEqual(try harness.engineSelection()["type"] as? String, Acceptance.textSelection,
+                       "activating a cell replaces the pre-remount cell rectangle with a caret")
+        XCTAssertEqual(try harness.actionLabels(onCellAt: reboundCell), Acceptance.singleCellActions,
+                       "an activated cell offers its single-cell table actions before any keystroke")
+        harness.view.activeTextInput.insertText(Acceptance.composedText)
+        let reboundLabels = try harness.actionLabels(onCellAt: reboundCell)
         XCTAssertTrue(reboundLabels.contains(Acceptance.addRowAfterLabel),
-                      "table actions are available again after the rebind: \(reboundLabels) \(String(describing: adapter.cachedActiveState?["commands"]))")
+                      "table actions are available again after the rebind: \(reboundLabels)")
         try harness.perform(Acceptance.addRowAfterLabel, onCellAt: try harness.positions()[Acceptance.tableColumns])
         grid = try harness.grid()
         XCTAssertEqual(grid.count, Acceptance.tableRows, "\(grid)")
@@ -562,7 +564,7 @@ final class TableAcceptanceTests: XCTestCase {
 
         let positions = try harness.positions()
         let shortRow = positions[Acceptance.irregularShortRowCell]
-        try harness.view.textView.selectTableCells(adapter: adapter, anchor: shortRow, head: shortRow)
+        try harness.root.selectTableCells(adapter: adapter, anchor: shortRow, head: shortRow)
         harness.expo.layoutIfNeeded()
         XCTAssertEqual(try harness.actionLabels(onCellAt: shortRow), Acceptance.irregularCellActions,
                        "a real cell of the raw table offers exactly these actions")
@@ -572,7 +574,7 @@ final class TableAcceptanceTests: XCTestCase {
         harness.remount()
         XCTAssertEqual(try harness.grid(), raw, "rebinding never repairs the raw table")
         XCTAssertEqual(adapter.baseDocumentRevision, revision)
-        try harness.view.textView.selectTableCells(adapter: adapter, anchor: shortRow, head: shortRow)
+        try harness.root.selectTableCells(adapter: adapter, anchor: shortRow, head: shortRow)
         harness.expo.layoutIfNeeded()
         XCTAssertEqual(try harness.actionLabels(onCellAt: shortRow), Acceptance.irregularCellActions,
                        "the same actions are offered after the rebind")

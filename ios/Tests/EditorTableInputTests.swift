@@ -1571,22 +1571,15 @@ final class EditorTableInputTests: XCTestCase {
         let drawing: PreparedProseDrawingView
         let recorder: GeometryRecorder
 
-        func select(_ selection: [String: Any]) throws {
-            let request = adapter.callWithEnvelope(["selection": selection]) {
-                editorV2SetSelection(editorId: adapter.editorId, requestJson: $0)
-            }
-            XCTAssertNil(request.error)
-            XCTAssertTrue(host.richTextView.textView.applyUpdateJSON(
-                try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))
-            ))
+        func selectText(anchor: UInt32, head: UInt32) throws {
+            try host.richTextView.textView.applyLocalSelection(
+                adapter: adapter, selection: EditorV2PositionBridge.textSelectionEnvelope(anchor: anchor, head: head)
+            )
         }
 
         func selectCells(anchor: Int, head: Int) throws {
-            try select([
-                "type": "cell",
-                "anchorCell": ["kind": "document", "offset": Int(positions[anchor])],
-                "headCell": ["kind": "document", "offset": Int(positions[head])]
-            ])
+            try host.richTextView.textView.selectTableCells(adapter: adapter, anchor: positions[anchor],
+                                                            head: positions[head])
         }
 
         func expectedWindowRects() throws -> [CGRect] {
@@ -1961,11 +1954,7 @@ final class EditorTableInputTests: XCTestCase {
 
     func testTextSelectionsPublishNoGeometryAndEndACellSelectionsGeometry() throws {
         try withExpoTableGeometry(document: proseThenFixedWidthTableDocument) { fixture in
-            try fixture.select([
-                "type": "text",
-                "anchor": ["kind": "scalar", "offset": 1],
-                "head": ["kind": "scalar", "offset": 4]
-            ])
+            try fixture.selectText(anchor: 1, head: 4)
             waitForGeometryFrame()
             XCTAssertTrue(fixture.recorder.payloads.isEmpty, "\(fixture.recorder.payloads)")
 
@@ -1973,11 +1962,7 @@ final class EditorTableInputTests: XCTestCase {
             waitForGeometryFrame()
             XCTAssertEqual(fixture.recorder.payloads.count, 1)
 
-            try fixture.select([
-                "type": "text",
-                "anchor": ["kind": "scalar", "offset": 2],
-                "head": ["kind": "scalar", "offset": 2]
-            ])
+            try fixture.selectText(anchor: 2, head: 2)
             waitForGeometryFrame()
             XCTAssertEqual(fixture.recorder.payloads.count, 2, "\(fixture.recorder.payloads)")
             XCTAssertEqual(fixture.recorder.payloads[1] as? [String: String], ["editorId": fixture.adapter.editorId])

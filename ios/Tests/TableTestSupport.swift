@@ -145,10 +145,14 @@ extension PreparedProseDrawingView {
 }
 
 extension EditorTextView {
-    func selectTableCells(adapter: EditorV2Adapter, anchor: UInt32, head: UInt32) throws {
-        let request = adapter.applyLocalSelection(documentCellSelection(anchor: anchor, head: head))
-        XCTAssertNil(request.error, "engine rejected the selection: \(String(describing: request.error))")
+    func applyLocalSelection(adapter: EditorV2Adapter, selection: [String: Any]) throws {
+        let request = adapter.applyLocalSelection(selection)
+        XCTAssertNil(request.error, "engine rejected the selection \(selection): \(String(describing: request.error))")
         XCTAssertTrue(applyUpdateJSON(try XCTUnwrap(adapter.refreshFromRustState(mirrorSelection: nil))))
+    }
+
+    func selectTableCells(adapter: EditorV2Adapter, anchor: UInt32, head: UInt32) throws {
+        try applyLocalSelection(adapter: adapter, selection: documentCellSelection(anchor: anchor, head: head))
     }
 }
 

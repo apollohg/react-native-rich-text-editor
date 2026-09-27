@@ -127,10 +127,9 @@ final class TableIntegrationTests: XCTestCase {
         }
 
         func applyRemoteTextSelection(at scalar: UInt32) throws {
-            try remote.apply(adapter.selectionEnvelope(anchor: scalar, head: scalar,
-                                                      affinity: Integration.remoteSelectionAffinity)) {
-                editorV2SetSelection(editorId: $0, requestJson: $1)
-            }
+            try remote.applySelection(EditorV2PositionBridge.textSelectionEnvelope(
+                anchor: scalar, head: scalar, affinity: Integration.remoteSelectionAffinity
+            ))
         }
 
         func applyRemoteCellSelection(anchor: UInt32, head: UInt32) throws {

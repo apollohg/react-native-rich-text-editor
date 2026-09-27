@@ -160,10 +160,9 @@ class NativeTableAcceptanceTest {
         }
 
         fun applyLocalCommand(command: JSONObject) {
-            val result = adapter.callWithEnvelope(JSONObject().put("command", command)) {
+            adapter.callWithEnvelope(JSONObject().put("command", command)) {
                 UniffiEditorV2Backend.applyCommand(adapter.editorId, it)
-            }
-            assertTrue("the local command $command was refused: $result", result is EditorV2CallResult.Ok)
+            }.required("local command $command")
             assertTrue(root.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
         }
 
@@ -556,7 +555,7 @@ class NativeTableAcceptanceTest {
         }
 
         val remote = room.makeAdapter()
-        val proseCaret = try {
+        try {
             harness.onMain {
                 val relay = TableCollaborationRelay(listOf(harness.adapter.editorId, remote.editorId))
                 assertEquals("catching up is a remote commit on the remote peer only, so its adapter must refresh " +
@@ -566,14 +565,12 @@ class NativeTableAcceptanceTest {
                 assertEquals("the local selection is the caret in the active cell: $local", TEXT_SELECTION,
                     local.getString("type"))
                 assertEquals(lastCell.toLong(), harness.activeCell())
-                val historyBefore = harness.adapter.historyCanUndo() to harness.adapter.historyCanRedo()
+                val canRedoBefore = harness.adapter.historyCanRedo()
                 requireNotNull(remote.refreshFromRustState(null))
-                val selected = remote.applyLocalSelection(documentCellSelection(lastCell, lastCell))
-                assertTrue("the remote peer could not select its row: $selected", selected is EditorV2CallResult.Ok)
-                val deleted = remote.callWithEnvelope(JSONObject().put("command", JSONObject().put("type", DELETE_TABLE_ROWS))) {
+                remote.applyLocalSelection(documentCellSelection(lastCell, lastCell)).required("remote row selection")
+                remote.callWithEnvelope(JSONObject().put("command", JSONObject().put("type", DELETE_TABLE_ROWS))) {
                     UniffiEditorV2Backend.applyCommand(remote.editorId, it)
-                }
-                assertTrue("the remote peer could not delete its row: $deleted", deleted is EditorV2CallResult.Ok)
+                }.required("remote row delete")
                 assertEquals("only the local editor receives a remote commit", setOf(harness.adapter.editorId),
                     relay.exchangeUntilIdle())
                 harness.deliverRemoteCommit()
@@ -594,14 +591,12 @@ class NativeTableAcceptanceTest {
                     resolved.getInt("anchor") > tableEnd)
                 assertEquals("no cell rectangle survives the remote deletion", emptySet<Int>(), harness.selectedCells())
                 val afterRemote = harness.documentJson()
-                assertEquals("the remote change adds no local history", historyBefore.second,
-                    harness.adapter.historyCanRedo())
+                assertEquals("the remote change adds no local history", canRedoBefore, harness.adapter.historyCanRedo())
                 assertEquals("KNOWN DEFECT: canUndo stays true after a remote row delete removed the only local undo item",
                     true, harness.adapter.historyCanUndo())
                 assertNull("KNOWN DEFECT: local undo is refused after a remote row delete while canUndo is true",
                     harness.adapter.undo())
                 assertEquals("local undo never restores the remote deletion", afterRemote, harness.documentJson())
-                resolved.getInt("anchorScalar")
             }
         } finally {
             remote.destroy()
@@ -632,18 +627,6 @@ class NativeTableAcceptanceTest {
             assertEquals("direction never changes the selected cells", rectangleBeforeDirection, harness.selectedCells())
         }
         harness.screenshot("native-table-acceptance-rtl.png")
-        harness.onMain {
-            val restored = harness.adapter.callWithEnvelope(
-                harness.adapter.selectionEnvelope(proseCaret, proseCaret, CARET_AFFINITY)
-            ) { UniffiEditorV2Backend.setSelection(harness.adapter.editorId, it) }
-            assertTrue("$restored", restored is EditorV2CallResult.Ok)
-            assertTrue(harness.root.applyUpdateJSON(requireNotNull(harness.adapter.refreshFromRustState(null))))
-        }
-        harness.onMain {
-            assertEquals("the caret returns to the trailing prose before the view is destroyed", TEXT_SELECTION,
-                harness.engineSelection().getString("type"))
-            assertEquals(emptySet<Int>(), harness.selectedCells())
-        }
 
         val beforeRemount = harness.onMain { harness.documentJson() }
         harness.remount()
@@ -652,11 +635,15 @@ class NativeTableAcceptanceTest {
             assertEquals((TABLE_ROWS - 1) * TABLE_COLUMNS, harness.positions().size)
             assertSame(harness.root, harness.view.activeTextInput)
             assertNotNull(harness.presentedCell(harness.positions()[0]))
+            assertEquals("the engine keeps the pre-remount cell rectangle, so the tap must replace it", CELL_SELECTION,
+                harness.engineSelection().getString("type"))
         }
         val reboundCell = harness.onMain { harness.positions()[TABLE_COLUMNS] }
         harness.tapCell(reboundCell)
         harness.onMain {
             assertEquals(reboundCell.toLong(), harness.activeCell())
+            assertEquals("tapping a cell replaces the pre-remount cell rectangle with a caret", TEXT_SELECTION,
+                harness.engineSelection().getString("type"))
             assertEquals("a really tapped cell offers its single-cell table actions before any keystroke",
                 SINGLE_CELL_ACTIONS, harness.actionIds(reboundCell))
             harness.commit(COMPOSED_TEXT)
@@ -704,7 +691,7 @@ class NativeTableAcceptanceTest {
         private const val HEADER_NODE = "table_header"
         private const val PARAGRAPH_NODE = "paragraph"
         private const val TEXT_SELECTION = "text"
-        private const val CARET_AFFINITY = "before"
+        private const val CELL_SELECTION = "cell"
         private const val PARITY_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Merged header across two columns"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"A tall cell whose text wraps over several lines"}]},{"type":"paragraph","content":[{"type":"text","text":"second"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"abcdefghijkl"}]}]},{"type":"table_cell","attrs":{"colwidth":[140]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Ready"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"x"}]}]},{"type":"table_cell","content":[{"type":"paragraph"}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After"}]}]}"""
         private const val IRREGULAR_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Raw"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Wide header"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":3},"content":[{"type":"paragraph","content":[{"type":"text","text":"Overhang"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Short row"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"One"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Two"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Four"}]}]}]}]}]}"""
         private const val IRREGULAR_SHORT_ROW_CELL = 3
