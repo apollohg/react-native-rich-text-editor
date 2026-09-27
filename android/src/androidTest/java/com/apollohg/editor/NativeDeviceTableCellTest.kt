@@ -1,6 +1,5 @@
 package com.apollohg.editor
 
-import android.app.Activity
 import android.app.Instrumentation
 import android.content.Context
 import android.graphics.Bitmap
@@ -18,11 +17,6 @@ import androidx.test.filters.LargeTest
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import com.apollohg.editor.viewer.PreparedProseDrawingView
-import expo.modules.core.ModuleRegistry
-import expo.modules.kotlin.AppContext
-import expo.modules.kotlin.ModulesProvider
-import expo.modules.kotlin.modules.Module
-import java.lang.ref.WeakReference
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -314,10 +308,9 @@ class NativeDeviceTableCellTest {
                 requireNotNull(adapter.setContentJson(document))
                 val updates = Collections.synchronizedList(mutableListOf<Map<String, Any>>())
                 scenario.onActivity { activity ->
-                    initializeSoLoaderIfAvailable(activity)
-                    val expo = testExpoContext(activity)
+                    val expo = instrumentedExpoContext(activity)
                     val root = FrameLayout(activity).apply { setBackgroundColor(Color.WHITE) }
-                    val editor = NativeEditorExpoView(expo.first, expo.second).apply {
+                    val editor = NativeEditorExpoView(expo.context, expo.appContext).apply {
                         clipToPadding = false
                         setShowToolbar(false)
                         onFocusChangeForTesting = {}
@@ -327,6 +320,7 @@ class NativeDeviceTableCellTest {
                         onSelectionChangeForTesting = {}
                         onContentHeightChangeForTesting = {}
                         onAtomLayoutForTesting = {}
+                        onTableSelectionGeometryForTesting = {}
                     }
                     root.addView(editor, FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 300)
@@ -557,30 +551,7 @@ class NativeDeviceTableCellTest {
     private fun dp(context: Context, value: Int): Int =
         (value * context.resources.displayMetrics.density).toInt()
 
-    private fun initializeSoLoaderIfAvailable(context: Context) {
-        try {
-            Class.forName("com.facebook.soloader.SoLoader")
-                .getMethod("init", Context::class.java, Boolean::class.javaPrimitiveType)
-                .invoke(null, context, false)
-        } catch (_: Throwable) {
-        }
-    }
 
-    private fun testExpoContext(activity: Activity): Pair<Context, AppContext> {
-        val reactContext = Class.forName("com.facebook.react.bridge.BridgeReactContext")
-            .getConstructor(Context::class.java).newInstance(activity) as Context
-        reactContext.javaClass.getMethod("onHostResume", Activity::class.java)
-            .invoke(reactContext, activity)
-        val provider = object : ModulesProvider {
-            override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
-        }
-        val constructor = AppContext::class.java.constructors.first {
-            it.parameterTypes.size == 3
-        }
-        val context = constructor.newInstance(provider,
-            ModuleRegistry(emptyList(), emptyList()), WeakReference(reactContext)) as AppContext
-        return reactContext to context
-    }
 
     companion object {
         private const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""

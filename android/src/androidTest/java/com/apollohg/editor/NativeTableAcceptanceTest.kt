@@ -17,6 +17,7 @@ import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
 import com.apollohg.editor.tables.TableCollaborationRelay
 import com.apollohg.editor.tables.TableRoomSeed
+import com.apollohg.editor.tables.TableToolbarTestItems
 import com.apollohg.editor.tables.applyLocalSelection
 import com.apollohg.editor.tables.TableAccessibilityAction
 import com.apollohg.editor.tables.TableAccessibilityNodes
@@ -25,6 +26,7 @@ import com.apollohg.editor.tables.ViewerTablePresentedCell
 import com.apollohg.editor.tables.activeTableCellPosition
 import com.apollohg.editor.tables.documentCellSelection
 import com.apollohg.editor.tables.presentedRealCell
+import com.apollohg.editor.tables.pressKeyboardToolbarButton
 import com.apollohg.editor.tables.required
 import com.apollohg.editor.tables.selectTableCells
 import com.apollohg.editor.tables.tableCellPositions
@@ -62,9 +64,10 @@ class NativeTableAcceptanceTest {
 
     private inner class Harness(private val scenario: ActivityScenario<NativeEditorOutsideTapActivity>) {
         lateinit var adapter: EditorV2Adapter
-        lateinit var view: RichTextEditorView
+        lateinit var expo: NativeEditorExpoView
         var token = 0L
 
+        val view: RichTextEditorView get() = expo.richTextView
         val root: EditorEditText get() = view.editorEditText
         val drawing: PreparedProseDrawingView get() = view.editorTableSurface.drawingView
 
@@ -92,23 +95,32 @@ class NativeTableAcceptanceTest {
         }
 
         fun mount(activity: Activity) {
-            view = RichTextEditorView(activity).apply {
-                applyTheme(EditorTheme.fromJson(THEME))
-                editorId = token
+            val context = instrumentedExpoContext(activity)
+            expo = NativeEditorExpoView(context.context, context.appContext).apply {
+                onFocusChangeForTesting = {}
+                onAddonEventForTesting = {}
+                onEditorUpdateForTesting = {}
+                onEditorReadyForTesting = {}
+                onSelectionChangeForTesting = {}
+                onContentHeightChangeForTesting = {}
+                onAtomLayoutForTesting = {}
+                onTableSelectionGeometryForTesting = {}
+                setThemeJson(THEME)
             }
             activity.setContentView(FrameLayout(activity).apply {
                 setBackgroundColor(Color.WHITE)
-                addView(view, FrameLayout.LayoutParams(
+                addView(expo, FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
                 ).apply {
                     val margin = (EDITOR_MARGIN_DP * activity.resources.displayMetrics.density).toInt()
                     setMargins(margin, margin * TOP_MARGIN_FACTOR, margin, margin)
                 })
             })
+            expo.setEditorId(token)
         }
 
         fun release() = onMain {
-            view.editorId = 0L
+            expo.setEditorId(0L)
             if (token != 0L) releasePairedV2TestEditor(token)
         }
 
@@ -192,7 +204,7 @@ class NativeTableAcceptanceTest {
         }
 
         fun remount() = onMain { activity ->
-            view.editorId = 0L
+            expo.setEditorId(0L)
             mount(activity)
         }
 
@@ -406,7 +418,10 @@ class NativeTableAcceptanceTest {
                 harness.selectedCells())
         }
 
-        val bodyStart = harness.onMain { harness.positions()[TABLE_COLUMNS] }
+        val bodyStart = harness.onMain {
+            harness.expo.setToolbarItemsJson(TableToolbarTestItems.STRONG_JSON)
+            harness.positions()[TABLE_COLUMNS]
+        }
         harness.tapCell(bodyStart)
         lateinit var cellInput: EditorEditText
         harness.onMain {
@@ -415,7 +430,7 @@ class NativeTableAcceptanceTest {
             assertEquals(bodyStart.toLong(), harness.activeCell())
             harness.commit(CELL_TEXT)
             cellInput.setSelection(0, BOLD_PREFIX_LENGTH)
-            cellInput.performToolbarToggleMark(STRONG_MARK)
+            harness.expo.pressKeyboardToolbarButton(TableToolbarTestItems.STRONG_LABEL)
             cellInput.setSelection(CELL_TEXT.length)
             harness.commit(PARAGRAPH_BREAK)
             harness.commit(SECOND_PARAGRAPH)
@@ -635,8 +650,13 @@ class NativeTableAcceptanceTest {
             assertEquals((TABLE_ROWS - 1) * TABLE_COLUMNS, harness.positions().size)
             assertSame(harness.root, harness.view.activeTextInput)
             assertNotNull(harness.presentedCell(harness.positions()[0]))
+            val preTap = harness.engineSelection()
             assertEquals("the engine keeps the pre-remount cell rectangle, so the tap must replace it", CELL_SELECTION,
-                harness.engineSelection().getString("type"))
+                preTap.getString("type"))
+            assertEquals("$preTap", harness.positions()[0], preTap.getInt("anchorCell"))
+            assertEquals("$preTap", harness.positions()[1], preTap.getInt("headCell"))
+            assertEquals("the remounted view draws the pre-remount rectangle", rectangleBeforeDirection,
+                harness.selectedCells())
         }
         val reboundCell = harness.onMain { harness.positions()[TABLE_COLUMNS] }
         harness.tapCell(reboundCell)
@@ -644,6 +664,7 @@ class NativeTableAcceptanceTest {
             assertEquals(reboundCell.toLong(), harness.activeCell())
             assertEquals("tapping a cell replaces the pre-remount cell rectangle with a caret", TEXT_SELECTION,
                 harness.engineSelection().getString("type"))
+            assertEquals("tapping a cell clears the drawn rectangle", emptySet<Int>(), harness.selectedCells())
             assertEquals("a really tapped cell offers its single-cell table actions before any keystroke",
                 SINGLE_CELL_ACTIONS, harness.actionIds(reboundCell))
             harness.commit(COMPOSED_TEXT)

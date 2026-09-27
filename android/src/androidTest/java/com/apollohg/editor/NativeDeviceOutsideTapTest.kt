@@ -17,11 +17,6 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.LargeTest
 import androidx.test.platform.app.InstrumentationRegistry
-import expo.modules.core.ModuleRegistry
-import expo.modules.kotlin.AppContext
-import expo.modules.kotlin.ModulesProvider
-import expo.modules.kotlin.modules.Module
-import java.lang.ref.WeakReference
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -62,7 +57,7 @@ class NativeDeviceOutsideTapTest {
                         isClickable = true
                         setOnClickListener { outsideTargetPressed.set(true) }
                     }
-                    val expoContext = testExpoContext(activity)
+                    val expoContext = instrumentedExpoContext(activity)
                     val editor = NativeEditorExpoView(
                         expoContext.context,
                         expoContext.appContext
@@ -181,7 +176,7 @@ class NativeDeviceOutsideTapTest {
                         isClickable = true
                         setOnClickListener { toolbarTargetPressed.set(true) }
                     }
-                    val expoContext = testExpoContext(activity)
+                    val expoContext = instrumentedExpoContext(activity)
                     val editor = NativeEditorExpoView(
                         expoContext.context,
                         expoContext.appContext
@@ -303,7 +298,7 @@ class NativeDeviceOutsideTapTest {
                         isFocusable = true
                         isFocusableInTouchMode = true
                     }
-                    val expoContext = testExpoContext(activity)
+                    val expoContext = instrumentedExpoContext(activity)
                     val editor = NativeEditorExpoView(
                         expoContext.context,
                         expoContext.appContext
@@ -483,7 +478,7 @@ class NativeDeviceOutsideTapTest {
                         isFocusableInTouchMode = true
                     }
                     val outsideTarget = TouchRecordingView(activity, outsideTargetTouchCount)
-                    val expoContext = testExpoContext(activity)
+                    val expoContext = instrumentedExpoContext(activity)
                     val editor = NativeEditorExpoView(
                         expoContext.context,
                         expoContext.appContext
@@ -903,30 +898,4 @@ class NativeDeviceOutsideTapTest {
 
     private fun dp(context: Context, value: Int): Int =
         (value * context.resources.displayMetrics.density).toInt()
-
-    private data class TestExpoContext(val context: Context, val appContext: AppContext)
-
-    private fun testExpoContext(activity: Activity): TestExpoContext {
-        val reactContext = Class
-            .forName("com.facebook.react.bridge.BridgeReactContext")
-            .getConstructor(Context::class.java)
-            .newInstance(activity) as Context
-
-        reactContext.javaClass
-            .getMethod("onHostResume", Activity::class.java)
-            .invoke(reactContext, activity)
-
-        val modulesProvider = object : ModulesProvider {
-            override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
-        }
-        val constructor = AppContext::class.java.constructors.first { constructor ->
-            constructor.parameterTypes.size == 3
-        }
-        val appContext = constructor.newInstance(
-            modulesProvider,
-            ModuleRegistry(emptyList(), emptyList()),
-            WeakReference(reactContext)
-        ) as AppContext
-        return TestExpoContext(reactContext, appContext)
-    }
 }

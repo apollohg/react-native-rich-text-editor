@@ -43,8 +43,11 @@ final class TableAcceptanceTests: XCTestCase {
         static let irregularDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Raw"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Wide header"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":3},"content":[{"type":"paragraph","content":[{"type":"text","text":"Overhang"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Short row"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"One"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Two"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Four"}]}]}]}]}]}"#
         static let irregularShortRowCell = 3
         static let irregularCellActions = ["Clear cells", "Delete table"]
-        static let singleCellActions = TableAccessibilityAction.all.map(\.label)
-            .filter { ![mergeLabel, splitLabel].contains($0) }
+        static let singleCellActions = [
+            "Insert row above", addRowAfterLabel, deleteRowLabel, "Select row", "Insert column before",
+            addColumnAfterLabel, deleteColumnLabel, "Select column", "Toggle header row", "Toggle header column",
+            "Toggle header cell", "Clear cells", "Delete table"
+        ]
         static let parityLayoutKey = "table-acceptance-parity"
     }
 
@@ -250,10 +253,11 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(try harness.selectedCells(), [], "an inserted table leaves a caret, not a cell rectangle")
 
         let bodyStart = positions[Acceptance.tableColumns]
+        harness.expo.setToolbarButtonsJson(TableToolbarTestItems.strongJson)
         let input = try harness.bind(cell: bodyStart)
         input.insertText(Acceptance.cellText)
         harness.place(input, range: NSRange(location: 0, length: Acceptance.boldPrefixLength))
-        input.performToolbarToggleMark(Acceptance.strongMark)
+        try input.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.strongLabel)
         harness.place(input, range: NSRange(location: Acceptance.cellText.count, length: 0))
         input.insertText(Acceptance.paragraphBreak)
         input.insertText(Acceptance.secondParagraph)
@@ -489,8 +493,13 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(positions.count, (Acceptance.tableRows - 1) * Acceptance.tableColumns)
         XCTAssertTrue(harness.view.activeTextInput === harness.root)
         try harness.presentedCell(positions[0])
-        XCTAssertEqual(try harness.engineSelection()["type"] as? String, Acceptance.cellSelection,
+        let preActivation = try harness.engineSelection()
+        XCTAssertEqual(preActivation["type"] as? String, Acceptance.cellSelection,
                        "the engine keeps the pre-remount cell rectangle, so activation must replace it")
+        XCTAssertEqual(preActivation["anchorCell"] as? Int, Int(positions[0]), "\(preActivation)")
+        XCTAssertEqual(preActivation["headCell"] as? Int, Int(positions[1]), "\(preActivation)")
+        XCTAssertEqual(try harness.selectedCells(), try harness.cellsAt(0, 1),
+                       "the remounted view draws the pre-remount rectangle")
         let reboundCell = positions[Acceptance.tableColumns]
         let reboundFrame = try XCTUnwrap(try harness.surface.cellFrame(
             tableID: try harness.tableID, cellIndex: UInt32(Acceptance.tableColumns)
@@ -501,6 +510,7 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(harness.activeCell(), reboundCell)
         XCTAssertEqual(try harness.engineSelection()["type"] as? String, Acceptance.textSelection,
                        "activating a cell replaces the pre-remount cell rectangle with a caret")
+        XCTAssertEqual(try harness.selectedCells(), [], "activating a cell clears the drawn rectangle")
         XCTAssertEqual(try harness.actionLabels(onCellAt: reboundCell), Acceptance.singleCellActions,
                        "an activated cell offers its single-cell table actions before any keystroke")
         harness.view.activeTextInput.insertText(Acceptance.composedText)
