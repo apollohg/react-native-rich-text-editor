@@ -274,6 +274,35 @@ internal class EditorTableSurfaceMountTest {
         }
 
     @Test
+    fun `a horizontal drag on the table body keeps scrolling the table with the finger`() =
+        withAttachedMountedView(wideTableDocument) { view, adapter ->
+            val canvas = requireNotNull(drawing(view))
+            val block = requireNotNull(canvas.preparedLayout?.blocks?.single())
+            val surface = requireNotNull(block.tableSurface)
+            val table = requireNotNull(block.tableBounds)
+            val x = canvas.left + TABLE_HOST_WIDTH / 2f
+            val y = canvas.top + table.exactCenterY()
+            assertNull("the drag must start away from every column resize edge",
+                canvas.hitResizeEdge(x - canvas.left, y - canvas.top))
+            val step = ViewConfiguration.get(view.context).scaledTouchSlop * 2
+            assertTrue(canvas.canConsumeTableDragAt(x - canvas.left, y - canvas.top, -step * SWIPE_STEPS.toFloat()))
+            val before = adapter.documentJson()
+            val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+            try { assertTrue(view.dispatchTouchEvent(down)) } finally { down.recycle() }
+            for (index in 1..SWIPE_STEPS) {
+                val move = MotionEvent.obtain(0, index * SWIPE_STEP_MS, MotionEvent.ACTION_MOVE,
+                    x - index * step, y, 0)
+                try { view.dispatchTouchEvent(move) } finally { move.recycle() }
+                assertEquals("table offset after move $index of a ${step}px-per-move drag",
+                    (index * step).toFloat(), canvas.tablePhysicalOffsetForTesting(surface.identity), 1f)
+            }
+            val up = MotionEvent.obtain(0, (SWIPE_STEPS + 1) * SWIPE_STEP_MS, MotionEvent.ACTION_UP,
+                x - SWIPE_STEPS * step, y, 0)
+            try { view.dispatchTouchEvent(up) } finally { up.recycle() }
+            assertEquals(before, adapter.documentJson())
+        }
+
+    @Test
     fun `editor host routes active cell drag with a nonzero touch pointer id`() =
         withAttachedMountedView(wideTableDocument) { view, adapter ->
             tapFirstCell(view)

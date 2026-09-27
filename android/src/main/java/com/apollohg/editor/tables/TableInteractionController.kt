@@ -64,6 +64,7 @@ internal class TableInteractionController(
     private val stoppingNestedTypes = mutableSetOf<Int>()
 
     val ownsHorizontalGesture: Boolean get() = axisLock.axis == TableGestureAxis.HORIZONTAL
+    val tracksGesture: Boolean get() = pointerId != MotionEvent.INVALID_POINTER_ID
 
     fun hasTableAt(x: Float, y: Float): Boolean = surfacesAt(x, y).isNotEmpty()
 

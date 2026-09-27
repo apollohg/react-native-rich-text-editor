@@ -1055,6 +1055,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     internal val ownsHorizontalTableGesture: Boolean get() = tableInteraction.ownsHorizontalGesture
+    internal val tracksTableGesture: Boolean get() = tableInteraction.tracksGesture
 
     internal fun canConsumeTableDragAt(x: Float, y: Float, dx: Float): Boolean =
         tableInteraction.canConsumeAt(x - contentOriginXPx, y - contentOriginYPx, dx)

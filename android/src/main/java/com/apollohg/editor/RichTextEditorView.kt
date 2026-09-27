@@ -176,6 +176,7 @@ class RichTextEditorView @JvmOverloads constructor(
                 MotionEvent.ACTION_MOVE -> {
                     if (editorTableSurface.nativeTextSelectionActive()) nativeTableSelectionGesture = true
                     if (!routingTableDrag && tableGestureEligible && !nativeTableSelectionGesture &&
+                    !editorTableSurface.drawingView.tracksTableGesture &&
                     editorTableSurface.hostGestureAxis(tableDownX, tableDownY,
                         event.x - tableDownX, event.y - tableDownY) == TableGestureAxis.HORIZONTAL) {
                         routingTableDrag = true

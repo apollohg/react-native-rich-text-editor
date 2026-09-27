@@ -23,6 +23,7 @@ import com.apollohg.editor.viewer.ProseViewerRequest
 import com.apollohg.editor.viewer.StaticLayoutAndroidProseLayoutEngine
 import com.apollohg.editor.viewer.compileWithRust
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -37,7 +38,7 @@ class NativeDeviceTableScrollTest {
     @Test
     fun editorHorizontalDragMovesTableWithoutChangingDocumentOrVerticalScroll() =
         withEditor { scenario ->
-            val start = editorTablePoint(scenario)
+            val start = editorTableBodyPoint(scenario)
             var identity = ""
             var initialVertical = 0
             scenario.onActivity { activity ->
@@ -50,11 +51,12 @@ class NativeDeviceTableScrollTest {
                 initialVertical = activity.richTextView.editorScrollView.scrollY
                 assertEquals(0f, host.tablePhysicalOffsetForTesting(identity), OFFSET_TOLERANCE_PX)
             }
-            drag(start, -dragDistance(scenario), 0f)
+            val distance = dragDistance(scenario)
+            drag(start, -distance, 0f)
             scenario.onActivity { activity ->
                 val host = editorTableHost(activity)
-                assertTrue("real horizontal drag did not advance the mounted table",
-                    host.tablePhysicalOffsetForTesting(identity) > 0f)
+                assertEquals("the table must follow the whole ${distance}px drag", distance,
+                    host.tablePhysicalOffsetForTesting(identity), DRAG_ROUNDING_TOLERANCE_PX)
                 assertEquals(initialVertical, activity.richTextView.editorScrollView.scrollY)
                 assertUnchanged(activity)
             }
@@ -63,7 +65,7 @@ class NativeDeviceTableScrollTest {
 
     @Test
     fun diagonalVerticalDragScrollsEditorWhileTableOffsetStaysPut() = withEditor { scenario ->
-        val start = editorTablePoint(scenario)
+        val start = editorTableBodyPoint(scenario)
         var identity = ""
         scenario.onActivity { activity ->
             val host = editorTableHost(activity)
@@ -180,7 +182,7 @@ class NativeDeviceTableScrollTest {
     @Test
     fun rtlTableStartsAtInlineStartAndPhysicalRightDragMovesTowardLeft() =
         withEditor(rtl = true, dark = true) { scenario ->
-            val start = editorTablePoint(scenario)
+            val start = editorTableBodyPoint(scenario)
             var identity = ""
             var initial = 0f
             scenario.onActivity { activity ->
@@ -192,10 +194,12 @@ class NativeDeviceTableScrollTest {
                 initial = host.tablePhysicalOffsetForTesting(identity)
                 assertTrue("RTL table must start at its physical right edge", initial > 0f)
             }
-            drag(start, dragDistance(scenario), 0f)
+            val distance = dragDistance(scenario)
+            drag(start, distance, 0f)
             scenario.onActivity { activity ->
-                assertTrue("right drag did not move RTL table toward its physical left",
-                    editorTableHost(activity).tablePhysicalOffsetForTesting(identity) < initial)
+                assertEquals("a ${distance}px right drag must move the RTL table as far toward its physical left",
+                    initial - distance, editorTableHost(activity).tablePhysicalOffsetForTesting(identity),
+                    DRAG_ROUNDING_TOLERANCE_PX)
                 assertUnchanged(activity)
             }
             instrumentation.saveDeviceScreenshot("native-table-scroll-editor-rtl-dark.png")
@@ -358,11 +362,22 @@ class NativeDeviceTableScrollTest {
     private fun editorTableHost(activity: NativeTableHostActivity) =
         tableHosts(activity.richTextView).single()
 
-    private fun editorTablePoint(scenario: ActivityScenario<NativeTableHostActivity>): Point {
+    private fun editorTableBodyPoint(scenario: ActivityScenario<NativeTableHostActivity>): Point {
         var point = Point(0f, 0f)
         scenario.onActivity { activity ->
             val host = editorTableHost(activity)
-            point = visibleTablePoint(host)
+            val center = visibleTablePoint(host)
+            val location = IntArray(2)
+            host.getLocationOnScreen(location)
+            val y = center.y - location[1]
+            val cell = host.presentedTableCells().single { presented ->
+                presented.bounds.contains(center.x - location[0], y) &&
+                    presented.clip.contains(center.x - location[0], y)
+            }
+            val x = cell.bounds.centerX()
+            assertNull("the drag must start on the table body, away from every column resize edge",
+                host.hitResizeEdge(x, y))
+            point = Point(location[0] + x, center.y)
         }
         return point
     }
@@ -539,6 +554,7 @@ class NativeDeviceTableScrollTest {
         const val VERTICAL_END_MARGIN_DP = 16f
         const val SELECTION_DRAG_DP = 24f
         const val OFFSET_TOLERANCE_PX = 0.5f
+        const val DRAG_ROUNDING_TOLERANCE_PX = DRAG_STEPS * OFFSET_TOLERANCE_PX
         const val TABLE_BLOCK_INDEX = 1
         const val EDITABLE_ROW = 1
         const val ALPHA_COLUMN = 0
