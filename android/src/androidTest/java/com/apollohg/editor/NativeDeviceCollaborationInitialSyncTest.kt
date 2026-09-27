@@ -160,7 +160,8 @@ class NativeDeviceCollaborationInitialSyncTest {
         val root = FrameLayout(activity).apply {
             setBackgroundColor(Color.WHITE)
         }
-        val expoContext = instrumentedExpoContext(activity)
+        initializeSoLoaderIfAvailable(activity)
+        val expoContext = testExpoContext(activity)
         val editor = NativeEditorExpoView(expoContext.context, expoContext.appContext).apply {
             clipToPadding = false
             setShowToolbar(false)

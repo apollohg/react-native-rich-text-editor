@@ -19,6 +19,7 @@ import android.widget.FrameLayout
 import com.apollohg.editor.EditorEditText
 import com.apollohg.editor.EditorV2Adapter
 import com.apollohg.editor.EditorV2CallResult
+import com.apollohg.editor.testExpoContext
 import com.apollohg.editor.EditorV2Registry
 import com.apollohg.editor.NativeEditorExpoView
 import com.apollohg.editor.NativeEditorExpoViewTestSupport

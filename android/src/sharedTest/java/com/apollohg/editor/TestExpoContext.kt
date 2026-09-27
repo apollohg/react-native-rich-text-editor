@@ -8,7 +8,7 @@ import expo.modules.kotlin.ModulesProvider
 import expo.modules.kotlin.modules.Module
 import java.lang.ref.WeakReference
 
-internal data class InstrumentedExpoContext(val context: Context, val appContext: AppContext)
+internal data class TestExpoContext(val context: Context, val appContext: AppContext)
 
 private const val SO_LOADER_CLASS = "com.facebook.soloader.SoLoader"
 private const val SO_LOADER_INIT = "init"
@@ -16,12 +16,16 @@ private const val REACT_CONTEXT_CLASS = "com.facebook.react.bridge.BridgeReactCo
 private const val HOST_RESUME = "onHostResume"
 private const val APP_CONTEXT_ARITY = 3
 
-internal fun instrumentedExpoContext(activity: Activity): InstrumentedExpoContext {
-    initializeSoLoaderIfAvailable(activity)
+internal fun testExpoContext(
+    context: Context,
+    currentActivity: Activity? = context as? Activity
+): TestExpoContext {
     val reactContext = Class.forName(REACT_CONTEXT_CLASS)
         .getConstructor(Context::class.java)
-        .newInstance(activity) as Context
-    reactContext.javaClass.getMethod(HOST_RESUME, Activity::class.java).invoke(reactContext, activity)
+        .newInstance(context) as Context
+    currentActivity?.let {
+        reactContext.javaClass.getMethod(HOST_RESUME, Activity::class.java).invoke(reactContext, it)
+    }
     val modulesProvider = object : ModulesProvider {
         override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
     }
@@ -31,10 +35,10 @@ internal fun instrumentedExpoContext(activity: Activity): InstrumentedExpoContex
         ModuleRegistry(emptyList(), emptyList()),
         WeakReference(reactContext)
     ) as AppContext
-    return InstrumentedExpoContext(reactContext, appContext)
+    return TestExpoContext(reactContext, appContext)
 }
 
-private fun initializeSoLoaderIfAvailable(context: Context) {
+internal fun initializeSoLoaderIfAvailable(context: Context) {
     val soLoader = try {
         Class.forName(SO_LOADER_CLASS)
     } catch (_: ClassNotFoundException) {

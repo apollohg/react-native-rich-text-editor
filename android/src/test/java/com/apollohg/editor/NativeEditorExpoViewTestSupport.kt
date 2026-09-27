@@ -1,17 +1,10 @@
 package com.apollohg.editor
 
-import android.app.Activity
-import android.content.Context
 import android.graphics.Rect
 import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import com.apollohg.editor.viewer.PreparedProseDrawingView
-import expo.modules.core.ModuleRegistry
-import expo.modules.kotlin.AppContext
-import expo.modules.kotlin.ModulesProvider
-import expo.modules.kotlin.modules.Module
-import java.lang.ref.WeakReference
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
@@ -136,37 +129,5 @@ abstract class NativeEditorExpoViewTestSupport {
             JSONObject(created.value).getString("editorId"),
             roomBound = false
         )!!
-    }
-
-    protected data class TestExpoContext(val context: Context, val appContext: AppContext)
-
-    protected fun testExpoContext(
-        context: Context,
-        currentActivity: Activity? = null
-    ): TestExpoContext {
-        val resolvedCurrentActivity = currentActivity ?: context as? Activity
-        val reactContext = Class
-            .forName("com.facebook.react.bridge.BridgeReactContext")
-            .getConstructor(Context::class.java)
-            .newInstance(context) as Context
-
-        if (resolvedCurrentActivity != null) {
-            reactContext.javaClass
-                .getMethod("onHostResume", Activity::class.java)
-                .invoke(reactContext, resolvedCurrentActivity)
-        }
-
-        val modulesProvider = object : ModulesProvider {
-            override fun getModulesMap(): Map<Class<out Module>, String?> = emptyMap()
-        }
-        val constructor = AppContext::class.java.constructors.first { constructor ->
-            constructor.parameterTypes.size == 3
-        }
-        val appContext = constructor.newInstance(
-            modulesProvider,
-            ModuleRegistry(emptyList(), emptyList()),
-            WeakReference(reactContext)
-        ) as AppContext
-        return TestExpoContext(reactContext, appContext)
     }
 }

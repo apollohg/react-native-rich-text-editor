@@ -57,7 +57,8 @@ class NativeDeviceOutsideTapTest {
                         isClickable = true
                         setOnClickListener { outsideTargetPressed.set(true) }
                     }
-                    val expoContext = instrumentedExpoContext(activity)
+                    initializeSoLoaderIfAvailable(activity)
+                    val expoContext = testExpoContext(activity)
                     val editor = NativeEditorExpoView(
                         expoContext.context,
                         expoContext.appContext
@@ -176,7 +177,8 @@ class NativeDeviceOutsideTapTest {
                         isClickable = true
                         setOnClickListener { toolbarTargetPressed.set(true) }
                     }
-                    val expoContext = instrumentedExpoContext(activity)
+                    initializeSoLoaderIfAvailable(activity)
+                    val expoContext = testExpoContext(activity)
                     val editor = NativeEditorExpoView(
                         expoContext.context,
                         expoContext.appContext
@@ -298,7 +300,8 @@ class NativeDeviceOutsideTapTest {
                         isFocusable = true
                         isFocusableInTouchMode = true
                     }
-                    val expoContext = instrumentedExpoContext(activity)
+                    initializeSoLoaderIfAvailable(activity)
+                    val expoContext = testExpoContext(activity)
                     val editor = NativeEditorExpoView(
                         expoContext.context,
                         expoContext.appContext
@@ -478,7 +481,8 @@ class NativeDeviceOutsideTapTest {
                         isFocusableInTouchMode = true
                     }
                     val outsideTarget = TouchRecordingView(activity, outsideTargetTouchCount)
-                    val expoContext = instrumentedExpoContext(activity)
+                    initializeSoLoaderIfAvailable(activity)
+                    val expoContext = testExpoContext(activity)
                     val editor = NativeEditorExpoView(
                         expoContext.context,
                         expoContext.appContext

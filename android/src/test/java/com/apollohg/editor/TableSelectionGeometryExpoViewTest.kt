@@ -16,6 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -474,5 +475,22 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         assertEquals("${fixture.payloads}", 2, fixture.payloads.size)
         assertEquals("releasing the cell clears its geometry", mapOf("editorId" to fixture.adapter.editorId),
             fixture.payloads[1])
+    }
+
+    @Test
+    fun `blur clears the active cell geometry and keeps the cell bound`() = withFocusedTable(fourCellTable) { fixture ->
+        tapCell(fixture.view, 1)
+        val input = fixture.view.richTextView.activeTextInput
+        assertTrue(input.hasFocus())
+        fixture.nextFrame()
+        assertEquals("${fixture.payloads}", 1, fixture.payloads.size)
+
+        fixture.view.blur()
+        assertFalse(input.hasFocus())
+        assertEquals("blur clears synchronously: ${fixture.payloads}", 2, fixture.payloads.size)
+        assertEquals(mapOf("editorId" to fixture.adapter.editorId), fixture.payloads[1])
+        assertSame("blur keeps the cell bound", input, fixture.view.richTextView.activeTextInput)
+        fixture.nextFrame()
+        assertEquals("a blurred cell publishes no geometry", 2, fixture.payloads.size)
     }
 }

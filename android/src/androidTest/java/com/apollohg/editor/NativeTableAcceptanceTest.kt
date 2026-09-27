@@ -65,6 +65,7 @@ class NativeTableAcceptanceTest {
     private inner class Harness(private val scenario: ActivityScenario<NativeEditorOutsideTapActivity>) {
         lateinit var adapter: EditorV2Adapter
         lateinit var expo: NativeEditorExpoView
+        private var expoContext: TestExpoContext? = null
         var token = 0L
 
         val view: RichTextEditorView get() = expo.richTextView
@@ -95,7 +96,10 @@ class NativeTableAcceptanceTest {
         }
 
         fun mount(activity: Activity) {
-            val context = instrumentedExpoContext(activity)
+            val context = expoContext ?: run {
+                initializeSoLoaderIfAvailable(activity)
+                testExpoContext(activity)
+            }.also { expoContext = it }
             expo = NativeEditorExpoView(context.context, context.appContext).apply {
                 onFocusChangeForTesting = {}
                 onAddonEventForTesting = {}
@@ -398,7 +402,7 @@ class NativeTableAcceptanceTest {
 
     private fun runWorkflow(harness: Harness, room: TableRoomSeed) {
         val richCell = listOf(
-            "<$STRONG_MARK>${CELL_TEXT.take(BOLD_PREFIX_LENGTH)}</>${CELL_TEXT.drop(BOLD_PREFIX_LENGTH)}",
+            "<${TableToolbarTestItems.STRONG_MARK}>${CELL_TEXT.take(BOLD_PREFIX_LENGTH)}</>${CELL_TEXT.drop(BOLD_PREFIX_LENGTH)}",
             SECOND_PARAGRAPH
         )
         harness.onMain {
@@ -702,7 +706,6 @@ class NativeTableAcceptanceTest {
         private const val BODY_TEXT = "Body"
         private const val PASTED_TSV_ROW = "\"abcdefghijkl\nsecond\"\tBody"
         private const val COMPOSED_TEXT = "Z"
-        private const val STRONG_MARK = "strong"
         private const val PARAGRAPH_BREAK = "\n"
         private const val INSERT_TABLE = "insertTable"
         private const val DELETE_TABLE_ROWS = "deleteTableRows"
