@@ -28,6 +28,7 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.math.hypot
 
 @RunWith(AndroidJUnit4::class)
 @LargeTest
@@ -475,8 +476,7 @@ class NativeDeviceTableScrollTest {
     private fun tap(point: Point) {
         val downTime = SystemClock.uptimeMillis()
         send(downTime, downTime, MotionEvent.ACTION_DOWN, point)
-        SystemClock.sleep(TAP_DURATION_MS)
-        send(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, point)
+        sendAt(downTime, downTime + TAP_DURATION_MS, MotionEvent.ACTION_UP, point)
         instrumentation.waitForIdleSync()
     }
 
@@ -505,25 +505,32 @@ class NativeDeviceTableScrollTest {
     }
 
     private fun moveAndRelease(downTime: Long, start: Point, deltaX: Float, deltaY: Float) {
+        val slop = ViewConfiguration.get(instrumentation.targetContext).scaledTouchSlop
+        val firstFraction = (slop * FIRST_STEP_SLOP_FACTOR / hypot(deltaX, deltaY))
+            .coerceIn(1f / DRAG_STEPS, 1f)
+        val begin = SystemClock.uptimeMillis()
         for (step in 1..DRAG_STEPS) {
-            SystemClock.sleep(DRAG_STEP_MS)
-            val fraction = step.toFloat() / DRAG_STEPS
-            send(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE,
+            val fraction = firstFraction + (1f - firstFraction) * (step - 1) / (DRAG_STEPS - 1)
+            sendAt(downTime, begin + step * DRAG_STEP_MS, MotionEvent.ACTION_MOVE,
                 Point(start.x + deltaX * fraction, start.y + deltaY * fraction))
         }
-        SystemClock.sleep(RELEASE_SETTLE_MS)
-        send(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE,
-            Point(start.x + deltaX, start.y + deltaY))
-        send(downTime, SystemClock.uptimeMillis(),
-            MotionEvent.ACTION_UP, Point(start.x + deltaX, start.y + deltaY))
+        val end = Point(start.x + deltaX, start.y + deltaY)
+        val settled = begin + DRAG_STEPS * DRAG_STEP_MS + RELEASE_SETTLE_MS
+        sendAt(downTime, settled, MotionEvent.ACTION_MOVE, end)
+        sendAt(downTime, settled, MotionEvent.ACTION_UP, end)
         instrumentation.waitForIdleSync()
+    }
+
+    private fun sendAt(downTime: Long, eventTime: Long, action: Int, point: Point) {
+        SystemClock.sleep((eventTime - SystemClock.uptimeMillis()).coerceAtLeast(0))
+        send(downTime, eventTime, action, point)
     }
 
     private fun send(downTime: Long, eventTime: Long, action: Int, point: Point) {
         val event = MotionEvent.obtain(downTime, eventTime, action, point.x, point.y, 0)
         try {
             assertTrue("UiAutomation rejected ${MotionEvent.actionToString(action)}",
-                instrumentation.uiAutomation.injectInputEvent(event, true))
+                instrumentation.uiAutomation.injectInputEvent(event, false))
         } finally {
             event.recycle()
         }
@@ -545,6 +552,7 @@ class NativeDeviceTableScrollTest {
         const val LONG_PRESS_SETTLE_MS = 150L
         const val TEXT_SELECTION_OFFSET = 2
         const val DRAG_STEPS = 6
+        const val FIRST_STEP_SLOP_FACTOR = 1.5f
         const val DRAG_WIDTH_FRACTION = 0.3f
         const val VERTICAL_DRAG_X_FRACTION = 0.45f
         const val PARTIAL_CELL_DRAG_FRACTION = 0.4f

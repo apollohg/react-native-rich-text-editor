@@ -520,7 +520,7 @@ class NativeDeviceTableCellTest {
 
         fun swipeFollowingProse(horizontal: Boolean) {
             val (x, y) = followingProsePoint()
-            val step = ViewConfiguration.get(instrumentation.targetContext).scaledTouchSlop.toFloat()
+            val step = ViewConfiguration.get(instrumentation.targetContext).scaledTouchSlop * SWIPE_STEP_SLOP_FACTOR
             gesture((0..SWIPE_STEPS).map { index ->
                 if (horizontal) x + index * step to y else x to y + index * step
             }, SWIPE_STEP_MS)
@@ -600,9 +600,14 @@ class NativeDeviceTableCellTest {
                 else -> MotionEvent.ACTION_MOVE
             }
             val eventTime = start + index * stepMs
-            if (index > 0) SystemClock.sleep((eventTime - SystemClock.uptimeMillis()).coerceAtLeast(0))
+            SystemClock.sleep((eventTime - SystemClock.uptimeMillis()).coerceAtLeast(0))
             val event = MotionEvent.obtain(start, eventTime, action, x, y, 0)
-            try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
+            try {
+                assertTrue("UiAutomation rejected ${MotionEvent.actionToString(action)}",
+                    instrumentation.uiAutomation.injectInputEvent(event, false))
+            } finally {
+                event.recycle()
+            }
         }
         instrumentation.waitForIdleSync()
     }
@@ -623,6 +628,7 @@ class NativeDeviceTableCellTest {
     companion object {
         private const val COMPOSED_TEXT = "Z"
         private const val SWIPE_STEPS = 4
+        private const val SWIPE_STEP_SLOP_FACTOR = 1.5f
         private const val SWIPE_STEP_MS = 16L
         private const val TAP_DURATION_MS = 40L
         private const val LONG_PRESS_HOLD_FACTOR = 2L

@@ -61,6 +61,9 @@ internal class EditorTableSurfaceMountTest {
         const val REFLOW_WIDTH = 400
         const val SWIPE_STEPS = 4
         const val SWIPE_STEP_MS = 16L
+        const val DRAG_STEP_SLOP_FACTOR = 2
+        const val OFFSET_ROUNDING_TOLERANCE_PX = 1f
+        const val FLING_FRAMES = 10
         const val LONG_PRESS_UP_MS = 1_000L
         const val OUTSIDE_TAP_JITTER_FRACTION = 0.85f
         const val SUB_PIXEL_JITTER = 0.9f
@@ -277,17 +280,18 @@ internal class EditorTableSurfaceMountTest {
         }
 
     @Test
-    fun `a horizontal drag on the table body keeps scrolling the table with the finger`() =
+    fun `a horizontal drag on the table body keeps scrolling the table with the finger and flings on release`() =
         withAttachedMountedView(wideTableDocument) { view, adapter ->
+            ShadowLooper.idleMainLooper()
             val canvas = requireNotNull(drawing(view))
             val block = requireNotNull(canvas.preparedLayout?.blocks?.single())
             val surface = requireNotNull(block.tableSurface)
             val table = requireNotNull(block.tableBounds)
-            val x = canvas.left + TABLE_HOST_WIDTH / 2f
+            val x = canvas.left + canvas.width / 2f
             val y = canvas.top + table.exactCenterY()
             assertNull("the drag must start away from every column resize edge",
                 canvas.hitResizeEdge(x - canvas.left, y - canvas.top))
-            val step = ViewConfiguration.get(view.context).scaledTouchSlop * 2
+            val step = ViewConfiguration.get(view.context).scaledTouchSlop * DRAG_STEP_SLOP_FACTOR
             assertTrue(canvas.canConsumeTableDragAt(x - canvas.left, y - canvas.top, -step * SWIPE_STEPS.toFloat()))
             val before = adapter.documentJson()
             val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
@@ -297,11 +301,20 @@ internal class EditorTableSurfaceMountTest {
                     x - index * step, y, 0)
                 try { view.dispatchTouchEvent(move) } finally { move.recycle() }
                 assertEquals("table offset after move $index of a ${step}px-per-move drag",
-                    (index * step).toFloat(), canvas.tablePhysicalOffsetForTesting(surface.identity), 1f)
+                    (index * step).toFloat(), canvas.tablePhysicalOffsetForTesting(surface.identity),
+                    OFFSET_ROUNDING_TOLERANCE_PX)
             }
+            val released = SWIPE_STEPS * step.toFloat()
             val up = MotionEvent.obtain(0, (SWIPE_STEPS + 1) * SWIPE_STEP_MS, MotionEvent.ACTION_UP,
-                x - SWIPE_STEPS * step, y, 0)
+                x - (SWIPE_STEPS + 1) * step, y, 0)
             try { view.dispatchTouchEvent(up) } finally { up.recycle() }
+            repeat(FLING_FRAMES) {
+                ShadowLooper.idleMainLooper(SWIPE_STEP_MS, TimeUnit.MILLISECONDS)
+                canvas.computeScroll()
+            }
+            assertTrue("a release at drag speed must fling the table past the finger's ${released}px, " +
+                "offset=${canvas.tablePhysicalOffsetForTesting(surface.identity)}",
+                canvas.tablePhysicalOffsetForTesting(surface.identity) > released + OFFSET_ROUNDING_TOLERANCE_PX)
             assertEquals(before, adapter.documentJson())
         }
 
