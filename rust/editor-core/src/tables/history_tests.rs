@@ -68,7 +68,7 @@ fn split_fixture() -> String {
     .to_string()
 }
 
-fn session_from(fixture: String) -> EditorSession {
+pub(crate) fn session_from(fixture: String) -> EditorSession {
     let mut session = seeded_session(fixture);
     session.attach_collaboration_runtime();
     session
@@ -80,7 +80,7 @@ fn local_session() -> EditorSession {
     session
 }
 
-fn awaiting_session() -> EditorSession {
+pub(crate) fn awaiting_session() -> EditorSession {
     let mut session = DocumentApiFacade::admit(
         EditorSessionConfig {
             schema_json: None,
@@ -122,7 +122,7 @@ fn table_shape(session: &EditorSession) -> (u32, u32, bool) {
     (projected.rows, projected.columns, projected.irregular)
 }
 
-fn document_json(session: &EditorSession) -> serde_json::Value {
+pub(crate) fn document_json(session: &EditorSession) -> serde_json::Value {
     session.engine.document_json().expect("the engine is ready")
 }
 
@@ -137,7 +137,7 @@ fn encoded_state(session: &EditorSession) -> Vec<u8> {
     session.engine.encoded_state().expect("the state encodes")
 }
 
-fn apply(session: &mut EditorSession, command: TableCommand) {
+pub(crate) fn apply(session: &mut EditorSession, command: TableCommand) {
     reset_planned_normalization_passes();
     let (engine, outbox) = session.engine_and_outbox();
     engine
@@ -146,7 +146,7 @@ fn apply(session: &mut EditorSession, command: TableCommand) {
         .unwrap_or_else(|| panic!("{command:?} produced a transaction"));
 }
 
-fn type_into_cell(session: &mut EditorSession, index: usize) {
+pub(crate) fn type_into_cell(session: &mut EditorSession, index: usize) {
     let opening = session_cell_openings(session)[index];
     let document = session
         .engine
@@ -188,7 +188,7 @@ fn type_into_cell(session: &mut EditorSession, index: usize) {
         .expect("typing produced a transaction");
 }
 
-fn undo(session: &mut EditorSession) {
+pub(crate) fn undo(session: &mut EditorSession) {
     reset_planned_normalization_passes();
     let (engine, outbox) = session.engine_and_outbox();
     engine
@@ -197,7 +197,7 @@ fn undo(session: &mut EditorSession) {
         .expect("the undo produced a commit");
 }
 
-fn redo(session: &mut EditorSession) {
+pub(crate) fn redo(session: &mut EditorSession) {
     reset_planned_normalization_passes();
     let (engine, outbox) = session.engine_and_outbox();
     engine
@@ -206,7 +206,7 @@ fn redo(session: &mut EditorSession) {
         .expect("the redo produced a commit");
 }
 
-fn exchange(from: &mut EditorSession, to: &mut EditorSession) -> usize {
+pub(crate) fn exchange(from: &mut EditorSession, to: &mut EditorSession) -> usize {
     drain_document_updates(to);
     let state_vector = to
         .engine

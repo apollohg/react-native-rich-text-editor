@@ -66,7 +66,10 @@ pub use origin::{DocumentOrigin, TransactionOrigin};
 pub(crate) use position::editor_offset_to_doc_pos;
 pub(crate) use position::BlockSourceIds;
 #[allow(unused_imports)]
-pub(crate) use position::{cursor_sticky_index_from_doc_pos, sticky_index_to_doc_pos};
+pub(crate) use position::{
+    cursor_sticky_index_from_doc_pos, relative_selection_resolves, sticky_index_to_doc_pos,
+    surviving_relative_point_to_doc_pos,
+};
 #[allow(unused_imports)]
 pub use position::{
     doc_pos_to_relative_point, relative_point_to_doc_pos, relative_selection_to_selection,

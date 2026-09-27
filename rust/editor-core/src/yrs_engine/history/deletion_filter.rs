@@ -370,3 +370,76 @@ impl YrsHistory {
         Ok(true)
     }
 }
+
+fn ids_of(set: &IdSet) -> impl Iterator<Item = ID> + '_ {
+    set.iter().flat_map(|(client, ranges)| {
+        ranges
+            .iter()
+            .flat_map(move |range| range.clone().map(move |clock| ID::new(*client, clock)))
+    })
+}
+
+fn redo_can_restore<T: ReadTxn>(
+    txn: &T,
+    fragment_name: &str,
+    deleted: &IdSet,
+    item: &StackItem<HistoryMetadata>,
+    id: ID,
+) -> bool {
+    let mut current = id;
+    loop {
+        let Some(offset) =
+            StickyIndex::new(IndexScope::Relative(current), Assoc::After).get_offset(txn)
+        else {
+            return true;
+        };
+        match offset.branch.id() {
+            BranchID::Root(name) => return name.as_ref() == fragment_name,
+            BranchID::Nested(parent) => {
+                if !deleted.contains(&parent) {
+                    return true;
+                }
+                if !item.deletions().contains(&parent) || item.insertions().contains(&parent) {
+                    return false;
+                }
+                current = parent;
+            }
+        }
+    }
+}
+
+impl YrsHistory {
+    pub(crate) fn drop_unrevertible_stack_tops(&mut self, doc: &Doc, fragment: &XmlFragmentRef) {
+        for action in [HistoryAction::Undo, HistoryAction::Redo] {
+            while self.top_is_unrevertible(doc, fragment, action) {
+                self.drop_top_stack_item(doc, fragment, action);
+            }
+        }
+    }
+
+    fn top_is_unrevertible(
+        &self,
+        doc: &Doc,
+        fragment: &XmlFragmentRef,
+        action: HistoryAction,
+    ) -> bool {
+        let Some(top) = self.acting_stack(action).last() else {
+            return false;
+        };
+        let BranchID::Root(fragment_name) = AsRef::<Branch>::as_ref(fragment).id() else {
+            return false;
+        };
+        if self.redone_chains.iter().any(|chain| {
+            id_sets_intersect(&chain.originals, top.insertions())
+                || id_sets_intersect(&chain.originals, top.deletions())
+        }) {
+            return false;
+        }
+        let txn = doc.transact();
+        let deleted = txn.snapshot().delete_set;
+        id_set_contains_all(&deleted, top.insertions())
+            && !ids_of(top.deletions())
+                .filter(|id| !top.insertions().contains(id))
+                .any(|id| redo_can_restore(&txn, &fragment_name, &deleted, top, id))
+    }
+}

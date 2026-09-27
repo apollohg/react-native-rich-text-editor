@@ -1,16 +1,20 @@
 use super::candidate_cache::encode_state_bounded;
 use super::history_state::history_operation_error;
 use super::outbound::OutboundUpdateSink;
-use super::transaction_result::cached_transition_render_update;
+use super::transaction_result::{cached_transition_render_update, surviving_selection};
 use super::{checked_operation_increment, merge_operation_details, YrsDocumentEngine};
+use crate::position::PositionMap;
 use crate::serialize::{
     from_prosemirror_json_with_limits, rehydrate_reserved_html_opaque, UnknownTypeMode,
 };
-use crate::tables::admission::admit_table_shapes;
+use crate::tables::admission::{admit_table_shapes, TableProjectionIndex};
 use crate::transform::{canonicalize_yrs_document, DocumentValidator};
 use crate::yrs_engine;
-use crate::yrs_engine::derived_state::{history_selection_to_relative, DerivedStateCache};
-use crate::yrs_engine::{TransactionOrigin, YrsDocumentCodec};
+use crate::yrs_engine::derived_state::{
+    history_selection_to_relative, operation_result_to_relative, resolved_to_legacy,
+    DerivedStateCache,
+};
+use crate::yrs_engine::{relative_selection_resolves, TransactionOrigin, YrsDocumentCodec};
 
 const DOCUMENT_LIMIT_EXCEEDED_CODE: &str = "DOCUMENT_LIMIT_EXCEEDED";
 const HISTORY_DOCUMENT_FIELD: &str = "document";
@@ -648,8 +652,29 @@ impl YrsDocumentEngine {
                     "history selection affinity is not exactly representable in the candidate",
                 )
             })?
-        } else {
+        } else if relative_selection_resolves(
+            &txn,
+            &fragment,
+            &restored.relative_selection,
+            &self.schema,
+        ) {
             restored.relative_selection.clone()
+        } else {
+            let surviving = surviving_selection(
+                &restored.relative_selection,
+                resolved_to_legacy(&restored.resolved_selection),
+                &txn,
+                &fragment,
+                &document,
+                &self.schema,
+                &PositionMap::build(&document, &self.schema),
+                &TableProjectionIndex::derive_or_fallback(
+                    &document,
+                    &self.schema,
+                    &self.resource_limits,
+                ),
+            );
+            operation_result_to_relative(&txn, &fragment, &surviving, &self.schema)
         };
         let stored_marks = restored
             .stored_marks

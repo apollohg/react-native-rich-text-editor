@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use yrs::branch::{Branch, BranchID, BranchPtr};
 use yrs::types::text::{Text, YChange};
 use yrs::types::xml::{XmlElementRef, XmlFragment, XmlFragmentRef, XmlOut, XmlTextRef};
-use yrs::{Any, Assoc, ReadTxn, StickyIndex};
+use yrs::{Any, Assoc, IndexScope, Offset, ReadTxn, StickyIndex};
 
 use crate::model::Document;
 use crate::position::PositionMap;
@@ -99,6 +99,22 @@ pub fn relative_point_to_doc_pos<T: ReadTxn>(
     sticky_index_to_doc_pos(txn, fragment, &point.sticky, schema)
 }
 
+pub(crate) fn relative_selection_resolves<T: ReadTxn>(
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    relative: &RelativeSelection,
+    schema: &Schema,
+) -> bool {
+    let resolves = |point| relative_point_to_doc_pos(txn, fragment, point, schema).is_some();
+    match relative {
+        RelativeSelection::Text { anchor, head } | RelativeSelection::Cell { anchor, head } => {
+            resolves(anchor) && resolves(head)
+        }
+        RelativeSelection::Node { point } => resolves(point),
+        RelativeSelection::All => true,
+    }
+}
+
 pub fn relative_selection_to_selection<T: ReadTxn>(
     txn: &T,
     fragment: &XmlFragmentRef,
@@ -176,6 +192,34 @@ pub(crate) fn sticky_index_to_doc_pos<T: ReadTxn>(
     #[cfg(test)]
     RELATIVE_REVERSE_TRAVERSALS.set(RELATIVE_REVERSE_TRAVERSALS.get().saturating_add(1));
     let offset = sticky_index.get_offset(txn)?;
+    offset_to_doc_pos(txn, fragment, &offset, schema)
+}
+
+pub(crate) fn surviving_relative_point_to_doc_pos<T: ReadTxn>(
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    point: &RelativePoint,
+    schema: &Schema,
+) -> Option<u32> {
+    let mut offset = point.sticky.get_offset(txn)?;
+    loop {
+        if let Some(position) = offset_to_doc_pos(txn, fragment, &offset, schema) {
+            return Some(position);
+        }
+        let BranchID::Nested(removed_container) = offset.branch.id() else {
+            return None;
+        };
+        offset = StickyIndex::new(IndexScope::Relative(removed_container), Assoc::After)
+            .get_offset(txn)?;
+    }
+}
+
+fn offset_to_doc_pos<T: ReadTxn>(
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    offset: &Offset,
+    schema: &Schema,
+) -> Option<u32> {
     let root_branch = BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment));
     if offset.branch == root_branch {
         return sequence_branch_index_to_doc_pos(txn, fragment.children(txn), offset.index, schema);

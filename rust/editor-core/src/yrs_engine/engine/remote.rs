@@ -4,11 +4,12 @@ use super::candidate_cache::{
 use super::history_state::history_operation_error;
 #[cfg(test)]
 use super::test_hooks::FAIL_QUARANTINED_UPDATE_RESERVATION;
-use super::transaction_result::{affinity_aware_mapped_selection, cached_render_operation_error};
+use super::transaction_result::{cached_render_operation_error, surviving_selection};
 use super::{
     checked_operation_increment, merge_operation_details, EngineCommit, YrsDocumentEngine,
 };
 use crate::position::update::UpdateMode;
+use crate::position::PositionMap;
 use crate::serialize::{
     from_prosemirror_json_with_limits, rehydrate_reserved_html_opaque, JsonParseError,
     UnknownTypeMode,
@@ -341,13 +342,15 @@ impl YrsDocumentEngine {
                         cached_render_operation_error(request_id, &self.resource_limits, error)
                     })?,
                 );
-                let fallback = affinity_aware_mapped_selection(
-                    &current.legacy_selection(),
+                let fallback = surviving_selection(
                     &current.relative_selection,
-                    &StepMap::empty(),
+                    current.legacy_selection(),
+                    &txn,
+                    &fragment,
                     &candidate_document,
                     &self.schema,
-                    None,
+                    &PositionMap::build(&candidate_document, &self.schema),
+                    &candidate_render_blocks.table_projection_index,
                 );
                 let mut next = current
                     .after_document_change(
@@ -653,6 +656,11 @@ impl YrsDocumentEngine {
                 next_state.mutation_lookup_seed = prepared_live_seed;
                 self.history
                     .finish_prepared_excluded(history_admission, accepted_update);
+                let fragment = self
+                    .doc
+                    .get_or_insert_xml_fragment(self.fragment_name.as_str());
+                self.history
+                    .drop_unrevertible_stack_tops(&self.doc, &fragment);
                 self.quarantined_remote_update = dependency_candidate;
                 self.derived_state = Some(next_state);
                 self.durable_client_ids = durable_client_ids;

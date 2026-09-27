@@ -262,21 +262,31 @@ fn selection_mapped_through(
             }
             mapped => mapped,
         },
-        Selection::Text { anchor, head } => {
-            let (anchor, head) = (map.map_pos(*anchor), map.map_pos(*head));
-            let position_map = position_map();
-            let near_head = position_map.forward_cursor_pos(head, after);
-            if near_head != head {
-                return Selection::cursor(near_head);
-            }
-            let anchor_is_textual = position_map.forward_cursor_pos(anchor, after) == anchor;
-            Selection::text(if anchor_is_textual { anchor } else { head }, head)
-        }
+        Selection::Text { anchor, head } => text_selection_near_mapped(
+            &position_map(),
+            after,
+            map.map_pos(*anchor),
+            map.map_pos(*head),
+        ),
         Selection::Node { .. } | Selection::All => selection.map(map),
     }
 }
 
-fn text_selection_between(
+pub(crate) fn text_selection_near_mapped(
+    position_map: &PositionMap,
+    document: &Document,
+    anchor: u32,
+    head: u32,
+) -> Selection {
+    let near_head = position_map.forward_cursor_pos(head, document);
+    if near_head != head {
+        return Selection::cursor(near_head);
+    }
+    let anchor_is_textual = position_map.forward_cursor_pos(anchor, document) == anchor;
+    Selection::text(if anchor_is_textual { anchor } else { head }, head)
+}
+
+pub(crate) fn text_selection_between(
     position_map: &PositionMap,
     document: &Document,
     anchor: u32,

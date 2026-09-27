@@ -4,12 +4,21 @@ use crate::boundary::ResourceLimits;
 use crate::model::Document;
 use crate::position::PositionMap;
 use crate::schema::Schema;
+use crate::selection::Selection;
+use crate::tables::admission::TableProjectionIndex;
+use crate::tables::command_context::{text_selection_between, text_selection_near_mapped};
+use crate::tables::selection::{cell_pair_is_usable, CellSelectionOrigin};
+use crate::transform::StepMap;
 use crate::yrs_engine;
 use crate::yrs_engine::compiler::{
     map_position, selectable_void_at, CompiledTransaction, SelectionPlan, StoredMarksPlan,
 };
-use crate::yrs_engine::TransactionOrigin;
+use crate::yrs_engine::{
+    surviving_relative_point_to_doc_pos, RelativePoint, RelativeSelection, TransactionOrigin,
+};
 use std::sync::Arc;
+use yrs::types::xml::XmlFragmentRef;
+use yrs::ReadTxn;
 
 impl YrsDocumentEngine {
     pub(super) fn prepare_empty_skip_result(
@@ -405,6 +414,71 @@ pub(super) fn affinity_aware_mapped_selection(
             crate::selection::Selection::cursor(pos).normalized(preview, position_map)
         }
         selection => selection,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn surviving_selection<T: ReadTxn>(
+    relative: &RelativeSelection,
+    legacy: Selection,
+    txn: &T,
+    fragment: &XmlFragmentRef,
+    document: &Document,
+    schema: &Schema,
+    position_map: &PositionMap,
+    table_index: &TableProjectionIndex,
+) -> Selection {
+    let surviving = |point: &RelativePoint, legacy: u32| {
+        surviving_relative_point_to_doc_pos(txn, fragment, point, schema).unwrap_or(legacy)
+    };
+    match (relative, legacy) {
+        (
+            RelativeSelection::Text { anchor, head },
+            Selection::Text {
+                anchor: legacy_anchor,
+                head: legacy_head,
+            },
+        ) => text_selection_near_mapped(
+            position_map,
+            document,
+            surviving(anchor, legacy_anchor),
+            surviving(head, legacy_head),
+        ),
+        (
+            RelativeSelection::Cell { anchor, head },
+            Selection::Cell {
+                anchor: legacy_anchor,
+                head: legacy_head,
+            },
+        ) => {
+            let (anchor, head) = (
+                surviving(anchor, legacy_anchor),
+                surviving(head, legacy_head),
+            );
+            if cell_pair_is_usable(table_index, anchor, head, CellSelectionOrigin::Preserved) {
+                Selection::cell(anchor, head)
+            } else {
+                text_selection_between(position_map, document, anchor, head)
+            }
+        }
+        (RelativeSelection::Node { point }, Selection::Node { pos }) => {
+            affinity_aware_mapped_selection(
+                &Selection::node(surviving(point, pos)),
+                relative,
+                &StepMap::empty(),
+                document,
+                schema,
+                Some(position_map),
+            )
+        }
+        (_, legacy) => affinity_aware_mapped_selection(
+            &legacy,
+            relative,
+            &StepMap::empty(),
+            document,
+            schema,
+            Some(position_map),
+        ),
     }
 }
 

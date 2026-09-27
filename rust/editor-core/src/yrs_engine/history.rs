@@ -13,7 +13,8 @@ use yrs::undo::{EventKind, Options as UndoOptions, StackItem, UndoManager};
 use yrs::updates::decoder::Decode;
 use yrs::updates::encoder::{Encode, Encoder, EncoderV1};
 use yrs::{
-    ClientID, Doc, IdSet, OffsetKind, Options, Origin, ReadTxn, StateVector, Transact, Update, ID,
+    Assoc, ClientID, Doc, IdSet, IndexScope, OffsetKind, Options, Origin, ReadTxn, StateVector,
+    StickyIndex, Transact, Update, ID,
 };
 
 use crate::model::Mark;

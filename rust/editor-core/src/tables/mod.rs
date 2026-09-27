@@ -24,7 +24,7 @@ pub(crate) mod commands_tests;
 #[cfg(test)]
 mod drop_tests;
 #[cfg(test)]
-mod history_tests;
+pub(crate) mod history_tests;
 #[cfg(test)]
 mod interchange_tests;
 #[cfg(test)]
@@ -35,6 +35,8 @@ pub(crate) mod normalize_tests;
 mod paste_tests;
 #[cfg(test)]
 mod projection_tests;
+#[cfg(test)]
+mod remote_selection_tests;
 #[cfg(test)]
 mod render_tests;
 #[cfg(test)]
