@@ -2,7 +2,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::model::{Document, Node};
 use crate::position::PositionMap;
-use crate::position_epoch::{PinnedCellBoundary, PinnedTableCell};
+use crate::position_epoch::{CellTextPoint, PinnedCellBoundary, PinnedTableCell};
 use crate::schema::Schema;
 use crate::serialize::node_to_prosemirror_json;
 use crate::tables::admission::TableProjectionIndex;
@@ -14,45 +14,8 @@ const CELL_CONTENT_OFFSET: u32 = 1;
 const ADJACENT_TEXT_POSITION: u32 = 1;
 
 pub(super) struct PinnedCellSpan {
-    pub(super) start: u32,
-    pub(super) end: u32,
     pub(super) cell: PinnedTableCell,
-}
-
-pub(super) struct CellTextCounter {
-    offsets: Vec<u32>,
-    previous: Option<(usize, u32)>,
-}
-
-impl CellTextCounter {
-    pub(super) fn new(cells: usize) -> Self {
-        Self {
-            offsets: vec![0; cells],
-            previous: None,
-        }
-    }
-
-    pub(super) fn advance(&mut self, cell: Option<usize>, doc_pos: u32) -> Option<u32> {
-        let previous = self.previous.take();
-        let cell = cell?;
-        if previous.is_some_and(|(previous_cell, previous_doc_pos)| {
-            previous_cell == cell && is_adjacent_text_step(previous_doc_pos, doc_pos)
-        }) {
-            self.offsets[cell] += 1;
-        }
-        self.previous = Some((cell, doc_pos));
-        Some(self.offsets[cell])
-    }
-}
-
-fn text_fingerprint_of(node: &Node) -> u64 {
-    let mut fingerprint = DefaultHasher::new();
-    node.text_content().hash(&mut fingerprint);
-    fingerprint.finish()
-}
-
-fn is_adjacent_text_step(previous_doc_pos: u32, doc_pos: u32) -> bool {
-    previous_doc_pos.checked_add(ADJACENT_TEXT_POSITION) == Some(doc_pos)
+    pub(super) points: Vec<(u32, CellTextPoint)>,
 }
 
 pub(super) struct CellPinning<'state> {
@@ -64,20 +27,17 @@ pub(super) struct CellPinning<'state> {
 
 impl CellPinning<'_> {
     pub(super) fn spans(&self) -> Vec<PinnedCellSpan> {
-        let mut spans: Vec<PinnedCellSpan> = self
-            .tables()
+        self.tables()
             .flat_map(|table| {
                 table.cells.iter().filter_map(move |cell| {
+                    let points = self.text_points(cell)?;
                     Some(PinnedCellSpan {
-                        start: cell.source_pos,
-                        end: cell.source_end,
-                        cell: self.pin(table, cell)?,
+                        cell: self.pin(table, cell, &points)?,
+                        points,
                     })
                 })
             })
-            .collect();
-        spans.sort_by_key(|span| span.start);
-        spans
+            .collect()
     }
 
     pub(super) fn reanchor_in_surviving_cell(
@@ -91,17 +51,28 @@ impl CellPinning<'_> {
             .flat_map(|table| table.cells.iter())
             .filter(|cell| cell.source_pos < doc_pos && doc_pos < cell.source_end)
             .min_by_key(|cell| cell.source_end - cell.source_pos)?;
-        if self.text_fingerprint(cell)? != pinned.cell.text_fingerprint {
+        let node = node_starting_at(self.document, cell.source_pos)?;
+        if text_fingerprint_of(node) != pinned.cell.text_fingerprint {
             return None;
         }
-        self.scalar_at_text_offset(cell, pinned.text_offset, affinity)
+        let points = self.text_points(cell)?;
+        if run_structure_of(&points) == pinned.cell.run_structure {
+            return scalar_at_point(&points, pinned.point);
+        }
+        let mut matching = points
+            .iter()
+            .filter(|(_, point)| point.text_offset == pinned.point.text_offset)
+            .map(|(scalar, _)| *scalar);
+        match affinity {
+            Affinity::Before => matching.next(),
+            Affinity::After => matching.last(),
+        }
     }
 
     pub(super) fn reanchor_in_retyped_cell(
         &self,
         row_position: u32,
         pinned: PinnedCellBoundary<'_>,
-        affinity: Affinity,
     ) -> Option<u32> {
         let table = self.tables().find(|table| {
             table
@@ -112,18 +83,14 @@ impl CellPinning<'_> {
         let cell = table.cells.iter().find(|cell| {
             cell.rect.row == pinned.cell.row && cell.rect.column == pinned.cell.column
         })?;
-        if self.pin(table, cell)? != *pinned.cell {
+        let points = self.text_points(cell)?;
+        if self.pin(table, cell, &points)? != *pinned.cell {
             return None;
         }
-        self.scalar_at_text_offset(cell, pinned.text_offset, affinity)
+        scalar_at_point(&points, pinned.point)
     }
 
-    fn scalar_at_text_offset(
-        &self,
-        cell: &ProjectedCell,
-        text_offset: u32,
-        affinity: Affinity,
-    ) -> Option<u32> {
+    fn text_points(&self, cell: &ProjectedCell) -> Option<Vec<(u32, CellTextPoint)>> {
         let nested: Vec<&ProjectedCell> = self
             .tables()
             .flat_map(|table| table.cells.iter())
@@ -135,9 +102,8 @@ impl CellPinning<'_> {
             cell.source_pos.checked_add(CELL_CONTENT_OFFSET)?,
             self.document,
         );
-        let mut count = 0u32;
-        let mut previous_doc_pos: Option<u32> = None;
-        let mut found = None;
+        let mut points = Vec::new();
+        let mut previous: Option<(u32, CellTextPoint)> = None;
         for scalar in start..=self.position_map.total_scalars() {
             let doc_pos = self.position_map.scalar_to_doc(scalar, self.document);
             if doc_pos >= cell.source_end {
@@ -150,21 +116,32 @@ impl CellPinning<'_> {
             {
                 continue;
             }
-            if previous_doc_pos.is_some_and(|previous| is_adjacent_text_step(previous, doc_pos)) {
-                count += 1;
-            }
-            previous_doc_pos = Some(doc_pos);
-            if count > text_offset {
-                break;
-            }
-            if count == text_offset {
-                found = Some(scalar);
-                if affinity == Affinity::Before {
-                    break;
+            let point = match previous {
+                None => CellTextPoint {
+                    text_offset: 0,
+                    run: 0,
+                    run_offset: 0,
+                },
+                Some((previous_doc_pos, point)) if previous_doc_pos == doc_pos => point,
+                Some((previous_doc_pos, point))
+                    if previous_doc_pos.checked_add(ADJACENT_TEXT_POSITION) == Some(doc_pos) =>
+                {
+                    CellTextPoint {
+                        text_offset: point.text_offset + 1,
+                        run: point.run,
+                        run_offset: point.run_offset + 1,
+                    }
                 }
-            }
+                Some((_, point)) => CellTextPoint {
+                    text_offset: point.text_offset,
+                    run: point.run + 1,
+                    run_offset: 0,
+                },
+            };
+            previous = Some((doc_pos, point));
+            points.push((scalar, point));
         }
-        found
+        Some(points)
     }
 
     fn tables(&self) -> impl Iterator<Item = &ProjectedTable> + '_ {
@@ -173,11 +150,12 @@ impl CellPinning<'_> {
             .filter_map(|position| self.index.table_at(position))
     }
 
-    fn text_fingerprint(&self, cell: &ProjectedCell) -> Option<u64> {
-        node_starting_at(self.document, cell.source_pos).map(text_fingerprint_of)
-    }
-
-    fn pin(&self, table: &ProjectedTable, cell: &ProjectedCell) -> Option<PinnedTableCell> {
+    fn pin(
+        &self,
+        table: &ProjectedTable,
+        cell: &ProjectedCell,
+        points: &[(u32, CellTextPoint)],
+    ) -> Option<PinnedTableCell> {
         let node = node_starting_at(self.document, cell.source_pos)?;
         let mut content_fingerprint = DefaultHasher::new();
         for child in node.content()?.iter() {
@@ -194,6 +172,28 @@ impl CellPinning<'_> {
             table_columns: table.columns,
             content_fingerprint: content_fingerprint.finish(),
             text_fingerprint: text_fingerprint_of(node),
+            run_structure: run_structure_of(points),
         })
     }
+}
+
+fn scalar_at_point(points: &[(u32, CellTextPoint)], target: CellTextPoint) -> Option<u32> {
+    points
+        .iter()
+        .find(|(_, point)| point.run == target.run && point.run_offset == target.run_offset)
+        .map(|(scalar, _)| *scalar)
+}
+
+fn run_structure_of(points: &[(u32, CellTextPoint)]) -> u64 {
+    let mut structure = DefaultHasher::new();
+    for (_, point) in points {
+        (point.run, point.run_offset).hash(&mut structure);
+    }
+    structure.finish()
+}
+
+fn text_fingerprint_of(node: &Node) -> u64 {
+    let mut fingerprint = DefaultHasher::new();
+    node.text_content().hash(&mut fingerprint);
+    fingerprint.finish()
 }

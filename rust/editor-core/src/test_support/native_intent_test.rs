@@ -731,6 +731,8 @@ const TWO_PARAGRAPH_CELL_DOCUMENT: &str = r#"{"type":"doc","content":[{"type":"p
 const FIRST_PARAGRAPH_TEXT: &str = "First";
 const HEADER_CELL_NODE: &str = "table_header";
 const SPLIT_HEAD_TEXT: &str = "Fir";
+const HEADING_LEVEL: u8 = 1;
+const HEADING_NODE: &str = "heading";
 const SPLIT_TAIL_TEXT: &str = "st";
 const SECOND_PARAGRAPH_TEXT: &str = "Extra";
 const EMPTY_CELLS_DOCUMENT: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph"}]},{"type":"table_cell","content":[{"type":"paragraph"}]}]}]}]}"#;
@@ -1068,5 +1070,135 @@ fn cell_commit_after_a_remote_peer_splits_its_paragraph_at_the_composition_keeps
             {"type": "paragraph", "content": [{"type": "text", "text": SPLIT_TAIL_TEXT}]},
         ]),
         "{outcome} {document}"
+    );
+}
+
+fn pin_two_paragraph_cell_commit(
+    session: &mut EditorSession,
+    paragraph_side: TwoParagraphSide,
+) -> PinnedCellCommit {
+    let first_paragraph_end =
+        cell_text_scalar_in(session, PROSE_PREFIX_TABLE_POSITION, FIRST_GRID_CELL)
+            + FIRST_PARAGRAPH_TEXT.chars().count() as u32;
+    let epoch = session
+        .pin_position_epoch(CELL_OWNER_ID, session.engine.revision())
+        .unwrap();
+    let scalar = match paragraph_side {
+        TwoParagraphSide::EndOfFirst => first_paragraph_end,
+        TwoParagraphSide::StartOfSecond => first_paragraph_end + PARAGRAPH_BREAK_SCALARS,
+    };
+    PinnedCellCommit { epoch, scalar }
+}
+
+#[derive(Clone, Copy)]
+enum TwoParagraphSide {
+    EndOfFirst,
+    StartOfSecond,
+}
+
+fn two_paragraph_cell_after_remote_edit(
+    paragraph_side: TwoParagraphSide,
+    edit: impl FnOnce(&mut YrsDocumentEngine, &PinnedCellCommit),
+) -> serde_json::Value {
+    let mut session = table_session_with(TWO_PARAGRAPH_CELL_DOCUMENT);
+    let pinned = pin_two_paragraph_cell_commit(&mut session, paragraph_side);
+    apply_remote_peer_edit(&mut session, |replica| edit(replica, &pinned));
+    let remote_revision = session.engine.revision();
+
+    let outcome = submit_cell_commit(&mut session, &pinned).unwrap();
+
+    assert_eq!(outcome["type"], "transaction", "{outcome}");
+    assert_eq!(
+        outcome["positionFallback"], true,
+        "the remote edit recreated the composing text leaf: {outcome}"
+    );
+    assert_eq!(session.engine.revision(), remote_revision + 1);
+    let document = session.engine.document_json().unwrap();
+    assert_eq!(
+        document["content"][0]["content"][0]["text"],
+        PROSE_PREFIX_TEXT
+    );
+    document["content"][1]["content"][0]["content"][0].clone()
+}
+
+fn toggle_header_of_the_composing_cell(replica: &mut YrsDocumentEngine, pinned: &PinnedCellCommit) {
+    remote_command_at(
+        replica,
+        pinned.scalar,
+        pinned.scalar,
+        TypedCommand::Table(TableCommand::ToggleTableHeader {
+            target: crate::tables::commands::TableHeaderTarget::Cell,
+        }),
+    );
+}
+
+fn paragraph(node_type: &str, text: String) -> serde_json::Value {
+    serde_json::json!({"type": node_type, "content": [{"type": "text", "text": text}]})
+}
+
+#[test]
+fn cell_commit_at_the_end_of_a_paragraph_stays_there_after_a_remote_header_toggle() {
+    let cell = two_paragraph_cell_after_remote_edit(
+        TwoParagraphSide::EndOfFirst,
+        toggle_header_of_the_composing_cell,
+    );
+
+    assert_eq!(cell["type"], HEADER_CELL_NODE, "{cell}");
+    assert_eq!(
+        cell["content"],
+        serde_json::json!([
+            paragraph(
+                "paragraph",
+                format!("{FIRST_PARAGRAPH_TEXT}{COMPOSED_TEXT}")
+            ),
+            paragraph("paragraph", SECOND_PARAGRAPH_TEXT.to_owned()),
+        ])
+    );
+}
+
+#[test]
+fn cell_commit_at_the_start_of_a_paragraph_stays_there_after_a_remote_header_toggle() {
+    let cell = two_paragraph_cell_after_remote_edit(
+        TwoParagraphSide::StartOfSecond,
+        toggle_header_of_the_composing_cell,
+    );
+
+    assert_eq!(cell["type"], HEADER_CELL_NODE, "{cell}");
+    assert_eq!(
+        cell["content"],
+        serde_json::json!([
+            paragraph("paragraph", FIRST_PARAGRAPH_TEXT.to_owned()),
+            paragraph(
+                "paragraph",
+                format!("{COMPOSED_TEXT}{SECOND_PARAGRAPH_TEXT}")
+            ),
+        ])
+    );
+}
+
+#[test]
+fn cell_commit_at_the_end_of_a_paragraph_stays_there_after_a_remote_block_type_change() {
+    let cell =
+        two_paragraph_cell_after_remote_edit(TwoParagraphSide::EndOfFirst, |replica, pinned| {
+            remote_command_at(
+                replica,
+                pinned.scalar,
+                pinned.scalar,
+                TypedCommand::ToggleHeading {
+                    level: HEADING_LEVEL,
+                },
+            );
+        });
+
+    assert_eq!(
+        cell["content"],
+        serde_json::json!([
+            serde_json::json!({
+                "type": HEADING_NODE,
+                "attrs": {"level": HEADING_LEVEL},
+                "content": [{"type": "text", "text": format!("{FIRST_PARAGRAPH_TEXT}{COMPOSED_TEXT}")}],
+            }),
+            paragraph("paragraph", SECOND_PARAGRAPH_TEXT.to_owned()),
+        ])
     );
 }

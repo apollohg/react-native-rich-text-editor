@@ -527,34 +527,12 @@ impl YrsDocumentEngine {
         let mut boundaries = Vec::new();
         boundaries.try_reserve_exact(count).ok()?;
         let spans = self.cell_pinning(state).spans();
-        let mut open_cells: Vec<usize> = Vec::new();
-        let mut text_counter = position_epoch_cells::CellTextCounter::new(spans.len());
-        let mut next_cell = 0usize;
         let mut previous: Option<(u32, crate::position_epoch::BoundaryAnchors)> = None;
         for scalar_offset in 0..=state.position_map.total_scalars() {
             let doc_pos = state
                 .position_map
                 .scalar_to_doc(scalar_offset, &state.document);
-            if previous
-                .as_ref()
-                .is_some_and(|(previous_doc_pos, _)| doc_pos < *previous_doc_pos)
-            {
-                open_cells.clear();
-                next_cell = 0;
-            }
-            while let Some(span) = spans.get(next_cell).filter(|span| span.start < doc_pos) {
-                if doc_pos < span.end {
-                    open_cells.push(next_cell);
-                }
-                next_cell += 1;
-            }
-            while open_cells
-                .last()
-                .is_some_and(|open| spans[*open].end <= doc_pos)
-            {
-                open_cells.pop();
-            }
-            let mut anchors = match &previous {
+            let anchors = match &previous {
                 Some((previous_doc_pos, previous_anchors)) if *previous_doc_pos == doc_pos => {
                     previous_anchors.clone()
                 }
@@ -565,18 +543,23 @@ impl YrsDocumentEngine {
                     &self.schema,
                 )?,
             };
-            let pinned_cell = anchors.table_cell_ancestors.and(open_cells.last().copied());
-            anchors.pinned_cell = text_counter
-                .advance(pinned_cell, doc_pos)
-                .zip(pinned_cell)
-                .map(
-                    |(text_offset, cell)| crate::position_epoch::CellTextPosition {
-                        cell,
-                        text_offset,
-                    },
-                );
             previous = Some((doc_pos, anchors.clone()));
             boundaries.push(anchors);
+        }
+        for (cell, span) in spans.iter().enumerate() {
+            for (scalar, point) in &span.points {
+                let Some(boundary) = usize::try_from(*scalar)
+                    .ok()
+                    .and_then(|index| boundaries.get_mut(index))
+                    .filter(|boundary| boundary.table_cell_ancestors.is_some())
+                else {
+                    continue;
+                };
+                boundary.pinned_cell = Some(crate::position_epoch::CellTextPosition {
+                    cell,
+                    point: *point,
+                });
+            }
         }
         Some(crate::position_epoch::EpochBoundaries {
             anchors: boundaries,
@@ -661,7 +644,7 @@ impl YrsDocumentEngine {
             let retyped = boundary
                 .pinned_cell
                 .filter(|_| depth == cell_depth)
-                .and_then(|pinned| pinning.reanchor_in_retyped_cell(doc_pos, pinned, affinity));
+                .and_then(|pinned| pinning.reanchor_in_retyped_cell(doc_pos, pinned));
             return Some(
                 retyped.map_or(resolved(unmapped, true), |offset| resolved(offset, false)),
             );

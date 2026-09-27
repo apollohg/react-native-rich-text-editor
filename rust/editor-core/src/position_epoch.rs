@@ -17,7 +17,14 @@ pub(crate) struct BoundaryAnchors {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CellTextPosition {
     pub(crate) cell: usize,
+    pub(crate) point: CellTextPoint,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CellTextPoint {
     pub(crate) text_offset: u32,
+    pub(crate) run: u32,
+    pub(crate) run_offset: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +37,7 @@ pub(crate) struct PinnedTableCell {
     pub(crate) table_columns: u32,
     pub(crate) content_fingerprint: u64,
     pub(crate) text_fingerprint: u64,
+    pub(crate) run_structure: u64,
 }
 
 #[derive(Debug)]
@@ -47,7 +55,7 @@ pub(crate) struct EpochBoundary<'epoch> {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PinnedCellBoundary<'epoch> {
     pub(crate) cell: &'epoch PinnedTableCell,
-    pub(crate) text_offset: u32,
+    pub(crate) point: CellTextPoint,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,7 +225,7 @@ impl PositionEpochStore {
             pinned_cell: anchors.pinned_cell.and_then(|position| {
                 Some(PinnedCellBoundary {
                     cell: epoch.boundaries.cells.get(position.cell)?,
-                    text_offset: position.text_offset,
+                    point: position.point,
                 })
             }),
             document_revision: epoch.document_revision,
