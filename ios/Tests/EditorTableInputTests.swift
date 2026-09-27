@@ -17,6 +17,7 @@ final class EditorTableInputTests: XCTestCase {
     }
 
     private let tableConfig = TableInputTestSchema.tableConfig
+    private static let selectRowsKey = "selectRows"
     private let listTableConfig = TableInputTestSchema.listTableConfig
     private let wideTwoCellDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
     private let fourCellDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"four"}]}]}]}]}]}"#
@@ -2077,6 +2078,74 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    func testRowSelectedFromAFocusedCellKeepsFocusAndPublishesTheRectangle() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            let input = try fixture.activateCell(0)
+            waitForGeometryFrame()
+            var focusEvents: [[String: Any]] = []
+            fixture.host.onFocusChangeForTesting = { focusEvents.append($0) }
+            let before = fixture.recorder.payloads.count
+            let selectRow = try XCTUnwrap(input.accessibilityCustomActions?.first {
+                $0.name == TableAccessibilityAction.all.first { $0.key == Self.selectRowsKey }?.label
+            }, "the focused cell offers no select-row action")
+            XCTAssertTrue(selectRow.actionHandler?(selectRow) ?? false, "select row was refused")
+            RunLoop.main.run(until: Date())
+
+            XCTAssertEqual(focusEvents.compactMap { $0["isFocused"] as? Bool }, [],
+                           "leaving the cell for a rectangle is not a blur: \(focusEvents)")
+            XCTAssertTrue(fixture.host.richTextView.textView.isFirstResponder, "the root takes focus for the rectangle")
+            XCTAssertEqual(fixture.drawing.selectedTableCellSourcePositions[fixture.tableID],
+                           Set([Int(fixture.positions[0]), Int(fixture.positions[1])]))
+            waitForGeometryFrame()
+            XCTAssertGreaterThan(fixture.recorder.payloads.count, before, "\(fixture.recorder.payloads)")
+            assertRects(try fixture.recorder.rects(at: fixture.recorder.payloads.count - 1),
+                        try fixture.expectedWindowRects(), "the row rectangle anchors the table toolbar")
+        }
+    }
+
+    func testTappingACellInAnUnfocusedEditorEmitsFocus() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            fixture.host.blur()
+            RunLoop.main.run(until: Date())
+            var focusEvents: [[String: Any]] = []
+            fixture.host.onFocusChangeForTesting = { focusEvents.append($0) }
+            _ = try fixture.activateCell(1)
+            RunLoop.main.run(until: Date())
+            XCTAssertEqual(focusEvents.compactMap { $0["isFocused"] as? Bool }, [true], "\(focusEvents)")
+            XCTAssertEqual(focusEvents.last?["editorId"] as? String, fixture.adapter.editorId)
+        }
+    }
+
+    func testBlurClearsTheActiveCellGeometry() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            let input = try fixture.activateCell(1)
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
+            fixture.host.blur()
+            XCTAssertFalse(input.isFirstResponder)
+            XCTAssertEqual(fixture.recorder.payloads.count, 2, "blur clears synchronously: \(fixture.recorder.payloads)")
+            XCTAssertEqual(fixture.recorder.payloads[1] as? [String: String], ["editorId": fixture.adapter.editorId])
+            XCTAssertTrue(fixture.host.richTextView.activeTextInput === input, "blur keeps the cell bound")
+            waitForGeometryFrame()
+            XCTAssertEqual(fixture.recorder.payloads.count, 2, "a blurred cell publishes no geometry")
+        }
+    }
+
+    func testEditorCommandPreparationSettlesTheFocusedCellComposition() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            let input = try fixture.activateCell(1)
+            input.setMarkedText("zz", selectedRange: NSRange(location: 2, length: 0))
+            XCTAssertNotNil(input.markedTextRange, "the cell is composing")
+
+            let preparation = try XCTUnwrap(JSONSerialization.jsonObject(
+                with: Data(fixture.host.prepareForEditorCommandJSON().utf8)
+            ) as? [String: Any])
+
+            XCTAssertEqual(preparation["ready"] as? Bool, true, "\(preparation)")
+            XCTAssertNil(input.markedTextRange, "preparing a command settles the focused cell's composition")
+        }
+    }
+
     func testKeyboardToolbarMarkPressTogglesTheMarkInTheBoundCell() throws {
         try withExpoTableGeometry(configJson: TableInputTestSchema.strongMarkTableConfig,
                                   document: fourCellDocument) { fixture in
@@ -2096,7 +2165,7 @@ final class EditorTableInputTests: XCTestCase {
                 ((cell["content"] as? [[String: Any]])?.first?["content"] as? [[String: Any]]) ?? []
             }
             XCTAssertEqual(runs(cells[1]).map { $0["text"] as? String }, ["two"], "\(cells[1])")
-            XCTAssertEqual(runs(cells[1]).first?["marks"] as? [[String: String]], [["type": "strong"]],
+            XCTAssertEqual(runs(cells[1]).first?["marks"] as? [[String: String]], [["type": TableToolbarTestItems.strongMark]],
                            "the toolbar marks the focused cell's text: \(cells[1])")
             XCTAssertNil(runs(cells[0]).first?["marks"], "the root's former caret cell is untouched: \(cells[0])")
         }

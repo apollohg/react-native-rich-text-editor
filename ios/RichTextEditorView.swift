@@ -676,10 +676,11 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
            let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let selection = update["selection"] as? [String: Any],
            selection["type"] as? String == "cell" {
-            if tableInputCoordinator.cellInput.isFirstResponder {
+            let cellWasFocused = tableInputCoordinator.cellInput.isFirstResponder
+            invalidateTableCellBinding()
+            if cellWasFocused {
                 _ = textView.becomeFirstResponder()
             }
-            invalidateTableCellBinding()
             return
         }
         guard let cellIndex = tableInputCoordinator.activeCellIndex,

@@ -34,8 +34,10 @@ private let documentPositionKind = "document"
 private let roomInitializationType = "room"
 
 enum TableToolbarTestItems {
+    static let strongMark = "strong"
     static let strongLabel = "Bold"
-    static let strongJson = #"[{"type":"mark","mark":"strong","label":"Bold","icon":{"type":"default","id":"bold"}}]"#
+    static let strongJson =
+        #"[{"type":"mark","mark":"\#(strongMark)","label":"\#(strongLabel)","icon":{"type":"default","id":"bold"}}]"#
 }
 
 func documentCellSelection(anchor: UInt32, head: UInt32) -> [String: Any] {

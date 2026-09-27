@@ -301,7 +301,7 @@ extension NativeEditorExpoView {
     func prepareForEditorCommandJSON() -> String {
         isApplyingJSUpdate = true
         defer { isApplyingJSUpdate = false }
-        let preparation = richTextView.textView.prepareForExternalEditorCommand()
+        let preparation = richTextView.activeTextInput.prepareForExternalEditorCommand()
         return NativeEditorViewRegistry.commandPreparationJSON(
             ready: preparation.ready,
             updateJSON: preparation.updateJSON,

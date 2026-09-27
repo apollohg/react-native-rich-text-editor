@@ -45,11 +45,13 @@ extension NativeEditorExpoView {
     }
 
     @objc func textViewDidEndEditing(_ notification: Notification) {
-        guard notification.object as? EditorTextView === richTextView.activeTextInput else {
+        guard notification.object as? EditorTextView === richTextView.activeTextInput,
+              !richTextView.textInputs.contains(where: \.isFirstResponder)
+        else {
             let editorId = richTextView.editorId
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.richTextView.editorId == editorId,
-                      !self.richTextView.activeTextInput.isFirstResponder
+                      !self.richTextView.textInputs.contains(where: \.isFirstResponder)
                 else { return }
                 self.activeTextInputDidEndEditing()
             }

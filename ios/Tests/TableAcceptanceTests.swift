@@ -15,7 +15,6 @@ final class TableAcceptanceTests: XCTestCase {
         static let pastedTSVRow = "\"abcdefghijkl\nsecond\"\tBody"
         static let bodyText = "Body"
         static let composedText = "Z"
-        static let strongMark = "strong"
         static let paragraphBreak = "\n"
         static let resizeDelta: CGFloat = 60
         static let minimumResizedWidth = 100
@@ -264,7 +263,7 @@ final class TableAcceptanceTests: XCTestCase {
         harness.expo.layoutIfNeeded()
         grid = try harness.grid()
         let richCell = [
-            "<\(Acceptance.strongMark)>\(Acceptance.cellText.prefix(Acceptance.boldPrefixLength))</>"
+            "<\(TableToolbarTestItems.strongMark)>\(Acceptance.cellText.prefix(Acceptance.boldPrefixLength))</>"
                 + Acceptance.cellText.dropFirst(Acceptance.boldPrefixLength),
             Acceptance.secondParagraph
         ]
