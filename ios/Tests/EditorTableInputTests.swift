@@ -2131,18 +2131,14 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
-    func testEditorCommandPreparationSettlesTheFocusedCellComposition() throws {
+    func testNativeCommandPreflightIsBlockedWhileACellIsActive() throws {
         try withExpoTableGeometry(document: fourCellDocument) { fixture in
-            let input = try fixture.activateCell(1)
-            input.setMarkedText("zz", selectedRange: NSRange(location: 2, length: 0))
-            XCTAssertNotNil(input.markedTextRange, "the cell is composing")
-
+            _ = try fixture.activateCell(1)
             let preparation = try XCTUnwrap(JSONSerialization.jsonObject(
                 with: Data(fixture.host.prepareForEditorCommandJSON().utf8)
             ) as? [String: Any])
-
-            XCTAssertEqual(preparation["ready"] as? Bool, true, "\(preparation)")
-            XCTAssertNil(input.markedTextRange, "preparing a command settles the focused cell's composition")
+            XCTAssertEqual(preparation["ready"] as? Bool, false, "\(preparation)")
+            XCTAssertEqual(preparation["blockedReason"] as? String, "composition", "\(preparation)")
         }
     }
 

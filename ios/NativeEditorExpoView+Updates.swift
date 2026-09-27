@@ -298,10 +298,18 @@ extension NativeEditorExpoView {
         }
     }
 
+    private static let activeCellCommandBlockedReason = "composition"
+
     func prepareForEditorCommandJSON() -> String {
+        guard richTextView.activeTextInput === richTextView.textView else {
+            return NativeEditorViewRegistry.commandPreparationJSON(
+                ready: false,
+                blockedReason: Self.activeCellCommandBlockedReason
+            )
+        }
         isApplyingJSUpdate = true
         defer { isApplyingJSUpdate = false }
-        let preparation = richTextView.activeTextInput.prepareForExternalEditorCommand()
+        let preparation = richTextView.textView.prepareForExternalEditorCommand()
         return NativeEditorViewRegistry.commandPreparationJSON(
             ready: preparation.ready,
             updateJSON: preparation.updateJSON,
