@@ -1,6 +1,7 @@
 import { EditorStyleSheet } from '@apollohg/react-native-rich-text-editor';
 import type {
     EditorMentionTheme,
+    EditorTheme,
     EditorTextStyle,
     EditorToolbarTheme,
 } from '@apollohg/react-native-rich-text-editor';
@@ -60,6 +61,11 @@ export const RADIUS = {
 /** WCAG 2.5.5 minimum touch target. */
 export const MIN_TOUCH_TARGET = 44;
 
+export const NARROW_VIEWPORT_WIDTH = 320;
+
+const TABLE_MIN_COLUMN_WIDTH = 96;
+const TABLE_BORDER_WIDTH = 1;
+
 const HEADING_SIZES = [ 32, 25, 21, 19, 17, 16 ] as const;
 const HEADING_LINE_HEIGHT_RATIO = 1.2;
 const HEADING_SPACING_RATIO = 0.35;
@@ -91,6 +97,30 @@ export const toolbarTheme: EditorToolbarTheme = {
     buttonDisabledColor: PALETTE.inkFaint,
     buttonDisabledBackgroundColor: PALETTE.spruceDeep,
     buttonBorderRadius: RADIUS.control,
+};
+
+export const customTableToolbarTheme: EditorToolbarTheme = {
+    ...toolbarTheme,
+    backgroundColor: PALETTE.paper,
+    borderColor: PALETTE.spruce,
+    borderWidth: TABLE_BORDER_WIDTH,
+    separatorColor: PALETTE.hairline,
+    buttonColor: PALETTE.spruceDeep,
+    buttonBackgroundColor: PALETTE.paper,
+    buttonActiveColor: PALETTE.paper,
+    buttonActiveBackgroundColor: PALETTE.spruce,
+    buttonDisabledColor: PALETTE.inkDisabled,
+    buttonDisabledBackgroundColor: PALETTE.paper,
+};
+
+const tableTheme: NonNullable<EditorTheme['table']> = {
+    minColumnWidth: TABLE_MIN_COLUMN_WIDTH,
+    cellPadding: SPACE.sm,
+    borderWidth: TABLE_BORDER_WIDTH,
+    borderColor: PALETTE.hairline,
+    headerBackgroundColor: PALETTE.wash,
+    selectionColor: PALETTE.spruceTint,
+    resizeHandleColor: PALETTE.spruce,
 };
 
 export const editorTheme = EditorStyleSheet.create({
@@ -144,6 +174,7 @@ export const editorTheme = EditorStyleSheet.create({
     },
     image: { backgroundColor: PALETTE.wash, borderRadius: RADIUS.card, marginVertical: SPACE.md },
     toolbar: toolbarTheme,
+    table: tableTheme,
 });
 
 export const mentionTheme: EditorMentionTheme = {
