@@ -228,15 +228,19 @@ internal fun NativeEditorExpoView.handleToolbarItemPress(
         }
         val root = richTextView.editorEditText
         val activeInput = richTextView.activeTextInput
-        val activeInputSettled = activeInput === root || activeInput.prepareForExternalEditorUpdate()
-        val preparation = if (activeInputSettled) root.prepareForExternalEditorCommand() else null
+        val activeInputPreparation =
+            if (activeInput === root) null else activeInput.prepareForExternalEditorUpdateWithResult()
+        val preparation =
+            if (activeInputPreparation?.ready != false) root.prepareForExternalEditorCommand() else null
         if (preparation == null || !preparation.ready) {
             if (allowPreflightRetry) {
                 schedulePendingNativeActionRetry(PendingNativeAction.ToolbarItemPress(item))
             }
             return
         }
-        preflightUpdate = preflightUpdateEventFromJSON(preparation.updateJSON)
+        preflightUpdate = preflightUpdateEventFromJSON(
+            preparation.updateJSON ?: activeInputPreparation?.adoptedUpdateJSON
+        )
         preflightUpdate?.let { lastDocumentVersion = it.documentRevision }
         clearPendingNativeActionRetry()
     }

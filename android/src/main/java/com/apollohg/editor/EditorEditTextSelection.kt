@@ -330,6 +330,7 @@ internal fun EditorEditText.applySelectionFromJSON(
                     ?: selectionDriver.scalarPositionForDoc(docHead)
                     ?: docHead.takeUnless { isTableCellInput || rootTablePositionMap != null }
                     ?: return
+                val leavesCellSelection = authoritativeCellSelectionActive
                 authoritativeCellSelectionActive = false
                 cellSelectionRootTouchPending = false
                 updateAtomBoundaryCursorVisibility()
@@ -356,6 +357,7 @@ internal fun EditorEditText.applySelectionFromJSON(
                     utf16Head = selectionEnd,
                     documentVersion = documentVersion
                 )
+                if (leavesCellSelection) restartInputForEditorIfFocused("cellSelectionExit")
             }
 
             "node" -> {

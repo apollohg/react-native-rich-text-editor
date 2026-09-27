@@ -646,23 +646,23 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         return result
     }
 
-    private func selectionFitsTableCell(_ selection: [String: Any], map: TableCellPositionMap) -> Bool {
-        let start: UInt32
-        let end: UInt32
+    private func selectionScalarRange(_ selection: [String: Any]) -> (start: UInt32, end: UInt32)? {
         switch selection["type"] as? String {
         case "text":
             guard let anchor = v2ExactUInt32(selection["anchorScalar"] as? NSNumber),
                   let head = v2ExactUInt32(selection["headScalar"] as? NSNumber)
-            else { return false }
-            start = min(anchor, head)
-            end = max(anchor, head)
+            else { return nil }
+            return (min(anchor, head), max(anchor, head))
         case "node":
-            guard let position = v2ExactUInt32(selection["posScalar"] as? NSNumber), position < UInt32.max else { return false }
-            start = position
-            end = position + 1
+            guard let position = v2ExactUInt32(selection["posScalar"] as? NSNumber), position < UInt32.max else { return nil }
+            return (position, position + 1)
         default:
-            return false
+            return nil
         }
+    }
+
+    private func selectionFitsTableCell(_ selection: [String: Any], map: TableCellPositionMap) -> Bool {
+        guard let (start, end) = selectionScalarRange(selection) else { return false }
         guard let localStart = map.localScalar(forGlobalScalar: start),
               let localEnd = map.localScalar(forGlobalScalar: end),
               let range = map.globalScalarRange(fromLocalScalar: localStart, toLocalScalar: localEnd)
@@ -701,13 +701,41 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
               cells[Int(cellIndex)].sourcePos == boundSourcePos,
               let data = updateJSON.data(using: .utf8),
               let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let selection = update["selection"] as? [String: Any],
-              bindTableCell(tableID: tableID, cellIndex: cellIndex, contentRect: frame, selection: selection)
+              let selection = update["selection"] as? [String: Any]
         else {
             invalidateTableCellBinding()
             return
         }
+        guard bindTableCell(tableID: tableID, cellIndex: cellIndex, contentRect: frame, selection: selection) else {
+            moveActiveTableCell(to: selection, adapter: adapter, fallback: frame)
+            return
+        }
         _ = tableInputCoordinator.cellInput.applySelectionFromJSON(selection)
+    }
+
+    private func moveActiveTableCell(to selection: [String: Any], adapter: EditorV2Adapter, fallback: CGRect) {
+        let cellInput = tableInputCoordinator.cellInput
+        let cellWasFocused = cellInput.isFirstResponder
+        if let range = selectionScalarRange(selection),
+           let tables = adapter.cachedTableInputMappings?.tables {
+            for (tableID, table) in tables {
+                for cell in table.cells where cell.blocks.contains(where: {
+                    range.start >= $0.scalarStart && range.start <= $0.breakScalarEnd
+                }) {
+                    let contentRect = tableSurface.cellFrame(tableID: tableID, cellIndex: cell.cellIndex) ?? fallback
+                    guard bindTableCell(tableID: tableID, cellIndex: cell.cellIndex,
+                                        contentRect: contentRect, selection: selection)
+                    else { continue }
+                    _ = cellInput.applySelectionFromJSON(selection)
+                    if cellWasFocused { _ = cellInput.becomeFirstResponder() }
+                    return
+                }
+            }
+        }
+        invalidateTableCellBinding()
+        if cellWasFocused {
+            _ = textView.becomeFirstResponder()
+        }
     }
 
     // MARK: - Initialization

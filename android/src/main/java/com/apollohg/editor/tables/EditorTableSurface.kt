@@ -1345,25 +1345,67 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val boundMap = coordinator?.positionMap ?: return false
         val revision = runCatching { JSONObject(update).optString("documentVersion") }
             .getOrNull()?.takeIf { canonicalV2U64(it) != null } ?: return false
+        val cellWasFocused = activeInput?.hasFocus() == true
         applyingCellUpdate = true
         val applied = try {
             root.applyUpdateJSON(update, notify, external)
         } finally {
             applyingCellUpdate = false
         }
-        val coherent = applied && root.editorId == editorId && root.v2Driver === adapter &&
+        val rootCoherent = applied && root.editorId == editorId && root.v2Driver === adapter &&
             EditorV2Registry.adapterForViewToken(editorId) === adapter &&
             root.hasAuthorizedNativeTableOwner(adapter) &&
             root.lastAppliedDocumentVersion == revision &&
             adapter.baseDocumentRevision.toString() == revision &&
-            adapter.cachedAtomicRenderDocumentRevision == adapter.baseDocumentRevision &&
-            activeCell == active && coordinator?.positionMap === boundMap
-        if (coherent) {
-            reconcileActiveCell(JSONObject(update).optJSONObject("selection"), localUpdate = true)
-        } else {
-            invalidateCell()
+            adapter.cachedAtomicRenderDocumentRevision == adapter.baseDocumentRevision
+        val coherent = rootCoherent && activeCell == active && coordinator?.positionMap === boundMap
+        val selection = JSONObject(update).optJSONObject("selection")
+        val range = selection?.let(::selectionScalarRange)
+        if (coherent && (range == null || projection(active.tableId, active.cellIndex)?.holds(range) != false)) {
+            reconcileActiveCell(selection, localUpdate = true)
+            return true
         }
-        return coherent
+        if (rootCoherent && selection != null && range != null) {
+            return moveActiveCell(selection, range, adapter, cellWasFocused)
+        }
+        invalidateCell()
+        return false
+    }
+
+    private fun selectionScalarRange(selection: JSONObject): Pair<Int, Int>? =
+        when (selection.optString("type")) {
+            "text" -> {
+                val anchor = exactV2ScalarInt(selection.opt("anchorScalar") as? Number)
+                val head = exactV2ScalarInt(selection.opt("headScalar") as? Number)
+                if (anchor == null || head == null) null else minOf(anchor, head) to maxOf(anchor, head)
+            }
+            "node" -> exactV2ScalarInt(selection.opt("posScalar") as? Number)?.let { it to it + 1 }
+            else -> null
+        }
+
+    private fun EditorTableCellProjection.Projection.holds(range: Pair<Int, Int>): Boolean =
+        positionMap.localScalarForGlobalScalar(range.first) != null &&
+            positionMap.localScalarForGlobalScalar(range.second) != null
+
+    private fun moveActiveCell(
+        selection: JSONObject,
+        range: Pair<Int, Int>,
+        adapter: EditorV2Adapter,
+        cellWasFocused: Boolean
+    ): Boolean {
+        val target = adapter.cachedTableInputMappings?.tables?.entries?.firstNotNullOfOrNull { (tableId, table) ->
+            table.cells.firstNotNullOfOrNull { cell ->
+                if (cell.blocks.none { range.first >= it.scalarStart && range.first <= it.breakScalarEnd }) {
+                    return@firstNotNullOfOrNull null
+                }
+                projection(tableId, cell.cellIndex)?.takeIf { it.holds(range) }
+                    ?.let { Triple(tableId, cell.cellIndex, it) }
+            }
+        }
+        if (target != null && bindCell(target.first, target.second, target.third, selection = selection)) return true
+        invalidateCell()
+        if (cellWasFocused) host.editorEditText.requestFocus()
+        return true
     }
 
     private fun reconcileActiveCell(selection: JSONObject? = null, localUpdate: Boolean = false) {

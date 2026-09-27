@@ -10,6 +10,7 @@ import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import com.apollohg.editor.tables.TableToolbarTestItems
+import com.apollohg.editor.tables.activeTableCellPosition
 import com.apollohg.editor.tables.pressKeyboardToolbarButton
 import com.apollohg.editor.tables.selectTableCells
 import com.apollohg.editor.tables.tableCellPositions
@@ -347,6 +348,125 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             pressAfterPendingUpdates(view, TableToolbarTestItems.STRONG_LABEL)
             assertFalse("the mark press commits the cell composition first", input.hasPendingCompositionForExternalRefresh())
             assertEquals("the composition lands in the focused cell", listOf("Firstzz", "Second"), cellTexts(adapter))
+        }
+
+    private fun recordFocus(view: NativeEditorExpoView): MutableList<Any?> {
+        val changes = mutableListOf<Any?>()
+        view.onFocusChangeForTesting = { changes += it["isFocused"] }
+        return changes
+    }
+
+    private fun typeInProse(view: NativeEditorExpoView, text: String): EditorEditText {
+        tapProse(view)
+        val root = view.richTextView.editorEditText
+        assertSame(root, view.richTextView.activeTextInput)
+        assertTrue(requireNotNull(root.onCreateInputConnection(EditorInfo())).commitText(text, 1))
+        return root
+    }
+
+    @Test
+    fun `keyboard toolbar undo from a bound cell rebinds the cell holding the restored caret`() =
+        withActiveCell { view, input, adapter ->
+            view.setToolbarItemsJson(TableToolbarTestItems.HISTORY_JSON)
+            typeAtCellEnd(input, "X")
+            val editedSelection = authoritativeSelection(adapter)
+            val positions = adapter.tableCellPositions(adapter.cachedTableRecords.keys.single())
+            tapCell(view, 1)
+            assertEquals(positions[1].toLong(), view.richTextView.activeTableCellPosition)
+            val focus = recordFocus(view)
+
+            pressAfterPendingUpdates(view, TableToolbarTestItems.UNDO_LABEL)
+            assertEquals(listOf("First", "Second"), cellTexts(adapter))
+            assertSame("the restored caret keeps the cell input", input, view.richTextView.activeTextInput)
+            assertEquals("the cell holding the restored caret is bound",
+                positions[0].toLong(), view.richTextView.activeTableCellPosition)
+            assertTrue("the rebound cell keeps focus", input.hasFocus())
+            assertEquals("First", input.text.toString())
+            assertEquals("the caret is restored in the rebound cell", "First".length, input.selectionStart)
+
+            pressAfterPendingUpdates(view, TableToolbarTestItems.REDO_LABEL)
+            assertEquals(listOf("FirstX", "Second"), cellTexts(adapter))
+            assertEquals(editedSelection, authoritativeSelection(adapter))
+            assertEquals(positions[0].toLong(), view.richTextView.activeTableCellPosition)
+            assertTrue(input.hasFocus())
+            assertEquals("the caret follows the reapplied edit", "FirstX".length, input.selectionStart)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertFalse("moving between cells never blurs: $focus", focus.contains(false))
+        }
+
+    @Test
+    fun `keyboard toolbar undo from a bound cell restoring a prose caret hands focus to the root`() =
+        withActiveCell { view, input, adapter ->
+            view.setToolbarItemsJson(TableToolbarTestItems.HISTORY_JSON)
+            val root = typeInProse(view, "Y")
+            assertEquals("afterY", proseText(adapter).take("afterY".length))
+            val proseCaret = root.selectionStart
+            tapCell(view, 0)
+            assertSame(input, view.richTextView.activeTextInput)
+            val focus = recordFocus(view)
+
+            pressAfterPendingUpdates(view, TableToolbarTestItems.UNDO_LABEL)
+            assertEquals("after", proseText(adapter))
+            assertSame("a prose caret retires the cell input", root, view.richTextView.activeTextInput)
+            assertTrue("the root takes over focus", root.hasFocus())
+            assertFalse(input.hasFocus())
+            assertEquals("the root shows the restored caret", proseCaret - 1, root.selectionStart)
+            assertFalse("the restored prose caret accepts input", root.rootTableSelectionInputBlocked)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertFalse("the cell-to-root handoff never blurs: $focus", focus.contains(false))
+        }
+
+    @Test
+    fun `keyboard toolbar undo leaving a rectangle for prose restarts the root input connection`() =
+        withActiveCell { view, _, adapter ->
+            view.setToolbarItemsJson(TableToolbarTestItems.HISTORY_JSON)
+            val root = typeInProse(view, "Y")
+            val proseCaret = root.selectionStart
+            val positions = adapter.tableCellPositions(adapter.cachedTableRecords.keys.single())
+            root.selectTableCells(adapter, positions.first(), positions.last())
+            assertTrue(root.authoritativeCellSelectionActive)
+            val restartsBefore = root.imeTraceSnapshotForTesting().count { it.startsWith(CELL_SELECTION_EXIT_RESTART) }
+
+            pressAfterPendingUpdates(view, TableToolbarTestItems.UNDO_LABEL)
+            assertEquals("after", proseText(adapter))
+            assertFalse(root.authoritativeCellSelectionActive)
+            assertTrue(root.hasFocus())
+            assertEquals(proseCaret - 1, root.selectionStart)
+            assertEquals("the retired root connection restarts for the prose caret", restartsBefore + 1,
+                root.imeTraceSnapshotForTesting().count { it.startsWith(CELL_SELECTION_EXIT_RESTART) })
+        }
+
+    @Test
+    fun `keyboard toolbar undo is refused and retried while the cell cannot drain`() =
+        withActiveCell { view, input, adapter ->
+            view.setToolbarItemsJson(TableToolbarTestItems.HISTORY_JSON)
+            typeAtCellEnd(input, "X")
+            input.blockExternalEditorUpdatePreparationForTesting = true
+            pressAfterPendingUpdates(view, TableToolbarTestItems.UNDO_LABEL)
+            assertEquals("an undrained cell refuses undo", listOf("FirstX", "Second"), cellTexts(adapter))
+            assertTrue("the refused press is retried", view.hasPendingNativeActionForTesting())
+            input.blockExternalEditorUpdatePreparationForTesting = false
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
+            assertEquals("the retry applies undo once the cell drains", listOf("First", "Second"), cellTexts(adapter))
+        }
+
+    @Test
+    fun `keyboard toolbar action settling a composing cell carries the settled update`() =
+        withActiveCell { view, input, adapter ->
+            view.setToolbarItemsJson(ACTION_TOOLBAR_JSON)
+            val payloads = mutableListOf<Map<String, Any>>()
+            view.onToolbarActionForTesting = { payloads += it }
+            input.setSelection(input.text.length)
+            assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).setComposingText("zz", 1))
+
+            pressAfterPendingUpdates(view, ACTION_LABEL)
+            assertEquals(listOf("Firstzz", "Second"), cellTexts(adapter))
+            val payload = payloads.single()
+            assertEquals(ACTION_KEY, payload["key"])
+            assertEquals("the action reports the settled revision: $payload",
+                adapter.baseDocumentRevision.toString(), payload["documentRevision"]?.toString())
+            assertTrue("the action carries the settled update: $payload",
+                (payload["updateJson"] as? String)?.contains("Firstzz") == true)
         }
 
     @Test
@@ -1141,5 +1261,10 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
 
     private companion object {
         const val KEYBOARD_HEIGHT_PX = 600
+        const val CELL_SELECTION_EXIT_RESTART = "restartInput:source=cellSelectionExit"
+        const val ACTION_KEY = "insertSnippet"
+        const val ACTION_LABEL = "Snippet"
+        const val ACTION_TOOLBAR_JSON =
+            """[{"type":"action","key":"$ACTION_KEY","label":"$ACTION_LABEL","icon":{"type":"glyph","text":"S"}}]"""
     }
 }

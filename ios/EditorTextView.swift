@@ -212,6 +212,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
 
     /// Tracks whether we're in a composition session (CJK / IME input).
     var isComposing = false
+    var blockExternalEditorUpdatePreparationForTesting = false
     var hasPendingCompositionForExternalRefresh: Bool { isComposing }
     lazy var caretPlacementTapRecognizer: CaretPlacementTapRecognizer = {
         let recognizer = CaretPlacementTapRecognizer(target: self, action: #selector(handleCaretPlacementTap(_:)))
