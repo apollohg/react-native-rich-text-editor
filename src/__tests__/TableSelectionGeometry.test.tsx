@@ -20,6 +20,7 @@ const SCROLLED_RECT = { x: -36, y: 180, width: 120, height: 44 };
 const VIEWPORT = { x: 0, y: 96, width: 390, height: 600 };
 const SAFE_AREA = { x: 0, y: 47, width: 390, height: 763 };
 const KEYBOARD = { x: 0, y: 510, width: 390, height: 334 };
+const REACT_EVENT_ENVELOPE = { target: 130, timeStamp: 434795517.54 };
 
 type GeometryListener = jest.Mock<void, [TableSelectionGeometry | null]>;
 
@@ -202,6 +203,22 @@ describe('native table selection geometry events', () => {
 
         expect(listener).not.toHaveBeenCalled();
         expect(consoleError).toHaveBeenCalledTimes(2);
+        handle.destroy();
+    });
+
+    it('accepts geometry and clears inside the React Native event envelope', () => {
+        const handle = createV2LocalHandle(V2_INITIAL_DOC);
+        const listener: GeometryListener = jest.fn();
+        const { emit } = renderEditor(handle, listener);
+
+        emit({ ...nativeGeometry(handle.editorId, { keyboard: KEYBOARD }), ...REACT_EVENT_ENVELOPE });
+        emit({ editorId: handle.editorId, ...REACT_EVENT_ENVELOPE });
+
+        expect(consoleError).not.toHaveBeenCalled();
+        expect(listener.mock.calls.map(([ geometry ]) => geometry?.rects ?? null)).toEqual([
+            [ SELECTED_RECT ],
+            null,
+        ]);
         handle.destroy();
     });
 

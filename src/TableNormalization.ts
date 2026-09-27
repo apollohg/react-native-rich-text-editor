@@ -52,6 +52,7 @@ const TABLE_SELECTION_GEOMETRY_FIELDS = [
     'editMenuVisible',
 ];
 const TABLE_SELECTION_KEYBOARD_FIELD = 'keyboard';
+const REACT_NATIVE_EVENT_ENVELOPE_FIELDS = [ 'target', 'timeStamp' ];
 const TABLE_HEADER_TARGETS: readonly TableHeaderTarget[] = [ 'row', 'column', 'cell' ];
 
 const TABLE_CELL_STEPS = new Map<unknown, string>([
@@ -284,12 +285,24 @@ function tableSelectionRects(value: unknown): TableSelectionRect[] | null {
     return rects;
 }
 
+function withoutEventEnvelope(event: Record<string, unknown>): Record<string, unknown> {
+    const payload = { ...event };
+
+    for (const field of REACT_NATIVE_EVENT_ENVELOPE_FIELDS) {
+        delete payload[field];
+    }
+
+    return payload;
+}
+
 export function normalizeNativeTableSelectionGeometry(
-    payload: unknown
+    event: unknown
 ): NativeTableSelectionGeometry | null {
-    if (!isPlainRecord(payload)) {
+    if (!isPlainRecord(event)) {
         return null;
     }
+
+    const payload = withoutEventEnvelope(event);
 
     const editorId = normalizeRevisionField(payload, 'editorId');
 
