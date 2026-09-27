@@ -597,7 +597,7 @@ internal class EditorTableSurfaceMountTest {
                 .cells.first().blocks.first().scalarStart
             val caret = JSONObject().put("type", "text").put("anchorScalar", cellStart).put("headScalar", cellStart)
             view.editorTableSurface.clear()
-            view.editorTableSurface.followRootSelectionIntoCell(JSONObject().put("selection", caret).toString())
+            view.editorTableSurface.followRootSelectionIntoCell(caret)
             val input = view.activeTextInput
             assertTrue("bound ${input.width}x${input.height} without a presented cell",
                 input === view.editorEditText)

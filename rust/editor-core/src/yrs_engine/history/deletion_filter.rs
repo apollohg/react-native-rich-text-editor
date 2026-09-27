@@ -379,6 +379,12 @@ fn ids_of(set: &IdSet) -> impl Iterator<Item = ID> + '_ {
     })
 }
 
+fn was_redone<T: ReadTxn>(txn: &T, container: ID) -> bool {
+    StickyIndex::new(IndexScope::Nested(container), Assoc::After)
+        .get_offset(txn)
+        .is_some_and(|offset| offset.branch.id() != BranchID::Nested(container))
+}
+
 fn redo_can_restore<T: ReadTxn>(
     txn: &T,
     fragment_name: &str,
@@ -396,7 +402,7 @@ fn redo_can_restore<T: ReadTxn>(
         match offset.branch.id() {
             BranchID::Root(name) => return name.as_ref() == fragment_name,
             BranchID::Nested(parent) => {
-                if !deleted.contains(&parent) {
+                if !deleted.contains(&parent) || was_redone(txn, parent) {
                     return true;
                 }
                 if !item.deletions().contains(&parent) || item.insertions().contains(&parent) {

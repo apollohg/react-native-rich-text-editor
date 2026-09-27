@@ -713,6 +713,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
               editorId != 0,
               let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
               hasTableCellBindingAuthority(adapter),
+              adapter.cachedTableInputMappings?.tables.isEmpty == false,
               let data = updateJSON.data(using: .utf8),
               let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let selection = update["selection"] as? [String: Any]

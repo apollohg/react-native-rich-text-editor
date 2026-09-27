@@ -574,6 +574,20 @@ fn apply_update_bytes(
     apply_update_bytes_with_origin(request_id, doc, bytes, origin.as_yrs_origin())
 }
 
+fn update_removes_content(request_id: u64, bytes: &[u8]) -> OperationResult<bool> {
+    if bytes.is_empty() {
+        return Ok(false);
+    }
+    let update = Update::decode_v1(bytes).map_err(|error| {
+        OperationError::engine_invariant_failed(
+            request_id,
+            None,
+            format!("cannot decode bounded history replay event: {error}"),
+        )
+    })?;
+    Ok(!update.delete_set().is_empty())
+}
+
 fn apply_update_bytes_with_origin(
     request_id: u64,
     doc: &Doc,

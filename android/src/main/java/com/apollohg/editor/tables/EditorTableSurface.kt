@@ -1385,12 +1385,12 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         if (refocusRoot) host.editorEditText.requestFocus()
     }
 
-    fun followRootSelectionIntoCell(update: String) {
+    fun followRootSelectionIntoCell(selection: JSONObject?) {
         val root = host.editorEditText
-        if (applyingCellUpdate || activeCell != null || !root.hasFocus()) return
+        if (selection == null || applyingCellUpdate || activeCell != null || !root.hasFocus()) return
         val adapter = root.v2Driver as? EditorV2Adapter ?: return
-        if (!root.hasAuthorizedNativeTableOwner(adapter)) return
-        val selection = runCatching { JSONObject(update).optJSONObject("selection") }.getOrNull() ?: return
+        if (adapter.cachedTableInputMappings?.tables.isNullOrEmpty() ||
+            !root.hasAuthorizedNativeTableOwner(adapter)) return
         val range = selectionScalarRange(selection) ?: return
         bindCell(holding = selection, range = range, adapter = adapter, focus = true)
     }

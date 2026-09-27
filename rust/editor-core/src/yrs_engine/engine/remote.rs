@@ -647,6 +647,7 @@ impl YrsDocumentEngine {
                     next_state_revision,
                     next_epoch,
                 } = *install;
+                let removes_content = !live_update.delete_set().is_empty();
                 {
                     let mut txn = self.doc.transact_mut_with(history_admission.yrs_origin());
                     txn.apply_update(live_update).expect(
@@ -656,11 +657,13 @@ impl YrsDocumentEngine {
                 next_state.mutation_lookup_seed = prepared_live_seed;
                 self.history
                     .finish_prepared_excluded(history_admission, accepted_update);
-                let fragment = self
-                    .doc
-                    .get_or_insert_xml_fragment(self.fragment_name.as_str());
-                self.history
-                    .drop_unrevertible_stack_tops(&self.doc, &fragment);
+                if removes_content {
+                    let fragment = self
+                        .doc
+                        .get_or_insert_xml_fragment(self.fragment_name.as_str());
+                    self.history
+                        .drop_unrevertible_stack_tops(&self.doc, &fragment);
+                }
                 self.quarantined_remote_update = dependency_candidate;
                 self.derived_state = Some(next_state);
                 self.durable_client_ids = durable_client_ids;

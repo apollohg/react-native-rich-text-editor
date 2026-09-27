@@ -297,7 +297,7 @@ class EditorEditText @JvmOverloads constructor(
     internal var onBeforeRenderRefresh: (() -> Unit)? = null
     internal var onTableRootTouch: ((MotionEvent) -> Unit)? = null
     internal var onTableRootGesture: (() -> Boolean)? = null
-    internal var onRootUpdateApplied: ((String) -> Unit)? = null
+    internal var onRootUpdateApplied: ((org.json.JSONObject?) -> Unit)? = null
     internal var tableCellDropHandler: ((DragEvent) -> Boolean?)? = null
     internal var onTableCellSelectionSynced: (() -> Unit)? = null
     internal var onTableCellTab: ((Boolean) -> Boolean)? = null

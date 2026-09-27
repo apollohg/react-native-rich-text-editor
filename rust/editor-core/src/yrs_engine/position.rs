@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use yrs::branch::{Branch, BranchID, BranchPtr};
 use yrs::types::text::{Text, YChange};
 use yrs::types::xml::{XmlElementRef, XmlFragment, XmlFragmentRef, XmlOut, XmlTextRef};
+use yrs::types::TypeRef;
 use yrs::{Any, Assoc, IndexScope, Offset, ReadTxn, StickyIndex};
 
 use crate::model::Document;
@@ -202,16 +203,26 @@ pub(crate) fn surviving_relative_point_to_doc_pos<T: ReadTxn>(
     schema: &Schema,
 ) -> Option<u32> {
     let mut offset = point.sticky.get_offset(txn)?;
+    let mut climbed = false;
+    let mut removed_table_structure = false;
     loop {
         if let Some(position) = offset_to_doc_pos(txn, fragment, &offset, schema) {
-            return Some(position);
+            return (!climbed || removed_table_structure).then_some(position);
         }
         let BranchID::Nested(removed_container) = offset.branch.id() else {
             return None;
         };
+        removed_table_structure |= is_table_structure_branch(offset.branch, txn, schema);
+        climbed = true;
         offset = StickyIndex::new(IndexScope::Relative(removed_container), Assoc::After)
             .get_offset(txn)?;
     }
+}
+
+fn is_table_structure_branch<T: ReadTxn>(branch: BranchPtr, txn: &T, schema: &Schema) -> bool {
+    matches!(branch.type_ref(), TypeRef::XmlElement(_))
+        && super::codec::wire_element_node_spec(&XmlElementRef::from(branch), txn, schema)
+            .is_some_and(|spec| spec.table_role.is_some())
 }
 
 fn offset_to_doc_pos<T: ReadTxn>(

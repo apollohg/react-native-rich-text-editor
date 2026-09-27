@@ -345,6 +345,11 @@ impl YrsHistory {
                 }
                 ReplayEvent::Excluded { update, origin, .. } => {
                     apply_update_bytes(request_id, doc, update, *origin)?;
+                    if *origin == TransactionOrigin::RemoteSync
+                        && update_removes_content(request_id, update)?
+                    {
+                        candidate.drop_unrevertible_stack_tops(doc, fragment);
+                    }
                     replayed_events.push(event.clone());
                 }
                 ReplayEvent::Action(action) => {
