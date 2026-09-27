@@ -781,18 +781,41 @@ internal class EditorTableSurfaceMountTest {
 
     @Test
     fun `an accessibility click on the prose reports a refusal and releases the cell once it can`() =
-        withAttachedMountedView(tableDocument) { view, adapter ->
-            assertRefusedRootAccessibilityActionKeepsTheCell(view, adapter, AccessibilityNodeInfo.ACTION_CLICK)
-            assertTrue("an allowed accessibility click succeeds",
-                view.editorEditText.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null))
-            assertProseTookOverFromTheCell(view, adapter)
-        }
+        assertRootAccessibilityActionWaitsForCellRelease(
+            AccessibilityNodeInfo.ACTION_CLICK, AccessibilityEvent.TYPE_VIEW_CLICKED)
 
     @Test
     fun `an accessibility focus on the prose reports a refusal and releases the cell once it can`() =
+        assertRootAccessibilityActionWaitsForCellRelease(
+            AccessibilityNodeInfo.ACTION_FOCUS, AccessibilityEvent.TYPE_VIEW_FOCUSED)
+
+    private fun assertRootAccessibilityActionWaitsForCellRelease(action: Int, forbiddenEvent: Int) =
         withAttachedMountedView(tableDocument) { view, adapter ->
-            assertRefusedRootAccessibilityActionKeepsTheCell(view, adapter, AccessibilityNodeInfo.ACTION_FOCUS)
-            view.editorEditText.performAccessibilityAction(AccessibilityNodeInfo.ACTION_FOCUS, null)
+            val (input) = composeInFirstCell(view)
+            val root = view.editorEditText
+            val sentEvents = mutableListOf<Int>()
+            root.accessibilityDelegate = object : View.AccessibilityDelegate() {
+                override fun sendAccessibilityEvent(host: View, eventType: Int) {
+                    sentEvents += eventType
+                    super.sendAccessibilityEvent(host, eventType)
+                }
+            }
+            val name = AccessibilityNodeInfo.AccessibilityAction(action, null).toString()
+            input.blockExternalEditorUpdatePreparationForTesting = true
+            val refused = try {
+                root.performAccessibilityAction(action, null)
+            } finally {
+                input.blockExternalEditorUpdatePreparationForTesting = false
+            }
+            assertFalse("a refused $name must not send ${AccessibilityEvent.eventTypeToString(forbiddenEvent)}: " +
+                "events=${sentEvents.map(AccessibilityEvent::eventTypeToString)}", forbiddenEvent in sentEvents)
+            assertFalse("a refused $name must not report success", refused)
+            assertSame("a refused $name keeps the cell input", input, view.activeTextInput)
+            assertTrue("a refused $name keeps the cell focused", input.hasFocus())
+            assertFalse("a refused $name leaves the prose unfocused", root.hasFocus())
+            assertEquals("a refused $name keeps the composition pending", "Cell text", firstCellText(adapter))
+            assertTrue("an allowed $name that moves focus to the prose reports success",
+                root.performAccessibilityAction(action, null))
             assertProseTookOverFromTheCell(view, adapter)
         }
 
@@ -811,35 +834,6 @@ internal class EditorTableSurfaceMountTest {
                 .getJSONObject(1).getJSONArray("content").getJSONObject(0).getString("text")
             assertEquals("the dropped text lands in the prose", "dropped after", paragraph)
         }
-
-    private fun assertRefusedRootAccessibilityActionKeepsTheCell(
-        view: RichTextEditorView,
-        adapter: EditorV2Adapter,
-        action: Int
-    ) {
-        val (input) = composeInFirstCell(view)
-        val root = view.editorEditText
-        val sentEvents = mutableListOf<Int>()
-        root.accessibilityDelegate = object : View.AccessibilityDelegate() {
-            override fun sendAccessibilityEvent(host: View, eventType: Int) {
-                sentEvents += eventType
-                super.sendAccessibilityEvent(host, eventType)
-            }
-        }
-        val name = AccessibilityNodeInfo.AccessibilityAction(action, null).toString()
-        input.blockExternalEditorUpdatePreparationForTesting = true
-        try {
-            assertFalse("a refused $name must not report success", root.performAccessibilityAction(action, null))
-        } finally {
-            input.blockExternalEditorUpdatePreparationForTesting = false
-        }
-        assertFalse("a refused $name must not announce a click: events=$sentEvents",
-            AccessibilityEvent.TYPE_VIEW_CLICKED in sentEvents)
-        assertSame("a refused $name keeps the cell input", input, view.activeTextInput)
-        assertTrue("a refused $name keeps the cell focused", input.hasFocus())
-        assertFalse("a refused $name leaves the prose unfocused", root.hasFocus())
-        assertEquals("a refused $name keeps the composition pending", "Cell text", firstCellText(adapter))
-    }
 
     private fun assertProseTookOverFromTheCell(view: RichTextEditorView, adapter: EditorV2Adapter) {
         assertSame("an allowed action releases the cell", view.editorEditText, view.activeTextInput)
