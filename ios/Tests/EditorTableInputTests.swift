@@ -21,6 +21,11 @@ final class EditorTableInputTests: XCTestCase {
     private static let gridSize = 3
     private static let narrowColumnWidth = 150
     private static let bodySwipeDistance: CGFloat = 80
+    private static let mergedReleasePlan = 0
+    private static let mergedCoreEditor = 2
+    private static let mergedRowOneNeighbour = 3
+    private static let mergedRowTwoNeighbour = 5
+    private static let mergedLastRowFirstCell = 7
     private let listTableConfig = TableInputTestSchema.listTableConfig
     private let wideTwoCellDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"#
     private let fourCellDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"four"}]}]}]}]}]}"#
@@ -132,14 +137,14 @@ final class EditorTableInputTests: XCTestCase {
             return drawing.convert(CGPoint(x: x, y: cell.bounds.midY), to: view)
         }
 
-        func assertBodyEdgeScrollsWithoutResizing(cellIndex index: Int, physicalDelta: CGFloat,
+        func assertBodyEdgeDoesNotClaimAResize(cellIndex index: Int, physicalDelta: CGFloat,
                                                   _ message: String) throws {
             let edge = try trailingEdgeHostPoint(cellIndex: index)
             let point = drawing.convert(edge, from: view)
             XCTAssertNil(drawing.hitResizeEdge(at: point), "\(message): not a resize handle")
             XCTAssertFalse(surface.beginResizeDrag(at: edge), "\(message): a drag must not start a resize")
             XCTAssertTrue(drawing.canScrollTables(in: drawing.tableChain(at: point), by: physicalDelta),
-                          "\(message): the table pan owns the drag")
+                          "\(message): the drag stays available to the table pan")
         }
 
         func documentObject() throws -> NSDictionary {
@@ -305,10 +310,7 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertLessThanOrEqual(try fixture.presentedCell(0).bounds.maxX, try fixture.presentedCell(1).bounds.minX + 0.5,
                                      "clearing the host direction restores the platform direction")
         }
-        let config = tableConfig.replacingOccurrences(
-            of: #""tableRole":"table","attrs":{"class":{"default":null}}"#,
-            with: #""tableRole":"table","attrs":{"class":{"default":null},"dir":{"default":null}}"#
-        )
+        let config = rightToLeftTableConfig
         let declaredLTR = fixedWidthFourCellDocument.replacingOccurrences(
             of: #"{"type":"table","content""#, with: #"{"type":"table","attrs":{"dir":"ltr"},"content""#
         )
@@ -495,10 +497,7 @@ final class EditorTableInputTests: XCTestCase {
     }
 
     func testMountedMergedRTLHandlesMirrorPhysicalCornersButKeepEndpointRoles() throws {
-        let config = tableConfig.replacingOccurrences(
-            of: #""tableRole":"table","attrs":{"class":{"default":null}}"#,
-            with: #""tableRole":"table","attrs":{"class":{"default":null},"dir":{"default":null}}"#
-        )
+        let config = rightToLeftTableConfig
         let document = #"{"type":"doc","content":[{"type":"table","attrs":{"dir":"rtl"},"content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"next"}]}]}]}]}]}"#
         try withMountedHandles(document: document, configJSON: config, anchorIndex: 0, headIndex: 1) { fixture in
             let anchor = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .anchor })
@@ -731,10 +730,7 @@ final class EditorTableInputTests: XCTestCase {
     }
 
     func testRTLResizeEdgeIsTheLogicalTrailingEdgeAndInvertsDelta() throws {
-        let config = tableConfig.replacingOccurrences(
-            of: #""tableRole":"table","attrs":{"class":{"default":null}}"#,
-            with: #""tableRole":"table","attrs":{"class":{"default":null},"dir":{"default":null}}"#
-        )
+        let config = rightToLeftTableConfig
         let document = #"{"type":"doc","content":[{"type":"table","attrs":{"dir":"rtl"},"content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}]}"#
         try withMountedTable(document: document, configJSON: config, cellSelection: nil) { fixture in
             let first = try fixture.presentedCell(0)
@@ -997,9 +993,80 @@ final class EditorTableInputTests: XCTestCase {
                 fixture.surface.endResizeDrag(at: CGPoint(x: handle.x + 40, y: handle.y))
                 XCTAssertEqual(try fixture.columnWidths(row: 0).first, [Self.narrowColumnWidth + 40],
                                "the \(label) edge resizes")
-                try fixture.assertBodyEdgeScrollsWithoutResizing(
+                try fixture.assertBodyEdgeDoesNotClaimAResize(
                     cellIndex: Self.gridSize, physicalDelta: -Self.bodySwipeDistance,
                     "a body-row edge below the \(label)")
+            }
+        }
+    }
+
+    private func tableDocument(rightToLeft: Bool, rows: [[(text: String, colspan: Int, rowspan: Int)]]) throws -> String {
+        let content: [[String: Any]] = rows.map { row in
+            ["type": "table_row", "content": row.map { cell in [
+                "type": "table_cell",
+                "attrs": ["colspan": cell.colspan, "rowspan": cell.rowspan,
+                          "colwidth": Array(repeating: Self.narrowColumnWidth, count: cell.colspan)],
+                "content": [["type": "paragraph", "content": [["type": "text", "text": cell.text]]]]
+            ] }]
+        }
+        var table: [String: Any] = ["type": "table", "content": content]
+        if rightToLeft { table["attrs"] = ["dir": "rtl"] }
+        let data = try JSONSerialization.data(withJSONObject: ["type": "doc", "content": [table]])
+        return try XCTUnwrap(String(data: data, encoding: .utf8))
+    }
+
+    private func mergedTitleRowDocument(rightToLeft: Bool) throws -> String {
+        try tableDocument(rightToLeft: rightToLeft, rows: [
+            [("Release plan", 2, 1), ("Status", 1, 1)],
+            [("Core editor", 1, 2), ("iOS", 1, 1), ("Ready", 1, 1)],
+            [("Android", 1, 1), ("In review", 1, 1)],
+            [("a", 1, 1), ("b", 1, 1), ("c", 1, 1)]
+        ])
+    }
+
+    func testAColumnEdgeHiddenByAMergedFirstRowTakesItsHandleFromTheFirstRowWhereItExists() throws {
+        for rightToLeft in [false, true] {
+            let label = rightToLeft ? "RTL" : "LTR"
+            try withMountedTable(document: mergedTitleRowDocument(rightToLeft: rightToLeft),
+                                 configJSON: rightToLeft ? rightToLeftTableConfig : nil, cellSelection: nil) { fixture in
+                let edgeX = fixture.drawing.convert(
+                    try fixture.trailingEdgeHostPoint(cellIndex: Self.mergedCoreEditor), from: fixture.view).x
+                func hit(_ index: Int) throws -> TableResizeEdge? {
+                    fixture.drawing.hitResizeEdge(at: CGPoint(x: edgeX, y: try fixture.presentedCell(index).bounds.midY))?.edge
+                }
+                XCTAssertNil(try hit(Self.mergedReleasePlan), "\(label): the merged title cell has no edge where column 0 ends")
+                XCTAssertEqual(try hit(Self.mergedRowOneNeighbour), TableResizeEdge(tableID: fixture.tableID, column: 0),
+                               "\(label): column 0's edge first exists in row 1, so row 1 carries its handle")
+                XCTAssertNil(try hit(Self.mergedRowTwoNeighbour), "\(label): the spanning cell below row 1 is not a handle")
+                XCTAssertNil(try hit(Self.mergedLastRowFirstCell), "\(label): a later body row is not a handle")
+                let titleEdge = fixture.drawing.convert(
+                    try fixture.trailingEdgeHostPoint(cellIndex: Self.mergedReleasePlan), from: fixture.view)
+                XCTAssertEqual(fixture.drawing.hitResizeEdge(at: titleEdge)?.edge.column, 1,
+                               "\(label): the merged title's own trailing edge keeps its first-row handle")
+                let start = fixture.drawing.convert(
+                    CGPoint(x: edgeX, y: try fixture.presentedCell(Self.mergedRowOneNeighbour).bounds.midY), to: fixture.view)
+                XCTAssertTrue(fixture.surface.beginResizeDrag(at: start))
+                fixture.surface.endResizeDrag(at: CGPoint(x: start.x + (rightToLeft ? -40 : 40), y: start.y))
+                XCTAssertEqual(try fixture.columnWidths(row: 1).first, [Self.narrowColumnWidth + 40],
+                               "\(label): row 1 resizes column 0")
+            }
+        }
+    }
+
+    func testAMergedCellThatGrowsTheSelectionToTheFirstRowIsNotAColumnSelection() throws {
+        let document = try tableDocument(rightToLeft: false, rows: [
+            [("a", 1, 1), ("b", 1, 2)],
+            [("c", 1, 1)],
+            [("d", 1, 1), ("e", 1, 1)]
+        ])
+        try withMountedTable(document: document, cellSelection: (4, 2)) { fixture in
+            XCTAssertTrue(fixture.drawing.selectedTableCellSourcePositions[fixture.tableID]?
+                .contains(Int(fixture.positions[0])) == true,
+                          "the merged cell must grow the drawn rectangle to the first row")
+            for index in [2, 3] {
+                let edge = fixture.drawing.convert(try fixture.trailingEdgeHostPoint(cellIndex: index), from: fixture.view)
+                XCTAssertNil(fixture.drawing.hitResizeEdge(at: edge),
+                             "body cell \(index): endpoints below the first row do not make a column selection")
             }
         }
     }
@@ -1014,7 +1081,7 @@ final class EditorTableInputTests: XCTestCase {
                                TableResizeEdge(tableID: fixture.tableID, column: 1),
                                "the selected column's edge in body cell \(index) is a handle")
             }
-            try fixture.assertBodyEdgeScrollsWithoutResizing(
+            try fixture.assertBodyEdgeDoesNotClaimAResize(
                 cellIndex: Self.gridSize, physicalDelta: -Self.bodySwipeDistance, "an unselected column's body edge")
             let edge = try fixture.trailingEdgeHostPoint(cellIndex: middleColumn[1])
             XCTAssertTrue(fixture.surface.beginResizeDrag(at: edge))
@@ -1042,7 +1109,7 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertTrue(fixture.surface.beginResizeDrag(at: handle))
             fixture.surface.endResizeDrag(at: CGPoint(x: handle.x - 40, y: handle.y))
             XCTAssertEqual(try fixture.columnWidths(row: 0).first, [Self.narrowColumnWidth + 40])
-            try fixture.assertBodyEdgeScrollsWithoutResizing(
+            try fixture.assertBodyEdgeDoesNotClaimAResize(
                 cellIndex: Self.gridSize, physicalDelta: Self.bodySwipeDistance, "an RTL body-row edge")
         }
     }

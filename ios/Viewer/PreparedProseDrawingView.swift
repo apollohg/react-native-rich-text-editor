@@ -457,7 +457,6 @@ public final class PreparedProseDrawingView: UIView {
             let sourceCells = sourceTable.cells
             let widths = table.surface.layout.columnWidths
             let rowOffsets = table.surface.layout.rowOffsets
-            let handleRowHeight = rowOffsets.count > 1 ? rowOffsets[1] - rowOffsets[0] : 0
             let selectedColumns = selectedWholeColumns(tableID: table.surface.identity, in: sourceTable)
             let rightToLeft = table.surface.direction == .rightToLeft
             for cell in snapshot.cells where cell.surface === table.surface {
@@ -466,7 +465,10 @@ public final class PreparedProseDrawingView: UIView {
                 else { continue }
                 let source = sourceCells[index]
                 let column = Int(source.column + source.colspan) - 1
-                let inHandleRow = source.row == 0 && point.y < cell.bounds.minY + handleRowHeight
+                let row = Int(source.row)
+                let handleRowHeight = row + 1 < rowOffsets.count ? rowOffsets[row + 1] - rowOffsets[row] : 0
+                let inHandleRow = row == table.surface.columnEdgeHandleRows[column]
+                    && point.y < cell.bounds.minY + handleRowHeight
                 guard inHandleRow || selectedColumns.contains(column) else { continue }
                 let x = rightToLeft ? cell.bounds.minX : cell.bounds.maxX
                 let distance = abs(point.x - x)
@@ -491,11 +493,15 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     private func selectedWholeColumns(tableID: String, in table: FfiViewerTable) -> Range<Int> {
-        guard let positions = selectedTableCellSourcePositions[tableID] else { return 0..<0 }
+        guard let endpoints = selectedTableCellEndpoints, endpoints.tableID == tableID,
+              let positions = selectedTableCellSourcePositions[tableID],
+              let anchor = table.cells.first(where: { $0.sourcePos == endpoints.anchor }),
+              let head = table.cells.first(where: { $0.sourcePos == endpoints.head }),
+              min(anchor.row, head.row) == 0,
+              max(anchor.row + anchor.rowspan, head.row + head.rowspan) == table.rows
+        else { return 0..<0 }
         let selected = table.cells.filter { positions.contains(Int($0.sourcePos)) }
-        guard let top = selected.map(\.row).min(), top == 0,
-              selected.map({ $0.row + $0.rowspan }).max() == table.rows,
-              let left = selected.map(\.column).min(),
+        guard let left = selected.map(\.column).min(),
               let right = selected.map({ $0.column + $0.colspan }).max()
         else { return 0..<0 }
         return Int(left)..<Int(right)

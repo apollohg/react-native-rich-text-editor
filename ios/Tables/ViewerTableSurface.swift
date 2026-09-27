@@ -27,12 +27,13 @@ final class ViewerTableSurface {
     let sourceTable: FfiViewerTable?
     let sourceAttributes: [String: [String: Any]]
     let syntheticRegions: [TableRenderSyntheticRegion]
+    let columnEdgeHandleRows: [Int: Int]
     let preparationError: ProseViewerError?
 
     var bounds: CGRect { CGRect(origin: .zero, size: layout.contentSize) }
     var retainedBytes: Int {
         256 + cells.reduce(0) { $0 + $1.retainedBytes }
-            + (sourceTable?.cells.count ?? 0) * 16 + syntheticRegions.count * 64
+            + (sourceTable?.cells.count ?? 0) * 16 + syntheticRegions.count * 64 + columnEdgeHandleRows.count * 16
             + layout.columnWidths.count * 16 + layout.rowOffsets.count * 16
             + layout.rectangles.count * 96 + layout.sourceOrder.count * 16
     }
@@ -60,6 +61,10 @@ final class ViewerTableSurface {
         self.sourceTable = sourceTable
         self.sourceAttributes = sourceAttributes
         self.syntheticRegions = sourceTable?.syntheticRegions ?? []
+        self.columnEdgeHandleRows = Dictionary(
+            (sourceTable?.cells ?? []).map { (Int($0.column + $0.colspan) - 1, Int($0.row)) },
+            uniquingKeysWith: min
+        )
         let sourceCellIndexes = Dictionary(uniqueKeysWithValues: (sourceTable?.cells ?? []).enumerated().map { (Int($0.element.sourcePos), $0.offset) })
         let sourceCells = Dictionary(uniqueKeysWithValues: record.cells.map { ($0.sourcePosition, $0) })
         let measurementRecord = TableGridRecord(
@@ -140,6 +145,7 @@ final class ViewerTableSurface {
         self.sourceTable = nil
         self.sourceAttributes = [:]
         self.syntheticRegions = []
+        self.columnEdgeHandleRows = [:]
         self.preparationError = preparationError
     }
 
