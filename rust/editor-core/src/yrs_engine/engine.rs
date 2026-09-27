@@ -528,6 +528,7 @@ impl YrsDocumentEngine {
         boundaries.try_reserve_exact(count).ok()?;
         let spans = self.cell_pinning(state).spans();
         let mut open_cells: Vec<usize> = Vec::new();
+        let mut text_counter = position_epoch_cells::CellTextCounter::new(spans.len());
         let mut next_cell = 0usize;
         let mut previous: Option<(u32, crate::position_epoch::BoundaryAnchors)> = None;
         for scalar_offset in 0..=state.position_map.total_scalars() {
@@ -564,7 +565,16 @@ impl YrsDocumentEngine {
                     &self.schema,
                 )?,
             };
-            anchors.pinned_cell = anchors.table_cell_ancestors.and(open_cells.last().copied());
+            let pinned_cell = anchors.table_cell_ancestors.and(open_cells.last().copied());
+            anchors.pinned_cell = text_counter
+                .advance(pinned_cell, doc_pos)
+                .zip(pinned_cell)
+                .map(
+                    |(text_offset, cell)| crate::position_epoch::CellTextPosition {
+                        cell,
+                        text_offset,
+                    },
+                );
             previous = Some((doc_pos, anchors.clone()));
             boundaries.push(anchors);
         }
@@ -631,39 +641,30 @@ impl YrsDocumentEngine {
             else {
                 continue;
             };
-            let cell_ancestor = anchors
-                .table_cell_ancestors
-                .zip(ancestor_depth)
-                .filter(|(cell_depth, depth)| depth >= cell_depth);
-            let Some((cell_depth, depth)) = cell_ancestor else {
-                return Some(crate::position_epoch::ResolvedBoundary {
-                    offset: state.position_map.doc_to_scalar(doc_pos, &state.document),
-                    fallback,
-                    left_table_cell: false,
-                });
-            };
-            let retyped_cell_offset = boundary
-                .pinned_cell
-                .filter(|_| depth == cell_depth)
-                .and_then(|pinned| {
-                    self.cell_pinning(state).reanchor_in_retyped_cell(
-                        doc_pos,
-                        pinned,
-                        original_offset,
-                    )
-                });
-            return Some(match retyped_cell_offset {
-                Some(offset) => crate::position_epoch::ResolvedBoundary {
+            let pinning = self.cell_pinning(state);
+            let resolved =
+                |offset: u32, left_table_cell: bool| crate::position_epoch::ResolvedBoundary {
                     offset,
                     fallback,
-                    left_table_cell: false,
-                },
-                None => crate::position_epoch::ResolvedBoundary {
-                    offset: state.position_map.doc_to_scalar(doc_pos, &state.document),
-                    fallback,
-                    left_table_cell: true,
-                },
-            });
+                    left_table_cell,
+                };
+            let unmapped = state.position_map.doc_to_scalar(doc_pos, &state.document);
+            let Some((depth, cell_depth)) = ancestor_depth.zip(anchors.table_cell_ancestors) else {
+                return Some(resolved(unmapped, false));
+            };
+            if depth < cell_depth {
+                let surviving = boundary.pinned_cell.and_then(|pinned| {
+                    pinning.reanchor_in_surviving_cell(doc_pos, pinned, affinity)
+                });
+                return Some(resolved(surviving.unwrap_or(unmapped), false));
+            }
+            let retyped = boundary
+                .pinned_cell
+                .filter(|_| depth == cell_depth)
+                .and_then(|pinned| pinning.reanchor_in_retyped_cell(doc_pos, pinned, affinity));
+            return Some(
+                retyped.map_or(resolved(unmapped, true), |offset| resolved(offset, false)),
+            );
         }
         Some(crate::position_epoch::ResolvedBoundary {
             offset: original_offset.min(state.position_map.total_scalars()),

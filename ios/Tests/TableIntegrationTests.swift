@@ -26,6 +26,8 @@ final class TableIntegrationTests: XCTestCase {
         static let geometryAccuracy: CGFloat = 0.5
         static let compositionText = "Z"
         static let staleCompositionText = "Q"
+        static let cellStartCaret = NSRange(location: 0, length: 0)
+        static let tallTextHead = NSRange(location: 0, length: 2)
         static let remoteProseText = "R"
         static let remoteProseScalar: UInt32 = 0
         static let remoteSelectionAffinity = "before"
@@ -527,6 +529,21 @@ final class TableIntegrationTests: XCTestCase {
         }
     }
 
+    func testRemoteTableDeletionDuringARangeReplacingCellCompositionCancelsItWithoutAMutation() throws {
+        try withTable(Integration.irregularDocument) { fixture in
+            let input = try composeStaleText(in: Integration.tallCell, replacing: Integration.tallTextHead, fixture)
+            let revision = fixture.adapter.baseDocumentRevision
+
+            try fixture.applyRemoteCommand(["type": Integration.deleteTable, "tablePos": Int(try fixture.tablePos())])
+            let remoteDocument = try XCTUnwrap(fixture.adapter.documentJson())
+            fixture.deliverRemoteCommit()
+            input.unmarkText()
+
+            assertCancelledComposition(input, landedOn: remoteDocument, revision: revision, fixture)
+            XCTAssertTrue(fixture.adapter.cachedTableRecords.isEmpty)
+        }
+    }
+
     func testRemoteRowDeletionDuringCellCompositionCancelsItWithoutAMutation() throws {
         try withTable(Integration.gridDocument) { fixture in
             let lastRowCell = try fixture.positions()[Integration.gridLast]
@@ -597,13 +614,15 @@ final class TableIntegrationTests: XCTestCase {
         }
     }
 
-    private func composeStaleText(in cellIndex: Int, _ fixture: Fixture) throws -> EditorTextView {
+    private func composeStaleText(in cellIndex: Int, replacing replaced: NSRange = Integration.cellStartCaret,
+                                  _ fixture: Fixture) throws -> EditorTextView {
         XCTAssertTrue(fixture.view.bindTableCell(tableID: fixture.tableID, cellIndex: UInt32(cellIndex),
                                                  contentRect: .zero))
         let input = fixture.view.activeTextInput
         XCTAssertFalse(input === fixture.view.textView, "a cell input must own the composition")
         XCTAssertTrue(input.becomeFirstResponder())
-        placeCaretAtCellStart(fixture)
+        input.selectedRange = replaced
+        input.textViewDidChangeSelection(input)
         input.setMarkedText(Integration.staleCompositionText, selectedRange: NSRange(location: 1, length: 0))
         XCTAssertTrue(input.isComposing)
         return input
@@ -683,7 +702,7 @@ final class TableIntegrationTests: XCTestCase {
 
     private func placeCaretAtCellStart(_ fixture: Fixture) {
         let input = fixture.view.activeTextInput
-        input.selectedRange = NSRange(location: 0, length: 0)
+        input.selectedRange = Integration.cellStartCaret
         input.textViewDidChangeSelection(input)
     }
 

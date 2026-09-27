@@ -729,6 +729,9 @@ const REMOTE_PROSE_TEXT: &str = "R";
 const CELL_REMOVED_CODE: &str = "POSITION_EPOCH_CELL_REMOVED";
 const TWO_PARAGRAPH_CELL_DOCUMENT: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"First"}]},{"type":"paragraph","content":[{"type":"text","text":"Extra"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Second"}]}]}]}]}]}"#;
 const FIRST_PARAGRAPH_TEXT: &str = "First";
+const HEADER_CELL_NODE: &str = "table_header";
+const SPLIT_HEAD_TEXT: &str = "Fir";
+const SPLIT_TAIL_TEXT: &str = "st";
 const SECOND_PARAGRAPH_TEXT: &str = "Extra";
 const EMPTY_CELLS_DOCUMENT: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph"}]},{"type":"table_cell","content":[{"type":"paragraph"}]}]}]}]}"#;
 const PARAGRAPH_BREAK_SCALARS: u32 = 1;
@@ -912,7 +915,7 @@ fn cell_commit_after_a_remote_edit_elsewhere_lands_in_its_moved_cell() {
     );
     assert_eq!(
         first_grid_cell_text(&session),
-        format!("{COMPOSED_TEXT}First")
+        format!("{COMPOSED_TEXT}{FIRST_PARAGRAPH_TEXT}")
     );
 }
 
@@ -960,7 +963,7 @@ fn cell_commit_after_a_remote_peer_joins_its_paragraph_stays_in_that_cell() {
             "type": "paragraph",
             "content": [{
                 "type": "text",
-                "text": format!("{FIRST_PARAGRAPH_TEXT}{SECOND_PARAGRAPH_TEXT}{COMPOSED_TEXT}"),
+                "text": format!("{FIRST_PARAGRAPH_TEXT}{COMPOSED_TEXT}{SECOND_PARAGRAPH_TEXT}"),
             }],
         }]),
         "the composed text stays in its cell: {document}"
@@ -984,7 +987,7 @@ fn cell_commit_after_a_remote_header_toggle_of_its_cell_stays_in_that_cell() {
     let remote_revision = session.engine.revision();
     let remote_cell =
         session.engine.document_json().unwrap()["content"][1]["content"][0]["content"][0].clone();
-    assert_eq!(remote_cell["type"], "table_header", "{remote_cell}");
+    assert_eq!(remote_cell["type"], HEADER_CELL_NODE, "{remote_cell}");
 
     let outcome = submit_cell_commit(&mut session, &pinned);
 
@@ -993,10 +996,10 @@ fn cell_commit_after_a_remote_header_toggle_of_its_cell_stays_in_that_cell() {
     assert_eq!(session.engine.revision(), remote_revision + 1);
     let cell =
         session.engine.document_json().unwrap()["content"][1]["content"][0]["content"][0].clone();
-    assert_eq!(cell["type"], "table_header", "{cell}");
+    assert_eq!(cell["type"], HEADER_CELL_NODE, "{cell}");
     assert_eq!(
         first_grid_cell_text(&session),
-        format!("{COMPOSED_TEXT}First"),
+        format!("{COMPOSED_TEXT}{FIRST_PARAGRAPH_TEXT}"),
         "{outcome}"
     );
 }
@@ -1025,4 +1028,45 @@ fn cell_commit_after_a_remote_deletion_of_its_empty_column_is_not_retargeted_to_
     );
 
     assert_cell_commit_refused_without_mutation(&mut session, &pinned);
+}
+
+#[test]
+fn cell_commit_after_a_remote_peer_splits_its_paragraph_at_the_composition_keeps_its_live_text_leaf(
+) {
+    let mut session = table_session_with(PROSE_AND_GRID_DOCUMENT);
+    let cell_start = cell_text_scalar_in(&session, PROSE_PREFIX_TABLE_POSITION, FIRST_GRID_CELL);
+    let epoch = session
+        .pin_position_epoch(CELL_OWNER_ID, session.engine.revision())
+        .unwrap();
+    let pinned = PinnedCellCommit {
+        epoch,
+        scalar: cell_start + SPLIT_HEAD_TEXT.chars().count() as u32,
+    };
+    apply_remote_peer_edit(&mut session, |replica| {
+        remote_command_at(
+            replica,
+            pinned.scalar,
+            pinned.scalar,
+            TypedCommand::SplitBlock,
+        );
+    });
+    let remote_revision = session.engine.revision();
+
+    let outcome = submit_cell_commit(&mut session, &pinned).unwrap();
+
+    assert_eq!(outcome["type"], "transaction", "{outcome}");
+    assert_eq!(
+        outcome["positionFallback"], false,
+        "the split keeps the head text leaf, so no fallback is involved: {outcome}"
+    );
+    assert_eq!(session.engine.revision(), remote_revision + 1);
+    let document = session.engine.document_json().unwrap();
+    assert_eq!(
+        document["content"][1]["content"][0]["content"][0]["content"],
+        serde_json::json!([
+            {"type": "paragraph", "content": [{"type": "text", "text": format!("{SPLIT_HEAD_TEXT}{COMPOSED_TEXT}")}]},
+            {"type": "paragraph", "content": [{"type": "text", "text": SPLIT_TAIL_TEXT}]},
+        ]),
+        "{outcome} {document}"
+    );
 }

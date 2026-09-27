@@ -11,7 +11,13 @@ pub(crate) struct BoundaryAnchors {
     pub(crate) ancestor_before: Vec<StickyIndex>,
     pub(crate) ancestor_after: Vec<StickyIndex>,
     pub(crate) table_cell_ancestors: Option<usize>,
-    pub(crate) pinned_cell: Option<usize>,
+    pub(crate) pinned_cell: Option<CellTextPosition>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CellTextPosition {
+    pub(crate) cell: usize,
+    pub(crate) text_offset: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,8 +28,8 @@ pub(crate) struct PinnedTableCell {
     pub(crate) colspan: u32,
     pub(crate) table_rows: u32,
     pub(crate) table_columns: u32,
-    pub(crate) content_scalar_start: u32,
     pub(crate) content_fingerprint: u64,
+    pub(crate) text_fingerprint: u64,
 }
 
 #[derive(Debug)]
@@ -34,8 +40,14 @@ pub(crate) struct EpochBoundaries {
 
 pub(crate) struct EpochBoundary<'epoch> {
     pub(crate) anchors: &'epoch BoundaryAnchors,
-    pub(crate) pinned_cell: Option<&'epoch PinnedTableCell>,
+    pub(crate) pinned_cell: Option<PinnedCellBoundary<'epoch>>,
     pub(crate) document_revision: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PinnedCellBoundary<'epoch> {
+    pub(crate) cell: &'epoch PinnedTableCell,
+    pub(crate) text_offset: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,9 +214,12 @@ impl PositionEpochStore {
             })?;
         Ok(EpochBoundary {
             anchors,
-            pinned_cell: anchors
-                .pinned_cell
-                .and_then(|cell| epoch.boundaries.cells.get(cell)),
+            pinned_cell: anchors.pinned_cell.and_then(|position| {
+                Some(PinnedCellBoundary {
+                    cell: epoch.boundaries.cells.get(position.cell)?,
+                    text_offset: position.text_offset,
+                })
+            }),
             document_revision: epoch.document_revision,
         })
     }
