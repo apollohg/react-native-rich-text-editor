@@ -92,8 +92,7 @@ final class TableAcceptanceTests: XCTestCase {
 
         var tableID: String {
             get throws {
-                try XCTUnwrap(adapter.cachedTableRecords.first { $0.value["readOnlyDescendants"] as? Bool == false }?.key,
-                              "no editable table is rendered")
+                try adapter.editableTableID()
             }
         }
 

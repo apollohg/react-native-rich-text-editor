@@ -637,9 +637,7 @@ final class TableIntegrationTests: XCTestCase {
         expo.setEditorId(editorId)
         XCTAssertTrue(expo.richTextView.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
         expo.layoutIfNeeded()
-        let tableID = try XCTUnwrap(adapter.cachedTableRecords.first {
-            $0.value["readOnlyDescendants"] as? Bool == false
-        }?.key)
+        let tableID = try adapter.editableTableID()
         let surface = try XCTUnwrap(expo.richTextView.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         try body(Fixture(expo: expo, adapter: adapter, editorId: editorId, tableID: tableID,

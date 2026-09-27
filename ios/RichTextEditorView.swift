@@ -456,10 +456,8 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
               adapter.stateRevision == commandStateRevision,
               adapter.positionEpoch == commandEpoch
         else { return }
-        let targetIsBound = activeTextInput === input
-            && tableInputCoordinator.positionMap.map { selectionFitsTableCell(targetSelection, map: $0) } == true
-        guard targetIsBound
-            || bindTableCell(holding: targetSelection, adapter: adapter, fallback: input.frame, focus: focused)
+        guard activeTextInput === input,
+              tableInputCoordinator.positionMap.map({ selectionFitsTableCell(targetSelection, map: $0) }) == true
         else {
             invalidateTableCellBinding()
             return

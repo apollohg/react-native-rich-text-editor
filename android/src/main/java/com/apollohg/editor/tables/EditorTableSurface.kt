@@ -1219,11 +1219,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             invalidateCell()
             return true
         }
-        if (input.tableCellPositionMap?.localScalarForGlobalScalar(scalar) != null) {
-            if (!input.isAuthorizedForTableCellInput()) invalidateCell()
-            return true
-        }
-        if (!bindCell(holding = targetSelection, range = scalar to scalar, adapter = adapter, focus = true)) {
+        if (input.tableCellPositionMap?.localScalarForGlobalScalar(scalar) == null ||
+            !input.isAuthorizedForTableCellInput()) {
             invalidateCell()
         }
         return true

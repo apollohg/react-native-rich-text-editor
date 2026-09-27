@@ -51,8 +51,7 @@ extension EditorV2Adapter {
     }
 
     func tableCellPositions() throws -> [UInt32] {
-        let cells = try XCTUnwrap(cachedTableRecords[try editableTableID()]?["cells"] as? [[String: Any]])
-        return try cells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
+        try tableCellPositions(tableID: editableTableID())
     }
 
     func tableCellTexts() throws -> [[String]] {

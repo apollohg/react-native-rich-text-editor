@@ -418,6 +418,8 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             tapCell(view, 1)
             input.clearFocus()
             assertFalse(input.hasFocus())
+            val root = view.richTextView.editorEditText
+            val rootFocusedBeforeUndo = root.hasFocus()
 
             input.performToolbarUndo()
             assertEquals(listOf("First", "Second"), cellTexts(adapter))
@@ -425,6 +427,8 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
                 positions[0].toLong(), view.richTextView.activeTableCellPosition)
             assertEquals("First".length, input.selectionStart)
             assertFalse("rebinding an unfocused cell does not grab focus", input.hasFocus())
+            assertEquals("the root keeps its focus state (focused before undo: $rootFocusedBeforeUndo)",
+                rootFocusedBeforeUndo, root.hasFocus())
         }
 
     @Test

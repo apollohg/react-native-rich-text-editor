@@ -966,9 +966,8 @@ final class EditorTableInputTests: XCTestCase {
         defer { window.isHidden = true }
         view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
         XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(fourCellDocument))))
-        let tableID = try XCTUnwrap(adapter.cachedTableRecords.keys.first)
-        let rawCells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
-        let positions = try rawCells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
+        let tableID = try adapter.editableTableID()
+        let positions = try adapter.tableCellPositions(tableID: tableID)
         let request = adapter.callWithEnvelope([
             "selection": ["type": "cell",
                           "anchorCell": ["kind": "document", "offset": Int(positions[0])],
@@ -2298,7 +2297,7 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertTrue(input.isFirstResponder, "the rebound cell keeps focus")
             XCTAssertEqual(input.textStorage.string, "oneX")
             XCTAssertEqual(input.selectedRange, NSRange(location: 4, length: 0), "the caret follows the reapplied edit")
-            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            RunLoop.main.run(until: Date())
             XCTAssertFalse(focus.events.contains(false), "moving between cells never blurs: \(focus.events)")
         }
     }
@@ -2324,7 +2323,7 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertFalse(input.isFirstResponder)
             XCTAssertEqual(root.selectedRange, NSRange(location: 0, length: 0), "the root shows the restored caret")
             XCTAssertFalse(root.rootTableSelectionInputBlocked, "the restored prose caret accepts input")
-            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            RunLoop.main.run(until: Date())
             XCTAssertFalse(focus.events.contains(false), "the cell-to-root handoff never blurs: \(focus.events)")
         }
     }
