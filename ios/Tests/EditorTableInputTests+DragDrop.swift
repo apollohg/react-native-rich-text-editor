@@ -72,18 +72,6 @@ extension EditorTableInputTests {
         fixture.view.textView.textDroppableView(fixture.view.textView, willPerformDrop: request)
     }
 
-    private func dragCellTexts(_ fixture: MountedTableFixture) throws -> [[String]] {
-        func text(_ node: [String: Any]) -> String {
-            if node["type"] as? String == "text" { return node["text"] as? String ?? "" }
-            return (node["content"] as? [[String: Any]] ?? []).map(text).joined()
-        }
-        let root = try XCTUnwrap(fixture.documentObject() as? [String: Any])
-        let content = try XCTUnwrap(root["content"] as? [[String: Any]])
-        let table = try XCTUnwrap(content.first { $0["type"] as? String == "table" })
-        let rows = try XCTUnwrap(table["content"] as? [[String: Any]])
-        return rows.map { row in (row["content"] as? [[String: Any]] ?? []).map(text) }
-    }
-
     private func loadedData(_ provider: NSItemProvider, type: String) throws -> Data {
         let loaded = expectation(description: "load \(type)")
         var result: Data?
@@ -169,7 +157,7 @@ extension EditorTableInputTests {
                            "hovering highlights the real drop cell")
             perform(fixture, request)
 
-            XCTAssertEqual(try dragCellTexts(fixture), [["", ""], ["A", "B"]])
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["", ""], ["A", "B"]])
             XCTAssertNil(fixture.drawing.tableCellDropTarget, "the highlight ends with the drop")
             try assertSingleUndoRestores(fixture, before)
         }
@@ -209,7 +197,7 @@ extension EditorTableInputTests {
                 XCTAssertEqual(target.drawing.tableCellDropTarget, dropTarget(target, cell: CellDrag.thirdCell))
                 perform(target, request)
 
-                XCTAssertEqual(try dragCellTexts(target), [["w", "x"], ["A", "B"]])
+                XCTAssertEqual(try target.adapter.tableCellTexts(), [["w", "x"], ["A", "B"]])
                 XCTAssertEqual(target.updates.updates.count, 1)
             }
             XCTAssertEqual(try source.documentObject(), sourceBefore, "a copy never clears the source")
@@ -236,7 +224,7 @@ extension EditorTableInputTests {
             RunLoop.main.run(until: Date().addingTimeInterval(CellDrag.lateUpdateWindow))
             XCTAssertEqual(fixture.updates.updates.count, 1, "updates: \(fixture.updates.updates)")
 
-            XCTAssertEqual(try dragCellTexts(fixture), [["w", "x", ""], ["y", "e1", "e2"]],
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["w", "x", ""], ["y", "e1", "e2"]],
                            "the matrix grows the table from the real drop cell")
             try assertSingleUndoRestores(fixture, before)
         }
@@ -374,7 +362,7 @@ extension EditorTableInputTests {
                 id: fixture.view.editorId, pos: fixture.positions[CellDrag.lastCell] + CellDrag.cellTextOffset,
                 text: CellDrag.staleEdit
             )))
-            XCTAssertEqual(try dragCellTexts(fixture), [["A", "B"], ["C", CellDrag.staleEdit + "D"]])
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["A", "B"], ["C", CellDrag.staleEdit + "D"]])
             fixture.view.layoutIfNeeded()
             fixture.updates.updates.removeAll()
             let before = try fixture.documentObject()

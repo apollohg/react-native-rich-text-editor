@@ -45,6 +45,21 @@ enum TableToolbarTestItems {
             + #"{"type":"command","command":"redo","label":"\#(redoLabel)","icon":{"type":"default","id":"redo"}}]"#
 }
 
+extension EditorV2Adapter {
+    func tableCellTexts() throws -> [[String]] {
+        func text(_ node: [String: Any]) -> String {
+            if node["type"] as? String == "text" { return node["text"] as? String ?? "" }
+            return (node["content"] as? [[String: Any]] ?? []).map(text).joined()
+        }
+        let json = try XCTUnwrap(documentJson())
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let content = try XCTUnwrap(root["content"] as? [[String: Any]])
+        let table = try XCTUnwrap(content.first { $0["type"] as? String == "table" })
+        let rows = try XCTUnwrap(table["content"] as? [[String: Any]])
+        return rows.map { row in (row["content"] as? [[String: Any]] ?? []).map(text) }
+    }
+}
+
 func documentCellSelection(anchor: UInt32, head: UInt32) -> [String: Any] {
     [
         "type": cellSelectionType,

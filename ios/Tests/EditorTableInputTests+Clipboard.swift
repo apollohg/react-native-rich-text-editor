@@ -59,16 +59,6 @@ extension EditorTableInputTests {
         return try XCTUnwrap(table["content"] as? [[String: Any]])
     }
 
-    private func cellTexts(_ fixture: MountedTableFixture) throws -> [[String]] {
-        func text(_ node: [String: Any]) -> String {
-            if node["type"] as? String == "text" { return node["text"] as? String ?? "" }
-            return (node["content"] as? [[String: Any]] ?? []).map(text).joined()
-        }
-        return try tableRows(fixture).map { row in
-            (row["content"] as? [[String: Any]] ?? []).map(text)
-        }
-    }
-
     private func assertOneUndoableUpdate(_ fixture: MountedTableFixture, restoring before: NSDictionary,
                                          file: StaticString = #filePath, line: UInt = #line) throws {
         XCTAssertEqual(fixture.updates.updates.count, 1, "exactly one published update", file: file, line: line)
@@ -123,7 +113,7 @@ extension EditorTableInputTests {
             root.cut(nil)
 
             XCTAssertEqual(UIPasteboard.general.string, TableClipboard.firstRowTSV)
-            XCTAssertEqual(try cellTexts(fixture), [["", ""], ["C", "D"]])
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["", ""], ["C", "D"]])
             XCTAssertEqual(try fixture.publishedSelectionType(), TableClipboard.cellSelectionType)
             try assertOneUndoableUpdate(fixture, restoring: before)
         }
@@ -137,7 +127,7 @@ extension EditorTableInputTests {
 
             fixture.view.textView.paste(nil)
 
-            XCTAssertEqual(try cellTexts(fixture), [["w", "x"], ["y", "z"]])
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["w", "x"], ["y", "z"]])
             let selection = try fixture.engineSelection()
             XCTAssertEqual(selection.0, fixture.positions[TableClipboard.firstCell])
             XCTAssertEqual(selection.1, fixture.positions[TableClipboard.lastCell])
@@ -155,13 +145,13 @@ extension EditorTableInputTests {
             ]]
 
             fixture.view.textView.paste(nil)
-            XCTAssertEqual(try cellTexts(fixture), [["h1", "h2"], ["C", "D"]])
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["h1", "h2"], ["C", "D"]])
             try assertOneUndoableUpdate(fixture, restoring: before)
 
             try select(fixture, anchor: fixture.positions[TableClipboard.firstCell],
                        head: fixture.positions[TableClipboard.secondCell])
             fixture.view.textView.pasteAndMatchStyle(nil)
-            XCTAssertEqual(try cellTexts(fixture), [["p1", "p2"], ["C", "D"]])
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["p1", "p2"], ["C", "D"]])
             try assertOneUndoableUpdate(fixture, restoring: before)
         }
     }
@@ -230,7 +220,7 @@ extension EditorTableInputTests {
             XCTAssertEqual(fixture.adapter.historyFlags()?.canUndo, false)
 
             fixture.view.textView.paste(nil)
-            XCTAssertEqual(try cellTexts(fixture), [["w", "x"], ["y", "z"]])
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["w", "x"], ["y", "z"]])
         }
     }
 
