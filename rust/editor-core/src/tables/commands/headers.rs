@@ -2,7 +2,7 @@ use crate::command_planner::SemanticOperation;
 use crate::model::Fragment;
 use crate::schema::Schema;
 use crate::selection::Selection;
-use crate::tables::command_context::TableActionOutcome;
+use crate::tables::command_context::{TableActionOutcome, TableSelectionAfter};
 use crate::tables::commands::{
     retyped_cell, TableHeaderTarget, TableTarget, FIRST_COLUMN, FIRST_ROW,
 };
@@ -70,6 +70,6 @@ pub(crate) fn plan_toggle_header(
     operations.reverse();
     Some(TableActionOutcome {
         operations,
-        selection_after: surviving_selection(target, selection)?,
+        selection_after: TableSelectionAfter::Set(surviving_selection(target, selection)?),
     })
 }

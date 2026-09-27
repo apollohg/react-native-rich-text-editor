@@ -2,7 +2,7 @@ use crate::boundary::ResourceLimits;
 use crate::command_planner::{apply_operations, default_attrs, SemanticOperation};
 use crate::model::{Document, Fragment, Node};
 use crate::schema::Schema;
-use crate::tables::command_context::TableActionOutcome;
+use crate::tables::command_context::{TableActionOutcome, TableSelectionAfter};
 use crate::tables::commands::{
     attrs_with_row_span, caret_in_cell, fresh_cell_node, GridRequirement, TableEdge, TableTarget,
     FIRST_COLUMN, FIRST_ROW, MINIMUM_SURVIVING_ROWS, NODE_OPENING_TOKENS, ONE_SLOT,
@@ -23,6 +23,7 @@ pub(crate) fn plan_insert_row(
     target: &TableTarget<'_>,
     side: TableEdge,
     schema: &Schema,
+    enters_inserted_row: bool,
 ) -> Option<TableActionOutcome> {
     let rect = target.rect()?;
     let row = match side {
@@ -72,9 +73,14 @@ pub(crate) fn plan_insert_row(
             Fragment::from(cells),
         )]),
     });
+    let selection_after = if enters_inserted_row {
+        TableSelectionAfter::Set(caret_in_cell(position.checked_add(NODE_OPENING_TOKENS)?)?)
+    } else {
+        TableSelectionAfter::Mapped
+    };
     Some(TableActionOutcome {
         operations,
-        selection_after: caret_in_cell(position.checked_add(NODE_OPENING_TOKENS)?)?,
+        selection_after,
     })
 }
 
@@ -111,18 +117,9 @@ pub(crate) fn plan_delete_rows(
         operations.extend(step);
     }
 
-    let surviving = TableTarget::resolve(
-        &candidate,
-        target.table_pos(),
-        None,
-        schema,
-        limits,
-        GridRequirement::Regular,
-    )?;
-    let row = rect.top.min(surviving.rows().checked_sub(ONE_SLOT)?);
     Some(TableActionOutcome {
         operations,
-        selection_after: surviving.cell_selection_at(row, FIRST_COLUMN)?,
+        selection_after: TableSelectionAfter::Mapped,
     })
 }
 

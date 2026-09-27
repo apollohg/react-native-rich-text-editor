@@ -5,6 +5,7 @@ use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::command_context::{
     table_shape_operation_error, TableAction, TableActionCandidate, TableActionOutcome,
+    TableSelectionAfter,
 };
 use crate::tables::commands::{
     attrs_with_removed_columns, attrs_with_row_span, cell_node, default_text_block_node,
@@ -156,7 +157,7 @@ fn plan_matrix_paste(
     };
     Ok(Some(TableActionOutcome {
         operations,
-        selection_after,
+        selection_after: TableSelectionAfter::Set(selection_after),
     }))
 }
 

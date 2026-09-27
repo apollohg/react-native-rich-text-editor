@@ -1,6 +1,7 @@
 use crate::selection::Selection;
 use crate::tables::admission::{ProjectionFailure, TableProjectionIndex};
-use crate::tables::projection::{CellRect, ProjectedTable};
+use crate::tables::projection::{CellRect, ProjectedCell, ProjectedTable};
+use crate::transform::StepMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CellAdmission {
@@ -195,6 +196,146 @@ pub(crate) fn resolve_cell_rect(
         cuts_a_span,
         cells,
     })
+}
+
+fn located_cell(
+    index: &TableProjectionIndex,
+    position: u32,
+) -> Option<(u32, &ProjectedTable, &ProjectedCell)> {
+    let (table_pos, table, cell) = locate(index, position)?;
+    Some((table_pos, table, table.cells.get(cell)?))
+}
+
+fn opening_at(table: &ProjectedTable, row: u32, column: u32) -> Option<u32> {
+    slot_cell(table, row, column).and_then(|cell| Some(table.cells.get(cell)?.source_pos))
+}
+
+fn row_end(rect: &CellRect) -> u32 {
+    rect.row.saturating_add(rect.rowspan)
+}
+
+fn column_end(rect: &CellRect) -> u32 {
+    rect.column.saturating_add(rect.colspan)
+}
+
+fn spans_every_column(table: &ProjectedTable, anchor: &CellRect, head: &CellRect) -> bool {
+    anchor.column.min(head.column) == FIRST_COLUMN
+        && column_end(anchor).max(column_end(head)) == table.columns
+}
+
+fn spans_every_row(table: &ProjectedTable, anchor: &CellRect, head: &CellRect) -> bool {
+    anchor.row.min(head.row) == FIRST_ROW && row_end(anchor).max(row_end(head)) == table.rows
+}
+
+fn row_selection(
+    table: &ProjectedTable,
+    anchor: &ProjectedCell,
+    head: &ProjectedCell,
+) -> Option<Selection> {
+    let last_column = table.columns.checked_sub(1)?;
+    let row_start = |cell: &ProjectedCell| opening_at(table, cell.rect.row, FIRST_COLUMN);
+    let row_finish = |cell: &ProjectedCell| opening_at(table, cell.rect.row, last_column);
+    let (anchor_pos, head_pos) = if anchor.rect.column <= head.rect.column {
+        (
+            if anchor.rect.column > FIRST_COLUMN {
+                row_start(anchor)?
+            } else {
+                anchor.source_pos
+            },
+            if column_end(&head.rect) < table.columns {
+                row_finish(head)?
+            } else {
+                head.source_pos
+            },
+        )
+    } else {
+        (
+            if column_end(&anchor.rect) < table.columns {
+                row_finish(anchor)?
+            } else {
+                anchor.source_pos
+            },
+            if head.rect.column > FIRST_COLUMN {
+                row_start(head)?
+            } else {
+                head.source_pos
+            },
+        )
+    };
+    Some(Selection::cell(anchor_pos, head_pos))
+}
+
+fn column_selection(
+    table: &ProjectedTable,
+    anchor: &ProjectedCell,
+    head: &ProjectedCell,
+) -> Option<Selection> {
+    let last_row = table.rows.checked_sub(1)?;
+    let column_top = |cell: &ProjectedCell| opening_at(table, FIRST_ROW, cell.rect.column);
+    let column_bottom =
+        |cell: &ProjectedCell| opening_at(table, last_row, column_end(&cell.rect).checked_sub(1)?);
+    let (anchor_pos, head_pos) = if anchor.rect.row <= head.rect.row {
+        (
+            if anchor.rect.row > FIRST_ROW {
+                column_top(anchor)?
+            } else {
+                anchor.source_pos
+            },
+            if row_end(&head.rect) < table.rows {
+                column_bottom(head)?
+            } else {
+                head.source_pos
+            },
+        )
+    } else {
+        (
+            if row_end(&anchor.rect) < table.rows {
+                column_bottom(anchor)?
+            } else {
+                anchor.source_pos
+            },
+            if head.rect.row > FIRST_ROW {
+                column_top(head)?
+            } else {
+                head.source_pos
+            },
+        )
+    };
+    Some(Selection::cell(anchor_pos, head_pos))
+}
+
+pub(crate) fn map_cell_selection(
+    before: &TableProjectionIndex,
+    after: &TableProjectionIndex,
+    anchor: u32,
+    head: u32,
+    map: &StepMap,
+) -> Selection {
+    let mapped_anchor = map.map_pos(anchor);
+    let mapped_head = map.map_pos(head);
+    let mapped = Selection::cell(mapped_anchor, mapped_head);
+    let (Some((table_pos, table, anchor_cell)), Some((head_table_pos, _, head_cell))) = (
+        located_cell(after, mapped_anchor),
+        located_cell(after, mapped_head),
+    ) else {
+        return Selection::text(mapped_anchor, mapped_head);
+    };
+    if head_table_pos != table_pos {
+        return Selection::text(mapped_anchor, mapped_head);
+    }
+    let (Some((_, before_table, before_anchor)), Some((_, _, before_head))) =
+        (located_cell(before, anchor), located_cell(before, head))
+    else {
+        return mapped;
+    };
+    let stretched = if spans_every_column(before_table, &before_anchor.rect, &before_head.rect) {
+        row_selection(table, anchor_cell, head_cell)
+    } else if spans_every_row(before_table, &before_anchor.rect, &before_head.rect) {
+        column_selection(table, anchor_cell, head_cell)
+    } else {
+        None
+    };
+    stretched.unwrap_or(mapped)
 }
 
 fn nearest_cell_opening(table: &ProjectedTable, position: u32) -> Option<u32> {

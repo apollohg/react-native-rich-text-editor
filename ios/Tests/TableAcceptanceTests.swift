@@ -36,6 +36,8 @@ final class TableAcceptanceTests: XCTestCase {
         static let addColumnAfterLabel = "Insert column after"
         static let deleteColumnLabel = "Delete column"
         static let geometryAccuracy: CGFloat = 0.5
+        static let blockContentOffset = 1
+        static let cellTextOffset = 2
         static let mainQueueDrainTimeout: TimeInterval = 1
         static let parityTheme = ##"{"text":{"fontSize":17,"color":"#1b1f2aff"},"backgroundColor":"#ffffffff","contentInsets":{"top":12,"right":12,"bottom":12,"left":12},"table":{"minColumnWidth":72,"cellPadding":8,"borderWidth":1,"borderColor":"#a0acb7ff","headerBackgroundColor":"#e8f0f5ff"}}"##
         static let parityDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Merged header across two columns"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"A tall cell whose text wraps over several lines"}]},{"type":"paragraph","content":[{"type":"text","text":"second"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"abcdefghijkl"}]}]},{"type":"table_cell","attrs":{"colwidth":[140]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Ready"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"x"}]}]},{"type":"table_cell","content":[{"type":"paragraph"}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After"}]}]}"#
@@ -115,6 +117,10 @@ final class TableAcceptanceTests: XCTestCase {
         func cellsAt(_ indices: Int...) throws -> Set<Int> {
             let positions = try positions()
             return Set(indices.map { Int(positions[$0]) })
+        }
+
+        func tableEnd() throws -> UInt32 {
+            try XCTUnwrap(adapter.cachedTableRecords[try tableID].flatMap { EditorV2Adapter.uint32Field($0, "sourceEnd") })
         }
 
         func engineSelection() throws -> [String: Any] {
@@ -303,9 +309,9 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(grid.map(\.count), Array(repeating: Acceptance.tableColumns, count: Acceptance.tableRows), "\(grid)")
         XCTAssertEqual(grid[1][0].paragraphs, richCell + [Acceptance.bodyText], "split keeps the content in the anchor")
         XCTAssertEqual(grid[1][1].paragraphs, [""])
+        XCTAssertEqual(try harness.selectedCells(), try harness.cellsAt(Acceptance.tableColumns, Acceptance.tableColumns + 1),
+                       "split selects the whole split rectangle, like prosemirror-tables splitCell from a cell selection")
         positions = try harness.positions()
-        XCTAssertEqual(try harness.selectedCells(), [Int(positions[Acceptance.tableColumns])],
-                       "split keeps the content-holding top-left cell selected")
 
         try harness.root.selectTableCells(adapter: adapter,
                                           anchor: positions[Acceptance.tableColumns * 2], head: positions[Acceptance.tableColumns * 2 + 1])
@@ -327,15 +333,20 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(grid.count, Acceptance.tableRows + 1, "\(grid)")
         XCTAssertEqual(grid[3].map(\.paragraphs), Array(repeating: [""], count: Acceptance.tableColumns))
         positions = try harness.positions()
-        XCTAssertEqual(try harness.selectedCells(), [], "adding a row leaves no cell rectangle")
+        XCTAssertEqual(try harness.selectedCells(),
+                       try harness.cellsAt(Acceptance.tableColumns * 2, Acceptance.tableColumns * 2 + 1),
+                       "adding a row maps the pasted rectangle onto the same cells")
         try harness.root.selectTableCells(adapter: adapter,
                                           anchor: positions[Acceptance.tableColumns * 3], head: positions[Acceptance.tableColumns * 3])
         harness.expo.layoutIfNeeded()
         try harness.perform(Acceptance.deleteRowLabel, onCellAt: positions[Acceptance.tableColumns * 3])
         XCTAssertEqual(try harness.grid().count, Acceptance.tableRows)
         XCTAssertEqual(try harness.grid().prefix(3).map { $0.map(\.paragraphs) }, grid.prefix(3).map { $0.map(\.paragraphs) })
-        XCTAssertEqual(try harness.selectedCells(), try harness.cellsAt(Acceptance.tableColumns * 2),
-                       "deleting the selected row selects the first real cell of the row above")
+        XCTAssertEqual(try harness.selectedCells(), [], "a deleted row takes its cell selection with it")
+        let afterRowDelete = try harness.engineSelection()
+        XCTAssertEqual(afterRowDelete["type"] as? String, Acceptance.textSelection, "\(afterRowDelete)")
+        XCTAssertEqual(afterRowDelete["head"] as? Int, Int(try harness.tableEnd()) + Acceptance.blockContentOffset,
+                       "deleting the last row maps the selection forward into the paragraph after the table")
 
         positions = try harness.positions()
         try harness.root.selectTableCells(adapter: adapter,
@@ -346,15 +357,20 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(grid.map(\.count), Array(repeating: Acceptance.tableColumns + 1, count: Acceptance.tableRows), "\(grid)")
         XCTAssertEqual(grid[0][Acceptance.tableColumns].type, Acceptance.headerNode, "the header row stays a header row")
         positions = try harness.positions()
-        XCTAssertEqual(try harness.selectedCells(), [], "adding a column leaves no cell rectangle")
+        XCTAssertEqual(try harness.selectedCells(), try harness.cellsAt(Acceptance.tableColumns - 1),
+                       "adding a column maps the selected cell onto itself")
         let addedColumnHeader = positions[Acceptance.tableColumns]
         try harness.root.selectTableCells(adapter: adapter, anchor: addedColumnHeader, head: addedColumnHeader)
         harness.expo.layoutIfNeeded()
         try harness.perform(Acceptance.deleteColumnLabel, onCellAt: addedColumnHeader)
         grid = try harness.grid()
         XCTAssertEqual(grid.map(\.count), Array(repeating: Acceptance.tableColumns, count: Acceptance.tableRows), "\(grid)")
-        XCTAssertEqual(try harness.selectedCells(), try harness.cellsAt(Acceptance.tableColumns - 1),
-                       "deleting the selected column selects the cell before it")
+        XCTAssertEqual(try harness.selectedCells(), [], "a deleted last column takes its cell selection with it")
+        let afterColumnDelete = try harness.engineSelection()
+        XCTAssertEqual(afterColumnDelete["type"] as? String, Acceptance.textSelection, "\(afterColumnDelete)")
+        XCTAssertEqual(afterColumnDelete["head"] as? Int,
+                       Int(try harness.positions()[Acceptance.tableColumns]) + Acceptance.cellTextOffset,
+                       "deleting the last column maps the selection forward to the start of the next row")
         let settled = grid
 
         positions = try harness.positions()
@@ -446,9 +462,7 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(adapter.documentJson(), remoteAdapter.documentJson(), "both peers converge")
         XCTAssertTrue(harness.view.activeTextInput === harness.root, "the dead cell releases the input")
         XCTAssertNil(harness.activeCell())
-        let tableEnd = try XCTUnwrap(adapter.cachedTableRecords[try harness.tableID].flatMap {
-            EditorV2Adapter.uint32Field($0, "sourceEnd")
-        })
+        let tableEnd = try harness.tableEnd()
         let resolved = try harness.engineSelection()
         XCTAssertEqual(resolved["type"] as? String, Acceptance.textSelection, "\(resolved)")
         XCTAssertEqual(resolved["anchor"] as? Int, localBeforeRemote["anchor"] as? Int,

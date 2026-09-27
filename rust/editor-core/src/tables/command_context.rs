@@ -4,11 +4,12 @@ use crate::command_planner::{
     SimulatedCommandPlan,
 };
 use crate::model::Document;
+use crate::position::PositionMap;
 use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::normalize::{normalize_outer_table, outer_table_grid};
-use crate::tables::selection::resolve_cell_rect;
+use crate::tables::selection::{map_cell_selection, resolve_cell_rect};
 use crate::tables::types::{TableActionKind, TableError, TableWorkCounters};
 use crate::transform::{apply_step_canonical_marks, StepMap};
 use crate::yrs_engine::{EditingLimits, OperationError, OperationResult, TransactionOrigin};
@@ -76,9 +77,14 @@ pub(crate) struct TableActionCandidate<'a> {
     pub selection: Selection,
 }
 
+pub(crate) enum TableSelectionAfter {
+    Mapped,
+    Set(Selection),
+}
+
 pub(crate) struct TableActionOutcome {
     pub operations: Vec<SemanticOperation>,
-    pub selection_after: Selection,
+    pub selection_after: TableSelectionAfter,
 }
 
 pub(crate) trait TableAction {
@@ -118,6 +124,7 @@ pub(crate) fn prepare_table_action(
     operations.extend(pre_pass);
 
     let anchors = remap_anchors(context, &candidate, &pre_map)?;
+    let selection = context.selection.map(&pre_map);
     #[cfg(feature = "table-interop")]
     PREPARING_REQUEST.set(Some(context.request_id));
     let planned = action.plan(
@@ -127,7 +134,7 @@ pub(crate) fn prepare_table_action(
             pre_map: &pre_map,
             table_pos: context.table_pos,
             anchors,
-            selection: context.selection.map(&pre_map),
+            selection: selection.clone(),
         },
         context.schema,
         context.resource_limits,
@@ -137,9 +144,14 @@ pub(crate) fn prepare_table_action(
     let outcome = planned
         .map_err(|error| recorrelate(error, context.request_id))?
         .ok_or_else(|| action_unavailable(context, action.kind()))?;
-    let (acted, _) = advance_candidate(context, &candidate, &outcome.operations)?;
+    let (acted, action_map) = advance_candidate(context, &candidate, &outcome.operations)?;
     operations.extend(outcome.operations);
-    let mut selection_after = outcome.selection_after;
+    let mut selection_after = match outcome.selection_after {
+        TableSelectionAfter::Set(selection) => selection,
+        TableSelectionAfter::Mapped => {
+            selection_mapped_through(context, &candidate, &acted, &selection, &action_map)
+        }
+    };
 
     let prepared_document = match outer_table_grid(
         &acted,
@@ -219,6 +231,53 @@ fn normalization_pass(
         .normalization_operations
         .saturating_add(u32::try_from(operations.len()).unwrap_or(u32::MAX));
     Ok(operations)
+}
+
+fn selection_mapped_through(
+    context: &TableActionContext<'_>,
+    before: &Document,
+    after: &Document,
+    selection: &Selection,
+    map: &StepMap,
+) -> Selection {
+    let position_map = || PositionMap::build(after, context.schema);
+    match selection {
+        Selection::Cell { anchor, head } => match map_cell_selection(
+            &TableProjectionIndex::derive_or_fallback(
+                before,
+                context.schema,
+                context.resource_limits,
+            ),
+            &TableProjectionIndex::derive_or_fallback(
+                after,
+                context.schema,
+                context.resource_limits,
+            ),
+            *anchor,
+            *head,
+            map,
+        ) {
+            Selection::Text { anchor, head } => {
+                let position_map = position_map();
+                Selection::text(
+                    position_map.forward_cursor_pos(anchor, after),
+                    position_map.forward_cursor_pos(head, after),
+                )
+            }
+            mapped => mapped,
+        },
+        Selection::Text { anchor, head } => {
+            let (anchor, head) = (map.map_pos(*anchor), map.map_pos(*head));
+            let position_map = position_map();
+            let near_head = position_map.forward_cursor_pos(head, after);
+            if near_head != head {
+                return Selection::cursor(near_head);
+            }
+            let anchor_is_textual = position_map.forward_cursor_pos(anchor, after) == anchor;
+            Selection::text(if anchor_is_textual { anchor } else { head }, head)
+        }
+        Selection::Node { .. } | Selection::All => selection.map(map),
+    }
 }
 
 fn advance_candidate(

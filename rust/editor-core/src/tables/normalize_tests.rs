@@ -465,7 +465,7 @@ use crate::command_planner::SemanticCommandHistory;
 use crate::selection::Selection;
 use crate::tables::command_context::{
     is_action_unavailable, prepare_table_action, CellAnchorPair, PreparedTableAction, TableAction,
-    TableActionCandidate, TableActionContext, TableActionOutcome,
+    TableActionCandidate, TableActionContext, TableActionOutcome, TableSelectionAfter,
 };
 use crate::tables::types::{TableActionKind, TableWorkCounters};
 use crate::yrs_engine::{table_action_plan_for_test, CommandPlan, TableActionTestRequest};
@@ -509,7 +509,9 @@ fn typing_action(
                     text: "z".to_string(),
                     marks: Vec::new(),
                 }],
-                selection_after: Selection::cursor(FIRST_CELL_TEXT_POSITION + 1),
+                selection_after: TableSelectionAfter::Set(Selection::cursor(
+                    FIRST_CELL_TEXT_POSITION + 1,
+                )),
             })
         },
     }
@@ -677,7 +679,7 @@ fn a_step_that_cannot_apply_is_never_mistaken_for_an_unavailable_action() {
                     from: UNREACHABLE_POSITION,
                     to: UNREACHABLE_POSITION + 1,
                 }],
-                selection_after: Selection::cursor(0),
+                selection_after: TableSelectionAfter::Set(Selection::cursor(0)),
             })
         },
     };
@@ -699,7 +701,7 @@ fn an_action_that_leaves_an_invalid_grid_fails_preparation() {
         plan: |_candidate: &TableActionCandidate<'_>| {
             Some(TableActionOutcome {
                 operations: vec![SemanticOperation::DeleteRange { from: 2, to: 7 }],
-                selection_after: Selection::cursor(2),
+                selection_after: TableSelectionAfter::Set(Selection::cursor(2)),
             })
         },
     };
@@ -1180,7 +1182,9 @@ fn insert_column_action(
                         content: crate::model::Fragment::from(vec![inserted]),
                     },
                 ],
-                selection_after: Selection::cursor(first_row + CARET_OFFSET_IN_NEW_CELL),
+                selection_after: TableSelectionAfter::Set(Selection::cursor(
+                    first_row + CARET_OFFSET_IN_NEW_CELL,
+                )),
             })
         },
     }
@@ -1471,7 +1475,9 @@ fn insert_twin_action(
                     to: between,
                     content: crate::model::Fragment::from(vec![inserted]),
                 }],
-                selection_after: Selection::cursor(between + CARET_OFFSET_IN_NEW_CELL),
+                selection_after: TableSelectionAfter::Set(Selection::cursor(
+                    between + CARET_OFFSET_IN_NEW_CELL,
+                )),
             })
         },
     }

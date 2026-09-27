@@ -140,6 +140,8 @@ class NativeTableAcceptanceTest {
 
         fun activeCell(): Long? = view.activeTableCellPosition
 
+        fun tableEnd(): Int = requireNotNull(adapter.cachedTableRecords[tableId()]).getInt("sourceEnd")
+
         fun engineSelection(): JSONObject {
             return JSONObject(UniffiEditorV2Backend.renderUpdate(adapter.editorId, null, null).required("render update"))
                 .getJSONObject("selection")
@@ -499,8 +501,8 @@ class NativeTableAcceptanceTest {
             assertEquals("split keeps the content in the anchor", richCell + BODY_TEXT, split[1][0].paragraphs)
             assertEquals(listOf(""), split[1][1].paragraphs)
             val afterSplit = harness.positions()
-            assertEquals("split keeps the content-holding top-left cell selected", setOf(afterSplit[TABLE_COLUMNS]),
-                harness.selectedCells())
+            assertEquals("split selects the whole split rectangle, like prosemirror-tables splitCell from a cell selection",
+                harness.cellsAt(TABLE_COLUMNS, TABLE_COLUMNS + 1), harness.selectedCells())
 
             harness.selectCells(afterSplit[TABLE_COLUMNS * 2], afterSplit[TABLE_COLUMNS * 2 + 1])
             assertTrue(harness.root.onTextContextMenuItem(android.R.id.paste))
@@ -516,13 +518,17 @@ class NativeTableAcceptanceTest {
             val grown = harness.grid()
             assertEquals("$grown", TABLE_ROWS + 1, grown.size)
             assertEquals(List(TABLE_COLUMNS) { listOf("") }, grown[3].map { it.paragraphs })
-            assertEquals("adding a row leaves no cell rectangle", emptySet<Int>(), harness.selectedCells())
+            assertEquals("adding a row maps the selected cell onto itself", harness.cellsAt(TABLE_COLUMNS * 2),
+                harness.selectedCells())
             val added = harness.positions()[TABLE_COLUMNS * 3]
             harness.selectCells(added, added)
             harness.perform(DELETE_ROWS, added)
             assertEquals(pasted, harness.grid())
-            assertEquals("deleting the selected row selects the first real cell of the row above", harness.cellsAt(TABLE_COLUMNS * 2),
-                harness.selectedCells())
+            assertEquals("a deleted row takes its cell selection with it", emptySet<Int>(), harness.selectedCells())
+            val afterRowDelete = harness.engineSelection()
+            assertEquals("$afterRowDelete", TEXT_SELECTION, afterRowDelete.getString("type"))
+            assertEquals("deleting the last row maps the selection forward into the paragraph after the table",
+                harness.tableEnd() + BLOCK_CONTENT_OFFSET, afterRowDelete.getInt("head"))
 
             val lastHeader = harness.positions()[TABLE_COLUMNS - 1]
             harness.selectCells(lastHeader, lastHeader)
@@ -530,13 +536,17 @@ class NativeTableAcceptanceTest {
             val widened = harness.grid()
             assertEquals("$widened", List(TABLE_ROWS) { TABLE_COLUMNS + 1 }, widened.map { it.size })
             assertEquals("the header row stays a header row", HEADER_NODE, widened[0][TABLE_COLUMNS].type)
-            assertEquals("adding a column leaves no cell rectangle", emptySet<Int>(), harness.selectedCells())
+            assertEquals("adding a column maps the selected cell onto itself", harness.cellsAt(TABLE_COLUMNS - 1),
+                harness.selectedCells())
             val addedHeader = harness.positions()[TABLE_COLUMNS]
             harness.selectCells(addedHeader, addedHeader)
             harness.perform(DELETE_COLUMNS, addedHeader)
             assertEquals(pasted, harness.grid())
-            assertEquals("deleting the selected column selects the cell before it", harness.cellsAt(TABLE_COLUMNS - 1),
-                harness.selectedCells())
+            assertEquals("a deleted last column takes its cell selection with it", emptySet<Int>(), harness.selectedCells())
+            val afterColumnDelete = harness.engineSelection()
+            assertEquals("$afterColumnDelete", TEXT_SELECTION, afterColumnDelete.getString("type"))
+            assertEquals("deleting the last column maps the selection forward to the start of the next row",
+                harness.positions()[TABLE_COLUMNS] + CELL_TEXT_OFFSET, afterColumnDelete.getInt("head"))
             val target = harness.positions()[TABLE_COLUMNS * 2]
             harness.selectCells(target, target)
         }
@@ -632,7 +642,7 @@ class NativeTableAcceptanceTest {
                 assertEquals("both peers converge", remote.documentJson(), harness.documentJson())
                 assertSame("the dead cell releases the input", harness.root, harness.view.activeTextInput)
                 assertNull(harness.activeCell())
-                val tableEnd = requireNotNull(harness.adapter.cachedTableRecords[harness.tableId()]).getInt("sourceEnd")
+                val tableEnd = harness.tableEnd()
                 val resolved = harness.engineSelection()
                 assertEquals("$resolved", TEXT_SELECTION, resolved.getString("type"))
                 assertEquals("KNOWN DEFECT: local caret not remapped after a remote row delete: $resolved before $local",
@@ -749,6 +759,8 @@ class NativeTableAcceptanceTest {
         private const val PARAGRAPH_NODE = "paragraph"
         private const val TEXT_SELECTION = "text"
         private const val CELL_SELECTION = "cell"
+private const val BLOCK_CONTENT_OFFSET = 1
+private const val CELL_TEXT_OFFSET = 2
         private const val PARITY_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Merged header across two columns"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"A tall cell whose text wraps over several lines"}]},{"type":"paragraph","content":[{"type":"text","text":"second"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"abcdefghijkl"}]}]},{"type":"table_cell","attrs":{"colwidth":[140]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Ready"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"x"}]}]},{"type":"table_cell","content":[{"type":"paragraph"}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After"}]}]}"""
         private const val IRREGULAR_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Raw"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Wide header"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":3},"content":[{"type":"paragraph","content":[{"type":"text","text":"Overhang"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Short row"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"One"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Two"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Four"}]}]}]}]}]}"""
         private const val IRREGULAR_SHORT_ROW_CELL = 3

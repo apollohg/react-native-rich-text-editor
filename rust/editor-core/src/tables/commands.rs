@@ -363,11 +363,6 @@ impl<'a> TableTarget<'a> {
             self.cell_at(bottom.checked_sub(ONE_SLOT)?, right.checked_sub(ONE_SLOT)?)?;
         Some(Selection::cell(anchor.source_pos, head.source_pos))
     }
-
-    pub(crate) fn cell_selection_at(&self, row: u32, column: u32) -> Option<Selection> {
-        let (cell, _) = self.cell_at(row, column)?;
-        Some(Selection::cell(cell.source_pos, cell.source_pos))
-    }
 }
 
 pub(crate) fn node_starting_at(document: &Document, position: u32) -> Option<&Node> {
@@ -594,6 +589,7 @@ fn regular_target<'a>(
 
 pub(crate) struct InsertRowAction {
     pub side: TableEdge,
+    pub enters_inserted_row: bool,
 }
 
 impl TableAction for InsertRowAction {
@@ -610,7 +606,12 @@ impl TableAction for InsertRowAction {
         let Some(target) = regular_target(candidate, schema, limits) else {
             return Ok(None);
         };
-        Ok(rows::plan_insert_row(&target, self.side, schema))
+        Ok(rows::plan_insert_row(
+            &target,
+            self.side,
+            schema,
+            self.enters_inserted_row,
+        ))
     }
 }
 
@@ -749,7 +750,11 @@ impl TableAction for SplitCellAction {
         let Some(target) = regular_target(candidate, schema, limits) else {
             return Ok(None);
         };
-        Ok(merge::plan_split_cell(&target, schema))
+        Ok(merge::plan_split_cell(
+            &target,
+            schema,
+            &candidate.selection,
+        ))
     }
 }
 

@@ -498,7 +498,15 @@ pub(super) fn plan(
         }
         TableCommand::AddTableRow { side } => match anchor {
             None => Ok(CommandPlan::NotApplicable),
-            Some(anchor) => scoped_action(&context, &anchor, &selection, &InsertRowAction { side }),
+            Some(anchor) => scoped_action(
+                &context,
+                &anchor,
+                &selection,
+                &InsertRowAction {
+                    side,
+                    enters_inserted_row: false,
+                },
+            ),
         },
         TableCommand::DeleteTableRows => match anchor {
             None => Ok(CommandPlan::NotApplicable),
@@ -674,7 +682,7 @@ fn appendable_outer_row(
         schema,
         GridRequirement::Regular,
     )?;
-    rows::plan_insert_row(&target, TableEdge::After, schema).map(|_| trailing)
+    rows::plan_insert_row(&target, TableEdge::After, schema, true).map(|_| trailing)
 }
 
 fn move_to_adjacent_cell(
@@ -712,6 +720,7 @@ fn move_to_adjacent_cell(
                 selection,
                 &InsertRowAction {
                     side: TableEdge::After,
+                    enters_inserted_row: true,
                 },
             )
         }
@@ -799,9 +808,9 @@ impl<'a> TableCommandSurface<'a> {
                         .is_some()
                 }
             },
-            TableCommand::AddTableRow { side } => self
-                .regular_target()
-                .is_some_and(|target| rows::plan_insert_row(target, side, self.schema).is_some()),
+            TableCommand::AddTableRow { side } => self.regular_target().is_some_and(|target| {
+                rows::plan_insert_row(target, side, self.schema, false).is_some()
+            }),
             TableCommand::DeleteTableRows => self.regular_target().is_some_and(|target| {
                 rows::plan_delete_rows(self.document, target, self.schema, self.limits).is_some()
             }),
@@ -833,9 +842,9 @@ impl<'a> TableCommandSurface<'a> {
             TableCommand::MergeTableCells => self
                 .regular_target()
                 .is_some_and(|target| merge::plan_merge_cells(target, self.schema).is_some()),
-            TableCommand::SplitTableCell => self
-                .regular_target()
-                .is_some_and(|target| merge::plan_split_cell(target, self.schema).is_some()),
+            TableCommand::SplitTableCell => self.regular_target().is_some_and(|target| {
+                merge::plan_split_cell(target, self.schema, self.selection).is_some()
+            }),
             TableCommand::SetTableColumnWidth { .. } => {
                 self.regular_target().is_some_and(|target| {
                     available_when_readable(resize::can_set_column_width(target))

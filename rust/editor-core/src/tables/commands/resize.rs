@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::command_planner::SemanticOperation;
 use crate::model::Node;
 use crate::selection::Selection;
-use crate::tables::command_context::TableActionOutcome;
+use crate::tables::command_context::{TableActionOutcome, TableSelectionAfter};
 use crate::tables::commands::{attrs_with_column_width, TableTarget, FIRST_ROW, ONE_SLOT};
 use crate::tables::projection::column_width;
 use crate::tables::types::TableError;
@@ -145,6 +145,6 @@ pub(crate) fn plan_set_column_width(
 
     Ok(Some(TableActionOutcome {
         operations,
-        selection_after,
+        selection_after: TableSelectionAfter::Set(selection_after),
     }))
 }

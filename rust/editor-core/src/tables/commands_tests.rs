@@ -54,7 +54,7 @@ pub(crate) const PROSE_PREFIX_TABLE_POSITION: u32 = 8;
 const OPERATION_INVALID_CODE: &str = "OPERATION_INVALID";
 const OUTSIDE_RESIZE_FIXTURE: u32 = 2;
 const SHARED_SURFACE_PROJECTIONS: u64 = 1;
-const STAGED_DELETION_PROJECTIONS: u64 = 4;
+const STAGED_DELETION_PROJECTIONS: u64 = 2;
 
 pub(crate) fn engine_with(schema: Schema, content: Vec<Value>) -> YrsDocumentEngine {
     let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
@@ -191,7 +191,7 @@ fn run(
     engine.apply_command(REQUEST_ID, TypedCommand::Table(command))
 }
 
-fn applied(engine: &mut YrsDocumentEngine, command: TableCommand) {
+pub(crate) fn applied(engine: &mut YrsDocumentEngine, command: TableCommand) {
     let result = run(engine, command).expect("the table command plans");
     assert!(
         result.is_some(),
@@ -2570,7 +2570,7 @@ pub(crate) fn place_caret(engine: &mut YrsDocumentEngine, index: usize) {
         .expect("the caret applies");
 }
 
-fn resolved_caret(engine: &YrsDocumentEngine) -> Option<(u32, u32)> {
+pub(crate) fn resolved_caret(engine: &YrsDocumentEngine) -> Option<(u32, u32)> {
     match engine.resolved_selection()? {
         crate::yrs_engine::ResolvedSelection::Text { anchor, head } => {
             Some((anchor.document, head.document))

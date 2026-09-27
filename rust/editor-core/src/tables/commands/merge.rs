@@ -2,7 +2,7 @@ use crate::command_planner::SemanticOperation;
 use crate::model::{Fragment, Node};
 use crate::schema::Schema;
 use crate::selection::Selection;
-use crate::tables::command_context::TableActionOutcome;
+use crate::tables::command_context::{TableActionOutcome, TableSelectionAfter};
 use crate::tables::commands::{
     attrs_with_merged_span, attrs_with_unit_span, cell_holds_no_content, cell_node,
     default_text_block_node, TableTarget, FIRST_WIDTH_SLICE, NODE_CLOSING_TOKENS,
@@ -68,13 +68,17 @@ pub(crate) fn plan_merge_cells(
 
     Some(TableActionOutcome {
         operations,
-        selection_after: Selection::cell(surviving.source_pos, surviving.source_pos),
+        selection_after: TableSelectionAfter::Set(Selection::cell(
+            surviving.source_pos,
+            surviving.source_pos,
+        )),
     })
 }
 
 pub(crate) fn plan_split_cell(
     target: &TableTarget<'_>,
     schema: &Schema,
+    selection: &Selection,
 ) -> Option<TableActionOutcome> {
     let rect = target.rect()?;
     if target
@@ -99,6 +103,8 @@ pub(crate) fn plan_split_cell(
         pos: cell.source_pos,
         attrs: slices.first()?.clone(),
     }];
+    let mut inserted_size = 0u32;
+    let mut last_fresh_cell = None;
     for row in rect.top..rect.bottom {
         let position = if row == rect.top {
             cell.source_end
@@ -110,7 +116,10 @@ pub(crate) fn plan_split_cell(
             if row == rect.top && offset == FIRST_WIDTH_SLICE as usize {
                 continue;
             }
-            fresh.push(cell_node(&cell_type, attrs.clone(), vec![block.clone()]));
+            let fresh_cell = cell_node(&cell_type, attrs.clone(), vec![block.clone()]);
+            last_fresh_cell = Some(position.checked_add(inserted_size)?);
+            inserted_size = inserted_size.checked_add(fresh_cell.node_size())?;
+            fresh.push(fresh_cell);
         }
         if fresh.is_empty() {
             continue;
@@ -123,8 +132,16 @@ pub(crate) fn plan_split_cell(
     }
     operations.reverse();
 
+    let selection_after = match selection {
+        Selection::Cell { .. } => {
+            TableSelectionAfter::Set(Selection::cell(cell.source_pos, last_fresh_cell?))
+        }
+        Selection::Text { .. } | Selection::Node { .. } | Selection::All => {
+            TableSelectionAfter::Mapped
+        }
+    };
     Some(TableActionOutcome {
         operations,
-        selection_after: Selection::cell(cell.source_pos, cell.source_pos),
+        selection_after,
     })
 }

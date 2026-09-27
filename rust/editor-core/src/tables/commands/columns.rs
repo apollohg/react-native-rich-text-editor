@@ -2,11 +2,10 @@ use crate::boundary::ResourceLimits;
 use crate::command_planner::{apply_operations, SemanticOperation};
 use crate::model::{Document, Fragment};
 use crate::schema::Schema;
-use crate::tables::command_context::TableActionOutcome;
+use crate::tables::command_context::{TableActionOutcome, TableSelectionAfter};
 use crate::tables::commands::{
-    attrs_with_added_column, attrs_with_removed_columns, caret_in_cell, fresh_cell_node,
-    GridRequirement, TableEdge, TableTarget, FIRST_COLUMN, FIRST_ROW, MINIMUM_SURVIVING_COLUMNS,
-    ONE_SLOT,
+    attrs_with_added_column, attrs_with_removed_columns, fresh_cell_node, GridRequirement,
+    TableEdge, TableTarget, FIRST_COLUMN, FIRST_ROW, MINIMUM_SURVIVING_COLUMNS, ONE_SLOT,
 };
 
 fn reference_column(target: &TableTarget<'_>, column: u32) -> Option<u32> {
@@ -37,7 +36,6 @@ pub(crate) fn plan_insert_column(
 
     let mut widenings = Vec::new();
     let mut insertions = Vec::new();
-    let mut first_inserted: Option<u32> = None;
     let mut row = FIRST_ROW;
     while row < target.rows() {
         let spans_across = column > FIRST_COLUMN
@@ -57,7 +55,6 @@ pub(crate) fn plan_insert_column(
             None => target.roles().cell.clone(),
         };
         let position = target.position_at(row, column)?;
-        first_inserted.get_or_insert(position);
         insertions.push(SemanticOperation::ReplaceRange {
             from: position,
             to: position,
@@ -66,13 +63,15 @@ pub(crate) fn plan_insert_column(
         row = row.checked_add(ONE_SLOT)?;
     }
 
-    let first_inserted = first_inserted?;
+    if insertions.is_empty() {
+        return None;
+    }
     insertions.reverse();
     let mut operations = widenings;
     operations.extend(insertions);
     Some(TableActionOutcome {
         operations,
-        selection_after: caret_in_cell(first_inserted)?,
+        selection_after: TableSelectionAfter::Mapped,
     })
 }
 
@@ -109,19 +108,9 @@ pub(crate) fn plan_delete_columns(
         operations.extend(step);
     }
 
-    let surviving = TableTarget::resolve(
-        &candidate,
-        target.table_pos(),
-        None,
-        schema,
-        limits,
-        GridRequirement::Regular,
-    )?;
-    let column = rect.left.min(surviving.columns().checked_sub(ONE_SLOT)?);
-    let row = rect.top.min(surviving.rows().checked_sub(ONE_SLOT)?);
     Some(TableActionOutcome {
         operations,
-        selection_after: surviving.cell_selection_at(row, column)?,
+        selection_after: TableSelectionAfter::Mapped,
     })
 }
 
