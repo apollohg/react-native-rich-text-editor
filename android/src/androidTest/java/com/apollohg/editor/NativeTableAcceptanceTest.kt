@@ -4,10 +4,12 @@ import android.app.Activity
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.RectF
 import android.os.SystemClock
 import android.util.Base64
 import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
@@ -235,12 +237,29 @@ class NativeTableAcceptanceTest {
             gesture(listOf(x to y, x to y))
         }
 
-        fun drag(from: Pair<Float, Float>, to: Pair<Float, Float>) {
+        fun drag(from: Pair<Float, Float>, to: Pair<Float, Float>, holdSteps: Int = 0) {
             val steps = (0..DRAG_STEPS).map { step ->
                 val fraction = step.toFloat() / DRAG_STEPS
-                from.first + (to.first - from.first) * fraction to from.second
+                from.first + (to.first - from.first) * fraction to from.second + (to.second - from.second) * fraction
             }
-            gesture(listOf(from) + steps + listOf(to))
+            gesture(listOf(from) + steps + List(holdSteps) { to } + listOf(to))
+        }
+
+        fun swipeEditorVertically(upward: Boolean) {
+            val (from, to) = onMain {
+                val location = IntArray(2)
+                view.getLocationOnScreen(location)
+                val unobscured = Rect().also(view::getWindowVisibleDisplayFrame)
+                val top = maxOf(location[1], unobscured.top)
+                val span = minOf(location[1] + view.height, unobscured.bottom) - top
+                val x = location[0] + view.width / 2f
+                val near = top + span * SWIPE_NEAR_EDGE_FRACTION
+                val far = top + span * (1f - SWIPE_NEAR_EDGE_FRACTION)
+                val slop = ViewConfiguration.get(view.context).scaledTouchSlop
+                assertTrue("the swipe must exceed touch slop $slop", far - near > slop)
+                if (upward) (x to far) to (x to near) else (x to near) to (x to far)
+            }
+            drag(from, to, SWIPE_HOLD_STEPS)
         }
 
         private fun gesture(points: List<Pair<Float, Float>>) {
@@ -560,11 +579,11 @@ class NativeTableAcceptanceTest {
                 .setComposingText(COMPOSED_TEXT, 1))
             harness.adapter.baseDocumentRevision
         }
+        val scrollBeforeSwipe = harness.onMain { harness.view.editorScrollView.scrollY }
+        harness.swipeEditorVertically(upward = true)
         harness.onMain {
-            val scroll = harness.view.editorScrollView
-            scroll.scrollTo(0, scroll.getChildAt(0).height)
-        }
-        harness.onMain {
+            assertTrue("a real swipe must scroll the document",
+                harness.view.editorScrollView.scrollY > scrollBeforeSwipe)
             val viewLocation = IntArray(2)
             harness.view.getLocationOnScreen(viewLocation)
             val drawingLocation = IntArray(2)
@@ -580,7 +599,11 @@ class NativeTableAcceptanceTest {
                 .finishComposingText())
             val grid = harness.grid()
             assertEquals("the pinned composition lands in its cell: $grid", listOf(COMPOSED_TEXT), grid[2][2].paragraphs)
-            harness.view.editorScrollView.scrollTo(0, 0)
+        }
+        harness.swipeEditorVertically(upward = false)
+        harness.onMain {
+            assertEquals("the reverse swipe returns to the table", scrollBeforeSwipe,
+                harness.view.editorScrollView.scrollY)
         }
 
         val remote = room.makeAdapter()
@@ -736,6 +759,8 @@ class NativeTableAcceptanceTest {
         private const val RESIZE_DELTA_DP = 60f
         private const val MINIMUM_RESIZED_WIDTH = 100
         private const val DRAG_STEPS = 8
+        private const val SWIPE_HOLD_STEPS = 6
+        private const val SWIPE_NEAR_EDGE_FRACTION = 0.1f
         private const val SCREENSHOT_SETTLE_MS = 750L
         private const val GESTURE_STEP_MS = 24L
         private const val EDITOR_MARGIN_DP = 16

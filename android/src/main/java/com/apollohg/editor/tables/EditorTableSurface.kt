@@ -3,6 +3,7 @@ package com.apollohg.editor.tables
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
 import android.text.Annotation
@@ -18,6 +19,7 @@ import android.view.ViewConfiguration
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import kotlin.math.ceil
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 import com.apollohg.editor.EditorClipboard
 import com.apollohg.editor.EditorEditText
@@ -172,6 +174,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     private var accessibilityKey: Triple<ULong?, Int, Int?>? = null
     private var activeAppearanceRevision: Long? = null
     private var blockedRootGesture = false
+    private var pendingRootTapRelease: PointF? = null
     private var coordinator: EditorTableInputCoordinator? = null
     val activeInput: EditorEditText? get() = coordinator?.cellInput?.takeIf { activeCell != null }
     fun nativeTextSelectionActive(): Boolean = activeInput?.let {
@@ -1026,12 +1029,12 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 if (host.editorEditText.authoritativeCellSelectionActive) {
                     host.editorEditText.cellSelectionRootTouchPending = true
                 }
-                if (activeCell != null) {
-                    if (activeInput?.prepareForExternalEditorUpdate() != true) {
-                        blockedRootGesture = true
-                        return false
-                    }
-                    invalidateCell()
+                pendingRootTapRelease = if (activeCell != null) PointF(event.x, event.y) else null
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val down = pendingRootTapRelease
+                if (down != null && hypot(event.x - down.x, event.y - down.y) > touchSlop) {
+                    pendingRootTapRelease = null
                 }
             }
             MotionEvent.ACTION_UP -> {
@@ -1039,6 +1042,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 if (root.cellSelectionRootTouchPending) {
                     root.post { root.cellSelectionRootTouchPending = false }
                 }
+                if (pendingRootTapRelease != null && !releaseActiveCellForRootGesture()) {
+                    blockedRootGesture = true
+                }
+                pendingRootTapRelease = null
                 if (blockedRootGesture) {
                     blockedRootGesture = false
                     return false
@@ -1046,13 +1053,26 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             }
             MotionEvent.ACTION_CANCEL -> {
                 host.editorEditText.cellSelectionRootTouchPending = false
-                if (blockedRootGesture) {
-                    blockedRootGesture = false
-                    return false
-                }
+                pendingRootTapRelease = null
+                blockedRootGesture = false
             }
         }
         return !blockedRootGesture
+    }
+
+    fun onRootLongPress(): Boolean {
+        if (pendingRootTapRelease == null) return true
+        pendingRootTapRelease = null
+        if (releaseActiveCellForRootGesture()) return true
+        blockedRootGesture = true
+        return false
+    }
+
+    private fun releaseActiveCellForRootGesture(): Boolean {
+        if (activeCell == null) return true
+        if (activeInput?.prepareForExternalEditorUpdate() != true) return false
+        invalidateCell()
+        return true
     }
 
     private fun rootCellAt(x: Float, y: Float): Pair<String, ViewerTablePresentedCell>? {

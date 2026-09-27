@@ -10,7 +10,9 @@ import android.view.View
 import android.view.MotionEvent
 import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.ViewConfiguration
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.widget.FrameLayout
 import com.apollohg.editor.tables.RootTableHeightSpan
 import com.apollohg.editor.viewer.PreparedProseDrawingView
@@ -44,6 +46,9 @@ internal class EditorTableSurfaceMountTest {
     private val tableDocument = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Cell text"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
     internal companion object {
         const val REFLOW_WIDTH = 400
+        const val SWIPE_STEPS = 4
+        const val SWIPE_STEP_MS = 16L
+        const val LONG_PRESS_UP_MS = 1_000L
         val nestedTableDocument = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Nested"}]}]}]}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
     }
     private val wideTableDocument = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Left"}]}]},{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Right"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
@@ -220,7 +225,7 @@ internal class EditorTableSurfaceMountTest {
             val before = adapter.documentJson()
             val beforeRevision = adapter.baseDocumentRevision
             val beforeHistory = adapter.historyCanUndo() to adapter.historyCanRedo()
-            val initialLeft = (input.layoutParams as android.widget.FrameLayout.LayoutParams).leftMargin
+            val initialLeft = (input.layoutParams as FrameLayout.LayoutParams).leftMargin
             val y = input.top + input.height / 2f
             val downX = input.left + minOf(input.width - 20f, 300f)
             assertTrue("input=${input.left},${input.top} ${input.width}x${input.height} canvas=${canvas.width}x${canvas.height} down=$downX,$y",
@@ -237,7 +242,7 @@ internal class EditorTableSurfaceMountTest {
                 events.forEach(MotionEvent::recycle)
             }
             assertTrue("table should scroll through active input", canvas.tablePhysicalOffsetForTesting(surface.identity) > 0f)
-            val shiftedLeft = (input.layoutParams as android.widget.FrameLayout.LayoutParams).leftMargin
+            val shiftedLeft = (input.layoutParams as FrameLayout.LayoutParams).leftMargin
             assertTrue("active input should follow presented cell", shiftedLeft < initialLeft)
             measure(view, 600)
             assertEquals(shiftedLeft, input.left)
@@ -608,8 +613,9 @@ internal class EditorTableSurfaceMountTest {
         val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
         try {
             assertTrue(view.dispatchTouchEvent(down))
+            assertTrue("a touch down alone must not release the cell", view.activeTextInput === input)
             assertEquals("after down trace=${input.imeTraceSnapshotForTesting()}",
-                "Cell texttail", firstCellText(adapter))
+                "Cell text", firstCellText(adapter))
             assertTrue(view.dispatchTouchEvent(up))
         } finally {
             down.recycle()
@@ -620,6 +626,74 @@ internal class EditorTableSurfaceMountTest {
         assertEquals("Cell texttail", firstCellText(adapter))
         assertTrue(!connection.beginBatchEdit())
     }
+
+    private fun proseTouchPoint(root: EditorEditText): Pair<Float, Float> {
+        val offset = root.text.toString().indexOf("after") + 2
+        val line = root.layout.getLineForOffset(offset)
+        return root.left + root.totalPaddingLeft + root.layout.getPrimaryHorizontal(offset) to
+            root.top + root.totalPaddingTop + (root.layout.getLineTop(line) + root.layout.getLineBottom(line)) / 2f
+    }
+
+    private fun composeInFirstCell(view: RichTextEditorView): Pair<EditorEditText, InputConnection> {
+        tapFirstCell(view)
+        val input = view.activeTextInput
+        assertNotSame(view.editorEditText, input)
+        input.setSelection(input.text.length)
+        val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+        assertTrue(connection.setComposingText("tail", 1))
+        return input to connection
+    }
+
+    @Test
+    fun `a swipe beyond touch slop on the prose keeps the composing cell bound`() = withMountedView { view, adapter, _ ->
+        val (input, connection) = composeInFirstCell(view)
+        val (x, y) = proseTouchPoint(view.editorEditText)
+        val slop = ViewConfiguration.get(view.context).scaledTouchSlop
+        val points = (0..SWIPE_STEPS).map { step -> y - step * slop }
+        val events = points.mapIndexed { index, pointY ->
+            val action = when (index) {
+                0 -> MotionEvent.ACTION_DOWN
+                points.lastIndex -> MotionEvent.ACTION_UP
+                else -> MotionEvent.ACTION_MOVE
+            }
+            MotionEvent.obtain(0, index * SWIPE_STEP_MS, action, x, pointY, 0)
+        }
+        try {
+            events.forEach { view.dispatchTouchEvent(it) }
+        } finally {
+            events.forEach(MotionEvent::recycle)
+        }
+        assertTrue("a swipe must keep the cell input: trace=${input.imeTraceSnapshotForTesting()}",
+            view.activeTextInput === input)
+        assertEquals("the composition stays pending", "Cell text", firstCellText(adapter))
+        assertEquals("Cell texttail", input.text.toString())
+        assertTrue("the cell connection stays live", connection.beginBatchEdit())
+        connection.endBatchEdit()
+        assertTrue(connection.finishComposingText())
+        assertEquals("Cell texttail", firstCellText(adapter))
+    }
+
+    @Test
+    fun `a long press on the prose releases the composing cell before the root selects`() =
+        withMountedView { view, adapter, _ ->
+            val (input, _) = composeInFirstCell(view)
+            val (x, y) = proseTouchPoint(view.editorEditText)
+            val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
+            val up = MotionEvent.obtain(0, LONG_PRESS_UP_MS, MotionEvent.ACTION_UP, x, y, 0)
+            try {
+                view.dispatchTouchEvent(down)
+                assertTrue(view.activeTextInput === input)
+                view.editorEditText.performLongClick()
+                assertTrue("the long press must release the cell", view.activeTextInput === view.editorEditText)
+                assertEquals("the composition commits before the root takes over", "Cell texttail",
+                    firstCellText(adapter))
+                view.dispatchTouchEvent(up)
+            } finally {
+                down.recycle()
+                up.recycle()
+            }
+            assertTrue(view.activeTextInput === view.editorEditText)
+        }
 
     @Test
     fun `blocked composition preflight keeps the cell active on prose tap`() = withMountedView { view, adapter, _ ->

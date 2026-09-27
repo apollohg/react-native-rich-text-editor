@@ -296,6 +296,7 @@ class EditorEditText @JvmOverloads constructor(
     internal var onMoveSelectionScalarForTesting: ((Int, Int, Int) -> Unit)? = null
     internal var onBeforeRenderRefresh: (() -> Unit)? = null
     internal var onTableRootTouch: ((MotionEvent) -> Boolean)? = null
+    internal var onTableRootLongPress: (() -> Boolean)? = null
     internal var onHistoryUpdateApplied: ((String) -> Unit)? = null
     internal var tableCellDropHandler: ((DragEvent) -> Boolean?)? = null
     internal var onTableCellSelectionSynced: (() -> Unit)? = null
@@ -511,18 +512,17 @@ class EditorEditText @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (onTableRootTouch?.invoke(event) == false) return true
+        if (onTableRootTouch?.invoke(event) == false) {
+            cancelTextGesture(event)
+            return true
+        }
         if (event.actionMasked == MotionEvent.ACTION_DOWN &&
             imageSpanHitAt(event.x, event.y) == null
         ) {
             clearExplicitSelectedImageRange()
         }
         if (handleTaskListMarkerTap(event)) {
-            // End the text gesture so its pending long press cannot select the marker.
-            val cancel = MotionEvent.obtain(event)
-            cancel.action = MotionEvent.ACTION_CANCEL
-            super.onTouchEvent(cancel)
-            cancel.recycle()
+            cancelTextGesture(event)
             parent?.requestDisallowInterceptTouchEvent(false)
             return true
         }
@@ -542,6 +542,18 @@ class EditorEditText @JvmOverloads constructor(
             }
         }
         return super.onTouchEvent(event)
+    }
+
+    private fun cancelTextGesture(event: MotionEvent) {
+        val cancel = MotionEvent.obtain(event)
+        cancel.action = MotionEvent.ACTION_CANCEL
+        super.onTouchEvent(cancel)
+        cancel.recycle()
+    }
+
+    override fun performLongClick(): Boolean {
+        if (onTableRootLongPress?.invoke() == false) return true
+        return super.performLongClick()
     }
 
     override fun onDragEvent(event: DragEvent): Boolean {
