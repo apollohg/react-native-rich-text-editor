@@ -42,6 +42,23 @@ internal class EditorTableColumnResizeTest {
     private val proseThenFixedWidthTable = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"first"}]}]},{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"second"}]}]}]}]}]}"""
     private val wideTwoCellTable = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]}]}"""
 
+    private fun narrowColumnGrid(headerRow: Boolean, rtl: Boolean = false): String {
+        fun cell(type: String, text: String) = JSONObject().put("type", type)
+            .put("attrs", JSONObject().put("colwidth", JSONArray().put(NARROW_COLUMN_WIDTH)))
+            .put("content", JSONArray().put(JSONObject().put("type", "paragraph")
+                .put("content", JSONArray().put(JSONObject().put("type", "text").put("text", text)))))
+        val rows = JSONArray()
+        repeat(GRID_SIZE) { row ->
+            val type = if (headerRow && row == 0) "table_header" else "table_cell"
+            val cells = JSONArray()
+            repeat(GRID_SIZE) { column -> cells.put(cell(type, "r${row}c$column")) }
+            rows.put(JSONObject().put("type", "table_row").put("content", cells))
+        }
+        val table = JSONObject().put("type", "table").put("content", rows)
+        if (rtl) table.put("attrs", JSONObject().put("dir", "rtl"))
+        return JSONObject().put("type", "doc").put("content", JSONArray().put(table)).toString()
+    }
+
     private inner class Fixture(
         val view: RichTextEditorView,
         val adapter: EditorV2Adapter,
@@ -130,6 +147,14 @@ internal class EditorTableColumnResizeTest {
                 (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT), 2, properties, coordinates,
                 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
             try { view.dispatchTouchEvent(event) } finally { event.recycle() }
+        }
+
+        fun swipe(from: Pair<Float, Float>, distance: Float) {
+            dispatch(MotionEvent.ACTION_DOWN, from.first, from.second)
+            for (step in 1..SWIPE_STEPS) {
+                dispatch(MotionEvent.ACTION_MOVE, from.first + distance * step / SWIPE_STEPS, from.second)
+            }
+            dispatch(MotionEvent.ACTION_UP, from.first + distance, from.second)
         }
 
         fun drag(from: Pair<Float, Float>, to: Pair<Float, Float>) {
@@ -492,25 +517,26 @@ internal class EditorTableColumnResizeTest {
 
     @Test
     fun `selection handle takes precedence over a shared trailing edge`() =
-        withMountedTable(fixedWidthGrid, cellSelection = 0 to 0) { fixture ->
+        withMountedTable(fixedWidthGrid, cellSelection = 0 to 2) { fixture ->
             val head = fixture.drawing.selectionHandles().single { it.role == TableSelectionHandleRole.HEAD }
-            val corner = fixture.cell(0).bounds.right to head.y
-            assertNotNull("the handle sits on a resize edge", fixture.drawing.hitResizeEdge(corner.first, corner.second))
+            val corner = fixture.cell(2).bounds.right to head.y
+            assertNotNull("the handle sits on a selected column's body-row resize edge",
+                fixture.drawing.hitResizeEdge(corner.first, corner.second))
             assertNotNull(fixture.drawing.hitSelectionHandle(corner.first, corner.second))
-            val target = fixture.cell(1).bounds
+            val target = fixture.cell(3).bounds
             fixture.drag(corner, target.centerX() to target.centerY())
-            assertEquals("the handle drag extended the selection", fixture.positions[1],
+            assertEquals("the handle drag extended the selection", fixture.positions[3],
                 fixture.engineSelection().getInt("headCell"))
             assertEquals("the shared edge did not resize", listOf(listOf(120), listOf(120)),
                 fixture.columnWidths(0))
 
-            val edge = fixture.trailingEdge(2)
+            val edge = fixture.trailingEdge(0)
             assertNull(fixture.drawing.hitSelectionHandle(edge.first, edge.second))
             fixture.drag(edge, edge.first + 40f to edge.second)
             assertEquals(listOf(listOf(160), listOf(120)), fixture.columnWidths(1))
             val selection = fixture.engineSelection()
             assertEquals(fixture.positions[0], selection.getInt("anchorCell"))
-            assertEquals(fixture.positions[1], selection.getInt("headCell"))
+            assertEquals(fixture.positions[3], selection.getInt("headCell"))
         }
 
     @Test
@@ -631,7 +657,7 @@ internal class EditorTableColumnResizeTest {
                 fixture.drawing.hitResizeEdge(outer.bounds.right, outer.bounds.centerY()))
         }
         val irregular = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2,"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","attrs":{"colspan":2,"colwidth":[100,100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"later"}]}]}]}]}]}"""
-        withMountedTable(irregular) { fixture ->
+        withMountedTable(irregular, cellSelection = 1 to 2) { fixture ->
             val record = fixture.adapter.cachedTableRecords.getValue(fixture.tableId)
             assertTrue("the irregular fixture must project a synthetic gap",
                 (record.optJSONArray("syntheticRegions") ?: JSONArray()).length() > 0)
@@ -644,8 +670,85 @@ internal class EditorTableColumnResizeTest {
                 fixture.drawing.hitResizeEdge((later.bounds.right + wide.bounds.right) / 2f, later.bounds.centerY()))
             assertEquals(2, fixture.drawing.hitResizeEdge(wide.bounds.right, wide.bounds.centerY())?.column)
             assertEquals(1, fixture.drawing.hitResizeEdge(later.bounds.right, later.bounds.centerY())?.column)
+            val tall = fixture.cell(0)
+            assertEquals(0, fixture.drawing.hitResizeEdge(tall.bounds.right, wide.bounds.centerY())?.column)
+            assertNull("a first-row cell spanning into an unselected body row has no handle below the first row",
+                fixture.drawing.hitResizeEdge(tall.bounds.right, later.bounds.centerY()))
         }
     }
+
+    @Test
+    fun `only the first row carries resize handles whether or not it is a header row`() {
+        listOf(true, false).forEach { headerRow ->
+            withMountedTable(narrowColumnGrid(headerRow)) { fixture ->
+                val label = if (headerRow) "header row" else "first row of a table without a header row"
+                val handle = fixture.trailingEdge(0)
+                assertEquals("the $label edge is a handle", TableResizeEdge(fixture.tableId, 0),
+                    fixture.drawing.hitResizeEdge(handle.first, handle.second))
+                fixture.drag(handle, handle.first + 40f to handle.second)
+                assertEquals("the $label edge resizes", listOf(listOf(NARROW_COLUMN_WIDTH + 40)),
+                    fixture.columnWidths(0).take(1))
+
+                val body = fixture.trailingEdge(GRID_SIZE)
+                assertNull("a body-row edge below the $label is not a handle",
+                    fixture.drawing.hitResizeEdge(body.first, body.second))
+                val before = fixture.documentObject().toString()
+                fixture.swipe(body, -BODY_SWIPE_DISTANCE)
+                assertNull(fixture.drawing.activeTableResizeEdge)
+                assertEquals("a drag on a body-row edge mutates nothing", before, fixture.documentObject().toString())
+                assertTrue("a drag on a body-row edge scrolls the table, offset=" +
+                    fixture.drawing.tableLogicalOffset(fixture.tableId),
+                    requireNotNull(fixture.drawing.tableLogicalOffset(fixture.tableId)) > 0f)
+            }
+        }
+    }
+
+    @Test
+    fun `a whole selected column carries resize handles in every row`() {
+        val middleColumn = listOf(1, GRID_SIZE + 1, 2 * GRID_SIZE + 1)
+        withMountedTable(narrowColumnGrid(headerRow = true),
+            cellSelection = middleColumn.first() to middleColumn.last()) { fixture ->
+            middleColumn.drop(1).forEach { index ->
+                val edge = fixture.trailingEdge(index)
+                assertEquals("the selected column's edge in body cell $index is a handle",
+                    TableResizeEdge(fixture.tableId, 1), fixture.drawing.hitResizeEdge(edge.first, edge.second))
+            }
+            val unselected = fixture.trailingEdge(GRID_SIZE)
+            assertNull("an unselected column's body edge is not a handle",
+                fixture.drawing.hitResizeEdge(unselected.first, unselected.second))
+            val edge = fixture.trailingEdge(middleColumn[1])
+            fixture.drag(edge, edge.first + 40f to edge.second)
+            assertEquals("a selected column resizes from a body row",
+                listOf(listOf(NARROW_COLUMN_WIDTH), listOf(NARROW_COLUMN_WIDTH + 40), listOf(NARROW_COLUMN_WIDTH)),
+                fixture.columnWidths(GRID_SIZE - 1))
+        }
+        withMountedTable(narrowColumnGrid(headerRow = true),
+            cellSelection = middleColumn[1] to middleColumn.last()) { fixture ->
+            val edge = fixture.trailingEdge(middleColumn[1])
+            assertNull("a selection that does not reach the first row is not a column selection",
+                fixture.drawing.hitResizeEdge(edge.first, edge.second))
+        }
+    }
+
+    @Test
+    fun `rtl body rows scroll while the first row keeps its logical trailing handles`() =
+        withMountedTable(narrowColumnGrid(headerRow = false, rtl = true), schemaConfig = rtlConfig) { fixture ->
+            assertTrue("the first logical column renders at the right in RTL",
+                fixture.cell(1).bounds.right <= fixture.cell(0).bounds.left + 0.5f)
+            val handle = fixture.trailingEdge(0)
+            assertEquals(TableResizeEdge(fixture.tableId, 0), fixture.drawing.hitResizeEdge(handle.first, handle.second))
+            fixture.drag(handle, handle.first - 40f to handle.second)
+            assertEquals(listOf(listOf(NARROW_COLUMN_WIDTH + 40)), fixture.columnWidths(0).take(1))
+            val body = fixture.trailingEdge(GRID_SIZE)
+            assertNull("an RTL body-row edge is not a handle", fixture.drawing.hitResizeEdge(body.first, body.second))
+            val before = fixture.documentObject().toString()
+            val initialOffset = requireNotNull(fixture.drawing.tableLogicalOffset(fixture.tableId))
+            fixture.swipe(body, BODY_SWIPE_DISTANCE)
+            assertNull(fixture.drawing.activeTableResizeEdge)
+            assertEquals(before, fixture.documentObject().toString())
+            assertTrue("an RTL body-row drag scrolls the table",
+                requireNotNull(fixture.drawing.tableLogicalOffset(fixture.tableId)) > initialOffset)
+        }
 
     @Test
     fun `owned paste in a table document returns an applicable update and undoes through the adapter`() =
@@ -698,4 +801,11 @@ internal class EditorTableColumnResizeTest {
             assertEquals(listOf(listOf(120), listOf(120)), fixture.columnWidths(0))
             assertWidth("geometry is untouched", 120f, fixture.cell(0).bounds.width())
         }
+
+    private companion object {
+        const val GRID_SIZE = 3
+        const val NARROW_COLUMN_WIDTH = 150
+        const val SWIPE_STEPS = 4
+        const val BODY_SWIPE_DISTANCE = 80f
+    }
 }

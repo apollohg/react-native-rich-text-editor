@@ -605,10 +605,10 @@ class NativeTableAcceptanceTest {
         }
 
         val settled = harness.onMain { harness.grid() }
-        val (resizeTarget, bodyRow) = harness.onMain {
-            harness.positions()[TABLE_COLUMNS * 2] to harness.positions()[TABLE_COLUMNS]
+        val (resizeTarget, firstRow) = harness.onMain {
+            harness.positions()[TABLE_COLUMNS * 2] to harness.positions()[0]
         }
-        val edge = harness.screenPoint(bodyRow, trailingEdge = true)
+        val edge = harness.screenPoint(firstRow, trailingEdge = true)
         val density = instrumentation.targetContext.resources.displayMetrics.density
         harness.drag(edge, edge.first + RESIZE_DELTA_DP * density to edge.second)
         val resized = harness.onMain {

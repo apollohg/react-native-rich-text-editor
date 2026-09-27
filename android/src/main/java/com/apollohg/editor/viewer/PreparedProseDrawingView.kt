@@ -46,6 +46,7 @@ import java.util.Collections
 import java.util.IdentityHashMap
 import org.json.JSONArray
 import org.json.JSONObject
+import uniffi.editor_core.FfiViewerTable
 
 internal enum class TableSelectionHandleRole { ANCHOR, HEAD }
 
@@ -396,16 +397,21 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         snapshot.rootTables().forEach { table ->
             if (y < table.clip.top || y >= table.clip.bottom) return@forEach
             val tableId = table.surface.editorTableId ?: return@forEach
-            val sourceCells = table.surface.sourceTable?.cells ?: return@forEach
+            val sourceTable = table.surface.sourceTable ?: return@forEach
+            val sourceCells = sourceTable.cells
             val columns = table.surface.layout.columnWidths.size
+            val handleRowHeight = table.surface.layout.rowOffsets.let { it.getOrNull(1)?.minus(it[0]) } ?: 0f
+            val selectedColumns = selectedWholeColumns(tableId, sourceTable)
             snapshot.cells.filter { it.surface === table.surface }.forEach { cell ->
                 val source = cell.cell.sourceCellIndex?.let(sourceCells::getOrNull) ?: return@forEach
                 if (y < cell.bounds.top || y >= cell.bounds.bottom) return@forEach
+                val column = (source.column + source.colspan).toInt() - 1
+                val inHandleRow = source.row == 0u && y < cell.bounds.top + handleRowHeight
+                if (!inHandleRow && column !in selectedColumns) return@forEach
                 val edgeX = if (table.surface.isRightToLeft) cell.bounds.left else cell.bounds.right
                 val distance = kotlin.math.abs(x - edgeX)
                 if (distance > reach || edgeX < table.clip.left || edgeX > table.clip.right ||
                     (visible != null && (edgeX < visible.left || edgeX > visible.right))) return@forEach
-                val column = (source.column + source.colspan).toInt() - 1
                 if (column !in 0 until columns) return@forEach
                 val current = best
                 if (current != null && (current.second < distance ||
@@ -414,6 +420,14 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             }
         }
         return best?.first
+    }
+
+    private fun selectedWholeColumns(tableId: String, table: FfiViewerTable): IntRange {
+        val positions = selectedTableCellSourcePositions[tableId] ?: return IntRange.EMPTY
+        val selected = table.cells.filter { it.sourcePos.toInt() in positions }
+        if (selected.isEmpty() || selected.minOf { it.row } != 0u ||
+            selected.maxOf { it.row + it.rowspan } != table.rows) return IntRange.EMPTY
+        return selected.minOf { it.column }.toInt() until selected.maxOf { it.column + it.colspan }.toInt()
     }
 
     internal fun tableLogicalOffset(tableId: String): Float? {

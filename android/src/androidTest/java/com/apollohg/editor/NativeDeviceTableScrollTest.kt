@@ -65,6 +65,27 @@ class NativeDeviceTableScrollTest {
         }
 
     @Test
+    fun editorDragStartingOnABodyRowColumnEdgeScrollsTheTable() = withEditor { scenario ->
+        val start = editorBodyRowColumnEdgePoint(scenario)
+        var identity = ""
+        scenario.onActivity { activity ->
+            val host = editorTableHost(activity)
+            identity = host.preparedLayout!!.blocks.single { it.tableSurface != null }
+                .tableSurface!!.identity
+            assertEquals(0f, host.tablePhysicalOffsetForTesting(identity), OFFSET_TOLERANCE_PX)
+        }
+        val distance = dragDistance(scenario)
+        drag(start, -distance, 0f)
+        scenario.onActivity { activity ->
+            val host = editorTableHost(activity)
+            assertNull("a body-row edge drag must not start a resize", host.activeTableResizeEdge)
+            assertEquals("the table must follow the whole ${distance}px drag from a body-row column edge",
+                distance, host.tablePhysicalOffsetForTesting(identity), DRAG_ROUNDING_TOLERANCE_PX)
+            assertUnchanged(activity)
+        }
+    }
+
+    @Test
     fun diagonalVerticalDragScrollsEditorWhileTableOffsetStaysPut() = withEditor { scenario ->
         val start = editorTableBodyPoint(scenario)
         var identity = ""
@@ -383,6 +404,31 @@ class NativeDeviceTableScrollTest {
         return point
     }
 
+    private fun editorBodyRowColumnEdgePoint(scenario: ActivityScenario<NativeTableHostActivity>): Point {
+        var point = Point(0f, 0f)
+        scenario.onActivity { activity ->
+            val host = editorTableHost(activity)
+            val visible = Rect()
+            assertTrue(host.getLocalVisibleRect(visible))
+            val columns = requireNotNull(host.preparedLayout!!.blocks.single { it.tableSurface != null }
+                .tableSurface!!.sourceTable).columns.toInt()
+            val column = (0 until columns).last { column ->
+                val cell = presentedCell(host, EDITABLE_ROW, column)
+                cell.bounds.right < minOf(cell.clip.right, visible.right.toFloat())
+            }
+            val body = presentedCell(host, EDITABLE_ROW, column)
+            val firstRow = presentedCell(host, HANDLE_ROW, column)
+            assertEquals("the same edge in the first row must be a resize handle", column,
+                host.hitResizeEdge(body.bounds.right, firstRow.bounds.centerY())?.column)
+            assertNull("the body-row edge must not be a resize handle",
+                host.hitResizeEdge(body.bounds.right, body.bounds.centerY()))
+            val location = IntArray(2)
+            host.getLocationOnScreen(location)
+            point = Point(location[0] + body.bounds.right, location[1] + body.bounds.centerY())
+        }
+        return point
+    }
+
     private fun editorCellPoint(
         scenario: ActivityScenario<NativeTableHostActivity>,
         row: Int,
@@ -564,6 +610,7 @@ class NativeDeviceTableScrollTest {
         const val OFFSET_TOLERANCE_PX = 0.5f
         const val DRAG_ROUNDING_TOLERANCE_PX = DRAG_STEPS * OFFSET_TOLERANCE_PX
         const val TABLE_BLOCK_INDEX = 1
+        const val HANDLE_ROW = 0
         const val EDITABLE_ROW = 1
         const val ALPHA_COLUMN = 0
         const val OWNER_COLUMN = 1
