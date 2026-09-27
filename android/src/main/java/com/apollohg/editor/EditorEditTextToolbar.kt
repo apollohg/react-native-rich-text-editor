@@ -75,16 +75,12 @@ internal fun EditorEditText.performToolbarInsertNodeImpl(nodeType: String) {
     }
 }
 
-internal fun EditorEditText.performToolbarUndoImpl() {
-    if (!prepareForToolbarCommand(EditorEditText::isAuthorizedForHistoryCommand)) return
-    v2Driver?.let { driver ->
-        driver.undo()?.let { applyUpdateJSON(it) }
-    }
-}
+internal fun EditorEditText.performToolbarUndoImpl() = performToolbarHistoryCommand(EditorV2Driver::undo)
 
-internal fun EditorEditText.performToolbarRedoImpl() {
+internal fun EditorEditText.performToolbarRedoImpl() = performToolbarHistoryCommand(EditorV2Driver::redo)
+
+private fun EditorEditText.performToolbarHistoryCommand(command: EditorV2Driver.() -> String?) {
     if (!prepareForToolbarCommand(EditorEditText::isAuthorizedForHistoryCommand)) return
-    v2Driver?.let { driver ->
-        driver.redo()?.let { applyUpdateJSON(it) }
-    }
+    val update = v2Driver?.command() ?: return
+    if (applyUpdateJSON(update)) onHistoryUpdateApplied?.invoke(update)
 }

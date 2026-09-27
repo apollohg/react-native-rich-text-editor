@@ -1393,6 +1393,23 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         adapter: EditorV2Adapter,
         cellWasFocused: Boolean
     ): Boolean {
+        if (bindCell(holding = selection, range = range, adapter = adapter)) return true
+        invalidateCell()
+        if (cellWasFocused) host.editorEditText.requestFocus()
+        return true
+    }
+
+    fun followRestoredRootSelection(update: String) {
+        if (activeCell != null) return
+        val root = host.editorEditText
+        val adapter = root.v2Driver as? EditorV2Adapter ?: return
+        if (!root.hasAuthorizedNativeTableOwner(adapter)) return
+        val selection = runCatching { JSONObject(update).optJSONObject("selection") }.getOrNull() ?: return
+        val range = selectionScalarRange(selection) ?: return
+        bindCell(holding = selection, range = range, adapter = adapter)
+    }
+
+    private fun bindCell(holding: JSONObject, range: Pair<Int, Int>, adapter: EditorV2Adapter): Boolean {
         val target = adapter.cachedTableInputMappings?.tables?.entries?.firstNotNullOfOrNull { (tableId, table) ->
             table.cells.firstNotNullOfOrNull { cell ->
                 if (cell.blocks.none { range.first >= it.scalarStart && range.first <= it.breakScalarEnd }) {
@@ -1401,11 +1418,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 projection(tableId, cell.cellIndex)?.takeIf { it.holds(range) }
                     ?.let { Triple(tableId, cell.cellIndex, it) }
             }
-        }
-        if (target != null && bindCell(target.first, target.second, target.third, selection = selection)) return true
-        invalidateCell()
-        if (cellWasFocused) host.editorEditText.requestFocus()
-        return true
+        } ?: return false
+        return bindCell(target.first, target.second, target.third, selection = holding)
     }
 
     private fun reconcileActiveCell(selection: JSONObject? = null, localUpdate: Boolean = false) {

@@ -384,6 +384,7 @@ class RichTextEditorView @JvmOverloads constructor(
         imageResizeOverlayView.bind(this)
         editorEditText.onBeforeRenderRefresh = imageResizeOverlayView::cancelActiveResize
         editorEditText.onTableRootTouch = editorTableSurface::onRootTouch
+        editorEditText.onHistoryUpdateApplied = editorTableSurface::followRestoredRootSelection
         editorEditText.tableCellDropHandler = editorTableSurface::onRootDragEvent
         editorScrollView.setOnScrollChangeListener { _, _, _, _, _ ->
             editorEditText.surfaceViewportChanged()

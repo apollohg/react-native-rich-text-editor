@@ -108,7 +108,9 @@ extension EditorTextView {
     private func performToolbarHistoryCommand(_ command: (UInt64) -> String) {
         guard isAuthorizedForHistoryCommand(), prepareForToolbarCommand() else { return }
         performAuthorizedInterceptedInput {
-            applyUpdateJSON(command(editorId))
+            let updateJSON = command(editorId)
+            guard applyUpdateJSON(updateJSON) else { return }
+            onHistoryUpdateApplied?(updateJSON)
         }
     }
 

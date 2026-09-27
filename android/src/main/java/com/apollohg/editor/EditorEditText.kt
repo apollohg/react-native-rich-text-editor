@@ -296,6 +296,7 @@ class EditorEditText @JvmOverloads constructor(
     internal var onMoveSelectionScalarForTesting: ((Int, Int, Int) -> Unit)? = null
     internal var onBeforeRenderRefresh: (() -> Unit)? = null
     internal var onTableRootTouch: ((MotionEvent) -> Boolean)? = null
+    internal var onHistoryUpdateApplied: ((String) -> Unit)? = null
     internal var tableCellDropHandler: ((DragEvent) -> Boolean?)? = null
     internal var onTableCellSelectionSynced: (() -> Unit)? = null
     internal var onTableCellTab: ((Boolean) -> Boolean)? = null

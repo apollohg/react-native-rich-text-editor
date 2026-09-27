@@ -270,17 +270,31 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             val positions = adapter.tableCellPositions(adapter.cachedTableRecords.keys.single())
             root.selectTableCells(adapter, positions.first(), positions.last())
             assertTrue("the rectangle is authoritative on the root", root.authoritativeCellSelectionActive)
+            assertSame("the rectangle retires the cell input", root, view.richTextView.activeTextInput)
+            assertTrue(root.hasFocus())
+            val focus = recordFocus(view)
 
             pressAfterPendingUpdates(view, TableToolbarTestItems.UNDO_LABEL)
             assertEquals("undo under a rectangle restores the document", listOf("First", "Second"), cellTexts(adapter))
             assertEquals("undo resolves to the selection before the edit",
                 originalSelection, authoritativeSelection(adapter))
             assertFalse("undo leaves no stale rectangle on the root", root.authoritativeCellSelectionActive)
+            assertSame("the cell holding the restored caret takes the input", input, view.richTextView.activeTextInput)
+            assertEquals(positions[0].toLong(), view.richTextView.activeTableCellPosition)
+            assertTrue("the bound cell takes focus", input.hasFocus())
+            assertFalse(root.hasFocus())
+            assertEquals("First", input.text.toString())
+            assertEquals("the caret is restored in the cell", "First".length, input.selectionStart)
 
             pressAfterPendingUpdates(view, TableToolbarTestItems.REDO_LABEL)
             assertEquals("redo reapplies the edit", listOf("FirstX", "Second"), cellTexts(adapter))
             assertEquals("redo resolves to the selection after the edit",
                 editedSelection, authoritativeSelection(adapter))
+            assertEquals(positions[0].toLong(), view.richTextView.activeTableCellPosition)
+            assertTrue(input.hasFocus())
+            assertEquals("FirstX".length, input.selectionStart)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertFalse("the rectangle-to-cell handoff never blurs: $focus", focus.contains(false))
 
             view.setEditable(false)
             view.richTextView.activeTextInput.performToolbarUndo()

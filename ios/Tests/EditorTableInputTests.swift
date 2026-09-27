@@ -2189,21 +2189,61 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertTrue(root.authoritativeCellSelectionActive, "the rectangle is authoritative on the root")
             XCTAssertTrue(fixture.host.richTextView.activeTextInput === root, "the rectangle retires the cell input")
 
+            let view = fixture.host.richTextView
+            let cellInput = try XCTUnwrap(view.textInputs.last { $0 !== root })
+            let focus = recordFocus(fixture.host)
+
             try root.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.undoLabel)
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), original, "undo under a rectangle restores the document")
             XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, originalSelection,
                            "undo resolves to the selection before the edit")
             XCTAssertFalse(root.authoritativeCellSelectionActive, "undo leaves no stale rectangle on the root")
             XCTAssertEqual(fixture.drawing.selectedTableCellSourcePositions, [:], "undo clears the drawn rectangle")
+            XCTAssertTrue(view.activeTextInput === cellInput, "the cell holding the restored caret takes the input")
+            XCTAssertEqual(view.activeTableCellPosition, fixture.positions[0])
+            XCTAssertTrue(cellInput.isFirstResponder, "the bound cell takes focus")
+            XCTAssertFalse(root.isFirstResponder)
+            XCTAssertEqual(cellInput.textStorage.string, "one")
+            XCTAssertEqual(cellInput.selectedRange, NSRange(location: 0, length: 0), "the caret is restored in the cell")
 
-            try root.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.redoLabel)
+            try cellInput.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.redoLabel)
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), edited, "redo reapplies the edit")
             XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, editedSelection,
                            "redo resolves to the selection after the edit")
+            XCTAssertEqual(view.activeTableCellPosition, fixture.positions[1])
+            XCTAssertTrue(cellInput.isFirstResponder)
+            XCTAssertEqual(cellInput.selectedRange, NSRange(location: 4, length: 0))
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            XCTAssertFalse(focus.events.contains(false), "the rectangle-to-cell handoff never blurs: \(focus.events)")
 
             fixture.host.setEditable(false)
             root.performToolbarUndo()
             XCTAssertEqual(try fixture.adapter.tableCellTexts(), edited, "a read-only editor refuses undo")
+        }
+    }
+
+    func testKeyboardToolbarUndoUnderACellRectangleKeepsARestoredProseCaretOnTheRoot() throws {
+        try withExpoTableGeometry(document: proseBeforeTableDocument) { fixture in
+            fixture.host.setToolbarButtonsJson(TableToolbarTestItems.historyJson)
+            let view = fixture.host.richTextView
+            let root = view.textView
+            let originalSelection = try authoritativeSelection(fixture.adapter) as NSDictionary
+            try fixture.activateCell(1).insertText("X")
+            try fixture.selectCells(anchor: 0, head: 1)
+            XCTAssertTrue(view.activeTextInput === root)
+            XCTAssertTrue(root.isFirstResponder)
+            let focus = recordFocus(fixture.host)
+
+            try root.pressAccessoryToolbarButton(labeled: TableToolbarTestItems.undoLabel)
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), [["one", "two"], ["three", "four"]])
+            XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, originalSelection)
+            XCTAssertTrue(view.activeTextInput === root, "a restored prose caret stays on the root")
+            XCTAssertNil(view.activeTableCellPosition)
+            XCTAssertTrue(root.isFirstResponder)
+            XCTAssertEqual(root.selectedRange, NSRange(location: 0, length: 0))
+            XCTAssertFalse(root.rootTableSelectionInputBlocked)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            XCTAssertFalse(focus.events.contains(false), "\(focus.events)")
         }
     }
 
