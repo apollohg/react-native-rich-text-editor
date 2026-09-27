@@ -258,8 +258,7 @@ class NativeTableAcceptanceTest {
         }
 
         fun pressToolbarButtonAfterPendingUpdates(label: String) {
-            SystemClock.sleep(NativeEditorExpoView.EDITOR_UPDATE_EVENT_DEBOUNCE_MS)
-            instrumentation.waitForIdleSync()
+            onMain { expo.drainPendingEditorUpdateEvents() }
             onMain { expo.pressKeyboardToolbarButton(label) }
         }
 
