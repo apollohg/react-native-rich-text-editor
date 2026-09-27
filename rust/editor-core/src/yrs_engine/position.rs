@@ -10,14 +10,18 @@ use crate::position::PositionMap;
 use crate::position_epoch::BoundaryAnchors;
 use crate::schema::{NodeRole, Schema};
 use crate::selection::Selection;
+use crate::tables::commands::{NODE_CLOSING_TOKENS, NODE_OPENING_TOKENS};
 
 use super::{Affinity, EditorOffsetKind, RevisionedPosition};
+
+const VOID_NODE_SIZE: u32 = 1;
 
 #[cfg(test)]
 std::thread_local! {
     static RELATIVE_FULL_SIZE_PREPASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RELATIVE_FORWARD_TRAVERSALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RELATIVE_REVERSE_TRAVERSALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BOUNDARY_WALK_NODE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -353,139 +357,213 @@ fn forward_doc_pos_to_sticky_index<T: ReadTxn>(
     )
 }
 
-pub(crate) fn boundary_anchors_from_doc_pos<T: ReadTxn>(
+pub(crate) fn boundary_anchors_at_doc_positions<T: ReadTxn>(
     txn: &T,
     fragment: &XmlFragmentRef,
-    doc_pos: u32,
+    doc_positions: &[u32],
     schema: &Schema,
-) -> Option<BoundaryAnchors> {
-    boundary_anchors_in_sequence(
+) -> Option<Vec<BoundaryAnchors>> {
+    let mut targets = Vec::new();
+    targets.try_reserve_exact(doc_positions.len()).ok()?;
+    targets.extend_from_slice(doc_positions);
+    targets.sort_unstable();
+    targets.dedup();
+    let mut walk = BoundaryAnchorWalk {
         txn,
-        fragment.children(txn),
-        doc_pos,
-        BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment)),
         schema,
-    )
+        targets: &targets,
+        anchors: Vec::new(),
+        ancestors: Vec::new(),
+    };
+    walk.anchors.try_reserve_exact(targets.len()).ok()?;
+    walk.walk_sequence(
+        fragment.children(txn),
+        BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment)),
+        0,
+        None,
+    )?;
+    if walk.anchors.len() != targets.len() {
+        return None;
+    }
+    let mut boundaries = Vec::new();
+    boundaries.try_reserve_exact(doc_positions.len()).ok()?;
+    for doc_pos in doc_positions {
+        let target = targets.binary_search(doc_pos).ok()?;
+        boundaries.push(walk.anchors[target].clone());
+    }
+    Some(boundaries)
 }
 
-fn boundary_anchors_in_sequence<'a, T: ReadTxn>(
-    txn: &T,
-    children: impl Iterator<Item = XmlOut> + 'a,
-    doc_pos: u32,
-    branch: BranchPtr,
-    schema: &Schema,
-) -> Option<BoundaryAnchors> {
-    let mut branch_index = 0u32;
-    let mut consumed_pm = 0u32;
-    let mut children = children.peekable();
+struct AncestorAnchors {
+    before: StickyIndex,
+    after: StickyIndex,
+    table_cell: bool,
+}
 
-    while let Some(child) = children.next() {
-        match &child {
-            XmlOut::Text(text) => {
-                let text_value = xml_text_plain_string(text, txn)?;
-                let text_scalar_len = scalar_len(&text_value);
-                let mut retry_adjacent_text = false;
-                if doc_pos <= consumed_pm + text_scalar_len {
-                    let utf16_offset = scalar_offset_to_utf16(&text_value, doc_pos - consumed_pm)?;
-                    let text_branch = BranchPtr::from(<XmlTextRef as AsRef<Branch>>::as_ref(text));
-                    let before = sticky_at(txn, text_branch, utf16_offset, Assoc::Before)
-                        .or_else(|| sticky_at(txn, branch, branch_index, Assoc::Before));
-                    let after =
-                        sticky_at(txn, text_branch, utf16_offset, Assoc::After).or_else(|| {
-                            sticky_at(txn, branch, branch_index.checked_add(1)?, Assoc::After)
-                        });
-                    if let (Some(before), Some(after)) = (before, after) {
-                        return Some(BoundaryAnchors {
-                            before,
-                            after,
-                            ancestor_before: Vec::new(),
-                            ancestor_after: Vec::new(),
-                            table_cell_ancestors: None,
-                            pinned_cell: None,
-                        });
-                    }
-                    if doc_pos < consumed_pm + text_scalar_len {
-                        return None;
-                    }
-                    retry_adjacent_text = true;
-                }
-                branch_index = branch_index.checked_add(1)?;
-                consumed_pm = consumed_pm.checked_add(text_scalar_len)?;
-                if retry_adjacent_text && !matches!(children.peek(), Some(XmlOut::Text(_))) {
-                    return None;
-                }
-            }
-            XmlOut::Element(element) => {
-                let child_size = xml_out_pm_size(txn, &child, schema)?;
-                if doc_pos == consumed_pm {
-                    return boundary_anchors_at(txn, branch, branch_index);
-                }
-                if doc_pos < consumed_pm.checked_add(child_size)? {
-                    let mut anchors = boundary_anchors_in_sequence(
-                        txn,
-                        element.children(txn),
-                        doc_pos.checked_sub(consumed_pm)?.checked_sub(1)?,
-                        BranchPtr::from(<XmlElementRef as AsRef<Branch>>::as_ref(element)),
-                        schema,
-                    )?;
-                    if anchors.table_cell_ancestors.is_none()
-                        && is_table_cell_element(element, txn, schema)
-                    {
-                        anchors.table_cell_ancestors = Some(anchors.ancestor_before.len());
-                    }
-                    anchors.ancestor_before.push(sticky_at(
-                        txn,
-                        branch,
-                        branch_index,
-                        Assoc::Before,
-                    )?);
-                    anchors.ancestor_after.push(sticky_at(
-                        txn,
-                        branch,
-                        branch_index.checked_add(1)?,
-                        Assoc::After,
-                    )?);
-                    return Some(anchors);
-                }
-                branch_index = branch_index.checked_add(1)?;
-                consumed_pm = consumed_pm.checked_add(child_size)?;
-            }
-            XmlOut::Fragment(nested) => {
-                let child_size = xml_out_pm_size(txn, &child, schema)?;
-                if doc_pos == consumed_pm {
-                    return boundary_anchors_at(txn, branch, branch_index);
-                }
-                if doc_pos < consumed_pm.checked_add(child_size)? {
-                    let mut anchors = boundary_anchors_in_sequence(
-                        txn,
-                        nested.children(txn),
-                        doc_pos.checked_sub(consumed_pm)?,
-                        BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(nested)),
-                        schema,
-                    )?;
-                    anchors.ancestor_before.push(sticky_at(
-                        txn,
-                        branch,
-                        branch_index,
-                        Assoc::Before,
-                    )?);
-                    anchors.ancestor_after.push(sticky_at(
-                        txn,
-                        branch,
-                        branch_index.checked_add(1)?,
-                        Assoc::After,
-                    )?);
-                    return Some(anchors);
-                }
-                branch_index = branch_index.checked_add(1)?;
-                consumed_pm = consumed_pm.checked_add(child_size)?;
-            }
-        }
+struct BoundaryAnchorWalk<'walk, T> {
+    txn: &'walk T,
+    schema: &'walk Schema,
+    targets: &'walk [u32],
+    anchors: Vec<BoundaryAnchors>,
+    ancestors: Vec<AncestorAnchors>,
+}
+
+impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
+    fn pending(&self, sequence_end: Option<u32>) -> Option<u32> {
+        self.targets
+            .get(self.anchors.len())
+            .copied()
+            .filter(|target| sequence_end.is_none_or(|end| *target < end))
     }
 
-    (doc_pos == consumed_pm)
-        .then(|| boundary_anchors_at(txn, branch, branch_index))
-        .flatten()
+    fn resolve(&mut self, mut leaf: BoundaryAnchors) {
+        let innermost_first = self.ancestors.iter().rev();
+        leaf.ancestor_before = innermost_first
+            .clone()
+            .map(|ancestor| ancestor.before.clone())
+            .collect();
+        leaf.ancestor_after = innermost_first
+            .clone()
+            .map(|ancestor| ancestor.after.clone())
+            .collect();
+        leaf.table_cell_ancestors = innermost_first
+            .clone()
+            .position(|ancestor| ancestor.table_cell);
+        self.anchors.push(leaf);
+    }
+
+    fn resolve_at_child(
+        &mut self,
+        branch: BranchPtr,
+        index: u32,
+        position: u32,
+        sequence_end: Option<u32>,
+    ) -> Option<()> {
+        if self.pending(sequence_end) == Some(position) {
+            self.resolve(boundary_anchors_at(self.txn, branch, index)?);
+        }
+        Some(())
+    }
+
+    fn enter(&mut self, branch: BranchPtr, index: u32, table_cell: bool) -> Option<()> {
+        self.ancestors.push(AncestorAnchors {
+            before: sticky_at(self.txn, branch, index, Assoc::Before)?,
+            after: sticky_at(self.txn, branch, index.checked_add(1)?, Assoc::After)?,
+            table_cell,
+        });
+        Some(())
+    }
+
+    fn walk_sequence(
+        &mut self,
+        children: impl Iterator<Item = XmlOut>,
+        branch: BranchPtr,
+        start: u32,
+        sequence_end: Option<u32>,
+    ) -> Option<u32> {
+        let mut index = 0u32;
+        let mut position = start;
+        let mut children = children.peekable();
+        while let Some(child) = children.next() {
+            #[cfg(test)]
+            BOUNDARY_WALK_NODE_VISITS.set(BOUNDARY_WALK_NODE_VISITS.get().saturating_add(1));
+            position = match &child {
+                XmlOut::Text(text) => {
+                    let followed_by_text = matches!(children.peek(), Some(XmlOut::Text(_)));
+                    self.walk_text(
+                        text,
+                        branch,
+                        index,
+                        position,
+                        sequence_end,
+                        followed_by_text,
+                    )?
+                }
+                XmlOut::Element(element) => {
+                    self.resolve_at_child(branch, index, position, sequence_end)?;
+                    if is_void_element(element, self.txn, self.schema) {
+                        position.checked_add(VOID_NODE_SIZE)?
+                    } else {
+                        self.enter(
+                            branch,
+                            index,
+                            is_table_cell_element(element, self.txn, self.schema),
+                        )?;
+                        let content_end = self.walk_sequence(
+                            element.children(self.txn),
+                            BranchPtr::from(<XmlElementRef as AsRef<Branch>>::as_ref(element)),
+                            position.checked_add(NODE_OPENING_TOKENS)?,
+                            None,
+                        )?;
+                        self.ancestors.pop();
+                        content_end.checked_add(NODE_CLOSING_TOKENS)?
+                    }
+                }
+                XmlOut::Fragment(nested) => {
+                    self.resolve_at_child(branch, index, position, sequence_end)?;
+                    let fragment_end =
+                        position.checked_add(xml_out_pm_size(self.txn, &child, self.schema)?)?;
+                    self.enter(branch, index, false)?;
+                    self.walk_sequence(
+                        nested.children(self.txn),
+                        BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(nested)),
+                        position,
+                        Some(fragment_end),
+                    )?;
+                    self.ancestors.pop();
+                    fragment_end
+                }
+            };
+            index = index.checked_add(1)?;
+        }
+        self.resolve_at_child(branch, index, position, sequence_end)?;
+        Some(position)
+    }
+
+    fn walk_text(
+        &mut self,
+        text: &XmlTextRef,
+        branch: BranchPtr,
+        index: u32,
+        start: u32,
+        sequence_end: Option<u32>,
+        followed_by_text: bool,
+    ) -> Option<u32> {
+        let value = xml_text_plain_string(text, self.txn)?;
+        let text_end = start.checked_add(scalar_len(&value))?;
+        let text_branch = BranchPtr::from(<XmlTextRef as AsRef<Branch>>::as_ref(text));
+        let mut characters = value.chars();
+        let mut scalar_offset = 0u32;
+        let mut utf16_offset = 0u32;
+        while let Some(target) = self
+            .pending(sequence_end)
+            .filter(|target| *target <= text_end)
+        {
+            let target_offset = target.checked_sub(start)?;
+            while scalar_offset < target_offset {
+                let width = u32::try_from(characters.next()?.len_utf16()).ok()?;
+                utf16_offset = utf16_offset.checked_add(width)?;
+                scalar_offset += 1;
+            }
+            let before = sticky_at(self.txn, text_branch, utf16_offset, Assoc::Before)
+                .or_else(|| sticky_at(self.txn, branch, index, Assoc::Before));
+            let after = sticky_at(self.txn, text_branch, utf16_offset, Assoc::After)
+                .or_else(|| sticky_at(self.txn, branch, index.checked_add(1)?, Assoc::After));
+            match before.zip(after) {
+                Some((before, after)) => self.resolve(BoundaryAnchors {
+                    before,
+                    after,
+                    ancestor_before: Vec::new(),
+                    ancestor_after: Vec::new(),
+                    table_cell_ancestors: None,
+                    pinned_cell: None,
+                }),
+                None if target == text_end && followed_by_text => break,
+                None => return None,
+            }
+        }
+        Some(text_end)
+    }
 }
 
 fn boundary_anchors_at<T: ReadTxn>(
@@ -655,11 +733,13 @@ fn xml_out_pm_size<T: ReadTxn>(txn: &T, node: &XmlOut, schema: &Schema) -> Optio
         XmlOut::Text(text) => Some(scalar_len(&xml_text_plain_string(text, txn)?)),
         XmlOut::Element(element) => {
             if is_void_element(element, txn, schema) {
-                Some(1)
+                Some(VOID_NODE_SIZE)
             } else {
-                element.children(txn).try_fold(2u32, |size, child| {
-                    size.checked_add(xml_out_pm_size(txn, &child, schema)?)
-                })
+                element
+                    .children(txn)
+                    .try_fold(NODE_OPENING_TOKENS + NODE_CLOSING_TOKENS, |size, child| {
+                        size.checked_add(xml_out_pm_size(txn, &child, schema)?)
+                    })
             }
         }
         XmlOut::Fragment(fragment) => fragment.children(txn).try_fold(0u32, |size, child| {
@@ -791,3 +871,7 @@ impl From<Affinity> for Assoc {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "position_tests.rs"]
+mod tests;

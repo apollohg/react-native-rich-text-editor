@@ -521,31 +521,22 @@ impl YrsDocumentEngine {
         let state = self.derived_state.as_ref()?;
         let txn = self.doc.transact();
         let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
-        let count = usize::try_from(state.position_map.total_scalars())
-            .ok()?
-            .checked_add(1)?;
-        let mut boundaries = Vec::new();
-        boundaries.try_reserve_exact(count).ok()?;
+        let total_scalars = state.position_map.total_scalars();
+        let mut doc_positions = Vec::new();
+        doc_positions
+            .try_reserve_exact(usize::try_from(total_scalars).ok()?.checked_add(1)?)
+            .ok()?;
+        doc_positions.extend(
+            (0..=total_scalars)
+                .map(|scalar| state.position_map.scalar_to_doc(scalar, &state.document)),
+        );
+        let mut boundaries = super::position::boundary_anchors_at_doc_positions(
+            &txn,
+            &fragment,
+            &doc_positions,
+            &self.schema,
+        )?;
         let spans = self.cell_pinning(state).spans();
-        let mut previous: Option<(u32, crate::position_epoch::BoundaryAnchors)> = None;
-        for scalar_offset in 0..=state.position_map.total_scalars() {
-            let doc_pos = state
-                .position_map
-                .scalar_to_doc(scalar_offset, &state.document);
-            let anchors = match &previous {
-                Some((previous_doc_pos, previous_anchors)) if *previous_doc_pos == doc_pos => {
-                    previous_anchors.clone()
-                }
-                _ => super::position::boundary_anchors_from_doc_pos(
-                    &txn,
-                    &fragment,
-                    doc_pos,
-                    &self.schema,
-                )?,
-            };
-            previous = Some((doc_pos, anchors.clone()));
-            boundaries.push(anchors);
-        }
         for (cell, span) in spans.iter().enumerate() {
             for (scalar, point) in &span.points {
                 let Some(boundary) = usize::try_from(*scalar)
@@ -565,6 +556,16 @@ impl YrsDocumentEngine {
             anchors: boundaries,
             cells: spans.into_iter().map(|span| span.cell).collect(),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn read_fragment_for_test<R>(
+        &self,
+        read: impl FnOnce(&yrs::Transaction<'_>, &yrs::XmlFragmentRef) -> R,
+    ) -> Option<R> {
+        let txn = self.doc.transact();
+        let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
+        Some(read(&txn, &fragment))
     }
 
     fn cell_pinning<'state>(

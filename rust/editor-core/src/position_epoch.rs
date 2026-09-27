@@ -4,7 +4,7 @@ use yrs::StickyIndex;
 
 use crate::session::{ErrorDomain, SessionError};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BoundaryAnchors {
     pub(crate) before: StickyIndex,
     pub(crate) after: StickyIndex,
