@@ -36,7 +36,7 @@ class NativeDeviceTableCellTest {
 
     @Test
     @SdkSuppress(minSdkVersion = 29)
-    fun authoritativeCellRectangleRetiresInputAndReturnsToTextOnTap() = withEditor { fixture ->
+    fun authoritativeCellRectangleRetiresInputAndReturnsToTextOnTapOutsideIt() = withEditor { fixture ->
         fixture.tapCell(0)
         fixture.onActivity {
             val stale = requireNotNull(fixture.cellInput().onCreateInputConnection(EditorInfo()))
@@ -49,7 +49,7 @@ class NativeDeviceTableCellTest {
                     requireNotNull(fixture.adapter.scalarPositionForDoc(opening + 2)))
             }
             val selection = JSONObject().put("type", "cell")
-                .put("anchorCell", point(0)).put("headCell", point(1))
+                .put("anchorCell", point(0)).put("headCell", point(0))
             val result = fixture.adapter.callWithEnvelope(JSONObject().put("selection", selection)) {
                 UniffiEditorV2Backend.setSelection(fixture.adapter.editorId, it)
             }

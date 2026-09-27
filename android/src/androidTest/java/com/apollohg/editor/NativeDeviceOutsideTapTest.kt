@@ -829,14 +829,12 @@ class NativeDeviceOutsideTapTest {
         view: View
     ) {
         val location = IntArray(2)
-        view.getLocationOnScreen(location)
-        val visibleWindowFrame = android.graphics.Rect()
-        view.getWindowVisibleDisplayFrame(visibleWindowFrame)
+        view.getLocationInWindow(location)
         val density = activity.resources.displayMetrics.density
         editor.setToolbarFrameJson(
             JSONObject()
-                .put("x", (location[0] - visibleWindowFrame.left) / density)
-                .put("y", (location[1] - visibleWindowFrame.top) / density)
+                .put("x", location[0] / density)
+                .put("y", location[1] / density)
                 .put("width", view.width / density)
                 .put("height", view.height / density)
                 .toString()
