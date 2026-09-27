@@ -25,6 +25,13 @@ pub(crate) struct CellTextPoint {
     pub(crate) text_offset: u32,
     pub(crate) run: u32,
     pub(crate) run_offset: u32,
+    pub(crate) attachment: CellTextAttachment,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CellTextAttachment {
+    PrecedingText,
+    FollowingText,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

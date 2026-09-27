@@ -3,7 +3,9 @@ use std::ops::Range;
 
 use crate::model::{Document, Node};
 use crate::position::PositionMap;
-use crate::position_epoch::{CellTextPoint, PinnedCellBoundary, PinnedTableCell};
+use crate::position_epoch::{
+    CellTextAttachment, CellTextPoint, PinnedCellBoundary, PinnedTableCell,
+};
 use crate::schema::Schema;
 use crate::serialize::node_to_prosemirror_json;
 use crate::tables::admission::TableProjectionIndex;
@@ -160,6 +162,9 @@ impl CellPinning<'_> {
             previous[innermost] = Some((doc_pos, point));
             points[innermost].push((scalar, point));
         }
+        for cell_points in &mut points {
+            attach_run_starts(cell_points);
+        }
         points
     }
 
@@ -196,6 +201,7 @@ fn next_text_point(previous: Option<(u32, CellTextPoint)>, doc_pos: u32) -> Cell
             text_offset: 0,
             run: 0,
             run_offset: 0,
+            attachment: CellTextAttachment::PrecedingText,
         },
         Some((previous_doc_pos, point)) if previous_doc_pos == doc_pos => point,
         Some((previous_doc_pos, point))
@@ -212,6 +218,17 @@ fn next_text_point(previous: Option<(u32, CellTextPoint)>, doc_pos: u32) -> Cell
             run_offset: 0,
             ..point
         },
+    }
+}
+
+fn attach_run_starts(points: &mut [(u32, CellTextPoint)]) {
+    let mut run_with_text = None;
+    for (_, point) in points.iter_mut().rev() {
+        if point.run_offset > 0 {
+            run_with_text = Some(point.run);
+        } else if run_with_text == Some(point.run) {
+            point.attachment = CellTextAttachment::FollowingText;
+        }
     }
 }
 
@@ -270,13 +287,23 @@ fn scalar_at_text_offset(
     target: CellTextPoint,
     affinity: Affinity,
 ) -> Option<u32> {
-    let mut matching = points
-        .iter()
-        .filter(|(_, point)| point.text_offset == target.text_offset)
-        .map(|(scalar, _)| *scalar);
+    let at_offset = || {
+        points
+            .iter()
+            .filter(move |(_, point)| point.text_offset == target.text_offset)
+    };
+    let same_side: Vec<u32> = at_offset()
+        .filter(|(_, point)| point.attachment == target.attachment)
+        .map(|(scalar, _)| *scalar)
+        .collect();
+    let candidates = if same_side.is_empty() {
+        at_offset().map(|(scalar, _)| *scalar).collect()
+    } else {
+        same_side
+    };
     match affinity {
-        Affinity::Before => matching.next(),
-        Affinity::After => matching.last(),
+        Affinity::Before => candidates.first().copied(),
+        Affinity::After => candidates.last().copied(),
     }
 }
 
