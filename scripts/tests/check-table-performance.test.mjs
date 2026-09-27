@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -25,11 +25,14 @@ const SCROLL_FRAME_BUDGET_MS = 16.67;
 const DROPPED_FRAME_MS = 33.34;
 const SHORT_TRAVERSAL_FRAMES = 1700;
 const OVER_LIMIT_DELTA_MS = 0.01;
+const EDITS_PER_UNSIZED_CASE = 4;
+const PRESENTATION_WINDOW_BOUND = 12;
 
 const iphone13 = {
     platform: 'ios',
     device: 'iPhone14,5',
     os: 'iOS 26.0 (23A341)',
+    physicalDevice: true,
     buildType: 'release',
     refreshHz: 60,
     textScale: 1,
@@ -39,6 +42,7 @@ const pixel7 = {
     platform: 'android',
     device: 'Pixel 7',
     os: 'Android 16 (BP2A.250605.031)',
+    physicalDevice: true,
     buildType: 'release',
     refreshHz: 60,
     textScale: 1,
@@ -53,8 +57,8 @@ function counters(overrides = {}) {
         unmountedCacheBytes: 1024,
         pinnedLayoutBytes: 2048,
         authoritativeDocumentBytes: 4096,
-        retainedPresentations: 12,
-        presentationWindowBound: 12,
+        retainedPresentations: PRESENTATION_WINDOW_BOUND,
+        presentationWindowBound: PRESENTATION_WINDOW_BOUND,
         ...overrides,
     };
 }
@@ -91,11 +95,19 @@ function hardCaseSamples(gate, fixture, run) {
     if (gate.minTraversalMs !== undefined) {
         return scrollSample(fixture, gate.metric);
     }
-    const count = gate.samplesPerRun ?? 1;
+    const count = gate.samplesPerRun ?? EDITS_PER_UNSIZED_CASE;
+    const perEditCounters = Object.fromEntries(
+        Object.entries(gate.countersPerSample ?? {}).map(([name, perEdit]) => [
+            name,
+            perEdit * count,
+        ])
+    );
     return {
         fixture,
         metric: gate.metric,
         run,
+        ...(gate.warmupSamples === undefined ? {} : { warmupSamplesDiscarded: gate.warmupSamples }),
+        counters: counters(perEditCounters),
         samplesMs:
             gate.percentiles.length === 0
                 ? repeat(count, FAST_MS)
@@ -152,17 +164,25 @@ function assertOnlyFailure(report, pattern) {
     assert.match(failures[0], pattern);
 }
 
-function runChecker(args, input) {
+function runWithInputFile(command, args, input) {
     const directory = mkdtempSync(path.join(tmpdir(), 'table-performance-check-'));
     const inputPath = path.join(directory, 'export.json');
-    if (input !== undefined) {
-        writeFileSync(inputPath, typeof input === 'string' ? input : JSON.stringify(input));
+    try {
+        if (input !== undefined) {
+            writeFileSync(inputPath, typeof input === 'string' ? input : JSON.stringify(input));
+        }
+        return spawnSync(
+            command,
+            args.map((argument) => (argument === '<input>' ? inputPath : argument)),
+            { cwd: repositoryRoot, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
+        );
+    } finally {
+        rmSync(directory, { recursive: true, force: true });
     }
-    return spawnSync(
-        process.execPath,
-        [checker, ...args.map((argument) => (argument === '<input>' ? inputPath : argument))],
-        { cwd: repositoryRoot, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
-    );
+}
+
+function runChecker(args, input) {
+    return runWithInputFile(process.execPath, [checker, ...args], input);
 }
 
 test('percentile uses nearest rank without interpolation', () => {
@@ -223,8 +243,11 @@ test('the configuration carries the TBL-23 sampling protocol and budgets exactly
         assert.deepEqual(gate('coldLayout', fixture).percentiles, [{ fraction: 0.95, maxMs: 500 }]);
     }
     for (const fixture of [...PLAIN_FIXTURES, ...RICH_FIXTURES]) {
-        assert.ok(gate('cellChangeStart', fixture), `cellChangeStart covers ${fixture}`);
-        assert.ok(gate('cellChangeEnd', fixture), `cellChangeEnd covers ${fixture}`);
+        for (const metric of ['cellChangeStart', 'cellChangeEnd']) {
+            assert.deepEqual(gate(metric, fixture).countersPerSample, {
+                changedCellRemeasurements: 1,
+            });
+        }
     }
     assert.equal(config.counterGates.unmountedCacheBytes, UNMOUNTED_CACHE_BUDGET_BYTES);
     assert.equal(config.counterGates.maxCellInputInstances, 1);
@@ -233,6 +256,7 @@ test('the configuration carries the TBL-23 sampling protocol and budgets exactly
             { platform: 'ios', device: 'iPhone14,5' },
             { platform: 'android', device: 'Pixel 7' },
         ],
+        physicalDevice: true,
         buildType: 'release',
         refreshHz: 60,
         textScale: 1,
@@ -493,6 +517,11 @@ test('malformed samples are rejected before any gate is evaluated', async (t) =>
 test('release rejects ineligible device and build metadata that diagnostic mode reports', async (t) => {
     for (const [name, overrides, reason] of [
         ['a simulator', { device: 'arm64' }, /device ios\/arm64 is not an eligible release device/],
+        [
+            'a simulator reporting the iPhone 13 model',
+            { physicalDevice: false },
+            /physicalDevice is false, release requires true/,
+        ],
         ['a different phone', { device: 'iPhone17,1' }, /not an eligible release device/],
         ['a debug build', { buildType: 'debug' }, /buildType is debug, release requires release/],
         ['a 120 Hz display', { refreshHz: 120 }, /refreshHz is 120, release requires 60/],
@@ -523,7 +552,12 @@ test('release rejects ineligible device and build metadata that diagnostic mode 
 });
 
 test('diagnostic mode still enforces every hard gate', () => {
-    const input = completeExport({ ...iphone13, device: 'arm64', buildType: 'debug' });
+    const input = completeExport({
+        ...iphone13,
+        device: 'arm64',
+        buildType: 'debug',
+        physicalDevice: false,
+    });
     raiseOneBoundarySample(findSample(input, 'typing', 'plain-3x3', 1), 50);
 
     assertOnlyFailure(
@@ -594,14 +628,14 @@ test('resource, ownership and reuse counters are hard gates on every sample', as
         await t.test(name, () => {
             const input = completeExport();
             const sample = findSample(input, metric, fixture);
-            sample.counters = counters(overrides);
+            Object.assign(sample.counters, overrides);
             assertOnlyFailure(check(input), message);
         });
     }
 
     await t.test('an unmounted cache exactly at 32 MiB passes', () => {
         const input = completeExport();
-        findSample(input, 'scrollVertical', 'plain-1000x20').counters = counters({
+        Object.assign(findSample(input, 'scrollVertical', 'plain-1000x20').counters, {
             unmountedCacheBytes: UNMOUNTED_CACHE_BUDGET_BYTES,
         });
         assert.deepEqual(allFailures(check(input)), []);
@@ -612,7 +646,7 @@ test('baseline-only latency is reported apart from hard gates and never fails th
     const input = completeExport();
     findSample(input, 'typing', 'rich-merged-100x200').samplesMs = [5000, 9000, 12000];
     findSample(input, 'remoteUpdate', 'plain-1000x20').samplesMs = [2500];
-    findSample(input, 'structuralCommand', 'plain-3x3').counters = counters({
+    Object.assign(findSample(input, 'structuralCommand', 'plain-3x3').counters, {
         pinnedLayoutBytes: 777,
         authoritativeDocumentBytes: 888,
     });
@@ -702,7 +736,12 @@ test('the CLI separates release verification from diagnostic evidence', () => {
     assert.match(eligible.stdout, /1 device evidence set\(s\) passed all release table gates/);
     assert.match(eligible.stdout, /"releaseEvidence": true/);
 
-    const simulator = completeExport({ ...iphone13, device: 'arm64', buildType: 'debug' });
+    const simulator = completeExport({
+        ...iphone13,
+        device: 'arm64',
+        buildType: 'debug',
+        physicalDevice: false,
+    });
     const release = runChecker(['--release', '--input', '<input>'], simulator);
     assert.notEqual(release.status, 0);
     assert.match(release.stderr, /ios\/arm64: ineligible release evidence: device ios\/arm64/);
@@ -712,13 +751,106 @@ test('the CLI separates release verification from diagnostic evidence', () => {
     assert.equal(diagnostic.status, 0, diagnostic.stderr);
     assert.match(diagnostic.stdout, /passed all diagnostic \(not release evidence\) table gates/);
     assert.doesNotMatch(diagnostic.stdout, /passed all release/);
+    assert.match(diagnostic.stdout, /"releaseEvidence": false/);
 });
 
-test('the package script runs the checker in release mode', () => {
-    const packageJson = JSON.parse(readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'));
+test('the npm release script passes eligible evidence and rejects a simulator export', () => {
+    const npmArguments = [
+        'run',
+        '--silent',
+        'test:tables:performance:check',
+        '--',
+        '--input',
+        '<input>',
+    ];
 
-    assert.equal(
-        packageJson.scripts['test:tables:performance:check'],
-        'node scripts/check-table-performance.mjs --release'
+    const eligible = runWithInputFile('npm', npmArguments, completeExport());
+    assert.equal(eligible.status, 0, eligible.stderr);
+    assert.match(eligible.stdout, /passed all release table gates/);
+
+    const simulator = runWithInputFile(
+        'npm',
+        npmArguments,
+        completeExport({ ...iphone13, device: 'arm64', buildType: 'debug', physicalDevice: false })
     );
+    assert.notEqual(simulator.status, 0);
+    assert.match(simulator.stderr, /ineligible release evidence: physicalDevice is false/);
+    assert.match(simulator.stderr, /Table performance check failed: release gates failed/);
+});
+
+test('a fixture cannot certify its own larger presentation window', () => {
+    const input = completeExport();
+    for (const sample of input.samples.filter(({ fixture }) => fixture === 'plain-1000x20')) {
+        Object.assign(sample.counters, {
+            retainedPresentations: PRESENTATION_WINDOW_BOUND * 50,
+            presentationWindowBound: PRESENTATION_WINDOW_BOUND * 50,
+        });
+    }
+
+    assertOnlyFailure(
+        check(input),
+        /^presentationWindowBound must be identical across every fixture for the same viewport and overscan: .*plain-3x3=12, plain-1000x20=600,/
+    );
+});
+
+test('a single-cell change must remeasure exactly the edited cell for every edit', async (t) => {
+    for (const [name, changed, message] of [
+        [
+            'nothing remeasured',
+            0,
+            /^cellChangeStart\/plain-100x200 run 1: changedCellRemeasurements=0, protocol requires 4 \(1 per edit\)$/,
+        ],
+        [
+            'one edit remeasured twice',
+            EDITS_PER_UNSIZED_CASE + 1,
+            /^cellChangeStart\/plain-100x200 run 1: changedCellRemeasurements=5, protocol requires 4 \(1 per edit\)$/,
+        ],
+    ]) {
+        await t.test(name, () => {
+            const input = completeExport();
+            findSample(
+                input,
+                'cellChangeStart',
+                'plain-100x200'
+            ).counters.changedCellRemeasurements = changed;
+            assertOnlyFailure(check(input), message);
+        });
+    }
+
+    await t.test('the counter is required on single-cell change samples', () => {
+        const input = completeExport();
+        delete findSample(input, 'cellChangeEnd', 'rich-merged-3x3').counters
+            .changedCellRemeasurements;
+        assert.throws(
+            () => check(input),
+            /cellChangeEnd\/rich-merged-3x3 run 1\) counter changedCellRemeasurements must be a non-negative integer/
+        );
+    });
+});
+
+test('typing runs must report exactly the 20 discarded warm-up edits', async (t) => {
+    await t.test('19 discarded', () => {
+        const input = completeExport();
+        findSample(input, 'typing', 'plain-3x3', 3).warmupSamplesDiscarded = 19;
+        assertOnlyFailure(
+            check(input),
+            /^typing\/plain-3x3 run 3: discarded 19 warm-up samples, protocol requires 20$/
+        );
+    });
+
+    await t.test('unreported', () => {
+        const input = completeExport();
+        delete findSample(input, 'typing', 'plain-3x3', 3).warmupSamplesDiscarded;
+        assert.throws(
+            () => check(input),
+            /typing\/plain-3x3 run 3\) warmupSamplesDiscarded must be a non-negative integer/
+        );
+    });
+});
+
+test('every sample must state whether it ran on physical hardware', () => {
+    const input = completeExport();
+    delete findSample(input, 'coldLayout', 'plain-3x3').physicalDevice;
+
+    assert.throws(() => check(input), /physicalDevice must be a boolean/);
 });

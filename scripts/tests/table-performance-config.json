@@ -4,6 +4,7 @@
             { "platform": "ios", "device": "iPhone14,5" },
             { "platform": "android", "device": "Pixel 7" }
         ],
+        "physicalDevice": true,
         "buildType": "release",
         "refreshHz": 60,
         "textScale": 1,
@@ -76,6 +77,7 @@
                 "rich-merged-100x200"
             ],
             "runs": 1,
+            "countersPerSample": { "changedCellRemeasurements": 1 },
             "percentiles": []
         },
         {
@@ -89,6 +91,7 @@
                 "rich-merged-100x200"
             ],
             "runs": 1,
+            "countersPerSample": { "changedCellRemeasurements": 1 },
             "percentiles": []
         }
     ],

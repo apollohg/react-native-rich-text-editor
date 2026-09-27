@@ -20,8 +20,15 @@ const DEVICE_FIELDS = [
     'refreshHz',
     'textScale',
     'viewportWidth',
+    'physicalDevice',
 ];
-const RELEASE_ENVIRONMENT_FIELDS = ['buildType', 'refreshHz', 'textScale', 'viewportWidth'];
+const RELEASE_ENVIRONMENT_FIELDS = [
+    'physicalDevice',
+    'buildType',
+    'refreshHz',
+    'textScale',
+    'viewportWidth',
+];
 
 export function percentile(samples, fraction) {
     if (
@@ -85,12 +92,13 @@ function isPositiveFinite(value) {
     return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
-function requiredCounters(config) {
+function requiredCounters(config, classification) {
     return [
         ...Object.keys(config.counterGates),
         ...config.reportedCounters,
         RETAINED_PRESENTATIONS,
         PRESENTATION_WINDOW_BOUND,
+        ...Object.keys(classification.gate?.countersPerSample ?? {}),
     ];
 }
 
@@ -120,6 +128,9 @@ function validateSample(sample, index, config) {
             throw new Error(`${label} must have a non-empty ${field}`);
         }
     }
+    if (typeof sample.physicalDevice !== 'boolean') {
+        throw new Error(`${label} physicalDevice must be a boolean`);
+    }
     for (const field of ['refreshHz', 'textScale', 'viewportWidth']) {
         if (!isPositiveFinite(sample[field])) {
             throw new Error(`${label} ${field} must be a finite positive number`);
@@ -129,9 +140,18 @@ function validateSample(sample, index, config) {
         throw new Error(`${label} run must be a positive integer`);
     }
     const caseLabel = caseKey(sample.metric, sample.fixture, sample.run);
-    if (!classifySample(sample, config)) {
+    const classification = classifySample(sample, config);
+    if (!classification) {
         throw new Error(
             `${label} has unexpected metric/fixture: ${sample.metric}/${sample.fixture}`
+        );
+    }
+    if (
+        classification.gate?.warmupSamples !== undefined &&
+        (!Number.isSafeInteger(sample.warmupSamplesDiscarded) || sample.warmupSamplesDiscarded < 0)
+    ) {
+        throw new Error(
+            `${label} (${caseLabel}) warmupSamplesDiscarded must be a non-negative integer`
         );
     }
     if (
@@ -148,7 +168,7 @@ function validateSample(sample, index, config) {
     if (!sample.counters || typeof sample.counters !== 'object' || Array.isArray(sample.counters)) {
         throw new Error(`${label} (${caseLabel}) must have a counters object`);
     }
-    for (const counter of requiredCounters(config)) {
+    for (const counter of requiredCounters(config, classification)) {
         const value = sample.counters[counter];
         if (!Number.isSafeInteger(value) || value < 0) {
             throw new Error(
@@ -232,6 +252,19 @@ function reportedCounters(sample, config) {
 
 function evaluateHardCase(sample, gate, config) {
     const failures = counterFailures(sample, config);
+    if (gate.warmupSamples !== undefined && sample.warmupSamplesDiscarded !== gate.warmupSamples) {
+        failures.push(
+            `discarded ${sample.warmupSamplesDiscarded} warm-up samples, protocol requires ${gate.warmupSamples}`
+        );
+    }
+    for (const [counter, perSample] of Object.entries(gate.countersPerSample ?? {})) {
+        const expected = perSample * sample.samplesMs.length;
+        if (sample.counters[counter] !== expected) {
+            failures.push(
+                `${counter}=${sample.counters[counter]}, protocol requires ${expected} (${perSample} per edit)`
+            );
+        }
+    }
     if (gate.samplesPerRun !== undefined && sample.samplesMs.length !== gate.samplesPerRun) {
         failures.push(
             `has ${sample.samplesMs.length} samples, protocol requires ${gate.samplesPerRun}`
@@ -331,6 +364,25 @@ function unexpectedRuns(device, config) {
         .map((sample) => caseKey(sample.metric, sample.fixture, sample.run));
 }
 
+function presentationBoundFailures(device) {
+    const boundsByFixture = new Map();
+    for (const sample of device.cases.values()) {
+        const bounds = boundsByFixture.get(sample.fixture) ?? new Set();
+        bounds.add(sample.counters[PRESENTATION_WINDOW_BOUND]);
+        boundsByFixture.set(sample.fixture, bounds);
+    }
+    const distinctBounds = new Set([...boundsByFixture.values()].flatMap((bounds) => [...bounds]));
+    if (distinctBounds.size <= 1) {
+        return [];
+    }
+    const perFixture = [...boundsByFixture]
+        .map(([fixture, bounds]) => `${fixture}=${[...bounds].join('|')}`)
+        .join(', ');
+    return [
+        `${PRESENTATION_WINDOW_BOUND} must be identical across every fixture for the same viewport and overscan: ${perFixture}`,
+    ];
+}
+
 function evaluateDevice(device, config, mode) {
     const ineligibility = releaseIneligibility(device.metadata, config.releaseEnvironment);
     const hardGates = [];
@@ -345,6 +397,7 @@ function evaluateDevice(device, config, mode) {
     }
     const failures = [
         ...missingEvidence(device, config).map((key) => `missing samples for ${key}`),
+        ...presentationBoundFailures(device),
         ...unexpectedRuns(device, config).map((key) => `unexpected extra run ${key}`),
         ...hardGates.flatMap(({ metric, fixture, run, failures: caseFailures }) =>
             caseFailures.map((failure) => `${caseKey(metric, fixture, run)}: ${failure}`)
