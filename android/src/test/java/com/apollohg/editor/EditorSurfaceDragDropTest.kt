@@ -46,6 +46,32 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
     }
 
     @Test
+    fun `a drop refused by the surface focus hook inserts nothing and hovering never focuses`() {
+        val harness = realExternalCompositionHarness("safe")
+        try {
+            val editor = harness.editText
+            measure(editor)
+            editor.clearFocus()
+            var consulted = 0
+            editor.onTableRootGesture = {
+                consulted += 1
+                false
+            }
+            val clip = ClipData.newPlainText("external", "bad")
+            assertTrue(send(editor, DragEvent.ACTION_DRAG_STARTED, clip))
+            assertTrue(send(editor, DragEvent.ACTION_DRAG_ENTERED, clip))
+            assertFalse("hovering a drag over the prose must not focus it", editor.hasFocus())
+            assertEquals("hovering must not consult the surface focus hook", 0, consulted)
+            assertFalse("a refused drop must report failure", send(editor, DragEvent.ACTION_DROP, clip, 2))
+            assertEquals("the drop must consult the surface focus hook once", 1, consulted)
+            assertFalse("a refused drop must not focus the prose", editor.hasFocus())
+            assertEquals("<p>safe</p>", harness.adapter.documentHtml())
+        } finally {
+            harness.adapter.destroy()
+        }
+    }
+
+    @Test
     fun `readonly editor rejects drag start and a previously accepted drop`() {
         val harness = realExternalCompositionHarness("safe")
         try {

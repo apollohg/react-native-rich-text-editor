@@ -594,7 +594,6 @@ internal class EditorTextSurfaceInteraction(
     fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
         when (action) {
             AccessibilityNodeInfo.ACTION_CLICK -> {
-                if (!view.onSurfaceGestureFocus()) return false
                 view.requestFocus()
                 showKeyboard()
                 view.performClick()

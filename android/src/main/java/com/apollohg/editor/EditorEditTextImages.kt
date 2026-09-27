@@ -135,7 +135,6 @@ internal fun EditorEditText.handleImageTap(event: MotionEvent): Boolean {
                     downY = event.y
                 )
             }
-            if (hit != null) requestFocus()
             return hit != null
         }
 
@@ -172,6 +171,7 @@ internal fun EditorEditText.handleImageTap(event: MotionEvent): Boolean {
             }
             val hit = imageSpanHitAt(event.x, event.y) ?: return false
             if (hit.span !== gesture.target) return false
+            if (!onSurfaceGestureFocus()) return true
             requestFocus()
             selectExplicitImageRange(hit.start, hit.end)
             performClick()

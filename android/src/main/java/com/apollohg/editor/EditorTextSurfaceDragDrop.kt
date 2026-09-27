@@ -39,10 +39,7 @@ internal class EditorTextSurfaceDragDrop(private val surface: EditorTextSurface)
             return false
         }
         return when (event.action) {
-            DragEvent.ACTION_DRAG_ENTERED -> {
-                editor.requestFocus()
-                true
-            }
+            DragEvent.ACTION_DRAG_ENTERED -> true
 
             DragEvent.ACTION_DRAG_LOCATION -> {
                 if (event.x.isFinite() && event.y.isFinite()) {
@@ -76,8 +73,8 @@ internal class EditorTextSurfaceDragDrop(private val surface: EditorTextSurface)
             return false
         }
         if (value.isEmpty()) return false
-        if (!editor.prepareForExternalInteractionMutation() || session !== active ||
-            !isCurrent(editor, active)
+        if (!editor.onSurfaceGestureFocus() || !editor.prepareForExternalInteractionMutation() ||
+            session !== active || !isCurrent(editor, active)
         ) {
             return false
         }

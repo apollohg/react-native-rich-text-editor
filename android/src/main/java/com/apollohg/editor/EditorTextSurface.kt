@@ -670,9 +670,11 @@ open class EditorTextSurface @JvmOverloads constructor(
         interaction.initializeAccessibility(info)
     }
 
-    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean =
-        interaction.performAccessibilityAction(action, arguments) ||
+    override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
+        if (action == AccessibilityNodeInfo.ACTION_CLICK && !onSurfaceGestureFocus()) return false
+        return interaction.performAccessibilityAction(action, arguments) ||
             super.performAccessibilityAction(action, arguments)
+    }
 
     override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
         super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)

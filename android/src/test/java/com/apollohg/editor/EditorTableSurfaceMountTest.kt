@@ -12,6 +12,7 @@ import android.view.MotionEvent
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.ViewConfiguration
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.widget.FrameLayout
@@ -28,6 +29,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -717,7 +719,7 @@ internal class EditorTableSurfaceMountTest {
             val root = view.editorEditText
             assertTrue("the prose took focus from the tap", root.hasFocus())
             assertTrue("a focused prose must not leave the cell bound", view.activeTextInput === root)
-            assertFalse(input.hasFocus())
+            assertFalse("the released cell input must not keep focus", input.hasFocus())
             assertEquals("the composition commits before the prose focuses", "Cell texttail", firstCellText(adapter))
         }
 
@@ -743,6 +745,28 @@ internal class EditorTableSurfaceMountTest {
                 up.recycle()
             }
             assertTrue(view.activeTextInput === view.editorEditText)
+        }
+
+    @Test
+    fun `an accessibility click on the prose reports a refusal and releases the cell once it can`() =
+        withMountedView { view, adapter, _ ->
+            val (input) = composeInFirstCell(view)
+            val root = view.editorEditText
+            input.blockExternalEditorUpdatePreparationForTesting = true
+            try {
+                assertFalse("a refused accessibility click must not report success",
+                    root.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null))
+            } finally {
+                input.blockExternalEditorUpdatePreparationForTesting = false
+            }
+            assertSame("a refused click keeps the cell input", input, view.activeTextInput)
+            assertTrue("a refused click keeps the cell focused", input.hasFocus())
+            assertEquals("a refused click keeps the composition pending", "Cell text", firstCellText(adapter))
+            assertTrue("an allowed accessibility click succeeds",
+                root.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null))
+            assertSame("an allowed click releases the cell", root, view.activeTextInput)
+            assertTrue("an allowed click focuses the prose", root.hasFocus())
+            assertEquals("the composition commits before the prose focuses", "Cell texttail", firstCellText(adapter))
         }
 
     @Test
