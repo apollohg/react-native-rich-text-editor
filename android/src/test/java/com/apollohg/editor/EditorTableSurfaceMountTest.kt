@@ -18,6 +18,9 @@ import android.widget.FrameLayout
 import com.apollohg.editor.tables.RootTableHeightSpan
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import java.util.concurrent.TimeUnit
+import kotlin.math.floor
+import kotlin.math.hypot
+import kotlin.math.sqrt
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -54,6 +57,8 @@ internal class EditorTableSurfaceMountTest {
         const val SWIPE_STEPS = 4
         const val SWIPE_STEP_MS = 16L
         const val LONG_PRESS_UP_MS = 1_000L
+        const val OUTSIDE_TAP_JITTER_FRACTION = 0.85f
+        const val SUB_PIXEL_JITTER = 0.9f
         const val LONG_PRESS_HOLD_FACTOR = 2L
         val nestedTableDocument = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Nested"}]}]}]}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
     }
@@ -641,31 +646,33 @@ internal class EditorTableSurfaceMountTest {
         return input to connection
     }
 
-    @Test
-    fun `a horizontal swipe beyond touch slop on the prose keeps the composing cell bound and focused`() =
-        withAttachedMountedView(tableDocument) { view, adapter ->
-        val (input, connection) = composeInFirstCell(view)
-        val (x, y) = proseTouchPoint(view.editorEditText)
-        val slop = ViewConfiguration.get(view.context).scaledTouchSlop
-        val points = (0..SWIPE_STEPS).map { step -> x + step * slop }
-        assertTrue("the swipe stays inside the prose", points.last() < view.editorEditText.width)
-        val events = points.mapIndexed { index, pointX ->
+    private fun dispatchPath(view: RichTextEditorView, points: List<Pair<Float, Float>>) {
+        val events = points.mapIndexed { index, (x, y) ->
             val action = when (index) {
                 0 -> MotionEvent.ACTION_DOWN
                 points.lastIndex -> MotionEvent.ACTION_UP
                 else -> MotionEvent.ACTION_MOVE
             }
-            MotionEvent.obtain(0, index * SWIPE_STEP_MS, action, pointX, y, 0)
+            MotionEvent.obtain(0, index * SWIPE_STEP_MS, action, x, y, 0)
         }
         try {
             events.forEach { view.dispatchTouchEvent(it) }
         } finally {
             events.forEach(MotionEvent::recycle)
         }
-        assertTrue("a swipe must keep the cell input: trace=${input.imeTraceSnapshotForTesting()}",
+    }
+
+    private fun assertComposingCellKeptBoundAndFocused(
+        view: RichTextEditorView,
+        adapter: EditorV2Adapter,
+        input: EditorEditText,
+        connection: InputConnection,
+        gesture: String
+    ) {
+        assertTrue("$gesture must keep the cell input: trace=${input.imeTraceSnapshotForTesting()}",
             view.activeTextInput === input)
-        assertTrue("the bound cell keeps focus after the swipe", input.hasFocus())
-        assertFalse("the prose must not take focus from a swipe", view.editorEditText.hasFocus())
+        assertTrue("the bound cell keeps focus after $gesture", input.hasFocus())
+        assertFalse("the prose must not take focus from $gesture", view.editorEditText.hasFocus())
         assertEquals("the composition stays pending", "Cell text", firstCellText(adapter))
         assertEquals("Cell texttail", input.text.toString())
         assertTrue("the cell connection stays live", connection.beginBatchEdit())
@@ -673,6 +680,46 @@ internal class EditorTableSurfaceMountTest {
         assertTrue(connection.finishComposingText())
         assertEquals("Cell texttail", firstCellText(adapter))
     }
+
+    @Test
+    fun `a horizontal swipe beyond touch slop on the prose keeps the composing cell bound and focused`() =
+        withAttachedMountedView(tableDocument) { view, adapter ->
+            val (input, connection) = composeInFirstCell(view)
+            val (x, y) = proseTouchPoint(view.editorEditText)
+            val slop = ViewConfiguration.get(view.context).scaledTouchSlop
+            val points = (0..SWIPE_STEPS).map { step -> x + step * slop to y }
+            assertTrue("the swipe stays inside the prose", points.last().first < view.editorEditText.width)
+            dispatchPath(view, points)
+            assertComposingCellKeptBoundAndFocused(view, adapter, input, connection, "a swipe")
+        }
+
+    @Test
+    fun `a diagonal jitter outside the tap region keeps the composing cell bound and focused`() =
+        withAttachedMountedView(tableDocument) { view, adapter ->
+            val (input, connection) = composeInFirstCell(view)
+            val (x, y) = proseTouchPoint(view.editorEditText)
+            val jitter = ViewConfiguration.get(view.context).scaledTouchSlop * OUTSIDE_TAP_JITTER_FRACTION
+            dispatchPath(view, listOf(x to y, x + jitter to y + jitter, x + jitter to y + jitter))
+            assertComposingCellKeptBoundAndFocused(view, adapter, input, connection, "a diagonal jitter")
+        }
+
+    @Test
+    fun `a diagonal jitter the surface still counts as a tap releases the composing cell before the prose focuses`() =
+        withAttachedMountedView(tableDocument) { view, adapter ->
+            val (input, _) = composeInFirstCell(view)
+            val (x, y) = proseTouchPoint(view.editorEditText)
+            val slop = ViewConfiguration.get(view.context).scaledTouchSlop
+            val jitter = floor(slop / sqrt(2f)) + SUB_PIXEL_JITTER
+            assertTrue("the jitter leaves a float slop circle of $slop", hypot(jitter, jitter) > slop)
+            assertTrue("the jitter stays inside the integer tap region",
+                2 * jitter.toInt() * jitter.toInt() <= slop * slop)
+            dispatchPath(view, listOf(x to y, x + jitter to y + jitter, x + jitter to y + jitter))
+            val root = view.editorEditText
+            assertTrue("the prose took focus from the tap", root.hasFocus())
+            assertTrue("a focused prose must not leave the cell bound", view.activeTextInput === root)
+            assertFalse(input.hasFocus())
+            assertEquals("the composition commits before the prose focuses", "Cell texttail", firstCellText(adapter))
+        }
 
     @Test
     fun `a long press on the prose releases the composing cell before the root selects`() =

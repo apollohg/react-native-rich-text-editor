@@ -403,7 +403,7 @@ open class EditorTextSurface @JvmOverloads constructor(
 
     protected open fun onSelectionChanged(selStart: Int, selEnd: Int) = Unit
     protected open fun onSurfaceInputStateChanged() = Unit
-    internal open fun onSurfaceLongPress(): Boolean = true
+    internal open fun onSurfaceGestureFocus(): Boolean = true
 
     fun beginBatchEdit(): Boolean {
         batchDepth++

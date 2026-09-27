@@ -204,9 +204,8 @@ class RichTextEditorView @JvmOverloads constructor(
                 }
                 return handled
             }
-            val allowRoot = editorTableSurface.onRootTouch(event)
-            if (allowRoot && editorTableSurface.activeInput == null &&
-                (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_UP)) {
+            editorTableSurface.onRootTouch(event)
+            if (editorTableSurface.activeInput == null && event.actionMasked == MotionEvent.ACTION_DOWN) {
                 editorEditText.isFocusableInTouchMode = true
                 editorEditText.requestFocus()
             }
@@ -399,7 +398,7 @@ class RichTextEditorView @JvmOverloads constructor(
         imageResizeOverlayView.bind(this)
         editorEditText.onBeforeRenderRefresh = imageResizeOverlayView::cancelActiveResize
         editorEditText.onTableRootTouch = editorTableSurface::onRootTouch
-        editorEditText.onTableRootLongPress = editorTableSurface::onRootLongPress
+        editorEditText.onTableRootGesture = editorTableSurface::releaseActiveCellForRootGesture
         editorEditText.onHistoryUpdateApplied = editorTableSurface::followRestoredRootSelection
         editorEditText.tableCellDropHandler = editorTableSurface::onRootDragEvent
         editorScrollView.setOnScrollChangeListener { _, _, _, _, _ ->

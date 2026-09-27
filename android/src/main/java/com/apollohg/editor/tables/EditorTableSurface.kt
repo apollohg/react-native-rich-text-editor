@@ -3,7 +3,6 @@ package com.apollohg.editor.tables
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.graphics.PointF
 import android.graphics.Rect
 import android.graphics.RectF
 import android.text.Annotation
@@ -20,7 +19,6 @@ import android.view.ViewConfiguration
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import kotlin.math.ceil
-import kotlin.math.hypot
 import kotlin.math.roundToInt
 import com.apollohg.editor.EditorClipboard
 import com.apollohg.editor.EditorEditText
@@ -174,8 +172,6 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     private var applyingCellUpdate = false
     private var accessibilityKey: Triple<ULong?, Int, Int?>? = null
     private var activeAppearanceRevision: Long? = null
-    private var blockedRootGesture = false
-    private var pendingRootTapRelease: PointF? = null
     private var coordinator: EditorTableInputCoordinator? = null
     val activeInput: EditorEditText? get() = coordinator?.cellInput?.takeIf { activeCell != null }
     fun nativeTextSelectionActive(): Boolean = activeInput?.let {
@@ -1022,54 +1018,18 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         )
     }
 
-    fun onRootTouch(event: MotionEvent): Boolean {
+    fun onRootTouch(event: MotionEvent) {
+        val root = host.editorEditText
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                blockedRootGesture = false
-                if (host.editorEditText.authoritativeCellSelectionActive) {
-                    host.editorEditText.cellSelectionRootTouchPending = true
-                }
-                pendingRootTapRelease = if (activeCell != null) PointF(event.x, event.y) else null
+            MotionEvent.ACTION_DOWN -> if (root.authoritativeCellSelectionActive) root.cellSelectionRootTouchPending = true
+            MotionEvent.ACTION_UP -> if (root.cellSelectionRootTouchPending) {
+                root.post { root.cellSelectionRootTouchPending = false }
             }
-            MotionEvent.ACTION_MOVE -> {
-                val down = pendingRootTapRelease
-                if (down != null && hypot(event.x - down.x, event.y - down.y) > touchSlop) {
-                    pendingRootTapRelease = null
-                }
-            }
-            MotionEvent.ACTION_POINTER_DOWN -> pendingRootTapRelease = null
-            MotionEvent.ACTION_UP -> {
-                val root = host.editorEditText
-                if (root.cellSelectionRootTouchPending) {
-                    root.post { root.cellSelectionRootTouchPending = false }
-                }
-                if (pendingRootTapRelease != null && !releaseActiveCellForRootGesture()) {
-                    blockedRootGesture = true
-                }
-                pendingRootTapRelease = null
-                if (blockedRootGesture) {
-                    blockedRootGesture = false
-                    return false
-                }
-            }
-            MotionEvent.ACTION_CANCEL -> {
-                host.editorEditText.cellSelectionRootTouchPending = false
-                pendingRootTapRelease = null
-                blockedRootGesture = false
-            }
+            MotionEvent.ACTION_CANCEL -> root.cellSelectionRootTouchPending = false
         }
-        return !blockedRootGesture
     }
 
-    fun onRootLongPress(): Boolean {
-        if (pendingRootTapRelease == null) return true
-        pendingRootTapRelease = null
-        if (releaseActiveCellForRootGesture()) return true
-        blockedRootGesture = true
-        return false
-    }
-
-    private fun releaseActiveCellForRootGesture(): Boolean {
+    fun releaseActiveCellForRootGesture(): Boolean {
         if (activeCell == null) return true
         if (activeInput?.prepareForExternalEditorUpdate() != true) return false
         invalidateCell()
@@ -1318,7 +1278,6 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         }
         val projected = projection(active.tableId, target) ?: return true
         if (!bindCell(active.tableId, target, projected)) {
-            invalidateCell()
             root.requestFocus()
             return true
         }

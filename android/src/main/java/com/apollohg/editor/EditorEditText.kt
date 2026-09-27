@@ -295,8 +295,8 @@ class EditorEditText @JvmOverloads constructor(
     internal var onResizeImageAtDocPosForTesting: ((Int, Int, Int) -> Unit)? = null
     internal var onMoveSelectionScalarForTesting: ((Int, Int, Int) -> Unit)? = null
     internal var onBeforeRenderRefresh: (() -> Unit)? = null
-    internal var onTableRootTouch: ((MotionEvent) -> Boolean)? = null
-    internal var onTableRootLongPress: (() -> Boolean)? = null
+    internal var onTableRootTouch: ((MotionEvent) -> Unit)? = null
+    internal var onTableRootGesture: (() -> Boolean)? = null
     internal var onHistoryUpdateApplied: ((String) -> Unit)? = null
     internal var tableCellDropHandler: ((DragEvent) -> Boolean?)? = null
     internal var onTableCellSelectionSynced: (() -> Unit)? = null
@@ -512,10 +512,7 @@ class EditorEditText @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (onTableRootTouch?.invoke(event) == false) {
-            cancelTextGesture(event)
-            return true
-        }
+        onTableRootTouch?.invoke(event)
         if (event.actionMasked == MotionEvent.ACTION_DOWN &&
             imageSpanHitAt(event.x, event.y) == null
         ) {
@@ -551,7 +548,7 @@ class EditorEditText @JvmOverloads constructor(
         cancel.recycle()
     }
 
-    override fun onSurfaceLongPress(): Boolean = onTableRootLongPress?.invoke() != false
+    override fun onSurfaceGestureFocus(): Boolean = onTableRootGesture?.invoke() != false
 
     override fun onDragEvent(event: DragEvent): Boolean {
         if (isTableCellInput) return false

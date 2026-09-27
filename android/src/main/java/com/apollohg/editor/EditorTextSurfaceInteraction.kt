@@ -68,7 +68,7 @@ internal class EditorTextSurfaceInteraction(
             object : GestureDetector.SimpleOnGestureListener() {
                 override fun onDown(e: MotionEvent) = true
                 override fun onSingleTapUp(e: MotionEvent): Boolean {
-                    if (moved || draggingHandle != 0) return true
+                    if (moved || draggingHandle != 0 || !view.onSurfaceGestureFocus()) return true
                     view.requestFocus()
                     view.setSelection(view.getOffsetForPosition(e.x, e.y))
                     endSelectionActionMode()
@@ -77,11 +77,12 @@ internal class EditorTextSurfaceInteraction(
                     return true
                 }
                 override fun onDoubleTap(e: MotionEvent): Boolean {
+                    if (!view.onSurfaceGestureFocus()) return true
                     selectWord(e.x, e.y)
                     return true
                 }
                 override fun onLongPress(e: MotionEvent) {
-                    if (draggingHandle != 0 || moved || !view.onSurfaceLongPress()) return
+                    if (draggingHandle != 0 || moved || !view.onSurfaceGestureFocus()) return
                     val offset = view.getOffsetForPosition(e.x, e.y)
                     val from = minOf(view.selectionStart, view.selectionEnd)
                     val to = maxOf(view.selectionStart, view.selectionEnd)
@@ -593,6 +594,7 @@ internal class EditorTextSurfaceInteraction(
     fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
         when (action) {
             AccessibilityNodeInfo.ACTION_CLICK -> {
+                if (!view.onSurfaceGestureFocus()) return false
                 view.requestFocus()
                 showKeyboard()
                 view.performClick()
