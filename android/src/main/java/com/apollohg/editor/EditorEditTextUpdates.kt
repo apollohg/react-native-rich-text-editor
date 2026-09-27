@@ -307,6 +307,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         onContentSizeMayChange?.invoke()
     }
     onSelectionOrContentMayChange?.invoke()
+    onRootUpdateApplied?.invoke(updateJSON)
     if (heightBehavior == EditorHeightBehavior.AUTO_GROW) {
         requestLayout()
     } else {

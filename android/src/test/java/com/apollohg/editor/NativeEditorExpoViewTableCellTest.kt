@@ -12,6 +12,7 @@ import android.widget.FrameLayout
 import com.apollohg.editor.tables.TableToolbarTestItems
 import com.apollohg.editor.tables.activeTableCellPosition
 import com.apollohg.editor.tables.pressKeyboardToolbarButton
+import com.apollohg.editor.tables.required
 import com.apollohg.editor.tables.selectTableCells
 import com.apollohg.editor.tables.tableCellPositions
 import com.apollohg.editor.viewer.PreparedProseDrawingView
@@ -408,6 +409,30 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             assertEquals("the caret follows the reapplied edit", "FirstX".length, input.selectionStart)
             shadowOf(Looper.getMainLooper()).idle()
             assertFalse("moving between cells never blurs: $focus", focus.contains(false))
+        }
+
+    @Test
+    fun `javascript undo under a cell rectangle binds the cell holding the restored caret`() =
+        withActiveCell { view, input, adapter ->
+            typeAtCellEnd(input, "X")
+            val positions = adapter.tableCellPositions(adapter.cachedTableRecords.keys.single())
+            val root = view.richTextView.editorEditText
+            root.selectTableCells(adapter, positions.first(), positions.last())
+            assertSame("the rectangle retires the cell input", root, view.richTextView.activeTextInput)
+            assertTrue(root.hasFocus())
+
+            adapter.callWithEnvelope(JSONObject(), includeBaseRevision = false) {
+                UniffiEditorV2Backend.undo(adapter.editorId, it)
+            }
+                .required("javascript undo")
+            assertTrue(view.applyEditorUpdate(
+                UniffiEditorV2Backend.renderUpdate(adapter.editorId, null, null).required("render update")))
+
+            assertEquals("the JavaScript undo restores the document", listOf("First", "Second"), cellTexts(adapter))
+            assertSame("the cell holding the restored caret takes the input", input, view.richTextView.activeTextInput)
+            assertEquals(positions[0].toLong(), view.richTextView.activeTableCellPosition)
+            assertTrue("the focused editor keeps focus in the bound cell", input.hasFocus())
+            assertEquals("the caret is restored in the cell", "First".length, input.selectionStart)
         }
 
     @Test

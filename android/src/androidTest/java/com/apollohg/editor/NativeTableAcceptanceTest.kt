@@ -323,6 +323,55 @@ class NativeTableAcceptanceTest {
     }
 
     @Test
+    fun remoteRowDeleteUnderACellRectangleBindsTheCellHoldingTheMappedCaret() {
+        ActivityScenario.launch(NativeEditorOutsideTapActivity::class.java).use { scenario ->
+            val harness = Harness(scenario)
+            val room = TableRoomSeed(CONFIG, REMOTE_GRID_DOCUMENT)
+            harness.createRoom(room)
+            val remote = room.makeAdapter()
+            try {
+                harness.onMain {
+                    val relay = TableCollaborationRelay(listOf(harness.adapter.editorId, remote.editorId))
+                    relay.exchangeUntilIdle()
+                    val rectangleCell = harness.positions()[REMOTE_GRID_COLUMNS + 1]
+                    harness.selectCells(rectangleCell, rectangleCell)
+                    assertTrue(harness.root.requestFocus())
+                    assertEquals(setOf(rectangleCell), harness.selectedCells())
+                    assertSame("the rectangle lives on the root", harness.root, harness.view.activeTextInput)
+                    assertNull(harness.activeCell())
+
+                    requireNotNull(remote.refreshFromRustState(null))
+                    remote.applyLocalSelection(documentCellSelection(rectangleCell, rectangleCell))
+                        .required("remote row selection")
+                    remote.callWithEnvelope(JSONObject().put("command", JSONObject().put("type", DELETE_TABLE_ROWS))) {
+                        UniffiEditorV2Backend.applyCommand(remote.editorId, it)
+                    }.required("remote row delete")
+                    assertEquals(setOf(harness.adapter.editorId), relay.exchangeUntilIdle())
+                    harness.deliverRemoteCommit()
+                }
+                harness.onMain {
+                    val mappedCell = harness.positions()[REMOTE_GRID_COLUMNS]
+                    val mappedCaret = mappedCell + CELL_TEXT_OFFSET
+                    val resolved = harness.engineSelection()
+                    assertEquals("$resolved", TEXT_SELECTION, resolved.getString("type"))
+                    assertEquals("the removed rectangle becomes a caret at the start of the next row like a local " +
+                        "row delete: $resolved", mappedCaret, resolved.getInt("anchor"))
+                    assertEquals("$resolved", mappedCaret, resolved.getInt("head"))
+                    assertEquals("the cell holding the mapped caret takes the input",
+                        mappedCell.toLong(), harness.activeCell())
+                    val input = harness.view.activeTextInput
+                    assertFalse(input === harness.root)
+                    assertTrue("the focused editor keeps focus in the bound cell", input.hasFocus())
+                    assertEquals(0, input.selectionStart)
+                }
+            } finally {
+                remote.destroy()
+                harness.release()
+            }
+        }
+    }
+
+    @Test
     fun editorAndViewerShareTableGeometryUnderOneThemeFontAndWidth() {
         ActivityScenario.launch(NativeEditorOutsideTapActivity::class.java).use { scenario ->
             val harness = Harness(scenario)
@@ -646,23 +695,25 @@ class NativeTableAcceptanceTest {
                 assertEquals("both peers converge", remote.documentJson(), harness.documentJson())
                 assertSame("the dead cell releases the input", harness.root, harness.view.activeTextInput)
                 assertNull(harness.activeCell())
-                val tableEnd = harness.tableEnd()
+                val followingProseStart = harness.tableEnd() + BLOCK_CONTENT_OFFSET
                 val resolved = harness.engineSelection()
                 assertEquals("$resolved", TEXT_SELECTION, resolved.getString("type"))
-                assertEquals("KNOWN DEFECT: local caret not remapped after a remote row delete: $resolved before $local",
-                    local.getInt("anchor"), resolved.getInt("anchor"))
-                assertEquals("KNOWN DEFECT: local caret not remapped after a remote row delete: $resolved",
-                    local.getInt("head"), resolved.getInt("head"))
-                assertTrue("KNOWN DEFECT: local caret not remapped after a remote row delete, so it lands after the table",
-                    resolved.getInt("anchor") > tableEnd)
+                assertEquals("the caret in the removed last row moves forward into the prose after the table like " +
+                    "a local row delete: $resolved before $local", followingProseStart, resolved.getInt("anchor"))
+                assertEquals("$resolved", followingProseStart, resolved.getInt("head"))
                 assertEquals("no cell rectangle survives the remote deletion", emptySet<Int>(), harness.selectedCells())
-                val afterRemote = harness.documentJson()
                 assertEquals("the remote change adds no local history", canRedoBefore, harness.adapter.historyCanRedo())
-                assertEquals("KNOWN DEFECT: canUndo stays true after a remote row delete removed the only local undo item",
-                    true, harness.adapter.historyCanUndo())
-                assertNull("KNOWN DEFECT: local undo is refused after a remote row delete while canUndo is true",
-                    harness.adapter.undo())
-                assertEquals("local undo never restores the remote deletion", afterRemote, harness.documentJson())
+                assertEquals("the typing inside the removed row is dropped, but the earlier resize outlives it and " +
+                    "stays undoable", true, harness.adapter.historyCanUndo())
+                val undone = requireNotNull(harness.adapter.undo()) { "undo reverts the surviving resize" }
+                assertTrue(harness.root.applyUpdateJSON(undone))
+                assertEquals("undo reverts the resize and never restores the remote deletion",
+                    settled.take(TABLE_ROWS - 1), harness.grid())
+                val restored = harness.engineSelection()
+                assertEquals("$restored", TEXT_SELECTION, restored.getString("type"))
+                assertEquals("the resize's cell selection in the removed row restores to the prose after the " +
+                    "table: $restored", followingProseStart, restored.getInt("anchor"))
+                assertEquals("$restored", followingProseStart, restored.getInt("head"))
             }
         } finally {
             remote.destroy()
@@ -767,6 +818,8 @@ class NativeTableAcceptanceTest {
         private const val CELL_TEXT_OFFSET = 2
         private const val PARITY_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Merged header across two columns"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"A tall cell whose text wraps over several lines"}]},{"type":"paragraph","content":[{"type":"text","text":"second"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"abcdefghijkl"}]}]},{"type":"table_cell","attrs":{"colwidth":[140]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Ready"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"x"}]}]},{"type":"table_cell","content":[{"type":"paragraph"}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After"}]}]}"""
         private const val IRREGULAR_DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Raw"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Wide header"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":3},"content":[{"type":"paragraph","content":[{"type":"text","text":"Overhang"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Short row"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"One"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Two"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Four"}]}]}]}]}]}"""
+        private const val REMOTE_GRID_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"a0"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"a1"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"b0"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"b1"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"c0"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"c1"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After"}]}]}"""
+        private const val REMOTE_GRID_COLUMNS = 2
         private const val IRREGULAR_SHORT_ROW_CELL = 3
         private const val SHORT_ROW_TEXT = "Short row"
         private val RAW_ROW_WIDTHS = listOf(3, 2, 4)

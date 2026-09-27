@@ -1376,19 +1376,23 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         cellWasFocused: Boolean
     ): Boolean {
         if (bindCell(holding = selection, range = range, adapter = adapter, focus = cellWasFocused)) return true
-        invalidateCell()
-        if (cellWasFocused) host.editorEditText.requestFocus()
+        retireActiveCell(refocusRoot = cellWasFocused)
         return true
     }
 
-    fun followRestoredRootSelection(update: String) {
-        if (activeCell != null) return
+    private fun retireActiveCell(refocusRoot: Boolean) {
+        invalidateCell()
+        if (refocusRoot) host.editorEditText.requestFocus()
+    }
+
+    fun followRootSelectionIntoCell(update: String) {
         val root = host.editorEditText
+        if (applyingCellUpdate || activeCell != null || !root.hasFocus()) return
         val adapter = root.v2Driver as? EditorV2Adapter ?: return
         if (!root.hasAuthorizedNativeTableOwner(adapter)) return
         val selection = runCatching { JSONObject(update).optJSONObject("selection") }.getOrNull() ?: return
         val range = selectionScalarRange(selection) ?: return
-        bindCell(holding = selection, range = range, adapter = adapter, focus = root.hasFocus())
+        bindCell(holding = selection, range = range, adapter = adapter, focus = true)
     }
 
     private fun bindCell(
@@ -1414,7 +1418,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val adapter = host.editorEditText.v2Driver as? EditorV2Adapter ?: return
         if (!localUpdate && coordinator?.positionMap?.binding?.revision !=
             adapter.baseDocumentRevision.toString()) {
-            invalidateCell()
+            retireActiveCell(refocusRoot = activeInput?.hasFocus() == true)
             return
         }
         val projected = projection(active.tableId, active.cellIndex)

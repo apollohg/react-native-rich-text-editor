@@ -597,7 +597,7 @@ internal class EditorTableSurfaceMountTest {
                 .cells.first().blocks.first().scalarStart
             val caret = JSONObject().put("type", "text").put("anchorScalar", cellStart).put("headScalar", cellStart)
             view.editorTableSurface.clear()
-            view.editorTableSurface.followRestoredRootSelection(JSONObject().put("selection", caret).toString())
+            view.editorTableSurface.followRootSelectionIntoCell(JSONObject().put("selection", caret).toString())
             val input = view.activeTextInput
             assertTrue("bound ${input.width}x${input.height} without a presented cell",
                 input === view.editorEditText)
@@ -835,9 +835,12 @@ internal class EditorTableSurfaceMountTest {
         assertTrue(view.editorEditText.applyUpdateJSON(update))
         measure(view, 600)
 
-        assertTrue(view.activeTextInput === view.editorEditText)
+        val rebound = view.activeTextInput
+        assertTrue("the focused editor rebinds the cell holding the caret", rebound !== view.editorEditText)
+        assertTrue(rebound.hasFocus())
+        assertEquals("Replacement", rebound.text.toString())
         assertEquals("Replacement", firstCellText(adapter))
-        assertTrue(!connection.beginBatchEdit())
+        assertTrue("the replaced cell's connection is retired", !connection.beginBatchEdit())
     }
 
     @Test

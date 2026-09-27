@@ -82,5 +82,5 @@ internal fun EditorEditText.performToolbarRedoImpl() = performToolbarHistoryComm
 private fun EditorEditText.performToolbarHistoryCommand(command: EditorV2Driver.() -> String?) {
     if (!prepareForToolbarCommand(EditorEditText::isAuthorizedForHistoryCommand)) return
     val update = v2Driver?.command() ?: return
-    if (applyUpdateJSON(update)) onHistoryUpdateApplied?.invoke(update)
+    applyUpdateJSON(update)
 }

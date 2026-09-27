@@ -2215,6 +2215,33 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    func testJavaScriptUndoUnderACellRectangleBindsTheCellHoldingTheRestoredCaret() throws {
+        try withExpoTableGeometry(document: fourCellDocument) { fixture in
+            let view = fixture.host.richTextView
+            let root = view.textView
+            let original = try fixture.adapter.tableCellTexts()
+            try fixture.activateCell(1).insertText("X")
+            try fixture.selectCells(anchor: 0, head: 1)
+            XCTAssertTrue(view.activeTextInput === root, "the rectangle retires the cell input")
+            XCTAssertTrue(root.isFirstResponder)
+            let cellInput = try XCTUnwrap(view.textInputs.last { $0 !== root })
+
+            let undone = fixture.adapter.callWithEnvelope([:], includeBaseRevision: false) {
+                editorV2Undo(editorId: fixture.adapter.editorId, requestJson: $0)
+            }
+            XCTAssertNil(undone.error, "the JavaScript undo was refused: \(String(describing: undone.error))")
+            let rendered = editorV2RenderUpdate(editorId: fixture.adapter.editorId,
+                                                mirrorScalarAnchor: nil, mirrorScalarHead: nil)
+            XCTAssertTrue(fixture.host.applyEditorUpdate(try XCTUnwrap(rendered.value)))
+
+            XCTAssertEqual(try fixture.adapter.tableCellTexts(), original, "the JavaScript undo restores the document")
+            XCTAssertTrue(view.activeTextInput === cellInput, "the cell holding the restored caret takes the input")
+            XCTAssertEqual(view.activeTableCellPosition, fixture.positions[0])
+            XCTAssertTrue(cellInput.isFirstResponder, "the focused editor keeps focus in the bound cell")
+            XCTAssertEqual(cellInput.selectedRange, NSRange(location: 0, length: 0), "the caret is restored in the cell")
+        }
+    }
+
     func testKeyboardToolbarUndoUnderACellRectangleKeepsARestoredProseCaretOnTheRoot() throws {
         try withExpoTableGeometry(document: proseBeforeTableDocument) { fixture in
             fixture.host.setToolbarButtonsJson(TableToolbarTestItems.historyJson)

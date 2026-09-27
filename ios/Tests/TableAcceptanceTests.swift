@@ -42,6 +42,8 @@ final class TableAcceptanceTests: XCTestCase {
         static let parityTheme = ##"{"text":{"fontSize":17,"color":"#1b1f2aff"},"backgroundColor":"#ffffffff","contentInsets":{"top":12,"right":12,"bottom":12,"left":12},"table":{"minColumnWidth":72,"cellPadding":8,"borderWidth":1,"borderColor":"#a0acb7ff","headerBackgroundColor":"#e8f0f5ff"}}"##
         static let parityDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Merged header across two columns"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"A tall cell whose text wraps over several lines"}]},{"type":"paragraph","content":[{"type":"text","text":"second"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"abcdefghijkl"}]}]},{"type":"table_cell","attrs":{"colwidth":[140]},"content":[{"type":"paragraph","content":[{"type":"text","text":"Ready"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"x"}]}]},{"type":"table_cell","content":[{"type":"paragraph"}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After"}]}]}"#
         static let irregularDocument = #"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Raw"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Wide header"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":3},"content":[{"type":"paragraph","content":[{"type":"text","text":"Overhang"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Short row"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"One"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Two"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Three"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Four"}]}]}]}]}]}"#
+        static let remoteGridDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"a0"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"a1"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"b0"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"b1"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"c0"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"c1"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After"}]}]}"#
+        static let remoteGridColumns = 2
         static let irregularShortRowCell = 3
         static let irregularCellActions = ["Clear cells", "Delete table"]
         static let singleCellActions = [
@@ -466,24 +468,27 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(adapter.documentJson(), remoteAdapter.documentJson(), "both peers converge")
         XCTAssertTrue(harness.view.activeTextInput === harness.root, "the dead cell releases the input")
         XCTAssertNil(harness.activeCell())
-        let tableEnd = try harness.tableEnd()
+        let followingProseStart = Int(try harness.tableEnd()) + Acceptance.blockContentOffset
         let resolved = try harness.engineSelection()
         XCTAssertEqual(resolved["type"] as? String, Acceptance.textSelection, "\(resolved)")
-        XCTAssertEqual(resolved["anchor"] as? Int, localBeforeRemote["anchor"] as? Int,
-                       "KNOWN DEFECT: local caret not remapped after a remote row delete: \(resolved) before \(localBeforeRemote)")
-        XCTAssertEqual(resolved["head"] as? Int, localBeforeRemote["head"] as? Int,
-                       "KNOWN DEFECT: local caret not remapped after a remote row delete: \(resolved)")
-        XCTAssertGreaterThan(resolved["anchor"] as? Int ?? 0, Int(tableEnd),
-                             "KNOWN DEFECT: local caret not remapped after a remote row delete, so it lands after the table")
+        XCTAssertEqual(resolved["anchor"] as? Int, followingProseStart,
+                       "the caret in the removed last row moves forward into the prose after the table like a local row delete: \(resolved) before \(localBeforeRemote)")
+        XCTAssertEqual(resolved["head"] as? Int, followingProseStart, "\(resolved)")
         XCTAssertEqual(try harness.selectedCells(), [], "no cell rectangle survives the remote deletion")
         let historyAfterRemote = try XCTUnwrap(adapter.historyFlags())
         XCTAssertEqual(historyAfterRemote.canRedo, historyBeforeRemote.canRedo, "the remote change adds no local history")
         XCTAssertTrue(historyAfterRemote.canUndo,
-                      "KNOWN DEFECT: canUndo stays true after a remote row delete removed the only local undo item")
-        let afterRemote = try harness.documentJSON()
-        XCTAssertNil(adapter.undo(), "KNOWN DEFECT: local undo is refused after a remote row delete while canUndo is true")
+                      "the typing inside the removed row is dropped, but the earlier resize outlives it and stays undoable")
+        let undone = try XCTUnwrap(adapter.undo(), "undo reverts the surviving resize")
+        XCTAssertTrue(harness.root.applyUpdateJSON(undone))
         harness.expo.layoutIfNeeded()
-        XCTAssertEqual(try harness.documentJSON(), afterRemote, "local undo never restores the remote deletion")
+        XCTAssertEqual(try harness.grid(), Array(settled.prefix(Acceptance.tableRows - 1)),
+                       "undo reverts the resize and never restores the remote deletion")
+        let restored = try harness.engineSelection()
+        XCTAssertEqual(restored["type"] as? String, Acceptance.textSelection, "\(restored)")
+        XCTAssertEqual(restored["anchor"] as? Int, followingProseStart,
+                       "the resize's cell selection in the removed row restores to the prose after the table: \(restored)")
+        XCTAssertEqual(restored["head"] as? Int, followingProseStart, "\(restored)")
 
         positions = try harness.positions()
         try harness.root.selectTableCells(adapter: adapter, anchor: positions[0], head: positions[1])
@@ -540,6 +545,50 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(grid[2].map(\.paragraphs), Array(repeating: [""], count: Acceptance.tableColumns))
 
         try export(adapter: adapter)
+    }
+
+    func testRemoteRowDeleteUnderACellRectangleBindsTheCellHoldingTheMappedCaret() throws {
+        let room = try TableRoomSeed(localConfigJson: Acceptance.config, documentJson: Acceptance.remoteGridDocument)
+        let editorId = room.makeEditor()
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let harness = Harness(editorId: editorId, adapter: adapter)
+        defer { harness.close() }
+        harness.expo.layoutIfNeeded()
+        let remoteId = room.makeEditor()
+        defer { destroyV2Editor(id: remoteId) }
+        let remoteAdapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: remoteId))
+        let relay = try TableCollaborationRelay(editorIds: [adapter.editorId, remoteAdapter.editorId])
+        _ = try relay.exchangeUntilIdle()
+
+        let rectangleCell = try harness.positions()[Acceptance.remoteGridColumns + 1]
+        try harness.root.selectTableCells(adapter: adapter, anchor: rectangleCell, head: rectangleCell)
+        harness.expo.layoutIfNeeded()
+        XCTAssertTrue(harness.root.becomeFirstResponder())
+        XCTAssertEqual(try harness.selectedCells(), [Int(rectangleCell)])
+        XCTAssertTrue(harness.view.activeTextInput === harness.root, "the rectangle lives on the root")
+        XCTAssertNil(harness.activeCell())
+
+        XCTAssertNotNil(remoteAdapter.refreshFromRustState(mirrorSelection: nil))
+        XCTAssertNil(remoteAdapter.applyLocalSelection(documentCellSelection(anchor: rectangleCell, head: rectangleCell)).error)
+        let remoteDelete = remoteAdapter.callWithEnvelope(["command": ["type": Acceptance.deleteTableRows]]) {
+            editorV2ApplyCommand(editorId: remoteAdapter.editorId, requestJson: $0)
+        }
+        XCTAssertNil(remoteDelete.error, "the remote peer could not delete its row: \(String(describing: remoteDelete.error))")
+        XCTAssertEqual(try relay.exchangeUntilIdle(), [adapter.editorId])
+        harness.deliverRemoteCommit()
+
+        let mappedCell = try harness.positions()[Acceptance.remoteGridColumns]
+        let mappedCaret = Int(mappedCell) + Acceptance.cellTextOffset
+        let resolved = try harness.engineSelection()
+        XCTAssertEqual(resolved["type"] as? String, Acceptance.textSelection, "\(resolved)")
+        XCTAssertEqual(resolved["anchor"] as? Int, mappedCaret,
+                       "the removed rectangle becomes a caret at the start of the next row like a local row delete: \(resolved)")
+        XCTAssertEqual(resolved["head"] as? Int, mappedCaret, "\(resolved)")
+        XCTAssertEqual(harness.activeCell(), mappedCell, "the cell holding the mapped caret takes the input")
+        XCTAssertFalse(harness.view.activeTextInput === harness.root)
+        XCTAssertTrue(harness.view.activeTextInput.isFirstResponder, "the focused editor keeps focus in the bound cell")
+        XCTAssertEqual(harness.view.activeTextInput.selectedRange, NSRange(location: 0, length: 0))
     }
 
     func testEditorAndViewerShareTableGeometryUnderOneThemeFontAndWidth() throws {
