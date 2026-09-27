@@ -24,6 +24,8 @@ final class TableAcceptanceTests: XCTestCase {
         static let exportFileName = "ios-table-acceptance.json"
         static let insertTable = "insertTable"
         static let deleteTableRows = "deleteTableRows"
+        static let textSelection = "text"
+        static let cellSelection = "cell"
         static let tableNode = "table"
         static let rowNode = "table_row"
         static let cellNode = "table_cell"
@@ -60,12 +62,13 @@ final class TableAcceptanceTests: XCTestCase {
         let editorId: UInt64
         let adapter: EditorV2Adapter
         let window: UIWindow
+        let remote: RemoteTablePeer
         private(set) var expo: NativeEditorExpoView
-        private var nextRemoteRequestId = Acceptance.remoteRequestIdBase
 
         init(editorId: UInt64, adapter: EditorV2Adapter) {
             self.editorId = editorId
             self.adapter = adapter
+            remote = RemoteTablePeer(adapter: adapter, requestIdBase: Acceptance.remoteRequestIdBase)
             window = UIWindow(frame: CGRect(origin: .zero, size: Acceptance.editorSize))
             expo = NativeEditorExpoView()
             expo.frame = window.bounds
@@ -93,12 +96,11 @@ final class TableAcceptanceTests: XCTestCase {
         }
 
         func positions() throws -> [UInt32] {
-            let cells = try XCTUnwrap(adapter.cachedTableRecords[try tableID]?["cells"] as? [[String: Any]])
-            return try cells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
+            try adapter.tableCellPositions(tableID: try tableID)
         }
 
         func activeCell() -> UInt32? {
-            view.activeTextInput.tableCellPositionMap?.binding.cellSourcePosition
+            view.activeTableCellPosition
         }
 
         func selectedCells() throws -> Set<Int> {
@@ -106,10 +108,18 @@ final class TableAcceptanceTests: XCTestCase {
         }
 
         func presentedCell(_ position: UInt32) throws -> ViewerTablePresentedCell {
-            let id = try tableID
-            return try XCTUnwrap(try drawing.mountedTablePresentation()?.cells.first {
-                $0.surface.identity == id && $0.sourcePosition == Int(position) && $0.cell.sourceCellIndex != nil
-            }, "cell \(position) is not presented")
+            try drawing.presentedRealCell(tableID: try tableID, position: position)
+        }
+
+        func selection(at positions: [UInt32], _ indices: Int...) -> Set<Int> {
+            Set(indices.map { Int(positions[$0]) })
+        }
+
+        func engineSelection() throws -> [String: Any] {
+            let rendered = editorV2RenderUpdate(editorId: adapter.editorId, mirrorScalarAnchor: nil, mirrorScalarHead: nil)
+            let update = try XCTUnwrap(rendered.value, "render update failed: \(String(describing: rendered.error))")
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(update.utf8)) as? [String: Any])
+            return try XCTUnwrap(object["selection"] as? [String: Any])
         }
 
         func documentJSON() throws -> String {
@@ -154,20 +164,8 @@ final class TableAcceptanceTests: XCTestCase {
             expo.layoutIfNeeded()
         }
 
-        func applyRemote(_ payload: [String: Any], call: (String, String) -> FfiJsonResult) throws {
-            nextRemoteRequestId += 1
-            var envelope = payload
-            envelope["version"] = 1
-            envelope["requestId"] = String(nextRemoteRequestId)
-            envelope["baseDocumentRevision"] = String(adapter.baseDocumentRevision)
-            let data = try JSONSerialization.data(withJSONObject: envelope)
-            let result = call(adapter.editorId, try XCTUnwrap(String(data: data, encoding: .utf8)))
-            XCTAssertNil(result.error, "the remote peer's change was refused: \(String(describing: result.error))")
-        }
-
         func deliverRemoteCommit() {
-            NativeEditorViewRegistry.shared.applyRemoteCommitRefresh(editorId: editorId)
-            expo.layoutIfNeeded()
+            expo.deliverRemoteCommit(editorId: editorId)
         }
 
         func bind(cell position: UInt32) throws -> EditorTextView {
@@ -327,6 +325,7 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(grid.count, Acceptance.tableRows + 1, "\(grid)")
         XCTAssertEqual(grid[3].map(\.paragraphs), Array(repeating: [""], count: Acceptance.tableColumns))
         positions = try harness.positions()
+        XCTAssertEqual(try harness.selectedCells(), [], "adding a row leaves no cell rectangle")
         try EditorTableInputTests.selectCells(anchor: positions[Acceptance.tableColumns * 3],
                                               head: positions[Acceptance.tableColumns * 3],
                                               adapter: adapter, view: harness.view)
@@ -334,6 +333,8 @@ final class TableAcceptanceTests: XCTestCase {
         try harness.perform(Acceptance.deleteRowLabel, onCellAt: positions[Acceptance.tableColumns * 3])
         XCTAssertEqual(try harness.grid().count, Acceptance.tableRows)
         XCTAssertEqual(try harness.grid().prefix(3).map { $0.map(\.paragraphs) }, grid.prefix(3).map { $0.map(\.paragraphs) })
+        XCTAssertEqual(try harness.selectedCells(), harness.selection(at: try harness.positions(), Acceptance.tableColumns * 2),
+                       "deleting the selected row selects the first real cell of the row above")
 
         positions = try harness.positions()
         try EditorTableInputTests.selectCells(anchor: positions[Acceptance.tableColumns - 1],
@@ -345,6 +346,7 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(grid.map(\.count), Array(repeating: Acceptance.tableColumns + 1, count: Acceptance.tableRows), "\(grid)")
         XCTAssertEqual(grid[0][Acceptance.tableColumns].type, Acceptance.headerNode, "the header row stays a header row")
         positions = try harness.positions()
+        XCTAssertEqual(try harness.selectedCells(), [], "adding a column leaves no cell rectangle")
         let addedColumnHeader = positions[Acceptance.tableColumns]
         try EditorTableInputTests.selectCells(anchor: addedColumnHeader, head: addedColumnHeader,
                                               adapter: adapter, view: harness.view)
@@ -352,6 +354,8 @@ final class TableAcceptanceTests: XCTestCase {
         try harness.perform(Acceptance.deleteColumnLabel, onCellAt: addedColumnHeader)
         grid = try harness.grid()
         XCTAssertEqual(grid.map(\.count), Array(repeating: Acceptance.tableColumns, count: Acceptance.tableRows), "\(grid)")
+        XCTAssertEqual(try harness.selectedCells(), harness.selection(at: try harness.positions(), Acceptance.tableColumns - 1),
+                       "deleting the selected column selects the cell before it")
         let settled = grid
 
         positions = try harness.positions()
@@ -382,9 +386,11 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(try harness.grid(), settled, "one undo removes the whole resize")
         XCTAssertEqual(try harness.presentedCell(try harness.positions()[0]).bounds.width, firstColumn.bounds.width,
                        accuracy: Acceptance.geometryAccuracy, "undo restores the column geometry")
+        XCTAssertEqual(try harness.selectedCells(), [Int(resizeTarget)], "undo keeps the selected real cell")
         XCTAssertTrue(harness.root.applyUpdateJSON(try XCTUnwrap(adapter.redo())))
         harness.expo.layoutIfNeeded()
         XCTAssertEqual(try harness.grid(), grid, "redo restores the resize")
+        XCTAssertEqual(try harness.selectedCells(), [Int(resizeTarget)], "redo keeps the selected real cell")
         let resized = grid
 
         positions = try harness.positions()
@@ -413,25 +419,25 @@ final class TableAcceptanceTests: XCTestCase {
         harness.root.contentOffset.y = 0
         try harness.surface.updateGeometry(from: harness.root)
 
-        positions = try harness.positions()
-        let activeBeforeRemote = try XCTUnwrap(harness.activeCell())
-        try harness.applyRemote(["selection": [
-            "type": "cell",
-            "anchorCell": ["kind": "document", "offset": Int(activeBeforeRemote)],
-            "headCell": ["kind": "document", "offset": Int(activeBeforeRemote)]
-        ]]) { editorV2SetSelection(editorId: $0, requestJson: $1) }
-        try harness.applyRemote(["command": ["type": Acceptance.deleteTableRows]]) {
-            editorV2ApplyCommand(editorId: $0, requestJson: $1)
-        }
+        let localBeforeRemote = try harness.engineSelection()
+        XCTAssertEqual(localBeforeRemote["type"] as? String, Acceptance.textSelection,
+                       "the local selection is the caret in the active cell: \(localBeforeRemote)")
+        XCTAssertEqual(harness.activeCell(), lastCell)
+        try harness.remote.applyCommand(["type": Acceptance.deleteTableRows])
         harness.deliverRemoteCommit()
         grid = try harness.grid()
         XCTAssertEqual(grid.count, Acceptance.tableRows - 1, "the remote peer removed the active cell's row: \(grid)")
         XCTAssertEqual(grid, Array(resized.prefix(Acceptance.tableRows - 1)))
         XCTAssertTrue(harness.view.activeTextInput === harness.root, "the dead cell releases the input")
         XCTAssertNil(harness.activeCell())
-        let survivingSelection = try harness.selectedCells()
-        XCTAssertTrue(survivingSelection.isSubset(of: Set(try harness.positions().map(Int.init))),
-                      "only surviving real cells may stay selected: \(survivingSelection)")
+        positions = try harness.positions()
+        let cellAbove = positions[Acceptance.tableColumns]
+        XCTAssertEqual(try harness.selectedCells(), [Int(cellAbove)],
+                       "the local caret in the deleted row resolves to the first real cell of the row above")
+        let resolved = try harness.engineSelection()
+        XCTAssertEqual(resolved["type"] as? String, Acceptance.cellSelection, "\(resolved)")
+        XCTAssertEqual(resolved["anchorCell"] as? Int, Int(cellAbove), "\(resolved)")
+        XCTAssertEqual(resolved["headCell"] as? Int, Int(cellAbove), "\(resolved)")
 
         let tableBeforeDirection = try harness.documentJSON()
         positions = try harness.positions()
@@ -445,6 +451,7 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertGreaterThan(rtlFirst.minX, rtlSecond.minX, "right-to-left mirrors the logical columns")
         XCTAssertEqual(rtlFirst.width, ltrFirst.width, accuracy: Acceptance.geometryAccuracy)
         XCTAssertEqual(try harness.documentJSON(), tableBeforeDirection, "direction is presentation only")
+        XCTAssertEqual(try harness.selectedCells(), [Int(cellAbove)], "direction never changes the selected cells")
 
         let beforeRemount = try harness.documentJSON()
         harness.remount()

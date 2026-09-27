@@ -61,24 +61,18 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         val token: Long,
         val tableId: String
     ) {
-        private var nextRemoteRequestId = REMOTE_REQUEST_ID_BASE
+        private val remote = RemoteTablePeer(adapter, REMOTE_REQUEST_ID_BASE)
         private var nextKeyEventTime = 0L
 
         val root: EditorEditText get() = view.richTextView.editorEditText
         val surface: EditorTableSurface get() = view.richTextView.editorTableSurface
         val drawing: PreparedProseDrawingView get() = surface.drawingView
 
-        fun positions(): List<Int> {
-            val cells = requireNotNull(adapter.cachedTableRecords[tableId]).getJSONArray("cells")
-            return (0 until cells.length()).map { cells.getJSONObject(it).getInt("sourcePos") }
-        }
+        fun positions(): List<Int> = adapter.tableCellPositions(tableId)
 
         fun tablePos(): Int = requireNotNull(adapter.cachedTableRecords[tableId]).getInt("tablePos")
 
-        fun presentedCell(position: Int): ViewerTablePresentedCell =
-            requireNotNull(drawing.presentedTableCells().firstOrNull {
-                it.surface.editorTableId == tableId && it.sourcePosition == position && it.cell.sourceCellIndex != null
-            }) { "cell $position is not presented" }
+        fun presentedCell(position: Int): ViewerTablePresentedCell = drawing.presentedRealCell(tableId, position)
 
         fun visibleRect(cell: ViewerTablePresentedCell): RectF? =
             RectF(cell.bounds).takeIf { it.intersect(cell.clip) }
@@ -86,7 +80,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         fun remoteRects(selection: RemoteTableCellSelection): List<RectF> =
             requireNotNull(drawing.tableCellRects(selection.tableId, selection.sourcePositions))
 
-        fun activeCellPosition(): Long? = view.richTextView.activeTextInput.tableCellPositionMap?.binding?.cellSourcePos
+        fun activeCellPosition(): Long? = view.richTextView.activeTableCellPosition
 
         fun relayout() {
             view.measure(
@@ -117,7 +111,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         }
 
         fun selectCells(anchor: Int, head: Int) {
-            val admitted = adapter.callWithEnvelope(JSONObject().put("selection", cellSelection(anchor, head))) {
+            val admitted = adapter.callWithEnvelope(JSONObject().put("selection", documentCellSelection(anchor, head))) {
                 UniffiEditorV2Backend.setSelection(adapter.editorId, it)
             }
             assertTrue("engine rejected the selection: $admitted", admitted is EditorV2CallResult.Ok)
@@ -126,33 +120,13 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             relayout()
         }
 
-        private fun remoteEnvelope(payload: JSONObject): String {
-            nextRemoteRequestId += 1
-            return payload.put("version", 1).put("requestId", nextRemoteRequestId.toString())
-                .put("baseDocumentRevision", adapter.baseDocumentRevision.toString()).toString()
-        }
+        fun applyRemoteCommand(command: JSONObject) = remote.applyCommand(command)
 
-        fun applyRemoteCommand(command: JSONObject) {
-            val result = UniffiEditorV2Backend.applyCommand(
-                adapter.editorId, remoteEnvelope(JSONObject().put("command", command))
-            )
-            assertTrue("the remote peer's change was refused: $result", result is EditorV2CallResult.Ok)
-        }
+        fun applyRemoteTextSelection(scalar: Int) =
+            remote.applySelection(adapter.selectionEnvelope(scalar, scalar, REMOTE_SELECTION_AFFINITY))
 
-        fun applyRemoteTextSelection(scalar: Int) {
-            val result = UniffiEditorV2Backend.setSelection(
-                adapter.editorId,
-                remoteEnvelope(adapter.selectionEnvelope(scalar, scalar, REMOTE_SELECTION_AFFINITY))
-            )
-            assertTrue("the remote peer's caret was refused: $result", result is EditorV2CallResult.Ok)
-        }
-
-        fun applyRemoteCellSelection(anchor: Int, head: Int) {
-            val result = UniffiEditorV2Backend.setSelection(
-                adapter.editorId, remoteEnvelope(JSONObject().put("selection", cellSelection(anchor, head)))
-            )
-            assertTrue("the remote peer's selection was refused: $result", result is EditorV2CallResult.Ok)
-        }
+        fun applyRemoteCellSelection(anchor: Int, head: Int) =
+            remote.applySelection(JSONObject().put("selection", documentCellSelection(anchor, head)))
 
         fun deliverRemoteCommit() {
             view.applyRemoteCommitRefresh(token)
@@ -192,11 +166,6 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             val bitmap = Bitmap.createBitmap(drawing.width, drawing.height, Bitmap.Config.ARGB_8888)
             drawing.draw(Canvas(bitmap))
             return bitmap
-        }
-
-        private fun cellSelection(anchor: Int, head: Int): JSONObject {
-            fun point(opening: Int) = JSONObject().put("kind", "document").put("offset", opening)
-            return JSONObject().put("type", CELL_SELECTION).put("anchorCell", point(anchor)).put("headCell", point(head))
         }
     }
 
@@ -710,7 +679,6 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         const val TOUCH_STEP_MS = 20L
         const val KEY_EVENT_STEP_MS = 100L
         const val REMOTE_REQUEST_ID_BASE = 22_000_000L
-        const val CELL_SELECTION = "cell"
         const val FIRST_PEER = "7"
         const val SECOND_PEER = "9"
         const val FIRST_PEER_COLOR = "#FF0000"

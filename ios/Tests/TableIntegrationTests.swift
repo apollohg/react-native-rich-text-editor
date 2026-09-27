@@ -67,7 +67,7 @@ final class TableIntegrationTests: XCTestCase {
         let tableID: String
         let surface: EditorTableSurface
         let drawing: PreparedProseDrawingView
-        private var nextRemoteRequestId = Integration.remoteRequestIdBase
+        private let remote: RemoteTablePeer
 
         init(expo: NativeEditorExpoView, adapter: EditorV2Adapter, editorId: UInt64, tableID: String,
              surface: EditorTableSurface, drawing: PreparedProseDrawingView) {
@@ -77,13 +77,13 @@ final class TableIntegrationTests: XCTestCase {
             self.tableID = tableID
             self.surface = surface
             self.drawing = drawing
+            remote = RemoteTablePeer(adapter: adapter, requestIdBase: Integration.remoteRequestIdBase)
         }
 
         var view: RichTextEditorView { expo.richTextView }
 
         func positions() throws -> [UInt32] {
-            let cells = try XCTUnwrap(adapter.cachedTableRecords[tableID]?["cells"] as? [[String: Any]])
-            return try cells.map { try XCTUnwrap(EditorV2Adapter.uint32Field($0, "sourcePos")) }
+            try adapter.tableCellPositions(tableID: tableID)
         }
 
         func documentObject() throws -> NSDictionary {
@@ -96,9 +96,7 @@ final class TableIntegrationTests: XCTestCase {
         }
 
         func presentedCell(_ position: UInt32) throws -> ViewerTablePresentedCell {
-            try XCTUnwrap(drawing.mountedTablePresentation()?.cells.first {
-                $0.surface.identity == tableID && $0.sourcePosition == Int(position) && $0.cell.sourceCellIndex != nil
-            }, "cell \(position) is not presented")
+            try drawing.presentedRealCell(tableID: tableID, position: position)
         }
 
         func remoteRects(_ selection: RemoteTableCellSelection) throws -> [CGRect] {
@@ -106,7 +104,7 @@ final class TableIntegrationTests: XCTestCase {
         }
 
         func activeCellPosition() -> UInt32? {
-            view.activeTextInput.tableCellPositionMap?.binding.cellSourcePosition
+            view.activeTableCellPosition
         }
 
         func setPeers(_ peers: [Peer]) throws {
@@ -124,30 +122,19 @@ final class TableIntegrationTests: XCTestCase {
             expo.setRemoteSelectionsJson(try XCTUnwrap(String(data: data, encoding: .utf8)))
         }
 
-        func applyRemote(_ payload: [String: Any], call: (String, String) -> FfiJsonResult) throws {
-            nextRemoteRequestId += 1
-            var envelope = payload
-            envelope["version"] = 1
-            envelope["requestId"] = String(nextRemoteRequestId)
-            envelope["baseDocumentRevision"] = String(adapter.baseDocumentRevision)
-            let data = try JSONSerialization.data(withJSONObject: envelope)
-            let result = call(adapter.editorId, try XCTUnwrap(String(data: data, encoding: .utf8)))
-            XCTAssertNil(result.error, "the remote peer's change was refused: \(String(describing: result.error))")
-        }
-
         func applyRemoteCommand(_ command: [String: Any]) throws {
-            try applyRemote(["command": command]) { editorV2ApplyCommand(editorId: $0, requestJson: $1) }
+            try remote.applyCommand(command)
         }
 
         func applyRemoteTextSelection(at scalar: UInt32) throws {
-            try applyRemote(adapter.selectionEnvelope(anchor: scalar, head: scalar,
+            try remote.apply(adapter.selectionEnvelope(anchor: scalar, head: scalar,
                                                       affinity: Integration.remoteSelectionAffinity)) {
                 editorV2SetSelection(editorId: $0, requestJson: $1)
             }
         }
 
         func applyRemoteCellSelection(anchor: UInt32, head: UInt32) throws {
-            try applyRemote([
+            try remote.apply([
                 "selection": [
                     "type": "cell",
                     "anchorCell": ["kind": "document", "offset": Int(anchor)],
@@ -157,8 +144,7 @@ final class TableIntegrationTests: XCTestCase {
         }
 
         func deliverRemoteCommit() {
-            NativeEditorViewRegistry.shared.applyRemoteCommitRefresh(editorId: editorId)
-            expo.layoutIfNeeded()
+            expo.deliverRemoteCommit(editorId: editorId)
         }
 
         func renderDrawing() throws -> CGImage {
