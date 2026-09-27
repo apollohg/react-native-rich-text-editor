@@ -1,5 +1,4 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::ops::Range;
 
 use crate::model::{Document, Node};
 use crate::position::PositionMap;
@@ -16,7 +15,6 @@ use crate::yrs_engine::Affinity;
 const ADJACENT_TEXT_POSITION: u32 = 1;
 const TEXT_STEP: u32 = 1;
 const RUN_STEP: u32 = 1;
-const WHOLE_DOCUMENT: Range<u32> = 0..u32::MAX;
 
 pub(super) struct PinnedCellSpan {
     pub(super) cell: PinnedTableCell,
@@ -33,7 +31,7 @@ pub(super) struct CellPinning<'state> {
 impl CellPinning<'_> {
     pub(super) fn spans(&self) -> Vec<PinnedCellSpan> {
         let cells = self.cells_in_document_order();
-        let points = self.text_points(&cells, WHOLE_DOCUMENT);
+        let points = self.text_points(&cells);
         let starts: Vec<u32> = cells.iter().map(|(_, cell)| cell.source_pos).collect();
         let nodes = nodes_starting_at(self.document, &starts);
         cells
@@ -118,28 +116,19 @@ impl CellPinning<'_> {
         cells: &[(&ProjectedTable, &ProjectedCell)],
         target: usize,
     ) -> Option<Vec<(u32, CellTextPoint)>> {
-        let (_, cell) = cells.get(target)?;
-        let content = cell.source_pos.checked_add(NODE_OPENING_TOKENS)?..cell.source_end;
-        self.text_points(cells, content).into_iter().nth(target)
+        self.text_points(cells).into_iter().nth(target)
     }
 
     fn text_points(
         &self,
         cells: &[(&ProjectedTable, &ProjectedCell)],
-        doc_range: Range<u32>,
     ) -> Vec<Vec<(u32, CellTextPoint)>> {
         let mut points: Vec<Vec<(u32, CellTextPoint)>> = vec![Vec::new(); cells.len()];
         let mut previous: Vec<Option<(u32, CellTextPoint)>> = vec![None; cells.len()];
         let mut open: Vec<usize> = Vec::new();
         let mut next_cell = 0;
-        let first_scalar = self
-            .position_map
-            .doc_to_scalar(doc_range.start, self.document);
-        for scalar in first_scalar..=self.position_map.total_scalars() {
+        for scalar in 0..=self.position_map.total_scalars() {
             let doc_pos = self.position_map.scalar_to_doc(scalar, self.document);
-            if doc_pos >= doc_range.end {
-                break;
-            }
             while open
                 .last()
                 .is_some_and(|&innermost| cells[innermost].1.source_end <= doc_pos)
@@ -320,3 +309,7 @@ fn text_fingerprint_of(node: &Node) -> u64 {
     node.text_content().hash(&mut fingerprint);
     fingerprint.finish()
 }
+
+#[cfg(test)]
+#[path = "position_epoch_cells_tests.rs"]
+mod tests;

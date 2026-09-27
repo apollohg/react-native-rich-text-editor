@@ -9,6 +9,10 @@ use crate::tables::commands::{TableCommand, CELL_INTERIOR_OFFSET};
 use crate::tables::commands_tests::{
     PROSE_PREFIX_TABLE_POSITION, PROSE_PREFIX_TEXT, TABLE_POSITION,
 };
+use crate::tables::tests::{
+    list_block, tabled_schema_with_lists, BULLET_LIST_NODE, LIST_ITEM_NODE,
+    PROSEMIRROR_TABLE_NAMES, TASK_ITEM_NODE, TASK_LIST_NODE,
+};
 use crate::yrs_engine::{
     Affinity, EditingLimits, EditorOffsetKind, InitializationMode, ReplacementHistory,
     ResolvedSelection, RevisionedPosition, SelectionInput, TransactionOrigin, TypedCommand,
@@ -139,9 +143,9 @@ const TAB_STALE_REQUEST_ID: &str = "73";
 const TAB_UNDO_REQUEST_ID: u64 = 74;
 const FOREIGN_OWNER_ID: u64 = 999;
 
-fn table_engine(mode: InitializationMode) -> YrsDocumentEngine {
+fn table_engine(schema: crate::schema::Schema, mode: InitializationMode) -> YrsDocumentEngine {
     YrsDocumentEngine::new(YrsEngineConfig {
-        schema: prosemirror_table_schema(),
+        schema,
         fragment_name: "prosemirror".into(),
         initialization_mode: mode,
         resource_limits: ResourceLimits::default(),
@@ -157,8 +161,12 @@ fn table_session() -> EditorSession {
 }
 
 fn table_session_with(document: &str) -> EditorSession {
+    table_session_with_schema(document, prosemirror_table_schema())
+}
+
+fn table_session_with_schema(document: &str, schema: crate::schema::Schema) -> EditorSession {
     let config = EditorSessionConfig::local_for_test();
-    let mut engine = table_engine(InitializationMode::LocalEmpty);
+    let mut engine = table_engine(schema, InitializationMode::LocalEmpty);
     engine
         .import_json(document, TransactionOrigin::DocumentImport)
         .unwrap();
@@ -181,7 +189,7 @@ fn cell_text_scalar_in(session: &EditorSession, table_position: u32, cell: usize
     let document = session.engine.document().unwrap();
     let index = crate::tables::admission::TableProjectionIndex::derive_or_fallback(
         document,
-        &prosemirror_table_schema(),
+        &session.engine.schema(),
         &ResourceLimits::default(),
     );
     let opening = index.table_at(table_position).unwrap().cells[cell].source_pos;
@@ -739,6 +747,9 @@ const HEADER_CELL_NODE: &str = "table_header";
 const PARAGRAPH_NODE: &str = "paragraph";
 const HEADING_NODE: &str = "heading";
 const HEADING_LEVEL: u8 = 1;
+const FIRST_LIST_ITEM_TEXT: &str = "Alpha";
+const SECOND_LIST_ITEM_TEXT: &str = "Beta";
+const LATER_ROW_LIST_CELL: usize = 2;
 const EMPTY_CELLS_DOCUMENT: &str = r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"before"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph"}]},{"type":"table_cell","content":[{"type":"paragraph"}]}]}]}]}"#;
 const PARAGRAPH_BREAK_SCALARS: u32 = 1;
 
@@ -777,7 +788,10 @@ fn submit_cell_commit(
 }
 
 fn apply_remote_peer_edit(session: &mut EditorSession, edit: impl FnOnce(&mut YrsDocumentEngine)) {
-    let mut replica = table_engine(InitializationMode::AwaitRemote);
+    let mut replica = table_engine(
+        session.engine.schema().clone(),
+        InitializationMode::AwaitRemote,
+    );
     replica
         .apply_remote_update_v1(REMOTE_REQUEST_ID, &session.engine.encoded_state().unwrap())
         .unwrap();
@@ -1044,13 +1058,24 @@ fn end_of_second_paragraph() -> u32 {
     start_of_second_paragraph() + SECOND_PARAGRAPH_TEXT.chars().count() as u32
 }
 
+fn grid_cell_json(document: &serde_json::Value, cell: usize) -> serde_json::Value {
+    document["content"][1]["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|row| row["content"].as_array().unwrap().iter())
+        .nth(cell)
+        .unwrap()
+        .clone()
+}
+
 fn cell_after_remote_edit(
-    document: &str,
+    mut session: EditorSession,
+    cell: usize,
     caret_in_cell: u32,
     edit: impl FnOnce(&mut YrsDocumentEngine, CellCaret),
 ) -> serde_json::Value {
-    let mut session = table_session_with(document);
-    let cell_start = cell_text_scalar_in(&session, PROSE_PREFIX_TABLE_POSITION, FIRST_GRID_CELL);
+    let cell_start = cell_text_scalar_in(&session, PROSE_PREFIX_TABLE_POSITION, cell);
     let caret = CellCaret {
         cell_start,
         scalar: cell_start + caret_in_cell,
@@ -1063,8 +1088,7 @@ fn cell_after_remote_edit(
     };
     apply_remote_peer_edit(&mut session, |replica| edit(replica, caret));
     let remote_revision = session.engine.revision();
-    let remote_cell =
-        session.engine.document_json().unwrap()["content"][1]["content"][0]["content"][0].clone();
+    let remote_cell = grid_cell_json(&session.engine.document_json().unwrap(), cell);
 
     let outcome = submit_cell_commit(&mut session, &pinned).unwrap();
 
@@ -1079,7 +1103,7 @@ fn cell_after_remote_edit(
         document["content"][0]["content"][0]["text"],
         PROSE_PREFIX_TEXT
     );
-    document["content"][1]["content"][0]["content"][0].clone()
+    grid_cell_json(&document, cell)
 }
 
 fn toggle_header_of_the_composing_cell(replica: &mut YrsDocumentEngine, caret: CellCaret) {
@@ -1118,7 +1142,8 @@ fn paragraph(text: &str) -> serde_json::Value {
 #[test]
 fn cell_commit_after_a_remote_peer_joins_its_paragraph_stays_in_that_cell() {
     let cell = cell_after_remote_edit(
-        TWO_PARAGRAPH_CELL_DOCUMENT,
+        table_session_with(TWO_PARAGRAPH_CELL_DOCUMENT),
+        FIRST_GRID_CELL,
         start_of_second_paragraph(),
         join_paragraph_into_previous(start_of_second_paragraph()),
     );
@@ -1135,7 +1160,8 @@ fn cell_commit_after_a_remote_peer_joins_its_paragraph_stays_in_that_cell() {
 #[test]
 fn cell_commit_at_the_end_of_a_joined_paragraph_stays_before_the_next_paragraph() {
     let cell = cell_after_remote_edit(
-        THREE_PARAGRAPH_CELL_DOCUMENT,
+        table_session_with(THREE_PARAGRAPH_CELL_DOCUMENT),
+        FIRST_GRID_CELL,
         end_of_second_paragraph(),
         join_paragraph_into_previous(start_of_second_paragraph()),
     );
@@ -1155,7 +1181,8 @@ fn cell_commit_at_the_end_of_a_joined_paragraph_stays_before_the_next_paragraph(
 #[test]
 fn cell_commit_in_an_empty_paragraph_joined_backward_lands_at_the_end_of_the_previous_paragraph() {
     let cell = cell_after_remote_edit(
-        EMPTY_MIDDLE_PARAGRAPH_CELL_DOCUMENT,
+        table_session_with(EMPTY_MIDDLE_PARAGRAPH_CELL_DOCUMENT),
+        FIRST_GRID_CELL,
         start_of_second_paragraph(),
         join_paragraph_into_previous(start_of_second_paragraph()),
     );
@@ -1173,7 +1200,8 @@ fn cell_commit_in_an_empty_paragraph_joined_backward_lands_at_the_end_of_the_pre
 #[test]
 fn cell_commit_at_the_end_of_a_paragraph_stays_there_after_a_remote_header_toggle() {
     let cell = cell_after_remote_edit(
-        TWO_PARAGRAPH_CELL_DOCUMENT,
+        table_session_with(TWO_PARAGRAPH_CELL_DOCUMENT),
+        FIRST_GRID_CELL,
         end_of_first_paragraph(),
         toggle_header_of_the_composing_cell,
     );
@@ -1191,7 +1219,8 @@ fn cell_commit_at_the_end_of_a_paragraph_stays_there_after_a_remote_header_toggl
 #[test]
 fn cell_commit_at_the_start_of_a_paragraph_stays_there_after_a_remote_header_toggle() {
     let cell = cell_after_remote_edit(
-        TWO_PARAGRAPH_CELL_DOCUMENT,
+        table_session_with(TWO_PARAGRAPH_CELL_DOCUMENT),
+        FIRST_GRID_CELL,
         start_of_second_paragraph(),
         toggle_header_of_the_composing_cell,
     );
@@ -1209,7 +1238,8 @@ fn cell_commit_at_the_start_of_a_paragraph_stays_there_after_a_remote_header_tog
 #[test]
 fn cell_commit_at_the_end_of_a_paragraph_stays_there_after_a_remote_block_type_change() {
     let cell = cell_after_remote_edit(
-        TWO_PARAGRAPH_CELL_DOCUMENT,
+        table_session_with(TWO_PARAGRAPH_CELL_DOCUMENT),
+        FIRST_GRID_CELL,
         end_of_first_paragraph(),
         |replica, caret| {
             remote_command_at(
@@ -1231,5 +1261,110 @@ fn cell_commit_at_the_end_of_a_paragraph_stays_there_after_a_remote_block_type_c
     assert_eq!(
         cell["content"],
         serde_json::json!([heading, paragraph(SECOND_PARAGRAPH_TEXT)])
+    );
+}
+
+fn list_table_session(rows: Vec<Vec<serde_json::Value>>) -> EditorSession {
+    let rows: Vec<serde_json::Value> = rows
+        .into_iter()
+        .map(|cells| {
+            let cells: Vec<serde_json::Value> = cells
+                .into_iter()
+                .map(|block| serde_json::json!({"type": "table_cell", "content": [block]}))
+                .collect();
+            serde_json::json!({"type": "table_row", "content": cells})
+        })
+        .collect();
+    let document = serde_json::json!({
+        "type": "doc",
+        "content": [paragraph(PROSE_PREFIX_TEXT), {"type": "table", "content": rows}],
+    });
+    table_session_with_schema(
+        &document.to_string(),
+        tabled_schema_with_lists(PROSEMIRROR_TABLE_NAMES),
+    )
+}
+
+fn composing_list(list: &str, item: &str) -> serde_json::Value {
+    list_block(list, item, &[FIRST_LIST_ITEM_TEXT, SECOND_LIST_ITEM_TEXT])
+}
+
+fn assert_list_cell_keeps_its_composition_after_a_header_toggle(
+    session: EditorSession,
+    cell: usize,
+    list: &str,
+    item: &str,
+) {
+    let header = cell_after_remote_edit(
+        session,
+        cell,
+        FIRST_LIST_ITEM_TEXT.chars().count() as u32,
+        toggle_header_of_the_composing_cell,
+    );
+
+    assert_eq!(header["type"], HEADER_CELL_NODE, "{header}");
+    assert_eq!(
+        header["content"],
+        serde_json::json!([list_block(
+            list,
+            item,
+            &[
+                &format!("{FIRST_LIST_ITEM_TEXT}{COMPOSED_TEXT}"),
+                SECOND_LIST_ITEM_TEXT
+            ],
+        )]),
+        "{header}"
+    );
+}
+
+#[test]
+fn cell_commit_in_a_list_first_cell_stays_there_after_a_remote_header_toggle() {
+    let session = list_table_session(vec![vec![
+        composing_list(BULLET_LIST_NODE, LIST_ITEM_NODE),
+        paragraph(SECOND_PARAGRAPH_TEXT),
+    ]]);
+
+    assert_list_cell_keeps_its_composition_after_a_header_toggle(
+        session,
+        FIRST_GRID_CELL,
+        BULLET_LIST_NODE,
+        LIST_ITEM_NODE,
+    );
+}
+
+#[test]
+fn cell_commit_in_a_task_list_first_cell_stays_there_after_a_remote_header_toggle() {
+    let session = list_table_session(vec![vec![
+        composing_list(TASK_LIST_NODE, TASK_ITEM_NODE),
+        paragraph(SECOND_PARAGRAPH_TEXT),
+    ]]);
+
+    assert_list_cell_keeps_its_composition_after_a_header_toggle(
+        session,
+        FIRST_GRID_CELL,
+        TASK_LIST_NODE,
+        TASK_ITEM_NODE,
+    );
+}
+
+#[test]
+fn cell_commit_in_a_list_cell_of_a_later_first_column_row_stays_there_after_a_remote_header_toggle()
+{
+    let session = list_table_session(vec![
+        vec![
+            paragraph(FIRST_PARAGRAPH_TEXT),
+            paragraph(SECOND_PARAGRAPH_TEXT),
+        ],
+        vec![
+            composing_list(BULLET_LIST_NODE, LIST_ITEM_NODE),
+            paragraph(THIRD_PARAGRAPH_TEXT),
+        ],
+    ]);
+
+    assert_list_cell_keeps_its_composition_after_a_header_toggle(
+        session,
+        LATER_ROW_LIST_CELL,
+        BULLET_LIST_NODE,
+        LIST_ITEM_NODE,
     );
 }

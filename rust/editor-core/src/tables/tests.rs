@@ -119,6 +119,48 @@ pub(crate) fn tabled_schema_with_second_text_block(names: [&str; 4]) -> Schema {
     Schema::from_json(&json).expect("the second text block schema is valid")
 }
 
+pub(crate) const BULLET_LIST_NODE: &str = "bullet_list";
+pub(crate) const LIST_ITEM_NODE: &str = "list_item";
+pub(crate) const TASK_LIST_NODE: &str = "task_list";
+pub(crate) const TASK_ITEM_NODE: &str = "task_item";
+
+pub(crate) fn tabled_schema_with_lists(names: [&str; 4]) -> Schema {
+    let mut json = tabled_schema_json(names);
+    let nodes = json["nodes"]
+        .as_array_mut()
+        .expect("the tabled schema lists nodes");
+    for (list, item) in [
+        (BULLET_LIST_NODE, LIST_ITEM_NODE),
+        (TASK_LIST_NODE, TASK_ITEM_NODE),
+    ] {
+        nodes.push(json!({
+            "name": list,
+            "content": format!("{item}+"),
+            "group": "block",
+            "role": "list",
+        }));
+        nodes.push(json!({
+            "name": item,
+            "content": "paragraph block*",
+            "role": "listItem",
+        }));
+    }
+    Schema::from_json(&json).expect("the list schema is valid")
+}
+
+pub(crate) fn list_block(list: &str, item: &str, texts: &[&str]) -> serde_json::Value {
+    let items: Vec<serde_json::Value> = texts
+        .iter()
+        .map(|text| {
+            json!({
+                "type": item,
+                "content": [{"type": "paragraph", "content": [{"type": "text", "text": text}]}],
+            })
+        })
+        .collect();
+    json!({ "type": list, "content": items })
+}
+
 #[test]
 fn schemas_without_table_metadata_resolve_to_no_roles() {
     for schema in [prosemirror_schema(), tiptap_schema()] {
