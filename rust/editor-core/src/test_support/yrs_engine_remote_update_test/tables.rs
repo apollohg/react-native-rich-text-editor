@@ -388,6 +388,7 @@ const DEFAULT_GRID_SLOTS: usize = 25_000;
 const FIRST_TABLE_SLOTS: usize = 12_000;
 const HOST_TABLE_SLOTS: usize = DEFAULT_GRID_SLOTS - FIRST_TABLE_SLOTS - 1;
 const AGGREGATE_TABLE_COUNT: usize = 3;
+const LEADING_TABLE_POSITION: u32 = 0;
 const RAISED_GRID_SLOTS: usize = DEFAULT_GRID_SLOTS + 1;
 
 fn single_cell_table(colspan: usize, content: Vec<serde_json::Value>) -> serde_json::Value {
@@ -426,10 +427,33 @@ fn tabled_engine_with_grid_limit(max_table_grid_slots: usize) -> YrsDocumentEngi
     )
 }
 
+fn assert_history_holds_only_the_kept_edit(engine: &mut YrsDocumentEngine) {
+    engine
+        .undo(453)
+        .unwrap()
+        .expect("the kept edit is still undoable after the rejection");
+    assert_eq!(
+        engine.document_json(),
+        tabled_engine(InitializationMode::LocalEmpty).document_json()
+    );
+    assert!(!engine.can_undo());
+}
+
+fn json_node_count(node: &serde_json::Value) -> usize {
+    1 + node["content"]
+        .as_array()
+        .map_or(0, |children| children.iter().map(json_node_count).sum())
+}
+
 fn edited_tabled_engine() -> YrsDocumentEngine {
     let mut engine = tabled_engine(InitializationMode::LocalEmpty);
     engine
-        .apply_command(450, TypedCommand::InsertText { text: "kept".into() })
+        .apply_command(
+            450,
+            TypedCommand::InsertText {
+                text: "kept".into(),
+            },
+        )
         .unwrap();
     engine
 }
@@ -476,7 +500,10 @@ fn the_default_grid_budget_admits_an_aggregate_of_exactly_its_limit_across_neste
         );
         assert!(!engine.table_projection_index().unwrap().projection_failed());
     }
-    assert_eq!(target.encoded_state().unwrap(), source.encoded_state().unwrap());
+    assert_eq!(
+        target.encoded_state().unwrap(),
+        source.encoded_state().unwrap()
+    );
 }
 
 #[test]
@@ -493,6 +520,7 @@ fn the_default_grid_budget_rejects_one_aggregate_slot_more_atomically_on_import(
 
     assert_import_exceeded_by_one_slot(&error, DEFAULT_GRID_SLOTS);
     assert_eq!(audit(&target), before);
+    assert_history_holds_only_the_kept_edit(&mut target);
 }
 
 #[test]
@@ -519,6 +547,7 @@ fn the_default_grid_budget_rejects_one_aggregate_slot_more_atomically_from_a_rem
     );
     assert_eq!(error.details.as_ref().unwrap()["field"], "update");
     assert_eq!(audit(&target), before);
+    assert_history_holds_only_the_kept_edit(&mut target);
 }
 
 #[test]
@@ -549,8 +578,9 @@ fn a_raised_grid_budget_is_a_resource_diagnostic_that_still_enforces_its_own_bou
 
 #[test]
 fn a_raised_grid_budget_does_not_lift_the_independent_document_node_budget() {
-    let fixture = aggregate_grid_document(RAISED_GRID_SLOTS).to_string();
-    let fixture_nodes = fixture.matches("\"type\"").count();
+    let fixture_json = aggregate_grid_document(RAISED_GRID_SLOTS);
+    let fixture_nodes = json_node_count(&fixture_json);
+    let fixture = fixture_json.to_string();
     let mut node_bounded = engine_with(
         crate::tables::tests::tabled_schema(crate::tables::tests::PROSEMIRROR_TABLE_NAMES),
         InitializationMode::LocalEmpty,
@@ -575,9 +605,66 @@ fn a_raised_grid_budget_does_not_lift_the_independent_document_node_budget() {
         "{error:?}"
     );
     assert_ne!(
-        error.details.as_ref().and_then(|details| details.get("phase")),
+        error
+            .details
+            .as_ref()
+            .and_then(|details| details.get("phase")),
         Some(&serde_json::json!("tableGrid")),
         "{error:?}"
     );
     assert_eq!(audit(&node_bounded), before);
+}
+
+#[test]
+fn undo_that_would_restore_one_slot_over_the_default_grid_budget_is_refused_atomically() {
+    let empty_paragraph = serde_json::json!({"type": PARAGRAPH_NODE, "content": []});
+    let mut local = source_holding(
+        crate::tables::tests::tabled_schema(crate::tables::tests::PROSEMIRROR_TABLE_NAMES),
+        table_document(vec![
+            single_cell_table(FIRST_TABLE_SLOTS, vec![empty_paragraph.clone()]),
+            empty_paragraph.clone(),
+        ]),
+    );
+    local
+        .apply_command(
+            454,
+            TypedCommand::Table(crate::tables::commands::TableCommand::DeleteTable {
+                table_pos: Some(LEADING_TABLE_POSITION),
+            }),
+        )
+        .unwrap()
+        .expect("the local table deletion applies");
+    let mut remote = tabled_engine(InitializationMode::AwaitRemote);
+    remote
+        .apply_remote_update_v1(455, &local.encoded_state().unwrap())
+        .unwrap();
+    remote
+        .import_json(
+            &table_document(vec![
+                single_cell_table(
+                    DEFAULT_GRID_SLOTS + 1 - FIRST_TABLE_SLOTS,
+                    vec![empty_paragraph.clone()],
+                ),
+                empty_paragraph,
+            ])
+            .to_string(),
+            TransactionOrigin::DocumentImport,
+        )
+        .expect("the remote table fits the default budget on its own");
+    local
+        .apply_remote_update_v1(456, &remote.encoded_state().unwrap())
+        .expect("the remote table fits beside the deleted local table");
+    assert!(local.can_undo());
+    let before = audit(&local);
+
+    let error = local.undo(457).unwrap_err();
+
+    assert_exceeded_by_one_slot(
+        error.code,
+        error.details.as_ref(),
+        (error.limit, error.actual),
+        DEFAULT_GRID_SLOTS,
+    );
+    assert_eq!(audit(&local), before);
+    assert!(local.can_undo());
 }
