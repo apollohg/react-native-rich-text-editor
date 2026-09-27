@@ -383,3 +383,201 @@ fn a_tabled_snapshot_restored_into_a_table_free_engine_reports_a_schema_mismatch
     assert_eq!(error.code, "SNAPSHOT_SCHEMA_MISMATCH");
     assert_eq!(audit(&target), before);
 }
+
+const DEFAULT_GRID_SLOTS: usize = 25_000;
+const FIRST_TABLE_SLOTS: usize = 12_000;
+const HOST_TABLE_SLOTS: usize = DEFAULT_GRID_SLOTS - FIRST_TABLE_SLOTS - 1;
+const AGGREGATE_TABLE_COUNT: usize = 3;
+const RAISED_GRID_SLOTS: usize = DEFAULT_GRID_SLOTS + 1;
+
+fn single_cell_table(colspan: usize, content: Vec<serde_json::Value>) -> serde_json::Value {
+    serde_json::json!({
+        "type": TABLE_NODE,
+        "content": [table_row(vec![serde_json::json!({
+            "type": CELL_NODE,
+            "attrs": {"colspan": colspan, "rowspan": 1, "colwidth": null},
+            "content": content,
+        })])],
+    })
+}
+
+fn aggregate_grid_document(total_slots: usize) -> serde_json::Value {
+    let nested_slots = total_slots - FIRST_TABLE_SLOTS - HOST_TABLE_SLOTS;
+    let empty_paragraph = serde_json::json!({"type": PARAGRAPH_NODE, "content": []});
+    table_document(vec![
+        single_cell_table(FIRST_TABLE_SLOTS, vec![empty_paragraph.clone()]),
+        single_cell_table(
+            HOST_TABLE_SLOTS,
+            vec![single_cell_table(nested_slots, vec![empty_paragraph])],
+        ),
+    ])
+}
+
+fn tabled_engine_with_grid_limit(max_table_grid_slots: usize) -> YrsDocumentEngine {
+    engine_with(
+        crate::tables::tests::tabled_schema(crate::tables::tests::PROSEMIRROR_TABLE_NAMES),
+        InitializationMode::LocalEmpty,
+        ResourceLimits {
+            max_table_grid_slots,
+            ..ResourceLimits::default()
+        },
+        EditingLimits::default(),
+        None,
+    )
+}
+
+fn edited_tabled_engine() -> YrsDocumentEngine {
+    let mut engine = tabled_engine(InitializationMode::LocalEmpty);
+    engine
+        .apply_command(450, TypedCommand::InsertText { text: "kept".into() })
+        .unwrap();
+    engine
+}
+
+fn assert_exceeded_by_one_slot(
+    code: &str,
+    details: Option<&serde_json::Value>,
+    reported: (Option<u64>, Option<u64>),
+    limit: usize,
+) {
+    assert_eq!(code, "DOCUMENT_LIMIT_EXCEEDED");
+    assert_eq!(details.unwrap()["phase"], "tableGrid");
+    assert_eq!(reported, (Some(limit as u64), Some(limit as u64 + 1)));
+}
+
+fn assert_import_exceeded_by_one_slot(error: &crate::yrs_engine::YrsEngineError, limit: usize) {
+    assert_exceeded_by_one_slot(
+        error.code,
+        error.details.as_ref(),
+        (
+            error.limit.map(|value| value as u64),
+            error.actual.map(|value| value as u64),
+        ),
+        limit,
+    );
+}
+
+#[test]
+fn the_default_grid_budget_admits_an_aggregate_of_exactly_its_limit_across_nested_tables() {
+    let source = source_holding(
+        crate::tables::tests::tabled_schema(crate::tables::tests::PROSEMIRROR_TABLE_NAMES),
+        aggregate_grid_document(DEFAULT_GRID_SLOTS),
+    );
+    let mut target = tabled_engine(InitializationMode::AwaitRemote);
+
+    target
+        .apply_remote_update_v1(451, &source.encoded_state().unwrap())
+        .expect("the boundary aggregate is admitted remotely under default limits");
+
+    for engine in [&source, &target] {
+        assert_eq!(
+            engine.table_projection_index().unwrap().len(),
+            AGGREGATE_TABLE_COUNT
+        );
+        assert!(!engine.table_projection_index().unwrap().projection_failed());
+    }
+    assert_eq!(target.encoded_state().unwrap(), source.encoded_state().unwrap());
+}
+
+#[test]
+fn the_default_grid_budget_rejects_one_aggregate_slot_more_atomically_on_import() {
+    let mut target = edited_tabled_engine();
+    let before = audit(&target);
+
+    let error = target
+        .import_json(
+            &aggregate_grid_document(DEFAULT_GRID_SLOTS + 1).to_string(),
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap_err();
+
+    assert_import_exceeded_by_one_slot(&error, DEFAULT_GRID_SLOTS);
+    assert_eq!(audit(&target), before);
+}
+
+#[test]
+fn the_default_grid_budget_rejects_one_aggregate_slot_more_atomically_from_a_remote_peer() {
+    let mut raised_source = tabled_engine_with_grid_limit(RAISED_GRID_SLOTS);
+    raised_source
+        .import_json(
+            &aggregate_grid_document(DEFAULT_GRID_SLOTS + 1).to_string(),
+            TransactionOrigin::DocumentImport,
+        )
+        .expect("the explicitly raised peer holds the over-default aggregate");
+    let mut target = edited_tabled_engine();
+    let before = audit(&target);
+
+    let error = target
+        .apply_remote_update_v1(452, &raised_source.encoded_state().unwrap())
+        .unwrap_err();
+
+    assert_exceeded_by_one_slot(
+        error.code,
+        error.details.as_ref(),
+        (error.limit, error.actual),
+        DEFAULT_GRID_SLOTS,
+    );
+    assert_eq!(error.details.as_ref().unwrap()["field"], "update");
+    assert_eq!(audit(&target), before);
+}
+
+#[test]
+fn a_raised_grid_budget_is_a_resource_diagnostic_that_still_enforces_its_own_boundary() {
+    let mut raised = tabled_engine_with_grid_limit(RAISED_GRID_SLOTS);
+    raised
+        .import_json(
+            &aggregate_grid_document(RAISED_GRID_SLOTS).to_string(),
+            TransactionOrigin::DocumentImport,
+        )
+        .expect("the raised limit admits its own boundary");
+    assert_eq!(
+        raised.table_projection_index().unwrap().len(),
+        AGGREGATE_TABLE_COUNT
+    );
+    let before = audit(&raised);
+
+    let error = raised
+        .import_json(
+            &aggregate_grid_document(RAISED_GRID_SLOTS + 1).to_string(),
+            TransactionOrigin::DocumentImport,
+        )
+        .unwrap_err();
+
+    assert_import_exceeded_by_one_slot(&error, RAISED_GRID_SLOTS);
+    assert_eq!(audit(&raised), before);
+}
+
+#[test]
+fn a_raised_grid_budget_does_not_lift_the_independent_document_node_budget() {
+    let fixture = aggregate_grid_document(RAISED_GRID_SLOTS).to_string();
+    let fixture_nodes = fixture.matches("\"type\"").count();
+    let mut node_bounded = engine_with(
+        crate::tables::tests::tabled_schema(crate::tables::tests::PROSEMIRROR_TABLE_NAMES),
+        InitializationMode::LocalEmpty,
+        ResourceLimits {
+            max_table_grid_slots: RAISED_GRID_SLOTS,
+            max_document_nodes: fixture_nodes - 1,
+            ..ResourceLimits::default()
+        },
+        EditingLimits::default(),
+        None,
+    );
+    let before = audit(&node_bounded);
+
+    let error = node_bounded
+        .import_json(&fixture, TransactionOrigin::DocumentImport)
+        .unwrap_err();
+
+    assert_eq!(error.code, "DOCUMENT_LIMIT_EXCEEDED", "{error:?}");
+    assert_eq!(
+        (error.limit, error.actual),
+        (Some(fixture_nodes - 1), Some(fixture_nodes)),
+        "{error:?}"
+    );
+    assert_ne!(
+        error.details.as_ref().and_then(|details| details.get("phase")),
+        Some(&serde_json::json!("tableGrid")),
+        "{error:?}"
+    );
+    assert_eq!(audit(&node_bounded), before);
+}
