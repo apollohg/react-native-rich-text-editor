@@ -333,7 +333,7 @@ fn deleting_a_column_leaves_the_selection_where_prosemirror_tables_maps_it() {
             resolved_caret(&engine),
             Some(expected),
             "a {name} last column selection falls out of the table and must resolve like TextSelection.between: \
-             the head searches toward the anchor and the anchor away from it, so both stay in the table",
+             the head searches toward the anchor and the anchor toward the head, so both stay in the table",
         );
     }
 }
