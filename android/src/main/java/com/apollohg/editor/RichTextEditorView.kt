@@ -151,6 +151,7 @@ class RichTextEditorView @JvmOverloads constructor(
         private var nativeTableSelectionGesture = false
 
         override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+            editorTableSurface.trackFrameGesture(event)
             if (editorTableSurface.dragActive()) return true
             if (event.actionMasked != MotionEvent.ACTION_DOWN &&
                 editorTableSurface.resizeClaimsGesture(event, event.x - tableDownX, event.y - tableDownY)) {
@@ -383,6 +384,7 @@ class RichTextEditorView @JvmOverloads constructor(
         imageResizeOverlayView.bind(this)
         editorEditText.onBeforeRenderRefresh = imageResizeOverlayView::cancelActiveResize
         editorEditText.onTableRootTouch = editorTableSurface::onRootTouch
+        editorEditText.tableCellDropHandler = editorTableSurface::onRootDragEvent
         editorScrollView.setOnScrollChangeListener { _, _, _, _, _ ->
             editorEditText.surfaceViewportChanged()
             refreshOverlays()

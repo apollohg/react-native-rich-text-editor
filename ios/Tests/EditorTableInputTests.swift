@@ -5,12 +5,14 @@ final class EditorTableInputTests: XCTestCase {
     final class UpdateSpy: EditorTextViewDelegate {
         var updates: [String] = []
         var selections: [[UInt32]] = []
+        var onUpdate: (() -> Void)?
 
         func editorTextView(_ textView: EditorTextView, selectionDidChange anchor: UInt32, head: UInt32) {
             selections.append([anchor, head])
         }
         func editorTextView(_ textView: EditorTextView, didReceiveUpdate updateJSON: String) {
             updates.append(updateJSON)
+            onUpdate?()
         }
     }
 

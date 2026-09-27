@@ -5,14 +5,18 @@ import XCTest
 final class TestTextDragSession: NSObject, UIDragSession {
     let items: [UIDragItem]
     var localContext: Any?
+    var windowLocation: CGPoint?
     var allowsMoveOperation: Bool { true }
     var isRestrictedToDraggingApplication: Bool { true }
 
-    init(items: [UIDragItem]) {
+    init(items: [UIDragItem], windowLocation: CGPoint? = nil) {
         self.items = items
+        self.windowLocation = windowLocation
     }
 
-    func location(in view: UIView) -> CGPoint { .zero }
+    func location(in view: UIView) -> CGPoint {
+        windowLocation.map { view.convert($0, from: nil) } ?? .zero
+    }
 
     func hasItemsConforming(toTypeIdentifiers typeIdentifiers: [String]) -> Bool {
         items.contains { item in
@@ -34,12 +38,23 @@ final class TestTextDropSession: NSObject, UIDropSession {
     var allowsMoveOperation: Bool { true }
     var isRestrictedToDraggingApplication: Bool { true }
 
-    init(dragSession: UIDragSession) {
+    var windowLocation: CGPoint?
+
+    init(dragSession: UIDragSession, windowLocation: CGPoint? = nil) {
         localDragSession = dragSession
         items = dragSession.items
+        self.windowLocation = windowLocation
     }
 
-    func location(in view: UIView) -> CGPoint { .zero }
+    init(externalItems: [UIDragItem], windowLocation: CGPoint) {
+        localDragSession = nil
+        items = externalItems
+        self.windowLocation = windowLocation
+    }
+
+    func location(in view: UIView) -> CGPoint {
+        windowLocation.map { view.convert($0, from: nil) } ?? .zero
+    }
 
     func hasItemsConforming(toTypeIdentifiers typeIdentifiers: [String]) -> Bool {
         items.contains { item in

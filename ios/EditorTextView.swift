@@ -184,6 +184,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
     var onProjectedUpdate: ((String, Bool) -> Bool)?
     var onAuthoritativeRenderApplied: ((String) -> Void)?
     var onFirstResponderResigned: (() -> Void)?
+    weak var tableCellDropHandler: TableCellDropHandling?
     var renderAppearanceRevision: UInt64 = 1
     var lastAppliedRenderAppearanceRevision: UInt64 = 0
 

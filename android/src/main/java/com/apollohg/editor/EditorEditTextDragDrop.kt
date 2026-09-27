@@ -5,7 +5,7 @@ import android.text.Spanned
 import android.view.DragEvent
 
 internal fun EditorEditText.localTextDragFor(event: DragEvent): LocalTextDrag? {
-    if (isTableCellInput || rootTablePositionMap != null || rootTableRenderNeedsRefresh) return null
+    if (isTableCellInput) return null
     if (!isEditable || editorId == 0L || !isDragFromThisEditor(event.localState) || !hasFocus()) {
         return null
     }
@@ -17,12 +17,8 @@ internal fun EditorEditText.localTextDragFor(event: DragEvent): LocalTextDrag? {
         currentText
     )
     if (start >= end || containsInterBlockBoundary(start, end)) return null
-    return LocalTextDrag(
-        PositionBridge.utf16ToScalar(start, currentText),
-        PositionBridge.utf16ToScalar(end, currentText),
-        lastAppliedDocumentVersion,
-        editorId
-    )
+    val (scalarFrom, scalarTo) = inputScalarRangeAtLocalUtf16(start, end, currentText) ?: return null
+    return LocalTextDrag(scalarFrom, scalarTo, lastAppliedDocumentVersion, editorId)
 }
 
 internal fun EditorEditText.isDragFromThisEditor(localState: Any?): Boolean = localState === this
@@ -38,7 +34,7 @@ internal fun EditorEditText.performLocalSelectionDrop(
     drag: LocalTextDrag,
     destination: Int
 ): Boolean {
-    if (isTableCellInput || rootTablePositionMap != null || rootTableRenderNeedsRefresh) return false
+    if (isTableCellInput) return false
     if (destination in drag.scalarFrom..drag.scalarTo) return false
     if (drag.editorId != editorId || drag.documentVersion == null) return false
     if (lastAppliedDocumentVersion == null ||

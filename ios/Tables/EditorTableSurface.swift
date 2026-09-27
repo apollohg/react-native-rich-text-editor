@@ -120,6 +120,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     struct RootTableCellHit: Equatable {
         let tableID: String
         let cellIndex: UInt32
+        let sourcePosition: Int
         let contentRect: CGRect
     }
 
@@ -150,12 +151,17 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private var mountedCanvasSize = CGSize.zero
     private var drawingOffset = CGPoint.zero
     private var activeCell: (tableID: String, cellIndex: UInt32)?
-    private weak var interactionHost: RichTextEditorView?
+    private(set) weak var interactionHost: RichTextEditorView?
     private lazy var selectionGesture: TableSelectionHandleGestureRecognizer = {
         let recognizer = TableSelectionHandleGestureRecognizer(target: self, action: #selector(handleSelectionGesture(_:)))
         recognizer.delegate = self
         recognizer.cancelsTouchesInView = true
         return recognizer
+    }()
+    private lazy var cellDragInteraction: UIDragInteraction = {
+        let interaction = UIDragInteraction(delegate: self)
+        interaction.isEnabled = true
+        return interaction
     }()
     private lazy var resizeGesture: TableResizePanGestureRecognizer = {
         let recognizer = TableResizePanGestureRecognizer(target: self, action: #selector(handleResizeGesture(_:)))
@@ -275,6 +281,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         selectionGesture.view?.removeGestureRecognizer(selectionGesture)
         resizeGesture.view?.removeGestureRecognizer(resizeGesture)
         cellEditMenu.interaction.view?.removeInteraction(cellEditMenu.interaction)
+        cellDragInteraction.view?.removeInteraction(cellDragInteraction)
     }
 
     override func didMoveToWindow() {
@@ -289,6 +296,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         host.addGestureRecognizer(selectionGesture)
         host.addGestureRecognizer(resizeGesture)
         interactionHost?.textView.addInteraction(cellEditMenu.interaction)
+        interactionHost?.textView.addInteraction(cellDragInteraction)
         drawingView.installTableInteraction(on: host)
     }
 
@@ -478,6 +486,34 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
               drawingView.selectedTableCellEndpoints != nil
         else { return nil }
         return host.textView
+    }
+
+    func cellDragSource(at point: CGPoint) -> TableCellDragSource? {
+        guard activeDrag == nil, cellSelectionContains(point), !hasSelectionHandle(at: point),
+              actionableResizeEdge(at: convert(point, to: drawingView)) == nil,
+              interactionHost?.hasPendingCompositionForExternalRefresh == false,
+              let endpoints = drawingView.selectedTableCellEndpoints,
+              let sourcePositions = drawingView.selectedTableCellSourcePositions[endpoints.tableID]
+        else { return nil }
+        return TableCellDragSource(tableID: endpoints.tableID, anchor: endpoints.anchor, head: endpoints.head,
+                                   sourcePositions: sourcePositions)
+    }
+
+    func cellDragPreview() -> UITargetedDragPreview? {
+        guard drawingView.window != nil, let rects = visibleSelectedCellRects() else { return nil }
+        let visiblePath = UIBezierPath()
+        rects.forEach { visiblePath.append(UIBezierPath(rect: $0)) }
+        let parameters = UIDragPreviewParameters()
+        parameters.visiblePath = visiblePath
+        return UITargetedDragPreview(view: drawingView, parameters: parameters)
+    }
+
+    func showTableCellDropTarget(_ target: TableCellDropTarget?) {
+        drawingView.tableCellDropTarget = target
+    }
+
+    func cellSelectionIncludes(_ target: TableCellDropTarget) -> Bool {
+        drawingView.selectedTableCellSourcePositions[target.tableID]?.contains(target.sourcePosition) == true
     }
 
     private func visibleSelectedCellRects() -> [CGRect]? {
@@ -671,6 +707,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         return RootTableCellHit(
             tableID: presented.surface.identity,
             cellIndex: UInt32(sourceCellIndex),
+            sourcePosition: presented.sourcePosition,
             contentRect: presented.bounds.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
                 .insetBy(dx: inset, dy: inset)
         )
@@ -1348,7 +1385,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
 }
 
 extension EditorTableSurface: TableAccessibilityEditing {
-    private func accessibilityMutationContext(tableID: String) -> (
+    func tableMutationContext(tableID: String) -> (
         host: RichTextEditorView, adapter: EditorV2Adapter, admission: EditorV2Adapter.TableMutationAdmission
     )? {
         guard let host = interactionHost, host.window != nil, host.editorId != 0,
@@ -1371,7 +1408,7 @@ extension EditorTableSurface: TableAccessibilityEditing {
 
     func tableAccessibilityActions(for cell: TableAccessibilityCell, tableID: String) -> [TableAccessibilityAction] {
         guard ownsAccessibilitySelection(cell, tableID: tableID),
-              let context = accessibilityMutationContext(tableID: tableID),
+              let context = tableMutationContext(tableID: tableID),
               let commands = context.adapter.cachedActiveState?["commands"] as? [String: Any]
         else { return [] }
         return TableAccessibilityAction.all.filter { commands[$0.applicability] as? Bool == true }
@@ -1380,7 +1417,7 @@ extension EditorTableSurface: TableAccessibilityEditing {
     func performTableAccessibilityAction(_ action: TableAccessibilityAction, for cell: TableAccessibilityCell,
                                          tableID: String) -> Bool {
         guard tableAccessibilityActions(for: cell, tableID: tableID).contains(action),
-              let context = accessibilityMutationContext(tableID: tableID),
+              let context = tableMutationContext(tableID: tableID),
               let update = context.adapter.applyTableCommandAtSelection(action.command, admission: context.admission)
         else { return false }
         return context.host.activeTextInput.applyUpdateJSON(update)
@@ -1445,11 +1482,11 @@ extension EditorTableSurface: TableAccessibilityEditing {
     }
 
     func canDeleteTableAccessibilityFrame(tableID: String) -> Bool {
-        accessibilityMutationContext(tableID: tableID) != nil
+        tableMutationContext(tableID: tableID) != nil
     }
 
     func deleteTableAccessibilityFrame(tableID: String) -> Bool {
-        guard let context = accessibilityMutationContext(tableID: tableID),
+        guard let context = tableMutationContext(tableID: tableID),
               let update = context.adapter.deleteTable(admission: context.admission)
         else { return false }
         return context.host.activeTextInput.applyUpdateJSON(update)

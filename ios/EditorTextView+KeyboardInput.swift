@@ -40,6 +40,9 @@ enum EditorPasteMode: String {
 
 struct EditorClipboardPayload {
     static let fragmentType = "com.apollohg.native-editor.fragment"
+    static let htmlType = "public.html"
+    static let plainTextType = "public.utf8-plain-text"
+    static let exportedTypes = [fragmentType, htmlType, plainTextType]
 
     let fragment: String
     let html: String
@@ -66,12 +69,33 @@ struct EditorClipboardPayload {
     func write(to pasteboard: UIPasteboard) -> Bool {
         pasteboard.items = [[
             Self.fragmentType: Data(fragment.utf8),
-            "public.html": Data(html.utf8),
-            "public.utf8-plain-text": text
+            Self.htmlType: Data(html.utf8),
+            Self.plainTextType: text
         ]]
         return pasteboard.data(forPasteboardType: Self.fragmentType) != nil
-            && pasteboard.data(forPasteboardType: "public.html") != nil
+            && pasteboard.data(forPasteboardType: Self.htmlType) != nil
             && pasteboard.string != nil
+    }
+
+    var representations: [String: Data] {
+        [
+            Self.fragmentType: Data(fragment.utf8),
+            Self.htmlType: Data(html.utf8),
+            Self.plainTextType: Data(text.utf8)
+        ]
+    }
+
+    func itemProvider() -> NSItemProvider {
+        let provider = NSItemProvider()
+        let representations = representations
+        for type in Self.exportedTypes {
+            let data = representations[type]
+            provider.registerDataRepresentation(forTypeIdentifier: type, visibility: .all) { completion in
+                completion(data, nil)
+                return nil
+            }
+        }
+        return provider
     }
 }
 
@@ -83,14 +107,10 @@ enum EditorClipboardCut {
 enum EditorClipboardPaste {
     static let maximumRTFBytes = 64 * 1_024 * 1_024
 
-    static let supportedTypes = [
-        EditorClipboardPayload.fragmentType,
-        "public.html",
-        "public.rtf",
-        "public.utf8-plain-text",
-        "public.plain-text",
-        "public.text"
-    ]
+    static let rtfType = "public.rtf"
+    static let plainTextTypes = [EditorClipboardPayload.plainTextType, "public.plain-text", "public.text"]
+    static let supportedTypes = [EditorClipboardPayload.fragmentType, EditorClipboardPayload.htmlType, rtfType]
+        + plainTextTypes
 
     static func hasSupportedContent(in pasteboard: UIPasteboard) -> Bool {
         pasteboard.contains(pasteboardTypes: supportedTypes)
@@ -101,15 +121,34 @@ enum EditorClipboardPaste {
         mode: EditorPasteMode,
         maximumRTFBytes: Int = EditorClipboardPaste.maximumRTFBytes
     ) -> [String: Any]? {
+        command(mode: mode, plainText: pasteboard.string, maximumRTFBytes: maximumRTFBytes) {
+            pasteboard.data(forPasteboardType: $0)
+        }
+    }
+
+    static func command(
+        from representations: [String: Data],
+        mode: EditorPasteMode
+    ) -> [String: Any]? {
+        let plainText = plainTextTypes.lazy.compactMap { utf8String(representations[$0]) }.first
+        return command(mode: mode, plainText: plainText, maximumRTFBytes: maximumRTFBytes) { representations[$0] }
+    }
+
+    private static func command(
+        mode: EditorPasteMode,
+        plainText: String?,
+        maximumRTFBytes: Int,
+        data: (String) -> Data?
+    ) -> [String: Any]? {
         guard mode != .disabled else { return nil }
         var command: [String: Any] = ["type": "paste"]
-        if let fragment = utf8String(pasteboard.data(forPasteboardType: EditorClipboardPayload.fragmentType)) {
+        if let fragment = utf8String(data(EditorClipboardPayload.fragmentType)) {
             command["fragment"] = fragment
         }
-        var html = utf8String(pasteboard.data(forPasteboardType: "public.html"))
-        var text = pasteboard.string
+        var html = utf8String(data(EditorClipboardPayload.htmlType))
+        var text = plainText
         if html == nil,
-           let rtf = pasteboard.data(forPasteboardType: "public.rtf"),
+           let rtf = data(rtfType),
            rtf.count <= maximumRTFBytes,
            let attributed = try? NSAttributedString(
                data: rtf,

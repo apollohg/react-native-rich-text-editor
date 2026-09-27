@@ -296,6 +296,7 @@ class EditorEditText @JvmOverloads constructor(
     internal var onMoveSelectionScalarForTesting: ((Int, Int, Int) -> Unit)? = null
     internal var onBeforeRenderRefresh: (() -> Unit)? = null
     internal var onTableRootTouch: ((MotionEvent) -> Boolean)? = null
+    internal var tableCellDropHandler: ((DragEvent) -> Boolean?)? = null
     internal var onTableCellSelectionSynced: (() -> Unit)? = null
     internal var onTableCellTab: ((Boolean) -> Boolean)? = null
     internal var onTableCellArrow: ((Int, Int) -> Boolean)? = null
@@ -542,7 +543,13 @@ class EditorEditText @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
-    override fun onDragEvent(event: DragEvent): Boolean = if (isTableCellInput || rootTablePositionMap != null || rootTableRenderNeedsRefresh) false else when (event.action) {
+    override fun onDragEvent(event: DragEvent): Boolean {
+        if (isTableCellInput) return false
+        if (localTextDrag == null) tableCellDropHandler?.invoke(event)?.let { return it }
+        return onTextDragEvent(event)
+    }
+
+    private fun onTextDragEvent(event: DragEvent): Boolean = when (event.action) {
         DragEvent.ACTION_DRAG_STARTED -> {
             val drag = localTextDragFor(event)
             localTextDrag = drag
@@ -558,8 +565,9 @@ class EditorEditText @JvmOverloads constructor(
                 val currentText = text?.toString().orEmpty()
                 val destinationUtf16 = getOffsetForPosition(event.x, event.y)
                     .coerceIn(0, currentText.length)
-                val destination = PositionBridge.utf16ToScalar(destinationUtf16, currentText)
-                performLocalSelectionDrop(drag, destination) || super.onDragEvent(event)
+                val destination = inputPositionScalarAtLocalUtf16(destinationUtf16, currentText)
+                destination != null &&
+                    (performLocalSelectionDrop(drag, destination) || super.onDragEvent(event))
             }
         }
 

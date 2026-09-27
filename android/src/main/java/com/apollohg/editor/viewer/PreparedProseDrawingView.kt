@@ -61,6 +61,8 @@ internal data class RemoteTableCellSelection(val tableId: String, val sourcePosi
 
 internal data class TableResizeEdge(val tableId: String, val column: Int)
 
+internal data class TableCellDropTarget(val tableId: String, val sourcePosition: Int)
+
 /** Rendering-only consumer of fully prepared StaticLayout and geometry fragments. */
 internal class PreparedProseDrawingView @JvmOverloads constructor(
     context: Context,
@@ -106,6 +108,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             invalidate()
         }
     internal var activeTableResizeEdge: TableResizeEdge? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
+    internal var tableCellDropTarget: TableCellDropTarget? = null
         set(value) {
             if (field == value) return
             field = value
@@ -621,6 +629,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                 }
                 snapshot.mountedCells.filter(::isSelectedTableCell).forEach {
                     fillTableCell(canvas, it, it.surface.style.selectionColor)
+                }
+                tableCellDropTarget?.let { target ->
+                    snapshot.mountedCells.filter {
+                        it.surface.editorTableId == target.tableId &&
+                            isRealTableCell(it, setOf(target.sourcePosition))
+                    }.forEach { fillTableCell(canvas, it, it.surface.style.selectionColor) }
                 }
                 snapshot.mountedCells.forEach { drawTableChromeBorder(canvas, it) }
                 visible.forEach { drawPresented(canvas, it, snapshot) { drawBorderOrRule(canvas, it) } }

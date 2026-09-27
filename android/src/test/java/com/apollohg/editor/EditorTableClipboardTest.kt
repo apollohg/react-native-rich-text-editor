@@ -6,13 +6,17 @@ import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
+import android.graphics.Point
+import android.graphics.RectF
 import android.os.Looper
+import android.view.DragEvent
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.widget.FrameLayout
 import java.time.Duration
+import kotlin.math.ceil
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -25,7 +29,12 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowWindowManagerGlobal
+import org.robolectric.util.ReflectionHelpers
+import com.apollohg.editor.tables.TableCellDragShadow
+import com.apollohg.editor.tables.TableCellDragState
 import com.apollohg.editor.viewer.PreparedProseDrawingView
+import com.apollohg.editor.viewer.TableCellDropTarget
 import com.apollohg.editor.viewer.TableSelectionHandleRole
 
 @RunWith(RobolectricTestRunner::class)
@@ -685,8 +694,315 @@ internal class EditorTableClipboardTest {
             assertEquals(null, fixture.root.selectionActionMode)
         }
 
+    private fun rootDragEvent(
+        root: EditorEditText,
+        action: Int,
+        point: Pair<Float, Float>,
+        clip: ClipData,
+        localState: Any
+    ): DragEvent = ReflectionHelpers.callStaticMethod<DragEvent>(DragEvent::class.java, "obtain").also {
+        ReflectionHelpers.setField(it, "mAction", action)
+        ReflectionHelpers.setField(it, "mX", point.first - root.left)
+        ReflectionHelpers.setField(it, "mY", point.second - root.top)
+        ReflectionHelpers.setField(it, "mClipData", clip.takeIf { action == DragEvent.ACTION_DROP })
+        ReflectionHelpers.setField(it, "mClipDescription", clip.description)
+        ReflectionHelpers.setField(it, "mLocalState", localState)
+    }
+
+    private fun sendDrag(root: EditorEditText, action: Int, point: Pair<Float, Float>, clip: ClipData,
+                         localState: Any): Boolean {
+        val event = rootDragEvent(root, action, point, clip, localState)
+        return try {
+            root.onDragEvent(event)
+        } finally {
+            ReflectionHelpers.callInstanceMethod<Unit>(event, "recycle")
+        }
+    }
+
+    private fun startCellDrag(fixture: Fixture, cell: Int): TableCellDragState {
+        val drawing = drawing(fixture)
+        val (x, y) = cellCenter(fixture, cell)
+        ShadowWindowManagerGlobal.clearLastDragClipData()
+        return requireNotNull(fixture.view.editorTableSurface.startCellDrag(x - drawing.left, y - drawing.top)) {
+            "a drag inside the cell selection must lift the cells"
+        }
+    }
+
+    private fun liftedClip(): ClipData = requireNotNull(ShadowWindowManagerGlobal.getLastDragClipData()) {
+        "no system drag was started"
+    }
+
+    private fun dropCells(fixture: Fixture, state: Any, clip: ClipData, cell: Int): Boolean {
+        val target = cellCenter(fixture, cell)
+        assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_STARTED, target, clip, state))
+        assertTrue("hovering a real cell is handled", sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, target, clip, state))
+        return sendDrag(fixture.root, DragEvent.ACTION_DROP, target, clip, state).also {
+            assertEquals("the highlight ends with the drop", null, drawing(fixture).tableCellDropTarget)
+        }
+    }
+
+    private fun dropTarget(fixture: Fixture, cell: Int) =
+        TableCellDropTarget(fixture.adapter.cachedTableRecords.keys.single(), fixture.openings()[cell])
+
+    @Test
+    fun `a long press inside the selection lifts the copy flavours as a system drag`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
+            assertTrue(fixture.root.onTextContextMenuItem(android.R.id.copy))
+            val copied = requireNotNull(clipboard().primaryClip)
+            ShadowWindowManagerGlobal.clearLastDragClipData()
+            val center = cellCenter(fixture, FIRST_CELL)
+
+            val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, center.first, center.second, 0)
+            try { fixture.view.editorContentFrame.dispatchTouchEvent(down) } finally { down.recycle() }
+            assertEquals("nothing lifts before the long-press timeout", null,
+                ShadowWindowManagerGlobal.getLastDragClipData())
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout().toLong()))
+            val up = MotionEvent.obtain(0, ViewConfiguration.getLongPressTimeout().toLong(), MotionEvent.ACTION_UP,
+                center.first, center.second, 0)
+            try { fixture.view.editorContentFrame.dispatchTouchEvent(up) } finally { up.recycle() }
+            awaitDoubleTapTimeout()
+
+            val lifted = liftedClip()
+            assertEquals(FIRST_ROW_TSV, lifted.getItemAt(0).text.toString())
+            assertEquals(copied.getItemAt(0).htmlText, lifted.getItemAt(0).htmlText)
+            assertEquals(copied.description.extras?.getString(EditorClipboard.EXTRA_FRAGMENT),
+                lifted.description.extras?.getString(EditorClipboard.EXTRA_FRAGMENT))
+            assertTrue(lifted.description.hasMimeType(EditorClipboard.MIME_TYPE_FRAGMENT))
+            assertFalse("the lifting press is not a menu tap", fixture.view.editorTableSurface.isCellEditMenuVisible)
+            assertEquals("lifting never mutates", emptyList<String>(), fixture.backend.mutations)
+            assertEquals(0, fixture.updates.size)
+        }
+
+    @Test
+    fun `a handle press or a quick tap never lifts the cells`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
+            ShadowWindowManagerGlobal.clearLastDragClipData()
+            val drawing = drawing(fixture)
+            val head = drawing.selectionHandles().single { it.role == TableSelectionHandleRole.HEAD }
+            val handle = head.x + drawing.left to head.y + drawing.top
+            val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, handle.first, handle.second, 0)
+            try { fixture.view.editorContentFrame.dispatchTouchEvent(down) } finally { down.recycle() }
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout().toLong()))
+            assertEquals("the handle keeps precedence", null, ShadowWindowManagerGlobal.getLastDragClipData())
+            fixture.view.editorTableSurface.cancelActiveDrag()
+
+            tapCell(fixture, FIRST_CELL)
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ViewConfiguration.getLongPressTimeout().toLong()))
+            assertEquals("a tap is not a long press", null, ShadowWindowManagerGlobal.getLastDragClipData())
+            assertTrue("the tap still toggles the menu", fixture.view.editorTableSurface.isCellEditMenuVisible)
+        }
+
+    @Test
+    fun `the drag shadow is the union of the selected cells`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
+            val drawing = drawing(fixture)
+            val rects = requireNotNull(drawing.selectedTableCellRects(requireNotNull(drawing.selectedTableCellEndpoints).first))
+            val union = RectF(rects.first()).apply { rects.drop(1).forEach(::union) }
+            val shadow = TableCellDragShadow(drawing, rects, union.left + SHADOW_TOUCH_INSET, union.top + SHADOW_TOUCH_INSET)
+            val size = Point()
+            val touch = Point()
+
+            shadow.onProvideShadowMetrics(size, touch)
+
+            assertEquals(ceil(union.width()).toInt(), size.x)
+            assertEquals(ceil(union.height()).toInt(), size.y)
+            assertEquals(Point(SHADOW_TOUCH_INSET.toInt(), SHADOW_TOUCH_INSET.toInt()), touch)
+        }
+
+    @Test
+    fun `a same editor drop moves the cells in one undoable mutation`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
+            val before = fixture.adapter.documentJson()
+            val state = startCellDrag(fixture, FIRST_CELL)
+            assertTrue(state.movable)
+            val target = cellCenter(fixture, THIRD_CELL)
+            val clip = liftedClip()
+            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_STARTED, target, clip, state))
+            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, target, clip, state))
+            assertEquals("hovering highlights the real drop cell", dropTarget(fixture, THIRD_CELL),
+                drawing(fixture).tableCellDropTarget)
+
+            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DROP, target, clip, state))
+
+            assertEquals(null, drawing(fixture).tableCellDropTarget)
+            assertEquals(listOf(listOf("", ""), listOf("A", "B")), fixture.cellTexts())
+            assertOneUndoableMutation(fixture, PASTE_COMMAND, before)
+        }
+
+    @Test
+    fun `dropping the cells onto themselves is a no op`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
+            val before = fixture.adapter.documentJson()
+            val state = startCellDrag(fixture, FIRST_CELL)
+            val target = cellCenter(fixture, SECOND_CELL)
+            val clip = liftedClip()
+            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_STARTED, target, clip, state))
+            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, target, clip, state))
+            assertEquals("a self drop highlights nothing", null, drawing(fixture).tableCellDropTarget)
+
+            assertFalse(sendDrag(fixture.root, DragEvent.ACTION_DROP, target, clip, state))
+
+            assertEquals(emptyList<String>(), fixture.backend.mutations)
+            assertEquals(before, fixture.adapter.documentJson())
+            assertFalse(requireNotNull(fixture.adapter.historyCanUndo()))
+        }
+
+    @Test
+    fun `a drop from another editor copies and leaves the source intact`() =
+        withTable(GRID_DOCUMENT, attached = true) { source ->
+            selectCellsForMenu(source, FIRST_CELL, SECOND_CELL)
+            val sourceBefore = source.adapter.documentJson()
+            val state = startCellDrag(source, FIRST_CELL)
+            val clip = liftedClip()
+            withTable(TARGET_GRID_DOCUMENT, attached = true) { target ->
+                target.relayout()
+                val before = target.adapter.documentJson()
+
+                assertTrue(dropCells(target, state, clip, THIRD_CELL))
+
+                assertEquals(listOf(listOf("w", "x"), listOf("A", "B")), target.cellTexts())
+                assertOneUndoableMutation(target, PASTE_COMMAND, before)
+            }
+            assertEquals("a copy never clears the source", sourceBefore, source.adapter.documentJson())
+            assertEquals(emptyList<String>(), source.backend.mutations)
+        }
+
+    @Test
+    fun `an external drop pastes its clip as a matrix at the real drop cell`() =
+        withTable(TARGET_GRID_DOCUMENT, attached = true) { fixture ->
+            fixture.relayout()
+            val before = fixture.adapter.documentJson()
+
+            assertTrue(dropCells(fixture, Any(), ClipData.newPlainText(STALE_LABEL, EXTERNAL_TSV), LAST_CELL))
+
+            assertEquals(listOf(listOf("w", "x", ""), listOf("y", "e1", "e2")), fixture.cellTexts())
+            assertOneUndoableMutation(fixture, PASTE_COMMAND, before)
+        }
+
+    @Test
+    fun `a cell drag dropped in prose keeps the text drop and leaves the source`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
+            val state = startCellDrag(fixture, FIRST_CELL)
+            val clip = liftedClip()
+            val prose = proseStart(fixture)
+
+            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_STARTED, prose, clip, state))
+            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, prose, clip, state))
+            assertEquals(null, drawing(fixture).tableCellDropTarget)
+            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DROP, prose, clip, state))
+
+            assertEquals(listOf(listOf("A", "B"), listOf("C", "D")), fixture.cellTexts())
+            assertTrue("the plain text is inserted into the prose",
+                requireNotNull(fixture.adapter.documentHtml()).contains(FIRST_ROW_TSV + AFTER_TEXT))
+        }
+
+    @Test
+    fun `a text drag in the prose of a root table document moves the text`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            fixture.relayout()
+            val text = requireNotNull(fixture.root.text).toString()
+            val start = text.indexOf(AFTER_TEXT)
+            fixture.root.setSelection(start, start + MOVED_PREFIX.length)
+            val end = start + AFTER_TEXT.length
+            val clip = ClipData.newPlainText(STALE_LABEL, MOVED_PREFIX)
+
+            assertTrue("a root table no longer disables text drags",
+                sendDrag(fixture.root, DragEvent.ACTION_DRAG_STARTED, proseOffset(fixture, end), clip, fixture.root))
+            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DROP, proseOffset(fixture, end), clip, fixture.root))
+
+            assertTrue(requireNotNull(fixture.adapter.documentHtml()).contains("<p>ter$MOVED_PREFIX</p>"))
+            assertEquals("the table is untouched", listOf(listOf("A", "B"), listOf("C", "D")), fixture.cellTexts())
+        }
+
+    @Test
+    fun `a read only editor lifts a copy only drag and refuses drops`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            selectCellsForMenu(fixture, FIRST_CELL, SECOND_CELL)
+            fixture.root.isEditable = false
+            val before = fixture.adapter.documentJson()
+
+            val state = startCellDrag(fixture, FIRST_CELL)
+            assertFalse("a read-only source can only be copied", state.movable)
+            val target = cellCenter(fixture, THIRD_CELL)
+            val clip = liftedClip()
+            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, target, clip, state))
+            assertEquals(null, drawing(fixture).tableCellDropTarget)
+            assertFalse(sendDrag(fixture.root, DragEvent.ACTION_DROP, target, clip, state))
+
+            assertEquals(emptyList<String>(), fixture.backend.mutations)
+            assertEquals(before, fixture.adapter.documentJson())
+        }
+
+    @Test
+    fun `a view that does not own the table cannot move or receive cell drops`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            val openings = fixture.openings()
+            fixture.selectCells(openings[FIRST_CELL], openings[SECOND_CELL])
+            val stale = fixture.nonOwnerView()
+            (fixture.view.parent as FrameLayout).addView(stale, FrameLayout.LayoutParams(VIEW_WIDTH, VIEW_HEIGHT))
+            fixture.relayout(stale)
+            assertTrue(stale.editorEditText.requestFocus())
+            val staleDrawing = stale.editorTableSurface.drawingView
+            val presented = staleDrawing.presentedTableCells().single { it.sourcePosition == openings[FIRST_CELL] }
+            val before = fixture.adapter.documentJson()
+
+            val state = requireNotNull(stale.editorTableSurface.startCellDrag(
+                presented.bounds.centerX(), presented.bounds.centerY()))
+            assertFalse("a non-owner can only copy", state.movable)
+            val target = staleDrawing.presentedTableCells().single { it.sourcePosition == openings[THIRD_CELL] }
+            assertFalse(sendDrag(stale.editorEditText, DragEvent.ACTION_DROP,
+                target.bounds.centerX() + staleDrawing.left to target.bounds.centerY() + staleDrawing.top,
+                liftedClip(), state))
+
+            assertEquals(emptyList<String>(), fixture.backend.mutations)
+            assertEquals(before, fixture.adapter.documentJson())
+        }
+
+    @Test
+    fun `an active composition refuses a cell drop`() =
+        withTable(GRID_DOCUMENT, attached = true) { fixture ->
+            fixture.relayout()
+            val text = requireNotNull(fixture.root.text).toString()
+            fixture.root.setSelection(text.indexOf(AFTER_TEXT))
+            fixture.root.beginExternalTextComposition(COMPOSITION_SESSION)
+            assertTrue(fixture.root.hasPendingCompositionForExternalRefresh())
+            val before = fixture.adapter.documentJson()
+            val clip = ClipData.newPlainText(STALE_LABEL, EXTERNAL_TSV)
+
+            assertTrue(sendDrag(fixture.root, DragEvent.ACTION_DRAG_LOCATION, cellCenter(fixture, THIRD_CELL), clip, Any()))
+            assertEquals(null, drawing(fixture).tableCellDropTarget)
+            assertFalse(sendDrag(fixture.root, DragEvent.ACTION_DROP, cellCenter(fixture, THIRD_CELL), clip, Any()))
+
+            assertEquals(before, fixture.adapter.documentJson())
+            assertEquals(emptyList<String>(), fixture.backend.mutations.filter { it.startsWith(APPLY_COMMAND) })
+        }
+
+    private fun proseOffset(fixture: Fixture, offset: Int): Pair<Float, Float> {
+        val root = fixture.root
+        val layout = requireNotNull(root.layout)
+        val line = layout.getLineForOffset(offset)
+        return layout.getPrimaryHorizontal(offset) + root.totalPaddingLeft + root.left to
+            layout.editorTextLineTop(line).toFloat() + root.totalPaddingTop + root.top + PROSE_LINE_INSET
+    }
+
+    private fun proseStart(fixture: Fixture): Pair<Float, Float> =
+        proseOffset(fixture, requireNotNull(fixture.root.text).toString().indexOf(AFTER_TEXT))
+
+
     private companion object {
         const val APPLY_COMMAND = "applyCommand"
+        const val EXTERNAL_TSV = "e1\te2"
+        const val MOVED_PREFIX = "af"
+        const val COMPOSITION_SESSION = "cell-drag-composition"
+        const val SHADOW_TOUCH_INSET = 4f
+        const val PROSE_LINE_INSET = 1f
+        const val TARGET_GRID_DOCUMENT = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"w"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"x"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"y"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"z"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
         const val APPLY_INPUT = "applyInput"
         const val SET_SELECTION = "setSelection"
         const val PASTE_COMMAND = "paste"

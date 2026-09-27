@@ -760,6 +760,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         textView.onFirstResponderResigned = { [weak self] in
             self?.tableSurface.dismissCellEditMenu()
         }
+        textView.tableCellDropHandler = tableSurface
         textView.onAuthoritativeRenderApplied = { [weak self] updateJSON in
             self?.refreshTablePresentation()
             self?.refreshActiveTableCell(after: updateJSON)

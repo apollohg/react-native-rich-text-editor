@@ -9,6 +9,7 @@ import android.text.Annotation
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ReplacementSpan
+import android.view.DragEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.MotionEvent
@@ -18,7 +19,11 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import kotlin.math.ceil
 import kotlin.math.roundToInt
+import com.apollohg.editor.EditorClipboard
 import com.apollohg.editor.EditorEditText
+import com.apollohg.editor.EditorPasteMode
+import com.apollohg.editor.canMutateSelectedTableCells
+import com.apollohg.editor.prepareForExternalInteractionMutation
 import com.apollohg.editor.EditorTextStyle
 import com.apollohg.editor.EditorV2Adapter
 import com.apollohg.editor.EditorV2Registry
@@ -50,6 +55,7 @@ import com.apollohg.editor.updateAtomBoundaryCursorVisibility
 import com.apollohg.editor.viewer.PreparedProseBlock
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import com.apollohg.editor.viewer.RemoteTableCellSelection
+import com.apollohg.editor.viewer.TableCellDropTarget
 import com.apollohg.editor.viewer.TableSelectionHandleRole
 import com.apollohg.editor.viewer.TableResizeEdge
 import com.apollohg.editor.viewer.PreparedProseLayout
@@ -143,7 +149,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         }
         onTableTap = { downX, downY, upX, upY ->
             val target = hitCell(downX, downY)?.takeIf { it == hitCell(upX, upY) }
-            tapCellSelection(target, upX, upY) ||
+            cellDragLifted || tapCellSelection(target, upX, upY) ||
                 target != null && activateCell(target.first, target.second, upX, upY)
         }
     }
@@ -153,6 +159,11 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     private var presentedCellEditMenuSelection: Triple<String, Int, Int>? = null
     private val doubleTapTimeoutMs = ViewConfiguration.getDoubleTapTimeout().toLong()
     private var pendingCellEditMenuToggle: Runnable? = null
+    private val longPressTimeoutMs = ViewConfiguration.getLongPressTimeout().toLong()
+    private val touchSlop = ViewConfiguration.get(host.context).scaledTouchSlop.toFloat()
+    private data class PendingCellDrag(val start: Runnable, val downX: Float, val downY: Float)
+    private var pendingCellDrag: PendingCellDrag? = null
+    private var cellDragLifted = false
     val isCellEditMenuVisible: Boolean get() = cellEditMenu.isVisible
     private data class ActiveCell(val tableId: String, val cellIndex: Int, val sourcePos: Long)
     private var activeCell: ActiveCell? = null
@@ -306,6 +317,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     fun beginFrameGesture(event: MotionEvent): Boolean {
         resizeCandidate = null
         resizeGestureAxis.reset()
+        cancelPendingCellDrag()
+        cellDragLifted = false
         if (event.actionMasked == MotionEvent.ACTION_DOWN &&
             !cellSelectionContains(event.x - drawingView.left, event.y - drawingView.top)) {
             cancelPendingCellEditMenuToggle()
@@ -314,7 +327,140 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         if (event.actionMasked != MotionEvent.ACTION_DOWN || event.pointerCount != 1) return false
         if (startHandleDrag(event)) return true
         armResize(event)
+        armCellDrag(event)
         return false
+    }
+
+    fun trackFrameGesture(event: MotionEvent) {
+        val pending = pendingCellDrag ?: return
+        val moved = event.actionMasked == MotionEvent.ACTION_MOVE &&
+            (event.x - pending.downX) * (event.x - pending.downX) +
+            (event.y - pending.downY) * (event.y - pending.downY) > touchSlop * touchSlop
+        if (moved || event.actionMasked != MotionEvent.ACTION_MOVE) cancelPendingCellDrag()
+    }
+
+    private fun armCellDrag(event: MotionEvent) {
+        if (resizeCandidate != null) return
+        val x = event.x - drawingView.left
+        val y = event.y - drawingView.top
+        if (cellDragSource(x, y) == null) return
+        val start = Runnable {
+            pendingCellDrag = null
+            startCellDrag(x, y)
+        }
+        pendingCellDrag = PendingCellDrag(start, event.x, event.y)
+        drawingView.postDelayed(start, longPressTimeoutMs)
+    }
+
+    private fun cancelPendingCellDrag() {
+        pendingCellDrag?.let { drawingView.removeCallbacks(it.start) }
+        pendingCellDrag = null
+    }
+
+    private fun cellDragSource(x: Float, y: Float): TableCellDragSource? {
+        if (activeDrag != null || activeCell != null || !cellSelectionContains(x, y) ||
+            drawingView.hitSelectionHandle(x, y) != null || drawingView.hitResizeEdge(x, y) != null ||
+            host.editorEditText.hasPendingCompositionForExternalRefresh() ||
+            drawingView.ownsHorizontalTableGesture) return null
+        val (tableId, anchor, head) = cellEditMenuSelection() ?: return null
+        val sourcePositions = drawingView.selectedTableCellSourcePositions[tableId] ?: return null
+        return TableCellDragSource(tableId, anchor, head, sourcePositions)
+    }
+
+    fun startCellDrag(x: Float, y: Float): TableCellDragState? {
+        val source = cellDragSource(x, y) ?: return null
+        val root = host.editorEditText
+        val adapter = root.v2Driver as? EditorV2Adapter ?: return null
+        val payload = adapter.clipboardJson()?.let(EditorClipboard::fromExportJson) ?: return null
+        val visible = Rect()
+        if (!drawingView.getLocalVisibleRect(visible)) return null
+        val cellRects = visibleSelectedCellRects(source.tableId, RectF(visible))?.takeIf { it.isNotEmpty() }
+            ?: return null
+        val state = TableCellDragState(root.editorId, adapter, adapter.baseDocumentRevision, source, payload,
+            root.isEditable && root.canMutateSelectedTableCells())
+        if (!drawingView.startDragAndDrop(EditorClipboard.create(payload),
+                TableCellDragShadow(drawingView, cellRects, x, y), state, View.DRAG_FLAG_GLOBAL)) return null
+        cellDragLifted = true
+        cancelPendingCellEditMenuToggle()
+        dismissCellEditMenu()
+        drawingView.cancelTableInteraction()
+        return state
+    }
+
+    private sealed interface TableCellDropResolution {
+        data object SelfDrop : TableCellDropResolution
+        data object Refused : TableCellDropResolution
+        data class Accepted(
+            val target: TableCellDropTarget,
+            val adapter: EditorV2Adapter,
+            val revision: ULong,
+            val dragged: TableCellDragState?,
+            val moved: TableCellDragSource?,
+            val pastesIntoSelection: Boolean
+        ) : TableCellDropResolution
+    }
+
+    fun onRootDragEvent(event: DragEvent): Boolean? = when (event.action) {
+        DragEvent.ACTION_DRAG_LOCATION -> {
+            val resolution = resolveTableCellDrop(event)
+            drawingView.tableCellDropTarget = (resolution as? TableCellDropResolution.Accepted)?.target
+            resolution?.let { true }
+        }
+        DragEvent.ACTION_DROP -> {
+            drawingView.tableCellDropTarget = null
+            when (val resolution = resolveTableCellDrop(event)) {
+                null -> null
+                TableCellDropResolution.SelfDrop, TableCellDropResolution.Refused -> false
+                is TableCellDropResolution.Accepted -> performTableCellDrop(resolution, event)
+            }
+        }
+        DragEvent.ACTION_DRAG_EXITED, DragEvent.ACTION_DRAG_ENDED -> {
+            drawingView.tableCellDropTarget = null
+            null
+        }
+        else -> null
+    }
+
+    private fun resolveTableCellDrop(event: DragEvent): TableCellDropResolution? {
+        val root = host.editorEditText
+        val (tableId, presented) = rootCellAt(event.x + root.left - drawingView.left,
+            event.y + root.top - drawingView.top) ?: return null
+        if (presented.cell.sourceCellIndex == null) return null
+        val target = TableCellDropTarget(tableId, presented.sourcePosition)
+        val dragged = event.localState as? TableCellDragState
+        val sameEditor = dragged?.takeIf { it.editorId == root.editorId && it.adapter === root.v2Driver }
+        if (sameEditor != null && sameEditor.source.tableId == tableId &&
+            target.sourcePosition in sameEditor.source.sourcePositions) return TableCellDropResolution.SelfDrop
+        if (root.pasteMode == EditorPasteMode.DISABLED) return TableCellDropResolution.Refused
+        val (adapter) = tableMutationContext(tableId) ?: return TableCellDropResolution.Refused
+        val revision = adapter.baseDocumentRevision
+        val moved = if (sameEditor?.movable == true) {
+            if (sameEditor.documentRevision != revision ||
+                tableMutationContext(sameEditor.source.tableId) == null) return TableCellDropResolution.Refused
+            sameEditor.source
+        } else null
+        val pastesIntoSelection = sameEditor == null &&
+            drawingView.selectedTableCellSourcePositions[tableId]?.contains(target.sourcePosition) == true &&
+            root.isEditable && root.canMutateSelectedTableCells()
+        return TableCellDropResolution.Accepted(target, adapter, revision, dragged, moved, pastesIntoSelection)
+    }
+
+    private fun performTableCellDrop(drop: TableCellDropResolution.Accepted, event: DragEvent): Boolean {
+        val root = host.editorEditText
+        val payload = drop.dragged?.payload ?: event.clipData?.let { EditorClipboard.read(it, root.context) }
+            ?: return false
+        if (payload.fragment == null && payload.html == null && payload.text.isNullOrEmpty()) return false
+        if (!(activeInput ?: root).prepareForExternalInteractionMutation() ||
+            drop.adapter.baseDocumentRevision != drop.revision ||
+            tableMutationContext(drop.target.tableId) == null) return false
+        val plainText = root.pasteMode == EditorPasteMode.PLAIN_TEXT
+        val update = if (drop.pastesIntoSelection) {
+            drop.adapter.pasteAtEngineSelection(payload.fragment, payload.html, payload.text, plainText)
+        } else {
+            drop.adapter.pasteIntoTableCell(payload, plainText, drop.target.sourcePosition,
+                drop.moved?.let { it.anchor to it.head })
+        } ?: return false
+        return applyTableMutationUpdate(update)
     }
 
     private fun startHandleDrag(event: MotionEvent): Boolean {
@@ -565,6 +711,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
 
     fun clear() {
         cancelPendingCellEditMenuToggle()
+        cancelPendingCellDrag()
+        drawingView.tableCellDropTarget = null
         discardActiveDrag()
         resizeCandidate = null
         invalidateCell()
@@ -896,12 +1044,15 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         return !blockedRootGesture
     }
 
-    private fun hitCell(x: Float, y: Float): Pair<String, Int>? {
+    private fun rootCellAt(x: Float, y: Float): Pair<String, ViewerTablePresentedCell>? {
         val presented = drawingView.presentedTableCells().asReversed().firstOrNull {
             it.bounds.contains(x, y) && it.clip.contains(x, y)
         } ?: return null
-        val tableId = entries.entries.firstOrNull { it.value.surface === presented.surface }?.key
-            ?: return null
+        return (tableIdFor(presented.surface) ?: return null) to presented
+    }
+
+    private fun hitCell(x: Float, y: Float): Pair<String, Int>? {
+        val (tableId, presented) = rootCellAt(x, y) ?: return null
         return tableId to (presented.cell.sourceCellIndex ?: return null)
     }
 
@@ -1301,7 +1452,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     private fun tableIdFor(surface: ViewerTableSurface): String? =
         entries.entries.firstOrNull { it.value.surface === surface }?.key
 
-    private fun accessibilityAdmission(tableId: String): Pair<EditorV2Adapter, TableMutationAdmission>? {
+    private fun tableMutationContext(tableId: String): Pair<EditorV2Adapter, TableMutationAdmission>? {
         val root = host.editorEditText
         val adapter = root.v2Driver as? EditorV2Adapter ?: return null
         if (!root.isEnabled || !root.isEditable || root.hasPendingCompositionForExternalRefresh() ||
@@ -1316,7 +1467,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         return drawingView.selectedTableCellSourcePositions[tableId]?.contains(cell.sourcePosition) == true
     }
 
-    private fun applyAccessibilityUpdate(update: String): Boolean {
+    private fun applyTableMutationUpdate(update: String): Boolean {
         val applied = if (activeCell != null) applyCellUpdate(update, notify = true, external = false)
         else host.editorEditText.applyUpdateJSON(update)
         refresh()
@@ -1326,7 +1477,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     override fun tableAccessibilityActions(cell: TableAccessibilityCell): List<TableAccessibilityAction> {
         val tableId = tableIdFor(cell.presented.surface) ?: return emptyList()
         if (!ownsAccessibilitySelection(tableId, cell)) return emptyList()
-        val (adapter) = accessibilityAdmission(tableId) ?: return emptyList()
+        val (adapter) = tableMutationContext(tableId) ?: return emptyList()
         val commands = adapter.cachedActiveState?.optJSONObject("commands") ?: return emptyList()
         return TableAccessibilityAction.ALL.filter { commands.optBoolean(it.applicability, false) }
     }
@@ -1334,9 +1485,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     override fun performTableAccessibilityAction(action: TableAccessibilityAction, cell: TableAccessibilityCell): Boolean {
         if (action !in tableAccessibilityActions(cell)) return false
         val tableId = tableIdFor(cell.presented.surface) ?: return false
-        val (adapter, admission) = accessibilityAdmission(tableId) ?: return false
+        val (adapter, admission) = tableMutationContext(tableId) ?: return false
         val update = adapter.applyTableCommandAtSelection(action.commandJson(), admission) ?: return false
-        return applyAccessibilityUpdate(update)
+        return applyTableMutationUpdate(update)
     }
 
     override fun activateTableAccessibilityCell(cell: TableAccessibilityCell): Boolean {
@@ -1381,12 +1532,12 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             (input.right - input.totalPaddingRight).toFloat(), bottom)
     }
 
-    override fun canDeleteTableAccessibilityFrame(tableId: String): Boolean = accessibilityAdmission(tableId) != null
+    override fun canDeleteTableAccessibilityFrame(tableId: String): Boolean = tableMutationContext(tableId) != null
 
     override fun deleteTableAccessibilityFrame(tableId: String): Boolean {
-        val (adapter, admission) = accessibilityAdmission(tableId) ?: return false
+        val (adapter, admission) = tableMutationContext(tableId) ?: return false
         val update = adapter.deleteTable(admission) ?: return false
-        return applyAccessibilityUpdate(update)
+        return applyTableMutationUpdate(update)
     }
 
     private fun mountDetachedFrameAccessibility() {

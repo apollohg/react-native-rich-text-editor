@@ -27,6 +27,11 @@ struct RemoteTableCellSelection: Equatable {
     let color: UIColor
 }
 
+struct TableCellDropTarget: Equatable {
+    let tableID: String
+    let sourcePosition: Int
+}
+
 struct TableResizeEdge: Equatable {
     let tableID: String
     let column: Int
@@ -179,6 +184,11 @@ public final class PreparedProseDrawingView: UIView {
     var activeTableResizeEdge: TableResizeEdge? {
         didSet {
             if activeTableResizeEdge != oldValue { setNeedsDisplay() }
+        }
+    }
+    var tableCellDropTarget: TableCellDropTarget? {
+        didSet {
+            if tableCellDropTarget != oldValue { setNeedsDisplay() }
         }
     }
 
@@ -1066,6 +1076,12 @@ public final class PreparedProseDrawingView: UIView {
         }
         for cell in snapshot.mountedCells where isSelectedTableCell(cell) {
             fillTableCell(cell, color: cell.surface.style.selectionColor, context: context)
+        }
+        if let target = tableCellDropTarget {
+            for cell in snapshot.mountedCells
+            where cell.surface.identity == target.tableID && isRealTableCell(cell, in: [target.sourcePosition]) {
+                fillTableCell(cell, color: cell.surface.style.selectionColor, context: context)
+            }
         }
         context.saveGState()
         context.translateBy(x: 0, y: bounds.height)

@@ -156,7 +156,7 @@ private fun EditorEditText.hasPasteableClip(): Boolean {
     return clipboard.primaryClipDescription?.let(EditorClipboard::isReadable) == true
 }
 
-private fun EditorEditText.canMutateSelectedTableCells(): Boolean {
+internal fun EditorEditText.canMutateSelectedTableCells(): Boolean {
     val adapter = v2Driver as? EditorV2Adapter ?: return false
     return authoritativeCellSelectionActive && hasAuthorizedNativeTableOwner(adapter) &&
         adapter.selectedTableCellsMutationAdmission() != null

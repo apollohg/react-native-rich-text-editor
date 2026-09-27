@@ -1,6 +1,12 @@
 import os
 import UIKit
 
+protocol TableCellDropHandling: AnyObject {
+    func tableCellDropOperation(for session: UIDropSession) -> UIDropOperation?
+    func performTableCellDrop(_ session: UIDropSession) -> Bool
+    func endTableCellDropHover()
+}
+
 extension EditorTextView {
     enum LocalTextDragState {
         case idle
@@ -23,6 +29,7 @@ extension EditorTextView {
         itemsForDrag dragRequest: UITextDragRequest
     ) -> [UIDragItem] {
         guard tableCellPositionMap == nil else { return dragRequest.suggestedItems }
+        guard !authoritativeCellSelectionActive else { return [] }
         let requestedRange = PositionBridge.textRangeToScalarRange(
             dragRequest.dragRange,
             in: self
@@ -98,7 +105,15 @@ extension EditorTextView {
         _ textDroppableView: UIView & UITextDroppable,
         proposalForDrop drop: UITextDropRequest
     ) -> UITextDropProposal {
-        guard let drag = matchingLocalTextDrag(for: drop) else {
+        let localTextDrag = matchingLocalTextDrag(for: drop)
+        if localTextDrag == nil,
+           let operation = tableCellDropHandler?.tableCellDropOperation(for: drop.dropSession) {
+            let proposal = UITextDropProposal(operation: operation)
+            proposal.dropPerformer = .delegate
+            proposal.useFastSameViewOperations = false
+            return proposal
+        }
+        guard let drag = localTextDrag else {
             return drop.suggestedProposal
         }
         let destination = PositionBridge.textViewToScalar(drop.dropPosition, in: self)
@@ -123,7 +138,11 @@ extension EditorTextView {
         _ textDroppableView: UIView & UITextDroppable,
         willPerformDrop drop: UITextDropRequest
     ) {
-        guard let drag = matchingLocalTextDrag(for: drop) else { return }
+        let localTextDrag = matchingLocalTextDrag(for: drop)
+        if localTextDrag == nil, tableCellDropHandler?.performTableCellDrop(drop.dropSession) == true {
+            return
+        }
+        guard let drag = localTextDrag else { return }
         let destination = PositionBridge.textViewToScalar(drop.dropPosition, in: self)
         guard drag.supported,
               drag.documentRevision == EditorV2Shadow.documentRevision(id: editorId),
@@ -178,6 +197,14 @@ extension EditorTextView {
         previewForDroppingAllItemsWithDefault defaultPreview: UITargetedDragPreview
     ) -> UITargetedDragPreview? {
         defaultPreview
+    }
+
+    func textDroppableView(_ textDroppableView: UIView & UITextDroppable, dropSessionDidExit session: UIDropSession) {
+        tableCellDropHandler?.endTableCellDropHover()
+    }
+
+    func textDroppableView(_ textDroppableView: UIView & UITextDroppable, dropSessionDidEnd session: UIDropSession) {
+        tableCellDropHandler?.endTableCellDropHover()
     }
 
     func textDraggableView(

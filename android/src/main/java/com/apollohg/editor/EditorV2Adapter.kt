@@ -78,6 +78,12 @@ internal class EditorV2Adapter private constructor(
     val debugNotes = mutableListOf<String>()
 
     companion object {
+        private const val TABLE_CELL_DROP_KEY = "cellDrop"
+        private const val TABLE_CELL_DROP_TARGET_KEY = "targetCell"
+        private const val TABLE_CELL_DROP_MOVED_KEY = "movedCells"
+        private const val TABLE_CELL_DROP_ANCHOR_KEY = "anchorCell"
+        private const val TABLE_CELL_DROP_HEAD_KEY = "headCell"
+
         /**
          * Attach to an existing v2 session created through the module's
          * JS-facing `editorV2Create` entry. The session is NOT re-created;
@@ -854,6 +860,25 @@ internal class EditorV2Adapter private constructor(
         text: String?,
         plainText: Boolean
     ): String? = commandAdoptingEngineSelection(pasteCommand(fragment, html, text, plainText))
+
+    fun pasteIntoTableCell(
+        payload: EditorClipboardPayload,
+        plainText: Boolean,
+        targetCell: Int,
+        movedCells: Pair<Int, Int>?
+    ): String? {
+        val cellDrop = JSONObject().put(TABLE_CELL_DROP_TARGET_KEY, targetCell)
+        movedCells?.let { (anchor, head) ->
+            cellDrop.put(
+                TABLE_CELL_DROP_MOVED_KEY,
+                JSONObject().put(TABLE_CELL_DROP_ANCHOR_KEY, anchor).put(TABLE_CELL_DROP_HEAD_KEY, head)
+            )
+        }
+        return commandAdoptingEngineSelection(
+            pasteCommand(payload.fragment, payload.html, payload.text, plainText)
+                .put(TABLE_CELL_DROP_KEY, cellDrop)
+        )
+    }
 
     override fun clearSelectedTableCells(): String? {
         if (selectedTableCellsMutationAdmission() == null) return null

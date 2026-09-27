@@ -37,8 +37,13 @@ internal fun EditorEditText.isAuthorizedForRootTableInput(): Boolean {
 }
 
 internal fun EditorEditText.inputScalar(localScalar: Int): Int? {
+    if (!isTableCellInput && rootTableSelectionInputBlocked) return null
+    return inputPositionScalar(localScalar)
+}
+
+internal fun EditorEditText.inputPositionScalar(localScalar: Int): Int? {
     if (!isTableCellInput) {
-        if (rootTableRenderNeedsRefresh || rootTableSelectionInputBlocked) return null
+        if (rootTableRenderNeedsRefresh) return null
         val map = rootTablePositionMap ?: return localScalar
         if (!isAuthorizedForRootTableInput()) return null
         return map.globalScalar(localScalar)
@@ -62,6 +67,9 @@ internal fun EditorEditText.inputScalarRange(fromLocal: Int, toLocal: Int): Pair
 
 internal fun EditorEditText.inputScalarAtLocalUtf16(offset: Int, text: String): Int? =
     if (offset in 0..text.length) inputScalar(PositionBridge.utf16ToScalar(offset, text)) else null
+
+internal fun EditorEditText.inputPositionScalarAtLocalUtf16(offset: Int, text: String): Int? =
+    if (offset in 0..text.length) inputPositionScalar(PositionBridge.utf16ToScalar(offset, text)) else null
 
 internal fun EditorEditText.inputScalarRangeAtLocalUtf16(
     start: Int,
