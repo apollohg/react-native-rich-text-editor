@@ -20,6 +20,8 @@ mod admission_tests;
 #[cfg(test)]
 pub(crate) mod commands_tests;
 #[cfg(test)]
+mod drop_tests;
+#[cfg(test)]
 mod history_tests;
 #[cfg(test)]
 mod interchange_tests;

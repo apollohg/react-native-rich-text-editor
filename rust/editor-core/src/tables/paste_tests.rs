@@ -65,6 +65,7 @@ fn pasted(
             plain_text: false,
             allow_base64_images: false,
             input_filter: None,
+            cell_drop: None,
         },
     )
 }
@@ -680,6 +681,7 @@ fn copied_atom_cells_paste_with_their_payload_intact() {
                 plain_text: false,
                 allow_base64_images: false,
                 input_filter: None,
+                cell_drop: None,
             },
         )
         .expect("the copied row pastes");
@@ -915,6 +917,7 @@ fn a_clipped_rowspan_is_cut_at_the_selection_bottom_not_by_its_own_span() {
                 plain_text: false,
                 allow_base64_images: false,
                 input_filter: None,
+                cell_drop: None,
             },
         )
         .expect("the tall source pastes")
@@ -962,6 +965,7 @@ fn pasted_plain_text(engine: &mut YrsDocumentEngine, html: Option<&str>, text: &
                 plain_text: true,
                 allow_base64_images: false,
                 input_filter: None,
+                cell_drop: None,
             },
         )
         .unwrap_or_else(|error| panic!("pasting {text:?} as plain text plans: {error:?}"))
@@ -1023,6 +1027,7 @@ fn a_lone_merged_source_tiles_its_covered_row_instead_of_doing_nothing() {
                 plain_text: false,
                 allow_base64_images: false,
                 input_filter: None,
+                cell_drop: None,
             },
         )
         .expect("the merged source pastes")

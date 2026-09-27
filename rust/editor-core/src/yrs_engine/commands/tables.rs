@@ -1,12 +1,15 @@
 use super::{CommandPlan, PlanningContext, TypedCommand};
 use crate::boundary::ResourceLimits;
-use crate::command_planner::{simulate_plan, AdmittedSemanticCommandPlan, SemanticCommandPlan};
+use crate::command_planner::{
+    apply_operations_mapped, simulate_plan, AdmittedSemanticCommandPlan, SemanticCommandPlan,
+};
 use crate::model::Document;
 use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::command_context::{
-    is_action_unavailable, prepare_table_action, CellAnchorPair, TableAction, TableActionContext,
+    is_action_unavailable, prepare_table_action, CellAnchorPair, PreparedTableAction, TableAction,
+    TableActionContext,
 };
 use crate::tables::commands::paste::MatrixPasteAction;
 use crate::tables::commands::{
@@ -25,8 +28,10 @@ use crate::tables::normalize::{
 use crate::tables::paste::TableMatrix;
 use crate::tables::selection::{cell_opening_containing, resolve_cell_rect};
 use crate::tables::types::TableError;
+use crate::yrs_engine::derived_state::resolved_from_legacy_with_view;
 use crate::yrs_engine::{
-    HistoryPolicy, OperationError, OperationResult, SelectionIntent, TypedTransaction,
+    HistoryPolicy, MovedTableCells, OperationError, OperationResult, ResolvedSelection,
+    SelectionIntent, TypedTransaction,
 };
 
 const CLEAR_CELLS_FIELD: &str = "clearTableCells";
@@ -146,6 +151,27 @@ fn prepared_action(
     selection: &Selection,
     action: &dyn TableAction,
 ) -> OperationResult<CommandPlan> {
+    match prepared_action_on(
+        context,
+        context.document,
+        table_pos,
+        anchors,
+        selection,
+        action,
+    )? {
+        None => Ok(CommandPlan::NotApplicable),
+        Some(prepared) => super::table_action_transaction(context, prepared),
+    }
+}
+
+fn prepared_action_on(
+    context: &PlanningContext<'_>,
+    document: &Document,
+    table_pos: u32,
+    anchors: Option<CellAnchorPair>,
+    selection: &Selection,
+    action: &dyn TableAction,
+) -> OperationResult<Option<PreparedTableAction>> {
     let prepared = prepare_table_action(
         &TableActionContext {
             request_id: context.request_id,
@@ -155,16 +181,15 @@ fn prepared_action(
             schema: context.schema,
             resource_limits: context.resource_limits,
             editing_limits: context.editing_limits,
-            document: context.document,
+            document,
             selection,
         },
         action,
     );
-    let prepared = match prepared {
-        Err(error) if is_action_unavailable(&error) => return Ok(CommandPlan::NotApplicable),
-        other => other?,
-    };
-    super::table_action_transaction(context, prepared)
+    match prepared {
+        Err(error) if is_action_unavailable(&error) => Ok(None),
+        other => other.map(Some),
+    }
 }
 
 pub(super) fn outer_paste_anchor(
@@ -191,6 +216,91 @@ pub(super) fn paste_matrix(
     matrix: TableMatrix,
 ) -> OperationResult<CommandPlan> {
     scoped_action(context, anchor, selection, &MatrixPasteAction { matrix })
+}
+
+pub(super) fn cell_drop_selection(
+    context: &PlanningContext<'_>,
+    target_cell: u32,
+) -> OperationResult<Option<ResolvedSelection>> {
+    let index = TableProjectionIndex::derive_or_fallback(
+        context.document,
+        context.schema,
+        context.resource_limits,
+    );
+    let Some(rect) = resolve_cell_rect(&index, target_cell, target_cell) else {
+        return Ok(None);
+    };
+    if !outer_table_positions(context.document, context.schema, context.resource_limits)?
+        .contains(&rect.table_pos)
+    {
+        return Ok(None);
+    }
+    let Some(caret) =
+        first_editable_position_in_cell(context.document, context.schema, target_cell)
+            .map_err(|failure| failure.into_operation_error(context.request_id))?
+    else {
+        return Ok(None);
+    };
+    if cell_opening_containing(&index, caret) != Some(target_cell) {
+        return Ok(None);
+    }
+    Ok(resolved_from_legacy_with_view(
+        context.document,
+        &Selection::text(caret, caret),
+        context.schema,
+        context.position_map,
+        context.rendered_text,
+        &index,
+    ))
+}
+
+pub(super) fn move_matrix(
+    context: &PlanningContext<'_>,
+    moved: MovedTableCells,
+    anchor: &TableAnchor,
+    selection: &Selection,
+    matrix: TableMatrix,
+) -> OperationResult<CommandPlan> {
+    let Some(source) = outer_paste_anchor(
+        context,
+        &Selection::cell(moved.anchor_cell, moved.head_cell),
+    )?
+    else {
+        return Ok(CommandPlan::NotApplicable);
+    };
+    let Some(source_target) = anchored_target(
+        context.document,
+        context.schema,
+        context.resource_limits,
+        Some(&source),
+        GridRequirement::AsProjected,
+    ) else {
+        return Ok(CommandPlan::NotApplicable);
+    };
+    let cleared = plan_clear_cells(&source_target, context.schema)
+        .map(|plan| plan.operations)
+        .unwrap_or_default();
+    let Ok((document, map)) = apply_operations_mapped(context.document, context.schema, &cleared)
+    else {
+        return Ok(CommandPlan::NotApplicable);
+    };
+    let Some(mut prepared) = prepared_action_on(
+        context,
+        &document,
+        map.map_pos(anchor.table_pos),
+        Some(CellAnchorPair {
+            anchor: map.map_pos(anchor.anchors.anchor),
+            head: map.map_pos(anchor.anchors.head),
+        }),
+        &selection.map(&map),
+        &MatrixPasteAction { matrix },
+    )?
+    else {
+        return Ok(CommandPlan::NotApplicable);
+    };
+    let pasted = std::mem::take(&mut prepared.plan.plan.operations);
+    prepared.plan.plan.operations = cleared.into_iter().chain(pasted).collect();
+    super::table_action_transaction(context, prepared)
 }
 
 fn explicit_table_resize(

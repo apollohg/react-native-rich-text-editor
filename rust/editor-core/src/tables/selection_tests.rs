@@ -981,6 +981,7 @@ mod engine_round_trip {
             plain_text: true,
             allow_base64_images: false,
             input_filter: None,
+            cell_drop: None,
         }
     }
 

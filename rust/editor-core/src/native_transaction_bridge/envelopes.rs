@@ -134,6 +134,32 @@ fn position_affinity(affinity: Option<AffinityEnvelope>) -> Affinity {
 
 #[derive(Debug, Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MovedCellsEnvelope {
+    anchor_cell: u32,
+    head_cell: u32,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CellDropEnvelope {
+    target_cell: u32,
+    moved_cells: Option<MovedCellsEnvelope>,
+}
+
+impl From<CellDropEnvelope> for TableCellDrop {
+    fn from(drop: CellDropEnvelope) -> Self {
+        Self {
+            target_cell: drop.target_cell,
+            moved_cells: drop.moved_cells.map(|moved| MovedTableCells {
+                anchor_cell: moved.anchor_cell,
+                head_cell: moved.head_cell,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RangeEnvelope {
     from: PositionEnvelope,
     to: PositionEnvelope,
@@ -181,6 +207,8 @@ enum CommandEnvelope {
         text: Option<String>,
         #[serde(default, rename = "plainText")]
         plain_text: bool,
+        #[serde(default, rename = "cellDrop")]
+        cell_drop: Option<CellDropEnvelope>,
     },
     SplitBlock,
     DeleteAndSplit,
@@ -473,6 +501,7 @@ impl From<CommandEnvelope> for TypedCommand {
                 html,
                 text,
                 plain_text,
+                cell_drop,
             } => Self::Paste {
                 fragment,
                 html,
@@ -480,6 +509,7 @@ impl From<CommandEnvelope> for TypedCommand {
                 plain_text,
                 allow_base64_images: false,
                 input_filter: None,
+                cell_drop: cell_drop.map(TableCellDrop::from),
             },
             CommandEnvelope::SplitBlock => Self::SplitBlock,
             CommandEnvelope::DeleteAndSplit => Self::DeleteAndSplit,

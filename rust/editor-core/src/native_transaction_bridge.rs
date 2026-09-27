@@ -35,10 +35,10 @@ use crate::tables::commands::{
 };
 use crate::tables::interchange::CellStep;
 use crate::yrs_engine::{
-    Affinity, CommandPlan, EditorOffsetKind, HistoryPolicy, OperationError, ReplacementHistory,
-    RevisionedPosition, RevisionedRange, SelectionInput, SelectionIntent, TransactionCommit,
-    TransactionOrigin, TypedCommand, TypedTransaction, TypedTransactionResult, YrsDocumentEngine,
-    DEFAULT_POSITION_AFFINITY,
+    Affinity, CommandPlan, EditorOffsetKind, HistoryPolicy, MovedTableCells, OperationError,
+    ReplacementHistory, RevisionedPosition, RevisionedRange, SelectionInput, SelectionIntent,
+    TableCellDrop, TransactionCommit, TransactionOrigin, TypedCommand, TypedTransaction,
+    TypedTransactionResult, YrsDocumentEngine, DEFAULT_POSITION_AFFINITY,
 };
 
 #[cfg(test)]

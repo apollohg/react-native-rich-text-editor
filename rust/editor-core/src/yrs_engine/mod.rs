@@ -41,7 +41,7 @@ pub use awareness::{
 };
 pub(crate) use codec::YrsDocumentCodec;
 pub(crate) use commands::TableCommandSurface;
-pub use commands::{CommandPlan, TypedCommand};
+pub use commands::{CommandPlan, MovedTableCells, TableCellDrop, TypedCommand};
 #[allow(unused_imports)]
 pub use editing_limits::{
     EditingLimitOverrides, EditingLimits, HARD_MAX_DERIVED_OUTPUT_BYTES,

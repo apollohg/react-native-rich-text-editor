@@ -1,4 +1,7 @@
-use super::{text::semantic_transaction, CommandPlan, PlanningContext, TypedCommand};
+use super::{
+    text::semantic_transaction, CommandPlan, MovedTableCells, PlanningContext, TableCellDrop,
+    TypedCommand,
+};
 use crate::clipboard::{self, ClipboardSlice};
 use crate::command_planner::default_attrs;
 use crate::model::{Document, Fragment, Node};
@@ -228,15 +231,49 @@ fn pasted_matrix(
     single_cell(blocks)
 }
 
+pub(super) struct PastedContent {
+    pub fragment: Option<String>,
+    pub html: Option<String>,
+    pub text: Option<String>,
+    pub plain_text: bool,
+    pub allow_base64_images: bool,
+    pub input_filter: Option<String>,
+}
+
 pub(super) fn plan(
     context: PlanningContext<'_>,
-    fragment: Option<String>,
-    html: Option<String>,
-    text: Option<String>,
-    plain_text: bool,
-    allow_base64_images: bool,
-    input_filter: Option<String>,
+    content: PastedContent,
+    cell_drop: Option<TableCellDrop>,
 ) -> OperationResult<CommandPlan> {
+    let Some(cell_drop) = cell_drop else {
+        return plan_at_selection(context, content, None);
+    };
+    let Some(dropped) = super::tables::cell_drop_selection(&context, cell_drop.target_cell)? else {
+        return Ok(CommandPlan::NotApplicable);
+    };
+    plan_at_selection(
+        PlanningContext {
+            selection: &dropped,
+            ..context
+        },
+        content,
+        cell_drop.moved_cells,
+    )
+}
+
+fn plan_at_selection(
+    context: PlanningContext<'_>,
+    content: PastedContent,
+    moved_cells: Option<MovedTableCells>,
+) -> OperationResult<CommandPlan> {
+    let PastedContent {
+        fragment,
+        html,
+        text,
+        plain_text,
+        allow_base64_images,
+        input_filter,
+    } = content;
     let filter = input_filter
         .map(|filter| regex::Regex::new(&filter))
         .transpose()
@@ -342,13 +379,22 @@ pub(super) fn plan(
             pasted_text.as_deref(),
             filter.as_ref(),
         )? {
-            match super::tables::paste_matrix(&context, &anchor, &selection, matrix)? {
+            let planned = match moved_cells {
+                None => super::tables::paste_matrix(&context, &anchor, &selection, matrix)?,
+                Some(moved) => {
+                    super::tables::move_matrix(&context, moved, &anchor, &selection, matrix)?
+                }
+            };
+            match planned {
                 CommandPlan::NotApplicable => {}
                 plan @ (CommandPlan::Transaction(_) | CommandPlan::SelectionOnly(_)) => {
                     return Ok(plan)
                 }
             }
         }
+    }
+    if moved_cells.is_some() {
+        return Ok(CommandPlan::NotApplicable);
     }
     for slice in slices {
         let Some(plan) = clipboard::replacement(

@@ -11,6 +11,7 @@ fn clipboard_paste(
         plain_text,
         allow_base64_images: false,
         input_filter: None,
+        cell_drop: None,
     }
 }
 

@@ -791,15 +791,19 @@ pub(super) fn plan(
             plain_text,
             allow_base64_images,
             input_filter,
+            cell_drop,
         } => {
             return super::clipboard::plan(
                 context,
-                fragment,
-                html,
-                text,
-                plain_text,
-                allow_base64_images,
-                input_filter,
+                super::clipboard::PastedContent {
+                    fragment,
+                    html,
+                    text,
+                    plain_text,
+                    allow_base64_images,
+                    input_filter,
+                },
+                cell_drop,
             );
         }
         TypedCommand::DeleteRange { range: requested } => {

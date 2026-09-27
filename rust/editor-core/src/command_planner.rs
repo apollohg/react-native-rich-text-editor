@@ -26,8 +26,8 @@ pub(crate) use structure::{
     AdmittedSemanticCommandPlan, ResizeImageRequest, SimulatedCommandPlan, StructuralDiff,
 };
 pub(crate) use text::{
-    apply_operations, plan_delete_backward, plan_delete_scalar_range, plan_insert_text,
-    plan_replace_selection_text, plan_split, TextReplacementPlanError,
+    apply_operations, apply_operations_mapped, plan_delete_backward, plan_delete_scalar_range,
+    plan_insert_text, plan_replace_selection_text, plan_split, TextReplacementPlanError,
 };
 use text::{default_text_block, node_delete_start};
 

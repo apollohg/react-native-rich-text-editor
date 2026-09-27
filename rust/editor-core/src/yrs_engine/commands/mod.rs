@@ -42,6 +42,7 @@ pub enum TypedCommand {
         plain_text: bool,
         allow_base64_images: bool,
         input_filter: Option<String>,
+        cell_drop: Option<TableCellDrop>,
     },
     SplitBlock,
     DeleteAndSplit,
@@ -94,6 +95,18 @@ pub enum TypedCommand {
         at: RevisionedPosition,
     },
     Table(crate::tables::commands::TableCommand),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MovedTableCells {
+    pub anchor_cell: u32,
+    pub head_cell: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TableCellDrop {
+    pub target_cell: u32,
+    pub moved_cells: Option<MovedTableCells>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
