@@ -33,13 +33,13 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             ) as ClipboardManager
             clipboard.setPrimaryClip(ClipData.newPlainText("clipboard", "keep"))
             val clip = ClipData.newPlainText("external", "X\nY")
-            assertTrue(send(editor, DragEvent.ACTION_DRAG_STARTED, clip))
-            assertTrue(send(editor, DragEvent.ACTION_DRAG_ENTERED, clip))
-            assertTrue(send(editor, DragEvent.ACTION_DROP, clip, 3))
+            assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_STARTED, clip))
+            assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_ENTERED, clip))
+            assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DROP, clip, 3))
             assertEquals("<p>a😀X</p><p>Yb</p>", harness.adapter.documentHtml())
             assertEquals("a😀X\nYb", editor.text.toString())
             assertEquals("keep", clipboard.primaryClip!!.getItemAt(0).text.toString())
-            assertTrue(send(editor, DragEvent.ACTION_DRAG_ENDED, clip))
+            assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_ENDED, clip))
         } finally {
             harness.adapter.destroy()
         }
@@ -58,11 +58,11 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
                 false
             }
             val clip = ClipData.newPlainText("external", "bad")
-            assertTrue(send(editor, DragEvent.ACTION_DRAG_STARTED, clip))
-            assertTrue(send(editor, DragEvent.ACTION_DRAG_ENTERED, clip))
+            assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_STARTED, clip))
+            assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_ENTERED, clip))
             assertFalse("hovering a drag over the prose must not focus it", editor.hasFocus())
             assertEquals("hovering must not consult the surface focus hook", 0, consulted)
-            assertFalse("a refused drop must report failure", send(editor, DragEvent.ACTION_DROP, clip, 2))
+            assertFalse("a refused drop must report failure", sendTextDragEventForTest(editor, DragEvent.ACTION_DROP, clip, 2))
             assertEquals("the drop must consult the surface focus hook once", 1, consulted)
             assertFalse("a refused drop must not focus the prose", editor.hasFocus())
             assertEquals("<p>safe</p>", harness.adapter.documentHtml())
@@ -79,11 +79,11 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             measure(editor)
             val clip = ClipData.newPlainText("external", "bad")
             editor.isEditable = false
-            assertFalse(send(editor, DragEvent.ACTION_DRAG_STARTED, clip))
+            assertFalse(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_STARTED, clip))
             editor.isEditable = true
-            assertTrue(send(editor, DragEvent.ACTION_DRAG_STARTED, clip))
+            assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_STARTED, clip))
             editor.isEditable = false
-            assertFalse(send(editor, DragEvent.ACTION_DROP, clip, 2))
+            assertFalse(sendTextDragEventForTest(editor, DragEvent.ACTION_DROP, clip, 2))
             assertEquals("<p>safe</p>", harness.adapter.documentHtml())
         } finally {
             harness.adapter.destroy()
@@ -101,8 +101,8 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             input.setComposingText("日本", 1)
             assertEquals("<p>abc tail</p>", harness.adapter.documentHtml())
             val clip = ClipData.newPlainText("external", "!")
-            assertTrue(send(editor, DragEvent.ACTION_DRAG_STARTED, clip))
-            assertTrue(send(editor, DragEvent.ACTION_DROP, clip, editor.text.length))
+            assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_STARTED, clip))
+            assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DROP, clip, editor.text.length))
             assertEquals("<p>日本 tail!</p>", harness.adapter.documentHtml())
             assertEquals(-1, BaseInputConnection.getComposingSpanStart(editor.editableText))
         } finally {
@@ -118,10 +118,10 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             val editor = first.editText
             measure(editor)
             val clip = ClipData.newPlainText("external", "bad")
-            assertTrue(send(editor, DragEvent.ACTION_DRAG_STARTED, clip))
+            assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_STARTED, clip))
             editor.editorId = 2L
             editor.v2Driver = second.adapter
-            assertFalse(send(editor, DragEvent.ACTION_DROP, clip, 1))
+            assertFalse(sendTextDragEventForTest(editor, DragEvent.ACTION_DROP, clip, 1))
             assertEquals("<p>first</p>", first.adapter.documentHtml())
             assertEquals("<p>second</p>", second.adapter.documentHtml())
         } finally {
@@ -136,10 +136,16 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
         try {
             val editor = harness.editText
             measure(editor)
+            var consulted = 0
+            editor.onTableRootGesture = {
+                consulted += 1
+                true
+            }
             val clip = ClipData.newPlainText("external", "bad")
-            assertTrue(send(editor, DragEvent.ACTION_DRAG_STARTED, clip))
+            assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_STARTED, clip))
             editor.blockExternalEditorUpdatePreparationForTesting = true
-            assertFalse(send(editor, DragEvent.ACTION_DROP, clip, 1))
+            assertFalse(sendTextDragEventForTest(editor, DragEvent.ACTION_DROP, clip, 1))
+            assertEquals("a drop refused by its preflight must not release a bound cell", 0, consulted)
             assertEquals("<p>safe</p>", harness.adapter.documentHtml())
         } finally {
             harness.adapter.destroy()
@@ -157,9 +163,9 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
             activity.setContentView(editor)
             measure(editor)
             val clip = ClipData.newPlainText("external", "bad")
-            assertTrue(send(editor, DragEvent.ACTION_DRAG_STARTED, clip))
+            assertTrue(sendTextDragEventForTest(editor, DragEvent.ACTION_DRAG_STARTED, clip))
             activity.setContentView(View(activity))
-            assertFalse(send(editor, DragEvent.ACTION_DROP, clip, 1))
+            assertFalse(sendTextDragEventForTest(editor, DragEvent.ACTION_DROP, clip, 1))
             assertEquals("<p>safe</p>", harness.adapter.documentHtml())
         } finally {
             harness.adapter.destroy()
@@ -173,40 +179,40 @@ internal class EditorSurfaceDragDropTest : EditorInputConnectionTestFixture() {
         )
         editor.layout(0, 0, editor.measuredWidth, editor.measuredHeight)
     }
+}
 
-    private fun send(
-        editor: EditorEditText,
-        action: Int,
-        clip: ClipData,
-        offset: Int = 0
-    ): Boolean {
-        val line = editor.layout.getLineForOffset(offset)
-        val event = ReflectionHelpers.callStaticMethod<DragEvent>(DragEvent::class.java, "obtain")
-        ReflectionHelpers.setField(event, "mAction", action)
-        ReflectionHelpers.setField(
-            event,
-            "mX",
-            editor.layout.getPrimaryHorizontal(offset) + editor.totalPaddingLeft
+internal fun sendTextDragEventForTest(
+    editor: EditorEditText,
+    action: Int,
+    clip: ClipData,
+    offset: Int = 0
+): Boolean {
+    val line = editor.layout.getLineForOffset(offset)
+    val event = ReflectionHelpers.callStaticMethod<DragEvent>(DragEvent::class.java, "obtain")
+    ReflectionHelpers.setField(event, "mAction", action)
+    ReflectionHelpers.setField(
+        event,
+        "mX",
+        editor.layout.getPrimaryHorizontal(offset) + editor.totalPaddingLeft
+    )
+    ReflectionHelpers.setField(
+        event,
+        "mY",
+        editor.layout.editorTextLineTop(line).toFloat() + editor.totalPaddingTop + 1f
+    )
+    ReflectionHelpers.setField(event, "mClipData", clip)
+    ReflectionHelpers.setField(event, "mClipDescription", clip.description)
+    ReflectionHelpers.setField(event, "mLocalState", Any())
+    if (action == DragEvent.ACTION_DROP) {
+        assertEquals(
+            "drop coordinate must target requested UTF16 boundary",
+            offset,
+            editor.getOffsetForPosition(event.x, event.y)
         )
-        ReflectionHelpers.setField(
-            event,
-            "mY",
-            editor.layout.editorTextLineTop(line).toFloat() + editor.totalPaddingTop + 1f
-        )
-        ReflectionHelpers.setField(event, "mClipData", clip)
-        ReflectionHelpers.setField(event, "mClipDescription", clip.description)
-        ReflectionHelpers.setField(event, "mLocalState", Any())
-        if (action == DragEvent.ACTION_DROP) {
-            assertEquals(
-                "drop coordinate must target requested UTF16 boundary",
-                offset,
-                editor.getOffsetForPosition(event.x, event.y)
-            )
-        }
-        return try {
-            editor.onDragEvent(event)
-        } finally {
-            ReflectionHelpers.callInstanceMethod<Unit>(event, "recycle")
-        }
+    }
+    return try {
+        editor.onDragEvent(event)
+    } finally {
+        ReflectionHelpers.callInstanceMethod<Unit>(event, "recycle")
     }
 }

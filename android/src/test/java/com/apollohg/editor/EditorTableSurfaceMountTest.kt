@@ -1,17 +1,20 @@
 package com.apollohg.editor
 
 import android.app.Activity
+import android.content.ClipData
 import android.content.pm.ApplicationInfo
 import android.text.Annotation
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.view.DragEvent
 import android.view.View
 import android.view.MotionEvent
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.ViewConfiguration
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -778,25 +781,71 @@ internal class EditorTableSurfaceMountTest {
 
     @Test
     fun `an accessibility click on the prose reports a refusal and releases the cell once it can`() =
-        withMountedView { view, adapter, _ ->
+        withAttachedMountedView(tableDocument) { view, adapter ->
+            assertRefusedRootAccessibilityActionKeepsTheCell(view, adapter, AccessibilityNodeInfo.ACTION_CLICK)
+            assertTrue("an allowed accessibility click succeeds",
+                view.editorEditText.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null))
+            assertProseTookOverFromTheCell(view, adapter)
+        }
+
+    @Test
+    fun `an accessibility focus on the prose reports a refusal and releases the cell once it can`() =
+        withAttachedMountedView(tableDocument) { view, adapter ->
+            assertRefusedRootAccessibilityActionKeepsTheCell(view, adapter, AccessibilityNodeInfo.ACTION_FOCUS)
+            view.editorEditText.performAccessibilityAction(AccessibilityNodeInfo.ACTION_FOCUS, null)
+            assertProseTookOverFromTheCell(view, adapter)
+        }
+
+    @Test
+    fun `an allowed text drop on the prose commits and releases the composing cell before inserting`() =
+        withAttachedMountedView(tableDocument) { view, adapter ->
             val (input) = composeInFirstCell(view)
             val root = view.editorEditText
-            input.blockExternalEditorUpdatePreparationForTesting = true
-            try {
-                assertFalse("a refused accessibility click must not report success",
-                    root.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null))
-            } finally {
-                input.blockExternalEditorUpdatePreparationForTesting = false
-            }
-            assertSame("a refused click keeps the cell input", input, view.activeTextInput)
-            assertTrue("a refused click keeps the cell focused", input.hasFocus())
-            assertEquals("a refused click keeps the composition pending", "Cell text", firstCellText(adapter))
-            assertTrue("an allowed accessibility click succeeds",
-                root.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null))
-            assertSame("an allowed click releases the cell", root, view.activeTextInput)
-            assertTrue("an allowed click focuses the prose", root.hasFocus())
-            assertEquals("the composition commits before the prose focuses", "Cell texttail", firstCellText(adapter))
+            val clip = ClipData.newPlainText("external", "dropped ")
+            val offset = root.text.toString().indexOf("after")
+            assertTrue(sendTextDragEventForTest(root, DragEvent.ACTION_DRAG_STARTED, clip))
+            assertTrue("an allowed drop succeeds", sendTextDragEventForTest(root, DragEvent.ACTION_DROP, clip, offset))
+            assertNotSame("the drop releases the cell input", input, view.activeTextInput)
+            assertProseTookOverFromTheCell(view, adapter)
+            val paragraph = JSONObject(requireNotNull(adapter.documentJson())).getJSONArray("content")
+                .getJSONObject(1).getJSONArray("content").getJSONObject(0).getString("text")
+            assertEquals("the dropped text lands in the prose", "dropped after", paragraph)
         }
+
+    private fun assertRefusedRootAccessibilityActionKeepsTheCell(
+        view: RichTextEditorView,
+        adapter: EditorV2Adapter,
+        action: Int
+    ) {
+        val (input) = composeInFirstCell(view)
+        val root = view.editorEditText
+        val sentEvents = mutableListOf<Int>()
+        root.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun sendAccessibilityEvent(host: View, eventType: Int) {
+                sentEvents += eventType
+                super.sendAccessibilityEvent(host, eventType)
+            }
+        }
+        val name = AccessibilityNodeInfo.AccessibilityAction(action, null).toString()
+        input.blockExternalEditorUpdatePreparationForTesting = true
+        try {
+            assertFalse("a refused $name must not report success", root.performAccessibilityAction(action, null))
+        } finally {
+            input.blockExternalEditorUpdatePreparationForTesting = false
+        }
+        assertFalse("a refused $name must not announce a click: events=$sentEvents",
+            AccessibilityEvent.TYPE_VIEW_CLICKED in sentEvents)
+        assertSame("a refused $name keeps the cell input", input, view.activeTextInput)
+        assertTrue("a refused $name keeps the cell focused", input.hasFocus())
+        assertFalse("a refused $name leaves the prose unfocused", root.hasFocus())
+        assertEquals("a refused $name keeps the composition pending", "Cell text", firstCellText(adapter))
+    }
+
+    private fun assertProseTookOverFromTheCell(view: RichTextEditorView, adapter: EditorV2Adapter) {
+        assertSame("an allowed action releases the cell", view.editorEditText, view.activeTextInput)
+        assertTrue("an allowed action focuses the prose", view.editorEditText.hasFocus())
+        assertEquals("the composition commits before the prose focuses", "Cell texttail", firstCellText(adapter))
+    }
 
     @Test
     fun `blocked composition preflight keeps the cell active on prose tap`() = withMountedView { view, adapter, _ ->

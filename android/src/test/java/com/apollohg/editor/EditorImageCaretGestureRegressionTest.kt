@@ -64,11 +64,7 @@ class EditorImageCaretGestureRegressionTest {
     @Test
     fun `tap inside image still selects it`() {
         val editor = editor()
-        val span = editor.text.getSpans(0, editor.text.length, BlockImageSpan::class.java).single()
-        val start = editor.text.getSpanStart(span)
-        val end = editor.text.getSpanEnd(span)
-        val bounds = editor.resolvedImageRect(editor.layout, span, start, end)
-        tap(editor, bounds.centerX(), bounds.centerY())
+        val (start, end) = tapImageCenter(editor)
         assertEquals(start, editor.selectionStart)
         assertEquals(end, editor.selectionEnd)
     }

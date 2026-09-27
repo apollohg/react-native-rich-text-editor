@@ -73,8 +73,8 @@ internal class EditorTextSurfaceDragDrop(private val surface: EditorTextSurface)
             return false
         }
         if (value.isEmpty()) return false
-        if (!editor.onSurfaceGestureFocus() || !editor.prepareForExternalInteractionMutation() ||
-            session !== active || !isCurrent(editor, active)
+        if (!editor.prepareForExternalInteractionMutation() || session !== active ||
+            !isCurrent(editor, active) || !editor.onSurfaceGestureFocus()
         ) {
             return false
         }
