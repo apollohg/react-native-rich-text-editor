@@ -59,6 +59,31 @@ internal class EditorTableColumnResizeTest {
         return JSONObject().put("type", "doc").put("content", JSONArray().put(table)).toString()
     }
 
+    private fun tableDocument(rtl: Boolean, vararg rows: List<Triple<String, Int, Int>>): String {
+        val content = JSONArray()
+        rows.forEach { row ->
+            val cells = JSONArray()
+            row.forEach { (text, colspan, rowspan) ->
+                val widths = JSONArray()
+                repeat(colspan) { widths.put(NARROW_COLUMN_WIDTH) }
+                cells.put(JSONObject().put("type", "table_cell")
+                    .put("attrs", JSONObject().put("colspan", colspan).put("rowspan", rowspan).put("colwidth", widths))
+                    .put("content", JSONArray().put(JSONObject().put("type", "paragraph")
+                        .put("content", JSONArray().put(JSONObject().put("type", "text").put("text", text))))))
+            }
+            content.put(JSONObject().put("type", "table_row").put("content", cells))
+        }
+        val table = JSONObject().put("type", "table").put("content", content)
+        if (rtl) table.put("attrs", JSONObject().put("dir", "rtl"))
+        return JSONObject().put("type", "doc").put("content", JSONArray().put(table)).toString()
+    }
+
+    private fun mergedTitleRowDocument(rtl: Boolean) = tableDocument(rtl,
+        listOf(Triple("Release plan", 2, 1), Triple("Status", 1, 1)),
+        listOf(Triple("Core editor", 1, 2), Triple("iOS", 1, 1), Triple("Ready", 1, 1)),
+        listOf(Triple("Android", 1, 1), Triple("In review", 1, 1)),
+        listOf(Triple("a", 1, 1), Triple("b", 1, 1), Triple("c", 1, 1)))
+
     private inner class Fixture(
         val view: RichTextEditorView,
         val adapter: EditorV2Adapter,
@@ -704,6 +729,46 @@ internal class EditorTableColumnResizeTest {
     }
 
     @Test
+    fun `a column edge hidden by a merged first row takes its handle from the first row where it exists`() {
+        listOf(false, true).forEach { rtl ->
+            withMountedTable(mergedTitleRowDocument(rtl), schemaConfig = if (rtl) rtlConfig else config) { fixture ->
+                val label = if (rtl) "RTL" else "LTR"
+                val edgeX = fixture.trailingEdge(MERGED_CORE_EDITOR).first
+                fun hit(cell: Int) = fixture.drawing.hitResizeEdge(edgeX, fixture.cell(cell).bounds.centerY())
+                assertNull("$label: the merged title cell has no edge where column 0 ends", hit(MERGED_RELEASE_PLAN))
+                assertEquals("$label: column 0's edge first exists in row 1, so row 1 carries its handle",
+                    TableResizeEdge(fixture.tableId, 0), hit(MERGED_ROW_ONE_NEIGHBOUR))
+                assertNull("$label: the spanning cell below row 1 is not a handle", hit(MERGED_ROW_TWO_NEIGHBOUR))
+                assertNull("$label: a later body row is not a handle", hit(MERGED_LAST_ROW_FIRST_CELL))
+                val titleEdge = fixture.trailingEdge(MERGED_RELEASE_PLAN)
+                assertEquals("$label: the merged title's own trailing edge keeps its first-row handle", 1,
+                    fixture.drawing.hitResizeEdge(titleEdge.first, titleEdge.second)?.column)
+                val start = edgeX to fixture.cell(MERGED_ROW_ONE_NEIGHBOUR).bounds.centerY()
+                fixture.drag(start, start.first + (if (rtl) -40f else 40f) to start.second)
+                assertEquals("$label: row 1 resizes column 0", listOf(NARROW_COLUMN_WIDTH + 40),
+                    fixture.columnWidths(1).first())
+            }
+        }
+    }
+
+    @Test
+    fun `a merged cell that grows the selection to the first row is not a column selection`() {
+        val document = tableDocument(false,
+            listOf(Triple("a", 1, 1), Triple("b", 1, 2)),
+            listOf(Triple("c", 1, 1)),
+            listOf(Triple("d", 1, 1), Triple("e", 1, 1)))
+        withMountedTable(document, cellSelection = 4 to 2) { fixture ->
+            assertTrue("the merged cell must grow the drawn rectangle to the first row",
+                fixture.positions[0] in fixture.drawing.selectedTableCellSourcePositions[fixture.tableId].orEmpty())
+            listOf(2, 3).forEach { index ->
+                val edge = fixture.trailingEdge(index)
+                assertNull("body cell $index: endpoints below the first row do not make a column selection",
+                    fixture.drawing.hitResizeEdge(edge.first, edge.second))
+            }
+        }
+    }
+
+    @Test
     fun `a whole selected column carries resize handles in every row`() {
         val middleColumn = listOf(1, GRID_SIZE + 1, 2 * GRID_SIZE + 1)
         withMountedTable(narrowColumnGrid(headerRow = true),
@@ -807,5 +872,10 @@ internal class EditorTableColumnResizeTest {
         const val NARROW_COLUMN_WIDTH = 150
         const val SWIPE_STEPS = 4
         const val BODY_SWIPE_DISTANCE = 80f
+        const val MERGED_RELEASE_PLAN = 0
+        const val MERGED_CORE_EDITOR = 2
+        const val MERGED_ROW_ONE_NEIGHBOUR = 3
+        const val MERGED_ROW_TWO_NEIGHBOUR = 5
+        const val MERGED_LAST_ROW_FIRST_CELL = 7
     }
 }

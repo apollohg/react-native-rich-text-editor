@@ -400,13 +400,16 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             val sourceTable = table.surface.sourceTable ?: return@forEach
             val sourceCells = sourceTable.cells
             val columns = table.surface.layout.columnWidths.size
-            val handleRowHeight = table.surface.layout.rowOffsets.let { it.getOrNull(1)?.minus(it[0]) } ?: 0f
+            val rowOffsets = table.surface.layout.rowOffsets
             val selectedColumns = selectedWholeColumns(tableId, sourceTable)
             snapshot.cells.filter { it.surface === table.surface }.forEach { cell ->
                 val source = cell.cell.sourceCellIndex?.let(sourceCells::getOrNull) ?: return@forEach
                 if (y < cell.bounds.top || y >= cell.bounds.bottom) return@forEach
                 val column = (source.column + source.colspan).toInt() - 1
-                val inHandleRow = source.row == 0u && y < cell.bounds.top + handleRowHeight
+                val row = source.row.toInt()
+                val handleRowHeight = rowOffsets.getOrNull(row + 1)?.minus(rowOffsets[row]) ?: 0f
+                val inHandleRow = row == table.surface.columnEdgeHandleRows[column] &&
+                    y < cell.bounds.top + handleRowHeight
                 if (!inHandleRow && column !in selectedColumns) return@forEach
                 val edgeX = if (table.surface.isRightToLeft) cell.bounds.left else cell.bounds.right
                 val distance = kotlin.math.abs(x - edgeX)
@@ -423,10 +426,15 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     private fun selectedWholeColumns(tableId: String, table: FfiViewerTable): IntRange {
-        val positions = selectedTableCellSourcePositions[tableId] ?: return IntRange.EMPTY
+        val (selectedTableId, anchor, head) = selectedTableCellEndpoints ?: return IntRange.EMPTY
+        val positions = selectedTableCellSourcePositions[tableId]
+        if (selectedTableId != tableId || positions == null) return IntRange.EMPTY
+        val endpoints = listOf(anchor, head).map { position ->
+            table.cells.firstOrNull { it.sourcePos.toInt() == position } ?: return IntRange.EMPTY
+        }
         val selected = table.cells.filter { it.sourcePos.toInt() in positions }
-        if (selected.isEmpty() || selected.minOf { it.row } != 0u ||
-            selected.maxOf { it.row + it.rowspan } != table.rows) return IntRange.EMPTY
+        if (selected.isEmpty() || endpoints.minOf { it.row } != 0u ||
+            endpoints.maxOf { it.row + it.rowspan } != table.rows) return IntRange.EMPTY
         return selected.minOf { it.column }.toInt() until selected.maxOf { it.column + it.colspan }.toInt()
     }
 

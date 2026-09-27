@@ -42,9 +42,13 @@ internal class ViewerTableSurface(
     val cells: List<PreparedViewerTableCell>
     val preparationError: ProseViewerError?
     val bounds: RectF get() = RectF(0f, 0f, layout.contentWidth, layout.contentHeight)
+    val columnEdgeHandleRows: Map<Int, Int> = sourceTable?.cells.orEmpty()
+        .groupBy { (it.column + it.colspan).toInt() - 1 }
+        .mapValues { (_, cells) -> cells.minOf { it.row }.toInt() }
     val retainedBytes: Long get() = 256L + cells.sumOf { it.retainedBytes } +
         (sourceTable?.cells?.size ?: 0) * 16L + layout.columnWidths.size * 16L +
-        layout.rowOffsets.size * 16L + layout.rectangles.size * 48L + layout.sourceOrder.size * 16L
+        layout.rowOffsets.size * 16L + layout.rectangles.size * 48L + layout.sourceOrder.size * 16L +
+        columnEdgeHandleRows.size * 16L
 
     init {
         val scale = displayScale.takeIf { it.isFinite() && it > 0f } ?: 1f
