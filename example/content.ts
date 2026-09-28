@@ -261,7 +261,7 @@ export function buildToolbarItems({
                     icon: {
                         type: 'platform',
                         ios: { type: 'sfSymbol', name: 'checklist' },
-                        android: { type: 'material', name: 'checklist' },
+                        android: { type: 'material', name: 'format-list-checks' },
                         fallbackText: '☑',
                     },
                 },
@@ -287,7 +287,7 @@ export function buildToolbarItems({
             icon: {
                 type: 'platform',
                 ios: { type: 'sfSymbol', name: 'plus.square' },
-                android: { type: 'material', name: 'add-box' },
+                android: { type: 'material', name: 'plus-box' },
                 fallbackText: '+',
             },
             presentation: 'menu',
@@ -299,7 +299,7 @@ export function buildToolbarItems({
                     icon: {
                         type: 'platform',
                         ios: { type: 'sfSymbol', name: 'number.square' },
-                        android: { type: 'material', name: 'pin' },
+                        android: { type: 'material', name: 'numeric' },
                         fallbackText: '#',
                     },
                 },

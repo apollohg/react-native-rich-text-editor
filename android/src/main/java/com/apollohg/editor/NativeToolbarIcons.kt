@@ -34,7 +34,7 @@ internal data class NativeToolbarIcon(
             ToolbarDefaultIconId.UNDO to "↩",
             ToolbarDefaultIconId.REDO to "↪"
         )
-         private val defaultMaterialDesignIcons = mapOf(
+        private val defaultMaterialDesignIcons = mapOf(
             ToolbarDefaultIconId.BOLD to "format-bold",
             ToolbarDefaultIconId.ITALIC to "format-italic",
             ToolbarDefaultIconId.UNDERLINE to "format-underline",

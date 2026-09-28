@@ -33,7 +33,7 @@ Below is a list of features that are planned or in progress. If you have a featu
 
 The package uses custom native code and Expo Modules. Use a development build or a bare React Native app with Expo Modules configured; it does not run in Expo Go.
 
-Requires Expo 52+, React Native 0.76+, React 18+, and `@react-native-vector-icons/material-design-icons` 14+. `RichTextViewer` requires the New Architecture. See the [Installation Guide](https://github.com/apollohg/react-native-rich-text-editor/wiki/Installation) for platform requirements.
+Requires Expo 52+, React Native 0.76+, React 18+, and `@react-native-vector-icons/material-design-icons` 13+. `RichTextViewer` requires the New Architecture. See the [Installation Guide](https://github.com/apollohg/react-native-rich-text-editor/wiki/Installation) for platform requirements.
 
 ## Installation
 
