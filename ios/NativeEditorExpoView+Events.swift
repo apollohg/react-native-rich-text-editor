@@ -129,7 +129,11 @@ extension NativeEditorExpoView {
             event,
             originatingEditorId: originatingEditorId
         ) else { return }
-        onSelectionChange(scopedEvent)
+        if let onSelectionChangeForTesting {
+            onSelectionChangeForTesting(scopedEvent)
+        } else {
+            onSelectionChange(scopedEvent)
+        }
     }
 
     func editorTextView(_ textView: EditorTextView, didReceiveUpdate updateJSON: String) {

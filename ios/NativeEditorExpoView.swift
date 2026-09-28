@@ -151,6 +151,7 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
     var onExternalTextCompositionEndForTesting: (([String: Any]) -> Void)?
     var onTableSelectionGeometryForTesting: (([String: Any]) -> Void)?
     var onFocusChangeForTesting: (([String: Any]) -> Void)?
+    var onSelectionChangeForTesting: (([String: Any]) -> Void)?
     let keyboardOcclusionView = UIView()
     var keyboardOcclusionConstraints: [NSLayoutConstraint] = []
     private(set) lazy var tableSelectionGeometryPublisher = TableSelectionGeometryPublisher(
@@ -225,7 +226,7 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
         richTextView.onTableSelectionGeometryMayChange = { [weak self] in
             self?.tableSelectionGeometryPublisher.scheduleFlush()
         }
-        richTextView.textView.editorDelegate = self
+        richTextView.textInputs.forEach { $0.editorDelegate = self }
         richTextView.textView.onExternalUpdateReadinessMayChange = { [weak self] in
             self?.schedulePendingAtomsWakeIfNeeded()
         }
@@ -256,7 +257,7 @@ class NativeEditorExpoView: ExpoView, EditorTextViewDelegate, UIGestureRecognize
 
     deinit {
         tableSelectionGeometryPublisher.cancelScheduledFlush()
-        richTextView.textView.editorDelegate = nil
+        richTextView.textInputs.forEach { $0.editorDelegate = nil }
         richTextView.textView.onExternalUpdateReadinessMayChange = nil
         if let resultJSON = richTextView.textView.discardTransientNativeInputForEditorRebind() {
             dispatchExternalTextCompositionEnd(resultJSON)

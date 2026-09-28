@@ -2180,6 +2180,29 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    func testActivatingACellPublishesItsTableCommandsToJS() throws {
+        try withExpoTableGeometry(document: proseThenFixedWidthTableDocument) { fixture in
+            var selectionEvents: [[String: Any]] = []
+            fixture.host.onSelectionChangeForTesting = { selectionEvents.append($0) }
+            try fixture.selectText(anchor: 2, head: 2)
+            selectionEvents.removeAll()
+
+            _ = try fixture.activateCell(1)
+            flushMainQueue()
+
+            let event = try XCTUnwrap(selectionEvents.last, "binding a cell publishes no selection to JS")
+            XCTAssertEqual(event["editorId"] as? String, fixture.adapter.editorId)
+            let stateJSON = try XCTUnwrap(event["stateJson"] as? String, "\(event)")
+            let state = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(stateJSON.utf8)) as? [String: Any])
+            let commands = try XCTUnwrap((state["activeState"] as? [String: Any])?["commands"] as? [String: Bool])
+            let published = TableAccessibilityAction.all.filter { commands[$0.applicability] == true }.map(\.key)
+            let native = try XCTUnwrap(fixture.adapter.cachedActiveState?["commands"] as? [String: Any])
+            let expected = TableAccessibilityAction.all.filter { native[$0.applicability] as? Bool == true }.map(\.key)
+            XCTAssertTrue(expected.contains("addRowBefore"), "the bound cell offers table actions natively: \(native)")
+            XCTAssertEqual(published, expected, "JS receives the bound cell's table commands: \(commands)")
+        }
+    }
+
     func testKeyboardOverAFocusedCellInsetsTheRootAndRevealsTheCellCaret() throws {
         let keyboardHeight: CGFloat = 140
         try withExpoTableGeometry(document: try tallTableDocument(rowCount: 12)) { fixture in
@@ -2271,7 +2294,7 @@ final class EditorTableInputTests: XCTestCase {
             var focusEvents: [[String: Any]] = []
             fixture.host.onFocusChangeForTesting = { focusEvents.append($0) }
             _ = try fixture.activateCell(1)
-            RunLoop.main.run(until: Date())
+            flushMainQueue()
             XCTAssertEqual(focusEvents.compactMap { $0["isFocused"] as? Bool }, [true], "\(focusEvents)")
             XCTAssertEqual(focusEvents.last?["editorId"] as? String, fixture.adapter.editorId)
         }

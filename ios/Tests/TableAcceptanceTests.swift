@@ -527,6 +527,8 @@ final class TableAcceptanceTests: XCTestCase {
         let reboundFrame = try XCTUnwrap(try harness.surface.cellFrame(
             tableID: try harness.tableID, cellIndex: UInt32(Acceptance.tableColumns)
         ))
+        var selectionEvents: [[String: Any]] = []
+        harness.expo.onSelectionChangeForTesting = { selectionEvents.append($0) }
         XCTAssertTrue(harness.view.activateTableCell(at: CGPoint(x: reboundFrame.midX, y: reboundFrame.midY)))
         drainMainQueue()
         harness.expo.layoutIfNeeded()
@@ -536,6 +538,12 @@ final class TableAcceptanceTests: XCTestCase {
         XCTAssertEqual(try harness.selectedCells(), [], "activating a cell clears the drawn rectangle")
         XCTAssertEqual(try harness.actionLabels(onCellAt: reboundCell), Acceptance.singleCellActions,
                        "an activated cell offers its single-cell table actions before any keystroke")
+        let stateJSON = try XCTUnwrap(selectionEvents.last?["stateJson"] as? String,
+                                      "activating a cell publishes its selection to JS: \(selectionEvents)")
+        let state = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(stateJSON.utf8)) as? [String: Any])
+        let commands = try XCTUnwrap((state["activeState"] as? [String: Any])?["commands"] as? [String: Bool])
+        XCTAssertEqual(TableAccessibilityAction.all.filter { commands[$0.applicability] == true }.map(\.label),
+                       Acceptance.singleCellActions, "the JS table toolbar enables the activated cell's actions")
         harness.view.activeTextInput.insertText(Acceptance.composedText)
         let reboundLabels = try harness.actionLabels(onCellAt: reboundCell)
         XCTAssertTrue(reboundLabels.contains(Acceptance.addRowAfterLabel),
