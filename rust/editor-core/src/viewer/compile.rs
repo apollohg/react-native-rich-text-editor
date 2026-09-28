@@ -61,6 +61,7 @@ pub(crate) fn compile(request: FfiViewerCompileRequest) -> FfiViewerCompileResul
                         request.mention_prefix.as_deref(),
                         request.images_enabled,
                         &mut table_records,
+                        0,
                     )
                 })
                 .collect::<Vec<_>>();
@@ -147,27 +148,31 @@ fn viewer_element(
     mention_prefix: Option<&str>,
     images_enabled: bool,
     table_records: &mut std::collections::BTreeMap<u32, super::types::FfiViewerTable>,
+    origin: u32,
 ) -> FfiViewerElement {
     match element {
-        RenderElement::Table { table } => {
-            let table_id = format!("t{}", table.table_pos);
+        RenderElement::Table { table, doc_offset } => {
+            let table_pos = origin + doc_offset;
+            let starts = crate::tables::render::absolute_cell_starts(&table, table_pos);
+            let table_id = format!("t{table_pos}");
             let record = super::types::FfiViewerTable {
-                table_pos: table.table_pos,
-                source_end: table.source_end,
-                rows: table.rows,
-                columns: table.columns,
-                column_widths: table.column_widths.clone(),
-                direction: table.direction.clone(),
-                irregular: table.irregular,
-                read_only_descendants: table.read_only_descendants,
-                attrs_key: table.attrs_key.clone(),
-                source_rows: table.source_rows.clone(),
+                table_pos,
+                source_end: table_pos + table.structure.doc_size,
+                rows: table.structure.rows,
+                columns: table.structure.columns,
+                column_widths: table.structure.column_widths.clone(),
+                direction: table.structure.direction.clone(),
+                irregular: table.structure.irregular,
+                read_only_descendants: table.structure.read_only_descendants,
+                attrs_key: table.structure.attrs_key.clone(),
+                source_rows: crate::tables::render::absolute_source_rows(&table, table_pos),
                 cells: table
                     .cells
                     .iter()
-                    .map(|cell| super::types::FfiViewerTableCell {
-                        source_pos: cell.source_pos,
-                        source_end: cell.source_end,
+                    .zip(starts)
+                    .map(|(cell, source_pos)| super::types::FfiViewerTableCell {
+                        source_pos,
+                        source_end: source_pos + cell.doc_size,
                         row: cell.row,
                         column: cell.column,
                         rowspan: cell.rowspan,
@@ -186,14 +191,15 @@ fn viewer_element(
                                     mention_prefix,
                                     images_enabled,
                                     table_records,
+                                    source_pos,
                                 )
                             })
                             .collect(),
                     })
                     .collect(),
-                synthetic_regions: table.synthetic_regions.clone(),
-                failure: table.failure,
-                compatibility_diagnostic: table.compatibility_diagnostic,
+                synthetic_regions: table.structure.synthetic_regions.clone(),
+                failure: table.structure.failure,
+                compatibility_diagnostic: table.structure.compatibility_diagnostic,
             };
             table_records.insert(record.table_pos, record);
             FfiViewerElement::Table { table_id }
@@ -213,7 +219,7 @@ fn viewer_element(
                 mention_prefix,
             ),
             node_type,
-            doc_pos,
+            doc_pos: origin + doc_pos,
             attrs_json: canonical_attrs_json(&attrs),
         },
         RenderElement::VoidBlock {
@@ -227,7 +233,7 @@ fn viewer_element(
                 mention_prefix,
             ),
             node_type,
-            doc_pos,
+            doc_pos: origin + doc_pos,
             attrs_json: canonical_attrs_json(&attrs),
         },
         RenderElement::OpaqueInlineAtom {
@@ -239,7 +245,7 @@ fn viewer_element(
         } => FfiViewerElement::InlineAtom {
             label: prefixed_mention_label(&node_type, label, mention_prefix),
             node_type,
-            doc_pos,
+            doc_pos: origin + doc_pos,
             attrs_json: canonical_attrs_json(&attrs),
         },
         RenderElement::OpaqueBlockAtom {
@@ -250,7 +256,7 @@ fn viewer_element(
         } => FfiViewerElement::BlockAtom {
             label: prefixed_mention_label(&node_type, label, mention_prefix),
             node_type,
-            doc_pos,
+            doc_pos: origin + doc_pos,
             attrs_json: canonical_attrs_json(&attrs),
         },
         RenderElement::BlockStart {

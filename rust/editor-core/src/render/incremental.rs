@@ -629,9 +629,17 @@ fn generate_block_inner(
 ) -> Result<(), CachedRenderError> {
     let spec = schema.node(node.node_type());
     if spec.is_some_and(|spec| spec.table_role == Some(crate::tables::TableRole::Table)) {
-        let table = crate::tables::render::generate_table(node, schema, *pos, context, in_cell)?;
-        *pos = table.source_end;
-        elements.push(RenderElement::Table { table });
+        let doc_offset = *pos;
+        let absolute_pos = context
+            .coordinate_origin
+            .checked_add(doc_offset)
+            .ok_or(CachedRenderError::PositionOverflow)?;
+        let table =
+            crate::tables::render::generate_table(node, schema, absolute_pos, context, in_cell)?;
+        *pos = pos
+            .checked_add(table.structure.doc_size)
+            .ok_or(CachedRenderError::PositionOverflow)?;
+        elements.push(RenderElement::Table { table, doc_offset });
         return Ok(());
     }
     let role = spec.map(|s| &s.role);

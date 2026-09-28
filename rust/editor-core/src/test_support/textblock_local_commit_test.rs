@@ -639,7 +639,10 @@ fn textblock_local_replacement_preserves_aggregate_output_budget_rejections() {
 fn table_records(cache: &CachedRenderBlocks) -> Vec<TableRenderRecord> {
     let mut records = Vec::new();
     cache.visit_table_records(&mut records);
-    records.into_iter().cloned().collect()
+    records
+        .into_iter()
+        .map(|(_, table)| table.clone())
+        .collect()
 }
 
 #[test]

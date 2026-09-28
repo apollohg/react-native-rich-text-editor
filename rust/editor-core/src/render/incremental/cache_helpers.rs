@@ -9,13 +9,14 @@ fn max_cached_elements(limits: &ResourceLimits) -> Result<usize, CachedRenderErr
 fn ordered_list_start(node: &Node) -> Result<u32, CachedRenderError> {
     match crate::render::ordered_list_start(node) {
         Ok(start) => Ok(start),
-        Err(GenerateError::RenderPreparationFailed) => Err(CachedRenderError::CacheInvariantViolation),
+        Err(GenerateError::RenderPreparationFailed) => {
+            Err(CachedRenderError::CacheInvariantViolation)
+        }
         Err(GenerateError::OrderedListStartOutOfRange) => {
             Err(CachedRenderError::InvalidOrderedListStart)
         }
-        Err(GenerateError::ListItemCountOutOfRange) | Err(GenerateError::OrderedListIndexOverflow) => {
-            Err(CachedRenderError::PositionOverflow)
-        }
+        Err(GenerateError::ListItemCountOutOfRange)
+        | Err(GenerateError::OrderedListIndexOverflow) => Err(CachedRenderError::PositionOverflow),
     }
 }
 
@@ -161,7 +162,17 @@ fn render_cached_block(
         .try_reserve(3)
         .map_err(|_| CachedRenderError::AllocationFailed)?;
     let mut rendered_end = start_pos;
-    generate_block(node, schema, &mut elements, &mut rendered_end, 0, None, 0, context, false)?;
+    generate_block(
+        node,
+        schema,
+        &mut elements,
+        &mut rendered_end,
+        0,
+        None,
+        0,
+        context,
+        false,
+    )?;
     if rendered_end != expected_end {
         return Err(CachedRenderError::CacheInvariantViolation);
     }
@@ -185,7 +196,7 @@ fn render_cached_block(
 
 fn render_element_doc_pos(element: &RenderElement) -> Option<u32> {
     match element {
-        RenderElement::Table { table } => Some(table.table_pos),
+        RenderElement::Table { doc_offset, .. } => Some(*doc_offset),
         RenderElement::VoidInline { doc_pos, .. }
         | RenderElement::VoidBlock { doc_pos, .. }
         | RenderElement::OpaqueInlineAtom { doc_pos, .. }
@@ -198,9 +209,9 @@ fn render_element_doc_pos(element: &RenderElement) -> Option<u32> {
 
 fn set_render_element_doc_pos(element: &mut RenderElement, doc_pos: u32) -> bool {
     match element {
-        RenderElement::Table { table } => {
-            let delta = i64::from(doc_pos) - i64::from(table.table_pos);
-            crate::tables::render::rebase_elements(std::slice::from_mut(element), delta).is_ok()
+        RenderElement::Table { doc_offset, .. } => {
+            *doc_offset = doc_pos;
+            true
         }
         RenderElement::VoidInline {
             doc_pos: current, ..

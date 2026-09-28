@@ -1,24 +1,26 @@
 impl CachedRenderBlocks {
     pub(crate) fn visit_table_records<'a>(
         &'a self,
-        output: &mut Vec<&'a crate::tables::render::TableRenderRecord>,
+        output: &mut Vec<(u32, &'a crate::tables::render::TableRenderRecord)>,
     ) {
-        let mut pending: Vec<&[RenderElement]> = self
+        let mut pending: Vec<_> = self
             .blocks
             .iter()
             .rev()
-            .map(|block| block.elements.as_slice())
+            .map(|block| (0, block.elements.as_slice()))
             .collect();
-        while let Some(elements) = pending.pop() {
+        while let Some((origin, elements)) = pending.pop() {
             for element in elements.iter().rev() {
-                if let RenderElement::Table { table } = element {
-                    output.push(table);
+                if let RenderElement::Table { table, doc_offset } = element {
+                    let table_pos = origin + doc_offset;
+                    output.push((table_pos, table));
+                    let starts = crate::tables::render::absolute_cell_starts(table, table_pos);
                     pending.extend(
-                        table
-                            .cells
-                            .iter()
+                        starts
+                            .into_iter()
+                            .zip(&table.cells)
                             .rev()
-                            .map(|cell| cell.elements.as_slice()),
+                            .map(|(start, cell)| (start, cell.elements.as_slice())),
                     );
                 }
             }
@@ -204,7 +206,7 @@ impl CachedRenderBlocks {
 
         fn element_bytes(element: &RenderElement) -> Option<usize> {
             match element {
-                RenderElement::Table { table } => {
+                RenderElement::Table { table, .. } => {
                     let bytes = table
                         .retained_bytes(|element| element_bytes(element).unwrap_or(usize::MAX));
                     (bytes < usize::MAX).then_some(bytes)

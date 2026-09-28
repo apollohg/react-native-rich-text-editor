@@ -21,7 +21,7 @@ fn test_table_ids(cache: &CachedRenderBlocks) -> std::collections::HashMap<u32, 
     tables
         .iter()
         .enumerate()
-        .map(|(index, table)| (table.table_pos, format!("y0-{index}")))
+        .map(|(index, (position, _))| (*position, format!("y0-{index}")))
         .collect()
 }
 
@@ -40,9 +40,9 @@ fn attribute_pool_collision_keeps_canonical_key_and_exact_json() {
     let mut original = crate::tables::render::TableRenderContext::new(Arc::clone(&index), &schema);
     let expected =
         crate::tables::render::generate_table(table, &schema, 0, &mut original, false).unwrap();
-    let json = original.attributes[&expected.attrs_key].clone();
+    let json = original.attributes[&expected.structure.attrs_key].clone();
     let digest = format!("{:x}", Sha256::digest(json.as_bytes()));
-    assert_eq!(expected.attrs_key, digest);
+    assert_eq!(expected.structure.attrs_key, digest);
 
     let mut context = crate::tables::render::TableRenderContext::new(index, &schema);
     context
@@ -51,18 +51,19 @@ fn attribute_pool_collision_keeps_canonical_key_and_exact_json() {
     let record =
         crate::tables::render::generate_table(table, &schema, 0, &mut context, false).unwrap();
 
-    assert_eq!(record.attrs_key.len(), 64);
+    assert_eq!(record.structure.attrs_key.len(), 64);
     assert!(record
+        .structure
         .attrs_key
         .bytes()
         .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
     assert_eq!(
-        context.attributes[&record.attrs_key].as_ref(),
+        context.attributes[&record.structure.attrs_key].as_ref(),
         json.as_ref()
     );
-    assert_ne!(record.attrs_key, expected.attrs_key);
+    assert_ne!(record.structure.attrs_key, expected.structure.attrs_key);
     assert_eq!(
-        context.attributes[&expected.attrs_key].as_ref(),
+        context.attributes[&expected.structure.attrs_key].as_ref(),
         "{\"different\":true}"
     );
 
@@ -75,9 +76,9 @@ fn attribute_pool_collision_keeps_canonical_key_and_exact_json() {
         false,
     )
     .unwrap();
-    assert_eq!(reused.attrs_key, record.attrs_key);
+    assert_eq!(reused.structure.attrs_key, record.structure.attrs_key);
     assert_eq!(
-        context.attributes[&reused.attrs_key].as_ref(),
+        context.attributes[&reused.structure.attrs_key].as_ref(),
         json.as_ref()
     );
 }
@@ -308,10 +309,16 @@ fn changing_one_cell_reuses_unchanged_content_and_rebases_source_positions() {
         "only the changed cell generates content; the unchanged cell is reused and rebased: {passes:#?}"
     );
     let new_blocks = transition.cache.materialize();
-    let RenderElement::Table { table: old_table } = &old_blocks[0][0] else {
+    let RenderElement::Table {
+        table: old_table, ..
+    } = &old_blocks[0][0]
+    else {
         panic!("table");
     };
-    let RenderElement::Table { table: new_table } = &new_blocks[0][0] else {
+    let RenderElement::Table {
+        table: new_table, ..
+    } = &new_blocks[0][0]
+    else {
         panic!("table");
     };
     assert_eq!(
@@ -319,8 +326,8 @@ fn changing_one_cell_reuses_unchanged_content_and_rebases_source_positions() {
         new_table.cells[1].content_key
     );
     assert_eq!(
-        old_table.cells[1].source_pos + 7,
-        new_table.cells[1].source_pos
+        crate::tables::render::absolute_cell_starts(old_table, 0)[1] + 7,
+        crate::tables::render::absolute_cell_starts(new_table, 0)[1]
     );
     assert_eq!(new_blocks, render_blocks(&new, &schema));
     assert_eq!(
@@ -342,21 +349,30 @@ fn unchanged_cell_at_the_same_position_reuses_its_render_arc() {
     let new = document("after");
     let cache = CachedRenderBlocks::build(&old, &schema, &limits).unwrap();
     let old_blocks = cache.materialize();
-    let RenderElement::Table { table: old_table } = &old_blocks[0][0] else {
+    let RenderElement::Table {
+        table: old_table, ..
+    } = &old_blocks[0][0]
+    else {
         panic!("old table");
     };
     let transition = cache
         .transition(&old, &new, &schema, &[0], &limits)
         .unwrap();
     let new_blocks = transition.cache.materialize();
-    let RenderElement::Table { table: new_table } = &new_blocks[0][0] else {
+    let RenderElement::Table {
+        table: new_table, ..
+    } = &new_blocks[0][0]
+    else {
         panic!("new table");
     };
     assert_eq!(
         old_table.cells[0].content_key,
         new_table.cells[0].content_key
     );
-    assert_eq!(old_table.cells[0].source_pos, new_table.cells[0].source_pos);
+    assert_eq!(
+        crate::tables::render::absolute_cell_starts(old_table, 0)[0],
+        crate::tables::render::absolute_cell_starts(new_table, 0)[0]
+    );
     assert!(std::sync::Arc::ptr_eq(
         &old_table.cells[0].elements,
         &new_table.cells[0].elements
@@ -388,26 +404,29 @@ fn source_anchoring_and_nested_records_survive_rich_cell_content() {
     let before = crate::serialize::to_prosemirror_json(&document, &schema);
     let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
     let blocks = cache.materialize();
-    let RenderElement::Table { table } = &blocks[0][0] else {
+    let RenderElement::Table { table, .. } = &blocks[0][0] else {
         panic!("table");
     };
     assert_eq!(
-        table.source_end,
+        table.structure.doc_size,
         document.root().child(0).unwrap().node_size()
     );
     assert_eq!(table.cells.len(), 2);
-    assert!(table.cells[1].source_end < table.source_end - 2);
-    let nested = table.cells[0]
+    assert!(
+        crate::tables::render::absolute_cell_starts(table, 0)[1] + table.cells[1].doc_size
+            < table.structure.doc_size - 2
+    );
+    let (nested_offset, nested) = table.cells[0]
         .elements
         .iter()
         .find_map(|element| match element {
-            RenderElement::Table { table } => Some(table),
+            RenderElement::Table { table, doc_offset } => Some((*doc_offset, table)),
             _ => None,
         })
         .unwrap();
-    assert!(nested.read_only_descendants);
-    assert!(nested.table_pos > table.cells[0].source_pos);
-    assert!(nested.source_end < table.cells[0].source_end);
+    assert!(nested.structure.read_only_descendants);
+    assert!(nested_offset > 0);
+    assert!(nested_offset + nested.structure.doc_size < table.cells[0].doc_size);
     assert_eq!(cache.rendered_text(&schema), "outer\nnested\nlast");
     assert_eq!(
         crate::serialize::to_prosemirror_json(&document, &schema),
@@ -453,40 +472,40 @@ fn combined_fixture_keeps_real_cells_bijective_and_marks_only_overlap_fallbacks(
 
     let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
     let blocks = cache.materialize();
-    let RenderElement::Table { table: safe } = &blocks[0][0] else {
+    let RenderElement::Table { table: safe, .. } = &blocks[0][0] else {
         panic!("safe table");
     };
-    let RenderElement::Table { table: collision } = &blocks[1][0] else {
+    let RenderElement::Table {
+        table: collision, ..
+    } = &blocks[1][0]
+    else {
         panic!("collision table");
     };
-    assert_eq!(safe.compatibility_diagnostic, None);
+    assert_eq!(safe.structure.compatibility_diagnostic, None);
     assert_eq!(safe.cells.len(), 4);
     assert_eq!(
-        safe.cells
-            .iter()
-            .map(|cell| cell.source_pos)
+        crate::tables::render::absolute_cell_starts(safe, 0)
+            .into_iter()
             .collect::<std::collections::BTreeSet<_>>()
             .len(),
         4
     );
-    assert!(safe
-        .cells
-        .iter()
-        .all(|cell| cell.source_pos < cell.source_end));
+    assert!(safe.cells.iter().all(|cell| cell.doc_size > 0));
     assert!(safe.cells[0].elements.iter().any(
-        |element| matches!(element, RenderElement::Table { table } if table.read_only_descendants)
+        |element| matches!(element, RenderElement::Table { table, .. } if table.structure.read_only_descendants)
     ));
     assert_eq!(
-        collision.compatibility_diagnostic,
+        collision.structure.compatibility_diagnostic,
         Some(crate::tables::render::TableCompatibilityDiagnostic::OverlappingReferenceCells)
     );
-    assert_eq!(collision.failure, None);
+    assert_eq!(collision.structure.failure, None);
     assert_eq!(
         collision.cells.len(),
         3,
         "fallback retains every authored source cell"
     );
     assert!(collision
+        .structure
         .synthetic_regions
         .iter()
         .all(|region| region.rowspan > 0 && region.colspan > 0));
@@ -506,22 +525,22 @@ fn grid_limit_failure_keeps_the_real_table_extent_without_inventing_cells() {
     };
     let cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
     let blocks = cache.materialize();
-    let RenderElement::Table { table } = &blocks[0][0] else {
+    let RenderElement::Table { table, doc_offset } = &blocks[0][0] else {
         panic!("failed table");
     };
-    assert_eq!(table.table_pos, 0);
+    assert_eq!(*doc_offset, 0);
     assert_eq!(
-        table.source_end,
+        table.structure.doc_size,
         document.root().child(0).unwrap().node_size()
     );
     assert_eq!(
-        table.failure,
+        table.structure.failure,
         Some(crate::tables::render::TableRenderFailure::GridLimit)
     );
-    assert_eq!(table.compatibility_diagnostic, None);
+    assert_eq!(table.structure.compatibility_diagnostic, None);
     assert!(table.cells.is_empty());
-    assert!(table.source_rows.is_empty());
-    assert!(table.synthetic_regions.is_empty());
+    assert!(table.structure.source_rows.is_empty());
+    assert!(table.structure.synthetic_regions.is_empty());
     let wire: serde_json::Value = serde_json::from_str(
         &crate::ffi_v2::render::serialize_render_cache_for_test(&cache, &test_table_ids(&cache)),
     )
@@ -530,7 +549,7 @@ fn grid_limit_failure_keeps_the_real_table_extent_without_inventing_cells() {
     assert_eq!(wire["tableRecords"][id]["tablePos"], json!(0));
     assert_eq!(
         wire["tableRecords"][id]["sourceEnd"],
-        json!(table.source_end)
+        json!(table.structure.doc_size)
     );
     assert_eq!(wire["tableRecords"][id]["failure"], json!("gridLimit"));
     assert_eq!(
@@ -554,21 +573,21 @@ fn structural_failure_keeps_the_real_table_extent_without_inventing_cells() {
     )
     .unwrap();
     let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
-    let RenderElement::Table { table } = &cache.materialize()[0][0] else {
+    let RenderElement::Table { table, .. } = &cache.materialize()[0][0] else {
         panic!("failed table");
     };
     assert_eq!(
-        table.source_end,
+        table.structure.doc_size,
         document.root().child(0).unwrap().node_size()
     );
     assert_eq!(
-        table.failure,
+        table.structure.failure,
         Some(crate::tables::render::TableRenderFailure::InvalidAttributes)
     );
-    assert_eq!(table.compatibility_diagnostic, None);
+    assert_eq!(table.structure.compatibility_diagnostic, None);
     assert!(table.cells.is_empty());
-    assert!(table.source_rows.is_empty());
-    assert!(table.synthetic_regions.is_empty());
+    assert!(table.structure.source_rows.is_empty());
+    assert!(table.structure.synthetic_regions.is_empty());
 }
 
 #[test]
@@ -593,11 +612,11 @@ fn transition_rebuilds_table_metadata_when_projection_limits_change() {
     let transition = cache
         .transition(&document, &document, &schema, &[], &constrained)
         .unwrap();
-    let RenderElement::Table { table } = &transition.cache.materialize()[0][0] else {
+    let RenderElement::Table { table, .. } = &transition.cache.materialize()[0][0] else {
         panic!("failed table");
     };
     assert_eq!(
-        table.failure,
+        table.structure.failure,
         Some(crate::tables::render::TableRenderFailure::GridLimit)
     );
     assert!(table.cells.is_empty());
@@ -636,3 +655,5 @@ fn table_is_one_outer_semantic_element() {
         "table descendants belong inside its semantic record"
     );
 }
+
+mod position_free;

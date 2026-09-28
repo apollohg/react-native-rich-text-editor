@@ -64,6 +64,9 @@ struct ScalarExtent {
 struct TableScope<'a> {
     record: &'a TableRenderRecord,
     table_id: String,
+    start: u32,
+    end: u32,
+    cell_starts: Vec<u32>,
 }
 
 struct CellScope<'a> {
@@ -89,21 +92,24 @@ pub(crate) fn derive(
     if records.is_empty() {
         return Ok(None);
     }
-    records.sort_by_key(|record| record.table_pos);
+    records.sort_by_key(|(position, _)| *position);
 
     let tables: Vec<_> = records
         .into_iter()
-        .map(|record| TableScope {
+        .map(|(start, record)| TableScope {
             record,
-            table_id: format!("t{}", record.table_pos),
+            table_id: format!("t{start}"),
+            start,
+            end: start + record.structure.doc_size,
+            cell_starts: crate::tables::render::absolute_cell_starts(record, start),
         })
         .collect();
     let mut cells = Vec::new();
     for (table_index, table) in tables.iter().enumerate() {
         for (cell_index, cell) in table.record.cells.iter().enumerate() {
             cells.push(CellScope {
-                start: cell.source_pos,
-                end: cell.source_end,
+                start: table.cell_starts[cell_index],
+                end: table.cell_starts[cell_index] + cell.doc_size,
                 table_index,
                 cell_index,
                 cell,
@@ -142,12 +148,13 @@ pub(crate) fn derive(
                     document,
                     position_map,
                     cell,
+                    table.cell_starts[cell_index],
                     &pending_cell.block_indices,
                 )?;
                 Ok(TableInputCell {
                     cell_index: u32::try_from(cell_index).map_err(|_| "cell index overflow")?,
-                    source_pos: cell.source_pos,
-                    source_end: cell.source_end,
+                    source_pos: table.cell_starts[cell_index],
+                    source_end: table.cell_starts[cell_index] + cell.doc_size,
                     blocks,
                     excluded: pending_cell.excluded.clone(),
                 })
@@ -156,11 +163,7 @@ pub(crate) fn derive(
         output.insert(
             table.table_id.clone(),
             TableInputTable {
-                extent: table_extent(
-                    position_map,
-                    table.record.table_pos,
-                    table.record.source_end,
-                ),
+                extent: table_extent(position_map, table.start, table.end),
                 cells: mapped_cells,
             },
         );
@@ -186,13 +189,13 @@ fn assign_direct_blocks(
     let mut active_tables = Vec::new();
     for block_index in 0..position_map.block_count() {
         let doc_start = position_map.effective_doc_start(block_index);
-        while next_table < tables.len() && tables[next_table].record.table_pos <= doc_start {
+        while next_table < tables.len() && tables[next_table].start <= doc_start {
             active_tables.push(next_table);
             next_table += 1;
         }
         while active_tables
             .last()
-            .is_some_and(|index| tables[*index].record.source_end <= doc_start)
+            .is_some_and(|index| tables[*index].end <= doc_start)
         {
             active_tables.pop();
         }
@@ -226,7 +229,7 @@ fn assign_nested_exclusions(
     let mut next_cell = 0;
     let mut active = Vec::new();
     for (table_index, table) in tables.iter().enumerate() {
-        let table_pos = table.record.table_pos;
+        let table_pos = table.start;
         while next_cell < cells.len() && cells[next_cell].start <= table_pos {
             active.push(next_cell);
             next_cell += 1;
@@ -256,14 +259,14 @@ fn assign_nested_exclusions(
             .enumerate()
             .skip(next_element)
             .find_map(|(index, element)| {
-                matches!(element, RenderElement::Table { table: nested } if nested.table_pos == table_pos).then_some(index)
+                matches!(element, RenderElement::Table { doc_offset, .. } if cell_scope.start + doc_offset == table_pos).then_some(index)
             })
             .ok_or("nested table is missing its cell render element")?;
         pending_cell.excluded.push(TableInputExcluded {
             element_index: u32::try_from(element_index)
                 .map_err(|_| "render element index overflow")?,
             table_id: table.table_id.clone(),
-            extent: table_extent(position_map, table_pos, table.record.source_end),
+            extent: table_extent(position_map, table_pos, table.end),
         });
     }
     Ok(())
@@ -273,10 +276,11 @@ fn serialize_cell_blocks(
     document: &Document,
     position_map: &PositionMap,
     cell: &TableRenderCell,
+    cell_start: u32,
     block_indices: &[usize],
 ) -> Result<Vec<TableInputBlock>, &'static str> {
     let mut next_element = 0;
-    let cell_scalar_end = table_extent(position_map, cell.source_pos, cell.source_end)
+    let cell_scalar_end = table_extent(position_map, cell_start, cell_start + cell.doc_size)
         .map(|extent| extent.scalar_end);
     block_indices
         .iter()
@@ -285,8 +289,13 @@ fn serialize_cell_blocks(
                 .block(*block_index)
                 .ok_or("position block index is invalid")?;
             let doc_start = position_map.effective_doc_start(*block_index);
-            let element_index =
-                find_block_element_index(document, cell, block, doc_start, &mut next_element)?;
+            let element_index = find_block_element_index(
+                document,
+                cell,
+                block,
+                doc_start - cell_start,
+                &mut next_element,
+            )?;
             let scalar_start = position_map.effective_scalar_start(*block_index);
             let content_scalar_start = scalar_start
                 .checked_add(block.scalar_prefix_len)

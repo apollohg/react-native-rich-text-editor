@@ -353,8 +353,8 @@ fn render_snapshot_json(
     let mut cached_tables = Vec::new();
     current_render_blocks.visit_table_records(&mut cached_tables);
     let mut unique_table_ids = std::collections::HashSet::new();
-    for table in cached_tables {
-        let Some(source_id) = source_ids.table_ids.get(&table.table_pos) else {
+    for (table_pos, _) in cached_tables {
+        let Some(source_id) = source_ids.table_ids.get(&table_pos) else {
             return Err(SessionError::from(YrsEngineError::new(
                 "ENGINE_INVARIANT_FAILED",
                 "render table is missing its live Yrs source identity",
@@ -570,30 +570,33 @@ fn serialize_render_elements(
     elements: &[crate::render::RenderElement],
     source_ids: &crate::yrs_engine::BlockSourceIds,
     table_records: &mut std::collections::BTreeMap<String, Value>,
+    origin: u32,
 ) -> serde_json::Value {
     let items: Vec<serde_json::Value> = elements
         .iter()
         .map(|el| match el {
-            crate::render::RenderElement::Table { table } => stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
-                let table_id = format!("t{}", table.table_pos);
+            crate::render::RenderElement::Table { table, doc_offset } => stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
+                let table_pos = origin + doc_offset;
+                let starts = crate::tables::render::absolute_cell_starts(table, table_pos);
+                let table_id = format!("t{table_pos}");
                 let record = serde_json::json!({
-                        "tablePos": table.table_pos,
-                        "sourceId": source_ids.table_ids.get(&table.table_pos).expect("table identity preflight required"),
-                        "sourceEnd": table.source_end,
-                        "rows": table.rows,
-                        "columns": table.columns,
-                        "columnWidths": table.column_widths,
-                        "direction": table.direction,
-                        "irregular": table.irregular,
-                        "readOnlyDescendants": table.read_only_descendants,
-                        "attrsKey": table.attrs_key,
-                        "sourceRows": table.source_rows,
-                        "syntheticRegions": table.synthetic_regions,
-                        "failure": table.failure,
-                        "compatibilityDiagnostic": table.compatibility_diagnostic,
-                        "cells": table.cells.iter().map(|cell| serde_json::json!({
-                            "sourcePos": cell.source_pos,
-                            "sourceEnd": cell.source_end,
+                        "tablePos": table_pos,
+                        "sourceId": source_ids.table_ids.get(&table_pos).expect("table identity preflight required"),
+                        "sourceEnd": table_pos + table.structure.doc_size,
+                        "rows": table.structure.rows,
+                        "columns": table.structure.columns,
+                        "columnWidths": table.structure.column_widths,
+                        "direction": table.structure.direction,
+                        "irregular": table.structure.irregular,
+                        "readOnlyDescendants": table.structure.read_only_descendants,
+                        "attrsKey": table.structure.attrs_key,
+                        "sourceRows": crate::tables::render::absolute_source_rows(table, table_pos),
+                        "syntheticRegions": table.structure.synthetic_regions,
+                        "failure": table.structure.failure,
+                        "compatibilityDiagnostic": table.structure.compatibility_diagnostic,
+                        "cells": table.cells.iter().zip(starts).map(|(cell, source_pos)| serde_json::json!({
+                            "sourcePos": source_pos,
+                            "sourceEnd": source_pos + cell.doc_size,
                             "row": cell.row,
                             "column": cell.column,
                             "rowspan": cell.rowspan,
@@ -601,7 +604,7 @@ fn serialize_render_elements(
                             "header": cell.header,
                             "attrsKey": cell.attrs_key,
                             "contentKey": cell.content_key,
-                            "elements": serialize_render_elements(&cell.elements, source_ids, table_records),
+                            "elements": serialize_render_elements(&cell.elements, source_ids, table_records, source_pos),
                         })).collect::<Vec<_>>()
                 })
                 ;
@@ -623,7 +626,7 @@ fn serialize_render_elements(
                 let mut obj = serde_json::json!({
                     "type": "voidInline",
                     "nodeType": node_type,
-                    "docPos": doc_pos,
+                    "docPos": origin + doc_pos,
                 });
                 if !attrs.is_empty() {
                     obj["attrs"] = serde_json::Value::Object(
@@ -648,7 +651,7 @@ fn serialize_render_elements(
                 let mut obj = serde_json::json!({
                     "type": "voidBlock",
                     "nodeType": node_type,
-                    "docPos": doc_pos,
+                    "docPos": origin + doc_pos,
                 });
                 if !attrs.is_empty() {
                     obj["attrs"] = serde_json::Value::Object(
@@ -663,7 +666,7 @@ fn serialize_render_elements(
                             .collect(),
                     );
                 }
-                if let Some(atom_id) = source_ids.atom_ids.get(doc_pos) {
+                if let Some(atom_id) = source_ids.atom_ids.get(&(origin + doc_pos)) {
                     obj["atomId"] = Value::String(atom_id.clone());
                 }
                 obj
@@ -679,7 +682,7 @@ fn serialize_render_elements(
                     "type": "opaqueInlineAtom",
                     "nodeType": node_type,
                     "label": label,
-                    "docPos": doc_pos,
+                    "docPos": origin + doc_pos,
                 });
                 if !attrs.is_empty() {
                     obj["attrs"] = serde_json::Value::Object(
@@ -719,7 +722,7 @@ fn serialize_render_elements(
                     "type": "opaqueBlockAtom",
                     "nodeType": node_type,
                     "label": label,
-                    "docPos": doc_pos,
+                    "docPos": origin + doc_pos,
                 });
                 if !attrs.is_empty() {
                     obj["attrs"] = serde_json::Value::Object(
@@ -800,7 +803,7 @@ fn serialize_render_blocks(
     serde_json::Value::Array(
         blocks
             .iter()
-            .map(|block| serialize_render_elements(block, source_ids, table_records))
+            .map(|block| serialize_render_elements(block, source_ids, table_records, 0))
             .collect(),
     )
 }

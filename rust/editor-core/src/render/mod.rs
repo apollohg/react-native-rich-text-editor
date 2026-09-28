@@ -69,6 +69,7 @@ impl Drop for RenderMark {
 pub enum RenderElement {
     Table {
         table: crate::tables::render::TableRenderRecord,
+        doc_offset: u32,
     },
     /// A run of text with applied mark names.
     TextRun {
@@ -116,8 +117,9 @@ pub enum RenderElement {
 impl Clone for RenderElement {
     fn clone(&self) -> Self {
         match self {
-            Self::Table { table } => Self::Table {
+            Self::Table { table, doc_offset } => Self::Table {
                 table: table.clone(),
+                doc_offset: *doc_offset,
             },
             Self::TextRun { text, marks } => Self::TextRun {
                 text: text.clone(),
@@ -186,8 +188,11 @@ impl Clone for RenderElement {
 impl RenderElement {
     pub(crate) fn drain_json_payloads(&mut self) {
         match self {
-            Self::Table { table } => {
+            Self::Table { table, .. } => {
                 for cell in &mut table.cells {
+                    let Some(cell) = std::sync::Arc::get_mut(cell) else {
+                        continue;
+                    };
                     if let Some(elements) = std::sync::Arc::get_mut(&mut cell.elements) {
                         for element in elements {
                             element.drain_json_payloads();
