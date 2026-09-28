@@ -561,6 +561,8 @@ fn encode_full_state(doc: &Doc) -> Vec<u8> {
     if txn.state_vector().is_empty() {
         Vec::new()
     } else {
+        #[cfg(test)]
+        super::observability::record_whole_state_encoding();
         txn.encode_state_as_update_v1(&StateVector::default())
     }
 }

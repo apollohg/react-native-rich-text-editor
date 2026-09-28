@@ -26,6 +26,13 @@ pub(crate) struct FullPassCounts {
     pub render_top_level_start_scans: usize,
     pub active_applicability_passes: usize,
     pub ordinary_step_applications: usize,
+    pub table_projection_derivations: usize,
+    pub table_command_availability_plans: usize,
+    pub yrs_tree_walks: usize,
+    pub whole_state_encodings: usize,
+    pub cell_content_keys: usize,
+    pub attribute_serializations: usize,
+    pub epoch_block_rebuilds: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +85,13 @@ std::thread_local! {
             render_top_level_start_scans: 0,
             active_applicability_passes: 0,
             ordinary_step_applications: 0,
+            table_projection_derivations: 0,
+            table_command_availability_plans: 0,
+            yrs_tree_walks: 0,
+            whole_state_encodings: 0,
+            cell_content_keys: 0,
+            attribute_serializations: 0,
+            epoch_block_rebuilds: 0,
         })
     };
     static PREPARED_ADMISSION_COUNTS: std::cell::Cell<PreparedAdmissionCounts> = const {
@@ -143,6 +157,19 @@ recorder!(
     active_applicability_passes
 );
 recorder!(record_ordinary_step_application, ordinary_step_applications);
+recorder!(
+    record_table_projection_derivation,
+    table_projection_derivations
+);
+recorder!(
+    record_table_command_availability_plan,
+    table_command_availability_plans
+);
+recorder!(record_yrs_tree_walk, yrs_tree_walks);
+recorder!(record_whole_state_encoding, whole_state_encodings);
+recorder!(record_cell_content_key, cell_content_keys);
+recorder!(record_attribute_serialization, attribute_serializations);
+recorder!(record_epoch_block_rebuild, epoch_block_rebuilds);
 
 pub(crate) fn reset_full_pass_counts_for_test() {
     FULL_PASS_COUNTS.set(FullPassCounts::default());

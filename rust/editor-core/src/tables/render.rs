@@ -264,8 +264,6 @@ impl TableRenderContext {
             return key.clone();
         }
         let json = attrs_json(node, cell);
-        #[cfg(test)]
-        ATTRIBUTE_SERIALIZED_BYTES.set(ATTRIBUTE_SERIALIZED_BYTES.get() + json.len());
         let mut digest: [u8; 32] = Sha256::digest(json.as_bytes()).into();
         let mut key = attribute_key(&digest);
         let mut collision = 0usize;
@@ -378,6 +376,8 @@ fn increment_attribute_key(digest: &mut [u8; 32]) {
 }
 
 fn attrs_json(node: &Node, cell: bool) -> String {
+    #[cfg(test)]
+    crate::yrs_engine::observability::record_attribute_serialization();
     let value = serde_json::Value::Object(
         node.attrs()
             .iter()
@@ -396,6 +396,8 @@ fn attrs_json(node: &Node, cell: bool) -> String {
 }
 
 fn content_key(cell: &Node, schema: &Schema, schema_key: &str) -> String {
+    #[cfg(test)]
+    crate::yrs_engine::observability::record_cell_content_key();
     let mut hash = Sha256::new();
     hash.update(schema_key.as_bytes());
     for index in 0..cell.child_count() {
@@ -406,12 +408,6 @@ fn content_key(cell: &Node, schema: &Schema, schema_key: &str) -> String {
         crate::boundary::drop_json_value_stack_safe(value);
     }
     format!("{:x}", hash.finalize())
-}
-
-#[cfg(test)]
-std::thread_local! {
-    pub(crate) static CELL_CONTENT_GENERATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    pub(crate) static ATTRIBUTE_SERIALIZED_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 pub(crate) fn generate_table(
@@ -505,8 +501,6 @@ pub(crate) fn generate_table(
                 Arc::new(elements)
             }
         } else {
-            #[cfg(test)]
-            CELL_CONTENT_GENERATIONS.set(CELL_CONTENT_GENERATIONS.get() + 1);
             let mut elements = Vec::new();
             let mut pos = projected_cell.source_pos + 1;
             for index in 0..cell.child_count() {

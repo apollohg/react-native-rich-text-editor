@@ -420,7 +420,14 @@ fn localized_render_failure_exposes_only_the_generic_transition_error() {
     assert!(generic.error.message.contains("AllocationFailed"));
     assert_eq!(generic.cached_counts, (0, 1, 0, 0, 0));
     assert_eq!(generic.lifecycle_counts, (0, 0, 0));
-    assert_eq!(generic.full_pass_counts, FullPassCounts::default());
+    assert_eq!(
+        generic.full_pass_counts,
+        FullPassCounts {
+            table_projection_derivations: 1,
+            whole_state_encodings: 1,
+            ..FullPassCounts::default()
+        }
+    );
     for stage in [
         LocalizedRenderFailureStage::Allocation,
         LocalizedRenderFailureStage::Resource,

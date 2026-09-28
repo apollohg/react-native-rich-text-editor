@@ -536,6 +536,9 @@ impl YrsDocumentEngine {
             &doc_positions,
             &self.schema,
         )?;
+        #[cfg(test)]
+        (0..state.position_map.block_count())
+            .for_each(|_| super::observability::record_epoch_block_rebuild());
         let spans = self.cell_pinning(state).spans();
         for (cell, span) in spans.iter().enumerate() {
             for (scalar, point) in &span.points {

@@ -28,6 +28,8 @@ fn replay_comparison_state(doc: &Doc) -> Vec<u8> {
             .get()
             .saturating_add(1),
     );
+    #[cfg(test)]
+    crate::yrs_engine::observability::record_whole_state_encoding();
     doc.transact()
         .encode_state_as_update_v1(&StateVector::default())
 }

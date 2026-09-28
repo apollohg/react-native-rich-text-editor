@@ -17,6 +17,8 @@ mod collaboration_outbox_test;
 mod collaboration_protocol_test;
 mod collaboration_transport_state_test;
 mod ffi_v2_test;
+mod large_table_budget_test;
+mod large_table_fixture;
 mod model_test;
 mod native_intent_test;
 mod native_transaction_bridge_test;

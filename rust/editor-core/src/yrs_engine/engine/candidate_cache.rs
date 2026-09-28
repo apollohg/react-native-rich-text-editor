@@ -366,6 +366,8 @@ pub(super) fn encode_state_bounded(
     let encoded_state = if txn.state_vector().is_empty() {
         Vec::new()
     } else {
+        #[cfg(test)]
+        crate::yrs_engine::observability::record_whole_state_encoding();
         txn.encode_state_as_update_v1(&StateVector::default())
     };
     if encoded_state.len() > resource_limits.max_encoded_state_bytes {
@@ -470,6 +472,8 @@ pub(super) fn prepare_import_candidate_cache(
             let encoded = if source_state_vector.is_empty() {
                 Vec::new()
             } else {
+                #[cfg(test)]
+                crate::yrs_engine::observability::record_whole_state_encoding();
                 source_txn.encode_state_as_update_v1(&StateVector::default())
             };
             let source_fragment = source_txn.get_xml_fragment(fragment_name)?;

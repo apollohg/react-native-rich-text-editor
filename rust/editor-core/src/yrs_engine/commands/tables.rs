@@ -745,6 +745,8 @@ impl<'a> TableCommandSurface<'a> {
         selection: &'a Selection,
         limits: &'a ResourceLimits,
     ) -> Self {
+        #[cfg(test)]
+        crate::yrs_engine::observability::record_table_command_availability_plan();
         let index = TableProjectionIndex::derive_or_fallback(document, schema, limits);
         let anchor = anchor_in(&index, selection);
         let target = anchor.as_ref().and_then(|anchor| {
@@ -773,6 +775,8 @@ impl<'a> TableCommandSurface<'a> {
     }
 
     pub(crate) fn is_available(&self, command: TableCommand) -> bool {
+        #[cfg(test)]
+        crate::yrs_engine::observability::record_table_command_availability_plan();
         match command {
             TableCommand::InsertTable {
                 rows,

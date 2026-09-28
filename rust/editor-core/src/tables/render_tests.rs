@@ -8,6 +8,8 @@ use crate::render::incremental::CachedRenderBlocks;
 use crate::render::RenderElement;
 use crate::tables::tests::{tabled_schema, PROSEMIRROR_TABLE_NAMES};
 
+const REKEYED_CELLS_PER_TABLE_TRANSITION: usize = 2;
+
 fn cell(text: &str) -> serde_json::Value {
     json!({ "type": "table_cell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": text }] }] })
 }
@@ -145,6 +147,31 @@ fn fixture(first: &str) -> crate::model::Document {
     }] }), &schema, crate::serialize::UnknownTypeMode::Preserve).unwrap()
 }
 
+fn distinct_table_attrs_storages(
+    document: &crate::model::Document,
+    schema: &crate::schema::Schema,
+) -> usize {
+    let storage =
+        |node: &crate::model::Node, cell: bool| (std::ptr::from_ref(node.attrs()) as usize, cell);
+    let index = crate::tables::admission::TableProjectionIndex::derive_or_fallback(
+        document,
+        schema,
+        &ResourceLimits::default(),
+    );
+    let table = document.root().child(0).unwrap();
+    let mut storages = std::collections::HashSet::from([storage(table, false)]);
+    for row in (0..table.child_count()).map(|index| table.child(index).unwrap()) {
+        storages.insert(storage(row, false));
+        for cell in (0..row.child_count()).map(|index| row.child(index).unwrap()) {
+            storages.insert(storage(cell, true));
+        }
+    }
+    for region in &index.table_at(0).unwrap().synthetic {
+        storages.insert(storage(&region.node, true));
+    }
+    storages.len()
+}
+
 fn shared_default_fixture() -> (crate::model::Document, crate::schema::Schema, String) {
     let payload = "shared-attribute-payload".repeat(4096);
     let mut config = crate::tables::tests::tabled_schema_json(PROSEMIRROR_TABLE_NAMES);
@@ -174,7 +201,8 @@ fn shared_default_fixture() -> (crate::model::Document, crate::schema::Schema, S
 #[test]
 fn shared_synthetic_attributes_are_retained_and_serialized_once() {
     let (document, schema, payload) = shared_default_fixture();
-    crate::tables::render::ATTRIBUTE_SERIALIZED_BYTES.set(0);
+    let distinct_attrs = distinct_table_attrs_storages(&document, &schema);
+    crate::yrs_engine::observability::reset_full_pass_counts_for_test();
     let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
     let json =
         crate::ffi_v2::render::serialize_render_cache_for_test(&cache, &test_table_ids(&cache));
@@ -187,7 +215,12 @@ fn shared_synthetic_attributes_are_retained_and_serialized_once() {
         json.len() < payload.len() + 16_384,
         "wire growth must be unique bytes plus records"
     );
-    assert!(crate::tables::render::ATTRIBUTE_SERIALIZED_BYTES.get() < 4 * payload.len());
+    let serializations =
+        crate::yrs_engine::observability::take_full_pass_counts_for_test().attribute_serializations;
+    assert_eq!(
+        serializations, distinct_attrs,
+        "each distinct attrs storage, including the shared synthetic default, must be serialized exactly once"
+    );
     assert!(
         cache
             .table_attributes
@@ -260,11 +293,14 @@ fn changing_one_cell_reuses_unchanged_content_and_rebases_source_positions() {
     let new = fixture("one longer");
     let cache = CachedRenderBlocks::build(&old, &schema, &limits).unwrap();
     let old_blocks = cache.materialize();
-    crate::tables::render::CELL_CONTENT_GENERATIONS.set(0);
+    crate::yrs_engine::observability::reset_full_pass_counts_for_test();
     let transition = cache
         .transition(&old, &new, &schema, &[0], &limits)
         .unwrap();
-    assert_eq!(crate::tables::render::CELL_CONTENT_GENERATIONS.get(), 1);
+    assert_eq!(
+        crate::yrs_engine::observability::take_full_pass_counts_for_test().cell_content_keys,
+        REKEYED_CELLS_PER_TABLE_TRANSITION,
+    );
     let new_blocks = transition.cache.materialize();
     let RenderElement::Table { table: old_table } = &old_blocks[0][0] else {
         panic!("table");

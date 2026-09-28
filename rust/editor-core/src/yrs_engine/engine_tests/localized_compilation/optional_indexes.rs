@@ -521,6 +521,13 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             render_top_level_start_scans: 0,
             active_applicability_passes: 0,
             ordinary_step_applications: 0,
+            table_projection_derivations: 1,
+            table_command_availability_plans: 0,
+            yrs_tree_walks: 3,
+            whole_state_encodings: 0,
+            cell_content_keys: 0,
+            attribute_serializations: 0,
+            epoch_block_rebuilds: 0,
         },
         (0, 1, 1),
         (0, 1, 1, 0),
@@ -553,6 +560,13 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             render_top_level_start_scans: 0,
             active_applicability_passes: 1,
             ordinary_step_applications: 0,
+            table_projection_derivations: 2,
+            table_command_availability_plans: 19,
+            yrs_tree_walks: 3,
+            whole_state_encodings: 0,
+            cell_content_keys: 0,
+            attribute_serializations: 0,
+            epoch_block_rebuilds: 0,
         },
         (0, 1, 1),
         (0, 1, 1, 0),
@@ -585,6 +599,13 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             render_top_level_start_scans: 0,
             active_applicability_passes: 1,
             ordinary_step_applications: 1,
+            table_projection_derivations: 2,
+            table_command_availability_plans: 19,
+            yrs_tree_walks: 0,
+            whole_state_encodings: 0,
+            cell_content_keys: 0,
+            attribute_serializations: 0,
+            epoch_block_rebuilds: 0,
         },
         (0, 1, 1),
         (0, 1, 1, 0),
@@ -592,14 +613,23 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
         (1, 1, 0),
     );
     for (index, actual) in commit_counts.iter().enumerate() {
-        assert_eq!(*actual, expected_commit, "direct commit edit {index}");
+        let mut expected = expected_commit;
+        expected.0.whole_state_encodings = usize::from(index != 0);
+        assert_eq!(*actual, expected, "direct commit edit {index}");
     }
     for (index, actual) in result_counts.iter().enumerate() {
-        assert_eq!(*actual, expected_result, "direct result edit {index}");
+        let mut expected = expected_result;
+        expected.0.whole_state_encodings = usize::from(index != 0);
+        assert_eq!(*actual, expected, "direct result edit {index}");
     }
     for (index, actual) in command_counts.iter().enumerate() {
         let mut expected = expected_command;
-        expected.0.active_applicability_passes = usize::from(index == 0);
+        let first = index == 0;
+        expected.0.active_applicability_passes = usize::from(first);
+        expected.0.table_projection_derivations += usize::from(first);
+        expected.0.table_command_availability_plans +=
+            usize::from(first) * expected_command.0.table_command_availability_plans;
+        expected.0.whole_state_encodings = usize::from(!first);
         assert_eq!(*actual, expected, "command edit {index}");
     }
 

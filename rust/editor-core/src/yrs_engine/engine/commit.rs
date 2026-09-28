@@ -300,6 +300,8 @@ impl YrsDocumentEngine {
                 #[cfg(test)]
                 COMMIT_CURRENT_STATE_ENCODINGS
                     .set(COMMIT_CURRENT_STATE_ENCODINGS.get().saturating_add(1));
+                #[cfg(test)]
+                crate::yrs_engine::observability::record_whole_state_encoding();
                 commit_authority
                     .txn()
                     .encode_state_as_update_v1(&StateVector::default())

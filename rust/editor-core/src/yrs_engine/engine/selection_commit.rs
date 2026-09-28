@@ -374,6 +374,8 @@ impl YrsDocumentEngine {
                 if commit_authority.state_vector().is_empty() {
                     Vec::new()
                 } else {
+                    #[cfg(test)]
+                    crate::yrs_engine::observability::record_whole_state_encoding();
                     commit_authority
                         .txn()
                         .encode_state_as_update_v1(&StateVector::default())

@@ -53,8 +53,8 @@ const PROSE_PREFIX_CARET: u32 = 2;
 pub(crate) const PROSE_PREFIX_TABLE_POSITION: u32 = 8;
 const OPERATION_INVALID_CODE: &str = "OPERATION_INVALID";
 const OUTSIDE_RESIZE_FIXTURE: u32 = 2;
-const SHARED_SURFACE_PROJECTIONS: u64 = 1;
-const STAGED_DELETION_PROJECTIONS: u64 = 2;
+const SHARED_SURFACE_PROJECTIONS: usize = 1;
+const STAGED_DELETION_PROJECTIONS: usize = 2;
 
 pub(crate) fn engine_with(schema: Schema, content: Vec<Value>) -> YrsDocumentEngine {
     let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
@@ -867,7 +867,7 @@ fn availability_projects_the_document_once_for_the_whole_command_surface() {
     select_cell(&mut engine, ANCHOR_CELL);
     let openings = cell_openings(&engine);
     let selection = Selection::cell(openings[ANCHOR_CELL], openings[ANCHOR_CELL]);
-    crate::tables::admission::reset_projection_derivations();
+    crate::yrs_engine::observability::reset_full_pass_counts_for_test();
 
     let commands = crate::editor_state::command_applicability(
         document_of(&engine),
@@ -882,7 +882,8 @@ fn availability_projects_the_document_once_for_the_whole_command_surface() {
         "the surface must answer every command it advertises",
     );
     assert_eq!(
-        crate::tables::admission::projection_derivations(),
+        crate::yrs_engine::observability::take_full_pass_counts_for_test()
+            .table_projection_derivations,
         SHARED_SURFACE_PROJECTIONS + STAGED_DELETION_PROJECTIONS,
         "the surface must project once and pay only for the documents deletion stages",
     );

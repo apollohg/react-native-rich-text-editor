@@ -80,6 +80,13 @@ fn localized_insert_compile_only_skips_every_proved_full_pass() {
             document_node_count_scans: 1,
             render_identity_scans: 0,
             ordinary_step_applications: 1,
+            table_projection_derivations: 1,
+            table_command_availability_plans: 0,
+            yrs_tree_walks: 0,
+            whole_state_encodings: 0,
+            cell_content_keys: 0,
+            attribute_serializations: 0,
+            epoch_block_rebuilds: 0,
             ..FullPassCounts::default()
         }
     );

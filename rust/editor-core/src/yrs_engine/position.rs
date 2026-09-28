@@ -231,6 +231,8 @@ fn offset_to_doc_pos<T: ReadTxn>(
     offset: &Offset,
     schema: &Schema,
 ) -> Option<u32> {
+    #[cfg(test)]
+    super::observability::record_yrs_tree_walk();
     let root_branch = BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment));
     if offset.branch == root_branch {
         return sequence_branch_index_to_doc_pos(txn, fragment.children(txn), offset.index, schema);
@@ -386,6 +388,8 @@ pub(crate) fn doc_pos_to_sticky_index<T: ReadTxn>(
 ) -> Option<StickyIndex> {
     #[cfg(test)]
     RELATIVE_FULL_SIZE_PREPASSES.set(RELATIVE_FULL_SIZE_PREPASSES.get().saturating_add(1));
+    #[cfg(test)]
+    super::observability::record_yrs_tree_walk();
     let content_size = xml_fragment_pm_content_size(txn, fragment, schema)?;
     if doc_pos > content_size {
         return None;
@@ -418,6 +422,8 @@ pub(crate) fn boundary_anchors_at_doc_positions<T: ReadTxn>(
     doc_positions: &[u32],
     schema: &Schema,
 ) -> Option<EpochBoundaries> {
+    #[cfg(test)]
+    super::observability::record_yrs_tree_walk();
     let mut targets = Vec::new();
     targets.try_reserve_exact(doc_positions.len()).ok()?;
     targets.extend_from_slice(doc_positions);
@@ -806,6 +812,8 @@ pub(crate) fn block_source_ids<T: ReadTxn>(
     fragment: &XmlFragmentRef,
     schema: &Schema,
 ) -> Option<BlockSourceIds> {
+    #[cfg(test)]
+    super::observability::record_yrs_tree_walk();
     let mut ids = BlockSourceIds {
         atom_ids: HashMap::new(),
         table_ids: HashMap::new(),
