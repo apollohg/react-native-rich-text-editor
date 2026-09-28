@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.sqrt
-import org.json.JSONArray
+import com.apollohg.editor.tables.PlainTableFixture
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -56,21 +56,7 @@ internal fun replaceTableDocumentExternallyForTest(adapter: EditorV2Adapter, doc
 @Config(sdk = [34])
 internal class EditorTableSurfaceMountTest {
     private val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
-    private val gridDocument = JSONObject().put("type", "doc").put("content", JSONArray().put(
-        JSONObject().put("type", "table").put("content", JSONArray().apply {
-            repeat(GRID_ROWS) {
-                put(JSONObject().put("type", "table_row").put("content", JSONArray().apply {
-                    repeat(GRID_COLUMNS) {
-                        put(JSONObject().put("type", "table_cell").put("content", JSONArray().put(
-                            JSONObject().put("type", "paragraph").put("content", JSONArray().put(
-                                JSONObject().put("type", "text").put("text", GRID_TEXT)
-                            ))
-                        )))
-                    }
-                }))
-            }
-        })
-    )).toString()
+    private val gridDocument = PlainTableFixture.document(GRID_ROWS, GRID_COLUMNS, GRID_TEXT)
     private val tableDocument = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Cell text"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
     internal companion object {
         private const val GRID_ROWS = 10

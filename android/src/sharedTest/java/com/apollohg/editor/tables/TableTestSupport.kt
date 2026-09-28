@@ -9,6 +9,8 @@ import com.apollohg.editor.NativeEditorExpoView
 import com.apollohg.editor.RichTextEditorView
 import com.apollohg.editor.UniffiEditorV2Backend
 import com.apollohg.editor.viewer.PreparedProseDrawingView
+import kotlin.math.ceil
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
@@ -20,6 +22,38 @@ private const val DOCUMENT_POSITION_KIND = "document"
 private const val COLLABORATION_NOW_MILLIS = "0"
 private const val MAXIMUM_RELAY_ROUNDS = 64
 private const val ROOM_INITIALIZATION_TYPE = "room"
+
+internal object PlainTableFixture {
+    const val CELL_TEXT = "abcdefghijkl"
+    const val LARGE_ROWS = 1000
+    const val LARGE_COLUMNS = 20
+    val TWENTY_THOUSAND_SLOT_SHAPES = listOf(LARGE_ROWS to LARGE_COLUMNS, 100 to 200)
+    private const val HEADER_ROW = 0
+    private const val OVERSCAN_VIEWPORTS = 1
+    private const val STRADDLING_CELLS = 1
+
+    fun maximumPresentedCells(style: TableStyle, viewportWidth: Float, viewportHeight: Float): Int {
+        val span = 1 + 2 * OVERSCAN_VIEWPORTS
+        val minimumRowHeight = 2f * (style.cellPadding + style.borderWidth)
+        val columns = ceil(span * viewportWidth / style.minColumnWidth).toInt() + STRADDLING_CELLS
+        val rows = ceil(span * viewportHeight / minimumRowHeight).toInt() + STRADDLING_CELLS
+        return columns * rows
+    }
+
+    fun document(rows: Int, columns: Int, cellText: String = CELL_TEXT): String {
+        fun node(type: String, content: JSONArray) = JSONObject().put("type", type).put("content", content)
+        fun cell(type: String) = node(type, JSONArray().put(node("paragraph", JSONArray().put(
+            JSONObject().put("type", "text").put("text", cellText)
+        ))))
+        val tableRows = JSONArray()
+        repeat(rows) { row ->
+            val cells = JSONArray()
+            repeat(columns) { cells.put(cell(if (row == HEADER_ROW) "table_header" else "table_cell")) }
+            tableRows.put(node("table_row", cells))
+        }
+        return node("doc", JSONArray().put(node("table", tableRows))).toString()
+    }
+}
 
 internal object TableToolbarTestItems {
     const val STRONG_MARK = "strong"

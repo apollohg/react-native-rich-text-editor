@@ -29,8 +29,8 @@ import com.apollohg.editor.UniffiEditorV2Backend
 import com.apollohg.editor.testExpoContext
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import com.apollohg.editor.viewer.RemoteTableCellSelection
+import java.lang.ref.WeakReference
 import java.time.Duration
-import kotlin.math.ceil
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -283,16 +283,17 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
 
     @Test
     @Config(qualifiers = RELEASE_VIEWPORT)
-    fun `twenty thousand slot tables render and present only their viewport window`() {
-        val style = TableStyle()
-        val span = 1 + 2 * OVERSCAN_VIEWPORTS
-        val minimumRowHeight = 2f * (style.cellPadding + style.borderWidth)
-        val columnBound = ceil(span * RELEASE_VIEWPORT_WIDTH / style.minColumnWidth).toInt() + STRADDLING_CELLS
-        val rowBound = ceil(span * RELEASE_VIEWPORT_HEIGHT / minimumRowHeight).toInt() + STRADDLING_CELLS
-        val maximumRetainedPresentations = columnBound * rowBound
-        TWENTY_THOUSAND_SLOT_TABLES.forEach { (rows, columns) ->
+    fun `large table renders and presents only its viewport window`() {
+        val maximumRetainedPresentations = PlainTableFixture.maximumPresentedCells(
+            TableStyle(), RELEASE_VIEWPORT_WIDTH.toFloat(), RELEASE_VIEWPORT_HEIGHT.toFloat()
+        )
+        PlainTableFixture.TWENTY_THOUSAND_SLOT_SHAPES.forEach { (rows, columns) ->
             val label = "${rows}x$columns"
-            withTable(plainTableDocument(rows, columns), Size(RELEASE_VIEWPORT_WIDTH, RELEASE_VIEWPORT_HEIGHT)) { fixture ->
+            lateinit var releasedView: WeakReference<NativeEditorExpoView>
+            lateinit var releasedAdapter: WeakReference<EditorV2Adapter>
+            withTable(PlainTableFixture.document(rows, columns), Size(RELEASE_VIEWPORT_WIDTH, RELEASE_VIEWPORT_HEIGHT)) { fixture ->
+                releasedView = WeakReference(fixture.view)
+                releasedAdapter = WeakReference(fixture.adapter)
                 val table = ViewerTablePresentation.surfaces(requireNotNull(fixture.drawing.preparedLayout) {
                     "$label: the table is mounted"
                 }).single()
@@ -318,21 +319,11 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
                         presented.any { it.bounds.contains(visible.exactCenterX(), visible.exactCenterY()) })
                 }
             }
+            shadowOf(Looper.getMainLooper()).idleFor(TEARDOWN_SETTLE)
+            repeat(GC_ATTEMPTS) { System.gc(); System.runFinalization() }
+            assertNull("$label: the torn-down editor view is collectable", releasedView.get())
+            assertNull("$label: the destroyed adapter is collectable", releasedAdapter.get())
         }
-    }
-
-    private fun plainTableDocument(rows: Int, columns: Int): String {
-        fun node(type: String, content: JSONArray) = JSONObject().put("type", type).put("content", content)
-        fun cell(type: String) = node(type, JSONArray().put(node(PARAGRAPH_NODE, JSONArray().put(
-            JSONObject().put("type", TEXT_NODE).put("text", PLAIN_CELL_TEXT)
-        ))))
-        val tableRows = JSONArray()
-        repeat(rows) { row ->
-            val cells = JSONArray()
-            repeat(columns) { cells.put(cell(if (row == HEADER_ROW) HEADER_CELL_TYPE else CELL_NODE)) }
-            tableRows.put(node(ROW_NODE, cells))
-        }
-        return node(DOC_NODE, JSONArray().put(node(TABLE_NODE, tableRows))).toString()
     }
 
     @Test
@@ -736,18 +727,8 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         const val RELEASE_VIEWPORT_WIDTH = 390
         const val RELEASE_VIEWPORT_HEIGHT = 844
         const val RELEASE_VIEWPORT = "w${RELEASE_VIEWPORT_WIDTH}dp-h${RELEASE_VIEWPORT_HEIGHT}dp-mdpi"
-        const val OVERSCAN_VIEWPORTS = 1
-        const val STRADDLING_CELLS = 1
-        const val PLAIN_CELL_TEXT = "abcdefghijkl"
-        const val HEADER_ROW = 0
-        const val DOC_NODE = "doc"
-        const val TABLE_NODE = "table"
-        const val ROW_NODE = "table_row"
-        const val CELL_NODE = "table_cell"
-        const val HEADER_CELL_TYPE = "table_header"
-        const val PARAGRAPH_NODE = "paragraph"
-        const val TEXT_NODE = "text"
-        val TWENTY_THOUSAND_SLOT_TABLES = listOf(1000 to 20, 100 to 200)
+        const val GC_ATTEMPTS = 3
+        val TEARDOWN_SETTLE: Duration = Duration.ofSeconds(1)
         const val WINDOW_COVERING_THE_EDITOR = "w1000dp-h700dp"
         const val TOUCH_STEP_MS = 20L
         const val KEY_EVENT_STEP_MS = 100L
