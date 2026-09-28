@@ -90,6 +90,27 @@ internal class ViewerTableSurface(
         }
     }
 
+    private val cellIndex = ViewerTableCellIndex(cells)
+
+    val nestedTableCells: List<PreparedViewerTableCell>
+        get() = cellIndex.nestedTableCells.map { cells[it] }
+
+    fun cellAtSourceIndex(sourceCellIndex: Int): PreparedViewerTableCell? =
+        cellIndex.bySourceCellIndex[sourceCellIndex]?.let(cells::get)
+
+    fun cellAtSourcePosition(sourcePosition: Int): PreparedViewerTableCell? =
+        cellIndex.bySourcePosition[sourcePosition]?.let(cells::get)
+
+    fun cellsIntersecting(left: Float, top: Float, right: Float, bottom: Float): List<PreparedViewerTableCell> =
+        cellIndex.indexesIntersecting(left, top, right, bottom, cells).map { cells[it] }
+
+    val hasAtoms: Boolean
+        get() = cellIndex.atomCells.isNotEmpty()
+
+    fun presentationCells(left: Float, top: Float, right: Float, bottom: Float): List<PreparedViewerTableCell> =
+        (cellIndex.indexesIntersecting(left, top, right, bottom, cells) + cellIndex.atomCells).toSortedSet()
+            .map { cells[it] }
+
     fun parentImageAttachments(offset: Int, tableOrigin: Rect): List<ViewerImageAttachment> {
         var ordinal = offset
         val result = mutableListOf<ViewerImageAttachment>()
@@ -124,7 +145,61 @@ internal class ViewerTableSurface(
         val left = viewport.left + horizontalOffset
         val right = viewport.right + horizontalOffset
         if (right <= left || viewport.bottom <= viewport.top) return cells
-        return cells.filter { it.frame.left < right && it.frame.left + it.frame.width > left && it.frame.top < viewport.bottom && it.frame.top + it.frame.height > viewport.top }
+        return cellsIntersecting(left, viewport.top, right, viewport.bottom)
+    }
+}
+
+private class ViewerTableCellIndex(cells: List<PreparedViewerTableCell>) {
+    private class Band(val top: Float, val cells: List<Int>)
+
+    private val bands: List<Band> = cells.indices.groupBy { cells[it].frame.top }.entries
+        .sortedBy { it.key }
+        .map { (top, indexes) -> Band(top, indexes.sortedBy { cells[it].frame.left }) }
+    private val maximumHeight = cells.maxOfOrNull { it.frame.height } ?: 0f
+    private val maximumWidth = cells.maxOfOrNull { it.frame.width } ?: 0f
+    val nestedTableCells: List<Int> = cells.indices.filter { index ->
+        cells[index].content.blocks.any { it.tableSurface != null }
+    }
+    val atomCells: List<Int> = cells.indices.filter { index ->
+        val content = cells[index].content
+        content.viewerAtoms.isNotEmpty() || content.blocks.any { it.tableSurface?.hasAtoms == true }
+    }
+    val bySourceCellIndex: Map<Int, Int> = cells.indices.reversed()
+        .mapNotNull { index -> cells[index].sourceCellIndex?.let { it to index } }.toMap()
+    val bySourcePosition: Map<Int, Int> = cells.indices.reversed().associateBy { cells[it].sourcePosition }
+
+    fun indexesIntersecting(
+        left: Float,
+        top: Float,
+        right: Float,
+        bottom: Float,
+        cells: List<PreparedViewerTableCell>
+    ): List<Int> {
+        if (right <= left || bottom <= top) return emptyList()
+        val result = mutableListOf<Int>()
+        val firstBand = partition(bands.size) { bands[it].top > top - maximumHeight }
+        for (bandIndex in firstBand until bands.size) {
+            val band = bands[bandIndex]
+            if (band.top >= bottom) break
+            val firstCell = partition(band.cells.size) { cells[band.cells[it]].frame.left > left - maximumWidth }
+            for (cellIndex in firstCell until band.cells.size) {
+                val index = band.cells[cellIndex]
+                val frame = cells[index].frame
+                if (frame.left >= right) break
+                if (frame.left + frame.width > left && frame.top + frame.height > top) result += index
+            }
+        }
+        return result.sorted()
+    }
+
+    private fun partition(count: Int, isAfter: (Int) -> Boolean): Int {
+        var low = 0
+        var high = count
+        while (low < high) {
+            val middle = (low + high) ushr 1
+            if (isAfter(middle)) high = middle else low = middle + 1
+        }
+        return low
     }
 }
 
@@ -202,7 +277,12 @@ internal class ViewerTablePresentationOwner {
 
 internal sealed interface ViewerTablePresentationViewport {
     data object Unknown : ViewerTablePresentationViewport
-    data class Known(val rect: Rect) : ViewerTablePresentationViewport
+    data class Known(val rect: Rect) : ViewerTablePresentationViewport {
+        val window: Rect?
+            get() = rect.takeIf { it.width() > 0 && it.height() > 0 }?.let {
+                Rect(it.left - it.width(), it.top - it.height(), it.right + it.width(), it.bottom + it.height())
+            }
+    }
 }
 
 internal data class ViewerTablePresentedBlock(
@@ -287,6 +367,44 @@ internal data class ViewerTablePresentationSnapshot(
 
 /** One recursive coordinate seam for drawing, rich hits, media, atoms, and accessibility. */
 internal object ViewerTablePresentation {
+    fun present(
+        cell: PreparedViewerTableCell,
+        table: ViewerTablePresentedSurface,
+        owner: ViewerTablePresentationOwner
+    ): ViewerTablePresentedCell =
+        present(cell, table.surface, table.bounds.left - owner.physicalOffset(table.surface), table.bounds.top, table.clip)
+
+    private fun present(
+        cell: PreparedViewerTableCell,
+        surface: ViewerTableSurface,
+        contentX: Float,
+        contentY: Float,
+        clip: RectF
+    ): ViewerTablePresentedCell {
+        val cellBounds = RectF(
+            contentX + cell.frame.left,
+            contentY + cell.frame.top,
+            contentX + cell.frame.left + cell.frame.width,
+            contentY + cell.frame.top + cell.frame.height
+        )
+        val childX = cellBounds.left + cell.contentOrigin.first
+        val childY = cellBounds.top + cell.contentOrigin.second
+        val contentBounds = RectF(childX, childY, childX + cell.content.widthPx, childY + cell.content.heightPx)
+        return ViewerTablePresentedCell(surface, cell, cell.sourcePosition, cell.content, cellBounds, contentBounds, clip)
+    }
+
+    fun surfaces(root: PreparedProseLayout): List<ViewerTableSurface> {
+        val surfaces = mutableListOf<ViewerTableSurface>()
+        fun visit(layout: PreparedProseLayout) {
+            layout.blocks.mapNotNull { it.tableSurface }.forEach { surface ->
+                surfaces += surface
+                surface.nestedTableCells.forEach { visit(it.content) }
+            }
+        }
+        visit(root)
+        return surfaces
+    }
+
     fun project(
         root: PreparedProseLayout,
         owner: ViewerTablePresentationOwner,
@@ -310,8 +428,7 @@ internal object ViewerTablePresentation {
             rect.bottom + y
         )
 
-        fun intersects(left: RectF, right: Rect): Boolean =
-            left.right > right.left && left.left < right.right && left.bottom > right.top && left.top < right.bottom
+        val window = (viewport as? ViewerTablePresentationViewport.Known)?.window
 
         fun intersect(left: RectF, right: RectF): RectF = RectF(
             maxOf(left.left, right.left),
@@ -396,26 +513,14 @@ internal object ViewerTablePresentation {
                     surface, RectF(hostX, hostY, hostX + hostWidth, hostY + surface.bounds.height()), hostClip
                 )
                 val contentX = hostX - owner.physicalOffset(surface)
-                surface.cells.forEach { cell ->
-                    val cellBounds = RectF(
-                        contentX + cell.frame.left,
-                        hostY + cell.frame.top,
-                        contentX + cell.frame.left + cell.frame.width,
-                        hostY + cell.frame.top + cell.frame.height
-                    )
-                    val childX = cellBounds.left + cell.contentOrigin.first
-                    val childY = cellBounds.top + cell.contentOrigin.second
-                    val contentBounds = RectF(childX, childY, childX + cell.content.widthPx, childY + cell.content.heightPx)
-                    cells += ViewerTablePresentedCell(
-                        surface,
-                        cell,
-                        cell.sourcePosition,
-                        cell.content,
-                        cellBounds,
-                        contentBounds,
-                        hostClip
-                    )
-                    appendLayout(cell.content, childX, childY, intersect(hostClip, contentBounds))
+                val windowCells = window?.let {
+                    surface.presentationCells(it.left - contentX, it.top - hostY, it.right - contentX, it.bottom - hostY)
+                } ?: surface.cells
+                windowCells.forEach { cell ->
+                    val presented = present(cell, surface, contentX, hostY, hostClip)
+                    cells += presented
+                    appendLayout(cell.content, presented.contentBounds.left, presented.contentBounds.top,
+                        intersect(hostClip, presented.contentBounds))
                 }
             }
             layout.imageAttachments.filter { emittedImages.add(it.id) }.forEach { attachment ->
@@ -435,18 +540,12 @@ internal object ViewerTablePresentation {
         appendLayout(root, 0f, 0f, RectF(-Float.MAX_VALUE, -Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE))
         val mountedCells = when (viewport) {
             ViewerTablePresentationViewport.Unknown -> cells
-            is ViewerTablePresentationViewport.Known -> {
-                val rect = viewport.rect
-                if (rect.width() <= 0 || rect.height() <= 0) emptyList() else {
-                    val candidate = Rect(
-                        rect.left - rect.width(),
-                        rect.top - rect.height(),
-                        rect.right + rect.width(),
-                        rect.bottom + rect.height()
-                    )
-                    cells.filter { intersects(it.bounds, candidate) }
+            is ViewerTablePresentationViewport.Known -> window?.let { candidate ->
+                cells.filter {
+                    it.bounds.right > candidate.left && it.bounds.left < candidate.right &&
+                        it.bounds.bottom > candidate.top && it.bounds.top < candidate.bottom
                 }
-            }
+            }.orEmpty()
         }
         return ViewerTablePresentationSnapshot(layouts, blocks, tables, cells, mountedCells, images, atoms, interactions, accessibilityNodes)
     }

@@ -6,8 +6,10 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Looper
+import android.util.Size
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -28,6 +30,7 @@ import com.apollohg.editor.testExpoContext
 import com.apollohg.editor.viewer.PreparedProseDrawingView
 import com.apollohg.editor.viewer.RemoteTableCellSelection
 import java.time.Duration
+import kotlin.math.ceil
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -60,7 +63,8 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         val view: NativeEditorExpoView,
         val adapter: EditorV2Adapter,
         val token: Long,
-        val tableId: String
+        val tableId: String,
+        val viewport: Size
     ) {
         private val remote = RemoteTablePeer(adapter, REMOTE_REQUEST_ID_BASE)
         private var nextKeyEventTime = 0L
@@ -85,10 +89,10 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
 
         fun relayout() {
             view.measure(
-                View.MeasureSpec.makeMeasureSpec(VIEW_WIDTH, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(VIEW_HEIGHT, View.MeasureSpec.EXACTLY)
+                View.MeasureSpec.makeMeasureSpec(viewport.width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(viewport.height, View.MeasureSpec.EXACTLY)
             )
-            view.layout(0, 0, VIEW_WIDTH, VIEW_HEIGHT)
+            view.layout(0, 0, viewport.width, viewport.height)
             drawing.measure(
                 View.MeasureSpec.makeMeasureSpec(root.width, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.EXACTLY)
@@ -257,6 +261,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         }
 
     @Test
+    @Config(qualifiers = WINDOW_COVERING_THE_EDITOR)
     fun `horizontal table scroll moves the rectangle with the cell and clips it to the table`() =
         withTable(WIDE_DOCUMENT) { fixture ->
             val second = fixture.positions()[GRID_SECOND]
@@ -275,6 +280,60 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             assertEquals("the rectangle is clipped to the table viewport", after.clip.right, rect.right, GEOMETRY_TOLERANCE)
             assertTrue(rect.right < after.bounds.right)
         }
+
+    @Test
+    @Config(qualifiers = RELEASE_VIEWPORT)
+    fun `twenty thousand slot tables render and present only their viewport window`() {
+        val style = TableStyle()
+        val span = 1 + 2 * OVERSCAN_VIEWPORTS
+        val minimumRowHeight = 2f * (style.cellPadding + style.borderWidth)
+        val columnBound = ceil(span * RELEASE_VIEWPORT_WIDTH / style.minColumnWidth).toInt() + STRADDLING_CELLS
+        val rowBound = ceil(span * RELEASE_VIEWPORT_HEIGHT / minimumRowHeight).toInt() + STRADDLING_CELLS
+        val maximumRetainedPresentations = columnBound * rowBound
+        TWENTY_THOUSAND_SLOT_TABLES.forEach { (rows, columns) ->
+            val label = "${rows}x$columns"
+            withTable(plainTableDocument(rows, columns), Size(RELEASE_VIEWPORT_WIDTH, RELEASE_VIEWPORT_HEIGHT)) { fixture ->
+                val table = ViewerTablePresentation.surfaces(requireNotNull(fixture.drawing.preparedLayout) {
+                    "$label: the table is mounted"
+                }).single()
+                assertEquals("$label: every cell is prepared", rows * columns, table.cells.size)
+                val drawn = mutableListOf<Int>()
+                fixture.drawing.onMountedTableCellsDrawnForTesting = { drawn += it }
+                val horizontalRoom = table.bounds.width() - table.hostViewportWidth
+                listOf(0f, horizontalRoom / 2, horizontalRoom).forEach { offset ->
+                    fixture.drawing.setTableLogicalOffset(table.identity, offset)
+                    fixture.relayout()
+                    fixture.drawing.draw(Canvas(Bitmap.createBitmap(
+                        RELEASE_VIEWPORT_WIDTH, RELEASE_VIEWPORT_HEIGHT, Bitmap.Config.ARGB_8888
+                    )))
+                    val presented = fixture.drawing.presentedTableCells()
+                    val visible = Rect().also { fixture.drawing.getLocalVisibleRect(it) }
+                    println("$label at table offset $offset: ${presented.size} presented, " +
+                        "${drawn.lastOrNull()} drawn, visible $visible, bound $maximumRetainedPresentations")
+                    assertTrue("$label: the presentation is bounded by the viewport window, not the table",
+                        presented.size <= maximumRetainedPresentations)
+                    assertTrue("$label: drawing mounts only the window",
+                        requireNotNull(drawn.lastOrNull()) <= maximumRetainedPresentations)
+                    assertTrue("$label: the cell under the viewport centre is presented",
+                        presented.any { it.bounds.contains(visible.exactCenterX(), visible.exactCenterY()) })
+                }
+            }
+        }
+    }
+
+    private fun plainTableDocument(rows: Int, columns: Int): String {
+        fun node(type: String, content: JSONArray) = JSONObject().put("type", type).put("content", content)
+        fun cell(type: String) = node(type, JSONArray().put(node(PARAGRAPH_NODE, JSONArray().put(
+            JSONObject().put("type", TEXT_NODE).put("text", PLAIN_CELL_TEXT)
+        ))))
+        val tableRows = JSONArray()
+        repeat(rows) { row ->
+            val cells = JSONArray()
+            repeat(columns) { cells.put(cell(if (row == HEADER_ROW) HEADER_CELL_TYPE else CELL_NODE)) }
+            tableRows.put(node(ROW_NODE, cells))
+        }
+        return node(DOC_NODE, JSONArray().put(node(TABLE_NODE, tableRows))).toString()
+    }
 
     @Test
     fun `right to left table mirrors the remote rectangle`() =
@@ -609,7 +668,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         assertFalse(fixture.root.text.toString(), fixture.root.text.toString().contains(STALE_COMPOSITION_TEXT))
     }
 
-    private fun withTable(document: String, block: (Fixture) -> Unit) {
+    private fun withTable(document: String, viewport: Size = Size(VIEW_WIDTH, VIEW_HEIGHT), block: (Fixture) -> Unit) {
         val activity = Robolectric.buildActivity(Activity::class.java).setup()
         val created = UniffiEditorV2Backend.create(TABLE_CONFIG, null) as EditorV2CallResult.Ok
         val adapter = requireNotNull(EditorV2Adapter.attach(
@@ -628,7 +687,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             view.onAtomLayoutForTesting = {}
             view.onTableSelectionGeometryForTesting = {}
             activity.get().setContentView(FrameLayout(activity.get()).apply {
-                addView(view, FrameLayout.LayoutParams(VIEW_WIDTH, VIEW_HEIGHT))
+                addView(view, FrameLayout.LayoutParams(viewport.width, viewport.height))
             })
             view.setAttachedToNativeWindowForTesting(true)
             view.setEditorId(token)
@@ -636,7 +695,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             val tableId = requireNotNull(adapter.cachedTableRecords.entries.firstOrNull {
                 !it.value.optBoolean("readOnlyDescendants", true)
             }?.key)
-            val fixture = Fixture(view, adapter, token, tableId)
+            val fixture = Fixture(view, adapter, token, tableId, viewport)
             fixture.relayout()
             fixture.root.requestFocus()
             try {
@@ -674,6 +733,21 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
     private companion object {
         const val VIEW_WIDTH = 900
         const val VIEW_HEIGHT = 500
+        const val RELEASE_VIEWPORT_WIDTH = 390
+        const val RELEASE_VIEWPORT_HEIGHT = 844
+        const val RELEASE_VIEWPORT = "w${RELEASE_VIEWPORT_WIDTH}dp-h${RELEASE_VIEWPORT_HEIGHT}dp-mdpi"
+        const val OVERSCAN_VIEWPORTS = 1
+        const val STRADDLING_CELLS = 1
+        const val PLAIN_CELL_TEXT = "abcdefghijkl"
+        const val HEADER_ROW = 0
+        const val DOC_NODE = "doc"
+        const val TABLE_NODE = "table"
+        const val ROW_NODE = "table_row"
+        const val CELL_NODE = "table_cell"
+        const val HEADER_CELL_TYPE = "table_header"
+        const val PARAGRAPH_NODE = "paragraph"
+        const val TEXT_NODE = "text"
+        val TWENTY_THOUSAND_SLOT_TABLES = listOf(1000 to 20, 100 to 200)
         const val WINDOW_COVERING_THE_EDITOR = "w1000dp-h700dp"
         const val TOUCH_STEP_MS = 20L
         const val KEY_EVENT_STEP_MS = 100L

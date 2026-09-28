@@ -29,6 +29,7 @@ final class ViewerTableSurface {
     let syntheticRegions: [TableRenderSyntheticRegion]
     let columnEdgeHandleRows: [Int: Int]
     let preparationError: ProseViewerError?
+    private let cellIndex: ViewerTableCellIndex
 
     var bounds: CGRect { CGRect(origin: .zero, size: layout.contentSize) }
     var retainedBytes: Int {
@@ -111,7 +112,7 @@ final class ViewerTableSurface {
         }
         layout = resolvedLayout
         preparationError = firstPreparationError
-        cells = resolvedLayout.sourceOrder.compactMap { sourcePosition in
+        let preparedCells = resolvedLayout.sourceOrder.compactMap { sourcePosition -> PreparedViewerTableCell? in
             guard let frame = resolvedLayout.rectangles[sourcePosition], let content = prepared[sourcePosition] else {
                 return nil
             }
@@ -123,6 +124,8 @@ final class ViewerTableSurface {
                                            sourceCellIndex: sourceCellIndex, isHeader: sourceCell?.header ?? false,
                                            attributesKey: sourceCell?.attrsKey)
         }
+        cells = preparedCells
+        cellIndex = ViewerTableCellIndex(cells: preparedCells)
     }
 
     init(
@@ -142,6 +145,7 @@ final class ViewerTableSurface {
         self.direction = direction
         self.layout = layout
         self.cells = cells
+        self.cellIndex = ViewerTableCellIndex(cells: cells)
         self.sourceTable = nil
         self.sourceAttributes = [:]
         self.syntheticRegions = []
@@ -191,8 +195,92 @@ final class ViewerTableSurface {
     }
 
     func visibleCells(in viewport: CGRect, horizontalOffset: CGFloat = 0) -> [PreparedViewerTableCell] {
-        let visible = viewport.offsetBy(dx: horizontalOffset, dy: 0)
-        return cells.filter { $0.frame.intersects(visible) }
+        cells(intersecting: viewport.offsetBy(dx: horizontalOffset, dy: 0))
+    }
+
+    func cells(intersecting rect: CGRect) -> [PreparedViewerTableCell] {
+        cellIndex.indexes(intersecting: rect, in: cells).map { cells[$0] }
+    }
+
+    var hasAtoms: Bool { !cellIndex.atomCells.isEmpty }
+
+    func presentationCells(intersecting window: CGRect) -> [PreparedViewerTableCell] {
+        Set(cellIndex.indexes(intersecting: window, in: cells)).union(cellIndex.atomCells).sorted().map { cells[$0] }
+    }
+
+    var nestedTableCells: [PreparedViewerTableCell] {
+        cellIndex.nestedTableCells.map { cells[$0] }
+    }
+
+    func cell(sourceCellIndex: Int) -> PreparedViewerTableCell? {
+        cellIndex.bySourceCellIndex[sourceCellIndex].map { cells[$0] }
+    }
+
+    func cell(sourcePosition: Int) -> PreparedViewerTableCell? {
+        cellIndex.bySourcePosition[sourcePosition].map { cells[$0] }
+    }
+}
+
+private struct ViewerTableCellIndex {
+    private struct Band {
+        let minY: CGFloat
+        let cells: [Int]
+    }
+
+    private let bands: [Band]
+    private let maximumHeight: CGFloat
+    private let maximumWidth: CGFloat
+    let nestedTableCells: [Int]
+    let atomCells: [Int]
+    let bySourceCellIndex: [Int: Int]
+    let bySourcePosition: [Int: Int]
+
+    init(cells: [PreparedViewerTableCell]) {
+        let rows = Dictionary(grouping: cells.indices, by: { cells[$0].frame.minY })
+        bands = rows.keys.sorted().map { minY in
+            Band(minY: minY, cells: rows[minY, default: []].sorted { cells[$0].frame.minX < cells[$1].frame.minX })
+        }
+        maximumHeight = cells.map(\.frame.height).max() ?? 0
+        maximumWidth = cells.map(\.frame.width).max() ?? 0
+        nestedTableCells = cells.indices.filter { index in
+            cells[index].content.blocks.contains { $0.tableSurface != nil }
+        }
+        atomCells = cells.indices.filter { index in
+            cells[index].content.blocks.contains { $0.atomSlot != nil || $0.tableSurface?.hasAtoms == true }
+        }
+        bySourceCellIndex = Dictionary(
+            cells.indices.compactMap { index in cells[index].sourceCellIndex.map { ($0, index) } },
+            uniquingKeysWith: min
+        )
+        bySourcePosition = Dictionary(cells.indices.map { (cells[$0].sourcePosition, $0) }, uniquingKeysWith: min)
+    }
+
+    func indexes(intersecting rect: CGRect, in cells: [PreparedViewerTableCell]) -> [Int] {
+        guard !rect.isNull, !rect.isEmpty else { return [] }
+        var result: [Int] = []
+        let firstBand = Self.partition(bands.count) { bands[$0].minY > rect.minY - maximumHeight }
+        for band in bands[firstBand...] {
+            guard band.minY < rect.maxY else { break }
+            let firstCell = Self.partition(band.cells.count) {
+                cells[band.cells[$0]].frame.minX > rect.minX - maximumWidth
+            }
+            for index in band.cells[firstCell...] {
+                let frame = cells[index].frame
+                guard frame.minX < rect.maxX else { break }
+                if frame.intersects(rect) { result.append(index) }
+            }
+        }
+        return result.sorted()
+    }
+
+    private static func partition(_ count: Int, isAfter: (Int) -> Bool) -> Int {
+        var low = 0
+        var high = count
+        while low < high {
+            let middle = (low + high) / 2
+            if isAfter(middle) { high = middle } else { low = middle + 1 }
+        }
+        return low
     }
 }
 
@@ -262,6 +350,13 @@ final class ViewerTablePresentationOwner {
 enum ViewerTablePresentationViewport {
     case unknown
     case known(CGRect)
+
+    var window: CGRect? {
+        guard case let .known(rect) = self, rect.width > 0, rect.height > 0,
+              rect.width.isFinite, rect.height.isFinite
+        else { return nil }
+        return rect.insetBy(dx: -rect.width, dy: -rect.height)
+    }
 }
 
 struct ViewerTablePresentedBlock {
@@ -346,6 +441,46 @@ struct ViewerTablePresentationSnapshot {
 
 /// One recursive coordinate seam for drawing, rich hits, media, atoms, and accessibility.
 enum ViewerTablePresentation {
+    static func present(
+        _ cell: PreparedViewerTableCell,
+        in table: ViewerTablePresentedTable,
+        owner: ViewerTablePresentationOwner
+    ) -> ViewerTablePresentedCell {
+        let contentOrigin = CGPoint(x: table.bounds.minX - owner.physicalOffset(for: table.surface), y: table.bounds.minY)
+        return present(cell, of: table.surface, contentOrigin: contentOrigin, clip: table.clip)
+    }
+
+    private static func present(
+        _ cell: PreparedViewerTableCell,
+        of surface: ViewerTableSurface,
+        contentOrigin: CGPoint,
+        clip: CGRect
+    ) -> ViewerTablePresentedCell {
+        let cellBounds = cell.frame.offsetBy(dx: contentOrigin.x, dy: contentOrigin.y)
+        let childOrigin = CGPoint(x: cellBounds.minX + cell.contentOrigin.x, y: cellBounds.minY + cell.contentOrigin.y)
+        return ViewerTablePresentedCell(
+            surface: surface,
+            cell: cell,
+            sourcePosition: cell.sourcePosition,
+            content: cell.content,
+            bounds: cellBounds,
+            contentBounds: CGRect(origin: childOrigin, size: cell.content.size),
+            clip: clip
+        )
+    }
+
+    static func surfaces(in root: PreparedProseLayout) -> [ViewerTableSurface] {
+        var surfaces: [ViewerTableSurface] = []
+        func visit(_ layout: PreparedProseLayout) {
+            for surface in layout.blocks.compactMap(\.tableSurface) {
+                surfaces.append(surface)
+                surface.nestedTableCells.forEach { visit($0.content) }
+            }
+        }
+        visit(root)
+        return surfaces
+    }
+
     static func project(
         layout root: PreparedProseLayout,
         owner: ViewerTablePresentationOwner,
@@ -365,6 +500,7 @@ enum ViewerTablePresentation {
         func transformed(_ rect: CGRect, by origin: CGPoint) -> CGRect {
             rect.offsetBy(dx: origin.x, dy: origin.y)
         }
+        let window = viewport.window
 
         func appendLayout(_ layout: PreparedProseLayout, origin: CGPoint, clip: CGRect,
                           parentScrollIdentity: String?) {
@@ -438,21 +574,14 @@ enum ViewerTablePresentation {
                     parentScrollIdentity: parentScrollIdentity
                 ))
                 let contentOrigin = CGPoint(x: hostOrigin.x - owner.physicalOffset(for: surface), y: hostOrigin.y)
-                for cell in surface.cells {
-                    let cellBounds = transformed(cell.frame, by: contentOrigin)
-                    let childOrigin = CGPoint(x: cellBounds.minX + cell.contentOrigin.x, y: cellBounds.minY + cell.contentOrigin.y)
-                    let contentBounds = CGRect(origin: childOrigin, size: cell.content.size)
-                    let presented = ViewerTablePresentedCell(
-                        surface: surface,
-                        cell: cell,
-                        sourcePosition: cell.sourcePosition,
-                        content: cell.content,
-                        bounds: cellBounds,
-                        contentBounds: contentBounds,
-                        clip: hostClip
-                    )
+                let windowCells = window.map {
+                    surface.presentationCells(intersecting: $0.offsetBy(dx: -contentOrigin.x, dy: -contentOrigin.y))
+                } ?? surface.cells
+                for cell in windowCells {
+                    let presented = present(cell, of: surface, contentOrigin: contentOrigin, clip: hostClip)
                     cells.append(presented)
-                    appendLayout(cell.content, origin: childOrigin, clip: hostClip.intersection(contentBounds),
+                    appendLayout(cell.content, origin: presented.contentBounds.origin,
+                                 clip: hostClip.intersection(presented.contentBounds),
                                  parentScrollIdentity: surface.scrollIdentity)
                 }
             }
@@ -475,11 +604,8 @@ enum ViewerTablePresentation {
         switch viewport {
         case .unknown:
             mountedCells = cells
-        case let .known(rect) where rect.width > 0 && rect.height > 0 && rect.width.isFinite && rect.height.isFinite:
-            let candidate = rect.insetBy(dx: -rect.width, dy: -rect.height)
-            mountedCells = cells.filter { $0.bounds.intersects(candidate) }
         case .known:
-            mountedCells = []
+            mountedCells = window.map { window in cells.filter { $0.bounds.intersects(window) } } ?? []
         }
         return ViewerTablePresentationSnapshot(
             layouts: layouts,

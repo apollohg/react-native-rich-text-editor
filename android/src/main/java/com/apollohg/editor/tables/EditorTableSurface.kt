@@ -1467,9 +1467,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
 
     private fun positionActiveInput(): Boolean {
         val active = activeCell ?: return false
-        val presented = drawingView.presentedTableCells().firstOrNull {
-            it.surface === entries[active.tableId]?.surface &&
-                (it.cell.sourceCellIndex == active.cellIndex || it.sourcePosition.toLong() == active.sourcePos)
+        val presented = drawingView.presentedTableCell(active.tableId) { table ->
+            listOfNotNull(table.cellAtSourceIndex(active.cellIndex), table.cellAtSourcePosition(active.sourcePos.toInt()))
+                .minByOrNull { it.sourcePosition }
         } ?: return false
         val cell = presented.cell
         if (cell.sourcePosition.toLong() != active.sourcePos) {

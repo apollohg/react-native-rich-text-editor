@@ -474,10 +474,10 @@ final class EditorTableInputTests: XCTestCase {
         try withMountedHandles(document: tallTableDocument(rowCount: 25),
                                anchorIndex: 0, headIndex: 24) { fixture in
             XCTAssertEqual(fixture.drawing.selectionHandles().map(\.role), [.anchor])
-            let last = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.first {
-                $0.surface.identity == fixture.tableID
-                    && $0.sourcePosition == Int(fixture.positions[24])
-            })
+            XCTAssertFalse(fixture.drawing.mountedTablePresentation()?.cells.contains {
+                $0.sourcePosition == Int(fixture.positions[24])
+            } ?? true, "a row two viewports below is outside the presentation window")
+            let last = try XCTUnwrap(fixture.drawing.presentedTableCell(tableID: fixture.tableID, sourceCellIndex: 24))
             XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .anchor)))
             fixture.surface.updateHandleDrag(at: fixture.drawing.convert(
                 CGPoint(x: last.bounds.midX, y: last.bounds.midY), to: fixture.view

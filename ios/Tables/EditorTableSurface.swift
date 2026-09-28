@@ -1321,9 +1321,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     private func presentedCell(tableID: String, cellIndex: UInt32) -> ViewerTablePresentedCell? {
-        drawingView.mountedTablePresentation()?.cells.first {
-            $0.surface.identity == tableID && $0.cell.sourceCellIndex == Int(cellIndex)
-        }
+        drawingView.presentedTableCell(tableID: tableID, sourceCellIndex: Int(cellIndex))
     }
 
     private func placeInput(in presented: ViewerTablePresentedCell?, fallback: CGRect) {

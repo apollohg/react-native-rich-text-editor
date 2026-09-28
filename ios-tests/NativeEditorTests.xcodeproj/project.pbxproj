@@ -158,6 +158,7 @@
 		A22F00000000000000000012 /* EditorTableInputTests+Deletion.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22F00000000000000000002 /* EditorTableInputTests+Deletion.swift */; };
 		A22B00000000000000000012 /* EditorTableInputTests+Accessibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22B00000000000000000002 /* EditorTableInputTests+Accessibility.swift */; };
 		A18000000000000000000012 /* EditorTableArrowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000002 /* EditorTableArrowTests.swift */; };
+		A24B0000000000000000000C /* EditorLargeTableTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A24B00000000000000000002 /* EditorLargeTableTests.swift */; };
 		A1FDE75D46491CC308103AEB /* NativeCollaborationTransport+Socket.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAEB95008867BEACFCE6D79C /* NativeCollaborationTransport+Socket.swift */; };
 		A2C0EC2E33ED65750D0AADD6 /* SharedNativeImagePipeline+Cache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CAA13163533CC9538155141 /* SharedNativeImagePipeline+Cache.swift */; };
 		A32E5AB4114BF5FA5BF1C3C6 /* RichTextEditorViewTests+MentionsImagesTests+ImageSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71A0E8D1B006EAA4500650E8 /* RichTextEditorViewTests+MentionsImagesTests+ImageSelection.swift */; };
@@ -400,6 +401,7 @@
 		A22F00000000000000000002 /* EditorTableInputTests+Deletion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorTableInputTests+Deletion.swift"; sourceTree = "<group>"; };
 		A22B00000000000000000002 /* EditorTableInputTests+Accessibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "EditorTableInputTests+Accessibility.swift"; sourceTree = "<group>"; };
 		A18000000000000000000002 /* EditorTableArrowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableArrowTests.swift; sourceTree = "<group>"; };
+		A24B00000000000000000002 /* EditorLargeTableTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorLargeTableTests.swift; sourceTree = "<group>"; };
 		A183A542FD912C410D3A2B03 /* PreparedProseMeasurementsManager.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = PreparedProseMeasurementsManager.mm; sourceTree = "<group>"; };
 		A1D514F4A4442129867A82DE /* RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RichTextEditorViewTests+LayoutRenderingTests+HardBreakGeometry.swift"; sourceTree = "<group>"; };
 		A268B84E57FD4C181DAB868B /* PreparedProseRevisionTests+Fonts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PreparedProseRevisionTests+Fonts.swift"; sourceTree = "<group>"; };
@@ -745,6 +747,7 @@
 				A22F00000000000000000002 /* EditorTableInputTests+Deletion.swift */,
 				A22B00000000000000000002 /* EditorTableInputTests+Accessibility.swift */,
 				A18000000000000000000002 /* EditorTableArrowTests.swift */,
+				A24B00000000000000000002 /* EditorLargeTableTests.swift */,
 				A17100000000000000000001 /* TableCellPositionMapTests.swift */,
 				0A70A1000000000000000002 /* AtomMountingTests.swift */,
 				80892297FFD41613BE083EF1 /* EditorV2AdapterTests.swift */,
@@ -1348,6 +1351,7 @@
 				A22F00000000000000000012 /* EditorTableInputTests+Deletion.swift in Sources */,
 				A22B00000000000000000012 /* EditorTableInputTests+Accessibility.swift in Sources */,
 				A18000000000000000000012 /* EditorTableArrowTests.swift in Sources */,
+				A24B0000000000000000000C /* EditorLargeTableTests.swift in Sources */,
 				A17100000000000000000011 /* TableCellPositionMapTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

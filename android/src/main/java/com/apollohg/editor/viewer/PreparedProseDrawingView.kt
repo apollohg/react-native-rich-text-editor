@@ -32,6 +32,7 @@ import com.apollohg.editor.tables.TableAccessibilityLocation
 import com.apollohg.editor.tables.TableAccessibilityNodes
 import com.apollohg.editor.tables.ViewerTablePresentation
 import com.apollohg.editor.tables.ViewerTablePresentationOwner
+import com.apollohg.editor.tables.PreparedViewerTableCell
 import com.apollohg.editor.tables.ViewerTablePresentationViewport
 import com.apollohg.editor.tables.TableInteractionController
 import com.apollohg.editor.tables.ViewerTablePresentedAccessibilityNode
@@ -170,7 +171,8 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     internal var tableAccessibilityGeneration = 0L
         private set
     private val tableAccessibility = TableAccessibilityNodes(
-        this, this, { tableAccessibilityItems() }, { tableAccessibilityGeneration },
+        this, this, { tableAccessibilityItems() },
+        { tableAccessibilityGeneration to (presentationViewport() as? ViewerTablePresentationViewport.Known)?.rect },
         { contentOriginXPx to contentOriginYPx },
         { bounds -> accessibilityVisibilityForTesting?.invoke(bounds) ?: accessibilityNodeVisibleOnScreen(bounds) },
         { clearVirtualAccessibilityFocus() }
@@ -182,9 +184,16 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         }
     private var contentOriginXPx = 0
     private var contentOriginYPx = 0
+    private var drawnPresentationWindow: Rect? = null
     private val scrollChangedListener = ViewTreeObserver.OnScrollChangedListener {
         reconcileVirtualAccessibilityFocus()
+        redrawIfVisibleRectLeftDrawnWindow()
         onTableGeometryChanged?.invoke()
+    }
+
+    private fun redrawIfVisibleRectLeftDrawnWindow() {
+        val visible = (presentationViewport() as? ViewerTablePresentationViewport.Known)?.rect ?: return
+        if (drawnPresentationWindow?.contains(visible) != true) invalidate()
     }
 
     init {
@@ -306,9 +315,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         preparedLayout = layout
         invalidateTableAccessibility()
         if (layout != null) {
-            val surfaces = ViewerTablePresentation.project(layout, tablePresentationOwner,
-                ViewerTablePresentationViewport.Unknown).tables.map { it.surface }
-            tablePresentationOwner.reconcile(surfaces)
+            tablePresentationOwner.reconcile(ViewerTablePresentation.surfaces(layout))
         }
         codeHighlighting.update()
         this.contentOriginXPx = contentOriginXPx
@@ -326,11 +333,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     /** Mounted-only seam; direction and gesture transport remain host-owned. */
     internal fun setTableLogicalOffset(sourceIdentity: String, offset: Float) {
         val artifact = preparedLayout ?: return
-        val surface = ViewerTablePresentation.project(
-            artifact,
-            tablePresentationOwner,
-            ViewerTablePresentationViewport.Unknown
-        ).cells.firstOrNull { it.surface.identity == sourceIdentity }?.surface ?: return
+        val surface = ViewerTablePresentation.surfaces(artifact).firstOrNull { it.identity == sourceIdentity } ?: return
         tablePresentationOwner.setLogicalOffset(offset, surface)
         tableOffsetChanged()
     }
@@ -350,9 +353,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     internal fun tablePhysicalOffsetForTesting(sourceIdentity: String): Float {
         val artifact = preparedLayout ?: return 0f
-        val surface = ViewerTablePresentation.project(
-            artifact, tablePresentationOwner, ViewerTablePresentationViewport.Unknown
-        ).cells.firstOrNull { it.surface.identity == sourceIdentity }?.surface ?: return 0f
+        val surface = ViewerTablePresentation.surfaces(artifact).firstOrNull { it.identity == sourceIdentity } ?: return 0f
         return tablePresentationOwner.physicalOffset(surface)
     }
 
@@ -366,6 +367,15 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     internal fun presentedTableCells(): List<ViewerTablePresentedCell> =
         presentationSnapshot()?.cells.orEmpty()
+
+    internal fun presentedTableCell(
+        tableId: String,
+        locate: (ViewerTableSurface) -> PreparedViewerTableCell?
+    ): ViewerTablePresentedCell? {
+        val table = presentationSnapshot()?.tableWithId(tableId) ?: return null
+        val cell = locate(table.surface) ?: return null
+        return ViewerTablePresentation.present(cell, table, tablePresentationOwner)
+    }
 
     internal fun selectionHandles(): List<TableSelectionHandle> =
         presentationSnapshot()?.let(::selectionHandles).orEmpty()
@@ -446,19 +456,25 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     private fun selectionHandles(snapshot: ViewerTablePresentationSnapshot): List<TableSelectionHandle> {
         val (tableId, anchor, head) = selectedTableCellEndpoints ?: return emptyList()
         val surface = snapshot.tableWithId(tableId) ?: return emptyList()
-        val cells = snapshot.cells.filter {
-            it.surface === surface.surface &&
-                it.sourcePosition in selectedTableCellSourcePositions[tableId].orEmpty()
+        val positions = selectedTableCellSourcePositions[tableId].orEmpty()
+        val cells = snapshot.cells.filter { it.surface === surface.surface && it.sourcePosition in positions }
+        val selected = positions.sorted().mapNotNull(surface.surface::cellAtSourcePosition)
+        if (selected.none { it.sourcePosition == anchor } || selected.none { it.sourcePosition == head }) {
+            return emptyList()
         }
-        if (cells.isEmpty() || cells.none { it.sourcePosition == anchor } ||
-            cells.none { it.sourcePosition == head }) return emptyList()
         val inset = HANDLE_INSET_DP * resources.displayMetrics.density
         val forward = anchor <= head
         val rtl = surface.surface.isRightToLeft
-        val firstCell = cells.minWith(compareBy<ViewerTablePresentedCell> { it.bounds.top }
-            .thenBy { if (rtl) -it.bounds.right else it.bounds.left })
-        val lastCell = cells.maxWith(compareBy<ViewerTablePresentedCell> { it.bounds.bottom }
-            .thenBy { if (rtl) -it.bounds.left else it.bounds.right })
+        val firstCell = ViewerTablePresentation.present(
+            selected.minWith(compareBy<PreparedViewerTableCell> { it.frame.top }
+                .thenBy { if (rtl) -(it.frame.left + it.frame.width) else it.frame.left }),
+            surface, tablePresentationOwner
+        )
+        val lastCell = ViewerTablePresentation.present(
+            selected.maxWith(compareBy<PreparedViewerTableCell> { it.frame.top + it.frame.height }
+                .thenBy { if (rtl) -it.frame.left else it.frame.left + it.frame.width }),
+            surface, tablePresentationOwner
+        )
         val firstX = if (rtl) firstCell.bounds.right - inset else firstCell.bounds.left + inset
         val lastX = if (rtl) lastCell.bounds.left + inset else lastCell.bounds.right - inset
         val first = TableSelectionHandle(
@@ -611,6 +627,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                 val paintClip = Rect(canvas.clipBounds)
                 val visibleRect = Rect()
                 val presentationViewport = presentationViewport()
+                drawnPresentationWindow = (presentationViewport as? ViewerTablePresentationViewport.Known)?.window
                 val snapshot = ViewerTablePresentation.project(
                     artifact,
                     tablePresentationOwner,

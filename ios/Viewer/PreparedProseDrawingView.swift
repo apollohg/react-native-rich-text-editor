@@ -144,10 +144,7 @@ public final class PreparedProseDrawingView: UIView {
             if nextOwner == nil || nextOwner != mountedTableOwnerIdentity {
                 tablePresentationOwner = ViewerTablePresentationOwner()
             } else if let layout {
-                let surfaces = ViewerTablePresentation.project(
-                    layout: layout, owner: tablePresentationOwner, viewport: .unknown
-                ).tables.map(\.surface)
-                tablePresentationOwner.retain(surfaces: surfaces)
+                tablePresentationOwner.retain(surfaces: ViewerTablePresentation.surfaces(in: layout))
             }
             mountedTableOwnerIdentity = nextOwner
             updateSidecarInstrumentation()
@@ -156,6 +153,7 @@ public final class PreparedProseDrawingView: UIView {
         }
     }
     private var tablePresentationOwner = ViewerTablePresentationOwner()
+    private var drawnPresentationWindow: CGRect?
     fileprivate var accessibilityPresentationGeneration = 0
     @objc public var onTableGeometryChanged: (() -> Void)?
     var onMountedTableCellsDrawnForTesting: ((Int) -> Void)?
@@ -317,6 +315,13 @@ public final class PreparedProseDrawingView: UIView {
         presentationSnapshot()
     }
 
+    func presentedTableCell(tableID: String, sourceCellIndex: Int) -> ViewerTablePresentedCell? {
+        guard let table = presentationSnapshot()?.tables.first(where: { $0.surface.identity == tableID }),
+              let cell = table.surface.cell(sourceCellIndex: sourceCellIndex)
+        else { return nil }
+        return ViewerTablePresentation.present(cell, in: table, owner: tablePresentationOwner)
+    }
+
     func tableSelectionViewport() -> CGRect? {
         configuredVisibleRect()
     }
@@ -354,21 +359,25 @@ public final class PreparedProseDrawingView: UIView {
             $0.surface === table.surface && $0.cell.sourceCellIndex != nil
                 && selectedPositions.contains($0.sourcePosition)
         }
-        guard cells.contains(where: { $0.sourcePosition == Int(endpoints.anchor) }),
-              cells.contains(where: { $0.sourcePosition == Int(endpoints.head) }),
-              let first = cells.min(by: { lhs, rhs in
-                  if lhs.bounds.minY != rhs.bounds.minY { return lhs.bounds.minY < rhs.bounds.minY }
-                  let left = table.surface.direction == .rightToLeft ? -lhs.bounds.maxX : lhs.bounds.minX
-                  let right = table.surface.direction == .rightToLeft ? -rhs.bounds.maxX : rhs.bounds.minX
+        let selected = selectedPositions.compactMap { table.surface.cell(sourcePosition: $0) }
+            .filter { $0.sourceCellIndex != nil }
+        guard selected.contains(where: { $0.sourcePosition == Int(endpoints.anchor) }),
+              selected.contains(where: { $0.sourcePosition == Int(endpoints.head) }),
+              let firstCell = selected.min(by: { lhs, rhs in
+                  if lhs.frame.minY != rhs.frame.minY { return lhs.frame.minY < rhs.frame.minY }
+                  let left = table.surface.direction == .rightToLeft ? -lhs.frame.maxX : lhs.frame.minX
+                  let right = table.surface.direction == .rightToLeft ? -rhs.frame.maxX : rhs.frame.minX
                   return left == right ? lhs.sourcePosition < rhs.sourcePosition : left < right
               }),
-              let last = cells.max(by: { lhs, rhs in
-                  if lhs.bounds.maxY != rhs.bounds.maxY { return lhs.bounds.maxY < rhs.bounds.maxY }
-                  let left = table.surface.direction == .rightToLeft ? -lhs.bounds.minX : lhs.bounds.maxX
-                  let right = table.surface.direction == .rightToLeft ? -rhs.bounds.minX : rhs.bounds.maxX
+              let lastCell = selected.max(by: { lhs, rhs in
+                  if lhs.frame.maxY != rhs.frame.maxY { return lhs.frame.maxY < rhs.frame.maxY }
+                  let left = table.surface.direction == .rightToLeft ? -lhs.frame.minX : lhs.frame.maxX
+                  let right = table.surface.direction == .rightToLeft ? -rhs.frame.minX : rhs.frame.maxX
                   return left == right ? lhs.sourcePosition < rhs.sourcePosition : left < right
               })
         else { return [] }
+        let first = ViewerTablePresentation.present(firstCell, in: table, owner: tablePresentationOwner)
+        let last = ViewerTablePresentation.present(lastCell, in: table, owner: tablePresentationOwner)
         let inset = TableHandleMetrics.radius
         let rtl = table.surface.direction == .rightToLeft
         let firstCenter = CGPoint(x: rtl ? first.bounds.maxX - inset : first.bounds.minX + inset,
@@ -565,11 +574,7 @@ public final class PreparedProseDrawingView: UIView {
     public func setTableLogicalOffset(_ offset: CGFloat, sourceIdentity: String) {
         tableInteractionController?.cancelMotion()
         guard let layout,
-              let surface = ViewerTablePresentation.project(
-                layout: layout,
-                owner: tablePresentationOwner,
-                viewport: .unknown
-              ).tables.first(where: { $0.surface.identity == sourceIdentity })?.surface
+              let surface = ViewerTablePresentation.surfaces(in: layout).first(where: { $0.identity == sourceIdentity })
         else { return }
         tablePresentationOwner.setLogicalOffset(offset, for: surface)
         updateSidecarInstrumentation()
@@ -579,8 +584,8 @@ public final class PreparedProseDrawingView: UIView {
         setNeedsDisplay()
     }
 
-    private func presentationSnapshot(viewport: ViewerTablePresentationViewport = .unknown) -> ViewerTablePresentationSnapshot? {
-        layout.map { ViewerTablePresentation.project(layout: $0, owner: tablePresentationOwner, viewport: viewport) }
+    private func presentationSnapshot() -> ViewerTablePresentationSnapshot? {
+        layout.map { ViewerTablePresentation.project(layout: $0, owner: tablePresentationOwner, viewport: presentationViewport()) }
     }
 
     private func presentationViewport() -> ViewerTablePresentationViewport {
@@ -653,7 +658,7 @@ public final class PreparedProseDrawingView: UIView {
         }
     }
     private var accessibilityElementsByIndex: [Int: NSObject] = [:]
-    private var accessibilityItemsCache: (generation: Int, items: [TableAccessibilityItem])?
+    private var accessibilityItemsCache: (generation: Int, window: CGRect?, items: [TableAccessibilityItem])?
     private enum AccessibilityAnnouncement {
         case structure
         case content(NSObject)
@@ -769,10 +774,16 @@ public final class PreparedProseDrawingView: UIView {
         observedScrollViewIDs = nextIDs
         scrollObservations = activeScrollViews.map { scrollView in
             scrollView.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
+                self?.redrawIfVisibleRectLeftDrawnWindow()
                 self?.updateConfiguredImagesForVisibleWindow()
                 self?.onTableGeometryChanged?()
             }
         }
+    }
+
+    private func redrawIfVisibleRectLeftDrawnWindow() {
+        guard let visible = configuredVisibleRect(), drawnPresentationWindow?.contains(visible) != true else { return }
+        setNeedsDisplay()
     }
 
     func interaction(at point: CGPoint) -> PreparedProseInteraction? {
@@ -924,7 +935,9 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     private var accessibilityItems: [TableAccessibilityItem] {
-        if let cached = accessibilityItemsCache, cached.generation == accessibilityPresentationGeneration {
+        let window = configuredVisibleRect()
+        if let cached = accessibilityItemsCache, cached.generation == accessibilityPresentationGeneration,
+           cached.window == window {
             return cached.items
         }
         var items: [TableAccessibilityItem] = []
@@ -934,7 +947,7 @@ public final class PreparedProseDrawingView: UIView {
                 detachedFrames: tableAccessibilityEditing?.detachedTableAccessibilityFrames() ?? []
             )
         }
-        accessibilityItemsCache = (accessibilityPresentationGeneration, items)
+        accessibilityItemsCache = (accessibilityPresentationGeneration, window, items)
         reconcileAccessibilityElements(with: items)
         return items
     }
@@ -1079,7 +1092,9 @@ public final class PreparedProseDrawingView: UIView {
     public override func draw(_ rect: CGRect) {
         let drawStarted = PreparedProseInstrumentation.now()
         guard let layout, let context = UIGraphicsGetCurrentContext(), !layout.blocks.isEmpty else { return }
-        let snapshot = ViewerTablePresentation.project(layout: layout, owner: tablePresentationOwner, viewport: presentationViewport())
+        let viewport = presentationViewport()
+        drawnPresentationWindow = viewport.window
+        let snapshot = ViewerTablePresentation.project(layout: layout, owner: tablePresentationOwner, viewport: viewport)
         onMountedTableCellsDrawnForTesting?(snapshot.mountedCells.count)
 
         context.saveGState()

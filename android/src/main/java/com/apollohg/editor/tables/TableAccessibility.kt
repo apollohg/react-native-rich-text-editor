@@ -298,7 +298,7 @@ internal class TableAccessibilityNodes(
     private val host: View,
     private val drawing: PreparedProseDrawingView,
     private val items: () -> List<TableAccessibilityItem>,
-    private val generation: () -> Long,
+    private val generation: () -> Any,
     private val originInHost: () -> Pair<Int, Int>,
     private val visibleOnScreen: (Rect) -> Boolean,
     private val onFocusClaimed: () -> Unit
@@ -319,7 +319,7 @@ internal class TableAccessibilityNodes(
 
     private val accessibilityManager = host.context.getSystemService(AccessibilityManager::class.java)
     private var focused: Focused? = null
-    private var cached: Pair<Long, Snapshot>? = null
+    private var cached: Pair<Any, Snapshot>? = null
     var editing: TableAccessibilityEditing? = null
         set(value) {
             field = value
