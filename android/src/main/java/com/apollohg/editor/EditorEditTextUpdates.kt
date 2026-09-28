@@ -65,14 +65,6 @@ private fun EditorEditText.rootTableRenderForUpdate(
     }.toMap(), scalarLength, tableIds)
 }
 
-/**
- * Apply a full render update from Rust to the EditText.
- *
- * Parses the update JSON, converts render elements to [android.text.SpannableStringBuilder]
- * via [RenderBridge], and replaces the EditText's content.
- *
- * @param updateJSON The JSON string from an [EditorV2Driver] transaction result.
- */
 internal fun EditorEditText.applyUpdateJSONImpl(
     updateJSON: String,
     notifyListener: Boolean = true,
@@ -127,7 +119,18 @@ internal fun EditorEditText.applyUpdateJSONImpl(
     val rootRender = rootTableRenderForUpdate(updateJSON, update, resolvedRenderBlocks)
         ?: run { recordImeTraceForTesting("rootTableRenderRejected", "admission"); return false }
     val hasRootTable = rootRender.tableIds.isNotEmpty()
-    val prebuiltRootRender = if (hasRootTable) {
+    val shouldSkipRender = !refreshInputConnectionForExternalUpdate &&
+        rootTableMapTableIds == rootRender.tableIds &&
+        rootTableMapExtents.keys == rootRender.extents.keys &&
+        !currentRenderBlocksNeedFullApply &&
+        !authorizedVisibleTextNeedsRebuild &&
+        resolvedRenderBlocks != null &&
+        currentRenderBlocksJson?.let { current ->
+            renderBlocksEqual(current, resolvedRenderBlocks)
+        } == true &&
+        text?.toString() == lastAuthorizedText &&
+        lastAppliedRenderAppearanceRevision == renderAppearanceRevision
+    val prebuiltRootRender = if (hasRootTable && !shouldSkipRender) {
         val blocks = resolvedRenderBlocks ?: return false
         RenderBridge.buildSpannableFromBlocks(
             blocks,
@@ -141,9 +144,9 @@ internal fun EditorEditText.applyUpdateJSONImpl(
             synthesizeTrailingHardBreakPlaceholders = false
         )
     } else null
-    val nextRootMap = if (prebuiltRootRender != null) {
+    val nextRootMap = if (hasRootTable) {
         RootTablePositionMap.fromRendered(
-            prebuiltRootRender, rootRender.extents, rootRender.scalarLength
+            prebuiltRootRender ?: text ?: return false, rootRender.extents, rootRender.scalarLength
         ) ?: run { recordImeTraceForTesting("rootTableRenderRejected", "coordinates"); return false }
     } else null
     if (tableSensitiveUpdate) advanceDeferred()
@@ -160,21 +163,9 @@ internal fun EditorEditText.applyUpdateJSONImpl(
         )
     }
 
-    // The core is the authority on empty state; adopt it before anything
-    // reconsiders the placeholder.
     setCoreReportedDocumentIsEmpty(
         if (update.has("documentIsEmpty")) update.optBoolean("documentIsEmpty") else null
     )
-    val shouldSkipRender = !hasRootTable && rootTablePositionMap == null &&
-        !refreshInputConnectionForExternalUpdate &&
-        !currentRenderBlocksNeedFullApply &&
-        !authorizedVisibleTextNeedsRebuild &&
-        resolvedRenderBlocks != null &&
-        currentRenderBlocksJson?.let { current ->
-            renderBlocksEqual(current, resolvedRenderBlocks)
-        } == true &&
-        text?.toString() == lastAuthorizedText &&
-        lastAppliedRenderAppearanceRevision == renderAppearanceRevision
     val previousScrollX = scrollX
     val previousScrollY = scrollY
 
@@ -352,5 +343,5 @@ internal fun EditorEditText.applyUpdateJSONImpl(
             totalNanos = totalNanos
         )
     }
-    return !shouldSkipRender
+    return hasRootTable || !shouldSkipRender
 }

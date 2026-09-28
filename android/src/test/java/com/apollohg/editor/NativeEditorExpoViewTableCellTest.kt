@@ -1053,10 +1053,10 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
                 val otherBefore = other.baseDocumentRevision
                 val originalBefore = adapter.baseDocumentRevision
                 val root = view.richTextView.editorEditText
-                val previous = root.onBeforeRenderRefresh
+                val previous = root.onRootUpdateApplied
                 var switched = false
-                root.onBeforeRenderRefresh = {
-                    previous?.invoke()
+                root.onRootUpdateApplied = { selection ->
+                    previous?.invoke(selection)
                     if (!switched) {
                         switched = true
                         view.setEditorId(otherToken)

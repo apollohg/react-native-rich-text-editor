@@ -1306,7 +1306,7 @@ internal class EditorTableSurfaceMountTest {
     }
 
     @Test
-    fun `same revision root redraw restores measured marker reservation`() = withMountedView { view, adapter, update ->
+    fun `same revision root update preserves measured marker reservation`() = withMountedView { view, adapter, update ->
         val original = heightSpan(view)
         val originalHeight = original.heightPx
         val revision = adapter.baseDocumentRevision
@@ -1316,7 +1316,7 @@ internal class EditorTableSurfaceMountTest {
         measure(view, 600)
 
         val restored = heightSpan(view)
-        assertNotSame(original, restored)
+        assertSame(original, restored)
         assertEquals(originalHeight, restored.heightPx)
         assertNotNull(drawing(view)?.preparedLayout?.blocks?.singleOrNull()?.tableSurface)
         assertEquals(document, adapter.documentJson())

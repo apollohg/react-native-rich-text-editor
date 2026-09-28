@@ -433,10 +433,50 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
         }
     }
 
+    private val rootTableConfig = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"hardBreak","content":"","group":"inline","role":"hardBreak","isVoid":true},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
+
+    @Test
+    fun `unchanged root blocks do not re-render when only extents change`() {
+        val created = UniffiEditorV2Backend.create(rootTableConfig, null) as EditorV2CallResult.Ok
+        val id = JSONObject(created.value).getString("editorId")
+        val adapter = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend, id, roomBound = false))
+        val input = EditorEditText(RuntimeEnvironment.getApplication()).apply {
+            editorId = id.toLong()
+            v2Driver = adapter
+            captureApplyUpdateTraceForTesting = true
+        }
+        try {
+            val document = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"😀"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
+            assertTrue(input.applyUpdateJSON(requireNotNull(adapter.setContentJson(document))))
+            val originalText = input.text
+            val originalMap = requireNotNull(input.rootTablePositionMap)
+            val originalBlocks = input.currentRenderBlocksJson.toString()
+            val proseLocal = input.text.toString().indexOf("after")
+            val beforeScalar = requireNotNull(input.inputPositionScalarAtLocalUtf16(proseLocal, input.text.toString()))
+            var rendered = 0
+            input.onBeforeRenderRefresh = { rendered++ }
+            val cell = requireNotNull(adapter.cachedTableInputMappings).tables.values.single().cells.single()
+            val inserted = "XYZ"
+            val update = requireNotNull(adapter.insertText(inserted, cell.blocks.first().contentScalarStart))
+            assertTrue("a map-only table update is still adopted", input.applyUpdateJSON(update))
+            assertEquals(originalBlocks, input.currentRenderBlocksJson.toString())
+            assertTrue("root Editable must survive the extent-only update", input.text === originalText)
+            assertEquals("root rendering must not run", 0, rendered)
+            assertTrue(requireNotNull(input.lastApplyUpdateTraceForTesting).skippedRender)
+            assertTrue("the map must adopt the new table extent", input.rootTablePositionMap !== originalMap)
+            assertEquals(beforeScalar + inserted.length,
+                input.inputPositionScalarAtLocalUtf16(proseLocal, input.text.toString()))
+            assertEquals(adapter.baseDocumentRevision.toString(), input.rootTableMapDocumentVersion)
+            assertEquals(adapter.positionEpoch, input.rootTableMapPositionEpoch)
+        } finally {
+            input.v2Driver = null
+            adapter.destroy()
+        }
+    }
+
     @Test
     fun `real engine root table keeps following prose at its engine scalar`() {
-        val config = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"hardBreak","content":"","group":"inline","role":"hardBreak","isVoid":true},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
-        val created = UniffiEditorV2Backend.create(config, null) as EditorV2CallResult.Ok
+        val created = UniffiEditorV2Backend.create(rootTableConfig, null) as EditorV2CallResult.Ok
         val id = JSONObject(created.value).getString("editorId")
         val adapter = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend, id, roomBound = false))
         val input = EditorEditText(RuntimeEnvironment.getApplication()).apply {
@@ -499,7 +539,7 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
                 val next = JSONObject().put("type", "doc").put("content", org.json.JSONArray().apply {
                     nodes.forEach(::put)
                 })
-                val freshCreated = UniffiEditorV2Backend.create(config, null) as EditorV2CallResult.Ok
+                val freshCreated = UniffiEditorV2Backend.create(rootTableConfig, null) as EditorV2CallResult.Ok
                 val freshId = JSONObject(freshCreated.value).getString("editorId")
                 val freshAdapter = requireNotNull(EditorV2Adapter.attach(
                     UniffiEditorV2Backend, freshId, roomBound = false))
