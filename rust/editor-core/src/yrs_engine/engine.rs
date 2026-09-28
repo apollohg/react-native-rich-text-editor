@@ -555,6 +555,7 @@ impl YrsDocumentEngine {
             }
         }
         boundaries.cells = spans.into_iter().map(|span| span.cell).collect();
+        boundaries.cells.shrink_to_fit();
         Some(boundaries)
     }
 
