@@ -113,6 +113,7 @@ afterEvaluate {
         largeTableTest.filter.includeTestsMatching largeTableUnitTests
         largeTableTest.dependsOn(base.dependsOn)
     }
+    tasks.named('check') { dependsOn 'testDebugLargeTableUnitTest' }
 }
 
 android {

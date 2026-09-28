@@ -61,7 +61,7 @@
         "start:example": "npm --prefix example start",
         "sync:version": "node scripts/sync-version.mjs",
         "test": "jest --runInBand --watchman=false",
-        "test:android": "npm run prebuild:example:android && cd example/android && ./gradlew :apollohg_react-native-rich-text-editor:testDebugUnitTest",
+        "test:android": "npm run prebuild:example:android && cd example/android && ./gradlew --continue :apollohg_react-native-rich-text-editor:testDebugUnitTest :apollohg_react-native-rich-text-editor:testDebugLargeTableUnitTest",
         "test:android:api24": "npm run prebuild:example:android && cd example/android && ./gradlew :apollohg_react-native-rich-text-editor:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.apollohg.editor.AndroidApi24SmokeTest",
         "test:android:device": "bash ./scripts/run-android-on-device.sh",
         "test:android:device:ime": "bash ./scripts/run-android-on-device.sh --class com.apollohg.editor.NativeDeviceImeRegressionTest",
