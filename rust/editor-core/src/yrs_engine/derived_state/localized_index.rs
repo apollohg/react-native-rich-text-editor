@@ -304,7 +304,7 @@ impl LocalizedTextLeafIndex {
         })
     }
 
-    pub(super) fn promote_textblock_edit(
+    pub(super) fn carry_after_textblock_edit(
         &self,
         validation: &DocumentValidationCertificate,
         admission: &LocalizedTextblockEditAdmission,
@@ -440,7 +440,7 @@ impl LocalizedTextLeafIndex {
             target_leaf.text_utf8_bytes = target_leaf
                 .text_utf8_bytes
                 .checked_add(plan.inserted_utf8_bytes)?;
-            target_leaf.text_sha256 = sha2::Sha256::digest(next_text.as_bytes()).into();
+            target_leaf.text_sha256 = leaf_text_sha256(next_text);
             target_leaf.marks_sha256 = canonical_marks_sha256(next_leaf.marks())?;
             for leaf in leaves.iter_mut().skip(target + 1) {
                 leaf.doc_start = leaf.doc_start.checked_add(inserted_scalars)?;
@@ -672,7 +672,7 @@ pub(super) fn collect_localized_text_leaves_streamed(
                 scalar_end,
                 utf16_start,
                 utf16_end,
-                text_sha256: sha2::Sha256::digest(text.as_bytes()).into(),
+                text_sha256: leaf_text_sha256(text),
                 text_scalars: child.node_size(),
                 text_utf16: utf16_end.checked_sub(utf16_start)?,
                 text_utf8_bytes: text.len(),
@@ -732,4 +732,11 @@ pub(super) fn node_path_sha256(path: &[u32]) -> [u8; 32] {
         digest.update(index.to_le_bytes());
     }
     digest.finalize().into()
+}
+
+fn leaf_text_sha256(text: &str) -> [u8; 32] {
+    #[cfg(test)]
+    super::observability::LOCALIZED_LEAF_TEXT_HASHES
+        .with(|count| count.set(count.get().saturating_add(1)));
+    sha2::Sha256::digest(text.as_bytes()).into()
 }

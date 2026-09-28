@@ -65,6 +65,7 @@ struct PreparedHistoryPop {
     candidate_history: yrs_engine::history::YrsHistory,
     candidate_state: DerivedStateCache,
     candidate_publication: Option<yrs_engine::derived_state::HistoryMutationLookupCapability>,
+    encoded_state_bytes: usize,
     next_document_revision: u64,
     next_state_revision: u64,
     next_yrs_state_epoch: u64,
@@ -282,6 +283,7 @@ impl YrsDocumentEngine {
             .then(|| self.prepare_history_result(request_id, &candidate_state))
             .transpose()?;
 
+        let encoded_state_bytes = candidate_encoded_state.len();
         candidate_history.accept_action(request_id, action, candidate_encoded_state)?;
         if let Some(result) = &mut result {
             candidate_state.cache_render_active_state(
@@ -301,6 +303,7 @@ impl YrsDocumentEngine {
                 candidate_history,
                 candidate_state,
                 candidate_publication,
+                encoded_state_bytes,
                 next_document_revision,
                 next_state_revision,
                 next_yrs_state_epoch,
@@ -425,6 +428,7 @@ impl YrsDocumentEngine {
         }
         self.history = prepared.candidate_history;
         self.derived_state = Some(prepared.candidate_state);
+        self.encoded_state_upper_bound = prepared.encoded_state_bytes;
         self.revision = prepared.next_document_revision;
         self.record_document_change(super::DocumentChangeScope::Document);
         self.state_revision = prepared.next_state_revision;

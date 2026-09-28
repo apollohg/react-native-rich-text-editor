@@ -13,6 +13,7 @@ use crate::tables::render::TableRenderRecord;
 use crate::yrs_engine::observability::{
     reset_full_pass_counts_for_test, take_full_pass_counts_for_test, FullPassCounts,
 };
+use crate::yrs_engine::take_localized_leaf_text_hashes_for_test;
 use crate::yrs_engine::{EditingLimits, ResolvedSelection};
 
 const OWNER_ID: u64 = 9;
@@ -28,6 +29,8 @@ const TEXT_CELL: (usize, usize) = (0, 1);
 const MIDDLE_OFFSET: u32 = 3;
 const LEAF_START: u32 = 0;
 const IDENTITY_PREDICATE_VISIT_CEILING: usize = 64;
+const INSERT_MARK_VALIDATION_NODES: usize = 2;
+const DELETE_MARK_VALIDATION_NODES: usize = 10;
 const LARGE_TABLE_ROWS: usize = 1000;
 const LARGE_TABLE_COLUMNS: usize = 20;
 const PROSE_PATH: [u32; 1] = [0];
@@ -793,7 +796,7 @@ fn assert_render_matches_fresh(session: &EditorSession, name: &str) {
 }
 
 #[test]
-fn a_native_insert_in_a_large_table_is_validated_locally() {
+fn a_large_table_keystroke_performs_no_document_wide_pass() {
     assert_large_table_edit_is_validated_locally(INSERT_INTENTS[0]);
 }
 
@@ -846,9 +849,15 @@ fn assert_large_table_edit_is_validated_locally(intent: &str) {
     }
     let request = request.to_string();
 
+    take_localized_leaf_text_hashes_for_test();
     reset_full_pass_counts_for_test();
     submit_insert(&mut session, &request).expect("the keystroke applies");
     let passes = take_full_pass_counts_for_test();
+    assert_eq!(
+        take_localized_leaf_text_hashes_for_test(),
+        1,
+        "only the edited cell leaf is rehashed"
+    );
     eprintln!("1000x20 native keystroke: {passes:#?}");
 
     let (row, column) = (cell / LARGE_TABLE_COLUMNS, cell % LARGE_TABLE_COLUMNS);
@@ -881,38 +890,28 @@ fn assert_large_table_edit_is_validated_locally(intent: &str) {
         (1, 1, 1),
         "an over-budget history snapshot retains one eager digest",
     );
-    for (kind, count) in [
-        ("yrs_tree_walks", passes.yrs_tree_walks),
-        (
-            "table_projection_derivations",
-            passes.table_projection_derivations,
-        ),
-        (
-            "table_command_availability_plans",
-            passes.table_command_availability_plans,
-        ),
-        (
-            "active_applicability_passes",
-            passes.active_applicability_passes,
-        ),
-        ("document_validations", passes.document_validations),
-        ("planner_simulations", passes.planner_simulations),
-        (
-            "rendered_text_derivations",
-            passes.rendered_text_derivations,
-        ),
-        ("raw_document_text_scans", passes.raw_document_text_scans),
-        (
-            "validation_certificate_constructions",
-            passes.validation_certificate_constructions,
-        ),
-        (
-            "validated_evidence_constructions",
-            passes.validated_evidence_constructions,
-        ),
-    ] {
-        assert_eq!(count, 0, "a single-textblock keystroke ran {kind}");
-    }
+    assert!(passes.position_map_clones <= 1, "{passes:#?}");
+    assert!(passes.position_map_compactions <= 1, "{passes:#?}");
+    assert_eq!(
+        passes,
+        FullPassCounts {
+            canonical_mark_nodes_visited: if intent == INSERT_INTENTS[0] {
+                INSERT_MARK_VALIDATION_NODES
+            } else {
+                DELETE_MARK_VALIDATION_NODES
+            },
+            canonical_projections: 1,
+            canonical_serializations: 1,
+            canonical_hashes: 1,
+            canonical_identity_predicate_nodes_visited: passes
+                .canonical_identity_predicate_nodes_visited,
+            position_map_clones: passes.position_map_clones,
+            position_map_compactions: passes.position_map_compactions,
+            cell_content_keys: 1,
+            cell_content_generations: 1,
+            ..FullPassCounts::default()
+        }
+    );
 }
 
 fn storage_reuse_audit() -> (

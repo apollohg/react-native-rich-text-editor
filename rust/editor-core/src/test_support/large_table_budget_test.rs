@@ -18,6 +18,7 @@ const STRUCTURAL_FIXTURE_SIZE: usize = 3;
 const STRUCTURAL_COMMAND_REQUEST_ID: u64 = 2;
 const LEDGER_EPOCH_OWNER: u64 = 7;
 const PROBE_FIXTURES: [(usize, usize); 2] = [(1000, 20), (100, 200)];
+const APPLY_BUDGET_MS: f64 = 0.9;
 const PROBE_WARMUP_KEYSTROKES: usize = 5;
 const PROBE_MEASURED_KEYSTROKES: usize = 20;
 const PROBE_KEYSTROKES: usize = PROBE_WARMUP_KEYSTROKES + PROBE_MEASURED_KEYSTROKES;
@@ -28,7 +29,7 @@ const CELL_BOUNDARY_SCALARS: usize = 1;
 const MILLISECONDS_PER_SECOND: f64 = 1_000.0;
 
 #[test]
-fn the_ledger_counts_every_document_wide_pass_kind_on_the_generic_structural_path() {
+fn the_ledger_counts_document_wide_work_on_the_generic_structural_path() {
     let mut session = session_with_document(&plain_table_document(
         STRUCTURAL_FIXTURE_SIZE,
         STRUCTURAL_FIXTURE_SIZE,
@@ -57,7 +58,6 @@ fn the_ledger_counts_every_document_wide_pass_kind_on_the_generic_structural_pat
             passes.table_command_availability_plans,
         ),
         ("yrs_tree_walks", passes.yrs_tree_walks),
-        ("whole_state_encodings", passes.whole_state_encodings),
         ("cell_content_keys", passes.cell_content_keys),
         ("attribute_serializations", passes.attribute_serializations),
     ] {
@@ -109,6 +109,7 @@ fn position_epoch(render: &Value) -> String {
 #[test]
 #[ignore = "release-mode wall-clock probe"]
 fn large_table_keystroke_budget_probe() {
+    let mut apply_results = Vec::new();
     for (rows, columns) in PROBE_FIXTURES {
         let fixture = format!("{rows}x{columns}");
         let editor_id = ffi_empty_editor();
@@ -155,7 +156,9 @@ fn large_table_keystroke_budget_probe() {
                 frame_samples.push(frame_ms);
             }
         }
-        println!("PROBE {fixture} apply {:.3}", median_ms(apply_samples));
+        let apply_median = median_ms(apply_samples);
+        println!("PROBE {fixture} apply {apply_median:.3}");
+        apply_results.push((fixture.clone(), apply_median));
         println!("PROBE {fixture} frame {:.3}", median_ms(frame_samples));
         let cell = keystroke_cell(rows, columns);
         let (row, column) = (cell / columns, cell % columns);
@@ -173,6 +176,12 @@ fn large_table_keystroke_budget_probe() {
         assert!(
             v2::editor_v2_destroy(editor_id).error.is_none(),
             "the probe editor is destroyed"
+        );
+    }
+    for (fixture, apply_median) in apply_results {
+        assert!(
+            apply_median <= APPLY_BUDGET_MS,
+            "{fixture}: apply median {apply_median:.3} ms exceeds {APPLY_BUDGET_MS} ms"
         );
     }
 }

@@ -124,6 +124,7 @@ pub struct YrsDocumentEngine {
     canonical_schema: CanonicalSchemaContext,
     derived_state: Option<DerivedStateCache>,
     revision: u64,
+    encoded_state_upper_bound: usize,
     document_scope_revision: u64,
     last_recorded_revision: u64,
     last_change_scope: DocumentChangeScope,
@@ -244,6 +245,7 @@ impl YrsDocumentEngine {
         );
 
         Ok(Self {
+            encoded_state_upper_bound: candidate.encoded_state_bytes,
             doc: candidate.doc,
             fragment_name,
             schema,
@@ -852,7 +854,7 @@ impl YrsDocumentEngine {
             txn.get_xml_fragment(self.fragment_name.as_str())
                 .expect("ready Yrs document retains the history fragment")
         };
-        self.history.rebind(&self.doc, &fragment);
+        self.encoded_state_upper_bound = self.history.rebind(&self.doc, &fragment);
         // Rebinding rebuilds the bounded replay chain (and, on the unchanged
         // restore/import fast paths, accompanies a quarantine clear) without
         // any revision/epoch change. Invalidate every outstanding prepared

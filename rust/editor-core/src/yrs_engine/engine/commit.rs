@@ -235,7 +235,7 @@ impl YrsDocumentEngine {
         })?;
 
         // Revalidate sealed signatures against one final stable read view.
-        let current_encoded_state = {
+        {
             #[cfg(test)]
             yrs_engine::compiler::check_atomic_failpoint(
                 compiled.request_id,
@@ -288,24 +288,27 @@ impl YrsDocumentEngine {
                 compiled.request_id,
                 yrs_engine::compiler::AtomicFailpoint::EncodedAdmission,
             )?;
-            if commit_authority.state_vector().is_empty() {
-                Vec::new()
-            } else if let Some(encoded_state) =
-                self.prepared_candidate_cache.as_mut().and_then(|cache| {
-                    cache.take_matching_encoded_state(
-                        &self.doc,
-                        commit_authority.fragment(),
-                        &compiled.mutation_plan,
-                        self.revision,
-                        self.yrs_state_epoch,
-                        self.resource_limits.max_encoded_state_bytes,
-                    )
-                })
-            {
-                #[cfg(test)]
-                COMMIT_SEALED_STATE_REUSES.set(COMMIT_SEALED_STATE_REUSES.get().saturating_add(1));
-                encoded_state
-            } else {
+        }
+        let encoded_state = std::cell::OnceCell::new();
+        if let Some(encoded) = self.prepared_candidate_cache.as_mut().and_then(|cache| {
+            cache.take_matching_encoded_state(
+                &self.doc,
+                commit_authority.fragment(),
+                &compiled.mutation_plan,
+                self.revision,
+                self.yrs_state_epoch,
+                self.resource_limits.max_encoded_state_bytes,
+            )
+        }) {
+            #[cfg(test)]
+            COMMIT_SEALED_STATE_REUSES.set(COMMIT_SEALED_STATE_REUSES.get().saturating_add(1));
+            let _ = encoded_state.set(encoded);
+        }
+        let current_encoded_state = || -> &[u8] {
+            encoded_state.get_or_init(|| {
+                if commit_authority.state_vector().is_empty() {
+                    return Vec::new();
+                }
                 #[cfg(test)]
                 COMMIT_CURRENT_STATE_ENCODINGS
                     .set(COMMIT_CURRENT_STATE_ENCODINGS.get().saturating_add(1));
@@ -314,29 +317,11 @@ impl YrsDocumentEngine {
                 commit_authority
                     .txn()
                     .encode_state_as_update_v1(&StateVector::default())
-            }
+            })
         };
-        let admitted_encoded_bytes = current_encoded_state
-            .len()
-            .checked_add(compiled.encoded_growth_bound)
-            .ok_or_else(|| {
-                yrs_engine::OperationError::document_limit_exceeded(
-                    compiled.request_id,
-                    None,
-                    "maxEncodedStateBytes",
-                    u64::try_from(self.resource_limits.max_encoded_state_bytes).unwrap_or(u64::MAX),
-                    u64::MAX,
-                )
-            })?;
-        if admitted_encoded_bytes > self.resource_limits.max_encoded_state_bytes {
-            return Err(yrs_engine::OperationError::document_limit_exceeded(
-                compiled.request_id,
-                None,
-                "maxEncodedStateBytes",
-                u64::try_from(self.resource_limits.max_encoded_state_bytes).unwrap_or(u64::MAX),
-                u64::try_from(admitted_encoded_bytes).unwrap_or(u64::MAX),
-            ));
-        }
+        let mut encoded_state_upper_bound = self
+            .encoded_state_upper_bound
+            .saturating_add(compiled.encoded_growth_bound);
 
         #[cfg(test)]
         yrs_engine::compiler::check_atomic_failpoint(
@@ -632,7 +617,7 @@ impl YrsDocumentEngine {
                 undo_units_bound,
                 history_before,
                 history_after_metadata_bytes,
-                &current_encoded_state,
+                current_encoded_state,
                 encoded_growth_bound,
                 prepared_history_limits,
             )?)
@@ -641,7 +626,7 @@ impl YrsDocumentEngine {
                 request_id,
                 origin,
                 replay_work_units_bound,
-                &current_encoded_state,
+                current_encoded_state,
                 encoded_growth_bound,
             )?)
         };
@@ -677,17 +662,15 @@ impl YrsDocumentEngine {
                     "prepared commit candidate root identity does not match the live store",
                 ));
             }
+            let current_encoded_state = current_encoded_state();
             if !current_encoded_state.is_empty() {
-                let current_update =
-                    Update::decode_v1(&current_encoded_state).map_err(|error| {
-                        yrs_engine::OperationError::engine_invariant_failed(
-                            request_id,
-                            None,
-                            format!(
-                                "admitted current Yrs state cannot seed commit candidate: {error}"
-                            ),
-                        )
-                    })?;
+                let current_update = Update::decode_v1(current_encoded_state).map_err(|error| {
+                    yrs_engine::OperationError::engine_invariant_failed(
+                        request_id,
+                        None,
+                        format!("admitted current Yrs state cannot seed commit candidate: {error}"),
+                    )
+                })?;
                 candidate_doc
                     .transact_mut()
                     .apply_update(current_update)
@@ -741,10 +724,17 @@ impl YrsDocumentEngine {
                 preflight_mutation_plan(request_id, &candidate_plan, &txn)?;
                 candidate_plan
             };
-            {
+            let history_update = {
                 let mut txn = candidate_doc.transact_mut();
                 execute_mutation_plan(candidate_plan, &mut txn);
-            }
+                txn.commit();
+                #[cfg(test)]
+                check_compiled_commit_preparation_stage_for_test(
+                    request_id,
+                    CompiledCommitPreparationStage::HistoryUpdateEncoding,
+                )?;
+                txn.encode_update_v1()
+            };
             let txn = candidate_doc.transact();
             let fragment = txn
                 .get_xml_fragment(self.fragment_name.as_str())
@@ -755,12 +745,17 @@ impl YrsDocumentEngine {
                         "prepared commit candidate lost its configured Yrs fragment",
                     )
                 })?;
-            #[cfg(test)]
-            check_compiled_commit_preparation_stage_for_test(
-                request_id,
-                CompiledCommitPreparationStage::HistoryUpdateEncoding,
-            )?;
-            let history_update = txn.encode_state_as_update_v1(&candidate_state_vector);
+            if encoded_state_upper_bound > self.resource_limits.max_encoded_state_bytes {
+                #[cfg(test)]
+                crate::yrs_engine::observability::record_whole_state_encoding();
+                let exact = txn.encode_state_as_update_v1(&StateVector::default()).len();
+                super::remote::admit_max_encoded_state_len(
+                    request_id,
+                    exact,
+                    self.resource_limits.max_encoded_state_bytes,
+                )?;
+                encoded_state_upper_bound = exact;
+            }
             if history_update.len() > encoded_growth_bound {
                 return Err(yrs_engine::OperationError::engine_invariant_failed(
                     request_id,
@@ -1041,6 +1036,7 @@ impl YrsDocumentEngine {
             next_derived_state: Some(next_derived_state),
             change_scope,
             next_durable_client_ids,
+            encoded_state_upper_bound,
             next_document_revision,
             next_state_revision,
             next_yrs_state_epoch,

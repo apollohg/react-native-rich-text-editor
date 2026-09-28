@@ -24,6 +24,7 @@ pub(super) struct PreparedCompiledCommit {
     pub(super) history_after: Option<yrs_engine::history::HistoryLocalState>,
     pub(super) next_derived_state: Option<DerivedStateCache>,
     pub(super) next_durable_client_ids: HashSet<u64>,
+    pub(super) encoded_state_upper_bound: usize,
     pub(super) next_document_revision: u64,
     pub(super) change_scope: super::DocumentChangeScope,
     pub(super) next_state_revision: u64,
@@ -99,6 +100,7 @@ impl YrsDocumentEngine {
             yrs_engine::mutation::record_unavailable_lookup_seed_install_for_test();
         }
         self.durable_client_ids = prepared.next_durable_client_ids;
+        self.encoded_state_upper_bound = prepared.encoded_state_upper_bound;
         self.revision = prepared.next_document_revision;
         self.record_document_change(prepared.change_scope);
         self.state_revision = prepared.next_state_revision;

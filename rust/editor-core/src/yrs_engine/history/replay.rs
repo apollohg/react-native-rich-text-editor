@@ -39,12 +39,12 @@ impl YrsHistory {
     /// newly compiled excluded event is retained in the new epoch. Remote
     /// callers keep using `pre_admit_excluded`, where a pending rebase remains
     /// an invalidate-after-commit signal.
-    pub(crate) fn pre_admit_compiled_excluded(
+    pub(crate) fn pre_admit_compiled_excluded<'a>(
         &mut self,
         request_id: u64,
         origin: TransactionOrigin,
         work_units: u64,
-        current_encoded_state: &[u8],
+        current_encoded_state: impl FnOnce() -> &'a [u8],
         update_bytes_bound: usize,
     ) -> OperationResult<PreparedExcludedHistoryAdmission> {
         let reserved_update = self.allocate_replay_update(request_id, update_bytes_bound)?;
@@ -57,7 +57,7 @@ impl YrsHistory {
             let replay_slot = self.prepare_replay_event_slot(request_id, rolls)?;
             let disposition = if rolls {
                 let owned_baseline =
-                    reserve_replay_roll_baseline(request_id, current_encoded_state)?;
+                    reserve_replay_roll_baseline(request_id, current_encoded_state())?;
                 ExcludedReplayDisposition::Roll { owned_baseline }
             } else {
                 ExcludedReplayDisposition::Append

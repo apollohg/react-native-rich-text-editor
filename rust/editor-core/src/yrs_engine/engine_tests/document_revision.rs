@@ -56,6 +56,12 @@ fn every_document_revision_records_exactly_one_scope() {
             );
             assert_eq!(engine.last_change_scope, DocumentChangeScope::Document);
         }
+        let exact_bytes = engine.encoded_state().unwrap().len();
+        if local || label == "row insertion" {
+            assert!(exact_bytes <= engine.encoded_state_upper_bound, "{label}");
+        } else {
+            assert_eq!(engine.encoded_state_upper_bound, exact_bytes, "{label}");
+        }
         *previous = engine.revision();
         *document_scope = engine.document_scope_revision();
     };

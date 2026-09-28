@@ -468,6 +468,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
 
     let mut command = fixture();
     let mut command_counts = Vec::new();
+    let mut command_full_encodings = Vec::new();
     reset_active_state_cache_counts_for_test();
     for index in 0..20 {
         reset_full_pass_counts_for_test();
@@ -475,6 +476,8 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
         reset_localized_index_lifecycle_counts_for_test();
         reset_cached_render_counts_for_test();
         reset_localized_render_transition_counts_for_test();
+        let previous_bound = command.encoded_state_upper_bound;
+        let previous_events = command.history.replay_audit_for_test().0;
         command
             .apply_command(
                 70_300 + index as u64,
@@ -482,6 +485,15 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             )
             .unwrap()
             .unwrap();
+        let exact_admission = command.encoded_state_upper_bound < previous_bound;
+        let replay_rolled = command.history.replay_audit_for_test().0 < previous_events;
+        command_full_encodings.push(usize::from(exact_admission) + usize::from(replay_rolled));
+        if exact_admission {
+            assert_eq!(
+                command.encoded_state_upper_bound,
+                command.encoded_state().unwrap().len()
+            );
+        }
         command_counts.push((
             take_full_pass_counts_for_test(),
             take_localized_lookup_counts_for_test(),
@@ -617,25 +629,23 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
         (1, 1, 0),
     );
     for (index, actual) in commit_counts.iter().enumerate() {
-        let mut expected = expected_commit;
-        expected.0.whole_state_encodings = usize::from(index != 0);
+        let expected = expected_commit;
         assert_eq!(*actual, expected, "direct commit edit {index}");
     }
     for (index, actual) in result_counts.iter().enumerate() {
-        let mut expected = expected_result;
-        expected.0.whole_state_encodings = usize::from(index != 0);
+        let expected = expected_result;
         assert_eq!(*actual, expected, "direct result edit {index}");
     }
     for (index, actual) in command_counts.iter().enumerate() {
         let mut expected = expected_command;
         let first = index == 0;
+        expected.0.whole_state_encodings = command_full_encodings[index];
         expected.0.canonical_serializations = usize::from(!first);
         expected.0.canonical_hashes = usize::from(!first);
         expected.0.active_applicability_passes = usize::from(first);
         expected.0.table_projection_derivations += usize::from(first);
         expected.0.table_command_availability_plans +=
             usize::from(first) * expected_command.0.table_command_availability_plans;
-        expected.0.whole_state_encodings = usize::from(!first);
         assert_eq!(*actual, expected, "command edit {index}");
     }
 

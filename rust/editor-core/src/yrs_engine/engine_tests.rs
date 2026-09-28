@@ -652,3 +652,5 @@ mod remote_updates;
 
 #[path = "engine_tests/document_revision.rs"]
 mod document_revision;
+#[path = "engine_tests/encoded_bound.rs"]
+mod encoded_bound;

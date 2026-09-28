@@ -8,6 +8,8 @@ mod compiler;
 pub(crate) use compiler::cell_admission_error;
 mod derived_state;
 pub(crate) use derived_state::record_active_state_full_assembly;
+#[cfg(test)]
+pub(crate) use derived_state::take_localized_leaf_text_hashes_for_test;
 mod editing_limits;
 mod engine;
 mod error;

@@ -80,6 +80,7 @@ struct PreparedRemoteInstall {
     next_state: DerivedStateCache,
     prepared_live_seed: Arc<yrs_engine::mutation::MutationLookupSeed>,
     durable_client_ids: HashSet<u64>,
+    encoded_state_bytes: usize,
     next_revision: u64,
     next_state_revision: u64,
     next_epoch: u64,
@@ -558,6 +559,7 @@ impl YrsDocumentEngine {
                 next_state,
                 prepared_live_seed,
                 durable_client_ids,
+                encoded_state_bytes: candidate_encoded.len(),
                 next_revision,
                 next_state_revision,
                 next_epoch,
@@ -644,6 +646,7 @@ impl YrsDocumentEngine {
                     mut next_state,
                     prepared_live_seed,
                     durable_client_ids,
+                    encoded_state_bytes,
                     next_revision,
                     next_state_revision,
                     next_epoch,
@@ -668,6 +671,7 @@ impl YrsDocumentEngine {
                 self.quarantined_remote_update = dependency_candidate;
                 self.derived_state = Some(next_state);
                 self.durable_client_ids = durable_client_ids;
+                self.encoded_state_upper_bound = encoded_state_bytes;
                 self.revision = next_revision;
                 self.record_document_change(super::DocumentChangeScope::Document);
                 self.state_revision = next_state_revision;

@@ -1,6 +1,6 @@
 impl YrsHistory {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn pre_admit_recorded(
+    pub(crate) fn pre_admit_recorded<'a>(
         &mut self,
         request_id: u64,
         origin: TransactionOrigin,
@@ -9,7 +9,7 @@ impl YrsHistory {
         undo_units_bound: u64,
         before: Option<HistoryLocalState>,
         after_metadata_bytes: usize,
-        current_encoded_state: &[u8],
+        current_encoded_state: impl FnOnce() -> &'a [u8],
         update_bytes_bound: usize,
         prepared_limits: Option<PreparedHistoryLimits>,
     ) -> OperationResult<PreparedRecordedHistoryAdmission> {
@@ -68,7 +68,7 @@ impl YrsHistory {
         }
         let rolls = limits.should_roll || reservation_would_roll;
         let owned_baseline = rolls
-            .then(|| reserve_replay_roll_baseline(request_id, current_encoded_state))
+            .then(|| reserve_replay_roll_baseline(request_id, current_encoded_state()))
             .transpose()?;
         let replay_slot = self.prepare_replay_event_slot(request_id, rolls)?;
         let compatible =
@@ -235,11 +235,12 @@ impl YrsHistory {
         );
     }
 
-    pub(crate) fn rebind(&mut self, doc: &Doc, fragment: &XmlFragmentRef) {
+    pub(crate) fn rebind(&mut self, doc: &Doc, fragment: &XmlFragmentRef) -> usize {
         let limits = self.limits.clone();
         let clock = self.clock.clone();
         let max_encoded_state_bytes = self.max_encoded_state_bytes;
         let baseline = encode_full_state(doc);
+        let encoded_state_bytes = baseline.len();
         *self = Self::from_stacks(
             doc,
             fragment,
@@ -251,6 +252,7 @@ impl YrsHistory {
             baseline,
             true,
         );
+        encoded_state_bytes
     }
 
     pub(crate) fn replay_into(

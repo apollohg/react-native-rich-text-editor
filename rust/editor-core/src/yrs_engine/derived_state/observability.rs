@@ -24,6 +24,7 @@ std::thread_local! {
     pub(super) static LOCALIZED_INDEX_PATH_COMPARISON_ELEMENTS: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
+    pub(super) static LOCALIZED_LEAF_TEXT_HASHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(super) static LOCALIZED_INDEX_BUILD_COUNT: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
@@ -411,4 +412,9 @@ pub(crate) fn record_preview_rendered_text_derivation() {
             .get()
             .saturating_add(1),
     );
+}
+
+#[cfg(test)]
+pub(crate) fn take_localized_leaf_text_hashes_for_test() -> usize {
+    LOCALIZED_LEAF_TEXT_HASHES.replace(0)
 }

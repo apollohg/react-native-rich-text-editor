@@ -160,7 +160,7 @@ fn prepared_candidate_cache_reuses_one_exact_store_across_successful_insert_burs
 }
 
 #[test]
-fn imported_candidate_sealed_state_replaces_only_the_first_commit_full_encode() {
+fn imported_candidate_bytes_are_consumed_once_then_local_commits_need_no_encoding() {
     let mut engine = transaction_engine();
     reset_encoded_state_reuse_counts_for_test();
     reset_import_state_encoding_counts_for_test();
@@ -188,8 +188,8 @@ fn imported_candidate_sealed_state_replaces_only_the_first_commit_full_encode() 
         .unwrap();
     assert_eq!(
         take_encoded_state_reuse_counts_for_test(),
-        (0, 1, 0),
-        "successful mutation caches must not retain the stale import bytes"
+        (0, 0, 0),
+        "the retained candidate needs neither encoding nor stale import bytes"
     );
 }
 

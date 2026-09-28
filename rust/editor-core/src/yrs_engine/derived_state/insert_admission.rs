@@ -498,7 +498,7 @@ impl ValidatedLocalizedTextblockEditAdmission<'_> {
         #[cfg(test)]
         let cache_budget = FORCE_LOCALIZED_INDEX_BUDGET.get().unwrap_or(cache_budget);
         let localized_text_index = self.state.localized_text_index.as_ref().and_then(|index| {
-            index.promote_textblock_edit(
+            index.carry_after_textblock_edit(
                 &self.state.validation_certificate,
                 self.admission,
                 block_path,

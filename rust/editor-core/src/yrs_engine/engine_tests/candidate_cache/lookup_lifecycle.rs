@@ -239,7 +239,7 @@ fn ordinary_lookup_collection_fails_fast_while_codec_projection_finishes() {
 }
 
 #[test]
-fn created_text_insert_localizes_then_next_insert_rebuilds_the_seed_once() {
+fn created_text_insert_carries_the_seed_into_the_next_localized_insert() {
     use crate::yrs_engine::mutation::{
         reset_localized_lookup_counts_for_test, take_localized_lookup_counts_for_test,
     };
@@ -255,7 +255,7 @@ fn created_text_insert_localizes_then_next_insert_rebuilds_the_seed_once() {
         .unwrap()
         .expect("existing text insert must apply");
 
-    assert_eq!(take_localized_lookup_counts_for_test(), (1, 2, 1));
+    assert_eq!(take_localized_lookup_counts_for_test(), (0, 2, 1));
 }
 
 #[test]
