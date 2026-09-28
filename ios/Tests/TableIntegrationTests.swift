@@ -144,7 +144,7 @@ final class TableIntegrationTests: XCTestCase {
             let format = UIGraphicsImageRendererFormat()
             format.scale = 1
             let image = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { _ in
-                drawing.draw(drawing.bounds)
+                drawing.drawInstalledLayersForTesting()
             }
             return try XCTUnwrap(image.cgImage)
         }

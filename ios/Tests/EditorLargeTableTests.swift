@@ -98,7 +98,7 @@ final class EditorLargeTableTests: XCTestCase {
                     textView.contentOffset.y = offsetY
                     drawing.scrollTables(in: chain, by: physicalDelta)
                     view.layoutIfNeeded()
-                    _ = renderer.image { _ in drawing.draw(drawing.bounds) }
+                    _ = renderer.image { _ in drawing.drawInstalledLayersForTesting() }
                     let presented = try XCTUnwrap(drawing.mountedTablePresentation())
                     print("\(label) at y \(offsetY), table offset \(drawing.tableLogicalOffset(for: table.surface.identity)): \(presented.cells.count) presented, \(drawnCells.last ?? -1) drawn, bound \(maximumRetainedPresentations)")
                     XCTAssertLessThanOrEqual(presented.cells.count, maximumRetainedPresentations,
@@ -280,6 +280,100 @@ final class EditorLargeTableTests: XCTestCase {
             let after = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
             XCTAssertEqual(after.cells.filter { retained.contains(ObjectIdentifier($0.content)) }.count, before.cells.count)
             XCTAssertEqual(prepared.count, 2, "only the new row is prepared")
+        }
+    }
+
+    func testNonWrappingKeystrokeRedrawsOnlyTheBoundCellLayer() throws {
+        try withMountedTable(rows: 12, columns: 2) { view, _, drawing in
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+            XCTAssertTrue(view.bindTableCell(tableID: try adapter.editableTableID(), cellIndex: 4, contentRect: .zero))
+            let input = view.activeTextInput
+            input.selectedRange = NSRange(location: input.textStorage.length, length: 0)
+            drawing.layer.displayIfNeeded()
+            let before = drawing.layerRedrawsForTesting
+            input.insertText("x")
+            view.layoutIfNeeded()
+            drawing.layer.displayIfNeeded()
+            for name in ["above", "boundRow", "below"] {
+                XCTAssertEqual(drawing.layerRedrawsForTesting[name], before[name], name)
+            }
+            XCTAssertEqual(drawing.layerRedrawsForTesting["boundCell", default: 0], before["boundCell", default: 0] + 1)
+        }
+    }
+
+    func testWrappingKeystrokeRedrawsTheBoundRowAndTranslatesRowsBelow() throws {
+        try withMountedTable(rows: 12, columns: 2) { view, _, drawing in
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+            XCTAssertTrue(view.bindTableCell(tableID: try adapter.editableTableID(), cellIndex: 4, contentRect: .zero))
+            let input = view.activeTextInput
+            input.selectedRange = NSRange(location: input.textStorage.length, length: 0)
+            drawing.layer.displayIfNeeded()
+            let before = drawing.layerRedrawsForTesting
+            let below = drawing.belowLayer.position
+            input.insertText(String(repeating: " wrapping text", count: 8))
+            view.layoutIfNeeded()
+            drawing.layer.displayIfNeeded()
+            for name in ["above", "below"] {
+                XCTAssertEqual(drawing.layerRedrawsForTesting[name], before[name], name)
+            }
+            XCTAssertEqual(drawing.layerRedrawsForTesting["boundRow", default: 0], before["boundRow", default: 0] + 1)
+            XCTAssertGreaterThan(drawing.belowLayer.position.y, below.y)
+            try assertLayeredMatchesSinglePass(drawing)
+        }
+    }
+
+    func testUnboundWindowUsesOneLayer() throws {
+        try withMountedTable(rows: 12, columns: 2) { _, _, drawing in
+            drawing.layer.displayIfNeeded()
+            let layers = [drawing.aboveLayer, drawing.boundRowLayer, drawing.boundCellLayer, drawing.belowLayer]
+            XCTAssertEqual(layers.filter { !$0.isHidden }.count, 1)
+            XCTAssertEqual(drawing.layerRedrawsForTesting.values.reduce(0, +), 1)
+            drawing.install(layout: nil)
+            XCTAssertTrue(layers.allSatisfy { $0.contents == nil && $0.isHidden }, "releasing the surface frees every cached bitmap")
+        }
+    }
+
+    private func assertLayeredMatchesSinglePass(_ drawing: PreparedProseDrawingView,
+                                               file: StaticString = #filePath, line: UInt = #line) throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = drawing.contentScaleFactor
+        func pixels() throws -> Data {
+            let image = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { _ in
+                drawing.drawInstalledLayersForTesting()
+            }
+            return try XCTUnwrap(image.cgImage?.dataProvider?.data) as Data
+        }
+        let layered = try pixels()
+        drawing.usesEditAnchoredLayers = false
+        defer { drawing.usesEditAnchoredLayers = true }
+        let singlePass = try pixels()
+        XCTAssertTrue(layered == singlePass, "translated layers must match a complete repaint pixel for pixel", file: file, line: line)
+    }
+
+    func testWrappingInsideRowspanKeepsCrossingContentAndFollowingRowsAligned() throws {
+        try withMountedTable(rows: 4, columns: 2) { view, _, drawing in
+            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: view.editorId))
+            func cell(_ text: String, span: Int = 1) -> [String: Any] {
+                ["type": PlainTable.cell, "attrs": ["rowspan": span], "content": [
+                    ["type": PlainTable.paragraph, "content": [["type": PlainTable.text, "text": text]]]
+                ]]
+            }
+            let rows = [
+                [cell(String(repeating: "spanning content ", count: 20), span: 3), cell("first")],
+                [cell("edited")], [cell("last")], [cell("below left"), cell("below right")]
+            ].map { ["type": PlainTable.row, "content": $0] as [String: Any] }
+            let data = try JSONSerialization.data(withJSONObject: ["type": PlainTable.document,
+                "content": [["type": PlainTable.table, "content": rows]]])
+            XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(String(decoding: data, as: UTF8.self)))))
+            view.layoutIfNeeded()
+            XCTAssertTrue(view.bindTableCell(tableID: try adapter.editableTableID(), cellIndex: 2, contentRect: .zero))
+            let input = view.activeTextInput
+            input.selectedRange = NSRange(location: input.textStorage.length, length: 0)
+            drawing.layer.displayIfNeeded()
+            input.insertText(String(repeating: " wrapping text", count: 8))
+            view.layoutIfNeeded()
+            drawing.layer.displayIfNeeded()
+            try assertLayeredMatchesSinglePass(drawing)
         }
     }
 

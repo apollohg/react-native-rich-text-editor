@@ -78,6 +78,72 @@ internal enum PreparedProseImagePixelMapAccounting {
 /// A rendering-only view: it consumes already prepared Core Text lines.
 @objc(PREPPreparedProseDrawingView)
 public final class PreparedProseDrawingView: UIView {
+    struct TableLayerCell: Equatable {
+        let tableID: String
+        let sourceIndex: Int
+    }
+
+    private enum TableLayerName: String {
+        case above, boundRow, boundCell, below
+    }
+
+    private struct TableLayerState {
+        let cell: TableLayerCell?
+        let window: CGRect
+        let frame: CGRect
+        let row: CGRect
+        let rowOffsets: [CGFloat]
+        let revision: UInt64?
+        let appearance: String
+    }
+
+    let aboveLayer = CALayer()
+    let boundRowLayer = CALayer()
+    let boundCellLayer = CALayer()
+    let belowLayer = CALayer()
+    private(set) var layerRedrawsForTesting: [String: Int] = [:]
+    var usesEditAnchoredLayers = false {
+        didSet {
+            guard usesEditAnchoredLayers != oldValue else { return }
+            clearTableLayers()
+            setNeedsDisplay()
+        }
+    }
+    var tableLayerCell: TableLayerCell? {
+        didSet {
+            if tableLayerCell != oldValue { invalidateTableLayers(); setNeedsDisplay() }
+        }
+    }
+    var tableLayerRevision: UInt64?
+    var tableLayerChanges: TableFrameChanges?
+    var tableLayerAppearance = ""
+    private var tableLayerState: TableLayerState?
+
+    private var tableLayers: [CALayer] { [aboveLayer, boundRowLayer, boundCellLayer, belowLayer] }
+
+    private var retainedTableLayerBytes: Int {
+        tableLayers.reduce(0) { total, layer in
+            guard let contents = layer.contents else { return total }
+            let image = contents as! CGImage
+            return Self.saturatingAdd(total, image.bytesPerRow * image.height)
+        }
+    }
+
+    private func clearTableLayers() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        tableLayerState = nil
+        for layer in tableLayers {
+            layer.contents = nil
+            layer.isHidden = true
+        }
+    }
+
+    private func invalidateTableLayers() {
+        tableLayerState = nil
+    }
+
     let codeHighlightingSession = NativeCodeHighlightingSession()
     var onCodeHighlightingResolved: ((String) -> Void)?
     var onCodeHighlightingFailure: ((Error) -> Void)?
@@ -88,6 +154,7 @@ public final class PreparedProseDrawingView: UIView {
 
     var imagePixels: [String: UIImage] = [:] {
         didSet {
+            invalidateTableLayers()
             PreparedProseInstrumentation.retained(.image, scope: "drawing-\(ObjectIdentifier(self))", bytes: retainedImagePixelsBytesForTesting)
             setNeedsDisplay()
         }
@@ -100,7 +167,7 @@ public final class PreparedProseDrawingView: UIView {
     internal var preparedSurfaceRetainedBytesForTesting: Int {
         Self.saturatingAdd(
             Self.saturatingAdd(
-                layout?.retainedBytes ?? 0,
+                Self.saturatingAdd(layout?.retainedBytes ?? 0, retainedTableLayerBytes),
                 imageRevisions.retainedPublicationBytesForTesting
             ),
             Self.saturatingAdd(
@@ -138,6 +205,8 @@ public final class PreparedProseDrawingView: UIView {
     var layout: PreparedProseLayout? {
         didSet {
             guard oldValue !== layout else { return }
+            if layout == nil { clearTableLayers() }
+            else if tableLayerState?.revision == layout?.key.attachmentRevision { invalidateTableLayers() }
             tableInteractionController?.cancelMotion()
             let nextOwner = layout.map { tableOwnerIdentityOverride ?? $0.key.semanticKey }
                 ?? tableOwnerIdentityOverride
@@ -166,27 +235,27 @@ public final class PreparedProseDrawingView: UIView {
     }
     var selectedTableCellSourceIndices: [String: Set<Int>] = [:] {
         didSet {
-            if selectedTableCellSourceIndices != oldValue { setNeedsDisplay() }
+            if selectedTableCellSourceIndices != oldValue { invalidateTableLayers(); setNeedsDisplay() }
         }
     }
     var selectedTableCellEndpoints: TableSelectionEndpoints? {
         didSet {
-            if selectedTableCellEndpoints != oldValue { setNeedsDisplay() }
+            if selectedTableCellEndpoints != oldValue { invalidateTableLayers(); setNeedsDisplay() }
         }
     }
     var remoteTableCellSelections: [RemoteTableCellSelection] = [] {
         didSet {
-            if remoteTableCellSelections != oldValue { setNeedsDisplay() }
+            if remoteTableCellSelections != oldValue { invalidateTableLayers(); setNeedsDisplay() }
         }
     }
     var activeTableResizeEdge: TableResizeEdge? {
         didSet {
-            if activeTableResizeEdge != oldValue { setNeedsDisplay() }
+            if activeTableResizeEdge != oldValue { invalidateTableLayers(); setNeedsDisplay() }
         }
     }
     var tableCellDropTarget: TableCellDropTarget? {
         didSet {
-            if tableCellDropTarget != oldValue { setNeedsDisplay() }
+            if tableCellDropTarget != oldValue { invalidateTableLayers(); setNeedsDisplay() }
         }
     }
 
@@ -210,6 +279,7 @@ public final class PreparedProseDrawingView: UIView {
     func setTableOwnerIdentity(_ identity: String?) {
         guard tableOwnerIdentityOverride != identity else { return }
         tableOwnerIdentityOverride = identity
+        clearTableLayers()
         tableInteractionController?.cancelMotion()
         tablePresentationOwner = ViewerTablePresentationOwner()
         mountedTableOwnerIdentity = nil
@@ -568,6 +638,7 @@ public final class PreparedProseDrawingView: UIView {
             changed = changed || consumed != 0
         }
         if changed {
+            invalidateTableLayers()
             updateSidecarInstrumentation()
             updateConfiguredImagesForVisibleWindow()
             onTableGeometryChanged?()
@@ -583,6 +654,7 @@ public final class PreparedProseDrawingView: UIView {
               let surface = ViewerTablePresentation.surfaces(in: layout).first(where: { $0.identity == sourceIdentity })
         else { return }
         tablePresentationOwner.setLogicalOffset(offset, for: surface)
+        invalidateTableLayers()
         updateSidecarInstrumentation()
         updateConfiguredImagesForVisibleWindow()
         onTableGeometryChanged?()
@@ -712,7 +784,7 @@ public final class PreparedProseDrawingView: UIView {
 
     public override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window == nil { tableInteractionController?.cancelMotion() }
+        if window == nil { tableInteractionController?.cancelMotion(); clearTableLayers() }
         if window == nil { codeHighlightingSession.cancel() } else { scheduleCodeHighlighting() }
         updateConfiguredImagesForVisibleWindow()
     }
@@ -1146,26 +1218,40 @@ public final class PreparedProseDrawingView: UIView {
         let snapshot = ViewerTablePresentation.project(layout: layout, owner: tablePresentationOwner, viewport: viewport)
         onMountedTableCellsDrawnForTesting?(snapshot.mountedCells.count)
 
+        if usesEditAnchoredLayers {
+            updateTableLayers(snapshot: snapshot)
+        } else {
+            paint(snapshot: snapshot, layout: layout, rect: rect, context: context)
+        }
+        PreparedProseInstrumentation.drew(drawStarted, visibleBlocks: snapshot.blocks.count)
+    }
+
+    private func paint(snapshot: ViewerTablePresentationSnapshot, layout: PreparedProseLayout,
+                       rect: CGRect, context: CGContext, excludedRect: CGRect? = nil) {
         context.saveGState()
         defer { context.restoreGState() }
         if let content = layout.decorations.first, let box = content.styleBox {
             context.addPath(box.path(in: content.bounds).cgPath)
             context.clip()
         }
-        let mountedLayoutIDs = Set(snapshot.mountedCells.map { ObjectIdentifier($0.content) })
+        let visibleCells = usesEditAnchoredLayers ? snapshot.mountedCells.filter { cell in
+            let visible = cell.bounds.intersection(rect)
+            return !visible.isNull && !visible.isEmpty && excludedRect?.contains(visible) != true
+        } : snapshot.mountedCells
+        let mountedLayoutIDs = Set(visibleCells.map { ObjectIdentifier($0.content) })
         let excludedLayoutID = excludedTableCellContentLayout.map(ObjectIdentifier.init)
-        drawHierarchicalBackgrounds(snapshot, mountedLayoutIDs: mountedLayoutIDs, excludedLayoutID: excludedLayoutID, dirtyRect: rect, context: context)
+        drawHierarchicalBackgrounds(snapshot, visibleCells: visibleCells, mountedLayoutIDs: mountedLayoutIDs, excludedLayoutID: excludedLayoutID, dirtyRect: rect, context: context)
         for remote in remoteTableCellSelections {
-            for cell in snapshot.mountedCells
+            for cell in visibleCells
             where cell.surface.identity == remote.tableID && isRealTableCell(cell, in: remote.sourceIndices) {
                 fillTableCell(cell, color: remote.color, context: context)
             }
         }
-        for cell in snapshot.mountedCells where isSelectedTableCell(cell) {
+        for cell in visibleCells where isSelectedTableCell(cell) {
             fillTableCell(cell, color: cell.surface.style.selectionColor, context: context)
         }
         if let target = tableCellDropTarget {
-            for cell in snapshot.mountedCells
+            for cell in visibleCells
             where cell.surface.identity == target.tableID && isRealTableCell(cell, in: [target.sourceIndex]) {
                 fillTableCell(cell, color: cell.surface.style.selectionColor, context: context)
             }
@@ -1184,7 +1270,7 @@ public final class PreparedProseDrawingView: UIView {
         for presented in visibleBlocks {
             drawPresented(presented, context: context) { fragment in drawBackground(fragment, in: context) }
         }
-        for cell in snapshot.mountedCells {
+        for cell in visibleCells {
             drawTableChromeBorder(cell, context: context)
         }
         for presented in visibleBlocks {
@@ -1233,7 +1319,118 @@ public final class PreparedProseDrawingView: UIView {
             }
             context.restoreGState()
         }
-        PreparedProseInstrumentation.drew(drawStarted, visibleBlocks: visibleBlocks.count)
+    }
+
+    private func recordTableLayer(_ target: CALayer, name: TableLayerName, rect: CGRect,
+                                  excluding excluded: CGRect? = nil,
+                                  snapshot: ViewerTablePresentationSnapshot, layout: PreparedProseLayout) {
+        guard !rect.isNull, !rect.isEmpty else {
+            target.isHidden = true
+            target.contents = nil
+            return
+        }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = CGFloat(Double(bitPattern: layout.key.displayScaleBits))
+        format.opaque = false
+        let image = UIGraphicsImageRenderer(bounds: rect, format: format).image { renderer in
+            let context = renderer.cgContext
+            context.clip(to: rect)
+            if let excluded, rect.intersects(excluded) {
+                context.addRect(rect)
+                context.addRect(excluded.intersection(rect))
+                context.clip(using: .evenOdd)
+            }
+            paint(snapshot: snapshot, layout: layout, rect: rect, context: context, excludedRect: excluded)
+        }
+        target.contentsScale = format.scale
+        target.contents = image.cgImage
+        target.frame = rect
+        target.isHidden = false
+        layerRedrawsForTesting[name.rawValue, default: 0] += 1
+    }
+
+    private func updateTableLayers(snapshot: ViewerTablePresentationSnapshot) {
+        guard let layout else { clearTableLayers(); return }
+        let window = configuredVisibleRect() ?? bounds
+        guard !window.isEmpty, !window.isNull else { clearTableLayers(); return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        for child in tableLayers where child.superlayer !== layer { layer.addSublayer(child) }
+        layer.masksToBounds = true
+        let presented = tableLayerCell.flatMap { binding in
+            snapshot.tables.first { $0.surface.identity == binding.tableID }.flatMap { table in
+                table.surface.cell(sourceIndex: binding.sourceIndex).map {
+                    ViewerTablePresentation.present($0, in: table, owner: tablePresentationOwner)
+                }
+            }
+        }
+        guard let binding = tableLayerCell, let presented else {
+            if tableLayerState?.cell != nil || tableLayerState?.window != window ||
+                tableLayerState?.revision != tableLayerRevision || tableLayerState?.appearance != tableLayerAppearance {
+                clearTableLayers()
+                recordTableLayer(aboveLayer, name: .above, rect: window, snapshot: snapshot, layout: layout)
+            }
+            tableLayerState = TableLayerState(cell: nil, window: window, frame: .zero, row: .zero, rowOffsets: [],
+                                             revision: tableLayerRevision, appearance: tableLayerAppearance)
+            return
+        }
+        let frame = presented.bounds
+        var firstRow = presented.cell.row
+        var lastRow = firstRow + presented.cell.rowspan
+        let cells = snapshot.mountedCells.filter { $0.surface.identity == binding.tableID }
+        while true {
+            let previous = firstRow..<lastRow
+            for cell in cells where cell.cell.row < lastRow && cell.cell.row + cell.cell.rowspan > firstRow {
+                firstRow = min(firstRow, cell.cell.row)
+                lastRow = max(lastRow, cell.cell.row + cell.cell.rowspan)
+            }
+            if previous == firstRow..<lastRow { break }
+        }
+        let offsets = presented.surface.layout.rowOffsets
+        let originY = frame.minY - offsets[presented.cell.row]
+        let row = CGRect(x: window.minX, y: originY + offsets[firstRow], width: window.width,
+                         height: offsets[lastRow] - offsets[firstRow])
+        let rowOffsets = offsets[firstRow...lastRow].map { $0 - offsets[firstRow] }
+        let old = tableLayerState
+        let changedRevision = old?.revision != tableLayerRevision
+        let changesAreBoundCellOnly = tableLayerChanges.map { changes in
+            !changes.fullReset && changes.replacedTables.isEmpty && changes.removedTables.isEmpty &&
+                changes.changedCells.allSatisfy { key, cells in
+                    key == binding.tableID && cells.isSubset(of: IndexSet(integer: binding.sourceIndex))
+                }
+        } ?? false
+        let reusable = old?.cell == binding && old?.window == window &&
+            old?.appearance == tableLayerAppearance && old?.row.minY == row.minY &&
+            old?.frame.minX == frame.minX && old?.frame.width == frame.width &&
+            (!changedRevision || changesAreBoundCellOnly)
+        if !reusable {
+            clearTableLayers()
+            recordTableLayer(aboveLayer, name: .above,
+                rect: CGRect(x: window.minX, y: window.minY, width: window.width,
+                             height: max(0, min(row.minY, window.maxY) - window.minY)), snapshot: snapshot, layout: layout)
+            recordTableLayer(belowLayer, name: .below,
+                rect: CGRect(x: window.minX, y: max(row.maxY, window.minY), width: window.width,
+                             height: max(0, window.maxY - max(row.maxY, window.minY))), snapshot: snapshot, layout: layout)
+        } else if let old, old.row.height != row.height {
+            let delta = row.height - old.row.height
+            belowLayer.position.y += delta
+            if belowLayer.frame.maxY < window.maxY {
+                recordTableLayer(belowLayer, name: .below,
+                    rect: CGRect(x: window.minX, y: max(row.maxY, window.minY), width: window.width,
+                                 height: max(0, window.maxY - max(row.maxY, window.minY))), snapshot: snapshot, layout: layout)
+            }
+        }
+        if !reusable || old?.rowOffsets != rowOffsets {
+            recordTableLayer(boundRowLayer, name: .boundRow, rect: row.intersection(window),
+                             excluding: frame, snapshot: snapshot, layout: layout)
+        }
+        if !reusable || changedRevision || old?.frame != frame {
+            recordTableLayer(boundCellLayer, name: .boundCell, rect: frame.intersection(window),
+                             snapshot: snapshot, layout: layout)
+        }
+        tableLayerState = TableLayerState(cell: binding, window: window, frame: frame, row: row, rowOffsets: rowOffsets,
+                                         revision: tableLayerRevision, appearance: tableLayerAppearance)
     }
 
     private func fillTableCell(_ cell: ViewerTablePresentedCell, color: UIColor, context: CGContext) {
@@ -1260,6 +1457,7 @@ public final class PreparedProseDrawingView: UIView {
 
     private func drawHierarchicalBackgrounds(
         _ snapshot: ViewerTablePresentationSnapshot,
+        visibleCells: [ViewerTablePresentedCell],
         mountedLayoutIDs: Set<ObjectIdentifier>,
         excludedLayoutID: ObjectIdentifier?,
         dirtyRect: CGRect,
@@ -1267,7 +1465,7 @@ public final class PreparedProseDrawingView: UIView {
     ) {
         let layouts = Dictionary(uniqueKeysWithValues: snapshot.layouts.map { (ObjectIdentifier($0.layout), $0) })
         let blocks = Dictionary(grouping: snapshot.blocks, by: { ObjectIdentifier($0.layout) })
-        let cells = Dictionary(grouping: snapshot.mountedCells, by: { ObjectIdentifier($0.surface) })
+        let cells = Dictionary(grouping: visibleCells, by: { ObjectIdentifier($0.surface) })
 
         func drawLayout(_ presented: ViewerTablePresentedLayout) {
             if ObjectIdentifier(presented.layout) != excludedLayoutID {

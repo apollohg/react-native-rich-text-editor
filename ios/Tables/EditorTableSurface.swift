@@ -258,6 +258,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         self.inputCoordinator = inputCoordinator
         super.init(frame: .zero)
         clipsToBounds = true
+        drawingView.usesEditAnchoredLayers = true
         drawingView.isOpaque = false
         drawingView.backgroundColor = .clear
         drawingView.isUserInteractionEnabled = false
@@ -385,6 +386,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         defer { selectionGeometryMayChange() }
         discardInvalidDrag()
         reprepareIfNeeded(from: textView)
+        drawingView.tableLayerRevision = latestPresentation?.documentRevision
+        drawingView.tableLayerChanges = latestPresentation?.changes
+        drawingView.tableLayerAppearance = "\(appearanceRevision)-\(textView.renderAppearanceRevision)"
         guard !entries.isEmpty else {
             mountedTableFrames.removeAll()
             mountedSurfaces.removeAll()
@@ -628,6 +632,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     func hideActiveInput() {
         defer { selectionGeometryMayChange() }
         activeCell = nil
+        drawingView.tableLayerCell = nil
         inputCoordinator.cellInput.tableAccessibilityCell = nil
         drawingView.excludedTableCellContentLayout = nil
         inputCoordinator.cellInput.isHidden = true
@@ -1416,6 +1421,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     private func updateExcludedCellContent() {
+        drawingView.tableLayerCell = activeCell.map {
+            PreparedProseDrawingView.TableLayerCell(tableID: $0.tableID, sourceIndex: Int($0.cellIndex))
+        }
         guard let activeCell,
               let presented = presentedCell(tableID: activeCell.tableID, cellIndex: activeCell.cellIndex) else {
             drawingView.excludedTableCellContentLayout = nil

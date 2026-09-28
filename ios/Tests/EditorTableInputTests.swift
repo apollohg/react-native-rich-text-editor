@@ -1638,7 +1638,7 @@ final class EditorTableInputTests: XCTestCase {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         let image = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { _ in
-            drawing.draw(drawing.bounds)
+            drawing.drawInstalledLayersForTesting()
         }
         let cgImage = try XCTUnwrap(image.cgImage)
         var pixels = [UInt8](repeating: 0, count: cgImage.width * cgImage.height * 4)
@@ -1650,7 +1650,7 @@ final class EditorTableInputTests: XCTestCase {
         let selectedPositions = drawing.selectedTableCellSourceIndices
         drawing.selectedTableCellSourceIndices = [:]
         let baselineImage = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { _ in
-            drawing.draw(drawing.bounds)
+            drawing.drawInstalledLayersForTesting()
         }
         drawing.selectedTableCellSourceIndices = selectedPositions
         let baselineCG = try XCTUnwrap(baselineImage.cgImage)
@@ -1718,7 +1718,7 @@ final class EditorTableInputTests: XCTestCase {
         let points = [CGPoint(x: first.bounds.minX + handleInset, y: first.bounds.minY + handleInset),
                       CGPoint(x: last.bounds.maxX - handleInset, y: last.bounds.maxY - handleInset)]
         let renderer = UIGraphicsImageRenderer(size: drawing.bounds.size)
-        let image = renderer.image { _ in drawing.draw(drawing.bounds) }
+        let image = renderer.image { _ in drawing.drawInstalledLayersForTesting() }
         let cgImage = try XCTUnwrap(image.cgImage)
         var pixels = [UInt8](repeating: 0, count: cgImage.width * cgImage.height * 4)
         let bitmap = try XCTUnwrap(CGContext(data: &pixels, width: cgImage.width, height: cgImage.height,
@@ -2871,7 +2871,7 @@ final class EditorTableInputTests: XCTestCase {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         _ = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { _ in
-            drawing.draw(drawing.bounds)
+            drawing.drawInstalledLayersForTesting()
         }
         XCTAssertGreaterThan(paintedCells, 0)
         XCTAssertGreaterThan(paintedText, 0)
@@ -3023,7 +3023,7 @@ final class EditorTableInputTests: XCTestCase {
             drawing.onTableRichFragmentDrawnForTesting = { rich += 1 }
             drawing.onTableChromeDrawnForTesting = { _ in chrome += 1 }
             let image = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { _ in
-                drawing.draw(drawing.bounds)
+                drawing.drawInstalledLayersForTesting()
             }.cgImage
             return (rich, chrome, image)
         }
@@ -3181,7 +3181,7 @@ final class EditorTableInputTests: XCTestCase {
         format.scale = 1
         _ = UIGraphicsImageRenderer(size: view.bounds.size, format: format).image { context in
             context.cgContext.translateBy(x: -drawing.bounds.minX, y: -drawing.bounds.minY)
-            drawing.draw(drawing.bounds)
+            drawing.drawInstalledLayersForTesting()
         }
         XCTAssertGreaterThan(paintedCells, 0)
         XCTAssertGreaterThan(paintedText, 0)

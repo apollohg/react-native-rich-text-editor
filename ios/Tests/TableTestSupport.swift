@@ -316,3 +316,14 @@ extension TableCellPositionMap.Binding {
         adapter.tableIndex.docStart(tableKey: tableKey, cellIndex: Int(cellIndex))
     }
 }
+
+extension PreparedProseDrawingView {
+    func drawInstalledLayersForTesting() {
+        guard let context = UIGraphicsGetCurrentContext() else {
+            XCTFail("drawing verification requires an image renderer context")
+            return
+        }
+        layer.displayIfNeeded()
+        layer.render(in: context)
+    }
+}
