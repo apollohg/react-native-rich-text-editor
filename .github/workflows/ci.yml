@@ -41,7 +41,9 @@ jobs:
         uses: android-actions/setup-android@v4
 
       - name: Setup Android NDK
-        run: sdkmanager --install 'ndk;27.1.12297006'
+        run: |
+          sdkmanager --install 'ndk;27.1.12297006'
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/27.1.12297006" >> "$GITHUB_ENV"
 
       - name: Setup RN 0.76 Android SDK
         run: sdkmanager --install 'platforms;android-36' 'build-tools;34.0.0'
@@ -51,6 +53,8 @@ jobs:
       # this package's correctness and must run on every change.
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -84,6 +88,12 @@ jobs:
 
       - name: Validate npm package contents
         run: npm pack --dry-run
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Build editor-core for Android
+        run: bash rust/build-android.sh
 
       - name: Pack Android release candidate
         run: |
