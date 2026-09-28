@@ -8,13 +8,30 @@ final class EditorTableIndexTests: XCTestCase {
     private let rootDocStart: UInt32 = 10
     private let rootScalarStart: UInt32 = 7
 
+    func testVoidElementMetadataRejectsNonAtomsAndOutOfRangeIndicesAtomically() throws {
+        let index = EditorTableIndex()
+        _ = index.adopt(frame(), installedRevision: nil, frameRevision: revision)
+        let original = index.record(tableKey: rootKey)
+        for indices in [[UInt32(0)], [3], [1, 1]] {
+            var corrupt = frame()
+            if indices.count > 1 {
+                corrupt.tables[0].cells[0].elements[1] = .inlineAtom(nodeType: "mention", docPos: 2, attrsJson: "{}", label: "a")
+            }
+            corrupt.tables[0].cells[0].voidElementIndices = indices
+            guard case .failure(.inputBlockOutOfStride) = index.adopt(corrupt, installedRevision: revision, frameRevision: revision) else {
+                return XCTFail("invalid void metadata was adopted: \(indices)")
+            }
+            XCTAssertEqual(index.record(tableKey: rootKey), original)
+        }
+    }
+
     private func cell(_ column: UInt32, stride: UInt32) -> FfiTableCellRecord {
         FfiTableCellRecord(sourceRow: 0, row: 0, column: column, rowspan: 1, colspan: 1,
                            header: false, attrsKey: attributeKey, contentKey: "cell-\(column)",
                            docSize: 5, scalarStride: stride,
                            elements: [.blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil),
                                       .textRun(text: "a", marks: []), .blockEnd],
-                           inputBlocks: [FfiCellInputBlock(elementIndex: 0, docStart: 2, docEnd: 3,
+                           voidElementIndices: [], inputBlocks: [FfiCellInputBlock(elementIndex: 0, docStart: 2, docEnd: 3,
                                scalarStart: 0, contentScalarStart: 0, scalarEnd: 1, breakScalarEnd: stride, void: false)],
                            nestedTables: [])
     }

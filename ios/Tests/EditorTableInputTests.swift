@@ -1844,7 +1844,7 @@ final class EditorTableInputTests: XCTestCase {
                     return .init(sourceRow: 0, row: UInt32(cell["row"] as! Int), column: UInt32(cell["column"] as! Int),
                         rowspan: UInt32(cell["rowspan"] as! Int), colspan: UInt32(cell["colspan"] as! Int), header: false,
                         attrsKey: "empty", contentKey: "cell-\(index)", docSize: UInt32(next - position), scalarStride: 0,
-                        elements: [], inputBlocks: [], nestedTables: [])
+                        elements: [], voidElementIndices: [], inputBlocks: [], nestedTables: [])
                 }
                 tables.append(.init(tableKey: key, host: nil, docSize: UInt32(end - start),
                     rows: UInt32(raw["rows"] as? Int ?? 0), columns: UInt32(raw["columns"] as? Int ?? 0), columnWidths: [],

@@ -4,13 +4,10 @@ import android.os.Handler
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
 import java.time.Duration
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -242,7 +239,7 @@ internal class NativeEditorExpoViewControlledUpdateResetTest :
         val viewToken = EditorV2Registry.register(adapter)
         val errors = mutableListOf<EditorV2Error>()
         val ordinaryUpdateJson = atomicRenderUpdateJson("ordinary", "1")
-        val malformedResetUpdateJson = renderUpdateJson("malformed reset")
+        val malformedResetUpdateJson = JSONObject(renderUpdateJson("malformed reset")).put("documentVersion", "invalid").toString()
         try {
             adapter.onAutonomousError = { errors += it }
             view.richTextView.setEditorIdWhileDetached(viewToken)
@@ -278,7 +275,7 @@ internal class NativeEditorExpoViewControlledUpdateResetTest :
         val adapter = attachAdapterForViewTest(backend)
         val viewToken = EditorV2Registry.register(adapter)
         val errors = mutableListOf<EditorV2Error>()
-        val malformedUpdateJson = renderUpdateJson("malformed reset")
+        val malformedUpdateJson = JSONObject(renderUpdateJson("malformed reset")).put("documentVersion", "invalid").toString()
         try {
             adapter.onAutonomousError = { errors += it }
             view.onAddonEventForTesting = {}

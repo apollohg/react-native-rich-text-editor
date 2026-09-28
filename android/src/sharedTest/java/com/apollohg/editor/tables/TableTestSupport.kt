@@ -1,5 +1,6 @@
 package com.apollohg.editor.tables
 
+import com.apollohg.editor.tableRecordsForTesting
 import android.view.View
 import com.apollohg.editor.EditorEditText
 import com.apollohg.editor.EditorV2Adapter
@@ -26,6 +27,8 @@ private const val ROOM_INITIALIZATION_TYPE = "room"
 internal object PlainTableFixture {
     const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock","htmlTag":"p"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","htmlTag":"table"},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row","htmlTag":"tr"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","htmlTag":"td","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","htmlTag":"th","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
     const val CELL_TEXT = "abcdefghijkl"
+    const val TYPING_PROBE_CHARACTERS = 20
+    const val TYPING_HEAP_GROWTH_CEILING_BYTES = 32 * 1024 * 1024
     const val LARGE_ROWS = 1000
     const val LARGE_COLUMNS = 20
     val TWENTY_THOUSAND_SLOT_SHAPES = listOf(LARGE_ROWS to LARGE_COLUMNS, 100 to 200)
@@ -103,7 +106,7 @@ internal fun documentCellSelection(anchor: Int, head: Int): JSONObject {
 }
 
 internal fun EditorV2Adapter.tableCellPositions(tableId: String): List<Int> {
-    val cells = requireNotNull(cachedTableRecords[tableId]) { "table $tableId is not rendered" }.getJSONArray("cells")
+    val cells = requireNotNull(tableRecordsForTesting[tableId]) { "table $tableId is not rendered" }.getJSONArray("cells")
     return (0 until cells.length()).map { cells.getJSONObject(it).getInt("sourcePos") }
 }
 

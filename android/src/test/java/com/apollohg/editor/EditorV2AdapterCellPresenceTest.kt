@@ -47,7 +47,7 @@ internal class EditorV2AdapterCellPresenceTest {
         )
         try {
             assertNotNull(adapter.setContentJson(document))
-            val cells = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+            val cells = adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
             block(adapter, backend, cells.getJSONObject(0).getInt("sourcePos"),
                 cells.getJSONObject(1).getInt("sourcePos"))
         } finally {
@@ -89,7 +89,7 @@ internal class EditorV2AdapterCellPresenceTest {
     @Test
     fun nodeSelectionLeavingCellsReplacesCellPresenceOnce() =
         withCellPresenceAdapter { adapter, backend, first, second ->
-            val tableEnd = adapter.cachedTableRecords.values.single().getInt("sourceEnd")
+            val tableEnd = adapter.tableRecordsForTesting.values.single().getInt("sourceEnd")
             adapter.adoptEngineCells(first, second)
             assertNotNull(adapter.publishedCollaborationCells)
             backend.selections.clear()

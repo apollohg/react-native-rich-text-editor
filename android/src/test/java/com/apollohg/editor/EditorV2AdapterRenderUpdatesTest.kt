@@ -1,12 +1,10 @@
 package com.apollohg.editor
-import android.text.Spanned
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -16,228 +14,246 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
-    @Test
-    fun `table input mapping survives atomic and view snapshot adoption`() {
-        val adapter = makeAdapter()
-        val snapshot = tableInputMappingSnapshot()
+    private class FrameBackend : EditorV2Backend by UniffiEditorV2Backend {
+        val frames = mutableListOf<uniffi.editor_core.FfiNativeRenderFrame>()
+        var transform: ((uniffi.editor_core.FfiNativeRenderFrame) -> uniffi.editor_core.FfiNativeRenderFrame)? = null
 
-        assertNotNull(adoptExternalRender(adapter, snapshot.toString()))
-        assertEquals(1, adapter.cachedTableInputMappings?.tables?.get("t0")?.cells?.size)
-        assertTrue(JSONObject(requireNotNull(adapter.cachedAtomicRenderJson)).has("tableInputMappings"))
-        assertTrue(JSONObject(requireNotNull(adapter.cachedViewUpdateJson)).has("tableInputMappings"))
-    }
-
-    @Test
-    fun `table input mapping rejects malformed associations atomically`() {
-        val adapter = makeAdapter()
-        val valid = tableInputMappingSnapshot()
-        assertNotNull(adoptExternalRender(adapter, valid.toString()))
-        val baseline = adapter.cachedAtomicRenderJson
-
-        val orphaned = JSONObject(valid.toString())
-        orphaned.getJSONObject("tableInputMappings").put("tables", JSONObject())
-        assertNull(adoptExternalRender(adapter, orphaned.toString()))
-        assertEquals(baseline, adapter.cachedAtomicRenderJson)
-
-        val invalidCoordinates = JSONObject(valid.toString())
-        val block = invalidCoordinates.getJSONObject("tableInputMappings").getJSONObject("tables")
-            .getJSONObject("t0").getJSONArray("cells").getJSONObject(0).getJSONArray("blocks").getJSONObject(0)
-        block.put("scalarEnd", 5)
-        assertNull(adoptExternalRender(adapter, invalidCoordinates.toString()))
-        assertEquals(baseline, adapter.cachedAtomicRenderJson)
-    }
-
-    @Test
-    fun `table source identity rejects missing malformed and duplicate wire values`() {
-        val adapter = makeAdapter()
-        val valid = tableInputMappingSnapshot()
-        assertNotNull(adoptExternalRender(adapter, valid.toString()))
-        val baseline = adapter.cachedAtomicRenderJson
-        for (sourceId in listOf(null, "", "t0", "y01-2", "y1-02", "y18446744073709551616-2", "y1-4294967296", "y1-2\n", "y1-2\r", "y١-2")) {
-            val invalid = JSONObject(valid.toString())
-            val record = invalid.getJSONObject("tableRecords").getJSONObject("t0")
-            if (sourceId == null) record.remove("sourceId") else record.put("sourceId", sourceId)
-            assertNull(adoptExternalRender(adapter, invalid.toString()))
-            assertEquals(baseline, adapter.cachedAtomicRenderJson)
-        }
-        val maxIdentity = JSONObject(valid.toString())
-        maxIdentity.getJSONObject("tableRecords").getJSONObject("t0")
-            .put("sourceId", "y18446744073709551615-4294967295")
-        assertNotNull(adoptExternalRender(adapter, maxIdentity.toString()))
-        val first = valid.getJSONObject("tableRecords").getJSONObject("t0")
-        val second = JSONObject(first.toString()).put("tablePos", 12).put("sourceEnd", 24)
-            .put("sourceId", "y2-3").put("sourceRows", org.json.JSONArray().put(
-                JSONObject(first.getJSONArray("sourceRows").getJSONObject(0).toString())
-                    .put("sourcePos", 13).put("sourceEnd", 23)))
-        second.getJSONArray("cells").getJSONObject(0).put("sourcePos", 14).put("sourceEnd", 22)
-        val elements = listOf(
-            JSONObject().put("type", "table").put("tableId", "t0"),
-            JSONObject().put("type", "table").put("tableId", "t12")
-        )
-        val pool = mapOf("a".repeat(64) to JSONObject())
-        assertTrue(validSemanticRenderElements(elements, pool, mapOf("t0" to first, "t12" to second)))
-        second.put("sourceId", first.getString("sourceId"))
-        assertFalse(validSemanticRenderElements(elements, pool, mapOf("t0" to first, "t12" to second)))
-    }
-
-    @Test
-    fun `render preflight validates retained table identities without mapping sidecar`() {
-        val adapter = makeAdapter()
-        val retained = tableInputMappingSnapshot().apply {
-            remove("tableInputMappings")
-            val records = getJSONObject("tableRecords")
-            val outer = records.getJSONObject("t0")
-            outer.put("sourceEnd", 14)
-            outer.getJSONArray("sourceRows").getJSONObject(0).put("sourceEnd", 13)
-            val cell = outer.getJSONArray("cells").getJSONObject(0)
-            cell.put("sourceEnd", 12)
-            cell.getJSONArray("elements").put(JSONObject().put("type", "table").put("tableId", "t9"))
-            records.put("t9", JSONObject()
-                .put("tablePos", 9).put("sourceId", "y1-3").put("sourceEnd", 11)
-                .put("rows", 0).put("columns", 0).put("columnWidths", org.json.JSONArray())
-                .put("direction", JSONObject.NULL).put("irregular", false)
-                .put("readOnlyDescendants", true).put("attrsKey", "a".repeat(64))
-                .put("sourceRows", org.json.JSONArray()).put("cells", org.json.JSONArray())
-                .put("syntheticRegions", org.json.JSONArray()).put("failure", "invalidStructure")
-                .put("compatibilityDiagnostic", JSONObject.NULL))
-        }
-        val patchBlocks = listOf(
-            org.json.JSONArray(),
-            org.json.JSONArray().put(org.json.JSONArray()
-                .put(JSONObject().put("type", "blockStart").put("nodeType", "paragraph").put("depth", 0))
-                .put(JSONObject().put("type", "textRun").put("text", "changed").put("marks", org.json.JSONArray()))
-                .put(JSONObject().put("type", "blockEnd")))
-        )
-        for ((patchIndex, blocks) in patchBlocks.withIndex()) {
-            val valid = JSONObject(retained.toString()).put("renderBlocks", JSONObject.NULL)
-                .put("renderPatch", JSONObject().put("baseDocumentVersion", "1")
-                    .put("startIndex", 0).put("deleteCount", patchIndex).put("renderBlocks", blocks))
-            assertNotNull("valid patch $patchIndex", parseAtomicRenderSnapshot(valid.toString()))
-            assertTrue("valid patch $patchIndex", adapter.validateExternalRender(valid.toString()))
-
-            for (tableId in listOf("t0", "t9")) {
-                for (sourceId in listOf(null, "y01-2")) {
-                    val invalid = JSONObject(valid.toString())
-                    val record = invalid.getJSONObject("tableRecords").getJSONObject(tableId)
-                    if (sourceId == null) record.remove("sourceId") else record.put("sourceId", sourceId)
-                    assertNull("patch $patchIndex $tableId sourceId $sourceId", parseAtomicRenderSnapshot(invalid.toString()))
-                    assertFalse("patch $patchIndex $tableId sourceId $sourceId", adapter.validateExternalRender(invalid.toString()))
+        override fun renderNativeFrame(editorId: String, ownerId: String?, mirrorAnchor: Int?, mirrorHead: Int?): EditorV2CallResult<uniffi.editor_core.FfiNativeRenderFrame> {
+            return when (val result = UniffiEditorV2Backend.renderNativeFrame(editorId, ownerId, mirrorAnchor, mirrorHead)) {
+                is EditorV2CallResult.Err -> result
+                is EditorV2CallResult.Ok -> {
+                    frames.add(result.value)
+                    EditorV2CallResult.Ok(transform?.invoke(result.value) ?: result.value)
                 }
             }
-            val duplicate = JSONObject(valid.toString())
-            val records = duplicate.getJSONObject("tableRecords")
-            records.getJSONObject("t9").put("sourceId", records.getJSONObject("t0").getString("sourceId"))
-            assertNull("patch $patchIndex duplicate sourceId", parseAtomicRenderSnapshot(duplicate.toString()))
-            assertFalse("patch $patchIndex duplicate sourceId", adapter.validateExternalRender(duplicate.toString()))
         }
+    }
 
-        val tableFree = JSONObject(atomicRenderSnapshot("base", "1"))
-            .put("renderBlocks", JSONObject.NULL)
-            .put("renderPatch", JSONObject().put("baseDocumentVersion", "1")
-                .put("startIndex", 0).put("deleteCount", 0).put("renderBlocks", org.json.JSONArray()))
-        assertTrue(adapter.validateExternalRender(tableFree.toString()))
+    private fun withFrameAdapter(test: (EditorV2Adapter, FrameBackend, MutableList<EditorV2Error>) -> Unit) {
+        val backend = FrameBackend()
+        val created = backend.create(com.apollohg.editor.tables.PlainTableFixture.CONFIG, null) as EditorV2CallResult.Ok
+        val adapter = requireNotNull(EditorV2Adapter.attach(backend, JSONObject(created.value).getString("editorId"), roomBound = false))
+        val errors = mutableListOf<EditorV2Error>()
+        adapter.bindAutonomousErrorOwner(1L, errors::add) {}
+        try {
+            assertNotNull(adapter.setContentJson(com.apollohg.editor.tables.PlainTableFixture.document(2, 2)))
+            backend.frames.clear()
+            test(adapter, backend, errors)
+        } finally {
+            adapter.destroy()
+        }
     }
 
     @Test
-    fun `legacy and release clear cached table input mapping`() {
-        val adapter = makeAdapter()
-        assertNotNull(adoptExternalRender(adapter, tableInputMappingSnapshot().toString()))
-        assertNotNull(adapter.cachedTableInputMappings)
-
-        val legacy = tableInputMappingSnapshot()
-        legacy.remove("tableInputMappings")
-        assertNotNull(adoptExternalRender(adapter, legacy.toString()))
-        assertNull(adapter.cachedTableInputMappings)
-
-        adapter.claimNativeBindingIfUnowned(1L)
-        assertNull(adapter.cachedTableInputMappings)
-        val native = tableInputMappingSnapshot().put("positionEpoch", "1")
-        assertNotNull(adoptExternalRender(adapter, native.toString()))
-        assertNotNull(adapter.cachedTableInputMappings)
+    fun `fresh binding expands retained root blocks without consuming another frame`() = withFrameAdapter { adapter, backend, errors ->
+        val key = adapter.tableIndex.tableKeys.single()
+        assertNotNull(adapter.insertText("X", requireNotNull(adapter.tableIndex.scalarStart(key, 0)).toInt()))
         adapter.releaseNativeBindingOwner(1L)
-        assertNull(adapter.cachedTableInputMappings)
-    }
-
-    @Test
-    fun `owner replacement re-pins the epoch and keeps the current table input mappings`() {
-        val adapter = makeAdapter()
-        adapter.claimNativeBindingIfUnowned(1L)
-        sessionOf(adapter).revision = TABLE_SNAPSHOT_REVISION
-        assertNotNull(adoptExternalRender(adapter, tableInputMappingSnapshot().put("positionEpoch", "1").toString()))
-        val mappings = requireNotNull(adapter.cachedTableInputMappings)
-        backend.calls.clear()
-
-        adapter.bindAutonomousErrorOwner(2L, {}) {}
-
-        println("owner replacement backend calls: ${backend.calls}")
-        assertTrue("the replacement owner pins its own epoch", backend.calls.contains("pinPositionEpoch"))
-        assertEquals("no second full render", 0, backend.calls.count { it == "renderUpdate" })
-        assertNotNull(adapter.positionEpoch)
-        assertTrue("the mappings of the current render survive", mappings === adapter.cachedTableInputMappings)
-    }
-
-    private fun tableInputMappingSnapshot(): JSONObject {
-        val attrsKey = "a".repeat(64)
-        val table = JSONObject("""{
-            "tablePos":0,"sourceId":"y1-2","sourceEnd":12,"rows":1,"columns":1,"columnWidths":[null],
-            "direction":null,"irregular":false,"readOnlyDescendants":false,"attrsKey":"$attrsKey",
-            "sourceRows":[{"sourcePos":1,"sourceEnd":11,"attrsKey":"$attrsKey"}],
-            "syntheticRegions":[],"failure":null,"compatibilityDiagnostic":null,
-            "cells":[{"sourcePos":2,"sourceEnd":10,"row":0,"column":0,"rowspan":1,"colspan":1,
-                "header":false,"attrsKey":"$attrsKey","contentKey":"cell","elements":[
-                    {"type":"blockStart","nodeType":"paragraph","depth":0},
-                    {"type":"textRun","text":"base","marks":[]},{"type":"blockEnd"}]}]
-        }""")
-        return JSONObject(atomicRenderSnapshot("base", TABLE_SNAPSHOT_REVISION.toString()))
-            .put("renderBlocks", org.json.JSONArray().put(org.json.JSONArray().put(JSONObject().put("type", "table").put("tableId", "t0"))))
-            .put("tableAttributes", JSONObject().put(attrsKey, "{}"))
-            .put("tableRecords", JSONObject().put("t0", table))
-            .put("scalarLength", 4)
-            .put("tableInputMappings", JSONObject().put("version", 1).put("tables", JSONObject().put("t0",
-                JSONObject().put("extent", JSONObject().put("scalarStart", 0).put("scalarEnd", 4)).put("cells",
-                    org.json.JSONArray().put(JSONObject().put("cellIndex", 0).put("sourcePos", 2).put("sourceEnd", 10)
-                        .put("blocks", org.json.JSONArray().put(JSONObject().put("elementIndex", 0).put("docStart", 4).put("docEnd", 8)
-                            .put("scalarStart", 0).put("contentScalarStart", 0).put("scalarEnd", 4).put("breakScalarEnd", 4).put("void", false)))
-                        .put("excluded", org.json.JSONArray()))
-                )
-            )))
-    }
-
-    private fun tableInputMappingSnapshotWithFollowingProse(epoch: String): JSONObject =
-        tableInputMappingSnapshot().apply {
-            getJSONArray("renderBlocks").put(org.json.JSONArray()
-                .put(JSONObject().put("type", "blockStart").put("nodeType", "paragraph").put("depth", 0))
-                .put(JSONObject().put("type", "textRun").put("text", "z").put("marks", org.json.JSONArray()))
-                .put(JSONObject().put("type", "blockEnd")))
-            put("scalarLength", 6)
-            getJSONObject("selection").put("anchorScalar", 5).put("headScalar", 5)
-            put("positionEpoch", epoch)
+        backend.frames.clear()
+        val token = EditorV2Registry.register(adapter)
+        val input = EditorEditText(RuntimeEnvironment.getApplication())
+        try {
+            input.bindEditor(token, null)
+            assertNotNull(input.rootTablePositionMap)
+            assertEquals(listOf(uniffi.editor_core.FfiTableFrameKind.DELTA), backend.frames.map { it.tables.kind })
+            assertTrue(errors.toString(), errors.isEmpty())
+        } finally {
+            input.unbindEditor()
+            EditorV2Registry.remove(adapter.editorId)
         }
+    }
 
     @Test
-    fun `root table input rejects sidecar loss at unchanged revision and epoch`() {
-        val adapter = makeAdapter()
+    fun `multi paragraph cell and nested table coordinates match the engine`() {
+        val config = JSONObject(rootTableConfig)
+        config.getJSONObject("schema").getJSONArray("nodes").put(JSONObject()
+            .put("name", "mention").put("content", "").put("group", "inline").put("role", "inline")
+            .put("isVoid", true).put("attrs", JSONObject().put("label", JSONObject().put("default", "Ada"))))
+        val created = UniffiEditorV2Backend.create(config.toString(), null) as EditorV2CallResult.Ok
+        val adapter = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend,
+            JSONObject(created.value).getString("editorId"), false))
+        try {
+            val source = JSONObject(com.apollohg.editor.tables.PlainTableFixture.document(4, 3))
+            val rows = source.getJSONArray("content").getJSONObject(0).getJSONArray("content")
+            fun paragraph(text: String) = JSONObject().put("type", "paragraph").put("content",
+                org.json.JSONArray().put(JSONObject().put("type", "text").put("text", text)))
+            val rich = org.json.JSONArray().put(paragraph("first😀"))
+                .put(paragraph("second").apply { getJSONArray("content").put(JSONObject().put("type", "mention")) })
+                .put(paragraph("third"))
+            rows.getJSONObject(1).getJSONArray("content").getJSONObject(1).put("content", rich)
+            val nested = JSONObject(com.apollohg.editor.tables.PlainTableFixture.document(2, 2))
+                .getJSONArray("content").getJSONObject(0)
+            rows.getJSONObject(2).getJSONArray("content").getJSONObject(2).put("content",
+                org.json.JSONArray().put(paragraph("before")).put(nested).put(paragraph("after")))
+            assertNotNull(adapter.setContentJson(source.toString()))
+            assertEquals(2, adapter.tableIndex.tableKeys.size)
+            assertFramePositionsMatchEngine(adapter)
+        } finally {
+            adapter.destroy()
+        }
+    }
+
+    @Test
+    fun `destroy releases retained frame state`() = withFrameAdapter { adapter, _, _ ->
+        assertFalse(adapter.tableIndex.tableKeys.isEmpty())
+        assertNull(adapter.destroy())
+        assertTrue(adapter.tableIndex.tableKeys.isEmpty())
+        assertNull(adapter.installedFrameRevision)
+        assertNull(adapter.cachedTablePresentation)
+        assertNull(adapter.cachedSemanticRenderBlocks)
+    }
+
+    @Test
+    fun `stale owner seed is a hint miss and refreshes the new owner without an error`() = withFrameAdapter { adapter, backend, oldErrors ->
+        val changed = adapter.callWithEnvelope(JSONObject().put("text", "X")) { backend.applyInput(adapter.editorId, it) }
+        assertTrue(changed is EditorV2CallResult.Ok)
+        val newErrors = mutableListOf<EditorV2Error>()
+        adapter.bindAutonomousErrorOwner(2L, newErrors::add) {}
+        assertTrue(oldErrors.toString(), oldErrors.isEmpty())
+        assertTrue(newErrors.toString(), newErrors.isEmpty())
+        assertNotNull(adapter.refreshFromRustState(null))
+        assertEquals(listOf(uniffi.editor_core.FfiTableFrameKind.FULL), backend.frames.map { it.tables.kind })
+        assertTrue(newErrors.toString(), newErrors.isEmpty())
+    }
+
+    @Test
+    fun `matching external reset adopts its one fetched frame`() = withFrameAdapter { adapter, backend, errors ->
+        val reset = JSONObject().put("history", "resetAndClear")
+            .put("documentRevision", adapter.baseDocumentRevision.toString())
+            .put("setJson", JSONObject(requireNotNull(adapter.documentJson())))
+        assertNotNull(adapter.adoptExternalReset(requireNotNull(adapter.cachedAtomicRenderJson), reset.toString()))
+        assertEquals(listOf(uniffi.editor_core.FfiTableFrameKind.DELTA), backend.frames.map { it.tables.kind })
+        assertTrue(errors.toString(), errors.isEmpty())
+    }
+
+    @Test
+    fun `native keystroke adopts one changed cell and caches a table free commit snapshot`() = withFrameAdapter { adapter, backend, errors ->
+        val key = adapter.tableIndex.tableKeys.single()
+        val before = requireNotNull(adapter.tableIndex.record(key))
+        val start = requireNotNull(adapter.tableIndex.scalarStart(key, 0)).toInt()
+        assertNotNull(adapter.insertText("X", start))
+        assertEquals(listOf(uniffi.editor_core.FfiTableFrameKind.DELTA), backend.frames.map { it.tables.kind })
+        assertEquals(setOf(0), adapter.cachedTablePresentation?.changes?.changedCells?.get(key))
+        val after = requireNotNull(adapter.tableIndex.record(key))
+        assertEquals(before.cells[0].docSize + 1u, after.cells[0].docSize)
+        assertEquals(before.cells.drop(1), after.cells.drop(1))
+        val snapshot = requireNotNull(adapter.atomicRenderJson(adapter.baseDocumentRevision.toString()))
+        assertEquals(backend.frames.single().snapshotJson, snapshot)
+        for (legacyKey in listOf("tableAttributes", "tableRecords", "tableInputMappings")) {
+            assertFalse(legacyKey, JSONObject(snapshot).has(legacyKey))
+        }
+        assertTrue(errors.toString(), errors.isEmpty())
+    }
+
+    @Test
+    fun `stale frame base recovers with exactly one full frame`() = withFrameAdapter { adapter, backend, errors ->
+        backend.transform = { frame ->
+            if (backend.frames.size == 1) frame.copy(tables = frame.tables.copy(baseDocumentRevision = "0")) else frame
+        }
+        assertNotNull(adapter.refreshFromRustState(null))
+        assertEquals(listOf(uniffi.editor_core.FfiTableFrameKind.DELTA, uniffi.editor_core.FfiTableFrameKind.FULL), backend.frames.map { it.tables.kind })
+        assertEquals(adapter.baseDocumentRevision, adapter.installedFrameRevision)
+        assertEquals(1, adapter.tableIndex.tableKeys.size)
+        assertTrue(errors.toString(), errors.isEmpty())
+    }
+
+    @Test
+    fun `corrupt full snapshot keeps root and index with one error`() = withFrameAdapter { adapter, backend, errors ->
+        adapter.releaseNativeBindingOwner(1L)
+        val key = adapter.tableIndex.tableKeys.single()
+        val before = adapter.tableIndex.record(key)
+        val root = adapter.cachedViewUpdateJson
+        val atomic = adapter.cachedAtomicRenderJson
+        backend.transform = { it.copy(snapshotJson = "{") }
+        assertNull(adapter.refreshFromRustState(null))
+        assertEquals(listOf(uniffi.editor_core.FfiTableFrameKind.FULL), backend.frames.map { it.tables.kind })
+        assertEquals(root, adapter.cachedViewUpdateJson)
+        assertEquals(atomic, adapter.cachedAtomicRenderJson)
+        assertEquals(before, adapter.tableIndex.record(key))
+        assertEquals(listOf("native table frame violates the frozen shape"), errors.map { it.message })
+    }
+
+    @Test
+    fun `failed table full frame adopts without cells`() = withFrameAdapter { adapter, backend, errors ->
+        adapter.releaseNativeBindingOwner(1L)
+        backend.transform = { frame -> frame.copy(tables = frame.tables.copy(tables = frame.tables.tables.map {
+            it.copy(failure = uniffi.editor_core.TableRenderFailure.GRID_LIMIT, cells = emptyList(), sourceRows = emptyList())
+        })) }
+        assertNotNull(adapter.refreshFromRustState(null))
+        val record = requireNotNull(adapter.tableIndex.record(adapter.tableIndex.tableKeys.single()))
+        assertEquals(uniffi.editor_core.TableRenderFailure.GRID_LIMIT, record.failure)
+        assertTrue(record.cells.isEmpty())
+        assertTrue(errors.toString(), errors.isEmpty())
+    }
+
+    @Test
+    fun `reclaimed owner and refused cell backspace use delta frames`() = withFrameAdapter { adapter, backend, errors ->
+        adapter.releaseNativeBindingOwner(1L)
+        adapter.bindAutonomousErrorOwner(2L, errors::add) {}
+        assertNotNull(adapter.refreshFromRustState(null))
+        val key = adapter.tableIndex.tableKeys.single()
+        val start = requireNotNull(adapter.tableIndex.scalarStart(key, 0)).toInt()
+        assertNotNull(adapter.syncSelection(start, start))
+        val before = adapter.documentJson()
+        adapter.deleteBackwardAtSelection(start, start)
+        assertEquals(before, adapter.documentJson())
+        assertTrue(backend.frames.isNotEmpty())
+        assertTrue(backend.frames.map { it.tables.kind }.toString(), backend.frames.all { it.tables.kind == uniffi.editor_core.FfiTableFrameKind.DELTA })
+        assertTrue(errors.toString(), errors.isEmpty())
+    }
+
+    @Test
+    fun `javascript render notice never installs javascript table content`() = withFrameAdapter { adapter, backend, errors ->
+        val key = adapter.tableIndex.tableKeys.single()
+        val before = adapter.tableIndex.record(key)
+        val notice = JSONObject().put("documentVersion", adapter.baseDocumentRevision.toString())
+            .put("tableRecords", JSONObject().put("forged", false))
+            .put("renderBlocks", org.json.JSONArray().put(org.json.JSONArray().put(JSONObject())))
+        assertNotNull(adapter.adoptExternalRender(notice.toString()))
+        assertEquals(before, adapter.tableIndex.record(key))
+        assertEquals(setOf(key), adapter.tableIndex.tableKeys.toSet())
+        assertEquals(1, backend.frames.size)
+        assertTrue(errors.toString(), errors.isEmpty())
+    }
+
+    private fun makeRootTableAdapter(): EditorV2Adapter {
+        val created = UniffiEditorV2Backend.create(rootTableConfig, null) as EditorV2CallResult.Ok
+        return requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend,
+            JSONObject(created.value).getString("editorId"), roomBound = false))
+    }
+
+    private fun rootTableDocument(after: String = "z"): String {
+        val document = JSONObject(com.apollohg.editor.tables.PlainTableFixture.document(1, 1, "base"))
+        document.getJSONArray("content").put(JSONObject().put("type", "paragraph").put("content",
+            org.json.JSONArray().put(JSONObject().put("type", "text").put("text", after))))
+        return document.toString()
+    }
+
+    @Test
+    fun `root table input rejects index loss at unchanged revision and epoch`() {
+        val adapter = makeRootTableAdapter()
         val token = EditorV2Registry.register(adapter)
         val input = EditorEditText(RuntimeEnvironment.getApplication())
         try {
             input.editorId = token
             input.v2Driver = adapter
-            val snapshot = tableInputMappingSnapshotWithFollowingProse(adapter.positionEpoch ?: "1")
-            assertTrue(input.applyUpdateJSON(requireNotNull(adoptExternalRender(adapter, snapshot.toString()))))
+            val update = requireNotNull(adapter.setContentJson(rootTableDocument()))
+            assertTrue(input.applyUpdateJSON(update))
+            input.applySelectionFromJSON(JSONObject().put("type", "text").put("anchor", 0).put("head", 0)
+                .put("anchorScalar", 5).put("headScalar", 5), adapter.baseDocumentRevision.toString())
             assertEquals(5, input.inputScalar(2))
             val connection = requireNotNull(input.onCreateInputConnection(android.view.inputmethod.EditorInfo()))
             val before = input.text.toString()
-            val withoutMappings = JSONObject(snapshot.toString()).apply { remove("tableInputMappings") }
-            assertNotNull(adoptExternalRender(adapter, withoutMappings.toString()))
-            assertNull(adapter.cachedTableInputMappings)
-            assertEquals(snapshot.getString("positionEpoch"), adapter.positionEpoch)
+            val epoch = adapter.positionEpoch
+            adapter.tableIndex = com.apollohg.editor.tables.EditorTableIndex()
+            assertEquals(epoch, adapter.positionEpoch)
             assertFalse(input.applyUpdateJSON(requireNotNull(adapter.cachedViewUpdateJson)))
             assertEquals(before, input.text.toString())
             assertNull(input.inputScalar(2))
-            backend.calls.clear()
+            val documentBefore = adapter.documentJson()
             connection.commitText("wrong", 1)
             assertEquals(before, input.text.toString())
-            assertFalse(backend.calls.contains("applyNativeIntent"))
+            assertEquals(documentBefore, adapter.documentJson())
         } finally {
             input.v2Driver = null
             EditorV2Registry.remove(adapter.editorId)
@@ -247,28 +263,30 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
 
     @Test
     fun `root table input rejects ownerless same revision readmission`() {
-        val adapter = makeAdapter()
+        val adapter = makeRootTableAdapter()
         val token = EditorV2Registry.register(adapter)
         val input = EditorEditText(RuntimeEnvironment.getApplication())
         try {
             input.editorId = token
             input.v2Driver = adapter
-            val snapshot = tableInputMappingSnapshotWithFollowingProse(adapter.positionEpoch ?: "1")
-            assertTrue(input.applyUpdateJSON(requireNotNull(adoptExternalRender(adapter, snapshot.toString()))))
+            val update = requireNotNull(adapter.setContentJson(rootTableDocument()))
+            assertTrue(input.applyUpdateJSON(update))
+            input.applySelectionFromJSON(JSONObject().put("type", "text").put("anchor", 0).put("head", 0)
+                .put("anchorScalar", 5).put("headScalar", 5), adapter.baseDocumentRevision.toString())
             assertEquals(5, input.inputScalar(2))
             val connection = requireNotNull(input.onCreateInputConnection(android.view.inputmethod.EditorInfo()))
             val before = input.text.toString()
             adapter.releaseNativeBindingOwner(input.nativeBindingToken)
             assertNull(adapter.nativeOwnerId)
-            assertNotNull(adoptExternalRender(adapter, snapshot.toString()))
-            assertNotNull(adapter.cachedTableInputMappings)
-            assertEquals(snapshot.getString("positionEpoch"), adapter.positionEpoch)
+            assertNotNull(adapter.refreshFromRustState(null))
+            assertNotNull(adapter.tableMappingsForTesting)
+            assertNull(adapter.positionEpoch)
             assertFalse(input.ownsNativeBinding(adapter))
             assertNull(input.inputScalar(2))
-            backend.calls.clear()
+            val documentBefore = adapter.documentJson()
             connection.commitText("wrong", 1)
             assertEquals(before, input.text.toString())
-            assertFalse(backend.calls.contains("applyNativeIntent"))
+            assertEquals(documentBefore, adapter.documentJson())
         } finally {
             input.v2Driver = null
             EditorV2Registry.remove(adapter.editorId)
@@ -278,14 +296,16 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
 
     @Test
     fun `root table composition restores transient text when binding authority is lost`() {
-        val adapter = makeAdapter()
+        val adapter = makeRootTableAdapter()
         val token = EditorV2Registry.register(adapter)
         val input = EditorEditText(RuntimeEnvironment.getApplication())
         try {
             input.editorId = token
             input.v2Driver = adapter
-            val snapshot = tableInputMappingSnapshotWithFollowingProse(adapter.positionEpoch ?: "1")
-            assertTrue(input.applyUpdateJSON(requireNotNull(adoptExternalRender(adapter, snapshot.toString()))))
+            val update = requireNotNull(adapter.setContentJson(rootTableDocument()))
+            assertTrue(input.applyUpdateJSON(update))
+            input.applySelectionFromJSON(JSONObject().put("type", "text").put("anchor", 0).put("head", 0)
+                .put("anchorScalar", 5).put("headScalar", 5), adapter.baseDocumentRevision.toString())
             val authorized = input.text.toString()
             input.setSelection(2)
             val connection = requireNotNull(input.onCreateInputConnection(
@@ -294,10 +314,10 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
             assertEquals("\u200B\nxz", input.text.toString())
             adapter.releaseNativeBindingOwner(input.nativeBindingToken)
             assertFalse(input.ownsNativeBinding(adapter))
-            backend.calls.clear()
+            val documentBefore = adapter.documentJson()
             assertTrue(connection.finishComposingText())
             assertEquals(authorized, input.text.toString())
-            assertFalse(backend.calls.contains("applyNativeIntent"))
+            assertEquals(documentBefore, adapter.documentJson())
         } finally {
             input.v2Driver = null
             EditorV2Registry.remove(adapter.editorId)
@@ -307,36 +327,31 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
 
     @Test
     fun `root table marker maps following prose and blocks table input`() {
-        val adapter = makeAdapter()
+        val adapter = makeRootTableAdapter()
         val token = EditorV2Registry.register(adapter)
         val input = EditorEditText(RuntimeEnvironment.getApplication())
         try {
             input.editorId = token
             input.v2Driver = adapter
-            val snapshot = tableInputMappingSnapshot()
-            snapshot.getJSONArray("renderBlocks").put(org.json.JSONArray()
-                .put(JSONObject().put("type", "blockStart").put("nodeType", "paragraph").put("depth", 0))
-                .put(JSONObject().put("type", "textRun").put("text", "😀z").put("marks", org.json.JSONArray()))
-                .put(JSONObject().put("type", "blockEnd")))
-            snapshot.put("scalarLength", 7)
-            snapshot.getJSONObject("selection").put("anchorScalar", 5).put("headScalar", 5)
-            snapshot.put("positionEpoch", adapter.positionEpoch ?: "1")
-            val update = requireNotNull(adoptExternalRender(adapter, snapshot.toString()))
+            val update = requireNotNull(adapter.setContentJson(rootTableDocument("😀z")))
+            val tableKey = adapter.tableIndex.tableKeys.single()
             val probe = RenderBridge.buildSpannableFromBlocks(
                 JSONObject(update).getJSONArray("renderBlocks"),
                 baseFontSize = 16f,
                 textColor = android.graphics.Color.BLACK,
-                rootTableIds = setOf("t0")
+                rootTableIds = setOf(tableKey)
             )
             assertEquals("\u200B\n😀z", probe.toString())
-            assertNotNull(RootTablePositionMap.fromRendered(probe, mapOf("t0" to TableInputExtent(0, 4)), 7))
+            assertNotNull(RootTablePositionMap.fromRendered(probe, mapOf(tableKey to TableScalarExtent(0, 4)), 7))
             assertEquals(update, adapter.cachedViewUpdateJson)
             assertEquals(1uL, adapter.cachedAtomicRenderDocumentRevision)
-            assertNotNull(adapter.cachedTableInputMappings)
+            assertNotNull(adapter.tableMappingsForTesting)
 
             val applied = input.applyUpdateJSON(update)
             assertTrue(input.imeTraceSnapshotForTesting().joinToString("\n"), applied)
             assertEquals("\u200B\n😀z", input.text.toString())
+            input.applySelectionFromJSON(JSONObject().put("type", "text").put("anchor", 0).put("head", 0)
+                .put("anchorScalar", 5).put("headScalar", 5), adapter.baseDocumentRevision.toString())
             assertEquals(5, input.inputScalarAtLocalUtf16(2, input.text.toString()))
             assertEquals(6, input.inputScalarAtLocalUtf16(4, input.text.toString()))
             assertEquals(5 to 6, input.inputScalarRangeAtLocalUtf16(2, 4, input.text.toString()))
@@ -366,10 +381,10 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
             assertFalse(input.ownsNativeBinding(adapter))
             assertNull(input.inputScalar(3))
             val beforeStaleInput = input.text.toString()
-            backend.calls.clear()
+            val documentBefore = adapter.documentJson()
             staleConnection.commitText("wrong", 1)
             assertEquals(beforeStaleInput, input.text.toString())
-            assertFalse(backend.calls.contains("applyNativeIntent"))
+            assertEquals(documentBefore, adapter.documentJson())
             adapter.baseDocumentRevision = 2uL
             assertNull(input.inputScalar(3))
         } finally {
@@ -380,18 +395,19 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
     }
 
     @Test
-    fun `root table rejects an update without its mapping atomically`() {
-        val adapter = makeAdapter()
+    fun `root table rejects an unpaired update atomically`() {
+        val adapter = makeRootTableAdapter()
         val token = EditorV2Registry.register(adapter)
         val input = EditorEditText(RuntimeEnvironment.getApplication())
         try {
             input.editorId = token
             input.v2Driver = adapter
-            val update = requireNotNull(adoptExternalRender(adapter,
-                tableInputMappingSnapshot().put("positionEpoch", adapter.positionEpoch ?: "1").toString()))
+            val update = requireNotNull(adapter.setContentJson(rootTableDocument()))
             assertTrue(input.applyUpdateJSON(update))
+            input.applySelectionFromJSON(JSONObject().put("type", "text").put("anchor", 0).put("head", 0)
+                .put("anchorScalar", 5).put("headScalar", 5), adapter.baseDocumentRevision.toString())
             val before = input.text.toString()
-            val stale = JSONObject(update).apply { remove("tableInputMappings") }
+            val stale = JSONObject(update).put("documentVersion", "0")
             assertFalse(input.applyUpdateJSON(stale.toString()))
             assertEquals(before, input.text.toString())
         } finally {
@@ -455,7 +471,7 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
             val beforeScalar = requireNotNull(input.inputPositionScalarAtLocalUtf16(proseLocal, input.text.toString()))
             var rendered = 0
             input.onBeforeRenderRefresh = { rendered++ }
-            val cell = requireNotNull(adapter.cachedTableInputMappings).tables.values.single().cells.single()
+            val cell = requireNotNull(adapter.tableMappingsForTesting).tables.values.single().cells.single()
             val inserted = "XYZ"
             val update = requireNotNull(adapter.insertText(inserted, cell.blocks.first().contentScalarStart))
             assertTrue("a map-only table update is still adopted", input.applyUpdateJSON(update))
@@ -487,7 +503,7 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
             val document = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"😀"}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"cell"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
             val update = requireNotNull(adapter.setContentJson(document))
             assertTrue(input.applyUpdateJSON(update))
-            val extent = requireNotNull(adapter.cachedTableInputMappings?.tables?.values?.single()?.extent)
+            val extent = requireNotNull(adapter.tableMappingsForTesting?.tables?.values?.single()?.extent)
             assertEquals(2, extent.scalarStart)
             assertEquals(6, extent.scalarEnd)
             assertEquals("😀\n\u200B\nafter", input.text.toString())
@@ -566,7 +582,7 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
 
             withDocument(table(true), table(true), paragraph("end")) { freshAdapter, fresh ->
                 assertEquals("\u200B\n\u200B\nend", fresh.text.toString())
-                val adjacent = freshAdapter.cachedTableInputMappings!!.tables.values.mapNotNull { it.extent }
+                val adjacent = freshAdapter.tableMappingsForTesting!!.tables.values.mapNotNull { it.extent }
                     .sortedBy { it.scalarStart }
                 assertEquals(2, adjacent.size)
                 val after = adjacent[1].scalarEnd + 1
@@ -581,12 +597,12 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
 
             withDocument(paragraph("before"), table(false), paragraph("after")) { freshAdapter, fresh ->
                 assertEquals("before\nafter", fresh.text.toString())
-                assertNull(freshAdapter.cachedTableInputMappings!!.tables.values.single().extent)
+                assertNull(freshAdapter.tableMappingsForTesting!!.tables.values.single().extent)
                 assertNull(fresh.inputScalar(7))
             }
 
             withDocument(paragraph(""), table(true), paragraph("")) { freshAdapter, fresh ->
-                val tableEnd = freshAdapter.cachedTableInputMappings!!.tables.values.single().extent!!.scalarEnd
+                val tableEnd = freshAdapter.tableMappingsForTesting!!.tables.values.single().extent!!.scalarEnd
                 val marker = fresh.text.toString().indexOf('\u200B', 1)
                 assertTrue(marker >= 0)
                 assertEquals(tableEnd + 1, fresh.inputScalarAtLocalUtf16(marker + 2,
@@ -598,7 +614,7 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
                     .put(JSONObject().put("type", "text").put("text", "tail"))
                     .put(JSONObject().put("type", "hardBreak")))
             withDocument(paragraph("before"), table(true), hardBreakParagraph) { freshAdapter, fresh ->
-                val tableEnd = freshAdapter.cachedTableInputMappings!!.tables.values.single().extent!!.scalarEnd
+                val tableEnd = freshAdapter.tableMappingsForTesting!!.tables.values.single().extent!!.scalarEnd
                 val after = fresh.text.toString().indexOf("tail")
                 assertTrue(after >= 0)
                 assertEquals(tableEnd + 1, fresh.inputScalarAtLocalUtf16(after, fresh.text.toString()))
@@ -610,46 +626,20 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
     }
 
     @Test
-    fun `semantic table admission rejects malformed patches atomically`() {
-        val adapter = makeAdapter()
-        val attrsKey = "a".repeat(64)
-        val snapshot = JSONObject(atomicRenderSnapshot("base", "1"))
-        val table = JSONObject("""{
-            "tablePos":0,"sourceId":"y1-2","sourceEnd":10,"rows":1,"columns":1,"columnWidths":[null],
-            "direction":null,"irregular":false,"readOnlyDescendants":false,"attrsKey":"$attrsKey",
-            "sourceRows":[{"sourcePos":1,"sourceEnd":9,"attrsKey":"$attrsKey"}],
-            "syntheticRegions":[],"failure":null,"compatibilityDiagnostic":null,
-            "cells":[{"sourcePos":2,"sourceEnd":8,"row":0,"column":0,"rowspan":1,"colspan":1,
-                "header":false,"attrsKey":"$attrsKey","contentKey":"same",
-                "elements":[{"type":"textRun","text":"base","marks":[]}]}]
-        }""")
-        fun blocks(value: JSONObject) = org.json.JSONArray().put(org.json.JSONArray().put(JSONObject().put("type", "table").put("tableId", "t0")))
-        snapshot.put("renderBlocks", blocks(table))
-        snapshot.put("tableAttributes", JSONObject().put(attrsKey, "{}"))
-        snapshot.put("tableRecords", JSONObject().put("t0", table))
-        assertNotNull(adoptExternalRender(adapter, snapshot.toString()))
-        val retainedNoop = JSONObject(snapshot.toString()).put("renderBlocks", JSONObject.NULL).put("renderPatch", JSONObject().put("baseDocumentVersion", "1")
-            .put("startIndex", 0).put("deleteCount", 0).put("renderBlocks", org.json.JSONArray()))
-        assertNotNull(adoptExternalRender(adapter, retainedNoop.toString()))
-        val baseline = adapter.baseDocumentRevision
-        val baselineJson = adapter.cachedAtomicRenderJson
-        val missingRetainedReference = JSONObject(snapshot.toString()).put("renderBlocks", JSONObject.NULL)
-            .put("tableAttributes", JSONObject()).put("renderPatch", JSONObject().put("baseDocumentVersion", "1")
-                .put("startIndex", 0).put("deleteCount", 0).put("renderBlocks", org.json.JSONArray()))
-        assertNull(adoptExternalRender(adapter, missingRetainedReference.toString()))
-        assertEquals(baselineJson, adapter.cachedAtomicRenderJson)
-        for (field in listOf("failure", "compatibilityDiagnostic", "columns", "attrsJson")) {
-            val changed = JSONObject(table.toString()).put(field, when (field) {
-                "columns" -> 0
-                "attrsJson" -> "{\"width\":1e309}"
-                else -> "unknown"
-            })
-            val patch = JSONObject(snapshot.toString()).put("renderBlocks", JSONObject.NULL).put("tableRecords", JSONObject().put("t0", changed)).put("renderPatch",
-                JSONObject().put("baseDocumentVersion", "1").put("startIndex", 0).put("deleteCount", 1).put("renderBlocks", blocks(changed)))
-            assertNull(adoptExternalRender(adapter, patch.toString()))
-            assertEquals(baseline, adapter.baseDocumentRevision)
-            assertEquals(baselineJson, adapter.cachedAtomicRenderJson)
-        }
+    fun `invalid root patch and frame leave all installed state untouched`() = withFrameAdapter { adapter, backend, errors ->
+        val originalIndex = adapter.tableIndex
+        val originalRoot = adapter.cachedViewUpdateJson
+        val originalRevision = adapter.installedFrameRevision
+        backend.transform = { frame -> frame.copy(snapshotJson = JSONObject(frame.snapshotJson)
+            .put("renderBlocks", JSONObject.NULL).put("renderPatch", JSONObject()
+                .put("baseDocumentVersion", "0").put("startIndex", 0).put("deleteCount", 1)
+                .put("renderBlocks", org.json.JSONArray())).toString()) }
+        assertNull(adapter.refreshFromRustState(null))
+        assertTrue(originalIndex === adapter.tableIndex)
+        assertEquals(originalRoot, adapter.cachedViewUpdateJson)
+        assertEquals(originalRevision, adapter.installedFrameRevision)
+        assertEquals(2, backend.frames.size)
+        assertEquals(1, errors.size)
     }
 
     @Test
@@ -899,7 +889,8 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
             .put("historyState", JSONObject().put("canUndo", false).put("canRedo", true))
             .toString()
 
-        assertNotNull(adoptExternalRender(adapter, snapshot))
+        backend.nextRenderUpdateResult = EditorV2CallResult.Ok(snapshot)
+        assertNotNull(adapter.refreshFromRustState(null))
         backend.calls.clear()
 
         assertEquals(false, adapter.historyCanUndo())

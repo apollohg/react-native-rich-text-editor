@@ -16,6 +16,11 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
+    private fun adoptNativeSnapshot(adapter: EditorV2Adapter, snapshot: String): String? {
+        backend.nextRenderUpdateResult = EditorV2CallResult.Ok(snapshot)
+        return adapter.adoptExternalRender("""{"documentVersion":"0"}""")
+    }
+
     @Test
     fun `atomic admission accepts language and rejects malformed language`() {
         fun snapshot(language: Any) = JSONObject(atomicRenderSnapshot("base", "7")).apply {
@@ -28,10 +33,10 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
                     ).put("nodeType", "codeBlock").put("depth", 0).put("language", language)
             )
         }.toString()
-        assertNotNull(adoptExternalRender(makeAdapter(), snapshot("rust")))
-        assertNotNull(adoptExternalRender(makeAdapter(), snapshot(JSONObject.NULL)))
-        assertNull(adoptExternalRender(makeAdapter(), snapshot(42)))
-        assertNull(adoptExternalRender(makeAdapter(), snapshot(JSONObject())))
+        assertNotNull(adoptNativeSnapshot(makeAdapter(), snapshot("rust")))
+        assertNotNull(adoptNativeSnapshot(makeAdapter(), snapshot(JSONObject.NULL)))
+        assertNull(adoptNativeSnapshot(makeAdapter(), snapshot(42)))
+        assertNull(adoptNativeSnapshot(makeAdapter(), snapshot(JSONObject())))
     }
 
     @Test
@@ -64,7 +69,7 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
                 "textDecorationLine",
                 "underline line-through"
             ).put("textDecorationStyle", "double")
-        assertNotNull(adoptExternalRender(makeAdapter(), snapshot(valid)))
+        assertNotNull(adoptNativeSnapshot(makeAdapter(), snapshot(valid)))
         listOf<Any>(
             "bad",
             JSONObject().put("unknown", 1),
@@ -74,7 +79,7 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
             JSONObject().put("fontWeight", 700),
             JSONObject().put("fontStyle", "oblique")
         )
-            .forEach { assertNull(adoptExternalRender(makeAdapter(), snapshot(it))) }
+            .forEach { assertNull(adoptNativeSnapshot(makeAdapter(), snapshot(it))) }
     }
 
     @Test
@@ -298,71 +303,25 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
     }
 
     @Test
-    fun `external adoption keeps the previous snapshot when epoch pinning fails`() {
+    fun `external notice keeps the previous snapshot when native frame fetch fails`() {
         val adapter = makeAdapter()
         adapter.setContentHtml("<p>a</p>")
         adapter.claimNativeBindingIfUnowned(99L)
-        val session = sessionOf(adapter)
-        val snapshotA = atomicRenderSnapshot("a", session.revision.toString(), selectionScalar = 0)
-        assertNotNull(adoptExternalRender(adapter, snapshotA))
-        val revisionA = adapter.baseDocumentRevision
-        val stateRevisionA = adapter.stateRevision
-        val epochA = session.positionEpochs.getValue("99")
+        assertNotNull(adapter.refreshFromRustState(null))
+        val previous = adapter.cachedAtomicRenderJson
+        val revision = adapter.baseDocumentRevision
+        val epoch = adapter.positionEpoch
         val errors = mutableListOf<EditorV2Error>()
         adapter.onAutonomousError = errors::add
-        val snapshotB = JSONObject(
-            atomicRenderSnapshot("bb", (revisionA + 1u).toString(), selectionScalar = 1)
-        )
-            .put("historyState", JSONObject().put("canUndo", false).put("canRedo", true))
-            .toString()
-        backend.nextPinPositionEpochResult = EditorV2CallResult.Err(
-            EditorV2Error("operation", "REVISION_MISMATCH", "stale")
-        )
+        backend.nextRenderUpdateResult = EditorV2CallResult.Err(
+            EditorV2Error("operation", "REVISION_MISMATCH", "stale"))
 
-        assertNull(adoptExternalRender(adapter, snapshotB))
+        assertNull(adoptExternalRender(adapter, atomicRenderSnapshot("bb", (revision + 1u).toString())))
 
-        assertEquals(revisionA, adapter.baseDocumentRevision)
-        assertEquals(stateRevisionA, adapter.stateRevision)
-        val cachedA = requireNotNull(adapter.atomicRenderJson(revisionA.toString()))
-        assertEquals("a", renderedText(cachedA))
-        assertEquals(0, JSONObject(cachedA).getJSONObject("selection").getInt("anchorScalar"))
-        assertFalse(
-            JSONObject(
-                cachedA
-            ).getJSONObject("activeState").getJSONObject("marks").getBoolean("bold")
-        )
-        assertEquals(true, adapter.historyCanUndo())
-        assertEquals(false, adapter.historyCanRedo())
-        assertNull(adapter.atomicRenderJson((revisionA + 1u).toString()))
-        assertEquals(epochA, session.positionEpochs.getValue("99"))
+        assertEquals(previous, adapter.cachedAtomicRenderJson)
+        assertEquals(revision, adapter.baseDocumentRevision)
+        assertEquals(epoch, adapter.positionEpoch)
         assertEquals("REVISION_MISMATCH", errors.single().code)
-    }
-
-    @Test
-    fun `external adoption keeps the previous snapshot when epoch pin result is malformed`() {
-        val adapter = makeAdapter()
-        adapter.setContentHtml("<p>a</p>")
-        adapter.claimNativeBindingIfUnowned(99L)
-        val session = sessionOf(adapter)
-        val snapshotA = atomicRenderSnapshot("a", session.revision.toString(), selectionScalar = 0)
-        assertNotNull(adoptExternalRender(adapter, snapshotA))
-        val revisionA = adapter.baseDocumentRevision
-        val epochA = session.positionEpochs.getValue("99")
-        val errors = mutableListOf<EditorV2Error>()
-        adapter.onAutonomousError = errors::add
-        backend.nextPinPositionEpochResult = EditorV2CallResult.Ok("{}")
-
-        assertNull(
-            adoptExternalRender(
-                adapter,
-                atomicRenderSnapshot("bb", (revisionA + 1u).toString(), selectionScalar = 1)
-            )
-        )
-
-        assertEquals(revisionA, adapter.baseDocumentRevision)
-        assertEquals("a", renderedText(adapter.atomicRenderJson(revisionA.toString())))
-        assertEquals(epochA, session.positionEpochs.getValue("99"))
-        assertEquals("FFI_RESULT_INVALID", errors.single().code)
     }
 
     @Test
@@ -382,8 +341,6 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
 
     @Test
     fun `atomic external snapshot accepts an inserted mention carrying node attrs`() {
-        // Rust emits `attrs` on every void/opaque element, so an inserted
-        // mention must survive validation on its way back to the view.
         val adapter = makeAdapter()
         val mention = JSONObject()
             .put("type", "opaqueInlineAtom")
@@ -409,7 +366,7 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
             )
             .toString()
 
-        assertNotNull(adoptExternalRender(adapter, snapshot))
+        assertNotNull(adoptNativeSnapshot(adapter, snapshot))
     }
 
     @Test
@@ -422,7 +379,7 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
                     org.json.JSONArray().put(org.json.JSONArray().put(element))
                 )
                 .toString()
-            return adoptExternalRender(adapter, snapshot)
+            return adoptNativeSnapshot(adapter, snapshot)
         }
 
         assertNotNull(
@@ -470,7 +427,7 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
             )
             .toString()
 
-        assertNull(adoptExternalRender(adapter, snapshot))
+        assertNull(adoptNativeSnapshot(adapter, snapshot))
     }
 
     @Test
@@ -478,7 +435,7 @@ internal class EditorV2AdapterCollaborationTest : EditorV2AdapterTestFixture() {
         val adapter = makeAdapter()
         val adopted = JSONObject(
             requireNotNull(
-                adoptExternalRender(adapter, atomicRenderSnapshot("ab", "4", selectionScalar = 1))
+                adoptNativeSnapshot(adapter, atomicRenderSnapshot("ab", "4", selectionScalar = 1))
             )
         )
 

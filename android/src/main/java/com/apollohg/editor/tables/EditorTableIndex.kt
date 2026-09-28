@@ -1,5 +1,6 @@
 package com.apollohg.editor.tables
 
+import uniffi.editor_core.FfiViewerElement
 import com.apollohg.editor.canonicalV2U64
 import org.json.JSONException
 import org.json.JSONObject
@@ -379,6 +380,14 @@ internal class EditorTableIndex {
 
         fun validate(cell: FfiTableCellRecord, tableKey: String, index: Int, pool: Map<String, String>) {
             if (cell.attrsKey !in pool) throw TableFrameRejection.MissingAttribute(cell.attrsKey)
+            val voidIndices = mutableSetOf<UInt>()
+            cell.voidElementIndices.forEach { elementIndex ->
+                val element = cell.elements.getOrNull(elementIndex.toInt())
+                if (!voidIndices.add(elementIndex) || element !is FfiViewerElement.InlineAtom &&
+                    element !is FfiViewerElement.BlockAtom) {
+                    throw TableFrameRejection.InputBlockOutOfStride(tableKey, index)
+                }
+            }
             var previousDoc = 0u
             var previousScalar = 0u
             cell.inputBlocks.forEach { block ->

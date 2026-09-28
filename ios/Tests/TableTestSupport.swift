@@ -296,7 +296,7 @@ extension EditorV2Adapter {
                 return ["sourcePos": Int(doc), "sourceEnd": Int(doc + cell.docSize), "row": Int(cell.row), "column": Int(cell.column),
                         "rowspan": Int(cell.rowspan), "colspan": Int(cell.colspan), "header": cell.header,
                         "attrsKey": cell.attrsKey, "contentKey": cell.contentKey,
-                        "elements": RenderBridge.inputElements(cell.elements, cellDocStart: doc)!]
+                        "elements": RenderBridge.inputElements(cell.elements, voidElementIndices: cell.voidElementIndices, cellDocStart: doc)!]
             }
             return (key, ["tablePos": Int(start), "sourceEnd": Int(start + record.docSize), "rows": Int(record.rows), "columns": Int(record.columns),
                           "columnWidths": record.columnWidths.map { $0.map { $0 as Any } ?? NSNull() },

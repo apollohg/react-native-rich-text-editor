@@ -130,7 +130,7 @@ class NativeTableAcceptanceTest {
             if (token != 0L) releasePairedV2TestEditor(token)
         }
 
-        fun tableId(): String = requireNotNull(adapter.cachedTableRecords.entries.firstOrNull {
+        fun tableId(): String = requireNotNull(adapter.tableRecordsForTesting.entries.firstOrNull {
             !it.value.optBoolean("readOnlyDescendants", true)
         }?.key) { "no editable table is rendered" }
 
@@ -140,7 +140,7 @@ class NativeTableAcceptanceTest {
 
         fun activeCell(): Long? = view.activeTableCellPosition
 
-        fun tableEnd(): Int = requireNotNull(adapter.cachedTableRecords[tableId()]).getInt("sourceEnd")
+        fun tableEnd(): Int = requireNotNull(adapter.tableRecordsForTesting[tableId()]).getInt("sourceEnd")
 
         fun engineSelection(): JSONObject {
             return JSONObject(UniffiEditorV2Backend.renderUpdate(adapter.editorId, null, null).required("render update"))
@@ -411,9 +411,9 @@ class NativeTableAcceptanceTest {
                 val (raw, revision, shortRow) = harness.onMain {
                     val raw = harness.grid()
                     assertEquals("the import keeps its raw row widths: $raw", RAW_ROW_WIDTHS, harness.rowWidths())
-                    val record = requireNotNull(harness.adapter.cachedTableRecords[harness.tableId()])
+                    val record = requireNotNull(harness.adapter.tableRecordsForTesting[harness.tableId()])
                     assertTrue(record.getBoolean("irregular"))
-                    assertTrue("the projection fills the raw gaps", record.getJSONArray("syntheticRegions").length() > 0)
+                    assertTrue("the projection fills the raw gaps", requireNotNull(harness.adapter.tableIndex.record(harness.tableId())).syntheticRegions.isNotEmpty())
                     Triple(raw, harness.adapter.baseDocumentRevision, harness.positions()[IRREGULAR_SHORT_ROW_CELL])
                 }
                 harness.onMain {
@@ -481,7 +481,7 @@ class NativeTableAcceptanceTest {
         )
         harness.onMain {
             assertEquals("the room opens on its seed", TRAILING_PARAGRAPHS + 1, harness.blocks().size)
-            assertTrue("the seed holds no table yet", harness.adapter.cachedTableRecords.isEmpty())
+            assertTrue("the seed holds no table yet", harness.adapter.tableRecordsForTesting.isEmpty())
             harness.root.requestFocus()
             harness.root.setSelection(INTRO_TEXT.length)
             harness.applyLocalCommand(JSONObject().put("type", INSERT_TABLE).put("rows", TABLE_ROWS)

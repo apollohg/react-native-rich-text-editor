@@ -1,6 +1,4 @@
 package com.apollohg.editor
-import android.app.Activity
-import android.os.Handler
 import android.os.Looper
 import android.view.inputmethod.EditorInfo
 import java.time.Duration
@@ -15,7 +13,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
@@ -48,8 +45,10 @@ internal class NativeEditorExpoViewControlledUpdateTest :
         val (adapterB, tokenB) = registerAdapter()
         val payloads = mutableListOf<Map<String, Any>>()
         try {
-            assertNotNull(adapterA.adoptExternalRender(atomicRenderUpdateJson("A", "7")))
-            assertNotNull(adapterB.adoptExternalRender(atomicRenderUpdateJson("B", "8")))
+            backend.sessions.getValue(adapterA.editorId).apply { text = StringBuilder("A"); revision = 7uL }
+            assertNotNull(adapterA.refreshFromRustState(null))
+            backend.sessions.getValue(adapterB.editorId).apply { text = StringBuilder("B"); revision = 8uL }
+            assertNotNull(adapterB.refreshFromRustState(null))
             view.onEditorUpdateForTesting = { payloads += it }
             view.onAddonEventForTesting = {}
 
@@ -104,7 +103,8 @@ internal class NativeEditorExpoViewControlledUpdateTest :
         val (adapterB, tokenB) = registerAdapter()
         val payloads = mutableListOf<Map<String, Any>>()
         try {
-            assertNotNull(adapterA.adoptExternalRender(atomicRenderUpdateJson("stale A", "7")))
+            backend.sessions.getValue(adapterA.editorId).apply { text = StringBuilder("stale A"); revision = 7uL }
+            assertNotNull(adapterA.refreshFromRustState(null))
             view.onEditorUpdateForTesting = { payloads += it }
             view.onAddonEventForTesting = {}
 

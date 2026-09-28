@@ -123,7 +123,9 @@ internal fun NativeEditorExpoView.preflightUpdateEventFromJSON(
 ): PreflightUpdateEvent? {
     val update = updateJSON ?: return null
     val documentRevision = documentVersionFromUpdateJSON(update) ?: return null
-    return PreflightUpdateEvent(updateJSON = update, documentRevision = documentRevision)
+    val adapter = EditorV2Registry.adapterForViewToken(richTextView.editorId)
+    val snapshot = if (adapter == null) update else adapter.atomicRenderJson(documentRevision) ?: return null
+    return PreflightUpdateEvent(updateJSON = snapshot, documentRevision = documentRevision)
 }
 
 internal fun NativeEditorExpoView.addPreflightUpdateToEvent(

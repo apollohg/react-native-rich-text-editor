@@ -1,5 +1,6 @@
 package com.apollohg.editor.tables
 
+import com.apollohg.editor.tableRecordsForTesting
 import android.app.Activity
 import android.content.ClipboardManager
 import android.content.Context
@@ -53,6 +54,21 @@ import org.robolectric.annotation.GraphicsMode
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
+    @Test
+    fun `large table frame coordinates match the engine for every cell`() {
+        val created = UniffiEditorV2Backend.create(PlainTableFixture.CONFIG, null) as EditorV2CallResult.Ok
+        val adapter = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend,
+            JSONObject(created.value).getString("editorId"), false))
+        try {
+            requireNotNull(adapter.setContentJson(PlainTableFixture.document(PlainTableFixture.LARGE_ROWS, PlainTableFixture.LARGE_COLUMNS)))
+            assertEquals(PlainTableFixture.LARGE_ROWS * PlainTableFixture.LARGE_COLUMNS,
+                adapter.tableIndex.record(adapter.tableIndex.tableKeys.single())?.cells?.size)
+            com.apollohg.editor.assertFramePositionsMatchEngine(adapter)
+        } finally {
+            adapter.destroy()
+        }
+    }
+
     private data class Peer(
         val clientId: String,
         val color: String,
@@ -77,7 +93,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
 
         fun positions(): List<Int> = adapter.tableCellPositions(tableId)
 
-        fun tablePos(): Int = requireNotNull(adapter.cachedTableRecords[tableId]).getInt("tablePos")
+        fun tablePos(): Int = requireNotNull(adapter.tableRecordsForTesting[tableId]).getInt("tablePos")
 
         fun presentedCell(position: Int): ViewerTablePresentedCell = drawing.presentedRealCell(tableId, position)
 
@@ -229,7 +245,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             fixture.applyRemoteCommand(JSONObject().put("type", MERGE_TABLE_CELLS))
             fixture.deliverRemoteCommit()
 
-            val cells = requireNotNull(fixture.adapter.cachedTableRecords[fixture.tableId]).getJSONArray("cells")
+            val cells = requireNotNull(fixture.adapter.tableRecordsForTesting[fixture.tableId]).getJSONArray("cells")
             val mergedRecord = (0 until cells.length()).map(cells::getJSONObject).single { it.getInt("sourcePos") == first }
             assertEquals("the remote merge must land", MERGED_COLSPAN, mergedRecord.getInt("colspan"))
             val remote = fixture.drawing.remoteTableCellSelections.single()
@@ -400,7 +416,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
                 fixture.view.setEditorId(otherToken)
                 assertTrue(fixture.root.applyUpdateJSON(update))
                 fixture.relayout()
-                val otherCells = other.cachedTableRecords.values.single().getJSONArray("cells")
+                val otherCells = other.tableRecordsForTesting.values.single().getJSONArray("cells")
                 val otherOpenings = (0 until otherCells.length()).map { otherCells.getJSONObject(it).getInt("sourcePos") }
                 assertFalse("the fixture must move the openings", first in otherOpenings)
                 assertTrue("the old opening addresses no cell of the new owner",
@@ -561,7 +577,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             fixture.deliverRemoteCommit()
             fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, tablePos, tablePos, staleRectangle)))
 
-            assertTrue("the remote peer deleted the table", fixture.adapter.cachedTableRecords.isEmpty())
+            assertTrue("the remote peer deleted the table", fixture.adapter.tableRecordsForTesting.isEmpty())
             assertEquals("only the remote change was applied", revision + 1u, fixture.adapter.baseDocumentRevision)
             assertFalse(fixture.root.authoritativeCellSelectionActive)
             assertTrue(fixture.drawing.selectedTableCellSourceIndices.isEmpty())
@@ -583,7 +599,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             fixture.relayout()
 
             assertCancelledComposition(fixture, composing, remoteDocument, revision)
-            assertTrue(fixture.adapter.cachedTableRecords.isEmpty())
+            assertTrue(fixture.adapter.tableRecordsForTesting.isEmpty())
         }
 
     @Test
@@ -714,7 +730,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             view.setAttachedToNativeWindowForTesting(true)
             view.setEditorId(token)
             assertTrue(view.richTextView.editorEditText.applyUpdateJSON(requireNotNull(adapter.setContentJson(document))))
-            val tableId = requireNotNull(adapter.cachedTableRecords.entries.firstOrNull {
+            val tableId = requireNotNull(adapter.tableRecordsForTesting.entries.firstOrNull {
                 !it.value.optBoolean("readOnlyDescendants", true)
             }?.key)
             val fixture = Fixture(view, adapter, token, tableId, viewport)

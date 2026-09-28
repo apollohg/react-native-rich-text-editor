@@ -2,7 +2,6 @@ package com.apollohg.editor
 
 import com.apollohg.editor.tables.EditorCellSelection
 import com.apollohg.editor.tables.resolveEditorCellSelection
-import org.json.JSONArray
 import org.json.JSONObject
 
 internal sealed interface SelectionSyncOutcome {
@@ -28,11 +27,11 @@ internal fun EditorV2Adapter.admitsTableMutation(admission: TableMutationAdmissi
         cachedAtomicRenderDocumentRevision == admission.documentRevision &&
         tablePresentationDocumentGeneration == admission.presentationGeneration &&
         nativeOwnerId == admission.ownerId && currentNativeOwnerToken == admission.ownerToken &&
-        cachedTableRecords[admission.tableId]?.optBoolean("readOnlyDescendants", true) == false
+        tableIndex.record(admission.tableId)?.readOnlyDescendants == false
 
 internal fun EditorV2Adapter.selectedTableCellsMutationAdmission(): TableMutationAdmission? {
     val selection = cachedAtomicRenderSelection() ?: return null
-    val cells = resolveEditorCellSelection(selection, cachedTableRecords)
+    val cells = resolveEditorCellSelection(selection, tableIndex)
         as? EditorCellSelection.Drawable ?: return null
     return tableMutationAdmission(cells.tableId).takeIf(::admitsTableMutation)
 }
@@ -88,7 +87,7 @@ private fun EditorV2Adapter.applyAdmittedTableCommand(
 ): String? {
     if (!admitsTableMutation(admission)) return null
     if (targetsTable) {
-        val tablePos = exactV2ScalarInt(cachedTableRecords[admission.tableId]?.opt("tablePos") as? Number)
+        val tablePos = tableIndex.tableDocStart(admission.tableId)?.toLong()?.takeIf { it <= Int.MAX_VALUE }?.toInt()
             ?: return null
         command.put("tablePos", tablePos)
     }
@@ -156,9 +155,6 @@ internal fun EditorV2Adapter.invalidateCachedAtomicState(selection: IntArray?) {
     cachedViewUpdateObject = null
     cachedAtomicRenderJson = null
     cachedAtomicRenderSelectionObject = null
-    cachedTableAttributes = emptyMap()
-    cachedTableRecords = emptyMap()
-    cachedTableInputMappings = null
     cachedAtomicRenderDocumentRevision = null
 }
 
@@ -206,9 +202,6 @@ internal fun EditorV2Adapter.ensureSelection(anchor: Int, head: Int): SelectionS
             cachedViewUpdateObject = null
             cachedAtomicRenderJson = null
             cachedAtomicRenderSelectionObject = null
-            cachedTableAttributes = emptyMap()
-            cachedTableRecords = emptyMap()
-            cachedTableInputMappings = null
             cachedAtomicRenderDocumentRevision = null
             SelectionSyncOutcome.Ok
         }

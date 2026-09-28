@@ -450,6 +450,7 @@ pub struct FfiTableCellRecord {
     pub doc_size: u32,
     pub scalar_stride: u32,
     pub elements: Vec<FfiViewerElement>,
+    pub void_element_indices: Vec<u32>,
     pub input_blocks: Vec<FfiCellInputBlock>,
     pub nested_tables: Vec<FfiCellNestedTable>,
 }

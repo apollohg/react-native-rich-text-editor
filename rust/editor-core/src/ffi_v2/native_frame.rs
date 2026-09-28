@@ -159,6 +159,18 @@ fn cell_record(
             .checked_sub(origin)
             .ok_or_else(|| invariant("cell scalar stride is reversed"))?,
         elements,
+        void_element_indices: cell
+            .elements
+            .iter()
+            .enumerate()
+            .filter_map(|(index, element)| {
+                matches!(
+                    element,
+                    RenderElement::VoidInline { .. } | RenderElement::VoidBlock { .. }
+                )
+                .then_some(index as u32)
+            })
+            .collect(),
         input_blocks,
         nested_tables,
     })

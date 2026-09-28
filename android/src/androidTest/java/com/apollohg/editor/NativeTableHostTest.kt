@@ -71,6 +71,36 @@ class NativeTableHostTest {
                         canvasHeight >= visible.bottom)
                 }
             }
+            val cellIndex = PlainTableFixture.LARGE_ROWS * PlainTableFixture.LARGE_COLUMNS / 2
+            var nodeId = 0
+            scenario.onActivity { activity ->
+                val drawing = tableHosts(activity.richTextView).single()
+                val surface = requireNotNull(drawing.preparedLayout).blocks.mapNotNull { it.tableSurface }.single()
+                nodeId = requireNotNull(drawing.tableAccessibilityLocation(surface, cellIndex)).cellNodeId
+                assertTrue(drawing.accessibilityNodeProvider.performAction(nodeId, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
+            }
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { activity ->
+                val drawing = tableHosts(activity.richTextView).single()
+                assertTrue(drawing.accessibilityNodeProvider.performAction(nodeId, AccessibilityNodeInfo.ACTION_CLICK, null))
+            }
+            instrumentation.waitForIdleSync()
+            repeat(PlainTableFixture.TYPING_PROBE_CHARACTERS) { keystroke ->
+                scenario.onActivity { activity ->
+                    val view = activity.richTextView
+                    val prepared = mutableListOf<Int>()
+                    view.editorTableSurface.onTableCellPreparedForTesting = prepared::add
+                    try {
+                        val input = view.activeTextInput
+                        assertTrue(input !== view.editorEditText)
+                        assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText("x", 1))
+                        assertEquals("keystroke $keystroke prepares only its cell", listOf(cellIndex), prepared)
+                    } finally {
+                        view.editorTableSurface.onTableCellPreparedForTesting = null
+                    }
+                }
+                instrumentation.waitForIdleSync()
+            }
             instrumentation.saveDeviceScreenshot("native-table-large-scrolled.png")
         }
     }
@@ -134,7 +164,7 @@ class NativeTableHostTest {
             scenario.onActivity { activity ->
                 val adapter = activity.adapter
                 val root = activity.richTextView.editorEditText
-                val cells = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+                val cells = adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
                 fun point(index: Int) = JSONObject().put("kind", "document")
                     .put("offset", cells.getJSONObject(index).getInt("sourcePos"))
                 val selection = JSONObject().put("type", "cell")
@@ -209,7 +239,7 @@ class NativeTableHostTest {
                     "inputs=${countEditorInputs(activity.richTextView)} rootFocused=${root.hasFocus()} " +
                     "hosts=${tableHosts(activity.richTextView).size} rootText=${root.text} " +
                     "revision=${activity.adapter.baseDocumentRevision} applied=${root.lastAppliedDocumentVersion} " +
-                    "tables=${activity.adapter.cachedTableRecords.keys} maps=${root.rootTableMapTableIds}",
+                    "tables=${activity.adapter.tableRecordsForTesting.keys} maps=${root.rootTableMapTableIds}",
                     activity.currentFocus is EditorEditText)
                 cellInput = activity.currentFocus as EditorEditText
                 assertTrue("cell tap must focus the reusable cell input", cellInput !== root)
@@ -435,7 +465,7 @@ class NativeTableHostTest {
                     append(" cachedRevision=${adapter.cachedAtomicRenderDocumentRevision}")
                     append(" baseRevision=${adapter.baseDocumentRevision}")
                     append(" lastAppliedVersion=${input.lastAppliedDocumentVersion}")
-                    append(" cachedMappingIds=${adapter.cachedTableInputMappings?.tables?.keys}")
+                    append(" cachedMappingIds=${adapter.tableMappingsForTesting?.tables?.keys}")
                     append(" rootMapIds=${input.rootTableMapTableIds}")
                     append(" rootMapVersion=${input.rootTableMapDocumentVersion}")
                     append(" rootMapPresent=${input.rootTablePositionMap != null}")
@@ -501,7 +531,7 @@ class NativeTableHostTest {
             tableBottom <= followingTop)
 
         val extent = requireNotNull(
-            activity.adapter.cachedTableInputMappings?.tables?.values?.single()?.extent
+            activity.adapter.tableMappingsForTesting?.tables?.values?.single()?.extent
         )
         assertEquals(extent.scalarEnd + 1,
             input.inputScalarAtLocalUtf16(afterOffset, content.toString()))

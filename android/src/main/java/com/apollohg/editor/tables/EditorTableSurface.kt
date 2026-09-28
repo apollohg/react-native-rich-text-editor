@@ -1,5 +1,6 @@
 package com.apollohg.editor.tables
 
+import com.apollohg.editor.TableScalarExtent
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -49,7 +50,6 @@ import com.apollohg.editor.updateSelection
 import com.apollohg.editor.cellSelectionEndpoints
 import com.apollohg.editor.RichTextEditorView
 import com.apollohg.editor.canonicalV2U64
-import com.apollohg.editor.exactV2U32
 import com.apollohg.editor.applyRenderedSpannable
 import com.apollohg.editor.applySelectionFromJSON
 import com.apollohg.editor.isAuthorizedForRootTableInput
@@ -135,8 +135,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
 
     private fun cellDocumentPosition(tableId: String, sourceIndex: Int): Int? {
         val adapter = host.editorEditText.v2Driver as? EditorV2Adapter ?: return null
-        val cell = adapter.cachedTableRecords[tableId]?.optJSONArray("cells")?.optJSONObject(sourceIndex) ?: return null
-        return exactV2ScalarInt(cell.opt("sourcePos") as? Number)
+        return adapter.tableIndex.docStart(tableId, sourceIndex)?.toLong()?.takeIf { it <= Int.MAX_VALUE }?.toInt()
     }
 
     private class ReusableCellContents(entry: Entry?, appearance: String) {
@@ -181,7 +180,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         tableAccessibilityEditing = this@EditorTableSurface
         tableCellDocumentPosition = ::cellDocumentPosition
         tableDocumentPosition = { tableId ->
-            (host.editorEditText.v2Driver as? EditorV2Adapter)?.cachedTableRecords?.get(tableId)?.let { exactV2ScalarInt(it.opt("tablePos") as? Number) }
+            (host.editorEditText.v2Driver as? EditorV2Adapter)?.tableIndex?.tableDocStart(tableId)?.toInt()
         }
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
         onTableGeometryChanged = {
@@ -521,7 +520,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         if (selection.optString("type") != "cell") return false
         val anchor = exactV2ScalarInt(selection.opt("anchorCell") as? Number) ?: return false
         val head = exactV2ScalarInt(selection.opt("headCell") as? Number) ?: return false
-        val resolved = resolveEditorCellSelection(selection, adapter.cachedTableRecords)
+        val resolved = resolveEditorCellSelection(selection, adapter.tableIndex)
             as? EditorCellSelection.Drawable ?: return false
         if (resolved.tableId != handle.tableId) return false
         cancelActiveDrag()
@@ -655,7 +654,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         return selection.optString("type") == "cell" &&
             exactV2ScalarInt(selection.opt("anchorCell") as? Number) == drag.anchor &&
             exactV2ScalarInt(selection.opt("headCell") as? Number) == drag.head &&
-            (resolveEditorCellSelection(selection, adapter.cachedTableRecords)
+            (resolveEditorCellSelection(selection, adapter.tableIndex)
                 as? EditorCellSelection.Drawable)?.tableId == drag.admission.tableId
     }
 
@@ -789,7 +788,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
 
     private fun displayedCellSelection(adapter: EditorV2Adapter): Triple<String, Int, Int>? {
         val selection = adapter.cachedAtomicRenderSelection() ?: return null
-        val cells = resolveEditorCellSelection(selection, adapter.cachedTableRecords)
+        val cells = resolveEditorCellSelection(selection, adapter.tableIndex)
             as? EditorCellSelection.Drawable ?: return null
         if (cells.tableId !in drawingView.selectedTableCellSourceIndices) return null
         val (anchor, head) = cellSelectionEndpoints(selection) ?: return null
@@ -884,13 +883,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             this.accessibilityKey = accessibilityKey
             drawingView.invalidateTableAccessibility()
         }
-        val admittedMappings = adapter?.cachedTableInputMappings?.tables
-        val rootTableIds = adapter?.cachedTableRecords?.filterValues {
-            !it.optBoolean("readOnlyDescendants", true)
-        }?.keys
-        val rootExtents = rootTableIds?.mapNotNull { id ->
-            admittedMappings?.get(id)?.extent?.let { id to it }
-        }?.toMap()
+        val rootTableIds = adapter?.tableIndex?.tableKeys?.filter { adapter.tableIndex.record(it)?.host == null }?.toSet()
+        val rootExtents = adapter?.tableIndex?.rootExtents?.filterValues { it.scalarEnd > it.scalarStart }?.mapValues { (_, extent) ->
+            TableScalarExtent(extent.scalarStart.toInt(), extent.scalarEnd.toInt())
+        }
         if (adapter != null && input.rootTableMapPositionEpoch != adapter.positionEpoch) {
             input.adoptCurrentRootTableMapEpoch(adapter)
         }
@@ -899,11 +895,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             input.rootTableMapDocumentVersion != revision.toString() ||
             input.rootTableMapPositionEpoch != adapter.positionEpoch ||
             rootTableIds != input.rootTableMapTableIds ||
-            rootTableIds?.all { admittedMappings?.containsKey(it) == true } != true ||
             rootExtents != input.rootTableMapExtents ||
             input.rootTableMapExtents.keys != markers.keys ||
             input.rootTablePositionMap == null || markers.isEmpty() || width <= 0 ||
-            adapter.cachedTableRecords.keys.containsAll(markers.keys).not()
+            adapter.tableIndex.tableKeys.containsAll(markers.keys).not()
         ) {
             val restoreCellSelectionFocus = input.authoritativeCellSelectionActive && activeCell != null
             if (entries.isNotEmpty() || drawingView.parent != null) clear()
@@ -917,7 +912,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             return
         }
         val cellSelection = adapter.cachedAtomicRenderSelection()?.takeIf { it.optString("type") == "cell" }
-            ?.let { resolveEditorCellSelection(it, adapter.cachedTableRecords) }
+            ?.let { resolveEditorCellSelection(it, adapter.tableIndex) }
         activeDrag?.let { drag -> if (!validDrag(drag)) discardActiveDrag() }
         if (input.authoritativeCellSelectionActive && activeCell != null) {
             invalidateCell()
@@ -928,7 +923,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val nextKey = PreparationKey(adapter, revision, width, input.renderAppearanceRevision,
             adapter.tablePresentationDocumentGeneration, resizePreview, tableDirection)
         if (key != nextKey) {
-            val records = lowerEditorTableRecords(adapter.cachedTableRecords) ?: run { clear(); return }
+            val index = adapter.tableIndex
             val density = input.resources.displayMetrics.density
             val base = EditorTextStyle(fontSize = input.baseFontSize / density,
                 color = input.baseTextColor)
@@ -942,8 +937,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 tableCellPreparationObserver = onTableCellPreparedForTesting
             }
             val appearance = "${input.renderAppearanceRevision}:$tableDirection:$density"
-            val presentationIdentities = adapter.cachedTableRecords.mapValues { (_, record) ->
-                "${adapter.editorId}:${adapter.tablePresentationDocumentGeneration}:${record.getString("sourceId")}"
+            val presentationIdentities = index.tableKeys.associateWith { tableKey ->
+                "${adapter.editorId}:${adapter.tablePresentationDocumentGeneration}:$tableKey"
             }
             val minimumColumnWidth = ceil(preparedTheme.tableStyle.minColumnWidth).toInt()
                 .coerceAtMost(MAXIMUM_COLUMN_WIDTH)
@@ -951,7 +946,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             val shapes = cellShapes.newBuildContext()
             val prepared = try {
                 markers.mapNotNull { (id, _) ->
-                    val source = records[id] ?: return@mapNotNull null
+                    val source = index.record(id) ?: return@mapNotNull null
                     val table = preview?.takeIf {
                         it.edge.tableId == id && it.edge.column in source.columnWidths.indices
                     }?.let { resized ->
@@ -961,9 +956,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                     } ?: source
                     val semantic = "editor-table-$id-$revision"
                     val document = ViewerDocument(semantic,
-                        listOf(ViewerBlock("table", 0, false, null, null, emptyList(), table = table)),
-                        false, 256, tableAttributes = adapter.cachedTableAttributes,
-                        tableRecords = records, tablePresentationIdentities = presentationIdentities)
+                        listOf(ViewerBlock("table", 0, false, null, null, emptyList(), frameRecord = table)),
+                        false, 256, tableAttributes = index.attributeObjects,
+                        frameIndex = index, tablePresentationIdentities = presentationIdentities)
                     val layoutKey = ProseLayoutKey(semantic, width, "editor-table-${input.renderAppearanceRevision}",
                         0, 0, density.toBits().toLong(), revision.toLong(), semantic,
                         tableDirection = tableDirection)
@@ -1007,7 +1002,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         drawingView.selectedTableCellEndpoints = displayedCellSelection(adapter)?.takeIf { (tableId) ->
             tableId in entries && input.isEnabled && input.isEditable && !input.hasPendingCompositionForExternalRefresh() &&
                 input.hasAuthorizedNativeTableOwner(adapter) &&
-                adapter.cachedTableRecords[tableId]?.optBoolean("readOnlyDescendants", true) == false
+                adapter.tableIndex.record(tableId)?.readOnlyDescendants == false
         }
         if (!applyingCellUpdate) reconcileActiveCell()
     }
@@ -1049,7 +1044,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val documentRevision = adapter.cachedAtomicRenderDocumentRevision ?: return null
         val layoutEpoch = canonicalV2U64(adapter.positionEpoch) ?: return null
         val (tableId, sourceIndices) = toolbarAnchorCells() ?: return null
-        val tablePos = exactV2U32(adapter.cachedTableRecords[tableId]?.opt("tablePos") as? Number)
+        val tablePos = adapter.tableIndex.tableDocStart(tableId)
             ?: return null
         val visible = Rect()
         if (drawingView.windowToken == null || !drawingView.getLocalVisibleRect(visible)) return null
@@ -1107,9 +1102,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         if (!root.isEditable || !root.hasAuthorizedNativeTableOwner(adapter) ||
             adapter.cachedAtomicRenderDocumentRevision != adapter.baseDocumentRevision ||
             root.lastAppliedDocumentVersion != adapter.baseDocumentRevision.toString()) return null
-        val table = adapter.cachedTableRecords[tableId] ?: return null
-        val mapping = adapter.cachedTableInputMappings?.tables?.get(tableId) ?: return null
-        return EditorTableCellProjection.project(cellIndex, table, mapping,
+        return EditorTableCellProjection.project(cellIndex, tableId, adapter.tableIndex,
             adapter.baseDocumentRevision.toString(), adapter.positionEpoch ?: return null,
             root.baseFontSize, root.baseTextColor, root.theme, root.resources.displayMetrics.density)
     }
@@ -1124,9 +1117,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             val adapter = root.v2Driver as? EditorV2Adapter ?: return false
             val beforeIds = markers(root).entries.sortedBy { it.value }.map { it.key }
             val ordinal = beforeIds.indexOf(tableId).takeIf { it >= 0 } ?: return false
-            val beforeTable = adapter.cachedTableRecords[tableId] ?: return false
-            val beforeCells = beforeTable.optJSONArray("cells") ?: return false
-            val contentKey = beforeCells.optJSONObject(cellIndex)?.optString("contentKey")
+            val beforeTable = adapter.tableIndex.record(tableId) ?: return false
+            val beforeCells = beforeTable.cells
+            val contentKey = beforeCells.getOrNull(cellIndex)?.contentKey
                 ?.takeIf { it.isNotEmpty() } ?: return false
             val preparation = root.prepareForExternalEditorUpdateWithResult()
             if (!preparation.ready) return false
@@ -1135,10 +1128,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 val afterIds = markers(root).entries.sortedBy { it.value }.map { it.key }
                 if (afterIds.size != beforeIds.size) return false
                 resolvedTableId = afterIds.getOrNull(ordinal) ?: return false
-                val afterCells = adapter.cachedTableRecords[resolvedTableId]
-                    ?.optJSONArray("cells") ?: return false
-                if (afterCells.length() != beforeCells.length() ||
-                    afterCells.optJSONObject(cellIndex)?.optString("contentKey") != contentKey
+                val afterCells = adapter.tableIndex.record(resolvedTableId)?.cells ?: return false
+                if (afterCells.size != beforeCells.size ||
+                    afterCells.getOrNull(cellIndex)?.contentKey != contentKey
                 ) return false
             }
         }
@@ -1442,7 +1434,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val root = host.editorEditText
         if (selection == null || applyingCellUpdate || activeCell != null || !root.hasFocus()) return
         val adapter = root.v2Driver as? EditorV2Adapter ?: return
-        if (adapter.cachedTableInputMappings?.tables.isNullOrEmpty() ||
+        if (adapter.tableIndex.tableKeys.isEmpty() ||
             !root.hasAuthorizedNativeTableOwner(adapter)) return
         val range = selectionScalarRange(selection) ?: return
         bindCell(holding = selection, range = range, adapter = adapter, focus = true)
@@ -1454,15 +1446,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         adapter: EditorV2Adapter,
         focus: Boolean
     ): Boolean {
-        val target = adapter.cachedTableInputMappings?.tables?.entries?.firstNotNullOfOrNull { (tableId, table) ->
-            table.cells.firstNotNullOfOrNull { cell ->
-                if (cell.blocks.none { range.first >= it.scalarStart && range.first <= it.breakScalarEnd }) {
-                    return@firstNotNullOfOrNull null
-                }
-                projection(tableId, cell.cellIndex)?.takeIf { it.holds(range) }
-                    ?.let { Triple(tableId, cell.cellIndex, it) }
-            }
-        } ?: return false
+        val tableId = adapter.tableIndex.tableKeyContainingScalar(range.first.toUInt()) ?: return false
+        val cellIndex = adapter.tableIndex.cellIndexContainingScalar(tableId, range.first.toUInt()) ?: return false
+        val projected = projection(tableId, cellIndex)?.takeIf { it.holds(range) } ?: return false
+        val target = Triple(tableId, cellIndex, projected)
         return bindCell(target.first, target.second, target.third, selection = holding, focus = focus)
     }
 
@@ -1625,13 +1612,11 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
 
     override fun detachedTableAccessibilityFrames(): List<TableAccessibilityDetachedFrame> {
         val adapter = host.editorEditText.v2Driver as? EditorV2Adapter ?: return emptyList()
-        val mappings = adapter.cachedTableInputMappings?.tables ?: return emptyList()
-        return adapter.cachedTableRecords.mapNotNull { (tableId, record) ->
-            val mapping = mappings[tableId] ?: return@mapNotNull null
-            if (mapping.extent != null || record.optBoolean("readOnlyDescendants", true)) return@mapNotNull null
-            val tablePos = exactV2ScalarInt(record.opt("tablePos") as? Number) ?: return@mapNotNull null
-            val unfilled = record.isNull("failure") &&
-                (record.optInt("rows", 0) == 0 || record.optInt("columns", 0) == 0)
+        return adapter.tableIndex.tableKeys.mapNotNull { tableId ->
+            val record = adapter.tableIndex.record(tableId) ?: return@mapNotNull null
+            if (adapter.tableIndex.rootExtents[tableId]?.let { it.scalarEnd > it.scalarStart } == true || record.readOnlyDescendants) return@mapNotNull null
+            val tablePos = adapter.tableIndex.tableDocStart(tableId)?.toInt() ?: return@mapNotNull null
+            val unfilled = record.failure == null && (record.rows == 0u || record.columns == 0u)
             TableAccessibilityDetachedFrame(
                 tableId,
                 tablePos,

@@ -34,7 +34,7 @@ abstract class NativeEditorExpoViewTestSupport {
             assertTrue("root=${root.width}x${root.height} canvas=${canvas.width}x${canvas.height}" +
                 " origin=$canvasOrigin tap=$x,$y revision=${adapter?.baseDocumentRevision}" +
                 " applied=${root.lastAppliedDocumentVersion} epoch=${adapter?.positionEpoch}" +
-                " owns=${adapter?.let(root::ownsNativeBinding)} mappings=${adapter?.cachedTableInputMappings?.tables?.keys}" +
+                " owns=${adapter?.let(root::ownsNativeBinding)} mappings=${adapter?.tableMappingsForTesting?.tables?.keys}" +
                 " rootMap=${root.rootTablePositionMap != null} rootTrace=${root.imeTraceSnapshotForTesting()}",
                 handled)
         } finally {

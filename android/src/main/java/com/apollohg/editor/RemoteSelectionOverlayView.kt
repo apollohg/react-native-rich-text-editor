@@ -1,5 +1,6 @@
 package com.apollohg.editor
 
+import com.apollohg.editor.tables.EditorTableIndex
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -179,10 +180,10 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
     private fun presentRemoteCellSelections() {
         val editorView = editorView ?: return
         val editorId = resolvedEditorId(editorView)
-        val records = EditorV2Registry.adapterForViewToken(editorId)?.cachedTableRecords.orEmpty()
+        val index = EditorV2Registry.adapterForViewToken(editorId)?.tableIndex ?: EditorTableIndex()
         val drawable = if (editorId == 0L) emptyList() else remoteSelections.mapNotNull { selection ->
             val rectangle = selection.cellRectangle ?: return@mapNotNull null
-            val cells = resolveEditorCellSelection(rectangle.anchorCell, rectangle.headCell, records)
+            val cells = resolveEditorCellSelection(rectangle.anchorCell, rectangle.headCell, index)
                 as? EditorCellSelection.Drawable ?: return@mapNotNull null
             selection.clientId to RemoteTableCellSelection(
                 cells.tableId,

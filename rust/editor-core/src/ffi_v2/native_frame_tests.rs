@@ -428,6 +428,7 @@ proptest::proptest! {
                     proptest::prop_assert_eq!(a.scalar_stride,b.scalar_stride);
                     proptest::prop_assert_eq!(&a.input_blocks,&b.input_blocks);
                     proptest::prop_assert_eq!(&a.nested_tables,&b.nested_tables);
+                    proptest::prop_assert_eq!(&a.void_element_indices,&b.void_element_indices);
                 }
             }
         }
@@ -724,4 +725,24 @@ fn native_frame_exports_return_typed_errors_and_round_trip_frames() {
         "REVISION_MISMATCH"
     );
     super::editor::editor_v2_destroy(editor);
+}
+
+#[test]
+fn native_frame_preserves_void_atom_render_kinds() {
+    let mut document = crate::test_support::large_table_fixture::plain_table_document(1, 1);
+    document["content"][0]["content"][0]["content"][0]["content"] = serde_json::json!([
+        {"type":"paragraph","content":[
+            {"type":"text","text":"x"}, {"type":"hard_break"},
+            {"type":"mention","attrs":{"id":"atom","label":"Ada"}}
+        ]},
+        {"type":"horizontal_rule"}
+    ]);
+    let mut session = session_with_document(&document);
+    let full = frame(&mut session, Some(OWNER));
+    let cell = &full.tables.tables[0].cells[0];
+    assert_eq!(cell.void_element_indices, vec![2, 5]);
+    assert!(matches!(
+        &cell.elements[3],
+        crate::viewer::FfiViewerElement::InlineAtom { .. }
+    ));
 }

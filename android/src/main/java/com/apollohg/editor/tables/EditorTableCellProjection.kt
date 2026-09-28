@@ -5,11 +5,8 @@ import com.apollohg.editor.AtomRenderConfiguration
 import com.apollohg.editor.EditorTheme
 import com.apollohg.editor.PositionBridge
 import com.apollohg.editor.RenderBridge
-import com.apollohg.editor.TableInputBlock
-import com.apollohg.editor.TableInputTable
+import uniffi.editor_core.FfiCellInputBlock
 import com.apollohg.editor.canonicalV2U64
-import com.apollohg.editor.exactV2ScalarInt
-import org.json.JSONObject
 
 internal object EditorTableCellProjection {
     data class Projection(
@@ -20,8 +17,8 @@ internal object EditorTableCellProjection {
 
     fun project(
         cellIndex: Int,
-        table: JSONObject,
-        mapping: TableInputTable,
+        tableKey: String,
+        index: EditorTableIndex,
         documentRevision: String,
         positionEpoch: String,
         baseFontSize: Float,
@@ -30,20 +27,13 @@ internal object EditorTableCellProjection {
         density: Float = 1f,
         atomConfiguration: AtomRenderConfiguration? = null
     ): Projection? {
-        if (cellIndex < 0 || canonicalV2U64(documentRevision) == null ||
-            canonicalV2U64(positionEpoch) == null ||
-            table.opt("readOnlyDescendants") != false
-        ) return null
-        val rawCell = table.optJSONArray("cells")?.optJSONObject(cellIndex) ?: return null
-        val inputCell = mapping.cells.getOrNull(cellIndex) ?: return null
-        val sourcePos = exactV2ScalarInt(rawCell.opt("sourcePos") as? Number) ?: return null
-        val sourceEnd = exactV2ScalarInt(rawCell.opt("sourceEnd") as? Number) ?: return null
-        val elements = rawCell.optJSONArray("elements") ?: return null
-        if (inputCell.cellIndex != cellIndex || inputCell.sourcePos != sourcePos ||
-            inputCell.sourceEnd != sourceEnd || sourcePos >= sourceEnd ||
-            inputCell.excluded.isNotEmpty() || inputCell.blocks.isEmpty()
-        ) return null
-
+        if (cellIndex < 0 || canonicalV2U64(documentRevision) == null || canonicalV2U64(positionEpoch) == null) return null
+        val table = index.record(tableKey) ?: return null
+        val cell = table.cells.getOrNull(cellIndex) ?: return null
+        if (table.readOnlyDescendants || cell.nestedTables.isNotEmpty() || cell.inputBlocks.isEmpty()) return null
+        val sourcePos = index.docStart(tableKey, cellIndex)?.toLong()?.takeIf { it <= Int.MAX_VALUE } ?: return null
+        val elements = inputElements(cell.elements, cell.voidElementIndices) { relative -> index.absoluteDocPos(tableKey, cellIndex, relative) }
+            ?: return null
         val binding = TableCellPositionMap.Binding(sourcePos.toLong(), documentRevision, positionEpoch)
         val target = EditorTableInputCoordinator.Target(binding)
         if (!EditorTableInputCoordinator.canBind(target)) return null
@@ -59,16 +49,16 @@ internal object EditorTableCellProjection {
             synthesizeTrailingHardBreakPlaceholders = false
         )
         if (duplicate) return null
-        if (ranges.keys != inputCell.blocks.map { it.elementIndex }.toSet()) return null
+        if (ranges.keys != cell.inputBlocks.map { it.elementIndex.toInt() }.toSet()) return null
         val text = rendered.toString()
-        val segments = mutableListOf<TableCellPositionMap.Segment>()
-        var previousBlock: TableInputBlock? = null
+        val segments = index.inputSegments(tableKey, cellIndex) ?: return null
+        var previousBlock: FfiCellInputBlock? = null
         var previousLocalEnd = 0
-        for (block in inputCell.blocks) {
-            val range = ranges[block.elementIndex] ?: return null
+        for ((blockIndex, block) in cell.inputBlocks.withIndex()) {
+            val range = ranges[block.elementIndex.toInt()] ?: return null
             if (range.first < 0 || range.second < range.first || range.second > text.length ||
-                block.scalarStart < 0 || block.contentScalarStart < block.scalarStart ||
-                block.scalarEnd < block.contentScalarStart || block.elementIndex < 0
+                block.contentScalarStart < block.scalarStart ||
+                block.scalarEnd < block.contentScalarStart
             ) return null
             val start = PositionBridge.utf16ToScalar(range.first, text)
             val end = PositionBridge.utf16ToScalar(range.second, text)
@@ -85,7 +75,8 @@ internal object EditorTableCellProjection {
                     block.scalarStart != previous.breakScalarEnd
                 ) return null
             }
-            segments.add(TableCellPositionMap.Segment(localStart.toInt(), localEndExclusive.toInt(), block.scalarStart))
+            val segment = segments[blockIndex]
+            if (segment.localScalarStart.toLong() != localStart || segment.localScalarEndExclusive.toLong() != localEndExclusive) return null
             previousBlock = block
             previousLocalEnd = end
         }

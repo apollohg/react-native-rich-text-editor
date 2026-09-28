@@ -51,7 +51,7 @@ final class EditorTableInputCoordinator {
             isSynthetic: false, isNestedTarget: table.readOnlyDescendants
         )
         guard canBind(target), !inputCell.inputBlocks.isEmpty,
-              let elements = RenderBridge.inputElements(inputCell.elements, cellDocStart: cellDocStart) else { return nil }
+              let elements = RenderBridge.inputElements(inputCell.elements, voidElementIndices: inputCell.voidElementIndices, cellDocStart: cellDocStart) else { return nil }
         let tableIDs = Set(inputCell.nestedTables.map(\.tableKey))
         guard tableIDs.count == inputCell.nestedTables.count,
               inputCell.nestedTables.allSatisfy({ $0.scalarStart != nil && $0.scalarEnd != nil }) else { return nil }

@@ -106,7 +106,8 @@ internal class EditorTableSurfaceMountTest {
             val update = requireNotNull(adapter.setContentJson(document))
             val view = RichTextEditorView(RuntimeEnvironment.getApplication())
             view.editorId = token
-            assertTrue(view.editorEditText.applyUpdateJSON(update))
+            val applied = view.editorEditText.applyUpdateJSON(requireNotNull(adapter.cachedViewUpdateJson))
+            assertTrue("admission=$applied trace=${view.editorEditText.imeTraceSnapshotForTesting()} extents=${adapter.tableIndex.rootExtents} scalar=${adapter.cachedScalarLength} blocks=${adapter.cachedSemanticRenderBlocks}", applied)
             measure(view, 600)
             block(view, adapter, update)
         } finally {
@@ -132,7 +133,7 @@ internal class EditorTableSurfaceMountTest {
     @Test
     fun `nested only outer cell has a representable selection endpoint`() =
         withMountedView(nestedTableDocument) { _, adapter, _ ->
-            val outer = adapter.cachedTableRecords.values.minBy { it.getInt("tablePos") }
+            val outer = adapter.tableRecordsForTesting.values.minBy { it.getInt("tablePos") }
             val cells = outer.getJSONArray("cells")
             val first = cells.getJSONObject(0).getInt("sourcePos")
             val nestedOnly = cells.getJSONObject(1).getInt("sourcePos")
@@ -412,10 +413,10 @@ internal class EditorTableSurfaceMountTest {
         withMountedView(wideTableWithBefore) { view, adapter, _ ->
             val canvas = requireNotNull(drawing(view))
             val beforeSurface = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
-            val beforeId = requireNotNull(adapter.cachedTableRecords.values.single().optString("sourceId"))
+            val beforeId = requireNotNull(adapter.tableRecordsForTesting.values.single().optString("sourceId"))
             val beforeEpoch = adapter.positionEpoch
             canvas.setTableLogicalOffset(beforeSurface.identity, 180f)
-            val oldPosition = requireNotNull(adapter.cachedTableRecords.keys.singleOrNull())
+            val oldPosition = requireNotNull(adapter.tableRecordsForTesting.keys.singleOrNull())
 
             val root = view.editorEditText
             root.setSelection(root.text.toString().indexOf("before") + "before".length)
@@ -424,8 +425,8 @@ internal class EditorTableSurfaceMountTest {
             measure(view, 600)
 
             val nextSurface = requireNotNull(drawing(view)?.preparedLayout?.blocks?.single()?.tableSurface)
-            assertNotEquals(oldPosition, adapter.cachedTableRecords.keys.single())
-            assertEquals(beforeId, adapter.cachedTableRecords.values.single().getString("sourceId"))
+            assertEquals(oldPosition, adapter.tableRecordsForTesting.keys.single())
+            assertEquals(beforeId, adapter.tableRecordsForTesting.values.single().getString("sourceId"))
             assertEquals("source=$beforeId epochs=$beforeEpoch/${adapter.positionEpoch}",
                 beforeSurface.identity, nextSurface.identity)
             assertEquals(180f, canvas.tablePhysicalOffsetForTesting(nextSurface.identity), 0.01f)
@@ -437,14 +438,14 @@ internal class EditorTableSurfaceMountTest {
             val canvas = requireNotNull(drawing(view))
             val beforeSurface = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
             canvas.setTableLogicalOffset(beforeSurface.identity, 180f)
-            val beforeSourceId = adapter.cachedTableRecords.values.single().getString("sourceId")
+            val beforeSourceId = adapter.tableRecordsForTesting.values.single().getString("sourceId")
             val beforeEpoch = adapter.positionEpoch
             val replacement = wideTableDocument.replace("Left", "Replacement")
             assertTrue(view.editorEditText.applyUpdateJSON(replaceTableDocumentExternallyForTest(adapter, replacement)))
             measure(view, 600)
 
             val nextSurface = requireNotNull(drawing(view)?.preparedLayout?.blocks?.single()?.tableSurface)
-            assertEquals("old=$beforeSourceId/$beforeEpoch next=${adapter.cachedTableRecords.values.single().getString("sourceId")}/${adapter.positionEpoch}",
+            assertEquals("old=$beforeSourceId/$beforeEpoch next=${adapter.tableRecordsForTesting.values.single().getString("sourceId")}/${adapter.positionEpoch}",
                 0f, canvas.tablePhysicalOffsetForTesting(nextSurface.identity), 0.01f)
         }
 
@@ -622,7 +623,7 @@ internal class EditorTableSurfaceMountTest {
             "[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"before\"}]},{\"type\":\"table\"")
         withMountedView(document) { view, adapter, _ ->
             val root = view.editorEditText
-            val originalTableId = requireNotNull(adapter.cachedTableInputMappings).tables.keys.single()
+            val originalTableId = requireNotNull(adapter.tableMappingsForTesting).tables.keys.single()
             root.setSelection(root.text.toString().indexOf("before") + "before".length)
             val connection = requireNotNull(root.onCreateInputConnection(EditorInfo()))
             assertTrue(connection.setComposingText("tail", 1))
@@ -636,7 +637,7 @@ internal class EditorTableSurfaceMountTest {
             assertEquals("Cell text", firstCellText(adapter))
             assertTrue(view.activeTextInput !== root)
             assertTrue(view.activeTextInput.hasFocus())
-            assertTrue(originalTableId != requireNotNull(adapter.cachedTableInputMappings).tables.keys.single())
+            assertEquals(originalTableId, requireNotNull(adapter.tableMappingsForTesting).tables.keys.single())
         }
     }
 
@@ -695,7 +696,7 @@ internal class EditorTableSurfaceMountTest {
     @Test
     fun `a restored caret without a presented cell leaves the root input active`() =
         withMountedView { view, adapter, _ ->
-            val cellStart = requireNotNull(adapter.cachedTableInputMappings).tables.values.single()
+            val cellStart = requireNotNull(adapter.tableMappingsForTesting).tables.values.single()
                 .cells.first().blocks.first().scalarStart
             val caret = JSONObject().put("type", "text").put("anchorScalar", cellStart).put("headScalar", cellStart)
             view.editorTableSurface.clear()
@@ -1135,7 +1136,7 @@ internal class EditorTableSurfaceMountTest {
                 view.editorEditText.layout.getLineTop(proseLine)
             assertTrue(view.editorEditText.layout.getLineBottom(markerLine) >= table.layout.contentHeight.toInt())
             assertTrue("table bottom $tableBottom, prose top $proseTop", proseTop >= tableBottom)
-            val extent = requireNotNull(adapter.cachedTableInputMappings?.tables?.values?.single()?.extent)
+            val extent = requireNotNull(adapter.tableMappingsForTesting?.tables?.values?.single()?.extent)
             assertEquals(extent.scalarEnd + 1,
                 view.editorEditText.rootTablePositionMap?.globalScalar(text.toString().indexOf("after")))
             assertEquals(documentBeforeMount, adapter.documentJson())
@@ -1150,7 +1151,7 @@ internal class EditorTableSurfaceMountTest {
     @Test
     fun `nested table snapshot mounts its outer root surface`() = withMountedView(nestedTableDocument) { view, adapter, update ->
         val input = view.editorEditText
-        val mappings = requireNotNull(adapter.cachedTableInputMappings).tables
+        val mappings = requireNotNull(adapter.tableMappingsForTesting).tables
         val before = adapter.documentJson()
         val revision = adapter.baseDocumentRevision
         assertEquals(JSONObject(update).getString("documentVersion"), revision.toString())
@@ -1226,15 +1227,15 @@ internal class EditorTableSurfaceMountTest {
             val input = view.editorEditText
             val rootIds = input.rootTableMapTableIds
             val rootExtents = input.rootTableMapExtents
-            val mappings = requireNotNull(adapter.cachedTableInputMappings)
+            val originalIndex = adapter.tableIndex
             assertNotNull(drawing(view))
 
-            adapter.cachedTableInputMappings = TableInputMappings(mappings.tables - rootIds.single())
+            adapter.tableIndex = com.apollohg.editor.tables.EditorTableIndex()
             view.requestLayout()
             measure(view, 600)
             assertNull(drawing(view))
 
-            adapter.cachedTableInputMappings = mappings
+            adapter.tableIndex = originalIndex
             view.requestLayout()
             measure(view, 600)
             assertNotNull(drawing(view))
@@ -1386,18 +1387,19 @@ internal class EditorTableSurfaceMountTest {
     }
 
     @Test
-    fun `loss of adopted mappings clears mounted table without changing root text`() = withMountedView { view, adapter, _ ->
+    fun `released owner clears mounted surface while retaining frame index`() = withMountedView { view, adapter, _ ->
         val input = view.editorEditText
         val visibleText = input.text.toString()
         val revision = adapter.baseDocumentRevision
         assertNotNull(drawing(view))
-        assertNotNull(adapter.cachedTableInputMappings)
+        assertNotNull(adapter.tableMappingsForTesting)
 
         adapter.releaseNativeBindingOwner(input.nativeBindingToken)
-        assertNull(adapter.cachedTableInputMappings)
+        assertNotNull(adapter.tableMappingsForTesting)
         input.setSelection(visibleText.length)
 
         assertNull(drawing(view))
+        assertFalse(input.isAuthorizedForRootTableInput())
         assertEquals(visibleText, input.text.toString())
         assertEquals(revision, adapter.baseDocumentRevision)
     }
@@ -1406,7 +1408,7 @@ internal class EditorTableSurfaceMountTest {
     fun `zero leaf table beside populated table leaves populated host visible`() {
         val document = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[]}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"visible cell"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
         withMountedView(document) { view, adapter, _ ->
-            val mappings = requireNotNull(adapter.cachedTableInputMappings).tables
+            val mappings = requireNotNull(adapter.tableMappingsForTesting).tables
             assertEquals(2, mappings.size)
             assertEquals(1, mappings.values.count { it.extent == null })
             assertEquals(1, mappings.values.count { it.extent != null })

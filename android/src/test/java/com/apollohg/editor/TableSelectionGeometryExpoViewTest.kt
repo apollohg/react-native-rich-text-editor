@@ -105,14 +105,14 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
             assertTrue(drawing.getLocalVisibleRect(visible))
             val selected = sourceIndices ?: requireNotNull(drawing.selectedTableCellSourceIndices[tableId])
             return drawing.presentedTableCells().filter {
-                it.surface.editorTableId == "t$tablePos" && it.sourceIndex in selected
+                it.surface.editorTableId == tableId && it.sourceIndex in selected
             }.mapNotNull { cell ->
                 RectF(cell.bounds).takeIf { it.intersect(cell.clip) && it.intersect(RectF(visible)) }
             }.map(::windowRect)
         }
 
         fun cellWindowRect(index: Int): RectF = windowRect(RectF(drawing.presentedTableCells().first {
-            it.surface.editorTableId == "t$tablePos" && it.sourceIndex == index
+            it.surface.editorTableId == tableId && it.sourceIndex == index
         }.bounds))
     }
 
@@ -167,9 +167,9 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
             assertTrue(view.richTextView.editorEditText.applyUpdateJSON(update))
             shadowOf(Looper.getMainLooper()).idle()
             assertTrue(view.richTextView.editorEditText.requestFocus())
-            val root = adapter.cachedTableRecords.values.minBy { it.getInt("tablePos") }
+            val root = adapter.tableRecordsForTesting.values.minBy { it.getInt("tablePos") }
             val cells = root.getJSONArray("cells")
-            val fixture = Fixture(view, adapter, "t${root.getInt("tablePos")}", root.getInt("tablePos"),
+            val fixture = Fixture(view, adapter, root.getString("sourceId"), root.getInt("tablePos"),
                 (0 until cells.length()).map { cells.getJSONObject(it).getInt("sourcePos") }, payloads)
             fixture.nextFrame()
             block(fixture)

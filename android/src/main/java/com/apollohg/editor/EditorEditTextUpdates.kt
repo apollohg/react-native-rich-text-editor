@@ -1,11 +1,10 @@
 package com.apollohg.editor
 
-import android.text.SpannableStringBuilder
 import com.apollohg.editor.EditorEditText.ApplyUpdateTrace
 import org.json.JSONObject
 
 private data class RootTableRender(
-    val extents: Map<String, TableInputExtent>,
+    val extents: Map<String, TableScalarExtent>,
     val scalarLength: Int,
     val tableIds: Set<String>
 )
@@ -54,15 +53,12 @@ private fun EditorEditText.rootTableRenderForUpdate(
         } else null
     }
     if (adapter != null && paired == null) return null
-    val atomic = if (adapter == null && update.has("scalarLength")) {
-        parseAtomicRenderSnapshot(updateJSON)
-    } else null
-    val mappings = atomic?.tableInputMappings ?: paired?.cachedTableInputMappings ?: return null
-    val scalarLength = atomic?.scalarLength ?: paired?.cachedScalarLength ?: return null
-    if (!tableIds.all { mappings.tables.containsKey(it) }) return null
-    return RootTableRender(tableIds.mapNotNull { id ->
-        mappings.tables.getValue(id).extent?.let { id to it }
-    }.toMap(), scalarLength, tableIds)
+    val index = paired?.tableIndex ?: return null
+    val scalarLength = paired.cachedScalarLength ?: return null
+    if (!index.tableKeys.containsAll(tableIds)) return null
+    return RootTableRender(index.rootExtents.filterValues { it.scalarEnd > it.scalarStart }.mapValues { (_, extent) ->
+        TableScalarExtent(extent.scalarStart.toInt(), extent.scalarEnd.toInt())
+    }, scalarLength, tableIds)
 }
 
 internal fun EditorEditText.applyUpdateJSONImpl(

@@ -11,7 +11,6 @@ import com.apollohg.editor.TableInputBlock
 import com.apollohg.editor.TableInputCell
 import com.apollohg.editor.TableInputExcluded
 import com.apollohg.editor.TableInputTable
-import com.apollohg.editor.parseTableInputMappings
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -54,32 +53,37 @@ internal class EditorTableCellProjectionTest {
             if (excluded) listOf(TableInputExcluded(0, "nested", null)) else emptyList()
         )))
 
-    private fun admitted(table: JSONObject, vararg blocks: TableInputBlock): TableInputTable {
-        val extent = JSONObject().put("scalarStart", blocks.first().scalarStart)
-            .put("scalarEnd", blocks.last().scalarEnd)
-        val rawBlocks = JSONArray()
-        blocks.forEach { block ->
-            rawBlocks.put(JSONObject().put("elementIndex", block.elementIndex)
-                .put("docStart", block.docStart).put("docEnd", block.docEnd)
-                .put("scalarStart", block.scalarStart)
-                .put("contentScalarStart", block.contentScalarStart)
-                .put("scalarEnd", block.scalarEnd)
-                .put("breakScalarEnd", block.breakScalarEnd).put("void", block.isVoid))
-        }
-        val sidecar = JSONObject().put("extent", extent).put("cells", JSONArray().put(
-            JSONObject().put("cellIndex", 0).put("sourcePos", 2).put("sourceEnd", 30)
-                .put("blocks", rawBlocks).put("excluded", JSONArray())
-        ))
-        val parsed = parseTableInputMappings(
-            JSONObject().put("version", 1).put("tables", JSONObject().put("t0", sidecar)),
-            mapOf("a".repeat(64) to JSONObject()), mapOf("t0" to table),
-            blocks.last().scalarEnd
-        )
-        return requireNotNull(parsed?.tables?.get("t0")) { "rejected ${table.getJSONArray("cells").getJSONObject(0).getJSONArray("elements")}" }
+    private fun project(table: JSONObject, mapping: TableInputTable, cellIndex: Int = 0, theme: EditorTheme? = null): EditorTableCellProjection.Projection? {
+        val source = requireNotNull(legacyViewerTables(mapOf("t0" to table))).getValue("t0")
+        val input = mapping.cells.single()
+        val start = input.blocks.firstOrNull()?.scalarStart ?: return null
+        val end = input.blocks.lastOrNull()?.breakScalarEnd ?: return null
+        if (input.sourcePos.toUInt() != source.cells.single().sourcePos || input.excluded.isNotEmpty()) return null
+        val cell = source.cells.single()
+        val record = uniffi.editor_core.FfiTableRecord("t0", null, source.sourceEnd - source.tablePos,
+            source.rows, source.columns, source.columnWidths, source.direction, source.irregular,
+            source.readOnlyDescendants, source.attrsKey,
+            listOf(uniffi.editor_core.FfiTableSourceRow(source.attrsKey, 1u)),
+            listOf(uniffi.editor_core.FfiTableCellRecord(0u, cell.row, cell.column, cell.rowspan, cell.colspan,
+                cell.header, cell.attrsKey, cell.contentKey, cell.sourceEnd - cell.sourcePos,
+                (end - start).toUInt(), cell.elements.map { element -> when (element) {
+                    is uniffi.editor_core.FfiViewerElement.InlineAtom -> element.copy(docPos = element.docPos - cell.sourcePos)
+                    is uniffi.editor_core.FfiViewerElement.BlockAtom -> element.copy(docPos = element.docPos - cell.sourcePos)
+                    else -> element
+                } }, (0 until table.getJSONArray("cells").getJSONObject(0).getJSONArray("elements").length()).filter {
+                    table.getJSONArray("cells").getJSONObject(0).getJSONArray("elements").getJSONObject(it).optString("type") in setOf("voidInline", "voidBlock")
+                }.map(Int::toUInt), input.blocks.map { block -> uniffi.editor_core.FfiCellInputBlock(block.elementIndex.toUInt(),
+                    (block.docStart - input.sourcePos).toUInt(), (block.docEnd - input.sourcePos).toUInt(),
+                    (block.scalarStart - start).toUInt(), (block.contentScalarStart - start).toUInt(),
+                    (block.scalarEnd - start).toUInt(), (block.breakScalarEnd - start).toUInt(), block.isVoid)
+                }, emptyList())), source.syntheticRegions, source.failure, source.compatibilityDiagnostic)
+        val index = EditorTableIndex()
+        val frame = uniffi.editor_core.FfiTableFrame(uniffi.editor_core.FfiTableFrameKind.FULL, null,
+            listOf(uniffi.editor_core.FfiTableAttribute(source.attrsKey, "{}")), emptyList(), listOf(record), emptyList(), emptyList(),
+            listOf(uniffi.editor_core.FfiTableExtent("t0", source.tablePos, record.docSize, start.toUInt(), end.toUInt())))
+        if (index.adopt(frame, null, 4uL) !is TableFrameAdoption.Adopted) return null
+        return EditorTableCellProjection.project(cellIndex, "t0", index, "4", "9", 16f, Color.BLACK, theme)
     }
-
-    private fun project(table: JSONObject, mapping: TableInputTable) =
-        EditorTableCellProjection.project(0, table, mapping, "4", "9", 16f, Color.BLACK)
 
     @Test
     fun `rendered rich emoji and paragraph breaks map through final caret`() {
@@ -92,7 +96,7 @@ internal class EditorTableCellProjectionTest {
             {"type":"blockEnd"}
         ]""")
         val record = table(elements)
-        val projection = requireNotNull(project(record, admitted(record,
+        val projection = requireNotNull(project(record, mapping(
             block(0, 40, 40, 42, 43), block(3, 43, 43, 44)
         )))
 
@@ -112,7 +116,7 @@ internal class EditorTableCellProjectionTest {
             {"type":"blockEnd"}
         ]""")
         val record = table(elements)
-        val projection = requireNotNull(project(record, admitted(record, block(0, 7, 7, 8))))
+        val projection = requireNotNull(project(record, mapping(block(0, 7, 7, 8))))
 
         assertEquals(1, projection.text.toString().codePointCount(0, projection.text.length))
         assertEquals(7, projection.positionMap.globalScalarForLocalScalar(0))
@@ -132,7 +136,7 @@ internal class EditorTableCellProjectionTest {
         val record = table(elements)
         val first = block(0, 11, 11, 12, 13)
         val second = block(2, 13, 13, 16)
-        val projection = requireNotNull(project(record, admitted(record, first, second)))
+        val projection = requireNotNull(project(record, mapping(first, second)))
 
         assertEquals("\u200B\ntwo", projection.text.toString())
         assertEquals(11, projection.positionMap.globalScalarForLocalUtf16(0, projection.text.toString()))
@@ -143,7 +147,7 @@ internal class EditorTableCellProjectionTest {
     }
 
     @Test
-    fun `projection rejects admitted global gaps and false break metadata`() {
+    fun `projection rejects global gaps and false break metadata`() {
         val elements = JSONArray("""[
             {"type":"blockStart","nodeType":"paragraph","depth":0},
             {"type":"textRun","text":"a","marks":[]},
@@ -154,10 +158,10 @@ internal class EditorTableCellProjectionTest {
         ]""")
         val record = table(elements)
 
-        val gap = admitted(record, block(0, 40, 40, 41, 42), block(3, 100, 100, 101))
+        val gap = mapping(block(0, 40, 40, 41, 42), block(3, 100, 100, 101))
         assertNull(project(record, gap))
 
-        val falseBreak = admitted(record, block(0, 40, 40, 41), block(3, 41, 41, 42))
+        val falseBreak = mapping(block(0, 40, 40, 41), block(3, 41, 41, 42))
         assertNull(project(record, falseBreak))
     }
 
@@ -170,22 +174,19 @@ internal class EditorTableCellProjectionTest {
             {"type":"blockEnd"},{"type":"blockEnd"}
         ]""")
         val listRecord = table(listElements)
-        val list = requireNotNull(project(listRecord, admitted(listRecord, block(1, 20, 23, 24))))
+        val list = requireNotNull(project(listRecord, mapping(block(1, 20, 23, 24))))
         assertEquals("1. x", list.text.toString())
         assertEquals(20, list.positionMap.globalScalarForLocalScalar(0))
         assertEquals(23, list.positionMap.globalScalarForLocalScalar(3))
         assertEquals(24, list.positionMap.globalScalarForLocalScalar(4))
         val theme = EditorTheme.fromJson("""{"version":1,"styles":{"paragraph":{"paddingLeft":10}}}""")
-        val styled = requireNotNull(EditorTableCellProjection.project(
-            0, listRecord, admitted(listRecord, block(1, 20, 23, 24)), "4", "9",
-            16f, Color.BLACK, theme
-        ))
+        val styled = requireNotNull(project(listRecord, mapping(block(1, 20, 23, 24)), theme = theme))
         assertEquals(list.text.toString(), styled.text.toString())
         assertEquals(24, styled.positionMap.globalScalarForLocalScalar(4))
 
         val atomElements = JSONArray("""[{"type":"voidBlock","nodeType":"rule","docPos":4}]""")
         val atomRecord = table(atomElements)
-        val atom = requireNotNull(project(atomRecord, admitted(atomRecord, block(0, 30, 30, 31, isVoid = true))))
+        val atom = requireNotNull(project(atomRecord, mapping(block(0, 30, 30, 31, isVoid = true))))
         assertEquals("\uFFFC", atom.text.toString())
         assertEquals(31, atom.positionMap.globalScalarForLocalScalar(1))
     }
@@ -198,14 +199,14 @@ internal class EditorTableCellProjectionTest {
             {"type":"blockEnd"}
         ]""")
         val record = table(elements)
-        val valid = admitted(record, block(0, 4, 4, 5))
+        val valid = mapping(block(0, 4, 4, 5))
         assertNotNull(project(record, valid))
         assertNull(project(record, mapping(block(0, 4, 4, 6))))
         assertNull(project(record, mapping(block(0, Int.MAX_VALUE, Int.MAX_VALUE, Int.MAX_VALUE))))
         assertNull(project(record, mapping(block(0, 4, 4, 5), excluded = true)))
         assertNull(project(table(elements, nested = true), valid))
         assertNull(project(table(elements, sourcePos = 3), valid))
-        assertNull(EditorTableCellProjection.project(1, record, valid, "4", "9", 16f, Color.BLACK))
+        assertNull(project(record, valid, cellIndex = 1))
 
         val extra = JSONArray("""[
             {"type":"blockStart","nodeType":"paragraph","depth":0},
@@ -227,7 +228,7 @@ internal class EditorTableCellProjectionTest {
             {"type":"blockEnd"}
         ]""")
         val record = table(elements)
-        val projection = requireNotNull(project(record, admitted(record, block(0, 8, 8, 10))))
+        val projection = requireNotNull(project(record, mapping(block(0, 8, 8, 10))))
         assertEquals("x\n", projection.text.toString())
         assertEquals(8, projection.positionMap.globalScalarForLocalScalar(0))
         assertEquals(9, projection.positionMap.globalScalarForLocalScalar(1))
@@ -254,7 +255,7 @@ internal class EditorTableCellProjectionTest {
             {"type":"blockEnd"}
         ]""")
         val record = table(elements)
-        val projection = requireNotNull(project(record, admitted(record, block(0, 20, 20, 23))))
+        val projection = requireNotNull(project(record, mapping(block(0, 20, 20, 23))))
 
         assertEquals("😀\n\n", projection.text.toString())
         assertEquals(20, projection.positionMap.globalScalarForLocalUtf16(0, projection.text.toString()))
@@ -274,7 +275,7 @@ internal class EditorTableCellProjectionTest {
             {"type":"blockEnd"}
         ]""")
         val record = table(elements)
-        val projection = requireNotNull(project(record, admitted(record,
+        val projection = requireNotNull(project(record, mapping(
             block(0, 8, 8, 10, 11), block(4, 11, 11, 12)
         )))
 

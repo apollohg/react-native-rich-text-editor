@@ -251,7 +251,7 @@ class EditorEditText @JvmOverloads constructor(
     internal var rootTableMapDocumentVersion: String? = null
     internal var rootTableMapPositionEpoch: String? = null
     internal var rootTableMapTableIds: Set<String> = emptySet()
-    internal var rootTableMapExtents: Map<String, TableInputExtent> = emptyMap()
+    internal var rootTableMapExtents: Map<String, TableScalarExtent> = emptyMap()
     internal var rootTableHasUnmappedExtent = false
     internal var rootTableSelectionInputBlocked = false
     internal var authoritativeCellSelectionActive = false

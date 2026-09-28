@@ -1,6 +1,5 @@
 package com.apollohg.editor
 
-import com.apollohg.editor.tables.TableCellPositionMap
 
 internal fun EditorEditText.isAuthorizedForTableCellInput(): Boolean {
     if (!isTableCellInput) return true
@@ -37,13 +36,11 @@ internal fun EditorEditText.adoptCurrentRootTableMapEpoch(adapter: EditorV2Adapt
     if (rootTableMapDocumentVersion != adapter.baseDocumentRevision.toString()) return false
     val currentEpoch = adapter.positionEpoch ?: return false
     if (adapter.cachedAtomicRenderDocumentRevision != adapter.baseDocumentRevision) return false
-    val mappings = adapter.cachedTableInputMappings ?: return false
-    val currentRootIds = adapter.cachedTableRecords.filterValues {
-        !it.optBoolean("readOnlyDescendants", true)
-    }.keys
-    if (currentRootIds != rootTableMapTableIds ||
-        currentRootIds.any { mappings.tables[it]?.extent != rootTableMapExtents[it] }
-    ) return false
+    val currentRootIds = adapter.tableIndex.tableKeys.filter { adapter.tableIndex.record(it)?.host == null }.toSet()
+    val extents = adapter.tableIndex.rootExtents.filterValues { it.scalarEnd > it.scalarStart }.mapValues { (_, extent) ->
+        TableScalarExtent(extent.scalarStart.toInt(), extent.scalarEnd.toInt())
+    }
+    if (currentRootIds != rootTableMapTableIds || extents != rootTableMapExtents) return false
     rootTableMapPositionEpoch = currentEpoch
     return true
 }

@@ -88,7 +88,7 @@ internal class EditorTableColumnResizeTest {
         val view: RichTextEditorView,
         val adapter: EditorV2Adapter,
         val drawing: PreparedProseDrawingView,
-        val tableId: String,
+        var tableId: String,
         val positions: List<Int>
     ) {
         private var eventTime = 0L
@@ -219,7 +219,7 @@ internal class EditorTableColumnResizeTest {
             container.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY))
             container.layout(0, 0, width, height)
-            val root = adapter.cachedTableRecords.values.minBy { it.getInt("tablePos") }
+            val root = adapter.tableRecordsForTesting.values.minBy { it.getInt("tablePos") }
             val cells = root.getJSONArray("cells")
             val positions = (0 until cells.length()).map { cells.getJSONObject(it).getInt("sourcePos") }
             if (cellSelection != null) {
@@ -235,7 +235,7 @@ internal class EditorTableColumnResizeTest {
             val drawing = (0 until view.editorContentFrame.childCount)
                 .map { view.editorContentFrame.getChildAt(it) }
                 .filterIsInstance<PreparedProseDrawingView>().single()
-            val fixture = Fixture(view, adapter, drawing, "t${root.getInt("tablePos")}", positions)
+            val fixture = Fixture(view, adapter, drawing, root.getString("sourceId"), positions)
             view.editorEditText.editorListener = object : EditorEditText.EditorListener {
                 override fun onEditorUpdate(updateJSON: String) {
                     fixture.published += updateJSON
@@ -389,6 +389,7 @@ internal class EditorTableColumnResizeTest {
             assertTrue(fixture.view.editorEditText.applyUpdateJSON(
                 replaceTableDocumentExternallyForTest(fixture.adapter, fixedWidthGrid.replace("first", "fresh"))))
             assertNull("a document reset discards the preview", fixture.drawing.activeTableResizeEdge)
+            fixture.tableId = fixture.adapter.tableIndex.rootExtents.keys.single()
             assertWidth("reset restores authoritative geometry", 120f, fixture.cell(0).bounds.width())
             val resetRevision = fixture.adapter.baseDocumentRevision
             assertTrue("the reset must advance the revision", resetRevision > beforeResetRevision)
@@ -682,9 +683,8 @@ internal class EditorTableColumnResizeTest {
         }
         val irregular = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2,"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","attrs":{"colspan":2,"colwidth":[100,100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[100]},"content":[{"type":"paragraph","content":[{"type":"text","text":"later"}]}]}]}]}]}"""
         withMountedTable(irregular, cellSelection = 1 to 2) { fixture ->
-            val record = fixture.adapter.cachedTableRecords.getValue(fixture.tableId)
             assertTrue("the irregular fixture must project a synthetic gap",
-                (record.optJSONArray("syntheticRegions") ?: JSONArray()).length() > 0)
+                requireNotNull(fixture.adapter.tableIndex.record(fixture.tableId)).syntheticRegions.isNotEmpty())
             val wide = fixture.cell(1)
             val later = fixture.cell(2)
             assertTrue("the gap sits after the last real cell of row 1", wide.bounds.right > later.bounds.right)

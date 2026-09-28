@@ -156,7 +156,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
                 .map { view.richTextView.editorContentFrame.getChildAt(it) }
                 .filterIsInstance<PreparedProseDrawingView>().single()
             val initial = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
-            val sourceId = adapter.cachedTableRecords.values.single().getString("sourceId")
+            val sourceId = adapter.tableRecordsForTesting.values.single().getString("sourceId")
             canvas.setTableLogicalOffset(initial.identity, 150f)
             assertEquals(150f, canvas.tablePhysicalOffsetForTesting(initial.identity), 0.01f)
 
@@ -168,7 +168,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             view.richTextView.layout(0, 0, 600, 500)
 
             val replacement = requireNotNull(canvas.preparedLayout?.blocks?.single()?.tableSurface)
-            assertEquals(sourceId, adapter.cachedTableRecords.values.single().getString("sourceId"))
+            assertEquals(sourceId, adapter.tableRecordsForTesting.values.single().getString("sourceId"))
             assertEquals(0f, canvas.tablePhysicalOffsetForTesting(replacement.identity), 0.01f)
         }
 
@@ -268,7 +268,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             typeAtCellEnd(input, "X")
             val editedSelection = authoritativeSelection(adapter)
             assertEquals("typing edits the cell", listOf("FirstX", "Second"), cellTexts(adapter))
-            val positions = adapter.tableCellPositions(adapter.cachedTableRecords.keys.single())
+            val positions = adapter.tableCellPositions(adapter.tableRecordsForTesting.keys.single())
             root.selectTableCells(adapter, positions.first(), positions.last())
             assertTrue("the rectangle is authoritative on the root", root.authoritativeCellSelectionActive)
             assertSame("the rectangle retires the cell input", root, view.richTextView.activeTextInput)
@@ -387,7 +387,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             view.setToolbarItemsJson(TableToolbarTestItems.HISTORY_JSON)
             typeAtCellEnd(input, "X")
             val editedSelection = authoritativeSelection(adapter)
-            val positions = adapter.tableCellPositions(adapter.cachedTableRecords.keys.single())
+            val positions = adapter.tableCellPositions(adapter.tableRecordsForTesting.keys.single())
             tapCell(view, 1)
             assertEquals(positions[1].toLong(), view.richTextView.activeTableCellPosition)
             val focus = recordFocus(view)
@@ -415,7 +415,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
     fun `javascript undo under a cell rectangle binds the cell holding the restored caret`() =
         withActiveCell { view, input, adapter ->
             typeAtCellEnd(input, "X")
-            val positions = adapter.tableCellPositions(adapter.cachedTableRecords.keys.single())
+            val positions = adapter.tableCellPositions(adapter.tableRecordsForTesting.keys.single())
             val root = view.richTextView.editorEditText
             root.selectTableCells(adapter, positions.first(), positions.last())
             assertSame("the rectangle retires the cell input", root, view.richTextView.activeTextInput)
@@ -439,7 +439,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
     fun `undo rebinding an unfocused cell leaves focus where it was`() =
         withActiveCell { view, input, adapter ->
             typeAtCellEnd(input, "X")
-            val positions = adapter.tableCellPositions(adapter.cachedTableRecords.keys.single())
+            val positions = adapter.tableCellPositions(adapter.tableRecordsForTesting.keys.single())
             tapCell(view, 1)
             input.clearFocus()
             assertFalse(input.hasFocus())
@@ -503,7 +503,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             view.setToolbarItemsJson(TableToolbarTestItems.HISTORY_JSON)
             val root = typeInProse(view, "Y")
             val proseCaret = root.selectionStart
-            val positions = adapter.tableCellPositions(adapter.cachedTableRecords.keys.single())
+            val positions = adapter.tableCellPositions(adapter.tableRecordsForTesting.keys.single())
             root.selectTableCells(adapter, positions.first(), positions.last())
             assertTrue(root.authoritativeCellSelectionActive)
             val restartsBefore = root.imeTraceSnapshotForTesting().count { it.startsWith(CELL_SELECTION_EXIT_RESTART) }
@@ -546,8 +546,8 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             assertEquals(ACTION_KEY, payload["key"])
             assertEquals("the action reports the settled revision: $payload",
                 adapter.baseDocumentRevision.toString(), payload["documentRevision"]?.toString())
-            assertTrue("the action carries the settled update: $payload",
-                (payload["updateJson"] as? String)?.contains("Firstzz") == true)
+            assertEquals("the action carries the exact settled native snapshot: $payload",
+                adapter.cachedAtomicRenderJson, payload["updateJson"])
         }
 
     @Test
@@ -1228,6 +1228,22 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
     }
 
     @Test
+    fun `cell typing publishes the exact table free native snapshot`() = withActiveCell { view, input, adapter ->
+        shadowOf(Looper.getMainLooper()).idle()
+        val updates = mutableListOf<Map<String, Any>>()
+        view.onEditorUpdateForTesting = updates::add
+        assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText("Z", 1))
+        val snapshot = adapter.cachedAtomicRenderJson
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(200))
+        val event = updates.single { it["documentRevision"] == adapter.baseDocumentRevision.toString() }
+        assertEquals(adapter.editorId, event["editorId"])
+        assertEquals(adapter.baseDocumentRevision.toString(), event["documentRevision"])
+        assertEquals(snapshot, event["updateJson"])
+        val payload = JSONObject(event["updateJson"] as String)
+        for (key in listOf("tableRecords", "tableAttributes", "tableInputMappings")) assertFalse(key, payload.has(key))
+    }
+
+    @Test
     fun `authoritative cell rectangle preserves wrapper focus and update shape`() =
         withActiveCell { view, input, adapter ->
             shadowOf(Looper.getMainLooper()).idle()
@@ -1237,7 +1253,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             view.onEditorUpdateForTesting = updates::add
             val staleConnection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
             val before = adapter.documentJson()
-            val cells = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+            val cells = adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
             fun point(index: Int): JSONObject {
                 val opening = cells.getJSONObject(index).getInt("sourcePos")
                 return JSONObject().put("offset", requireNotNull(adapter.scalarPositionForDoc(opening + 2)))
@@ -1258,7 +1274,7 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             assertFalse(focusChanges.any { it["isFocused"] == false })
             assertTrue(view.isEditorEffectivelyFocusedForNativeAction())
             assertEquals(1, updates.size)
-            val event = updates.single()
+            val event = updates.single { it["documentRevision"] == adapter.baseDocumentRevision.toString() }
             assertEquals(adapter.editorId, event["editorId"])
             assertEquals(adapter.baseDocumentRevision.toString(), event["documentRevision"])
             val published = JSONObject(event["updateJson"] as String).getJSONObject("selection")

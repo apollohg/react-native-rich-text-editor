@@ -2409,6 +2409,7 @@ data class FfiTableCellRecord (
     var `docSize`: kotlin.UInt,
     var `scalarStride`: kotlin.UInt,
     var `elements`: List<FfiViewerElement>,
+    var `voidElementIndices`: List<kotlin.UInt>,
     var `inputBlocks`: List<FfiCellInputBlock>,
     var `nestedTables`: List<FfiCellNestedTable>
 ) {
@@ -2433,6 +2434,7 @@ public object FfiConverterTypeFfiTableCellRecord: FfiConverterRustBuffer<FfiTabl
             FfiConverterUInt.read(buf),
             FfiConverterUInt.read(buf),
             FfiConverterSequenceTypeFfiViewerElement.read(buf),
+            FfiConverterSequenceUInt.read(buf),
             FfiConverterSequenceTypeFfiCellInputBlock.read(buf),
             FfiConverterSequenceTypeFfiCellNestedTable.read(buf),
         )
@@ -2450,6 +2452,7 @@ public object FfiConverterTypeFfiTableCellRecord: FfiConverterRustBuffer<FfiTabl
             FfiConverterUInt.allocationSize(value.`docSize`) +
             FfiConverterUInt.allocationSize(value.`scalarStride`) +
             FfiConverterSequenceTypeFfiViewerElement.allocationSize(value.`elements`) +
+            FfiConverterSequenceUInt.allocationSize(value.`voidElementIndices`) +
             FfiConverterSequenceTypeFfiCellInputBlock.allocationSize(value.`inputBlocks`) +
             FfiConverterSequenceTypeFfiCellNestedTable.allocationSize(value.`nestedTables`)
     )
@@ -2466,6 +2469,7 @@ public object FfiConverterTypeFfiTableCellRecord: FfiConverterRustBuffer<FfiTabl
             FfiConverterUInt.write(value.`docSize`, buf)
             FfiConverterUInt.write(value.`scalarStride`, buf)
             FfiConverterSequenceTypeFfiViewerElement.write(value.`elements`, buf)
+            FfiConverterSequenceUInt.write(value.`voidElementIndices`, buf)
             FfiConverterSequenceTypeFfiCellInputBlock.write(value.`inputBlocks`, buf)
             FfiConverterSequenceTypeFfiCellNestedTable.write(value.`nestedTables`, buf)
     }
@@ -3827,6 +3831,34 @@ public object FfiConverterOptionalTypeTableRenderFailure: FfiConverterRustBuffer
         } else {
             buf.put(1)
             FfiConverterTypeTableRenderFailure.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceUInt: FfiConverterRustBuffer<List<kotlin.UInt>> {
+    override fun read(buf: ByteBuffer): List<kotlin.UInt> {
+        val len = buf.getInt()
+        return List<kotlin.UInt>(len) {
+            FfiConverterUInt.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.UInt>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterUInt.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.UInt>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterUInt.write(it, buf)
         }
     }
 }

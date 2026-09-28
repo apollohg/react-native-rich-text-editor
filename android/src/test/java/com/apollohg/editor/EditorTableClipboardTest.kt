@@ -70,7 +70,7 @@ internal class EditorTableClipboardTest {
         val root: EditorEditText get() = view.editorEditText
 
         fun openings(tableIndex: Int = OUTER_TABLE): List<Int> {
-            val table = adapter.cachedTableRecords.values.sortedBy { it.getInt("tablePos") }[tableIndex]
+            val table = adapter.tableRecordsForTesting.values.sortedBy { it.getInt("tablePos") }[tableIndex]
             val cells = table.getJSONArray("cells")
             return (0 until cells.length()).map { cells.getJSONObject(it).getInt("sourcePos") }
         }
@@ -741,7 +741,7 @@ internal class EditorTableClipboardTest {
     }
 
     private fun dropTarget(fixture: Fixture, cell: Int) =
-        TableCellDropTarget(fixture.adapter.cachedTableRecords.keys.single(), cell)
+        TableCellDropTarget(fixture.adapter.tableRecordsForTesting.keys.single(), cell)
 
     @Test
     fun `a long press inside the selection lifts the copy flavours as a system drag`() =

@@ -45,7 +45,7 @@ internal class EditorCellSelectionAdmissionTest {
     private val document = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"one"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"two"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"after"}]}]}"""
 
     private fun selectCells(adapter: EditorV2Adapter, anchorIndex: Int = 0, headIndex: Int = 1): Pair<Int, Int> {
-        val cells = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+        val cells = adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
         val anchor = cells.getJSONObject(anchorIndex).getInt("sourcePos")
         val head = cells.getJSONObject(headIndex).getInt("sourcePos")
         fun point(docPos: Int) = JSONObject().put("offset", requireNotNull(adapter.scalarPositionForDoc(docPos + 2)))
@@ -86,7 +86,7 @@ internal class EditorCellSelectionAdmissionTest {
                 View.MeasureSpec.makeMeasureSpec(500, View.MeasureSpec.EXACTLY))
             view.layout(0, 0, width, 500)
             if (exactSelection) {
-                val cells = adapter.cachedTableRecords.values.minBy { it.getInt("tablePos") }
+                val cells = adapter.tableRecordsForTesting.values.minBy { it.getInt("tablePos") }
                     .getJSONArray("cells")
                 fun point(index: Int) = JSONObject().put("kind", "document")
                     .put("offset", cells.getJSONObject(index).getInt("sourcePos"))
@@ -163,7 +163,7 @@ internal class EditorCellSelectionAdmissionTest {
     @Test
     fun `reverse anchor drag crosses head and publishes canonical cell selection`() =
         withMountedSelection(threeCellDocument, 900, 2, 1) { view, adapter, drawing ->
-            val openings = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+            val openings = adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
             val handles = drawing.selectionHandles()
             assertEquals(2, handles.size)
             val anchor = handles.single { it.role == TableSelectionHandleRole.ANCHOR }
@@ -225,7 +225,7 @@ internal class EditorCellSelectionAdmissionTest {
     fun `anti diagonal selection keeps handles on effective union corners`() =
         withMountedSelection(gridDocument, 600, 1, 2) { _, adapter, drawing ->
             val selection = engineSelection(adapter)
-            val resolved = resolveEditorCellSelection(selection, adapter.cachedTableRecords)
+            val resolved = resolveEditorCellSelection(selection, adapter.tableIndex)
                 as EditorCellSelection.Drawable
             assertEquals(4, resolved.sourceIndices.size)
             val handles = drawing.selectionHandles()
@@ -242,7 +242,7 @@ internal class EditorCellSelectionAdmissionTest {
         val backend = RecordingAwarenessBackend()
         withMountedSelection(gridDocument, 600, 0, 1, backend = backend, roomBound = true) {
             view, adapter, drawing ->
-            val cells = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+            val cells = adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
             val anchor = cells.getJSONObject(0).getInt("sourcePos")
             val target = cells.getJSONObject(3).getInt("sourcePos")
             val head = drawing.selectionHandles().single { it.role == TableSelectionHandleRole.HEAD }
@@ -264,7 +264,7 @@ internal class EditorCellSelectionAdmissionTest {
         withMountedSelection(gridDocument, 600, 0, 0, backend = backend, roomBound = true) {
             _, adapter, _ ->
             assertNotNull("the mounted view owns native intents", adapter.nativeOwnerId)
-            val cells = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+            val cells = adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
             val first = cells.getJSONObject(0).getInt("sourcePos")
             val second = cells.getJSONObject(1).getInt("sourcePos")
             val caret = requireNotNull(adapter.scalarPositionForDoc(first + 2))
@@ -282,12 +282,12 @@ internal class EditorCellSelectionAdmissionTest {
     fun `head drag addresses nested only outer cell without selecting its descendant`() =
         withMountedSelection(EditorTableSurfaceMountTest.nestedTableDocument, 900, 0, 2) {
             view, adapter, drawing ->
-            val outer = adapter.cachedTableRecords.values.minBy { it.getInt("tablePos") }
+            val outer = adapter.tableRecordsForTesting.values.minBy { it.getInt("tablePos") }
             val openings = outer.getJSONArray("cells")
             val nestedOnly = openings.getJSONObject(1).getInt("sourcePos")
             val head = drawing.selectionHandles().single { it.role == TableSelectionHandleRole.HEAD }
             val target = drawing.presentedTableCells().first {
-                it.surface.editorTableId == "t${outer.getInt("tablePos")}" &&
+                it.surface.editorTableId == outer.getString("sourceId") &&
                     it.sourceIndex == 1
             }
             val before = adapter.documentJson()
@@ -311,7 +311,7 @@ internal class EditorCellSelectionAdmissionTest {
             val anchor = handles.single { it.role == TableSelectionHandleRole.ANCHOR }
             val head = handles.single { it.role == TableSelectionHandleRole.HEAD }
             assertTrue(anchor.x > head.x)
-            val cells = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+            val cells = adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
             assertEquals(cells.getJSONObject(0).getInt("sourcePos"), anchor.sourcePosition)
             assertEquals(cells.getJSONObject(3).getInt("sourcePos"), head.sourcePosition)
             val target = drawing.presentedTableCells().first {
@@ -334,7 +334,7 @@ internal class EditorCellSelectionAdmissionTest {
         }.toString()
         withMountedSelection(merged, 600, 0, 2) { _, adapter, drawing ->
             val selection = engineSelection(adapter)
-            val resolved = resolveEditorCellSelection(selection, adapter.cachedTableRecords)
+            val resolved = resolveEditorCellSelection(selection, adapter.tableIndex)
                 as EditorCellSelection.Drawable
             assertEquals(3, resolved.sourceIndices.size)
             assertEquals(2, drawing.selectionHandles().size)
@@ -350,14 +350,14 @@ internal class EditorCellSelectionAdmissionTest {
                 .getJSONObject(1).getJSONArray("content").remove(1)
         }.toString()
         withMountedSelection(irregular, 600, 0, 1) { view, adapter, drawing ->
-            val record = adapter.cachedTableRecords.values.single()
-            assertTrue(record.getJSONArray("syntheticRegions").length() > 0)
+            val record = adapter.tableRecordsForTesting.values.single()
+            assertTrue(requireNotNull(adapter.tableIndex.record(record.getString("sourceId"))).syntheticRegions.isNotEmpty())
             val cells = drawing.presentedTableCells()
             val upperRight = cells.first { it.sourceIndex == 1 }
             val lowerLeft = cells.first { it.sourceIndex == 2 }
             val x = upperRight.bounds.centerX()
             val y = lowerLeft.bounds.centerY()
-            assertNull(drawing.selectedTableCellAt(x, y, "t${record.getInt("tablePos")}"))
+            assertNull(drawing.selectedTableCellAt(x, y, record.getString("sourceId")))
             val head = drawing.selectionHandles().single { it.role == TableSelectionHandleRole.HEAD }
             val before = engineSelection(adapter).toString()
             dragHandle(view, head.x + drawing.left, head.y + drawing.top,
@@ -374,7 +374,7 @@ internal class EditorCellSelectionAdmissionTest {
         }.toString()
         withMountedSelection(irregular, 600, 1, 2) { _, adapter, drawing ->
             val selection = engineSelection(adapter)
-            val selected = resolveEditorCellSelection(selection, adapter.cachedTableRecords)
+            val selected = resolveEditorCellSelection(selection, adapter.tableIndex)
                 as EditorCellSelection.Drawable
             assertEquals(3, selected.sourceIndices.size)
             val handles = drawing.selectionHandles()
@@ -418,7 +418,7 @@ internal class EditorCellSelectionAdmissionTest {
     @Test
     fun `foreign cell selection invalidates held endpoint owner`() =
         withMountedSelection(threeCellDocument, 900, 0, 1) { view, adapter, drawing ->
-            val record = adapter.cachedTableRecords.values.single()
+            val record = adapter.tableRecordsForTesting.values.single()
             val cells = record.getJSONArray("cells")
             val head = drawing.selectionHandles().single { it.role == TableSelectionHandleRole.HEAD }
             val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN,
@@ -492,7 +492,7 @@ internal class EditorCellSelectionAdmissionTest {
                 try { view.editorContentFrame.dispatchTouchEvent(motion) }
                 finally { motion.recycle() }
             }
-            assertEquals(adapter.cachedTableRecords.values.single().getJSONArray("cells")
+            assertEquals(adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
                 .getJSONObject(1).getInt("sourcePos"), engineSelection(adapter).getInt("headCell"))
             listOf(event(MotionEvent.ACTION_DOWN, 25, fromX, fromY),
                 otherPointer(MotionEvent.ACTION_POINTER_DOWN or
@@ -502,7 +502,7 @@ internal class EditorCellSelectionAdmissionTest {
                 finally { motion.recycle() }
             }
             assertEquals("second pointer must cancel the captured drag",
-                adapter.cachedTableRecords.values.single().getJSONArray("cells")
+                adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
                     .getJSONObject(1).getInt("sourcePos"), engineSelection(adapter).getInt("headCell"))
             listOf(event(MotionEvent.ACTION_DOWN, 40, fromX, fromY),
                 event(MotionEvent.ACTION_MOVE, 50, toX, toY, pointerId = 8),
@@ -511,7 +511,7 @@ internal class EditorCellSelectionAdmissionTest {
                 finally { motion.recycle() }
             }
             assertEquals("lost pointer must cancel the captured drag",
-                adapter.cachedTableRecords.values.single().getJSONArray("cells")
+                adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
                     .getJSONObject(1).getInt("sourcePos"), engineSelection(adapter).getInt("headCell"))
             listOf(event(MotionEvent.ACTION_DOWN, 70, fromX, fromY),
                 event(MotionEvent.ACTION_MOVE, 90, toX, toY),
@@ -610,17 +610,16 @@ internal class EditorCellSelectionAdmissionTest {
         withMountedSelection(EditorTableSurfaceMountTest.nestedTableDocument, 900, 0, 2) {
             view, adapter, drawing ->
             assertEquals(2, drawing.selectionHandles().size)
-            val originalRecords = adapter.cachedTableRecords
-            val outer = originalRecords.values.minBy { it.getInt("tablePos") }
-            adapter.cachedTableRecords = originalRecords +
-                ("t${outer.getInt("tablePos")}" to JSONObject(outer.toString())
-                    .put("failure", "invalidStructure"))
+            val originalIndex = adapter.tableIndex
+            adapter.tableIndex = originalIndex.replacingRecordsForTesting {
+                if (it.host == null) it.copy(failure = uniffi.editor_core.TableRenderFailure.INVALID_STRUCTURE) else it
+            }
             view.editorEditText.onSelectionOrContentMayChange?.invoke()
             assertTrue(drawing.selectionHandles().isEmpty())
-            adapter.cachedTableRecords = originalRecords
+            adapter.tableIndex = originalIndex
             view.editorEditText.onSelectionOrContentMayChange?.invoke()
             assertEquals(2, drawing.selectionHandles().size)
-            val nested = adapter.cachedTableRecords.values.maxBy { it.getInt("tablePos") }
+            val nested = adapter.tableRecordsForTesting.values.maxBy { it.getInt("tablePos") }
             val opening = nested.getJSONArray("cells").getJSONObject(0).getInt("sourcePos")
             val point = JSONObject().put("kind", "document").put("offset", opening)
             val selection = JSONObject().put("type", "cell")
@@ -675,7 +674,7 @@ internal class EditorCellSelectionAdmissionTest {
                 container.layout(0, 0, 300, 500)
                 val visible = Rect()
                 assertTrue(drawing.getLocalVisibleRect(visible))
-                val tableId = "t${adapter.cachedTableRecords.values.single().getInt("tablePos")}"
+                val tableId = adapter.tableRecordsForTesting.keys.single()
                 val invisible = drawing.presentedTableCells().first { cell ->
                     cell.bounds.centerY() > visible.bottom + 24f &&
                         cell.bounds.centerX() < visible.right
@@ -796,7 +795,7 @@ internal class EditorCellSelectionAdmissionTest {
                 val maxScroll = view.editorScrollView.getChildAt(0).height -
                     view.editorScrollView.height
                 assertTrue("fixture reached document bottom before rehit", view.editorScrollView.scrollY < maxScroll)
-                val tableId = "t${adapter.cachedTableRecords.values.single().getInt("tablePos")}"
+                val tableId = adapter.tableRecordsForTesting.keys.single()
                 val visibleAfter = Rect()
                 assertTrue(drawing.getLocalVisibleRect(visibleAfter))
                 val pointedCell = drawing.selectedTableCellAt(
@@ -807,7 +806,7 @@ internal class EditorCellSelectionAdmissionTest {
                 assertNotEquals("frame scrolling must select a newly reached cell",
                     headAfterMove, scrolledSelection.getInt("headCell"))
                 assertEquals(pointedCell, scrolledSelection.getInt("headCell"))
-                assertEquals(adapter.cachedTableRecords.values.single().getJSONArray("cells")
+                assertEquals(adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
                     .getJSONObject(0).getInt("sourcePos"), scrolledSelection.getInt("anchorCell"))
                 val cancel = MotionEvent.obtain(0, 300, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
                 try { view.editorContentFrame.dispatchTouchEvent(cancel) }
@@ -819,7 +818,7 @@ internal class EditorCellSelectionAdmissionTest {
                 assertEquals(stoppedVertical, view.editorScrollView.scrollY)
                 assertEquals(before, adapter.documentJson())
                 assertEquals(revision, adapter.baseDocumentRevision)
-                val real = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+                val real = adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
                 val positions = (0 until real.length()).map { real.getJSONObject(it).getInt("sourcePos") }.toSet()
                 assertTrue(engineSelection(adapter).getInt("headCell") in positions)
             } finally { activity.pause().stop().destroy() }
@@ -885,8 +884,8 @@ internal class EditorCellSelectionAdmissionTest {
         try {
             assertNotNull(adapter.setContentJson(document))
             val (anchor, head) = selectCells(adapter)
-            val raw = (UniffiEditorV2Backend.renderUpdate(adapter.editorId, null, null)
-                as EditorV2CallResult.Ok).value
+            assertNotNull(adapter.refreshFromRustState(null))
+            val raw = requireNotNull(adapter.cachedAtomicRenderJson)
             val wire = JSONObject(raw).getJSONObject("selection")
             assertEquals(setOf("type", "anchorCell", "headCell"), wire.keys().asSequence().toSet())
             assertEquals(anchor, wire.getInt("anchorCell"))
@@ -894,24 +893,18 @@ internal class EditorCellSelectionAdmissionTest {
             assertNotNull("Android rejects genuine engine selection", parseAtomicRenderSnapshot(raw))
             val mismatched = JSONObject(raw).put("selection", JSONObject(wire.toString())
                 .put("headCell", head + 10000))
-            assertNull("cell opening outside the admitted table", parseAtomicRenderSnapshot(mismatched.toString()))
+            assertNull("cell opening outside the admitted table",
+                resolveEditorCellSelection(mismatched.getJSONObject("selection"), adapter.tableIndex))
             assertNull(parseAtomicRenderSnapshot(JSONObject(raw).put("selection", JSONObject(wire.toString())
                 .put("anchorScalar", 0)).toString()))
             assertNull(parseAtomicRenderSnapshot(JSONObject(raw).put("selection", JSONObject(wire.toString())
                 .put("headCell", "9")).toString()))
-            val failureFrame = JSONObject(raw)
-            val failureRecord = failureFrame.getJSONObject("tableRecords").getJSONObject("t0")
-            failureRecord.put("rows", 0).put("columns", 0)
-                .put("columnWidths", org.json.JSONArray())
-                .put("sourceRows", org.json.JSONArray())
-                .put("cells", org.json.JSONArray())
-                .put("syntheticRegions", org.json.JSONArray())
-                .put("failure", "invalidStructure")
-            failureFrame.getJSONObject("tableInputMappings").getJSONObject("tables")
-                .getJSONObject("t0").put("extent", JSONObject.NULL)
-                .put("cells", org.json.JSONArray())
-            assertNotNull("preserved selection must survive an unavailable projection",
-                parseAtomicRenderSnapshot(failureFrame.toString()))
+            assertTrue(resolveEditorCellSelection(wire, adapter.tableIndex) is EditorCellSelection.Drawable)
+            val unavailable = adapter.tableIndex.replacingRecordsForTesting {
+                it.copy(failure = uniffi.editor_core.TableRenderFailure.INVALID_STRUCTURE)
+            }
+            assertTrue("preserved selection must survive an unavailable projection",
+                resolveEditorCellSelection(wire, unavailable) is EditorCellSelection.Unavailable)
         } finally {
             adapter.destroy()
         }
@@ -930,41 +923,33 @@ internal class EditorCellSelectionAdmissionTest {
             val raw = (UniffiEditorV2Backend.renderUpdate(adapter.editorId, null, null)
                 as EditorV2CallResult.Ok).value
             val selection = JSONObject(raw).getJSONObject("selection")
-            val record = adapter.cachedTableRecords.values.single()
+            val record = adapter.tableRecordsForTesting.values.single()
             val realCells = record.getJSONArray("cells")
             val expected = (0 until realCells.length()).toSet()
             assertEquals(5, expected.size)
-            assertEquals(expected, (resolveEditorCellSelection(selection, adapter.cachedTableRecords)
+            assertEquals(expected, (resolveEditorCellSelection(selection, adapter.tableIndex)
                 as EditorCellSelection.Drawable).sourceIndices)
-            val rtl = JSONObject(record.toString()).put("direction", "rtl")
-            assertEquals(expected, (resolveEditorCellSelection(selection, mapOf("t0" to rtl))
-                as EditorCellSelection.Drawable).sourceIndices)
-            val unavailable = JSONObject(record.toString()).put("failure", "invalidStructure")
-            assertTrue(resolveEditorCellSelection(selection, mapOf("t0" to unavailable))
-                is EditorCellSelection.Unavailable)
-            val outerFailure = JSONObject().put("tablePos", 0).put("sourceEnd", 100)
-                .put("failure", "invalidStructure")
-            val innerFailure = JSONObject().put("tablePos", 20).put("sourceEnd", 50)
-                .put("failure", "invalidStructure")
-            val nestedSelection = JSONObject().put("type", "cell")
-                .put("anchorCell", 25).put("headCell", 30)
-            assertEquals("t20", resolveEditorCellSelection(nestedSelection,
-                mapOf("t0" to outerFailure, "t20" to innerFailure))?.tableId)
-
+            val rtl = adapter.tableIndex.replacingRecordsForTesting { it.copy(direction = "rtl") }
+            assertEquals(expected, (resolveEditorCellSelection(selection, rtl) as EditorCellSelection.Drawable).sourceIndices)
+            val unavailable = adapter.tableIndex.replacingRecordsForTesting {
+                it.copy(failure = uniffi.editor_core.TableRenderFailure.INVALID_STRUCTURE)
+            }
+            assertTrue(resolveEditorCellSelection(selection, unavailable) is EditorCellSelection.Unavailable)
             val separateTables = JSONObject(document).apply {
                 val content = getJSONArray("content")
                 content.put(JSONObject(content.getJSONObject(0).toString()))
             }
             assertNotNull(adapter.setContentJson(separateTables.toString()))
-            val tableRecords = adapter.cachedTableRecords
+            val tableRecords = adapter.tableRecordsForTesting
             assertEquals(2, tableRecords.size)
             val openings = tableRecords.values.map { it.getJSONArray("cells").getJSONObject(0).getInt("sourcePos") }
             val crossTable = JSONObject().put("type", "cell")
                 .put("anchorCell", openings[0]).put("headCell", openings[1])
-            assertNull(resolveEditorCellSelection(crossTable, tableRecords))
+            assertNull(resolveEditorCellSelection(crossTable, adapter.tableIndex))
             val atomic = JSONObject(requireNotNull(adapter.cachedAtomicRenderJson))
                 .put("selection", crossTable)
-            assertNull(parseAtomicRenderSnapshot(atomic.toString()))
+            assertNotNull(parseAtomicRenderSnapshot(atomic.toString()))
+            assertNull(resolveEditorCellSelection(crossTable, adapter.tableIndex))
         } finally {
             adapter.destroy()
         }
@@ -1091,7 +1076,7 @@ internal class EditorCellSelectionAdmissionTest {
     fun `mounted head handle extends authoritative selection without editing document`() {
         withMountedSelection(threeCellDocument, 900, 0, 1, exactSelection = false) {
             view, adapter, drawing ->
-            val openings = adapter.cachedTableRecords.values.single().getJSONArray("cells")
+            val openings = adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
             val block = drawing.preparedLayout!!.blocks.single()
             val table = block.tableSurface!!
             val bounds = block.tableBounds!!

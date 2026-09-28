@@ -294,6 +294,16 @@ final class EditorTableIndex {
 
     private static func validate(_ cell: FfiTableCellRecord, tableKey: String, index: Int, pool: [String: String]) throws {
         guard pool[cell.attrsKey] != nil else { throw TableFrameRejection.missingAttribute(cell.attrsKey) }
+        var voidIndices = Set<UInt32>()
+        for elementIndex in cell.voidElementIndices {
+            guard Int(elementIndex) < cell.elements.count, voidIndices.insert(elementIndex).inserted else {
+                throw TableFrameRejection.inputBlockOutOfStride(tableKey, index)
+            }
+            switch cell.elements[Int(elementIndex)] {
+            case .inlineAtom, .blockAtom: break
+            default: throw TableFrameRejection.inputBlockOutOfStride(tableKey, index)
+            }
+        }
         var previousDoc: UInt32 = 0
         var previousScalar: UInt32 = 0
         for block in cell.inputBlocks {

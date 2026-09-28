@@ -1,7 +1,5 @@
 package com.apollohg.editor.viewer
 
-import android.graphics.Rect
-import com.apollohg.editor.tables.ViewerTableSurface
 import java.util.IdentityHashMap
 
 /** A source-neutral local shape. Parent artifacts remain the only persistent owners. */
@@ -58,9 +56,9 @@ internal fun cellShapeKey(
                         theme.viewerAtoms.estimatedHeights[custom.nodeType]
                 )
             }
-            block.table?.let { table ->
-                com.apollohg.editor.tables.TableSurfaceSource.from(table).cells.forEach {
-                    addAll(atomGeometry(current.cellDocument(it, "t${table.tablePos}")))
+            block.tableSource()?.let { table ->
+                table.cells.forEach {
+                    addAll(atomGeometry(current.cellDocument(it, requireNotNull(block.tableKey))))
                 }
             }
         }
@@ -70,9 +68,9 @@ internal fun cellShapeKey(
             ViewerImageAttachment.sourceAndDeclaredSize(block)?.let { (id, source, declared) ->
                 add("$source:${declared ?: ViewerImageIntrinsicStore.shared.size(id)}")
             }
-            block.table?.let { table ->
-                com.apollohg.editor.tables.TableSurfaceSource.from(table).cells.forEach {
-                    addAll(imageGeometry(current.cellDocument(it, "t${table.tablePos}")))
+            block.tableSource()?.let { table ->
+                table.cells.forEach {
+                    addAll(imageGeometry(current.cellDocument(it, requireNotNull(block.tableKey))))
                 }
             }
         }

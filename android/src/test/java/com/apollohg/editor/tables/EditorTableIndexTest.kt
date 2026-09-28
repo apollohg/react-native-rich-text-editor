@@ -42,7 +42,7 @@ internal class EditorTableIndexTest {
         0u, 0u, column, 1u, 1u, false, ATTRIBUTE_KEY, "cell-$column", 5u, stride,
         listOf(FfiViewerElement.BlockStart("paragraph", null, 0u, null),
             FfiViewerElement.TextRun("a", emptyList()), FfiViewerElement.BlockEnd),
-        listOf(FfiCellInputBlock(0u, 2u, 3u, 0u, 0u, 1u, stride, false)), emptyList()
+        emptyList(), listOf(FfiCellInputBlock(0u, 2u, 3u, 0u, 0u, 1u, stride, false)), emptyList()
     )
 
     private fun frame(): FfiTableFrame {
@@ -77,6 +77,26 @@ internal class EditorTableIndexTest {
             check(requireNotNull(native.frame).tables, JSONObject(requireNotNull(legacy.value)), adapter.baseDocumentRevision)
         } finally {
             adapter.destroy()
+        }
+    }
+
+    @Test
+    fun `void element metadata rejects duplicates non atoms and out of range indices atomically`() {
+        val index = EditorTableIndex()
+        val full = frame()
+        assertTrue(index.adopt(full, null, REVISION) is TableFrameAdoption.Adopted)
+        val original = index.record(ROOT_KEY)
+        for (indices in listOf(listOf(0u), listOf(3u), listOf(1u, 1u))) {
+            val corrupted = frame()
+            if (indices.size > 1) {
+                corrupted.tables[0].cells[0].elements = corrupted.tables[0].cells[0].elements.toMutableList().apply {
+                    set(1, FfiViewerElement.InlineAtom("mention", 2u, "{}", "a"))
+                }
+            }
+            corrupted.tables[0].cells[0].voidElementIndices = indices
+            assertEquals(TableFrameAdoption.Rejected(TableFrameRejection.InputBlockOutOfStride(ROOT_KEY, 0)),
+                index.adopt(corrupted, REVISION, REVISION))
+            assertEquals(original, index.record(ROOT_KEY))
         }
     }
 

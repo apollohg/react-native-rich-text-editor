@@ -165,13 +165,14 @@ final class RenderBridge {
     ///   - textColor: The default text color.
     /// - Returns: The rendered attributed string. Returns an empty attributed
     ///   string if the JSON is invalid.
-    static func inputElements(_ elements: [FfiViewerElement], cellDocStart: UInt32) -> [[String: Any]]? {
+    static func inputElements(_ elements: [FfiViewerElement], voidElementIndices: [UInt32], cellDocStart: UInt32) -> [[String: Any]]? {
         func object(_ json: String) -> [String: Any]? {
             guard let data = json.data(using: .utf8) else { return nil }
             return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         }
         var result: [[String: Any]] = []
-        for element in elements {
+        let voidIndices = Set(voidElementIndices)
+        for (index, element) in elements.enumerated() {
             switch element {
             case let .table(tableId): result.append(["type": "table", "tableId": tableId])
             case .blockEnd: result.append(["type": "blockEnd"])
@@ -194,7 +195,11 @@ final class RenderBridge {
             case let .inlineAtom(nodeType, docPos, attrsJson, label), let .blockAtom(nodeType, docPos, attrsJson, label):
                 guard let attrs = object(attrsJson), let position = UInt32(exactly: UInt64(cellDocStart) + UInt64(docPos)) else { return nil }
                 let type: String
-                if case .inlineAtom = element { type = "opaqueInlineAtom" } else { type = "opaqueBlockAtom" }
+                if case .inlineAtom = element {
+                    type = voidIndices.contains(UInt32(index)) ? "voidInline" : "opaqueInlineAtom"
+                } else {
+                    type = voidIndices.contains(UInt32(index)) ? "voidBlock" : "opaqueBlockAtom"
+                }
                 result.append(["type": type, "nodeType": nodeType, "docPos": position, "attrs": attrs, "label": label])
             }
         }

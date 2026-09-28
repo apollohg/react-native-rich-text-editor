@@ -1,14 +1,18 @@
 package com.apollohg.editor.viewer
 
+import uniffi.editor_core.FfiTableRecord
+import com.apollohg.editor.tables.TableSurfaceCell
+import com.apollohg.editor.tables.TableSurfaceSource
+import com.apollohg.editor.tables.EditorTableIndex
 import com.apollohg.editor.ProseViewerConfiguration
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.ProseViewerSource
 import java.security.MessageDigest
+import org.json.JSONArray
 import org.json.JSONObject
 import uniffi.editor_core.FfiViewerCompileRequest
 import uniffi.editor_core.FfiViewerElement
 import uniffi.editor_core.FfiViewerTable
-import com.apollohg.editor.parseTableAttributes
 import uniffi.editor_core.FfiViewerMark
 import uniffi.editor_core.FfiViewerSourceKind
 import uniffi.editor_core.viewerCompile
@@ -76,8 +80,14 @@ internal data class ViewerBlock(
     val isBlockAtom: Boolean = false,
     val containers: List<ViewerContainerAncestor> = emptyList(),
     val language: String? = null,
-    val table: FfiViewerTable? = null
-)
+    val table: FfiViewerTable? = null,
+    val frameRecord: FfiTableRecord? = null
+) {
+    val tableKey: String? get() = frameRecord?.tableKey ?: table?.let { "t${it.tablePos}" }
+    fun tableSource(): TableSurfaceSource? =
+        frameRecord?.let(TableSurfaceSource::from)
+            ?: table?.let(TableSurfaceSource::from)
+}
 
 /** Semantic positions live only in [ViewerInline.Atom], never in Android drawing spans. */
 internal data class ViewerDocument(
@@ -89,10 +99,11 @@ internal data class ViewerDocument(
     val tableAttributes: Map<String, JSONObject> = emptyMap(),
     val tableRecords: Map<String, FfiViewerTable> = emptyMap(),
     val preferredTextBlockName: String = "paragraph",
-    val tablePresentationIdentities: Map<String, String> = emptyMap()
+    val tablePresentationIdentities: Map<String, String> = emptyMap(),
+    val frameIndex: EditorTableIndex? = null
 ) {
-    fun tablePresentationIdentity(table: FfiViewerTable): String =
-        tablePresentationIdentities["t${table.tablePos}"] ?: "t${table.tablePos}"
+    fun tablePresentationIdentity(tableKey: String): String =
+        tablePresentationIdentities[tableKey] ?: tableKey
 }
 
 internal data class ProseViewerRequest(
@@ -282,7 +293,8 @@ private fun lowerElements(
     elements: List<FfiViewerElement>,
     preferredTextBlockName: String,
     tableRecords: Map<String, FfiViewerTable>,
-    isEmpty: Boolean
+    isEmpty: Boolean,
+    frameIndex: EditorTableIndex? = null
 ): List<ViewerBlock> {
     data class Builder(
         val nodeType: String,
@@ -322,7 +334,8 @@ private fun lowerElements(
         inlines: List<ViewerInline>,
         ancestors: List<Builder>,
         isBlockAtom: Boolean = false,
-        table: FfiViewerTable? = null
+        table: FfiViewerTable? = null,
+        frameRecord: FfiTableRecord? = null
     ) {
         val itemAncestors = listItemAncestors(ancestors)
         rendered += ViewerBlock(
@@ -334,6 +347,7 @@ private fun lowerElements(
             inlines = inlines,
             isBlockAtom = isBlockAtom,
             table = table,
+            frameRecord = frameRecord,
             language = ancestors.lastOrNull()?.language,
             containers = ancestors.filter {
                 it.nodeType in CONTAINER_BLOCKS &&
@@ -355,7 +369,12 @@ private fun lowerElements(
 
     elements.forEach { element ->
         when (element) {
-            is FfiViewerElement.Table -> appendLeaf("table", stack.lastOrNull()?.depth ?: 0, emptyList(), stack, true, tableRecords[element.tableId] ?: throw ProseViewerError.compiler("viewer", "INVALID_TABLE_RECORD", "The compiler returned a dangling semantic table reference."))
+            is FfiViewerElement.Table -> {
+                val record = frameIndex?.record(element.tableId)
+                val table = tableRecords[element.tableId]
+                if (record == null && table == null) throw ProseViewerError.compiler("viewer", "INVALID_TABLE_RECORD", "The compiler returned a dangling semantic table reference.")
+                appendLeaf("table", stack.lastOrNull()?.depth ?: 0, emptyList(), stack, true, table, record)
+            }
             is FfiViewerElement.BlockStart -> {
                 val context = listContext(element.listContextJson)
                 if (context?.isFirst == true) {
@@ -506,14 +525,23 @@ private fun lowerElements(
 
 }
 
-internal fun ViewerDocument.cellDocument(cell: com.apollohg.editor.tables.TableSurfaceCell, tableId: String): ViewerDocument =
-    copy(
+internal fun ViewerDocument.cellDocument(cell: TableSurfaceCell, tableId: String): ViewerDocument {
+    val elements = if (frameIndex == null) cell.elements else cell.elements.map { element ->
+        fun absolute(relative: UInt): UInt = requireNotNull(frameIndex.absoluteDocPos(tableId, cell.sourceIndex, relative))
+        when (element) {
+            is FfiViewerElement.InlineAtom -> element.copy(docPos = absolute(element.docPos))
+            is FfiViewerElement.BlockAtom -> element.copy(docPos = absolute(element.docPos))
+            else -> element
+        }
+    }
+    return copy(
         semanticKey = "$semanticKey:$tableId:${cell.sourceIndex}:${cell.contentKey}",
-        blocks = lowerElements(cell.elements, preferredTextBlockName, tableRecords, cell.elements.isEmpty()),
+        blocks = lowerElements(elements, preferredTextBlockName, tableRecords, elements.isEmpty(), frameIndex),
         isEmpty = cell.elements.isEmpty(),
         retainedBytes = 0,
         trailingEmptyTextBlockCount = 0
     )
+}
 
 private val CONTAINER_BLOCKS = setOf(
     "doc",
@@ -568,4 +596,33 @@ internal fun sha256(value: String): String = MessageDigest.getInstance(
     "SHA-256"
 ).digest(value.toByteArray(Charsets.UTF_8)).joinToString("") {
     "%02x".format(it)
+}
+
+private fun parseTableAttributes(value: Any?): Map<String, JSONObject>? {
+    val raw = if (value == null) JSONObject() else value as? JSONObject ?: return null
+    val pool = mutableMapOf<String, JSONObject>()
+    val unique = mutableSetOf<String>()
+    var bytes = 0L
+    var entries = 0
+    for (key in raw.keys()) {
+        val json = raw.opt(key) as? String ?: return null
+        entries++
+        bytes += json.toByteArray(Charsets.UTF_8).size
+        if (!Regex("^[0-9a-f]{64}$").matches(key) || entries > 7_000_000 || !unique.add(json) || bytes > 192L * 1024 * 1024) return null
+        val root = try { JSONObject(json) } catch (_: Exception) { return null }
+        val pending = java.util.ArrayDeque<Pair<Any, Int>>()
+        pending.add(root to 0)
+        var work = 0
+        while (pending.isNotEmpty()) {
+            val (item, depth) = pending.removeLast()
+            if (++work > json.length || depth > 1024) return null
+            when (item) {
+                is Number -> if (!item.toDouble().isFinite()) return null
+                is JSONObject -> item.keys().forEach { pending.add(item.get(it) to depth + 1) }
+                is JSONArray -> for (index in 0 until item.length()) pending.add(item.get(index) to depth + 1)
+            }
+        }
+        pool[key] = root
+    }
+    return pool.toMap()
 }

@@ -1629,12 +1629,13 @@ public struct FfiTableCellRecord {
     public var docSize: UInt32
     public var scalarStride: UInt32
     public var elements: [FfiViewerElement]
+    public var voidElementIndices: [UInt32]
     public var inputBlocks: [FfiCellInputBlock]
     public var nestedTables: [FfiCellNestedTable]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sourceRow: UInt32, row: UInt32, column: UInt32, rowspan: UInt32, colspan: UInt32, header: Bool, attrsKey: String, contentKey: String, docSize: UInt32, scalarStride: UInt32, elements: [FfiViewerElement], inputBlocks: [FfiCellInputBlock], nestedTables: [FfiCellNestedTable]) {
+    public init(sourceRow: UInt32, row: UInt32, column: UInt32, rowspan: UInt32, colspan: UInt32, header: Bool, attrsKey: String, contentKey: String, docSize: UInt32, scalarStride: UInt32, elements: [FfiViewerElement], voidElementIndices: [UInt32], inputBlocks: [FfiCellInputBlock], nestedTables: [FfiCellNestedTable]) {
         self.sourceRow = sourceRow
         self.row = row
         self.column = column
@@ -1646,6 +1647,7 @@ public struct FfiTableCellRecord {
         self.docSize = docSize
         self.scalarStride = scalarStride
         self.elements = elements
+        self.voidElementIndices = voidElementIndices
         self.inputBlocks = inputBlocks
         self.nestedTables = nestedTables
     }
@@ -1691,6 +1693,9 @@ extension FfiTableCellRecord: Equatable, Hashable {
         if lhs.elements != rhs.elements {
             return false
         }
+        if lhs.voidElementIndices != rhs.voidElementIndices {
+            return false
+        }
         if lhs.inputBlocks != rhs.inputBlocks {
             return false
         }
@@ -1712,6 +1717,7 @@ extension FfiTableCellRecord: Equatable, Hashable {
         hasher.combine(docSize)
         hasher.combine(scalarStride)
         hasher.combine(elements)
+        hasher.combine(voidElementIndices)
         hasher.combine(inputBlocks)
         hasher.combine(nestedTables)
     }
@@ -1737,6 +1743,7 @@ public struct FfiConverterTypeFfiTableCellRecord: FfiConverterRustBuffer {
                 docSize: FfiConverterUInt32.read(from: &buf),
                 scalarStride: FfiConverterUInt32.read(from: &buf),
                 elements: FfiConverterSequenceTypeFfiViewerElement.read(from: &buf),
+                voidElementIndices: FfiConverterSequenceUInt32.read(from: &buf),
                 inputBlocks: FfiConverterSequenceTypeFfiCellInputBlock.read(from: &buf),
                 nestedTables: FfiConverterSequenceTypeFfiCellNestedTable.read(from: &buf)
         )
@@ -1754,6 +1761,7 @@ public struct FfiConverterTypeFfiTableCellRecord: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.docSize, into: &buf)
         FfiConverterUInt32.write(value.scalarStride, into: &buf)
         FfiConverterSequenceTypeFfiViewerElement.write(value.elements, into: &buf)
+        FfiConverterSequenceUInt32.write(value.voidElementIndices, into: &buf)
         FfiConverterSequenceTypeFfiCellInputBlock.write(value.inputBlocks, into: &buf)
         FfiConverterSequenceTypeFfiCellNestedTable.write(value.nestedTables, into: &buf)
     }
@@ -3909,6 +3917,31 @@ fileprivate struct FfiConverterOptionTypeTableRenderFailure: FfiConverterRustBuf
         case 1: return try FfiConverterTypeTableRenderFailure.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = [UInt32]
+
+    public static func write(_ value: [UInt32], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterUInt32.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [UInt32] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [UInt32]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterUInt32.read(from: &buf))
+        }
+        return seq
     }
 }
 

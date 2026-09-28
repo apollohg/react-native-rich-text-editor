@@ -1,25 +1,9 @@
 package com.apollohg.editor
 
-import org.json.JSONArray
+import com.apollohg.editor.tables.EditorTablePresentationSnapshot
+import com.apollohg.editor.tables.EditorTableIndex
 import org.json.JSONObject
 
-/**
- * The v2 adapter.
- *
- * Owns one v2 editor session (decimal-string handle) and translates the
- * existing native view operations into typed v2 transactions/results. Every
- * mutation is one typed transaction against the tracked base document
- * revision. Transient IME/composing state never reaches the adapter — only
- * final commits do.
- *
- * Render derivation: the v2 render accessor
- * ([EditorV2Backend.renderUpdate] / [EditorV2Backend.resolveScalarSelection]
- * / [EditorV2Backend.docToScalar] / [EditorV2Backend.scalarToDoc]) returns
- * everything the view needs — full render blocks, toolbar active state, the
- * mirrored scalar selection resolved to doc positions, and the lenient
- * doc↔scalar mapping (including the document's scalar extent) — derived
- * directly from the live v2 session.
- */
 internal class EditorV2Adapter private constructor(
     internal val backend: EditorV2Backend,
     val editorId: String,
@@ -65,12 +49,14 @@ internal class EditorV2Adapter private constructor(
     internal var cachedAtomicRenderSelectionObject: JSONObject? = null
     internal var cachedSemanticRenderBlocks: List<List<Any?>>? = null
     internal var cachedSemanticRenderBlocksRevision: ULong? = null
-    internal var cachedTableAttributes: Map<String, JSONObject> = emptyMap()
-    internal var cachedTableRecords: Map<String, JSONObject> = emptyMap()
+    internal var tableIndex = EditorTableIndex()
+    internal var installedFrameRevision: ULong? = null
+    internal var cachedTablePresentation: EditorTablePresentationSnapshot? = null
+    internal var fullFrameAdoptionCountForTesting = 0
+    internal var deltaFrameAdoptionCountForTesting = 0
     internal var tablePresentationDocumentGeneration: Long = 0
         private set
     private var lastTablePresentationResetRevision: ULong? = null
-    internal var cachedTableInputMappings: TableInputMappings? = null
     internal var cachedAtomicRenderDocumentRevision: ULong? = null
     internal var renderUpdateCallCountForTesting = 0
         internal set
@@ -133,9 +119,9 @@ internal class EditorV2Adapter private constructor(
         destroyed = true
         cachedSemanticRenderBlocks = null
         cachedSemanticRenderBlocksRevision = null
-        cachedTableAttributes = emptyMap()
-        cachedTableRecords = emptyMap()
-        cachedTableInputMappings = null
+        tableIndex = EditorTableIndex()
+        installedFrameRevision = null
+        cachedTablePresentation = null
         val error = backend.destroy(editorId) ?: return null
         if (error.code == "ENGINE_DESTROYED" || error.code == "ENGINE_DESTROYING") return null
         return error
@@ -242,10 +228,12 @@ internal class EditorV2Adapter private constructor(
             }
         }
         releasedOwner?.let { backend.releaseNativeBinding(editorId, it) }
-        val renderedRevision = cachedAtomicRenderDocumentRevision
-        val repinned = releasedOwner != null && !destroyed && renderedRevision == baseDocumentRevision &&
-            renderedRevision != null && pinCurrentPositionEpoch(renderedRevision)
-        if (!repinned) cachedTableInputMappings = null
+        val revision = installedFrameRevision ?: return
+        if (!destroyed && revision == baseDocumentRevision) {
+            val error = backend.seedNativeRenderCursor(editorId, requireNotNull(nativeOwnerId), revision.toString())
+            if (error == null) pinCurrentPositionEpoch(revision)
+            else if (error.code != "REVISION_MISMATCH") emit(error)
+        }
     }
 
     internal fun releaseNativeBindingOwner(token: Long) {
@@ -253,7 +241,6 @@ internal class EditorV2Adapter private constructor(
             if (nativeOwnerToken != token) return
             nativeOwnerToken = null
             positionEpoch = null
-            cachedTableInputMappings = null
             nativeOwnerId.also { nativeOwnerId = null }
         }
         releasedOwner?.let { backend.releaseNativeBinding(editorId, it) }
@@ -333,11 +320,10 @@ internal class EditorV2Adapter private constructor(
     internal fun adoptExternalReset(renderJson: String, resetJson: String): String? {
         val reset = parseExternalReset(resetJson) ?: return null
         val resetRevision = reset.getString("documentRevision").toULong()
+        if (!validateExternalRender(renderJson)) return null
         val current = refreshFromRustState(null) ?: return null
-        if (parseAtomicRenderSnapshot(current)?.documentRevision ==
-            resetRevision
-        ) {
-            return adoptExternalRender(renderJson)?.also {
+        if (baseDocumentRevision == resetRevision) {
+            return current.also {
                 markTablePresentationReset(resetRevision)
             }
         }
@@ -364,7 +350,7 @@ internal class EditorV2Adapter private constructor(
                     emit(contractError("v2 reset state violates the frozen shape"))
                     return null
                 }
-                if (origin != "nativeView") return refreshFromRustState(null)
+                if (origin != "nativeView") return current
             }
         }
         reset.remove("documentRevision")
@@ -412,23 +398,8 @@ internal class EditorV2Adapter private constructor(
             emit(destroyedError())
             return null
         }
-        val snapshot = parseAtomicRenderSnapshot(renderJson)
-        if (snapshot == null) {
-            emit(contractError("v2 atomic render snapshot violates the frozen shape"))
-            return null
-        }
-        val resolvedPositionEpoch = when {
-            snapshot.positionEpoch != null -> snapshot.positionEpoch
-            nativeOwnerId == null -> positionEpoch
-            else -> pinPositionEpochCandidate(snapshot.documentRevision) ?: return null
-        }
-        val pinned = PinnedAtomicRenderSnapshot(snapshot, resolvedPositionEpoch)
-        return adopt(
-            pinned.snapshot,
-            stripViewSelection = false,
-            engineOwnedSelection = true,
-            resolvedPositionEpoch = pinned.positionEpoch
-        )?.also { publishCollaborationCellsIfChanged() }
+        if (!validateExternalRender(renderJson)) return null
+        return refreshInternal(null, stripViewSelection = false)?.also { publishCollaborationCellsIfChanged() }
     }
 
     internal fun validateExternalRender(renderJson: String): Boolean {
@@ -436,9 +407,11 @@ internal class EditorV2Adapter private constructor(
             emit(destroyedError())
             return false
         }
-        if (parseAtomicRenderSnapshot(renderJson) != null) return true
-        emit(contractError("v2 atomic render snapshot violates the frozen shape"))
-        return false
+        val valid = try {
+            canonicalV2U64(JSONObject(renderJson).opt("documentVersion") as? String) != null
+        } catch (_: org.json.JSONException) { false }
+        if (!valid) emit(contractError("external editor update notice is malformed"))
+        return valid
     }
 
     override fun refreshFromRustState(mirrorSelection: IntArray?): String? =
@@ -455,7 +428,6 @@ internal class EditorV2Adapter private constructor(
     internal fun recoverNativeRender(): String? {
         val ownerId = synchronized(this) {
             positionEpoch = null
-            cachedTableInputMappings = null
             nativeOwnerId
         }
         ownerId?.let { backend.releaseNativeBinding(editorId, it) }

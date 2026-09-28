@@ -48,7 +48,7 @@ internal class RootTablePositionMap private constructor(
     companion object {
         fun fromRendered(
             content: Spanned,
-            extents: Map<String, TableInputExtent>,
+            extents: Map<String, TableScalarExtent>,
             scalarLength: Int
         ): RootTablePositionMap? {
             val annotations = content.getSpans(0, content.length, Annotation::class.java)

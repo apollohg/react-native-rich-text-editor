@@ -36,7 +36,7 @@ internal class EditorTableDeletionTest {
             }
         }
 
-        fun records(): List<JSONObject> = adapter.cachedTableRecords.values.sortedBy { it.getInt("tablePos") }
+        fun records(): List<JSONObject> = adapter.tableRecordsForTesting.values.sortedBy { it.getInt("tablePos") }
 
         fun apply(update: String?) {
             assertNotNull("the adapter produced no update", update)
@@ -75,7 +75,7 @@ internal class EditorTableDeletionTest {
             assertEquals("the fixture must be an empty frame: $record", 0, record.getInt("rows"))
             assertEquals("an empty frame has no cell to anchor a delete", 0, record.getJSONArray("cells").length())
             val before = fixture.document().toString()
-            val admission = fixture.adapter.tableMutationAdmission("t${record.getInt("tablePos")}")
+            val admission = fixture.adapter.tableMutationAdmission(record.getString("sourceId"))
 
             fixture.apply(fixture.adapter.deleteTable(admission))
 
@@ -85,7 +85,7 @@ internal class EditorTableDeletionTest {
                 fixture.backend.commands.map(JSONObject::toString)
             )
             assertEquals(REMAINING_PROSE, fixture.blockSummary())
-            assertTrue("the frame's record is gone", fixture.adapter.cachedTableRecords.isEmpty())
+            assertTrue("the frame's record is gone", fixture.adapter.tableRecordsForTesting.isEmpty())
             assertEquals(true, fixture.adapter.historyCanUndo())
             fixture.apply(fixture.adapter.undo())
             assertEquals("one undo restores the frame", before, fixture.document().toString())
@@ -99,10 +99,10 @@ internal class EditorTableDeletionTest {
             val (outer, nested) = fixture.records()
             assertEquals(false, outer.getBoolean("readOnlyDescendants"))
             assertEquals(true, nested.getBoolean("readOnlyDescendants"))
-            val outerId = "t${outer.getInt("tablePos")}"
+            val outerId = outer.getString("sourceId")
 
             assertNull("a nested table is read-only",
-                fixture.adapter.deleteTable(fixture.adapter.tableMutationAdmission("t${nested.getInt("tablePos")}")))
+                fixture.adapter.deleteTable(fixture.adapter.tableMutationAdmission(nested.getString("sourceId"))))
 
             val stale = fixture.adapter.tableMutationAdmission(outerId)
             fixture.apply(fixture.adapter.setContentJson(NESTED_DOCUMENT))

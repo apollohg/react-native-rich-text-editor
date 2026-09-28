@@ -2,6 +2,19 @@ import CoreText
 import XCTest
 
 extension RenderBridgeTests {
+    func testNativeCellPreservesHardBreakAndVoidBlockAlongsideOpaqueAtom() throws {
+        let elements: [FfiViewerElement] = [
+            .blockStart(nodeType: "paragraph", language: nil, depth: 0, listContextJson: nil),
+            .textRun(text: "x", marks: []),
+            .inlineAtom(nodeType: "hardBreak", docPos: 3, attrsJson: "{}", label: "hardBreak"),
+            .inlineAtom(nodeType: "mention", docPos: 4, attrsJson: "{}", label: "Ada"), .blockEnd,
+            .blockAtom(nodeType: "horizontalRule", docPos: 6, attrsJson: "{}", label: "horizontalRule")
+        ]
+        let input = try XCTUnwrap(RenderBridge.inputElements(elements, voidElementIndices: [2, 5], cellDocStart: 10))
+        let rendered = RenderBridge.renderElements(fromArray: input, baseFont: baseFont, textColor: textColor)
+        XCTAssertEqual(rendered.string, "x\nAda\n\u{fffc}")
+    }
+
     func testRender_codeBlock_honorsContextualInlineFontFamily() throws {
         let json = """
         [

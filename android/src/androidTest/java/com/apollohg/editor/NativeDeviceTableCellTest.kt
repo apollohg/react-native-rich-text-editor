@@ -36,6 +36,36 @@ class NativeDeviceTableCellTest {
     private val instrumentation: Instrumentation = InstrumentationRegistry.getInstrumentation()
 
     @Test
+    fun expoToolbarTypingInTwentyThousandSlotTableStaysWithinHeap() {
+        val fixtureSource = com.apollohg.editor.tables.PlainTableFixture
+        withEditor(fixtureSource.document(fixtureSource.LARGE_ROWS, fixtureSource.LARGE_COLUMNS), showToolbar = true) { fixture ->
+            val index = fixtureSource.LARGE_ROWS * fixtureSource.LARGE_COLUMNS / 2
+            fixture.revealCell(index)
+            fixture.tapCell(index)
+            instrumentation.waitForIdleSync()
+            Runtime.getRuntime().gc()
+            val runtime = Runtime.getRuntime()
+            val beforeHeap = runtime.totalMemory() - runtime.freeMemory()
+            val fullFrames = fixture.adapter.fullFrameAdoptionCountForTesting
+            repeat(fixtureSource.TYPING_PROBE_CHARACTERS) {
+                fixture.onActivity {
+                    val input = fixture.cellInput()
+                    val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+                    assertTrue(connection.commitText("x", 1))
+                }
+                instrumentation.waitForIdleSync()
+            }
+            Runtime.getRuntime().gc()
+            val growth = runtime.totalMemory() - runtime.freeMemory() - beforeHeap
+            assertTrue("retained heap grew by $growth bytes", growth < fixtureSource.TYPING_HEAP_GROWTH_CEILING_BYTES)
+            assertEquals("typing must not request a Full frame", fullFrames, fixture.adapter.fullFrameAdoptionCountForTesting)
+            fixture.onActivity {
+                assertEquals(fixtureSource.CELL_TEXT.length + fixtureSource.TYPING_PROBE_CHARACTERS, fixture.cellInput().text.length)
+            }
+        }
+    }
+
+    @Test
     @SdkSuppress(minSdkVersion = 29)
     fun authoritativeCellRectangleRetiresInputAndReturnsToTextOnTapOutsideIt() = withEditor { fixture ->
         fixture.tapCell(0)
@@ -43,7 +73,7 @@ class NativeDeviceTableCellTest {
             val stale = requireNotNull(fixture.cellInput().onCreateInputConnection(EditorInfo()))
             val before = fixture.adapter.documentJson()
             val revision = fixture.adapter.baseDocumentRevision
-            val cells = fixture.adapter.cachedTableRecords.values.single().getJSONArray("cells")
+            val cells = fixture.adapter.tableRecordsForTesting.values.single().getJSONArray("cells")
             fun point(index: Int): JSONObject {
                 val opening = cells.getJSONObject(index).getInt("sourcePos")
                 return JSONObject().put("kind", "scalar").put("offset",
@@ -339,7 +369,7 @@ class NativeDeviceTableCellTest {
         }
     }
 
-    private fun withEditor(document: String = DOCUMENT, test: (Fixture) -> Unit) {
+    private fun withEditor(document: String = DOCUMENT, showToolbar: Boolean = false, test: (Fixture) -> Unit) {
         ActivityScenario.launch(NativeEditorOutsideTapActivity::class.java).use { scenario ->
             val editorRef = AtomicReference<NativeEditorExpoView>()
             val created = when (val result = UniffiEditorV2Backend.create(CONFIG, null)) {
@@ -359,7 +389,7 @@ class NativeDeviceTableCellTest {
                     val root = FrameLayout(activity).apply { setBackgroundColor(Color.WHITE) }
                     val editor = NativeEditorExpoView(expo.context, expo.appContext).apply {
                         clipToPadding = false
-                        setShowToolbar(false)
+                        setShowToolbar(showToolbar)
                         onFocusChangeForTesting = {}
                         onAddonEventForTesting = {}
                         onEditorUpdateForTesting = updates::add
@@ -492,6 +522,17 @@ class NativeDeviceTableCellTest {
                 }
             }
             received
+        }
+
+        fun revealCell(index: Int) {
+            scenario.onActivity {
+                val host = requireNotNull(tableHostOrNull())
+                val surface = requireNotNull(host.preparedLayout).blocks.mapNotNull { it.tableSurface }.single()
+                val location = requireNotNull(host.tableAccessibilityLocation(surface, index))
+                assertTrue(host.accessibilityNodeProvider.performAction(location.cellNodeId,
+                    android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
+            }
+            instrumentation.waitForIdleSync()
         }
 
         fun tapCell(index: Int) {

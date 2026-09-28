@@ -23,10 +23,8 @@ import com.apollohg.editor.EditorBoxStyle
 import com.apollohg.editor.EditorEdges
 import com.apollohg.editor.EditorLinkTheme
 import com.apollohg.editor.EditorMentionTheme
-import com.apollohg.editor.EditorOrderedListMarkerTheme
 import com.apollohg.editor.EditorResolvedTextSpan
 import com.apollohg.editor.EditorTextStyle
-import com.apollohg.editor.EditorTheme
 import com.apollohg.editor.OrderedListMarkerFormatter
 import com.apollohg.editor.ProseViewerError
 import com.apollohg.editor.applyPhysicalTextAlignment
@@ -34,9 +32,7 @@ import com.apollohg.editor.tables.TableGridRecord
 import com.apollohg.editor.tables.TableLayoutDirection
 import com.apollohg.editor.tables.physical
 import com.apollohg.editor.tables.ViewerTableSurface
-import java.text.Bidi
 import com.apollohg.editor.tables.TableSurfaceCell
-import com.apollohg.editor.tables.TableSurfaceSource
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
@@ -411,9 +407,9 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             }
             val blockContentWidth = max(1, contentWidth - leftInset - rightInset)
             val blockCursorY = cursorY + outer.top.toInt()
-            if (block.table != null) {
-                val table = block.table!!
-                val surfaceSource = TableSurfaceSource.from(table)
+            if (block.tableKey != null) {
+                val tableKey = requireNotNull(block.tableKey)
+                val surfaceSource = requireNotNull(block.tableSource())
                 val placement = listPlacement(
                     block,
                     markers,
@@ -428,14 +424,14 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     cellShapeStyleDigest(childTheme, key.nativeFontRevision, key.fontEnvironmentRevision)
                 }
                 val surface = ViewerTableSurface(
-                    document.tablePresentationIdentity(table),
+                    document.tablePresentationIdentity(tableKey),
                     TableGridRecord.from(surfaceSource, document.semanticKey).physical(density),
                     tableWidth.toFloat(),
                     theme.tableStyle.physical(density),
-                    TableLayoutDirection.isRightToLeft(table.direction, theme.tableDirection),
+                    TableLayoutDirection.isRightToLeft(surfaceSource.direction, theme.tableDirection),
                     displayScale = 1f,
                     sourceTable = surfaceSource,
-                    editorTableId = "t${table.tablePos}",
+                    editorTableId = tableKey,
                     sourceAttributes = document.tableAttributes
                 ) { cell, cellWidth ->
                     val source = surfaceSource.cells.getOrNull(cell.sourceIndex)
@@ -443,7 +439,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     if (!cellMode) {
                         source?.let { reusableTableCellContent?.invoke(it, childWidth) }?.let { return@ViewerTableSurface it }
                     }
-                    val child = source?.let { document.cellDocument(it, "t${table.tablePos}") }
+                    val child = source?.let { document.cellDocument(it, tableKey) }
                     if (child == null) return@ViewerTableSurface PreparedProseLayout.error(
                         key, cellWidth.toInt(), ProseViewerError.layout("Invalid table cell.")
                     )
@@ -791,28 +787,28 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 )
             }
             if (atomIndex != sourceAtoms.size) return null
-            val tableSurface = current.table?.let { table ->
+            val tableSurface = current.tableKey?.let { tableKey ->
                 val tableBounds = localBlock.tableBounds ?: return null
-                val surfaceSource = TableSurfaceSource.from(table)
+                val surfaceSource = requireNotNull(current.tableSource())
                 val childTheme = theme.copy(insetTopPx = 0, insetRightPx = 0, insetBottomPx = 0, insetLeftPx = 0)
                 val shapeStyleDigest by lazy {
                     cellShapeStyleDigest(childTheme, key.nativeFontRevision, key.fontEnvironmentRevision)
                 }
                 val surface = ViewerTableSurface(
-                    document.tablePresentationIdentity(table),
+                    document.tablePresentationIdentity(tableKey),
                     TableGridRecord.from(surfaceSource, document.semanticKey).physical(density),
                     tableBounds.width().toFloat(),
                     theme.tableStyle.physical(density),
-                    TableLayoutDirection.isRightToLeft(table.direction, theme.tableDirection),
+                    TableLayoutDirection.isRightToLeft(surfaceSource.direction, theme.tableDirection),
                     displayScale = 1f,
                     sourceTable = surfaceSource,
-                    editorTableId = "t${table.tablePos}",
+                    editorTableId = tableKey,
                     sourceAttributes = document.tableAttributes
                 ) { cell, cellWidth ->
                     val source = surfaceSource.cells.getOrNull(cell.sourceIndex) ?: return@ViewerTableSurface PreparedProseLayout.error(
                         key, cellWidth.toInt(), ProseViewerError.layout("Invalid table cell.")
                     )
-                    val child = document.cellDocument(source, "t${table.tablePos}")
+                    val child = document.cellDocument(source, tableKey)
                     val childWidth = cellWidth.toInt().coerceAtLeast(1)
                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
                     val childShapeKey = cellShapeKey(cell.contentKey, child, childWidth, childTheme, density, shapeStyleDigest)

@@ -64,7 +64,7 @@ internal class EditorTableAccessibilityTest {
         }
 
         fun openings(): List<Int> {
-            val table = adapter.cachedTableRecords.values.filter { it.getJSONArray("cells").length() > 0 }
+            val table = adapter.tableRecordsForTesting.values.filter { it.getJSONArray("cells").length() > 0 }
                 .minBy { it.getInt("tablePos") }
             val cells = table.getJSONArray("cells")
             return (0 until cells.length()).map { cells.getJSONObject(it).getInt("sourcePos") }
@@ -304,7 +304,7 @@ internal class EditorTableAccessibilityTest {
     fun `an empty frame beside a table deletes exactly that table in one mutation`() =
         withTable(FRAME_BESIDE_TABLE_DOCUMENT) { fixture ->
             val before = fixture.adapter.documentJson()
-            val frameTablePos = fixture.adapter.cachedTableRecords.values
+            val frameTablePos = fixture.adapter.tableRecordsForTesting.values
                 .single { it.getJSONArray("cells").length() == 0 }.getInt("tablePos")
             val (frameId, frame) = fixture.frameNode()
             val bounds = android.graphics.Rect().also(frame::getBoundsInParent)

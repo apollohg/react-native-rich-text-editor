@@ -1,17 +1,10 @@
 package com.apollohg.editor
 import android.app.Activity
-import android.os.Handler
 import android.os.Looper
-import android.view.inputmethod.EditorInfo
 import java.time.Duration
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -130,7 +123,7 @@ internal class NativeEditorExpoViewControlledUpdateRemoteRefreshTest :
 
             assertEquals("", firstView.richTextView.editorEditText.text.toString())
             assertEquals("Remote", secondView.richTextView.editorEditText.text.toString())
-            assertEquals(1, backend.calls.count { it == "renderNative" })
+            assertEquals(1, backend.calls.count { it == "renderNativeFrame" })
         } finally {
             EditorV2Registry.remove(adapter.editorId)
             NativeEditorViewRegistry.unregister(viewToken, firstView)

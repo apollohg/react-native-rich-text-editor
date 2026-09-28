@@ -1,14 +1,23 @@
 package com.apollohg.editor
 
+import com.apollohg.editor.tables.resolveEditorCellSelection
+import com.apollohg.editor.tables.EditorTablePresentationSnapshot
+import com.apollohg.editor.tables.TableFrameAdoption
+import uniffi.editor_core.FfiTableFrameKind
+import uniffi.editor_core.FfiNativeRenderFrame
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal fun EditorV2Adapter.adopt(
-    snapshot: AtomicRenderSnapshot,
+private fun EditorV2Adapter.adopt(
+    frame: FfiNativeRenderFrame,
     stripViewSelection: Boolean,
-    engineOwnedSelection: Boolean,
-    resolvedPositionEpoch: String? = snapshot.positionEpoch
+    engineOwnedSelection: Boolean
 ): String? {
+    val snapshot = parseAtomicRenderSnapshot(frame.snapshotJson) ?: return null
+    val nextIndex = tableIndex.copy()
+    val adoption = nextIndex.adopt(frame.tables, installedFrameRevision, snapshot.documentRevision)
+        as? TableFrameAdoption.Adopted ?: return null
+    if (nextIndex.rootExtents.values.any { it.scalarEnd.toLong() > snapshot.scalarLength }) return null
     fun blocks(value: JSONArray): List<List<Any?>> = (0 until value.length()).map { index ->
         val block = value.getJSONArray(index)
         (0 until block.length()).map { block.opt(it) }
@@ -16,43 +25,54 @@ internal fun EditorV2Adapter.adopt(
     var candidate = snapshot.renderObject.optJSONArray("renderBlocks")?.let(::blocks)
     if (candidate == null) {
         val patch = snapshot.renderObject.optJSONObject("renderPatch") ?: return null
-        val retained = cachedSemanticRenderBlocks
+        val retained = cachedSemanticRenderBlocks ?: return null
         val start = patch.optLong("startIndex", -1)
         val delete = patch.optLong("deleteCount", -1)
-        if (retained != null && patch.optString("baseDocumentVersion").toULongOrNull() == cachedSemanticRenderBlocksRevision &&
-            start >= 0 && delete >= 0 && start + delete <= retained.size) {
-            candidate = retained.take(start.toInt()) + blocks(patch.getJSONArray("renderBlocks")) + retained.drop((start + delete).toInt())
-        } else if (snapshot.renderObject.has("tableAttributes") || snapshot.renderObject.has("tableRecords") || cachedTableAttributes.isNotEmpty() || cachedTableRecords.isNotEmpty()) {
-            return null
-        }
+        if (patch.optString("baseDocumentVersion").toULongOrNull() != cachedSemanticRenderBlocksRevision ||
+            start < 0 || delete < 0 || start + delete > retained.size) return null
+        candidate = retained.take(start.toInt()) + blocks(patch.getJSONArray("renderBlocks")) + retained.drop((start + delete).toInt())
     }
-    if (candidate != null && !validSemanticRenderElements(candidate.flatten(), snapshot.tableAttributes, snapshot.tableRecords)) return null
-    val updateObject = if (stripViewSelection) {
-        JSONObject(snapshot.viewUpdateJson).apply { remove("selection") }
-    } else {
-        snapshot.renderObject
-    }
+    if (!validSemanticRenderElements(candidate.flatten(), nextIndex)) return null
+    val roots = candidate.flatten().mapNotNull { element ->
+        (element as? JSONObject)?.takeIf { it.opt("type") == "table" }?.optString("tableId")
+    }.toSet()
+    if (roots != nextIndex.rootExtents.keys) return null
+    val selection = snapshot.renderObject.optJSONObject("selection")
+    if (selection?.opt("type") == "cell" && resolveEditorCellSelection(selection, nextIndex) == null) return null
+    val updateObject = if (stripViewSelection) JSONObject(snapshot.viewUpdateJson).apply { remove("selection") } else snapshot.renderObject
     val updateJson = if (stripViewSelection) updateObject.toString() else snapshot.viewUpdateJson
+    tableIndex = nextIndex
+    installedFrameRevision = snapshot.documentRevision
+    cachedTablePresentation = EditorTablePresentationSnapshot(
+        snapshot.documentRevision, snapshot.positionEpoch, nextIndex, adoption.changes)
+    if (adoption.changes.fullReset) fullFrameAdoptionCountForTesting++ else deltaFrameAdoptionCountForTesting++
     baseDocumentRevision = snapshot.documentRevision
     stateRevision = snapshot.stateRevision
     cachedScalarLength = snapshot.scalarLength
     cachedAuthoritativeScalarSelection = snapshot.scalarSelection?.copyOf()
-    lastSyncedScalarSelection =
-        if (engineOwnedSelection) snapshot.scalarSelection?.copyOf() else null
+    lastSyncedScalarSelection = if (engineOwnedSelection) snapshot.scalarSelection?.copyOf() else null
     cachedActiveState = snapshot.activeState
     cachedHistoryState = snapshot.historyState
     cachedViewUpdateJson = updateJson
     cachedViewUpdateObject = updateObject
-    cachedAtomicRenderJson = snapshot.atomicRenderJson
-    cachedAtomicRenderSelectionObject = snapshot.renderObject.optJSONObject("selection")
+    cachedAtomicRenderJson = frame.snapshotJson
+    cachedAtomicRenderSelectionObject = selection
     cachedAtomicRenderDocumentRevision = snapshot.documentRevision
     cachedSemanticRenderBlocks = candidate
     cachedSemanticRenderBlocksRevision = snapshot.documentRevision
-    cachedTableAttributes = snapshot.tableAttributes
-    cachedTableRecords = snapshot.tableRecords
-    cachedTableInputMappings = snapshot.tableInputMappings
-    if (resolvedPositionEpoch != null) positionEpoch = resolvedPositionEpoch
+    snapshot.positionEpoch?.let { positionEpoch = it }
     return updateJson
+}
+
+internal fun EditorV2Adapter.initialUpdateJson(): String? {
+    val update = refreshInternal(null, stripViewSelection = false) ?: return null
+    val blocks = cachedSemanticRenderBlocks ?: return null
+    val objectValue = JSONObject(update).put("renderBlocks", JSONArray(blocks.map { JSONArray(it) }))
+        .put("renderPatch", JSONObject.NULL)
+    val complete = objectValue.toString()
+    cachedViewUpdateJson = complete
+    cachedViewUpdateObject = objectValue
+    return complete
 }
 
 internal fun EditorV2Adapter?.readOnlyParsedUpdate(updateJson: String): JSONObject =
@@ -80,41 +100,26 @@ internal fun EditorV2Adapter.refreshInternal(
         emit(EditorV2Adapter.destroyedError())
         return null
     }
-    val ownerId = nativeOwnerId
-    val renderResult = if (ownerId == null) {
-        backend.renderUpdate(editorId, mirrorSelection?.get(0), mirrorSelection?.get(1))
-    } else {
-        backend.renderNative(editorId, ownerId, mirrorSelection?.get(0), mirrorSelection?.get(1))
-    }
-    val derived = when (val result = renderResult) {
-        is EditorV2CallResult.Err -> {
-            // A render update that fails or violates the frozen shape is a
-            // boundary failure like any other. Returning null without
-            // reporting it leaves every caller — the paired view and the
-            // stateless render probe alike — holding a bare null with no
-            // cause to surface, so the engine's own error is what travels.
-            emit(result.error)
-            return null
+    fun fetch(): FfiNativeRenderFrame? {
+        renderUpdateCallCountForTesting++
+        return when (val result = backend.renderNativeFrame(editorId, nativeOwnerId, mirrorSelection?.get(0), mirrorSelection?.get(1))) {
+            is EditorV2CallResult.Err -> { emit(result.error); null }
+            is EditorV2CallResult.Ok -> result.value
         }
-
-        is EditorV2CallResult.Ok -> result.value
     }
-    renderUpdateCallCountForTesting += 1
-    cachedViewUpdateObject = null
-    val snapshot = parseAtomicRenderSnapshot(derived)
-    return if (snapshot == null) {
-        emit(EditorV2Adapter.contractError("v2 render update violates the frozen shape"))
-        null
-    } else {
-        // Preserve an IME-owned caret only after authoritative active and
-        // history state has been adopted from the post-operation snapshot.
-        val viewUpdateJson = adopt(
-            snapshot,
-            stripViewSelection = stripViewSelection,
-            engineOwnedSelection = mirrorSelection == null
-        ) ?: return null
-        if (controlledPropSnapshot) snapshot.atomicRenderJson else viewUpdateJson
+    fun install(frame: FfiNativeRenderFrame): String? {
+        val update = adopt(frame, stripViewSelection, mirrorSelection == null) ?: return null
+        return if (controlledPropSnapshot) frame.snapshotJson else update
     }
+    val frame = fetch() ?: return null
+    install(frame)?.let { return it }
+    if (frame.tables.kind == FfiTableFrameKind.DELTA) {
+        nativeOwnerId?.let { backend.releaseNativeBinding(editorId, it) }
+        val full = fetch() ?: return null
+        if (full.tables.kind == FfiTableFrameKind.FULL) install(full)?.let { return it }
+    }
+    emit(EditorV2Adapter.contractError("native table frame violates the frozen shape"))
+    return null
 }
 
 internal fun EditorV2Adapter.pinPositionEpochCandidate(documentRevision: ULong): String? {

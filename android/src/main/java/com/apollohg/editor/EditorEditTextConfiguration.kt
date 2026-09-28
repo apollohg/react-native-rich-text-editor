@@ -41,7 +41,8 @@ internal fun EditorEditText.bindEditorImpl(
         if (!initialHTML.isNullOrEmpty()) {
             driver.setContentHtml(initialHTML)?.let { applyUpdateJSON(it, notifyListener = false) }
         } else {
-            driver.currentStateJson()?.let { applyUpdateJSON(it, notifyListener = notifyListener) }
+            val initial = if (driver is EditorV2Adapter) driver.initialUpdateJson() else driver.currentStateJson()
+            initial?.let { applyUpdateJSON(it, notifyListener = notifyListener) }
         }
         return
     }
