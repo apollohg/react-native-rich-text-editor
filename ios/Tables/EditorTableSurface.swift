@@ -103,6 +103,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             let header: Bool
             let attributesKey: String
             let widthPixels: Int
+            let displayScaleBits: UInt64
         }
 
         private var contents: [Key: [PreparedProseLayout]] = [:]
@@ -115,14 +116,15 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 else { continue }
                 let sourceCell = source.cells[index]
                 contents[Key(contentKey: sourceCell.contentKey, header: sourceCell.header,
-                             attributesKey: sourceCell.attrsKey, widthPixels: cell.content.key.widthPixels),
+                             attributesKey: sourceCell.attrsKey, widthPixels: cell.content.key.widthPixels,
+                             displayScaleBits: cell.content.key.displayScaleBits),
                          default: []].append(cell.content)
             }
         }
 
-        mutating func take(_ cell: FfiViewerTableCell, widthPixels: Int) -> PreparedProseLayout? {
+        mutating func take(_ cell: FfiViewerTableCell, widthPixels: Int, displayScale: CGFloat) -> PreparedProseLayout? {
             let key = Key(contentKey: cell.contentKey, header: cell.header, attributesKey: cell.attrsKey,
-                          widthPixels: widthPixels)
+                          widthPixels: widthPixels, displayScaleBits: Double(displayScale).bitPattern)
             return contents[key]?.popLast()
         }
 
@@ -433,9 +435,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             drawingView.frame = bounds
         }
         drawingOffset = textView.contentOffset
+        drawingView.accessibilityRevealScrollView = textView
         let visibleBounds = CGRect(
             origin: drawingOffset,
-        drawingView.accessibilityRevealScrollView = textView
             size: bounds.size
         )
         if drawingView.bounds != visibleBounds {
@@ -1234,7 +1236,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             var reusable = ReusableCellContents(self.entries[tableID], themeDigest: themeDigest)
             let engine = CoreTextProseLayoutEngine()
             engine.tableCellPreparationObserver = onTableCellPreparedForTesting
-            engine.reusableTableCellContent = { cell, widthPixels in reusable.take(cell, widthPixels: widthPixels) }
+            engine.reusableTableCellContent = { cell, widthPixels in
+                reusable.take(cell, widthPixels: widthPixels, displayScale: displayScale)
+            }
             let key = ProseLayoutKey(
                 semanticKey: document.semanticKey,
                 widthPixels: widthPixels,
