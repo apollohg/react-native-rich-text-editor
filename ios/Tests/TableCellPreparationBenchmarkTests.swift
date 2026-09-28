@@ -61,23 +61,8 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
             let measureStart = CACurrentMediaTime()
             for index in texts.indices {
                 measuredHeights[index] = autoreleasepool {
-                    let attributed = NSAttributedString(string: texts[index], attributes: [
-                        kCTFontAttributeName as NSAttributedString.Key: CoreTextProseLayoutEngine.coreTextFont(from: theme.paragraph.font)
-                    ])
-                    let framesetter = CTFramesetterCreateWithAttributedString(attributed)
-                    let size = CTFramesetterSuggestFrameSizeWithConstraints(framesetter, CFRange(location: 0, length: 0),
-                        nil, CGSize(width: width, height: .greatestFiniteMagnitude), nil)
-                    let path = CGPath(rect: CGRect(x: 0, y: 0, width: width, height: size.height), transform: nil)
-                    let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
-                    let lines = CTFrameGetLines(frame) as! [CTLine]
-                    let height = lines.reduce(CGFloat.zero) { height, line in
-                        var ascent: CGFloat = 0
-                        var descent: CGFloat = 0
-                        var leading: CGFloat = 0
-                        CTLineGetTypographicBounds(line, &ascent, &descent, &leading)
-                        return height + ascent + descent + leading
-                    }
-                    return ceil(height * scale) / scale
+                    measurePlainText(texts[index], font: theme.paragraph.font, width: width,
+                                     scale: scale, collectLineEnds: false).height
                 }
             }
             let measureDuration = CACurrentMediaTime() - measureStart
@@ -101,6 +86,67 @@ final class TableCellPreparationBenchmarkTests: XCTestCase {
             }
         }
         print("TABLE_CELL_BENCHMARK platform=ios scale=\(scale) width=\(width) cells=\(Benchmark.cellCount) prepareUs=\(median(prepareSamples)) measureUs=\(median(measureSamples)) changedMs=\(median(changedSamples)) prepareRuns=\(prepareSamples) measureRuns=\(measureSamples) changedRuns=\(changedSamples) changedHeightChecksum=\(changedHeightChecksum)")
+    }
+
+    func testExactMeasurementPreservesPlainCellHeightAndLineBreaks() throws {
+        let texts = ["", "a", " ", "  ", "word ", " word", "word  word", "a-b/c.d, e! f?",
+                     "R0001C0001XY", String(repeating: "x", count: 200), "short", "last  "]
+        let engine = CoreTextProseLayoutEngine()
+        for fontScale: CGFloat in [1, 1.3, 2] {
+            var theme = PreparedProseTheme.resolve(themeJSON: nil, fontScale: fontScale)
+            theme.contentInsets = .zero
+            for scale: CGFloat in [1, 2, 3] {
+                for width: CGFloat in [31, 62, 186] {
+                    for text in texts {
+                        let document = ViewerDocument(semanticKey: text, paragraphs: [.init(text: text)],
+                            isEmpty: false, retainedBytes: 0).withPreparedTheme(theme)
+                        let key = ProseLayoutKey(semanticKey: text, widthPixels: Int(width * scale),
+                            themeDigest: Benchmark.generation, nativeFontRevision: 0, fontEnvironmentRevision: 0,
+                            displayScale: scale, attachmentRevision: 0, generationIdentity: Benchmark.generation,
+                            semanticGenerationIdentity: Benchmark.generation)
+                        let prepared = try engine.prepare(document: document, key: key, widthPoints: width,
+                                                          displayScale: scale, cellMode: true)
+                        let measured = measurePlainText(text, font: theme.paragraph.font, width: width, scale: scale)
+                        let context = "text=<\(text)> fontScale=\(fontScale) scale=\(scale) width=\(width)"
+                        XCTAssertEqual(prepared.size.height, measured.height, context)
+                        if !text.isEmpty {
+                            let ends = prepared.blocks.flatMap(\.fragments).compactMap { fragment -> Int? in
+                                guard fragment.kind == .text, let line = fragment.line else { return nil }
+                                let range = CTLineGetStringRange(line)
+                                return range.location + range.length
+                            }
+                            XCTAssertEqual(ends, measured.lineEnds, context)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func measurePlainText(_ text: String, font: UIFont, width: CGFloat, scale: CGFloat,
+                                  collectLineEnds: Bool = true) -> (height: CGFloat, lineEnds: [Int]) {
+        if text.isEmpty { return (ceil(font.lineHeight * scale) / scale, []) }
+        let attributed = NSAttributedString(string: text, attributes: [
+            kCTFontAttributeName as NSAttributedString.Key: CoreTextProseLayoutEngine.coreTextFont(from: font)
+        ])
+        let framesetter = CTFramesetterCreateWithAttributedString(attributed)
+        let size = CTFramesetterSuggestFrameSizeWithConstraints(framesetter, CFRange(location: 0, length: 0),
+            nil, CGSize(width: width, height: .greatestFiniteMagnitude), nil)
+        let path = CGPath(rect: CGRect(x: 0, y: 0, width: width, height: size.height), transform: nil)
+        let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
+        let lines = CTFrameGetLines(frame) as! [CTLine]
+        let height = lines.reduce(CGFloat.zero) { height, line in
+            var ascent: CGFloat = 0
+            var descent: CGFloat = 0
+            var leading: CGFloat = 0
+            CTLineGetTypographicBounds(line, &ascent, &descent, &leading)
+            return height + ascent + descent + leading
+        }
+        let ends = collectLineEnds ? lines.map { line -> Int in
+            let range = CTLineGetStringRange(line)
+            return range.location + range.length
+        } : []
+        return (ceil(height * scale) / scale, ends)
     }
 
     private func median(_ samples: [Double]) -> Double {
