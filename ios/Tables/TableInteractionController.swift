@@ -181,8 +181,8 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
     }
 
     private func claimsTouch(towards delta: CGFloat) -> Bool {
-        guard let drawing, let host else { return false }
-        return canScroll(drawing.tableChain(at: touchPoint), horizontalScrollAncestors(of: host), by: delta)
+        guard let host else { return false }
+        return canScroll(drawingChainAtTouch(), horizontalScrollAncestors(of: host), by: delta)
     }
 
     private func canScroll(_ chain: [String], _ outer: [UIScrollView], by delta: CGFloat) -> Bool {
@@ -296,9 +296,7 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
         lastTimestamp = link.timestamp
         guard elapsed > 0, elapsed.isFinite else { return }
         let delta = velocity * elapsed
-        let room = drawing.canScrollTables(in: chain, by: delta)
-            || outerScrollViews.contains(where: { canScroll($0.value, by: delta) })
-        guard room else {
+        guard canScroll(chain, outerScrollViews.compactMap(\.value), by: delta) else {
             cancelMotion()
             return
         }
