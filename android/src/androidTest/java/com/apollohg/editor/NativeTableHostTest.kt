@@ -1,6 +1,9 @@
 package com.apollohg.editor
 
 import android.content.Intent
+import android.graphics.Rect
+import android.view.accessibility.AccessibilityNodeInfo
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import android.os.SystemClock
 import android.text.Spanned
 import android.view.View
@@ -69,6 +72,44 @@ class NativeTableHostTest {
                 }
             }
             instrumentation.saveDeviceScreenshot("native-table-large-scrolled.png")
+        }
+    }
+
+    @Test
+    fun largeTableScreenReaderFocusRevealsEachWalkedRowOnDevice() {
+        val intent = Intent(instrumentation.targetContext, NativeTableHostActivity::class.java)
+            .putExtra(NativeTableHostActivity.EXTRA_PLAIN_ROWS, PlainTableFixture.LARGE_ROWS)
+            .putExtra(NativeTableHostActivity.EXTRA_PLAIN_COLUMNS, PlainTableFixture.LARGE_COLUMNS)
+        ActivityScenario.launch<NativeTableHostActivity>(intent).use { scenario ->
+            awaitTableLayout(scenario, "native-table-large-a11y-timeout.png", timeoutMs = LARGE_TABLE_LAYOUT_TIMEOUT_MS)
+            PlainTableFixture.ACCESSIBILITY_WALK_ROWS.forEach { row ->
+                val column = row % PlainTableFixture.LARGE_COLUMNS
+                var id = 0
+                scenario.onActivity { activity ->
+                    val drawing = tableHosts(activity.richTextView).single()
+                    val surface = requireNotNull(drawing.preparedLayout).blocks.mapNotNull { it.tableSurface }.single()
+                    id = requireNotNull(drawing.tableAccessibilityLocation(surface, row * PlainTableFixture.LARGE_COLUMNS + column)) {
+                        "cell $row,$column has an accessibility node"
+                    }.cellNodeId
+                    assertTrue("focus reaches row $row",
+                        drawing.accessibilityNodeProvider.performAction(id, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
+                }
+                instrumentation.waitForIdleSync()
+                scenario.onActivity { activity ->
+                    val drawing = tableHosts(activity.richTextView).single()
+                    val info = requireNotNull(drawing.accessibilityNodeProvider.createAccessibilityNodeInfo(id))
+                    val item = requireNotNull(AccessibilityNodeInfoCompat.wrap(info).collectionItemInfo)
+                    val bounds = Rect().also(info::getBoundsInScreen)
+                    val metrics = activity.resources.displayMetrics
+                    val screen = Rect(0, 0, metrics.widthPixels, metrics.heightPixels)
+                    println("row $row column $column: focused ${info.isAccessibilityFocused} rowIndex ${item.rowIndex} " +
+                        "title '${item.columnTitle}' screen $bounds of $screen")
+                    assertTrue("row $row is revealed on screen: $bounds", Rect.intersects(bounds, screen))
+                    assertTrue("row $row keeps focus after its reveal", info.isAccessibilityFocused)
+                    assertEquals(row, item.rowIndex)
+                    assertEquals("row $row announces its column header", PlainTableFixture.CELL_TEXT, item.columnTitle)
+                }
+            }
         }
     }
 

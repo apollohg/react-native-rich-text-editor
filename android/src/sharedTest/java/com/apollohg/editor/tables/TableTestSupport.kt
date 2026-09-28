@@ -28,6 +28,7 @@ internal object PlainTableFixture {
     const val LARGE_ROWS = 1000
     const val LARGE_COLUMNS = 20
     val TWENTY_THOUSAND_SLOT_SHAPES = listOf(LARGE_ROWS to LARGE_COLUMNS, 100 to 200)
+    val ACCESSIBILITY_WALK_ROWS = listOf(1, 150, 400, 999)
     private const val HEADER_ROW = 0
     private const val OVERSCAN_VIEWPORTS = 1
     private const val STRADDLING_CELLS = 1
