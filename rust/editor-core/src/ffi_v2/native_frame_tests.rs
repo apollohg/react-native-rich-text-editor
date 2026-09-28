@@ -668,3 +668,60 @@ fn native_frame_updates_a_nested_tables_host_after_inserting_an_outer_row() {
     mirror.apply(&delta).unwrap();
     assert_mirror(&mut session, &mut mirror, "nested host shifted");
 }
+
+#[test]
+fn native_frame_exports_return_typed_errors_and_round_trip_frames() {
+    use super::native_frame::{editor_v2_render_native_frame, editor_v2_seed_native_render_cursor};
+    let unknown = editor_v2_render_native_frame(u64::MAX.to_string(), None, None, None);
+    assert!(unknown.frame.is_none());
+    assert_eq!(unknown.error.unwrap().code, "ENGINE_DESTROYED");
+    let malformed =
+        editor_v2_render_native_frame(u64::MAX.to_string(), Some("01".into()), None, None);
+    assert!(malformed.frame.is_none());
+    assert_eq!(malformed.error.unwrap().code, "CONFIG_INVALID");
+    let editor = crate::test_support::large_table_fixture::ffi_empty_editor();
+    let first = editor_v2_render_native_frame(editor.clone(), Some(OWNER.to_string()), None, None);
+    assert!(first.error.is_none());
+    let first = first.frame.unwrap();
+    assert_eq!(first.tables.kind, FfiTableFrameKind::Full);
+    let snapshot: serde_json::Value = serde_json::from_str(&first.snapshot_json).unwrap();
+    let revision = snapshot["documentVersion"].as_str().unwrap();
+    let seeded = editor_v2_seed_native_render_cursor(
+        editor.clone(),
+        (OWNER + 1).to_string(),
+        revision.into(),
+    );
+    assert!(seeded.error.is_none());
+    let delta =
+        editor_v2_render_native_frame(editor.clone(), Some((OWNER + 1).to_string()), None, None)
+            .frame
+            .unwrap();
+    assert_eq!(delta.tables.kind, FfiTableFrameKind::Delta);
+    assert!(delta.tables.tables.is_empty());
+    assert_eq!(
+        editor_v2_render_native_frame(editor.clone(), None, Some(0), None)
+            .error
+            .unwrap()
+            .code,
+        "CONFIG_INVALID"
+    );
+    assert_eq!(
+        editor_v2_seed_native_render_cursor(editor.clone(), OWNER.to_string(), "01".into())
+            .error
+            .unwrap()
+            .code,
+        "CONFIG_INVALID"
+    );
+    assert_eq!(
+        editor_v2_seed_native_render_cursor(
+            editor.clone(),
+            OWNER.to_string(),
+            u64::MAX.to_string()
+        )
+        .error
+        .unwrap()
+        .code,
+        "REVISION_MISMATCH"
+    );
+    super::editor::editor_v2_destroy(editor);
+}

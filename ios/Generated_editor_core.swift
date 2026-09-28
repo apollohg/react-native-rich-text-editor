@@ -698,6 +698,226 @@ public func FfiConverterTypeViewerCompiledDocument_lower(_ value: ViewerCompiled
 
 
 
+public struct FfiCellInputBlock {
+    public var elementIndex: UInt32
+    public var docStart: UInt32
+    public var docEnd: UInt32
+    public var scalarStart: UInt32
+    public var contentScalarStart: UInt32
+    public var scalarEnd: UInt32
+    public var breakScalarEnd: UInt32
+    public var void: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(elementIndex: UInt32, docStart: UInt32, docEnd: UInt32, scalarStart: UInt32, contentScalarStart: UInt32, scalarEnd: UInt32, breakScalarEnd: UInt32, void: Bool) {
+        self.elementIndex = elementIndex
+        self.docStart = docStart
+        self.docEnd = docEnd
+        self.scalarStart = scalarStart
+        self.contentScalarStart = contentScalarStart
+        self.scalarEnd = scalarEnd
+        self.breakScalarEnd = breakScalarEnd
+        self.void = void
+    }
+}
+
+#if compiler(>=6)
+extension FfiCellInputBlock: Sendable {}
+#endif
+
+
+extension FfiCellInputBlock: Equatable, Hashable {
+    public static func ==(lhs: FfiCellInputBlock, rhs: FfiCellInputBlock) -> Bool {
+        if lhs.elementIndex != rhs.elementIndex {
+            return false
+        }
+        if lhs.docStart != rhs.docStart {
+            return false
+        }
+        if lhs.docEnd != rhs.docEnd {
+            return false
+        }
+        if lhs.scalarStart != rhs.scalarStart {
+            return false
+        }
+        if lhs.contentScalarStart != rhs.contentScalarStart {
+            return false
+        }
+        if lhs.scalarEnd != rhs.scalarEnd {
+            return false
+        }
+        if lhs.breakScalarEnd != rhs.breakScalarEnd {
+            return false
+        }
+        if lhs.void != rhs.void {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(elementIndex)
+        hasher.combine(docStart)
+        hasher.combine(docEnd)
+        hasher.combine(scalarStart)
+        hasher.combine(contentScalarStart)
+        hasher.combine(scalarEnd)
+        hasher.combine(breakScalarEnd)
+        hasher.combine(void)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCellInputBlock: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCellInputBlock {
+        return
+            try FfiCellInputBlock(
+                elementIndex: FfiConverterUInt32.read(from: &buf),
+                docStart: FfiConverterUInt32.read(from: &buf),
+                docEnd: FfiConverterUInt32.read(from: &buf),
+                scalarStart: FfiConverterUInt32.read(from: &buf),
+                contentScalarStart: FfiConverterUInt32.read(from: &buf),
+                scalarEnd: FfiConverterUInt32.read(from: &buf),
+                breakScalarEnd: FfiConverterUInt32.read(from: &buf),
+                void: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiCellInputBlock, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.elementIndex, into: &buf)
+        FfiConverterUInt32.write(value.docStart, into: &buf)
+        FfiConverterUInt32.write(value.docEnd, into: &buf)
+        FfiConverterUInt32.write(value.scalarStart, into: &buf)
+        FfiConverterUInt32.write(value.contentScalarStart, into: &buf)
+        FfiConverterUInt32.write(value.scalarEnd, into: &buf)
+        FfiConverterUInt32.write(value.breakScalarEnd, into: &buf)
+        FfiConverterBool.write(value.void, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCellInputBlock_lift(_ buf: RustBuffer) throws -> FfiCellInputBlock {
+    return try FfiConverterTypeFfiCellInputBlock.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCellInputBlock_lower(_ value: FfiCellInputBlock) -> RustBuffer {
+    return FfiConverterTypeFfiCellInputBlock.lower(value)
+}
+
+
+public struct FfiCellNestedTable {
+    public var elementIndex: UInt32
+    public var tableKey: String
+    public var docOffset: UInt32
+    public var docSize: UInt32
+    public var scalarStart: UInt32?
+    public var scalarEnd: UInt32?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(elementIndex: UInt32, tableKey: String, docOffset: UInt32, docSize: UInt32, scalarStart: UInt32?, scalarEnd: UInt32?) {
+        self.elementIndex = elementIndex
+        self.tableKey = tableKey
+        self.docOffset = docOffset
+        self.docSize = docSize
+        self.scalarStart = scalarStart
+        self.scalarEnd = scalarEnd
+    }
+}
+
+#if compiler(>=6)
+extension FfiCellNestedTable: Sendable {}
+#endif
+
+
+extension FfiCellNestedTable: Equatable, Hashable {
+    public static func ==(lhs: FfiCellNestedTable, rhs: FfiCellNestedTable) -> Bool {
+        if lhs.elementIndex != rhs.elementIndex {
+            return false
+        }
+        if lhs.tableKey != rhs.tableKey {
+            return false
+        }
+        if lhs.docOffset != rhs.docOffset {
+            return false
+        }
+        if lhs.docSize != rhs.docSize {
+            return false
+        }
+        if lhs.scalarStart != rhs.scalarStart {
+            return false
+        }
+        if lhs.scalarEnd != rhs.scalarEnd {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(elementIndex)
+        hasher.combine(tableKey)
+        hasher.combine(docOffset)
+        hasher.combine(docSize)
+        hasher.combine(scalarStart)
+        hasher.combine(scalarEnd)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiCellNestedTable: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiCellNestedTable {
+        return
+            try FfiCellNestedTable(
+                elementIndex: FfiConverterUInt32.read(from: &buf),
+                tableKey: FfiConverterString.read(from: &buf),
+                docOffset: FfiConverterUInt32.read(from: &buf),
+                docSize: FfiConverterUInt32.read(from: &buf),
+                scalarStart: FfiConverterOptionUInt32.read(from: &buf),
+                scalarEnd: FfiConverterOptionUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiCellNestedTable, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.elementIndex, into: &buf)
+        FfiConverterString.write(value.tableKey, into: &buf)
+        FfiConverterUInt32.write(value.docOffset, into: &buf)
+        FfiConverterUInt32.write(value.docSize, into: &buf)
+        FfiConverterOptionUInt32.write(value.scalarStart, into: &buf)
+        FfiConverterOptionUInt32.write(value.scalarEnd, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCellNestedTable_lift(_ buf: RustBuffer) throws -> FfiCellNestedTable {
+    return try FfiConverterTypeFfiCellNestedTable.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiCellNestedTable_lower(_ value: FfiCellNestedTable) -> RustBuffer {
+    return FfiConverterTypeFfiCellNestedTable.lower(value)
+}
+
+
 public struct FfiError {
     public var domain: String
     public var code: String
@@ -883,6 +1103,146 @@ public func FfiConverterTypeFfiJsonResult_lift(_ buf: RustBuffer) throws -> FfiJ
 #endif
 public func FfiConverterTypeFfiJsonResult_lower(_ value: FfiJsonResult) -> RustBuffer {
     return FfiConverterTypeFfiJsonResult.lower(value)
+}
+
+
+public struct FfiNativeRenderFrame {
+    public var snapshotJson: String
+    public var tables: FfiTableFrame
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(snapshotJson: String, tables: FfiTableFrame) {
+        self.snapshotJson = snapshotJson
+        self.tables = tables
+    }
+}
+
+#if compiler(>=6)
+extension FfiNativeRenderFrame: Sendable {}
+#endif
+
+
+extension FfiNativeRenderFrame: Equatable, Hashable {
+    public static func ==(lhs: FfiNativeRenderFrame, rhs: FfiNativeRenderFrame) -> Bool {
+        if lhs.snapshotJson != rhs.snapshotJson {
+            return false
+        }
+        if lhs.tables != rhs.tables {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(snapshotJson)
+        hasher.combine(tables)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiNativeRenderFrame: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiNativeRenderFrame {
+        return
+            try FfiNativeRenderFrame(
+                snapshotJson: FfiConverterString.read(from: &buf),
+                tables: FfiConverterTypeFfiTableFrame.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiNativeRenderFrame, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.snapshotJson, into: &buf)
+        FfiConverterTypeFfiTableFrame.write(value.tables, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNativeRenderFrame_lift(_ buf: RustBuffer) throws -> FfiNativeRenderFrame {
+    return try FfiConverterTypeFfiNativeRenderFrame.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNativeRenderFrame_lower(_ value: FfiNativeRenderFrame) -> RustBuffer {
+    return FfiConverterTypeFfiNativeRenderFrame.lower(value)
+}
+
+
+public struct FfiNativeRenderFrameResult {
+    public var frame: FfiNativeRenderFrame?
+    public var error: FfiError?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(frame: FfiNativeRenderFrame?, error: FfiError?) {
+        self.frame = frame
+        self.error = error
+    }
+}
+
+#if compiler(>=6)
+extension FfiNativeRenderFrameResult: Sendable {}
+#endif
+
+
+extension FfiNativeRenderFrameResult: Equatable, Hashable {
+    public static func ==(lhs: FfiNativeRenderFrameResult, rhs: FfiNativeRenderFrameResult) -> Bool {
+        if lhs.frame != rhs.frame {
+            return false
+        }
+        if lhs.error != rhs.error {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(frame)
+        hasher.combine(error)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiNativeRenderFrameResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiNativeRenderFrameResult {
+        return
+            try FfiNativeRenderFrameResult(
+                frame: FfiConverterOptionTypeFfiNativeRenderFrame.read(from: &buf),
+                error: FfiConverterOptionTypeFfiError.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiNativeRenderFrameResult, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeFfiNativeRenderFrame.write(value.frame, into: &buf)
+        FfiConverterOptionTypeFfiError.write(value.error, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNativeRenderFrameResult_lift(_ buf: RustBuffer) throws -> FfiNativeRenderFrameResult {
+    return try FfiConverterTypeFfiNativeRenderFrameResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiNativeRenderFrameResult_lower(_ value: FfiNativeRenderFrameResult) -> RustBuffer {
+    return FfiConverterTypeFfiNativeRenderFrameResult.lower(value)
 }
 
 
@@ -1184,6 +1544,838 @@ public func FfiConverterTypeFfiSnapshotExportResult_lift(_ buf: RustBuffer) thro
 #endif
 public func FfiConverterTypeFfiSnapshotExportResult_lower(_ value: FfiSnapshotExportResult) -> RustBuffer {
     return FfiConverterTypeFfiSnapshotExportResult.lower(value)
+}
+
+
+public struct FfiTableAttribute {
+    public var key: String
+    public var json: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(key: String, json: String) {
+        self.key = key
+        self.json = json
+    }
+}
+
+#if compiler(>=6)
+extension FfiTableAttribute: Sendable {}
+#endif
+
+
+extension FfiTableAttribute: Equatable, Hashable {
+    public static func ==(lhs: FfiTableAttribute, rhs: FfiTableAttribute) -> Bool {
+        if lhs.key != rhs.key {
+            return false
+        }
+        if lhs.json != rhs.json {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(key)
+        hasher.combine(json)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTableAttribute: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTableAttribute {
+        return
+            try FfiTableAttribute(
+                key: FfiConverterString.read(from: &buf),
+                json: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTableAttribute, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.json, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableAttribute_lift(_ buf: RustBuffer) throws -> FfiTableAttribute {
+    return try FfiConverterTypeFfiTableAttribute.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableAttribute_lower(_ value: FfiTableAttribute) -> RustBuffer {
+    return FfiConverterTypeFfiTableAttribute.lower(value)
+}
+
+
+public struct FfiTableCellRecord {
+    public var sourceRow: UInt32
+    public var row: UInt32
+    public var column: UInt32
+    public var rowspan: UInt32
+    public var colspan: UInt32
+    public var header: Bool
+    public var attrsKey: String
+    public var contentKey: String
+    public var docSize: UInt32
+    public var scalarStride: UInt32
+    public var elements: [FfiViewerElement]
+    public var inputBlocks: [FfiCellInputBlock]
+    public var nestedTables: [FfiCellNestedTable]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sourceRow: UInt32, row: UInt32, column: UInt32, rowspan: UInt32, colspan: UInt32, header: Bool, attrsKey: String, contentKey: String, docSize: UInt32, scalarStride: UInt32, elements: [FfiViewerElement], inputBlocks: [FfiCellInputBlock], nestedTables: [FfiCellNestedTable]) {
+        self.sourceRow = sourceRow
+        self.row = row
+        self.column = column
+        self.rowspan = rowspan
+        self.colspan = colspan
+        self.header = header
+        self.attrsKey = attrsKey
+        self.contentKey = contentKey
+        self.docSize = docSize
+        self.scalarStride = scalarStride
+        self.elements = elements
+        self.inputBlocks = inputBlocks
+        self.nestedTables = nestedTables
+    }
+}
+
+#if compiler(>=6)
+extension FfiTableCellRecord: Sendable {}
+#endif
+
+
+extension FfiTableCellRecord: Equatable, Hashable {
+    public static func ==(lhs: FfiTableCellRecord, rhs: FfiTableCellRecord) -> Bool {
+        if lhs.sourceRow != rhs.sourceRow {
+            return false
+        }
+        if lhs.row != rhs.row {
+            return false
+        }
+        if lhs.column != rhs.column {
+            return false
+        }
+        if lhs.rowspan != rhs.rowspan {
+            return false
+        }
+        if lhs.colspan != rhs.colspan {
+            return false
+        }
+        if lhs.header != rhs.header {
+            return false
+        }
+        if lhs.attrsKey != rhs.attrsKey {
+            return false
+        }
+        if lhs.contentKey != rhs.contentKey {
+            return false
+        }
+        if lhs.docSize != rhs.docSize {
+            return false
+        }
+        if lhs.scalarStride != rhs.scalarStride {
+            return false
+        }
+        if lhs.elements != rhs.elements {
+            return false
+        }
+        if lhs.inputBlocks != rhs.inputBlocks {
+            return false
+        }
+        if lhs.nestedTables != rhs.nestedTables {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(sourceRow)
+        hasher.combine(row)
+        hasher.combine(column)
+        hasher.combine(rowspan)
+        hasher.combine(colspan)
+        hasher.combine(header)
+        hasher.combine(attrsKey)
+        hasher.combine(contentKey)
+        hasher.combine(docSize)
+        hasher.combine(scalarStride)
+        hasher.combine(elements)
+        hasher.combine(inputBlocks)
+        hasher.combine(nestedTables)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTableCellRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTableCellRecord {
+        return
+            try FfiTableCellRecord(
+                sourceRow: FfiConverterUInt32.read(from: &buf),
+                row: FfiConverterUInt32.read(from: &buf),
+                column: FfiConverterUInt32.read(from: &buf),
+                rowspan: FfiConverterUInt32.read(from: &buf),
+                colspan: FfiConverterUInt32.read(from: &buf),
+                header: FfiConverterBool.read(from: &buf),
+                attrsKey: FfiConverterString.read(from: &buf),
+                contentKey: FfiConverterString.read(from: &buf),
+                docSize: FfiConverterUInt32.read(from: &buf),
+                scalarStride: FfiConverterUInt32.read(from: &buf),
+                elements: FfiConverterSequenceTypeFfiViewerElement.read(from: &buf),
+                inputBlocks: FfiConverterSequenceTypeFfiCellInputBlock.read(from: &buf),
+                nestedTables: FfiConverterSequenceTypeFfiCellNestedTable.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTableCellRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.sourceRow, into: &buf)
+        FfiConverterUInt32.write(value.row, into: &buf)
+        FfiConverterUInt32.write(value.column, into: &buf)
+        FfiConverterUInt32.write(value.rowspan, into: &buf)
+        FfiConverterUInt32.write(value.colspan, into: &buf)
+        FfiConverterBool.write(value.header, into: &buf)
+        FfiConverterString.write(value.attrsKey, into: &buf)
+        FfiConverterString.write(value.contentKey, into: &buf)
+        FfiConverterUInt32.write(value.docSize, into: &buf)
+        FfiConverterUInt32.write(value.scalarStride, into: &buf)
+        FfiConverterSequenceTypeFfiViewerElement.write(value.elements, into: &buf)
+        FfiConverterSequenceTypeFfiCellInputBlock.write(value.inputBlocks, into: &buf)
+        FfiConverterSequenceTypeFfiCellNestedTable.write(value.nestedTables, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableCellRecord_lift(_ buf: RustBuffer) throws -> FfiTableCellRecord {
+    return try FfiConverterTypeFfiTableCellRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableCellRecord_lower(_ value: FfiTableCellRecord) -> RustBuffer {
+    return FfiConverterTypeFfiTableCellRecord.lower(value)
+}
+
+
+public struct FfiTableCellUpdate {
+    public var tableKey: String
+    public var cellIndex: UInt32
+    public var cell: FfiTableCellRecord
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(tableKey: String, cellIndex: UInt32, cell: FfiTableCellRecord) {
+        self.tableKey = tableKey
+        self.cellIndex = cellIndex
+        self.cell = cell
+    }
+}
+
+#if compiler(>=6)
+extension FfiTableCellUpdate: Sendable {}
+#endif
+
+
+extension FfiTableCellUpdate: Equatable, Hashable {
+    public static func ==(lhs: FfiTableCellUpdate, rhs: FfiTableCellUpdate) -> Bool {
+        if lhs.tableKey != rhs.tableKey {
+            return false
+        }
+        if lhs.cellIndex != rhs.cellIndex {
+            return false
+        }
+        if lhs.cell != rhs.cell {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(tableKey)
+        hasher.combine(cellIndex)
+        hasher.combine(cell)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTableCellUpdate: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTableCellUpdate {
+        return
+            try FfiTableCellUpdate(
+                tableKey: FfiConverterString.read(from: &buf),
+                cellIndex: FfiConverterUInt32.read(from: &buf),
+                cell: FfiConverterTypeFfiTableCellRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTableCellUpdate, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.tableKey, into: &buf)
+        FfiConverterUInt32.write(value.cellIndex, into: &buf)
+        FfiConverterTypeFfiTableCellRecord.write(value.cell, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableCellUpdate_lift(_ buf: RustBuffer) throws -> FfiTableCellUpdate {
+    return try FfiConverterTypeFfiTableCellUpdate.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableCellUpdate_lower(_ value: FfiTableCellUpdate) -> RustBuffer {
+    return FfiConverterTypeFfiTableCellUpdate.lower(value)
+}
+
+
+public struct FfiTableExtent {
+    public var tableKey: String
+    public var docStart: UInt32
+    public var docSize: UInt32
+    public var scalarStart: UInt32
+    public var scalarEnd: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(tableKey: String, docStart: UInt32, docSize: UInt32, scalarStart: UInt32, scalarEnd: UInt32) {
+        self.tableKey = tableKey
+        self.docStart = docStart
+        self.docSize = docSize
+        self.scalarStart = scalarStart
+        self.scalarEnd = scalarEnd
+    }
+}
+
+#if compiler(>=6)
+extension FfiTableExtent: Sendable {}
+#endif
+
+
+extension FfiTableExtent: Equatable, Hashable {
+    public static func ==(lhs: FfiTableExtent, rhs: FfiTableExtent) -> Bool {
+        if lhs.tableKey != rhs.tableKey {
+            return false
+        }
+        if lhs.docStart != rhs.docStart {
+            return false
+        }
+        if lhs.docSize != rhs.docSize {
+            return false
+        }
+        if lhs.scalarStart != rhs.scalarStart {
+            return false
+        }
+        if lhs.scalarEnd != rhs.scalarEnd {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(tableKey)
+        hasher.combine(docStart)
+        hasher.combine(docSize)
+        hasher.combine(scalarStart)
+        hasher.combine(scalarEnd)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTableExtent: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTableExtent {
+        return
+            try FfiTableExtent(
+                tableKey: FfiConverterString.read(from: &buf),
+                docStart: FfiConverterUInt32.read(from: &buf),
+                docSize: FfiConverterUInt32.read(from: &buf),
+                scalarStart: FfiConverterUInt32.read(from: &buf),
+                scalarEnd: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTableExtent, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.tableKey, into: &buf)
+        FfiConverterUInt32.write(value.docStart, into: &buf)
+        FfiConverterUInt32.write(value.docSize, into: &buf)
+        FfiConverterUInt32.write(value.scalarStart, into: &buf)
+        FfiConverterUInt32.write(value.scalarEnd, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableExtent_lift(_ buf: RustBuffer) throws -> FfiTableExtent {
+    return try FfiConverterTypeFfiTableExtent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableExtent_lower(_ value: FfiTableExtent) -> RustBuffer {
+    return FfiConverterTypeFfiTableExtent.lower(value)
+}
+
+
+public struct FfiTableFrame {
+    public var kind: FfiTableFrameKind
+    public var baseDocumentRevision: String?
+    public var attributes: [FfiTableAttribute]
+    public var removedAttributeKeys: [String]
+    public var tables: [FfiTableRecord]
+    public var removedTableKeys: [String]
+    public var cellUpdates: [FfiTableCellUpdate]
+    public var extents: [FfiTableExtent]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: FfiTableFrameKind, baseDocumentRevision: String?, attributes: [FfiTableAttribute], removedAttributeKeys: [String], tables: [FfiTableRecord], removedTableKeys: [String], cellUpdates: [FfiTableCellUpdate], extents: [FfiTableExtent]) {
+        self.kind = kind
+        self.baseDocumentRevision = baseDocumentRevision
+        self.attributes = attributes
+        self.removedAttributeKeys = removedAttributeKeys
+        self.tables = tables
+        self.removedTableKeys = removedTableKeys
+        self.cellUpdates = cellUpdates
+        self.extents = extents
+    }
+}
+
+#if compiler(>=6)
+extension FfiTableFrame: Sendable {}
+#endif
+
+
+extension FfiTableFrame: Equatable, Hashable {
+    public static func ==(lhs: FfiTableFrame, rhs: FfiTableFrame) -> Bool {
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.baseDocumentRevision != rhs.baseDocumentRevision {
+            return false
+        }
+        if lhs.attributes != rhs.attributes {
+            return false
+        }
+        if lhs.removedAttributeKeys != rhs.removedAttributeKeys {
+            return false
+        }
+        if lhs.tables != rhs.tables {
+            return false
+        }
+        if lhs.removedTableKeys != rhs.removedTableKeys {
+            return false
+        }
+        if lhs.cellUpdates != rhs.cellUpdates {
+            return false
+        }
+        if lhs.extents != rhs.extents {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(baseDocumentRevision)
+        hasher.combine(attributes)
+        hasher.combine(removedAttributeKeys)
+        hasher.combine(tables)
+        hasher.combine(removedTableKeys)
+        hasher.combine(cellUpdates)
+        hasher.combine(extents)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTableFrame: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTableFrame {
+        return
+            try FfiTableFrame(
+                kind: FfiConverterTypeFfiTableFrameKind.read(from: &buf),
+                baseDocumentRevision: FfiConverterOptionString.read(from: &buf),
+                attributes: FfiConverterSequenceTypeFfiTableAttribute.read(from: &buf),
+                removedAttributeKeys: FfiConverterSequenceString.read(from: &buf),
+                tables: FfiConverterSequenceTypeFfiTableRecord.read(from: &buf),
+                removedTableKeys: FfiConverterSequenceString.read(from: &buf),
+                cellUpdates: FfiConverterSequenceTypeFfiTableCellUpdate.read(from: &buf),
+                extents: FfiConverterSequenceTypeFfiTableExtent.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTableFrame, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiTableFrameKind.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.baseDocumentRevision, into: &buf)
+        FfiConverterSequenceTypeFfiTableAttribute.write(value.attributes, into: &buf)
+        FfiConverterSequenceString.write(value.removedAttributeKeys, into: &buf)
+        FfiConverterSequenceTypeFfiTableRecord.write(value.tables, into: &buf)
+        FfiConverterSequenceString.write(value.removedTableKeys, into: &buf)
+        FfiConverterSequenceTypeFfiTableCellUpdate.write(value.cellUpdates, into: &buf)
+        FfiConverterSequenceTypeFfiTableExtent.write(value.extents, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableFrame_lift(_ buf: RustBuffer) throws -> FfiTableFrame {
+    return try FfiConverterTypeFfiTableFrame.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableFrame_lower(_ value: FfiTableFrame) -> RustBuffer {
+    return FfiConverterTypeFfiTableFrame.lower(value)
+}
+
+
+public struct FfiTableHost {
+    public var tableKey: String
+    public var cellIndex: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(tableKey: String, cellIndex: UInt32) {
+        self.tableKey = tableKey
+        self.cellIndex = cellIndex
+    }
+}
+
+#if compiler(>=6)
+extension FfiTableHost: Sendable {}
+#endif
+
+
+extension FfiTableHost: Equatable, Hashable {
+    public static func ==(lhs: FfiTableHost, rhs: FfiTableHost) -> Bool {
+        if lhs.tableKey != rhs.tableKey {
+            return false
+        }
+        if lhs.cellIndex != rhs.cellIndex {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(tableKey)
+        hasher.combine(cellIndex)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTableHost: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTableHost {
+        return
+            try FfiTableHost(
+                tableKey: FfiConverterString.read(from: &buf),
+                cellIndex: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTableHost, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.tableKey, into: &buf)
+        FfiConverterUInt32.write(value.cellIndex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableHost_lift(_ buf: RustBuffer) throws -> FfiTableHost {
+    return try FfiConverterTypeFfiTableHost.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableHost_lower(_ value: FfiTableHost) -> RustBuffer {
+    return FfiConverterTypeFfiTableHost.lower(value)
+}
+
+
+public struct FfiTableRecord {
+    public var tableKey: String
+    public var host: FfiTableHost?
+    public var docSize: UInt32
+    public var rows: UInt32
+    public var columns: UInt32
+    public var columnWidths: [UInt32?]
+    public var direction: String?
+    public var irregular: Bool
+    public var readOnlyDescendants: Bool
+    public var attrsKey: String
+    public var sourceRows: [FfiTableSourceRow]
+    public var cells: [FfiTableCellRecord]
+    public var syntheticRegions: [TableRenderSyntheticRegion]
+    public var failure: TableRenderFailure?
+    public var compatibilityDiagnostic: TableCompatibilityDiagnostic?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(tableKey: String, host: FfiTableHost?, docSize: UInt32, rows: UInt32, columns: UInt32, columnWidths: [UInt32?], direction: String?, irregular: Bool, readOnlyDescendants: Bool, attrsKey: String, sourceRows: [FfiTableSourceRow], cells: [FfiTableCellRecord], syntheticRegions: [TableRenderSyntheticRegion], failure: TableRenderFailure?, compatibilityDiagnostic: TableCompatibilityDiagnostic?) {
+        self.tableKey = tableKey
+        self.host = host
+        self.docSize = docSize
+        self.rows = rows
+        self.columns = columns
+        self.columnWidths = columnWidths
+        self.direction = direction
+        self.irregular = irregular
+        self.readOnlyDescendants = readOnlyDescendants
+        self.attrsKey = attrsKey
+        self.sourceRows = sourceRows
+        self.cells = cells
+        self.syntheticRegions = syntheticRegions
+        self.failure = failure
+        self.compatibilityDiagnostic = compatibilityDiagnostic
+    }
+}
+
+#if compiler(>=6)
+extension FfiTableRecord: Sendable {}
+#endif
+
+
+extension FfiTableRecord: Equatable, Hashable {
+    public static func ==(lhs: FfiTableRecord, rhs: FfiTableRecord) -> Bool {
+        if lhs.tableKey != rhs.tableKey {
+            return false
+        }
+        if lhs.host != rhs.host {
+            return false
+        }
+        if lhs.docSize != rhs.docSize {
+            return false
+        }
+        if lhs.rows != rhs.rows {
+            return false
+        }
+        if lhs.columns != rhs.columns {
+            return false
+        }
+        if lhs.columnWidths != rhs.columnWidths {
+            return false
+        }
+        if lhs.direction != rhs.direction {
+            return false
+        }
+        if lhs.irregular != rhs.irregular {
+            return false
+        }
+        if lhs.readOnlyDescendants != rhs.readOnlyDescendants {
+            return false
+        }
+        if lhs.attrsKey != rhs.attrsKey {
+            return false
+        }
+        if lhs.sourceRows != rhs.sourceRows {
+            return false
+        }
+        if lhs.cells != rhs.cells {
+            return false
+        }
+        if lhs.syntheticRegions != rhs.syntheticRegions {
+            return false
+        }
+        if lhs.failure != rhs.failure {
+            return false
+        }
+        if lhs.compatibilityDiagnostic != rhs.compatibilityDiagnostic {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(tableKey)
+        hasher.combine(host)
+        hasher.combine(docSize)
+        hasher.combine(rows)
+        hasher.combine(columns)
+        hasher.combine(columnWidths)
+        hasher.combine(direction)
+        hasher.combine(irregular)
+        hasher.combine(readOnlyDescendants)
+        hasher.combine(attrsKey)
+        hasher.combine(sourceRows)
+        hasher.combine(cells)
+        hasher.combine(syntheticRegions)
+        hasher.combine(failure)
+        hasher.combine(compatibilityDiagnostic)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTableRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTableRecord {
+        return
+            try FfiTableRecord(
+                tableKey: FfiConverterString.read(from: &buf),
+                host: FfiConverterOptionTypeFfiTableHost.read(from: &buf),
+                docSize: FfiConverterUInt32.read(from: &buf),
+                rows: FfiConverterUInt32.read(from: &buf),
+                columns: FfiConverterUInt32.read(from: &buf),
+                columnWidths: FfiConverterSequenceOptionUInt32.read(from: &buf),
+                direction: FfiConverterOptionString.read(from: &buf),
+                irregular: FfiConverterBool.read(from: &buf),
+                readOnlyDescendants: FfiConverterBool.read(from: &buf),
+                attrsKey: FfiConverterString.read(from: &buf),
+                sourceRows: FfiConverterSequenceTypeFfiTableSourceRow.read(from: &buf),
+                cells: FfiConverterSequenceTypeFfiTableCellRecord.read(from: &buf),
+                syntheticRegions: FfiConverterSequenceTypeTableRenderSyntheticRegion.read(from: &buf),
+                failure: FfiConverterOptionTypeTableRenderFailure.read(from: &buf),
+                compatibilityDiagnostic: FfiConverterOptionTypeTableCompatibilityDiagnostic.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTableRecord, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.tableKey, into: &buf)
+        FfiConverterOptionTypeFfiTableHost.write(value.host, into: &buf)
+        FfiConverterUInt32.write(value.docSize, into: &buf)
+        FfiConverterUInt32.write(value.rows, into: &buf)
+        FfiConverterUInt32.write(value.columns, into: &buf)
+        FfiConverterSequenceOptionUInt32.write(value.columnWidths, into: &buf)
+        FfiConverterOptionString.write(value.direction, into: &buf)
+        FfiConverterBool.write(value.irregular, into: &buf)
+        FfiConverterBool.write(value.readOnlyDescendants, into: &buf)
+        FfiConverterString.write(value.attrsKey, into: &buf)
+        FfiConverterSequenceTypeFfiTableSourceRow.write(value.sourceRows, into: &buf)
+        FfiConverterSequenceTypeFfiTableCellRecord.write(value.cells, into: &buf)
+        FfiConverterSequenceTypeTableRenderSyntheticRegion.write(value.syntheticRegions, into: &buf)
+        FfiConverterOptionTypeTableRenderFailure.write(value.failure, into: &buf)
+        FfiConverterOptionTypeTableCompatibilityDiagnostic.write(value.compatibilityDiagnostic, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableRecord_lift(_ buf: RustBuffer) throws -> FfiTableRecord {
+    return try FfiConverterTypeFfiTableRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableRecord_lower(_ value: FfiTableRecord) -> RustBuffer {
+    return FfiConverterTypeFfiTableRecord.lower(value)
+}
+
+
+public struct FfiTableSourceRow {
+    public var attrsKey: String
+    public var cellCount: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(attrsKey: String, cellCount: UInt32) {
+        self.attrsKey = attrsKey
+        self.cellCount = cellCount
+    }
+}
+
+#if compiler(>=6)
+extension FfiTableSourceRow: Sendable {}
+#endif
+
+
+extension FfiTableSourceRow: Equatable, Hashable {
+    public static func ==(lhs: FfiTableSourceRow, rhs: FfiTableSourceRow) -> Bool {
+        if lhs.attrsKey != rhs.attrsKey {
+            return false
+        }
+        if lhs.cellCount != rhs.cellCount {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(attrsKey)
+        hasher.combine(cellCount)
+    }
+}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTableSourceRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTableSourceRow {
+        return
+            try FfiTableSourceRow(
+                attrsKey: FfiConverterString.read(from: &buf),
+                cellCount: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiTableSourceRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.attrsKey, into: &buf)
+        FfiConverterUInt32.write(value.cellCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableSourceRow_lift(_ buf: RustBuffer) throws -> FfiTableSourceRow {
+    return try FfiConverterTypeFfiTableSourceRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableSourceRow_lower(_ value: FfiTableSourceRow) -> RustBuffer {
+    return FfiConverterTypeFfiTableSourceRow.lower(value)
 }
 
 
@@ -1955,6 +3147,76 @@ public func FfiConverterTypeTableRenderSyntheticRegion_lower(_ value: TableRende
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum FfiTableFrameKind {
+
+    case full
+    case delta
+}
+
+
+#if compiler(>=6)
+extension FfiTableFrameKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTableFrameKind: FfiConverterRustBuffer {
+    typealias SwiftType = FfiTableFrameKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTableFrameKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .full
+
+        case 2: return .delta
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiTableFrameKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .full:
+            writeInt(&buf, Int32(1))
+
+
+        case .delta:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableFrameKind_lift(_ buf: RustBuffer) throws -> FfiTableFrameKind {
+    return try FfiConverterTypeFfiTableFrameKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTableFrameKind_lower(_ value: FfiTableFrameKind) -> RustBuffer {
+    return FfiConverterTypeFfiTableFrameKind.lower(value)
+}
+
+
+extension FfiTableFrameKind: Equatable, Hashable {}
+
+
+
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum FfiViewerElement {
 
     case table(tableId: String
@@ -2509,6 +3771,30 @@ fileprivate struct FfiConverterOptionTypeFfiError: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFfiNativeRenderFrame: FfiConverterRustBuffer {
+    typealias SwiftType = FfiNativeRenderFrame?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiNativeRenderFrame.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiNativeRenderFrame.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeFfiOutboundLease: FfiConverterRustBuffer {
     typealias SwiftType = FfiOutboundLease?
 
@@ -2549,6 +3835,30 @@ fileprivate struct FfiConverterOptionTypeFfiSnapshotExport: FfiConverterRustBuff
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeFfiSnapshotExport.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiTableHost: FfiConverterRustBuffer {
+    typealias SwiftType = FfiTableHost?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiTableHost.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiTableHost.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -2599,6 +3909,231 @@ fileprivate struct FfiConverterOptionTypeTableRenderFailure: FfiConverterRustBuf
         case 1: return try FfiConverterTypeTableRenderFailure.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]
+
+    public static func write(_ value: [String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiCellInputBlock: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiCellInputBlock]
+
+    public static func write(_ value: [FfiCellInputBlock], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiCellInputBlock.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiCellInputBlock] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiCellInputBlock]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiCellInputBlock.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiCellNestedTable: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiCellNestedTable]
+
+    public static func write(_ value: [FfiCellNestedTable], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiCellNestedTable.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiCellNestedTable] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiCellNestedTable]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiCellNestedTable.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiTableAttribute: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiTableAttribute]
+
+    public static func write(_ value: [FfiTableAttribute], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiTableAttribute.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiTableAttribute] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiTableAttribute]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiTableAttribute.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiTableCellRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiTableCellRecord]
+
+    public static func write(_ value: [FfiTableCellRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiTableCellRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiTableCellRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiTableCellRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiTableCellRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiTableCellUpdate: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiTableCellUpdate]
+
+    public static func write(_ value: [FfiTableCellUpdate], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiTableCellUpdate.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiTableCellUpdate] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiTableCellUpdate]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiTableCellUpdate.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiTableExtent: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiTableExtent]
+
+    public static func write(_ value: [FfiTableExtent], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiTableExtent.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiTableExtent] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiTableExtent]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiTableExtent.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiTableRecord: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiTableRecord]
+
+    public static func write(_ value: [FfiTableRecord], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiTableRecord.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiTableRecord] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiTableRecord]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiTableRecord.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiTableSourceRow: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiTableSourceRow]
+
+    public static func write(_ value: [FfiTableSourceRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiTableSourceRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiTableSourceRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiTableSourceRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiTableSourceRow.read(from: &buf))
+        }
+        return seq
     }
 }
 
@@ -3071,6 +4606,16 @@ public func editorV2RenderNative(editorId: String, ownerId: String, mirrorScalar
     )
 })
 }
+public func editorV2RenderNativeFrame(editorId: String, ownerId: String?, mirrorScalarAnchor: UInt32?, mirrorScalarHead: UInt32?) -> FfiNativeRenderFrameResult  {
+    return try!  FfiConverterTypeFfiNativeRenderFrameResult_lift(try! rustCall() {
+    uniffi_editor_core_fn_func_editor_v2_render_native_frame(
+        FfiConverterString.lower(editorId),
+        FfiConverterOptionString.lower(ownerId),
+        FfiConverterOptionUInt32.lower(mirrorScalarAnchor),
+        FfiConverterOptionUInt32.lower(mirrorScalarHead),$0
+    )
+})
+}
 public func editorV2RenderUpdate(editorId: String, mirrorScalarAnchor: UInt32?, mirrorScalarHead: UInt32?) -> FfiJsonResult  {
     return try!  FfiConverterTypeFfiJsonResult_lift(try! rustCall() {
     uniffi_editor_core_fn_func_editor_v2_render_update(
@@ -3102,6 +4647,15 @@ public func editorV2ScalarToDoc(editorId: String, scalar: UInt32) -> FfiJsonResu
     uniffi_editor_core_fn_func_editor_v2_scalar_to_doc(
         FfiConverterString.lower(editorId),
         FfiConverterUInt32.lower(scalar),$0
+    )
+})
+}
+public func editorV2SeedNativeRenderCursor(editorId: String, ownerId: String, documentRevision: String) -> FfiUnitResult  {
+    return try!  FfiConverterTypeFfiUnitResult_lift(try! rustCall() {
+    uniffi_editor_core_fn_func_editor_v2_seed_native_render_cursor(
+        FfiConverterString.lower(editorId),
+        FfiConverterString.lower(ownerId),
+        FfiConverterString.lower(documentRevision),$0
     )
 })
 }
@@ -3247,6 +4801,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_editor_core_checksum_func_editor_v2_render_native() != 16234) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_editor_core_checksum_func_editor_v2_render_native_frame() != 615) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_editor_core_checksum_func_editor_v2_render_update() != 13282) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3257,6 +4814,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_editor_core_checksum_func_editor_v2_scalar_to_doc() != 60383) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_editor_core_checksum_func_editor_v2_seed_native_render_cursor() != 7084) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_editor_core_checksum_func_editor_v2_set_selection() != 39340) {

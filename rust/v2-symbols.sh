@@ -1,0 +1,51 @@
+V2_SYMBOLS=(
+    editor_v2_create
+    editor_v2_destroy
+    editor_v2_get_state
+    editor_v2_get_document_json
+    editor_v2_get_document_html
+    editor_v2_get_clipboard
+    editor_v2_get_content_snapshot
+    editor_v2_replace_document
+    editor_v2_apply_input
+    editor_v2_apply_command
+    editor_v2_apply_local_api
+    editor_v2_set_selection
+    editor_v2_pin_position_epoch
+    editor_v2_apply_native_intent
+    editor_v2_release_native_binding
+    editor_v2_undo
+    editor_v2_redo
+    editor_v2_collaboration_drive
+    editor_v2_collaboration_socket_open
+    editor_v2_collaboration_receive
+    editor_v2_collaboration_socket_close
+    editor_v2_collaboration_lease_outbound
+    editor_v2_collaboration_ack_outbound
+    editor_v2_collaboration_nack_outbound
+    editor_v2_collaboration_set_awareness
+    editor_v2_collaboration_set_awareness_selection
+    editor_v2_collaboration_peers
+    editor_v2_collaboration_detach
+    editor_v2_collaboration_reattach
+    editor_v2_snapshot_export
+    editor_v2_snapshot_restore
+    editor_v2_render_update
+    editor_v2_render_native
+    editor_v2_render_native_frame
+    editor_v2_seed_native_render_cursor
+    editor_v2_resolve_scalar_selection
+    editor_v2_doc_to_scalar
+    editor_v2_scalar_to_doc
+)
+
+VIEWER_METHODS=(
+    semantic_key
+    elements
+    is_empty
+    preferred_text_block_name
+    trailing_empty_text_block_count
+    retained_bytes_decimal
+    table_attributes
+    table_records
+)

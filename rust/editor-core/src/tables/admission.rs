@@ -106,6 +106,16 @@ impl TableProjectionIndex {
         self.tables.get(&position)
     }
 
+    pub(crate) fn has_nested_table(&self, start: u32, end: u32) -> bool {
+        self.tables
+            .range((
+                std::ops::Bound::Excluded(start),
+                std::ops::Bound::Excluded(end),
+            ))
+            .next()
+            .is_some()
+    }
+
     pub(crate) fn positions(&self) -> impl Iterator<Item = u32> + '_ {
         self.tables.keys().copied()
     }

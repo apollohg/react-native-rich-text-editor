@@ -5,6 +5,7 @@ set -euo pipefail
 export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/v2-symbols.sh"
 CRATE_DIR="$SCRIPT_DIR/editor-core"
 OUT_DIR="$SCRIPT_DIR/android"
 LIB_NAME="libeditor_core.so"
@@ -53,8 +54,8 @@ for pair in "${TARGET_ABI_PAIRS[@]}"; do
     v2_count="$(nm -gU "$TARGET_DIR/$target/release/$LIB_NAME" 2>/dev/null | grep -c 'uniffi_editor_core_fn_func_editor_v2_' || true)"
     legacy_lines="$(nm -gU "$TARGET_DIR/$target/release/$LIB_NAME" 2>/dev/null | grep -E 'uniffi_editor_core_(fn|checksum)_func_(editor_|collaboration_)' | grep -v 'editor_v2\|editor_core_version' || true)"
     echo "  $target: $v2_count editor_v2 symbols"
-    if [ "$v2_count" -ne 36 ]; then
-        echo "ERROR: expected exactly 36 editor_v2 symbols in $target .so" >&2
+    if [ "$v2_count" -ne "${#V2_SYMBOLS[@]}" ]; then
+        echo "ERROR: expected exactly ${#V2_SYMBOLS[@]} editor_v2 symbols in $target .so" >&2
         exit 1
     fi
     if [ -n "$legacy_lines" ]; then

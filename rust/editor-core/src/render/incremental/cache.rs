@@ -14,6 +14,12 @@ impl CachedRenderBlocks {
                 if let RenderElement::Table { table, doc_offset } = element {
                     let table_pos = origin + doc_offset;
                     output.push((table_pos, table));
+                    if !self
+                        .table_projection_index
+                        .has_nested_table(table_pos, table_pos + table.structure.doc_size)
+                    {
+                        continue;
+                    }
                     let starts = crate::tables::render::absolute_cell_starts(table, table_pos);
                     pending.extend(
                         starts

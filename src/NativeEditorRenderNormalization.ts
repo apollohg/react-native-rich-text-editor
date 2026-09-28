@@ -175,13 +175,20 @@ export function normalizeRenderBlocks(
     value: unknown,
     tableAttributes: unknown = {},
     tableRecords: unknown = {},
+    allowUnpooledTableReferences = false,
 ): RenderElement[][] | null {
     if (!Array.isArray(value)) {
         return null;
     }
 
     if (!value.every(Array.isArray)) return null;
-    return validRenderElements(value.flat(), tableAttributes, tableRecords)
+    return validRenderElements(
+        value.flat(),
+        tableAttributes,
+        tableRecords,
+        true,
+        allowUnpooledTableReferences,
+    )
         ? (value as RenderElement[][])
         : null;
 }
@@ -279,6 +286,7 @@ function validRenderElements(
     tableAttributes: unknown = {},
     tableRecords: unknown = {},
     requireAllRecords = true,
+    allowUnpooledTableReferences = false,
 ): boolean {
     const pool = normalizeTableAttributes(tableAttributes);
     if (pool === null) return false;
@@ -330,10 +338,15 @@ function validRenderElements(
         if (
             !hasExactOwnKeys(value, ['type', 'tableId']) ||
             typeof value.tableId !== 'string' ||
-            !/^t(?:0|[1-9][0-9]*)$/.test(value.tableId)
+            (!allowUnpooledTableReferences &&
+                !/^t(?:0|[1-9][0-9]*)$/.test(value.tableId))
         )
             return false;
         if (referencedTableIds.has(value.tableId)) return false;
+        if (allowUnpooledTableReferences) {
+            referencedTableIds.add(value.tableId);
+            continue;
+        }
         const t = records[value.tableId];
         if (!isPlainRecord(t)) return false;
         referencedTableIds.add(value.tableId);
@@ -516,7 +529,8 @@ function validRenderElements(
     }
     return (
         !requireAllRecords ||
-        (referencedTableIds.size === Object.keys(records).length &&
+        ((allowUnpooledTableReferences ||
+            referencedTableIds.size === Object.keys(records).length) &&
             referencedAttributeKeys.size === Object.keys(pool).length)
     );
 }
@@ -525,6 +539,7 @@ export function normalizeRenderPatch(
     value: unknown,
     tableAttributes: unknown = {},
     tableRecords: unknown = {},
+    allowUnpooledTableReferences = false,
 ): RenderBlocksPatch | null | undefined {
     if (value === null) {
         return null;
@@ -550,6 +565,7 @@ export function normalizeRenderPatch(
             tableAttributes,
             tableRecords,
             false,
+            allowUnpooledTableReferences,
         )
     )
         return undefined;
@@ -756,6 +772,10 @@ export function normalizeNativeEditorV2RenderUpdateValue(
     );
     if (tableAttributes === null) return null;
     const tableRecords = parsed.tableRecords ?? {};
+    const allowUnpooledTableReferences =
+        parsed.tableRecords === undefined &&
+        parsed.tableAttributes === undefined &&
+        parsed.tableInputMappings === undefined;
     const normalizedTableRecords = tableRecords as Record<
         string,
         import('./TableTypes').TableRenderRecord
@@ -767,12 +787,14 @@ export function normalizeNativeEditorV2RenderUpdateValue(
                   parsed.renderBlocks,
                   tableAttributes,
                   tableRecords,
+                  allowUnpooledTableReferences,
               );
 
     const renderPatch = normalizeRenderPatch(
         parsed.renderPatch,
         tableAttributes,
         tableRecords,
+        allowUnpooledTableReferences,
     );
     const selection = normalizeRenderSelection(parsed.selection);
     const activeState = normalizeRenderActiveState(parsed.activeState);

@@ -7,7 +7,6 @@ use super::large_table_fixture::{
     plain_table_document, session_with_document,
 };
 use crate::ffi_v2::editor as v2;
-use crate::ffi_v2::render as v2_render;
 use crate::tables::commands::{TableCommand, TableEdge};
 use crate::yrs_engine::observability::{
     reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
@@ -19,6 +18,8 @@ const STRUCTURAL_COMMAND_REQUEST_ID: u64 = 2;
 const LEDGER_EPOCH_OWNER: u64 = 7;
 const PROBE_FIXTURES: [(usize, usize); 2] = [(1000, 20), (100, 200)];
 const APPLY_BUDGET_MS: f64 = 0.9;
+const FRAME_BUDGET_MS: f64 = 0.4;
+const COLD_FRAME_BUDGET_MS: f64 = 40.0;
 const IMPORT_BUDGET_MS: f64 = 90.0;
 const PROBE_WARMUP_KEYSTROKES: usize = 5;
 const PROBE_MEASURED_KEYSTROKES: usize = 20;
@@ -94,10 +95,17 @@ fn median_ms(mut samples: Vec<f64>) -> f64 {
 
 fn probe_render(editor_id: &str) -> (Value, f64) {
     let start = Instant::now();
-    let result =
-        v2_render::editor_v2_render_native(editor_id.to_owned(), PROBE_OWNER_ID.into(), None, None);
+    let result = crate::ffi_v2::native_frame::editor_v2_render_native_frame(
+        editor_id.to_owned(),
+        Some(PROBE_OWNER_ID.into()),
+        None,
+        None,
+    );
     let elapsed = elapsed_ms(start);
-    (ffi_value(&result), elapsed)
+    let frame = result
+        .frame
+        .unwrap_or_else(|| panic!("native frame: {:?}", result.error));
+    (serde_json::from_str(&frame.snapshot_json).unwrap(), elapsed)
 }
 
 fn position_epoch(render: &Value) -> String {
@@ -129,6 +137,11 @@ fn large_table_keystroke_budget_probe() {
 
         let (render, first_frame_ms) = probe_render(&editor_id);
         println!("PROBE {fixture} first_frame {first_frame_ms:.3}");
+        if first_frame_ms > COLD_FRAME_BUDGET_MS {
+            violations.push(format!(
+                "{fixture}: cold frame {first_frame_ms:.3} ms exceeds {COLD_FRAME_BUDGET_MS} ms"
+            ));
+        }
 
         let cell_scalars = fixture_cell_text(0, 0).chars().count();
         let content_end =
@@ -169,7 +182,13 @@ fn large_table_keystroke_budget_probe() {
                 "{fixture}: apply median {apply_median:.3} ms exceeds {APPLY_BUDGET_MS} ms"
             ));
         }
-        println!("PROBE {fixture} frame {:.3}", median_ms(frame_samples));
+        let frame_median = median_ms(frame_samples);
+        println!("PROBE {fixture} frame {frame_median:.3}");
+        if frame_median > FRAME_BUDGET_MS {
+            violations.push(format!(
+                "{fixture}: frame median {frame_median:.3} ms exceeds {FRAME_BUDGET_MS} ms"
+            ));
+        }
         let cell = keystroke_cell(rows, columns);
         let (row, column) = (cell / columns, cell % columns);
         let document = ffi_value(&v2::editor_v2_get_document_json(editor_id.clone()));

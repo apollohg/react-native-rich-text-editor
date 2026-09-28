@@ -54,10 +54,12 @@
     { "name": "editor_v2_redo", "checksum": 48065 },
     { "name": "editor_v2_release_native_binding", "checksum": 2756 },
     { "name": "editor_v2_render_native", "checksum": 16234 },
+    { "name": "editor_v2_render_native_frame", "checksum": 615 },
     { "name": "editor_v2_render_update", "checksum": 13282 },
     { "name": "editor_v2_replace_document", "checksum": 31032 },
     { "name": "editor_v2_resolve_scalar_selection", "checksum": 26332 },
     { "name": "editor_v2_scalar_to_doc", "checksum": 60383 },
+    { "name": "editor_v2_seed_native_render_cursor", "checksum": 7084 },
     { "name": "editor_v2_set_selection", "checksum": 39340 },
     { "name": "editor_v2_snapshot_export", "checksum": 2193 },
     { "name": "editor_v2_snapshot_restore", "checksum": 47504 },
@@ -77,6 +79,8 @@
           { "name": "preferred_text_block_name", "checksum": 32137 },
           { "name": "retained_bytes_decimal", "checksum": 13333 },
           { "name": "semantic_key", "checksum": 2241 },
+          { "name": "table_attributes", "checksum": 60903 },
+          { "name": "table_records", "checksum": 27911 },
           { "name": "trailing_empty_text_block_count", "checksum": 11698 }
         ]
       }

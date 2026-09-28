@@ -27,6 +27,47 @@ describe('NativeEditorBridge v2', () => {
             expect(Object.isFrozen(snapshot.activeState.marks)).toBe(true);
         });
 
+        it('accepts table references without a pool from native frames', () => {
+            const handle = createHandle();
+            const reference = { type: 'table', tableId: 'y17-42' };
+            const full = {
+                ...MOCK_ATOMIC_RENDER_SNAPSHOT,
+                renderBlocks: [[reference]],
+            };
+            mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
+                okRecord(JSON.stringify(full)),
+            );
+            expect(handle.bridge.renderUpdate()).toEqual(full);
+            const patch = {
+                ...MOCK_ATOMIC_RENDER_SNAPSHOT,
+                renderBlocks: null,
+                renderPatch: {
+                    baseDocumentVersion: '1',
+                    startIndex: 0,
+                    deleteCount: 1,
+                    renderBlocks: [[reference]],
+                },
+            };
+            mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
+                okRecord(JSON.stringify(patch)),
+            );
+            expect(handle.bridge.renderUpdate()).toEqual(patch);
+        });
+
+        it('retains pool validation when a snapshot supplies table records', () => {
+            const handle = createHandle();
+            mockNativeModule.editorV2RenderUpdate.mockReturnValueOnce(
+                okRecord(
+                    JSON.stringify({
+                        ...MOCK_ATOMIC_RENDER_SNAPSHOT,
+                        tableRecords: {},
+                        renderBlocks: [[{ type: 'table', tableId: 'y17-42' }]],
+                    }),
+                ),
+            );
+            expect(() => handle.bridge.renderUpdate()).toThrow();
+        });
+
         it('passes an exact optional mirror while retaining the atomic result shape', () => {
             const handle = createHandle();
             handle.bridge.renderUpdate({ anchor: 2, head: 5 });

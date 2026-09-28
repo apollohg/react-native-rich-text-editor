@@ -806,6 +806,10 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
 // For large crates we prevent `MethodTooLargeException` (see #2340)
 // N.B. the name of the extension is very misleading, since it is
 // rather `InterfaceTooLargeException`, caused by too many methods
@@ -879,6 +883,8 @@ fun uniffi_editor_core_checksum_func_editor_v2_release_native_binding(
 ): Short
 fun uniffi_editor_core_checksum_func_editor_v2_render_native(
 ): Short
+fun uniffi_editor_core_checksum_func_editor_v2_render_native_frame(
+): Short
 fun uniffi_editor_core_checksum_func_editor_v2_render_update(
 ): Short
 fun uniffi_editor_core_checksum_func_editor_v2_replace_document(
@@ -886,6 +892,8 @@ fun uniffi_editor_core_checksum_func_editor_v2_replace_document(
 fun uniffi_editor_core_checksum_func_editor_v2_resolve_scalar_selection(
 ): Short
 fun uniffi_editor_core_checksum_func_editor_v2_scalar_to_doc(
+): Short
+fun uniffi_editor_core_checksum_func_editor_v2_seed_native_render_cursor(
 ): Short
 fun uniffi_editor_core_checksum_func_editor_v2_set_selection(
 ): Short
@@ -1040,6 +1048,8 @@ fun uniffi_editor_core_fn_func_editor_v2_release_native_binding(`editorId`: Rust
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_func_editor_v2_render_native(`editorId`: RustBuffer.ByValue,`ownerId`: RustBuffer.ByValue,`mirrorScalarAnchor`: RustBuffer.ByValue,`mirrorScalarHead`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
+fun uniffi_editor_core_fn_func_editor_v2_render_native_frame(`editorId`: RustBuffer.ByValue,`ownerId`: RustBuffer.ByValue,`mirrorScalarAnchor`: RustBuffer.ByValue,`mirrorScalarHead`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
 fun uniffi_editor_core_fn_func_editor_v2_render_update(`editorId`: RustBuffer.ByValue,`mirrorScalarAnchor`: RustBuffer.ByValue,`mirrorScalarHead`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_func_editor_v2_replace_document(`editorId`: RustBuffer.ByValue,`requestJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -1047,6 +1057,8 @@ fun uniffi_editor_core_fn_func_editor_v2_replace_document(`editorId`: RustBuffer
 fun uniffi_editor_core_fn_func_editor_v2_resolve_scalar_selection(`editorId`: RustBuffer.ByValue,`scalarAnchor`: Int,`scalarHead`: Int,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_func_editor_v2_scalar_to_doc(`editorId`: RustBuffer.ByValue,`scalar`: Int,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+fun uniffi_editor_core_fn_func_editor_v2_seed_native_render_cursor(`editorId`: RustBuffer.ByValue,`ownerId`: RustBuffer.ByValue,`documentRevision`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 fun uniffi_editor_core_fn_func_editor_v2_set_selection(`editorId`: RustBuffer.ByValue,`requestJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
@@ -1271,6 +1283,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_editor_core_checksum_func_editor_v2_render_native() != 16234.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_editor_core_checksum_func_editor_v2_render_native_frame() != 615.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_editor_core_checksum_func_editor_v2_render_update() != 13282.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1281,6 +1296,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_editor_core_checksum_func_editor_v2_scalar_to_doc() != 60383.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_editor_core_checksum_func_editor_v2_seed_native_render_cursor() != 7084.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_editor_core_checksum_func_editor_v2_set_selection() != 39340.toShort()) {
@@ -1946,6 +1964,110 @@ public object FfiConverterTypeViewerCompiledDocument: FfiConverter<ViewerCompile
 
 
 
+data class FfiCellInputBlock (
+    var `elementIndex`: kotlin.UInt,
+    var `docStart`: kotlin.UInt,
+    var `docEnd`: kotlin.UInt,
+    var `scalarStart`: kotlin.UInt,
+    var `contentScalarStart`: kotlin.UInt,
+    var `scalarEnd`: kotlin.UInt,
+    var `breakScalarEnd`: kotlin.UInt,
+    var `void`: kotlin.Boolean
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiCellInputBlock: FfiConverterRustBuffer<FfiCellInputBlock> {
+    override fun read(buf: ByteBuffer): FfiCellInputBlock {
+        return FfiCellInputBlock(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterBoolean.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiCellInputBlock) = (
+            FfiConverterUInt.allocationSize(value.`elementIndex`) +
+            FfiConverterUInt.allocationSize(value.`docStart`) +
+            FfiConverterUInt.allocationSize(value.`docEnd`) +
+            FfiConverterUInt.allocationSize(value.`scalarStart`) +
+            FfiConverterUInt.allocationSize(value.`contentScalarStart`) +
+            FfiConverterUInt.allocationSize(value.`scalarEnd`) +
+            FfiConverterUInt.allocationSize(value.`breakScalarEnd`) +
+            FfiConverterBoolean.allocationSize(value.`void`)
+    )
+
+    override fun write(value: FfiCellInputBlock, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`elementIndex`, buf)
+            FfiConverterUInt.write(value.`docStart`, buf)
+            FfiConverterUInt.write(value.`docEnd`, buf)
+            FfiConverterUInt.write(value.`scalarStart`, buf)
+            FfiConverterUInt.write(value.`contentScalarStart`, buf)
+            FfiConverterUInt.write(value.`scalarEnd`, buf)
+            FfiConverterUInt.write(value.`breakScalarEnd`, buf)
+            FfiConverterBoolean.write(value.`void`, buf)
+    }
+}
+
+
+
+data class FfiCellNestedTable (
+    var `elementIndex`: kotlin.UInt,
+    var `tableKey`: kotlin.String,
+    var `docOffset`: kotlin.UInt,
+    var `docSize`: kotlin.UInt,
+    var `scalarStart`: kotlin.UInt?,
+    var `scalarEnd`: kotlin.UInt?
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiCellNestedTable: FfiConverterRustBuffer<FfiCellNestedTable> {
+    override fun read(buf: ByteBuffer): FfiCellNestedTable {
+        return FfiCellNestedTable(
+            FfiConverterUInt.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+            FfiConverterOptionalUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiCellNestedTable) = (
+            FfiConverterUInt.allocationSize(value.`elementIndex`) +
+            FfiConverterString.allocationSize(value.`tableKey`) +
+            FfiConverterUInt.allocationSize(value.`docOffset`) +
+            FfiConverterUInt.allocationSize(value.`docSize`) +
+            FfiConverterOptionalUInt.allocationSize(value.`scalarStart`) +
+            FfiConverterOptionalUInt.allocationSize(value.`scalarEnd`)
+    )
+
+    override fun write(value: FfiCellNestedTable, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`elementIndex`, buf)
+            FfiConverterString.write(value.`tableKey`, buf)
+            FfiConverterUInt.write(value.`docOffset`, buf)
+            FfiConverterUInt.write(value.`docSize`, buf)
+            FfiConverterOptionalUInt.write(value.`scalarStart`, buf)
+            FfiConverterOptionalUInt.write(value.`scalarEnd`, buf)
+    }
+}
+
+
+
 data class FfiError (
     var `domain`: kotlin.String,
     var `code`: kotlin.String,
@@ -2028,6 +2150,70 @@ public object FfiConverterTypeFfiJsonResult: FfiConverterRustBuffer<FfiJsonResul
 
     override fun write(value: FfiJsonResult, buf: ByteBuffer) {
             FfiConverterOptionalString.write(value.`value`, buf)
+            FfiConverterOptionalTypeFfiError.write(value.`error`, buf)
+    }
+}
+
+
+
+data class FfiNativeRenderFrame (
+    var `snapshotJson`: kotlin.String,
+    var `tables`: FfiTableFrame
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiNativeRenderFrame: FfiConverterRustBuffer<FfiNativeRenderFrame> {
+    override fun read(buf: ByteBuffer): FfiNativeRenderFrame {
+        return FfiNativeRenderFrame(
+            FfiConverterString.read(buf),
+            FfiConverterTypeFfiTableFrame.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiNativeRenderFrame) = (
+            FfiConverterString.allocationSize(value.`snapshotJson`) +
+            FfiConverterTypeFfiTableFrame.allocationSize(value.`tables`)
+    )
+
+    override fun write(value: FfiNativeRenderFrame, buf: ByteBuffer) {
+            FfiConverterString.write(value.`snapshotJson`, buf)
+            FfiConverterTypeFfiTableFrame.write(value.`tables`, buf)
+    }
+}
+
+
+
+data class FfiNativeRenderFrameResult (
+    var `frame`: FfiNativeRenderFrame?,
+    var `error`: FfiError?
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiNativeRenderFrameResult: FfiConverterRustBuffer<FfiNativeRenderFrameResult> {
+    override fun read(buf: ByteBuffer): FfiNativeRenderFrameResult {
+        return FfiNativeRenderFrameResult(
+            FfiConverterOptionalTypeFfiNativeRenderFrame.read(buf),
+            FfiConverterOptionalTypeFfiError.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiNativeRenderFrameResult) = (
+            FfiConverterOptionalTypeFfiNativeRenderFrame.allocationSize(value.`frame`) +
+            FfiConverterOptionalTypeFfiError.allocationSize(value.`error`)
+    )
+
+    override fun write(value: FfiNativeRenderFrameResult, buf: ByteBuffer) {
+            FfiConverterOptionalTypeFfiNativeRenderFrame.write(value.`frame`, buf)
             FfiConverterOptionalTypeFfiError.write(value.`error`, buf)
     }
 }
@@ -2174,6 +2360,398 @@ public object FfiConverterTypeFfiSnapshotExportResult: FfiConverterRustBuffer<Ff
     override fun write(value: FfiSnapshotExportResult, buf: ByteBuffer) {
             FfiConverterOptionalTypeFfiSnapshotExport.write(value.`value`, buf)
             FfiConverterOptionalTypeFfiError.write(value.`error`, buf)
+    }
+}
+
+
+
+data class FfiTableAttribute (
+    var `key`: kotlin.String,
+    var `json`: kotlin.String
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiTableAttribute: FfiConverterRustBuffer<FfiTableAttribute> {
+    override fun read(buf: ByteBuffer): FfiTableAttribute {
+        return FfiTableAttribute(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiTableAttribute) = (
+            FfiConverterString.allocationSize(value.`key`) +
+            FfiConverterString.allocationSize(value.`json`)
+    )
+
+    override fun write(value: FfiTableAttribute, buf: ByteBuffer) {
+            FfiConverterString.write(value.`key`, buf)
+            FfiConverterString.write(value.`json`, buf)
+    }
+}
+
+
+
+data class FfiTableCellRecord (
+    var `sourceRow`: kotlin.UInt,
+    var `row`: kotlin.UInt,
+    var `column`: kotlin.UInt,
+    var `rowspan`: kotlin.UInt,
+    var `colspan`: kotlin.UInt,
+    var `header`: kotlin.Boolean,
+    var `attrsKey`: kotlin.String,
+    var `contentKey`: kotlin.String,
+    var `docSize`: kotlin.UInt,
+    var `scalarStride`: kotlin.UInt,
+    var `elements`: List<FfiViewerElement>,
+    var `inputBlocks`: List<FfiCellInputBlock>,
+    var `nestedTables`: List<FfiCellNestedTable>
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiTableCellRecord: FfiConverterRustBuffer<FfiTableCellRecord> {
+    override fun read(buf: ByteBuffer): FfiTableCellRecord {
+        return FfiTableCellRecord(
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterSequenceTypeFfiViewerElement.read(buf),
+            FfiConverterSequenceTypeFfiCellInputBlock.read(buf),
+            FfiConverterSequenceTypeFfiCellNestedTable.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiTableCellRecord) = (
+            FfiConverterUInt.allocationSize(value.`sourceRow`) +
+            FfiConverterUInt.allocationSize(value.`row`) +
+            FfiConverterUInt.allocationSize(value.`column`) +
+            FfiConverterUInt.allocationSize(value.`rowspan`) +
+            FfiConverterUInt.allocationSize(value.`colspan`) +
+            FfiConverterBoolean.allocationSize(value.`header`) +
+            FfiConverterString.allocationSize(value.`attrsKey`) +
+            FfiConverterString.allocationSize(value.`contentKey`) +
+            FfiConverterUInt.allocationSize(value.`docSize`) +
+            FfiConverterUInt.allocationSize(value.`scalarStride`) +
+            FfiConverterSequenceTypeFfiViewerElement.allocationSize(value.`elements`) +
+            FfiConverterSequenceTypeFfiCellInputBlock.allocationSize(value.`inputBlocks`) +
+            FfiConverterSequenceTypeFfiCellNestedTable.allocationSize(value.`nestedTables`)
+    )
+
+    override fun write(value: FfiTableCellRecord, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`sourceRow`, buf)
+            FfiConverterUInt.write(value.`row`, buf)
+            FfiConverterUInt.write(value.`column`, buf)
+            FfiConverterUInt.write(value.`rowspan`, buf)
+            FfiConverterUInt.write(value.`colspan`, buf)
+            FfiConverterBoolean.write(value.`header`, buf)
+            FfiConverterString.write(value.`attrsKey`, buf)
+            FfiConverterString.write(value.`contentKey`, buf)
+            FfiConverterUInt.write(value.`docSize`, buf)
+            FfiConverterUInt.write(value.`scalarStride`, buf)
+            FfiConverterSequenceTypeFfiViewerElement.write(value.`elements`, buf)
+            FfiConverterSequenceTypeFfiCellInputBlock.write(value.`inputBlocks`, buf)
+            FfiConverterSequenceTypeFfiCellNestedTable.write(value.`nestedTables`, buf)
+    }
+}
+
+
+
+data class FfiTableCellUpdate (
+    var `tableKey`: kotlin.String,
+    var `cellIndex`: kotlin.UInt,
+    var `cell`: FfiTableCellRecord
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiTableCellUpdate: FfiConverterRustBuffer<FfiTableCellUpdate> {
+    override fun read(buf: ByteBuffer): FfiTableCellUpdate {
+        return FfiTableCellUpdate(
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterTypeFfiTableCellRecord.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiTableCellUpdate) = (
+            FfiConverterString.allocationSize(value.`tableKey`) +
+            FfiConverterUInt.allocationSize(value.`cellIndex`) +
+            FfiConverterTypeFfiTableCellRecord.allocationSize(value.`cell`)
+    )
+
+    override fun write(value: FfiTableCellUpdate, buf: ByteBuffer) {
+            FfiConverterString.write(value.`tableKey`, buf)
+            FfiConverterUInt.write(value.`cellIndex`, buf)
+            FfiConverterTypeFfiTableCellRecord.write(value.`cell`, buf)
+    }
+}
+
+
+
+data class FfiTableExtent (
+    var `tableKey`: kotlin.String,
+    var `docStart`: kotlin.UInt,
+    var `docSize`: kotlin.UInt,
+    var `scalarStart`: kotlin.UInt,
+    var `scalarEnd`: kotlin.UInt
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiTableExtent: FfiConverterRustBuffer<FfiTableExtent> {
+    override fun read(buf: ByteBuffer): FfiTableExtent {
+        return FfiTableExtent(
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiTableExtent) = (
+            FfiConverterString.allocationSize(value.`tableKey`) +
+            FfiConverterUInt.allocationSize(value.`docStart`) +
+            FfiConverterUInt.allocationSize(value.`docSize`) +
+            FfiConverterUInt.allocationSize(value.`scalarStart`) +
+            FfiConverterUInt.allocationSize(value.`scalarEnd`)
+    )
+
+    override fun write(value: FfiTableExtent, buf: ByteBuffer) {
+            FfiConverterString.write(value.`tableKey`, buf)
+            FfiConverterUInt.write(value.`docStart`, buf)
+            FfiConverterUInt.write(value.`docSize`, buf)
+            FfiConverterUInt.write(value.`scalarStart`, buf)
+            FfiConverterUInt.write(value.`scalarEnd`, buf)
+    }
+}
+
+
+
+data class FfiTableFrame (
+    var `kind`: FfiTableFrameKind,
+    var `baseDocumentRevision`: kotlin.String?,
+    var `attributes`: List<FfiTableAttribute>,
+    var `removedAttributeKeys`: List<kotlin.String>,
+    var `tables`: List<FfiTableRecord>,
+    var `removedTableKeys`: List<kotlin.String>,
+    var `cellUpdates`: List<FfiTableCellUpdate>,
+    var `extents`: List<FfiTableExtent>
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiTableFrame: FfiConverterRustBuffer<FfiTableFrame> {
+    override fun read(buf: ByteBuffer): FfiTableFrame {
+        return FfiTableFrame(
+            FfiConverterTypeFfiTableFrameKind.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterSequenceTypeFfiTableAttribute.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceTypeFfiTableRecord.read(buf),
+            FfiConverterSequenceString.read(buf),
+            FfiConverterSequenceTypeFfiTableCellUpdate.read(buf),
+            FfiConverterSequenceTypeFfiTableExtent.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiTableFrame) = (
+            FfiConverterTypeFfiTableFrameKind.allocationSize(value.`kind`) +
+            FfiConverterOptionalString.allocationSize(value.`baseDocumentRevision`) +
+            FfiConverterSequenceTypeFfiTableAttribute.allocationSize(value.`attributes`) +
+            FfiConverterSequenceString.allocationSize(value.`removedAttributeKeys`) +
+            FfiConverterSequenceTypeFfiTableRecord.allocationSize(value.`tables`) +
+            FfiConverterSequenceString.allocationSize(value.`removedTableKeys`) +
+            FfiConverterSequenceTypeFfiTableCellUpdate.allocationSize(value.`cellUpdates`) +
+            FfiConverterSequenceTypeFfiTableExtent.allocationSize(value.`extents`)
+    )
+
+    override fun write(value: FfiTableFrame, buf: ByteBuffer) {
+            FfiConverterTypeFfiTableFrameKind.write(value.`kind`, buf)
+            FfiConverterOptionalString.write(value.`baseDocumentRevision`, buf)
+            FfiConverterSequenceTypeFfiTableAttribute.write(value.`attributes`, buf)
+            FfiConverterSequenceString.write(value.`removedAttributeKeys`, buf)
+            FfiConverterSequenceTypeFfiTableRecord.write(value.`tables`, buf)
+            FfiConverterSequenceString.write(value.`removedTableKeys`, buf)
+            FfiConverterSequenceTypeFfiTableCellUpdate.write(value.`cellUpdates`, buf)
+            FfiConverterSequenceTypeFfiTableExtent.write(value.`extents`, buf)
+    }
+}
+
+
+
+data class FfiTableHost (
+    var `tableKey`: kotlin.String,
+    var `cellIndex`: kotlin.UInt
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiTableHost: FfiConverterRustBuffer<FfiTableHost> {
+    override fun read(buf: ByteBuffer): FfiTableHost {
+        return FfiTableHost(
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiTableHost) = (
+            FfiConverterString.allocationSize(value.`tableKey`) +
+            FfiConverterUInt.allocationSize(value.`cellIndex`)
+    )
+
+    override fun write(value: FfiTableHost, buf: ByteBuffer) {
+            FfiConverterString.write(value.`tableKey`, buf)
+            FfiConverterUInt.write(value.`cellIndex`, buf)
+    }
+}
+
+
+
+data class FfiTableRecord (
+    var `tableKey`: kotlin.String,
+    var `host`: FfiTableHost?,
+    var `docSize`: kotlin.UInt,
+    var `rows`: kotlin.UInt,
+    var `columns`: kotlin.UInt,
+    var `columnWidths`: List<kotlin.UInt?>,
+    var `direction`: kotlin.String?,
+    var `irregular`: kotlin.Boolean,
+    var `readOnlyDescendants`: kotlin.Boolean,
+    var `attrsKey`: kotlin.String,
+    var `sourceRows`: List<FfiTableSourceRow>,
+    var `cells`: List<FfiTableCellRecord>,
+    var `syntheticRegions`: List<TableRenderSyntheticRegion>,
+    var `failure`: TableRenderFailure?,
+    var `compatibilityDiagnostic`: TableCompatibilityDiagnostic?
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiTableRecord: FfiConverterRustBuffer<FfiTableRecord> {
+    override fun read(buf: ByteBuffer): FfiTableRecord {
+        return FfiTableRecord(
+            FfiConverterString.read(buf),
+            FfiConverterOptionalTypeFfiTableHost.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterSequenceOptionalUInt.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeFfiTableSourceRow.read(buf),
+            FfiConverterSequenceTypeFfiTableCellRecord.read(buf),
+            FfiConverterSequenceTypeTableRenderSyntheticRegion.read(buf),
+            FfiConverterOptionalTypeTableRenderFailure.read(buf),
+            FfiConverterOptionalTypeTableCompatibilityDiagnostic.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiTableRecord) = (
+            FfiConverterString.allocationSize(value.`tableKey`) +
+            FfiConverterOptionalTypeFfiTableHost.allocationSize(value.`host`) +
+            FfiConverterUInt.allocationSize(value.`docSize`) +
+            FfiConverterUInt.allocationSize(value.`rows`) +
+            FfiConverterUInt.allocationSize(value.`columns`) +
+            FfiConverterSequenceOptionalUInt.allocationSize(value.`columnWidths`) +
+            FfiConverterOptionalString.allocationSize(value.`direction`) +
+            FfiConverterBoolean.allocationSize(value.`irregular`) +
+            FfiConverterBoolean.allocationSize(value.`readOnlyDescendants`) +
+            FfiConverterString.allocationSize(value.`attrsKey`) +
+            FfiConverterSequenceTypeFfiTableSourceRow.allocationSize(value.`sourceRows`) +
+            FfiConverterSequenceTypeFfiTableCellRecord.allocationSize(value.`cells`) +
+            FfiConverterSequenceTypeTableRenderSyntheticRegion.allocationSize(value.`syntheticRegions`) +
+            FfiConverterOptionalTypeTableRenderFailure.allocationSize(value.`failure`) +
+            FfiConverterOptionalTypeTableCompatibilityDiagnostic.allocationSize(value.`compatibilityDiagnostic`)
+    )
+
+    override fun write(value: FfiTableRecord, buf: ByteBuffer) {
+            FfiConverterString.write(value.`tableKey`, buf)
+            FfiConverterOptionalTypeFfiTableHost.write(value.`host`, buf)
+            FfiConverterUInt.write(value.`docSize`, buf)
+            FfiConverterUInt.write(value.`rows`, buf)
+            FfiConverterUInt.write(value.`columns`, buf)
+            FfiConverterSequenceOptionalUInt.write(value.`columnWidths`, buf)
+            FfiConverterOptionalString.write(value.`direction`, buf)
+            FfiConverterBoolean.write(value.`irregular`, buf)
+            FfiConverterBoolean.write(value.`readOnlyDescendants`, buf)
+            FfiConverterString.write(value.`attrsKey`, buf)
+            FfiConverterSequenceTypeFfiTableSourceRow.write(value.`sourceRows`, buf)
+            FfiConverterSequenceTypeFfiTableCellRecord.write(value.`cells`, buf)
+            FfiConverterSequenceTypeTableRenderSyntheticRegion.write(value.`syntheticRegions`, buf)
+            FfiConverterOptionalTypeTableRenderFailure.write(value.`failure`, buf)
+            FfiConverterOptionalTypeTableCompatibilityDiagnostic.write(value.`compatibilityDiagnostic`, buf)
+    }
+}
+
+
+
+data class FfiTableSourceRow (
+    var `attrsKey`: kotlin.String,
+    var `cellCount`: kotlin.UInt
+) {
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiTableSourceRow: FfiConverterRustBuffer<FfiTableSourceRow> {
+    override fun read(buf: ByteBuffer): FfiTableSourceRow {
+        return FfiTableSourceRow(
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FfiTableSourceRow) = (
+            FfiConverterString.allocationSize(value.`attrsKey`) +
+            FfiConverterUInt.allocationSize(value.`cellCount`)
+    )
+
+    override fun write(value: FfiTableSourceRow, buf: ByteBuffer) {
+            FfiConverterString.write(value.`attrsKey`, buf)
+            FfiConverterUInt.write(value.`cellCount`, buf)
     }
 }
 
@@ -2553,6 +3131,36 @@ public object FfiConverterTypeTableRenderSyntheticRegion: FfiConverterRustBuffer
             FfiConverterString.write(value.`attrsKey`, buf)
     }
 }
+
+
+
+
+enum class FfiTableFrameKind {
+
+    FULL,
+    DELTA;
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFfiTableFrameKind: FfiConverterRustBuffer<FfiTableFrameKind> {
+    override fun read(buf: ByteBuffer) = try {
+        FfiTableFrameKind.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: FfiTableFrameKind) = 4UL
+
+    override fun write(value: FfiTableFrameKind, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
 
 
 
@@ -3037,6 +3645,38 @@ public object FfiConverterOptionalTypeFfiError: FfiConverterRustBuffer<FfiError?
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeFfiNativeRenderFrame: FfiConverterRustBuffer<FfiNativeRenderFrame?> {
+    override fun read(buf: ByteBuffer): FfiNativeRenderFrame? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiNativeRenderFrame.read(buf)
+    }
+
+    override fun allocationSize(value: FfiNativeRenderFrame?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiNativeRenderFrame.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiNativeRenderFrame?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiNativeRenderFrame.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeFfiOutboundLease: FfiConverterRustBuffer<FfiOutboundLease?> {
     override fun read(buf: ByteBuffer): FfiOutboundLease? {
         if (buf.get().toInt() == 0) {
@@ -3101,6 +3741,38 @@ public object FfiConverterOptionalTypeFfiSnapshotExport: FfiConverterRustBuffer<
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypeFfiTableHost: FfiConverterRustBuffer<FfiTableHost?> {
+    override fun read(buf: ByteBuffer): FfiTableHost? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeFfiTableHost.read(buf)
+    }
+
+    override fun allocationSize(value: FfiTableHost?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeFfiTableHost.allocationSize(value)
+        }
+    }
+
+    override fun write(value: FfiTableHost?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeFfiTableHost.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeTableCompatibilityDiagnostic: FfiConverterRustBuffer<TableCompatibilityDiagnostic?> {
     override fun read(buf: ByteBuffer): TableCompatibilityDiagnostic? {
         if (buf.get().toInt() == 0) {
@@ -3155,6 +3827,258 @@ public object FfiConverterOptionalTypeTableRenderFailure: FfiConverterRustBuffer
         } else {
             buf.put(1)
             FfiConverterTypeTableRenderFailure.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.String>> {
+    override fun read(buf: ByteBuffer): List<kotlin.String> {
+        val len = buf.getInt()
+        return List<kotlin.String>(len) {
+            FfiConverterString.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.String>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterString.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.String>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiCellInputBlock: FfiConverterRustBuffer<List<FfiCellInputBlock>> {
+    override fun read(buf: ByteBuffer): List<FfiCellInputBlock> {
+        val len = buf.getInt()
+        return List<FfiCellInputBlock>(len) {
+            FfiConverterTypeFfiCellInputBlock.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiCellInputBlock>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiCellInputBlock.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiCellInputBlock>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiCellInputBlock.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiCellNestedTable: FfiConverterRustBuffer<List<FfiCellNestedTable>> {
+    override fun read(buf: ByteBuffer): List<FfiCellNestedTable> {
+        val len = buf.getInt()
+        return List<FfiCellNestedTable>(len) {
+            FfiConverterTypeFfiCellNestedTable.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiCellNestedTable>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiCellNestedTable.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiCellNestedTable>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiCellNestedTable.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiTableAttribute: FfiConverterRustBuffer<List<FfiTableAttribute>> {
+    override fun read(buf: ByteBuffer): List<FfiTableAttribute> {
+        val len = buf.getInt()
+        return List<FfiTableAttribute>(len) {
+            FfiConverterTypeFfiTableAttribute.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiTableAttribute>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiTableAttribute.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiTableAttribute>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiTableAttribute.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiTableCellRecord: FfiConverterRustBuffer<List<FfiTableCellRecord>> {
+    override fun read(buf: ByteBuffer): List<FfiTableCellRecord> {
+        val len = buf.getInt()
+        return List<FfiTableCellRecord>(len) {
+            FfiConverterTypeFfiTableCellRecord.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiTableCellRecord>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiTableCellRecord.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiTableCellRecord>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiTableCellRecord.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiTableCellUpdate: FfiConverterRustBuffer<List<FfiTableCellUpdate>> {
+    override fun read(buf: ByteBuffer): List<FfiTableCellUpdate> {
+        val len = buf.getInt()
+        return List<FfiTableCellUpdate>(len) {
+            FfiConverterTypeFfiTableCellUpdate.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiTableCellUpdate>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiTableCellUpdate.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiTableCellUpdate>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiTableCellUpdate.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiTableExtent: FfiConverterRustBuffer<List<FfiTableExtent>> {
+    override fun read(buf: ByteBuffer): List<FfiTableExtent> {
+        val len = buf.getInt()
+        return List<FfiTableExtent>(len) {
+            FfiConverterTypeFfiTableExtent.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiTableExtent>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiTableExtent.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiTableExtent>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiTableExtent.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiTableRecord: FfiConverterRustBuffer<List<FfiTableRecord>> {
+    override fun read(buf: ByteBuffer): List<FfiTableRecord> {
+        val len = buf.getInt()
+        return List<FfiTableRecord>(len) {
+            FfiConverterTypeFfiTableRecord.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiTableRecord>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiTableRecord.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiTableRecord>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiTableRecord.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeFfiTableSourceRow: FfiConverterRustBuffer<List<FfiTableSourceRow>> {
+    override fun read(buf: ByteBuffer): List<FfiTableSourceRow> {
+        val len = buf.getInt()
+        return List<FfiTableSourceRow>(len) {
+            FfiConverterTypeFfiTableSourceRow.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FfiTableSourceRow>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFfiTableSourceRow.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FfiTableSourceRow>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFfiTableSourceRow.write(it, buf)
         }
     }
 }
@@ -3690,6 +4614,15 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
     )
     }
 
+ fun `editorV2RenderNativeFrame`(`editorId`: kotlin.String, `ownerId`: kotlin.String?, `mirrorScalarAnchor`: kotlin.UInt?, `mirrorScalarHead`: kotlin.UInt?): FfiNativeRenderFrameResult {
+            return FfiConverterTypeFfiNativeRenderFrameResult.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_editor_core_fn_func_editor_v2_render_native_frame(
+        FfiConverterString.lower(`editorId`),FfiConverterOptionalString.lower(`ownerId`),FfiConverterOptionalUInt.lower(`mirrorScalarAnchor`),FfiConverterOptionalUInt.lower(`mirrorScalarHead`),_status)
+}
+    )
+    }
+
  fun `editorV2RenderUpdate`(`editorId`: kotlin.String, `mirrorScalarAnchor`: kotlin.UInt?, `mirrorScalarHead`: kotlin.UInt?): FfiJsonResult {
             return FfiConverterTypeFfiJsonResult.lift(
     uniffiRustCall() { _status ->
@@ -3722,6 +4655,15 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_editor_core_fn_func_editor_v2_scalar_to_doc(
         FfiConverterString.lower(`editorId`),FfiConverterUInt.lower(`scalar`),_status)
+}
+    )
+    }
+
+ fun `editorV2SeedNativeRenderCursor`(`editorId`: kotlin.String, `ownerId`: kotlin.String, `documentRevision`: kotlin.String): FfiUnitResult {
+            return FfiConverterTypeFfiUnitResult.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_editor_core_fn_func_editor_v2_seed_native_render_cursor(
+        FfiConverterString.lower(`editorId`),FfiConverterString.lower(`ownerId`),FfiConverterString.lower(`documentRevision`),_status)
 }
     )
     }

@@ -307,28 +307,39 @@ pub(crate) fn build_native_frame(
                     scalar_end,
                 });
             }
-            match old.get(context.key.as_str()).filter(|old| {
-                old_hosts.get(&context.key) == Some(&context.host)
-                    && old.cells.len() == context.record.cells.len()
-                    && old
-                        .cells
-                        .iter()
-                        .zip(&context.record.cells)
-                        .all(|(a, b)| Arc::ptr_eq(a, b) || same_cell_layout(a, b))
-                    && (Arc::ptr_eq(&old.structure, &context.record.structure)
-                        || same_layout(&old.structure, &context.record.structure))
-            }) {
-                Some(old) => {
+            let changed = old
+                .get(context.key.as_str())
+                .filter(|old| {
+                    old_hosts.get(&context.key) == Some(&context.host)
+                        && old.cells.len() == context.record.cells.len()
+                        && (Arc::ptr_eq(&old.structure, &context.record.structure)
+                            || same_layout(&old.structure, &context.record.structure))
+                })
+                .and_then(|old| {
+                    let mut changed = Vec::new();
                     for (index, (before, after)) in
                         old.cells.iter().zip(&context.record.cells).enumerate()
                     {
-                        if !same_cell(before, after) {
-                            tables.cell_updates.push(FfiTableCellUpdate {
-                                table_key: context.key.clone(),
-                                cell_index: index as u32,
-                                cell: cell_record(session, context, index, &keys)?,
-                            });
+                        if Arc::ptr_eq(before, after) {
+                            continue;
                         }
+                        if !same_cell_layout(before, after) {
+                            return None;
+                        }
+                        if !same_cell(before, after) {
+                            changed.push(index);
+                        }
+                    }
+                    Some(changed)
+                });
+            match changed {
+                Some(changed) => {
+                    for index in changed {
+                        tables.cell_updates.push(FfiTableCellUpdate {
+                            table_key: context.key.clone(),
+                            cell_index: index as u32,
+                            cell: cell_record(session, context, index, &keys)?,
+                        });
                     }
                 }
                 None => tables.tables.push(table_record(session, context, &keys)?),
@@ -347,4 +358,68 @@ pub(crate) fn build_native_frame(
         snapshot_json,
         tables,
     })
+}
+
+fn parse_native_frame_id(value: &str, field: &str) -> Result<u64, FfiError> {
+    parse_canonical_u64(value).ok_or_else(|| {
+        FfiError::new(
+            crate::session::ErrorDomain::Boundary,
+            "CONFIG_INVALID",
+            format!("{field} must be a canonical decimal u64 string"),
+        )
+    })
+}
+
+#[uniffi::export]
+pub fn editor_v2_render_native_frame(
+    editor_id: String,
+    owner_id: Option<String>,
+    mirror_scalar_anchor: Option<u32>,
+    mirror_scalar_head: Option<u32>,
+) -> FfiNativeRenderFrameResult {
+    let result = (|| {
+        let owner = owner_id
+            .as_deref()
+            .map(|owner| parse_native_frame_id(owner, "ownerId"))
+            .transpose()?;
+        let mirror = match (mirror_scalar_anchor, mirror_scalar_head) {
+            (None, None) => None,
+            (Some(anchor), Some(head)) => Some((anchor, head)),
+            _ => {
+                return Err(FfiError::new(
+                    crate::session::ErrorDomain::Boundary,
+                    "CONFIG_INVALID",
+                    "render mirror requires both scalar anchor and head",
+                ))
+            }
+        };
+        super::editor::with_editor(&editor_id, |session| {
+            build_native_frame(session, &editor_id, owner, mirror)
+        })
+    })();
+    match result {
+        Ok(frame) => FfiNativeRenderFrameResult {
+            frame: Some(frame),
+            error: None,
+        },
+        Err(error) => FfiNativeRenderFrameResult {
+            frame: None,
+            error: Some(error),
+        },
+    }
+}
+
+#[uniffi::export]
+pub fn editor_v2_seed_native_render_cursor(
+    editor_id: String,
+    owner_id: String,
+    document_revision: String,
+) -> FfiUnitResult {
+    super::editor::unit_result((|| {
+        let owner = parse_native_frame_id(&owner_id, "ownerId")?;
+        let revision = parse_native_frame_id(&document_revision, "documentRevision")?;
+        super::editor::with_editor(&editor_id, |session| {
+            session.seed_native_render_cursor(owner, revision)
+        })
+    })())
 }
