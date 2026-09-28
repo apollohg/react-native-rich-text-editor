@@ -8,5 +8,5 @@ function IconMock(props) {
 }
 
 module.exports = {
-    MaterialIcons: IconMock,
+    MaterialDesignIcons: IconMock,
 };

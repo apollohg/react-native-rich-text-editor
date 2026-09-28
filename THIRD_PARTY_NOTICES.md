@@ -6,7 +6,7 @@ Include the applicable notices and source links with distributed applications or
 
 ## Package scope
 
-`@apollohg/react-native-rich-text-editor` — core Rust engine, generated UniFFI bindings, native dependencies, and copied Material Icons assets. The optional `@apollohg/react-native-rich-text-editor-code-highlighting` package has its own notices file.
+`@apollohg/react-native-rich-text-editor` — core Rust engine, generated UniFFI bindings, native dependencies, and copied Material Design Icons assets. The optional `@apollohg/react-native-rich-text-editor-code-highlighting` package has its own notices file.
 
 ## Rust dependencies
 
@@ -29350,23 +29350,21 @@ DEALINGS IN THE SOFTWARE.
 
 ## Scope
 
-The published root npm package has no `dependencies` and does not bundle its JavaScript framework packages. Its published sources import React (including `react/jsx-runtime`), React Native, Expo Modules Core, and `@expo/vector-icons`; Expo and vector-icons are declared peers. The Expo config plugin resolves `expo/config-plugins` at build time. The optional highlighting package imports Expo Modules Core and the editor's types, with no additional JavaScript library bundled.
+The published root npm package has no `dependencies` and does not bundle its JavaScript framework packages. Its published sources import React (including `react/jsx-runtime`), React Native, Expo Modules Core, and `@react-native-vector-icons/material-design-icons`; Expo and vector-icons are declared peers. The Expo config plugin resolves `expo/config-plugins` at build time. The optional highlighting package imports Expo Modules Core and the editor's types, with no additional JavaScript library bundled.
 
 Version numbers below describe this checkout's installed packages, not minimum requirements or guaranteed consuming-app versions. Consumers must retain the notices for their actual React Native/Expo/Metro/Hermes native and JavaScript dependency graph and any other icon fonts their app includes. Do not treat the development lockfile as a list of files distributed in the npm package, nor this framework overview as a complete app bundle inventory.
 
-## Material Icons assets distributed by this package
+## Material Design Icons assets distributed by this package
 
-`android/src/main/assets/editor-icons/MaterialIcons.ttf` and `MaterialIcons.json` are byte-identical to the font/glyphmap in `@expo/vector-icons` 15.1.1 under `build/vendor/react-native-vector-icons/`. The font's embedded name table identifies **Version 1.017**, `FontForge 2.0 : Material Icons : 5-3-2019`, and the following copyright:
+`android/src/main/assets/editor-icons/MaterialDesignIcons.ttf` and `MaterialDesignIcons.json` are byte-identical to `fonts/MaterialDesignIcons.ttf` and `glyphmaps/MaterialDesignIcons.json` in `@react-native-vector-icons/material-design-icons` 13.1.4. The package includes Pictogrammers Material Design Icons 7.4.47.
 
-Copyright 2018 Google, Inc. All Rights Reserved.
+Font SHA-256: `61e8aba5a4e981fe22cf7c8e8bcdbea00476e75c62c37f01bf7ee33361d68428`
 
-Font SHA-256: `ef149f08bdd2ff09a4e2c8573476b7b0f3fbb15b623954ade59899e7175bedda`
+Glyphmap SHA-256: `54c620e48800b895a2a6c34ec24e03c56d5c0fdd1625f955ef51bbdb49726c91`
 
-Glyphmap SHA-256: `3ff308d5ff464db98175b00507929b54c688836421685eb5cab925b135ec795b`
+The Pictogrammers Free License identifies fonts as Apache-2.0 and non-font/non-icon code as MIT. Sources: [Material Design Icons 7.4.47 license](https://github.com/Templarian/MaterialDesign-Webfont/blob/v7.4.47/LICENSE), [React Native Vector Icons package](https://github.com/oblador/react-native-vector-icons/tree/master/packages/material-design-icons). Retain the Apache-2.0 text below and the React Native Vector Icons MIT notice when distributing these assets. No other icon fonts are copied into tracked project files.
 
-Google's Material Icons font uses Apache-2.0, independently of the MIT wrapper/glyphmap attribution. Sources: [Material Icons](https://github.com/google/material-design-icons), [upstream license](https://github.com/google/material-design-icons/blob/master/LICENSE), [Google's licensing guide](https://developers.google.com/fonts/docs/material_icons#licensing). The source vendoring path is [Expo vector-icons](https://github.com/expo/vector-icons/tree/master/src/vendor/react-native-vector-icons). Include the Google attribution and Apache-2.0 text plus the MIT notices below when distributing these assets. No other icon fonts are copied into tracked project files.
-
-### Material Icons — Apache-2.0
+### Material Design Icons — Apache-2.0
 
 ```text
 
@@ -29573,56 +29571,20 @@ Google's Material Icons font uses Apache-2.0, independently of the MIT wrapper/g
    limitations under the License.
 ```
 
-## @expo/vector-icons
+## @react-native-vector-icons/material-design-icons
 
-Version: 15.1.1. License: MIT.
+Version: 13.1.4. License: MIT (wrapper and glyphmap); Apache-2.0 (font).
 
 Scope: JS peer and source of copied Android glyphmap/font.
 
-Source: https://github.com/expo/vector-icons
+Source: https://github.com/oblador/react-native-vector-icons/tree/master/packages/material-design-icons
 
-Exact local license: `node_modules/@expo/vector-icons/LICENSE`.
-
-```text
-The MIT License (MIT)
-
-Copyright (c) 2015 Joel Arvidsson
-Copyright (c) 2020 650 Industries
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-## react-native-vector-icons (vendored by @expo/vector-icons)
-
-Version: vendored in @expo/vector-icons 15.1.1. License: MIT.
-
-Scope: Source of copied Android glyphmap; wrapper code used by Expo.
-
-Source: https://github.com/oblador/react-native-vector-icons/tree/10.x
-
-Exact local license: `node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/LICENSE`.
+Exact local license: `node_modules/@react-native-vector-icons/material-design-icons/LICENSE`.
 
 ```text
-The MIT License (MIT)
+MIT License
 
 Copyright (c) 2015 Joel Arvidsson
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

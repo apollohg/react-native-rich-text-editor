@@ -97,7 +97,7 @@ class NativeToolbarTest {
                 "label": "Mention",
                 "icon": {
                   "type": "platform",
-                  "android": { "type": "material", "name": "alternate-email" },
+                  "android": { "type": "material", "name": "at" },
                   "fallbackText": "@"
                 },
                 "isActive": true,
@@ -109,7 +109,7 @@ class NativeToolbarTest {
 
         assertEquals(1, items.size)
         assertEquals(ToolbarItemKind.ACTION, items[0].type)
-        assertEquals("alternate-email", items[0].icon?.resolvedMaterialIconName())
+        assertEquals("at", items[0].icon?.resolvedMaterialIconName())
         assertTrue(items[0].isActive)
         assertFalse(items[0].isDisabled)
     }
@@ -179,7 +179,7 @@ class NativeToolbarTest {
     @Test
     fun `material icon registry resolves glyph and typeface`() {
         val context = RuntimeEnvironment.getApplication()
-        val glyph = MaterialIconRegistry.glyphForName(context, "alternate-email")
+        val glyph = MaterialIconRegistry.glyphForName(context, "at")
         val typeface = MaterialIconRegistry.typeface(context)
 
         assertNotNull(glyph)

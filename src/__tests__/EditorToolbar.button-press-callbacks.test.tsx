@@ -168,7 +168,7 @@ describe('EditorToolbar', () => {
                         icon: {
                             type: 'platform',
                             ios: { type: 'sfSymbol', name: 'at' },
-                            android: { type: 'material', name: 'alternate-email' },
+                            android: { type: 'material', name: 'at' },
                             fallbackText: '@',
                         },
                     },
@@ -203,7 +203,7 @@ describe('EditorToolbar', () => {
                         icon: {
                             type: 'platform',
                             ios: { type: 'sfSymbol', name: 'at' },
-                            android: { type: 'material', name: 'alternate-email' },
+                            android: { type: 'material', name: 'at' },
                             fallbackText: '@',
                         },
                     },

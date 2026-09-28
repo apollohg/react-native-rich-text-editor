@@ -7,6 +7,7 @@ export default {
         version: rootPackage.version,
         plugins: [
             '@apollohg/react-native-rich-text-editor',
+            '@react-native-vector-icons/material-design-icons',
             'expo-font',
             'expo-status-bar',
             [
