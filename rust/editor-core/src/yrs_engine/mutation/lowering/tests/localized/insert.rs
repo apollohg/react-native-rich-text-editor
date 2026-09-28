@@ -209,17 +209,25 @@ fn localized_nested_custom_list_textblock_matches_eager() {
 }
 
 #[test]
-fn localized_empty_inline_void_and_cross_block_inputs_choose_eager_before_lowering() {
+fn localized_empty_textblock_insert_creates_the_eager_text_target() {
+    let source = json!({
+        "type": "doc",
+        "content": [{ "type": "paragraph" }]
+    });
+    let (_doc, eager, localized, mode) =
+        compile_pair_at_block_offset(&source, &tiptap_schema(), 0, 0, "!");
+    assert_eq!(mode, MutationCompilerBuild::Localized);
+    assert!(matches!(
+        localized.actions.as_slice(),
+        [YrsMutationAction::CreateText { .. }]
+    ));
+    assert_insert_plans_equal(&eager, &localized);
+}
+
+#[test]
+fn localized_inline_void_and_cross_block_inputs_choose_eager_before_lowering() {
     let schema = tiptap_schema();
     let cases = [
-        (
-            json!({
-                "type": "doc",
-                "content": [{ "type": "paragraph" }]
-            }),
-            0,
-            0,
-        ),
         (
             json!({
                 "type": "doc",

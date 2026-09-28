@@ -572,6 +572,23 @@ impl YrsDocumentEngine {
         Some(read(&txn, &fragment))
     }
 
+    #[cfg(test)]
+    pub(crate) fn drop_localized_text_index_for_test(&mut self) {
+        if let Some(state) = self.derived_state.as_mut() {
+            state.localized_text_index = None;
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_history_for_test(&self) -> (u64, usize) {
+        (
+            self.history
+                .retained_units(0)
+                .expect("retained history units fit their limit"),
+            self.history.replay_metadata_bytes_for_test(),
+        )
+    }
+
     fn cell_pinning<'state>(
         &'state self,
         state: &'state super::derived_state::DerivedStateCache,

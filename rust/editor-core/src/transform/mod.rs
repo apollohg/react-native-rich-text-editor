@@ -8,8 +8,9 @@ pub(crate) use apply::DocumentStats;
 pub use apply::DocumentValidator;
 pub(crate) use apply::{
     apply_step_canonical_marks, canonicalize_yrs_document, canonicalize_yrs_document_with_evidence,
-    validate_canonical_marks, validate_importable_marks_with_evidence, validate_input_mark_set,
-    CanonicalMarksEvidence,
+    document_validation_work_limit, validate_canonical_marks,
+    validate_importable_marks_with_evidence, validate_input_mark_set, validate_subtree_marks,
+    CanonicalMarksEvidence, DOCUMENT_ROOT_DEPTH,
 };
 pub(crate) use apply::{DocumentValidationMetrics, DocumentValidationReport};
 

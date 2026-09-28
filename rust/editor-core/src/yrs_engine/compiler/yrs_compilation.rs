@@ -110,7 +110,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
         txn,
         context.resource_limits,
     )?;
-    let localized_insert_admission = engine_view.and_then(|view| {
+    let localized_textblock_edit_admission = engine_view.and_then(|view| {
         let [TypedOperation::InsertText { at, .. }] = transaction.operations.as_slice() else {
             return None;
         };
@@ -127,14 +127,14 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
         .and_then(|document_position| {
             view.authority
                 .installed()
-                .admit_existing_text_insert_with_authority(
+                .admit_textblock_edit_with_authority(
                     &transaction,
-                    prepared_semantics.is_some(),
                     document_position,
                     txn,
                     fragment,
                     view.authority.lookup_seed(request_id).ok()?,
                     view.authority.materialized_identity(),
+                    context.schema,
                     view.schema_fingerprint,
                     context.resource_limits,
                     context.editing_limits,
@@ -307,7 +307,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
     }
     let localized_semantic = if localized_compiler.is_some() {
         engine_view.and_then(|view| {
-            let admission = localized_insert_admission.as_ref()?;
+            let admission = localized_textblock_edit_admission.as_ref()?;
             let [TypedOperation::InsertText { at, .. }] = transaction.operations.as_slice() else {
                 return None;
             };
@@ -329,6 +329,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
                 fragment,
                 view.authority.lookup_seed(request_id).ok()?,
                 view.authority.materialized_identity(),
+                context.schema,
                 context.resource_limits,
                 context.editing_limits,
                 context.max_length,
@@ -408,7 +409,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
             localized: localized_semantic,
         },
     )?;
-    compiled.localized_insert_admission = localized_insert_admission;
+    compiled.localized_textblock_edit_admission = localized_textblock_edit_admission;
     compiled.relative_selection_plan =
         match (&compiled.selection_plan, &transaction.selection_intent) {
             (SelectionPlan::Preserve, _) => RelativeSelectionPlan::Preserve,
@@ -454,7 +455,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
     preflight_mutation_plan(request_id, &compiled.mutation_plan, txn)?;
     if compiled.localized_semantic_used {
         compiled.prepared_derived_evidence = engine_view.and_then(|view| {
-            let admission = compiled.localized_insert_admission.as_ref()?;
+            let admission = compiled.localized_textblock_edit_admission.as_ref()?;
             let [TypedOperation::InsertText { at, .. }] = transaction.operations.as_slice() else {
                 return None;
             };
@@ -476,6 +477,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
                 fragment,
                 view.authority.lookup_seed(request_id).ok()?,
                 view.authority.materialized_identity(),
+                context.schema,
                 context.resource_limits,
                 context.editing_limits,
                 context.max_length,
@@ -485,6 +487,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
                 &compiled.preview,
                 compiled.canonical_artifact.as_ref()?,
                 compiled.preview_derivations.as_ref()?,
+                context.schema,
             )
         });
     }

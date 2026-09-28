@@ -171,6 +171,7 @@ impl CachedRenderBlocks {
                 RenderElement::BlockEnd => {}
             }
         }
+        text.shrink_to_fit();
         text
     }
 
@@ -305,7 +306,7 @@ impl CachedRenderBlocks {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn transition_localized_insert(
+    pub(crate) fn transition_localized_textblock(
         &self,
         old_document: &Document,
         new_document: &Document,

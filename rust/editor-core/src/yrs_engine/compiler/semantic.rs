@@ -541,7 +541,7 @@ pub(super) fn compile_transaction_impl(
         // seals its current epoch onto the compiled plan before it can leave
         // the stable read view.
         yrs_state_epoch: 0,
-        localized_insert_admission: None,
+        localized_textblock_edit_admission: None,
         prepared_derived_evidence: None,
         prepared_candidate_validation,
         prepared_active_state_transition: None,

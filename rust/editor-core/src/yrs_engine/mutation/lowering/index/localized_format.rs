@@ -338,12 +338,17 @@ fn localized_existing_textblock_targets<T: ReadTxn>(
     if !valid_range {
         return Ok(None);
     }
+    let creates_text = matches!(locator, LocalizedTextblockLocator::Insert(_))
+        && semantic_block
+            .content()
+            .is_some_and(|content| content.child_count() == 0);
     if semantic_block.is_void()
         || !schema
             .node(semantic_block.node_type())
             .is_some_and(|spec| matches!(spec.role, NodeRole::TextBlock))
         || semantic_block.content().is_none_or(|content| {
-            content.child_count() == 0 || content.iter().any(|child| !child.is_text())
+            (content.child_count() == 0 && !creates_text)
+                || content.iter().any(|child| !child.is_text())
         })
     {
         return Ok(None);
@@ -386,6 +391,29 @@ fn localized_existing_textblock_targets<T: ReadTxn>(
     };
     let children = textblock.children(txn).collect::<Vec<_>>();
     path_parent_widths.insert(AsRef::<Branch>::as_ref(&textblock).id(), children.len());
+    if creates_text {
+        if !children.is_empty() {
+            return Ok(None);
+        }
+        let signature = parent_signature_from_children(&textblock, &branch_path, &children, 0, 0);
+        return Ok(Some(LocalizedTextblockTargets {
+            targets: vec![ResolvedText {
+                kind: ResolvedTargetKind::Missing {
+                    parent: textblock,
+                    child_index: 0,
+                    signature,
+                    create_action: None,
+                },
+                gap_before: block_start,
+                text: String::new(),
+                scalar_len: 0,
+                base_runs: Vec::new(),
+                current_runs: Vec::new(),
+                action_slots: Vec::new(),
+            }],
+            path_parent_widths,
+        }));
+    }
     if children.is_empty()
         || children
             .iter()

@@ -32,6 +32,7 @@ mod session_initialization_test;
 mod session_lifecycle_test;
 mod session_replacement_test;
 mod session_snapshot_lifecycle_test;
+mod textblock_local_commit_test;
 mod transform_test;
 mod yrs_engine_awareness_test;
 mod yrs_engine_compiler_test;

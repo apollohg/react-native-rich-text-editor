@@ -44,7 +44,10 @@ pub(crate) use history_snapshot::{
     HistoryDocumentSnapshotRetainedBytes, HistoryDocumentSnapshotRetainedInput,
     HistoryMutationLookupCapability, PreparedHistoryCandidateRead, RestoredHistoryDocumentState,
 };
-pub(crate) use insert_admission::{LocalizedInsertAdmission, ValidatedLocalizedInsertAdmission};
+pub(crate) use insert_admission::{
+    LocalizedTextblockEdit, LocalizedTextblockEditAdmission,
+    ValidatedLocalizedTextblockEditAdmission,
+};
 #[cfg(test)]
 use localized_index::canonical_marks_sha256;
 #[allow(unused_imports)]

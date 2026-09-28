@@ -89,7 +89,9 @@ fn promoted_marked_fragmented_non_bmp_insert_preserves_second_insert_exact_work_
         .prepare_promotion(
             &txn,
             &fragment,
-            &promotion,
+            promotion
+                .as_ref()
+                .expect("an existing-text insert promotes the lookup seed"),
             &document,
             &after,
             &limits,
@@ -243,7 +245,9 @@ fn promoted_insert_materialization_work_admits_chained_localized_format() {
         .prepare_promotion(
             &txn,
             &fragment,
-            &promotion,
+            promotion
+                .as_ref()
+                .expect("an existing-text insert promotes the lookup seed"),
             &document,
             &after,
             &limits,

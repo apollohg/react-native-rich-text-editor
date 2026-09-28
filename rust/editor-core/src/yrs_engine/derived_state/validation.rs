@@ -1,4 +1,4 @@
-use super::insert_admission::LocalizedInsertAdmission;
+use super::insert_admission::LocalizedTextblockEditPlan;
 use crate::boundary::ResourceLimits;
 use crate::model::{Document, Node};
 use crate::schema::Schema;
@@ -433,39 +433,87 @@ impl DocumentValidationCertificate {
         self.state_revision = state_revision;
     }
 
-    pub(super) fn promote_existing_insert(
-        &self,
+    pub(crate) fn mint_localized(
+        previous: &Self,
+        block_path: &[u32],
+        old_block: &Node,
+        new_block: &Node,
+        schema: &Schema,
+        limits: &ResourceLimits,
+    ) -> Option<Self> {
+        let depth = crate::transform::DOCUMENT_ROOT_DEPTH.checked_add(block_path.len())?;
+        let old =
+            DocumentValidator::validate_subtree_report(old_block, schema, limits, depth).ok()?;
+        let new =
+            DocumentValidator::validate_subtree_report(new_block, schema, limits, depth).ok()?;
+        crate::transform::validate_subtree_marks(new_block, schema).ok()?;
+        if previous.resource_limits != *limits
+            || (new.stats.max_depth < old.stats.max_depth
+                && old.stats.max_depth >= previous.stats.max_depth)
+        {
+            return None;
+        }
+        let stats = DocumentStats {
+            node_count: previous
+                .stats
+                .node_count
+                .checked_sub(old.stats.node_count)?
+                .checked_add(new.stats.node_count)?,
+            max_depth: previous.stats.max_depth.max(new.stats.max_depth),
+        };
+        let metrics = DocumentValidationMetrics {
+            metadata_bytes: previous
+                .metrics
+                .metadata_bytes
+                .checked_sub(old.metrics.metadata_bytes)?
+                .checked_add(new.metrics.metadata_bytes)?,
+            validation_work: previous
+                .metrics
+                .validation_work
+                .checked_sub(old.metrics.validation_work)?
+                .checked_add(new.metrics.validation_work)?,
+        };
+        if stats.node_count > limits.max_document_nodes
+            || stats.max_depth > limits.max_document_depth
+            || metrics.metadata_bytes > limits.max_input_bytes
+            || metrics.validation_work > crate::transform::document_validation_work_limit(limits)
+        {
+            return None;
+        }
+        Some(Self {
+            stats,
+            metrics,
+            ..previous.clone()
+        })
+    }
+
+    pub(super) fn promote_localized_canonical(
+        self,
         canonical_artifact: &CanonicalArtifact,
         derivations: &CompiledDocumentDerivations,
-        admission: &LocalizedInsertAdmission,
+        plan: &LocalizedTextblockEditPlan,
     ) -> Option<Self> {
         let canonical_fingerprint = canonical_artifact.sha256();
         if canonical_artifact.schema_fingerprint() != self.schema_fingerprint.as_ref()
             || canonical_artifact.format_version()
                 != yrs_engine::canonical::CANONICAL_ARTIFACT_FORMAT_VERSION
-            || canonical_artifact.serialized_len() != admission.next_canonical_serialized_len
-            || canonical_artifact.text_scalar_len() != admission.next_raw_text_scalars
-            || canonical_artifact.text_utf8_bytes() != admission.next_raw_text_utf8_bytes
+            || canonical_artifact.serialized_len() != plan.next_canonical_serialized_len
+            || canonical_artifact.text_scalar_len() != plan.next_raw_text_scalars
+            || canonical_artifact.text_utf8_bytes() != plan.next_raw_text_utf8_bytes
             || derivations.document_node_count != self.stats.node_count
-            || derivations.document_text_bytes != admission.next_raw_text_utf8_bytes
-            || derivations.rendered_scalars != admission.next_rendered_scalars
+            || derivations.document_text_bytes != plan.next_raw_text_utf8_bytes
+            || derivations.rendered_scalars != plan.next_rendered_scalars
         {
             return None;
         }
         Some(Self {
-            stats: self.stats,
-            metrics: self.metrics,
-            resource_limits: self.resource_limits.clone(),
-            schema_fingerprint: Arc::clone(&self.schema_fingerprint),
             canonical_artifact: canonical_artifact.clone(),
             canonical_fingerprint,
             canonical_serialized_len: canonical_artifact.serialized_len(),
             canonical_fingerprint_materialized: true,
             raw_text_scalars: canonical_artifact.text_scalar_len(),
             raw_text_utf8_bytes: canonical_artifact.text_utf8_bytes(),
-            document_revision: self.document_revision,
-            state_revision: self.state_revision,
-            yrs_state_epoch: self.yrs_state_epoch,
+            ..self
         })
     }
 

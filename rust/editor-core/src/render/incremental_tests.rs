@@ -312,7 +312,7 @@ fn localized_render_transition_matches_generic_for_supported_insert_shapes() {
         let affected = target.saturating_sub(1)..old.root().child_count();
         let affected = affected.collect::<Vec<_>>();
         let specialized = cache
-            .transition_localized_insert(&old, &new, &schema, target, inserted_scalars, &limits)
+            .transition_localized_textblock(&old, &new, &schema, target, inserted_scalars, &limits)
             .unwrap();
         let generic = cache.transition(&old, &new, &schema, &[], &limits).unwrap();
         assert_eq!(specialized.update, generic.update);
@@ -470,10 +470,10 @@ fn localized_render_transition_accepts_exact_element_capacity_and_rejects_one_un
     };
 
     assert!(cache
-        .transition_localized_insert(&old, &new, &schema, 0, 1, &exact)
+        .transition_localized_textblock(&old, &new, &schema, 0, 1, &exact)
         .is_ok());
     assert!(matches!(
-        cache.transition_localized_insert(&old, &new, &schema, 0, 1, &one_under),
+        cache.transition_localized_textblock(&old, &new, &schema, 0, 1, &one_under),
         Err(super::CachedRenderError::ResourceLimitExceeded)
     ));
 }
@@ -491,11 +491,11 @@ fn localized_render_transition_rejects_unsealed_shape_and_delta_facts() {
     let cache = CachedRenderBlocks::build(&old, &schema, &limits).unwrap();
 
     assert!(matches!(
-        cache.transition_localized_insert(&old, &new, &schema, 1, 2, &limits),
+        cache.transition_localized_textblock(&old, &new, &schema, 1, 2, &limits),
         Err(super::CachedRenderError::CacheInvariantViolation)
     ));
     assert!(matches!(
-        cache.transition_localized_insert(&old, &new, &schema, 3, 1, &limits),
+        cache.transition_localized_textblock(&old, &new, &schema, 3, 1, &limits),
         Err(super::CachedRenderError::CacheInvariantViolation)
     ));
 
@@ -506,7 +506,7 @@ fn localized_render_transition_rejects_unsealed_shape_and_delta_facts() {
         paragraph(vec![text("extra")]),
     ]);
     assert!(matches!(
-        cache.transition_localized_insert(&old, &changed_cardinality, &schema, 1, 1, &limits,),
+        cache.transition_localized_textblock(&old, &changed_cardinality, &schema, 1, 1, &limits,),
         Err(super::CachedRenderError::CacheInvariantViolation)
     ));
 
@@ -516,7 +516,14 @@ fn localized_render_transition_rejects_unsealed_shape_and_delta_facts() {
         paragraph(vec![text("last")]),
     ]);
     assert!(matches!(
-        cache.transition_localized_insert(&old, &foreign_unchanged_blocks, &schema, 1, 1, &limits,),
+        cache.transition_localized_textblock(
+            &old,
+            &foreign_unchanged_blocks,
+            &schema,
+            1,
+            1,
+            &limits,
+        ),
         Err(super::CachedRenderError::CacheInvariantViolation)
     ));
 }

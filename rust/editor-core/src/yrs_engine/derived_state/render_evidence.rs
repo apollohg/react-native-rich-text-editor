@@ -25,13 +25,14 @@ pub(super) struct LocalizedRenderTransitionProof {
     pub(super) derivation_identity_seal: Arc<()>,
     pub(super) target_top_level_index: usize,
     pub(super) inserted_scalar_delta: u32,
+    pub(super) rendered_scalar_delta: u32,
     pub(super) top_level_cardinality: usize,
     pub(super) operation_kind: LocalizedRenderOperationKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LocalizedRenderOperationKind {
-    ExistingTextInsert,
+    TextblockInsert,
     #[cfg(test)]
     Unsupported,
 }
@@ -86,6 +87,7 @@ impl PreparedDerivedEvidence {
             "derivationIdentity",
             "targetIndex",
             "scalarDelta",
+            "renderedDelta",
             "cardinality",
             "operationKind",
         ]
@@ -129,6 +131,9 @@ impl PreparedDerivedEvidence {
             "scalarDelta" => {
                 proof.inserted_scalar_delta = proof.inserted_scalar_delta.saturating_add(1)
             }
+            "renderedDelta" => {
+                proof.rendered_scalar_delta = proof.rendered_scalar_delta.saturating_add(1)
+            }
             "cardinality" => {
                 proof.top_level_cardinality = proof.top_level_cardinality.saturating_add(1)
             }
@@ -161,7 +166,7 @@ impl PreparedDerivedEvidence {
             base_raw_scalars.checked_add(u64::from(proof.inserted_scalar_delta))?;
         let expected_rendered_scalars = state
             .rendered_scalars
-            .checked_add(proof.inserted_scalar_delta)?;
+            .checked_add(proof.rendered_scalar_delta)?;
         let expected_affected_start = proof.target_top_level_index.saturating_sub(1);
         let expected_affected_len = proof
             .top_level_cardinality
@@ -190,7 +195,7 @@ impl PreparedDerivedEvidence {
             || proof.max_undo_retained_units != editing_limits.max_undo_retained_units
             || proof.max_length != max_length
             || !Arc::ptr_eq(&proof.derivation_identity_seal, &derivations.identity_seal)
-            || proof.operation_kind != LocalizedRenderOperationKind::ExistingTextInsert
+            || proof.operation_kind != LocalizedRenderOperationKind::TextblockInsert
             || proof.inserted_scalar_delta == 0
             || state.document.root().child_count() != proof.top_level_cardinality
             || preview.root().child_count() != proof.top_level_cardinality
@@ -211,7 +216,7 @@ impl PreparedDerivedEvidence {
         {
             return None;
         }
-        Some(state.render_blocks.transition_localized_insert(
+        Some(state.render_blocks.transition_localized_textblock(
             &state.document,
             preview,
             schema,

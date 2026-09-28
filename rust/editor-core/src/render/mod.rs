@@ -277,6 +277,7 @@ pub(crate) fn rendered_text(document: &Document, schema: &Schema) -> String {
             RenderElement::BlockEnd => {}
         }
     }
+    text.shrink_to_fit();
     text
 }
 

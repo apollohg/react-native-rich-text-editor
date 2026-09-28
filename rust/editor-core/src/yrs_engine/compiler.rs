@@ -13,7 +13,7 @@ mod text_boundaries;
 mod yrs_compilation;
 
 use super::canonical::CanonicalArtifact;
-use super::derived_state::{LocalizedInsertAdmission, PreparedDerivedEvidence};
+use super::derived_state::{LocalizedTextblockEditAdmission, PreparedDerivedEvidence};
 use super::mutation::{
     LocalizedFormatCompiler, LocalizedInsertCompiler, LocalizedRootWindowCompiler,
     MutationCompiler, MutationLookupPromotion, YrsMutationAction, YrsMutationPlan,
@@ -157,12 +157,12 @@ pub(crate) struct PreparedSelectionMutationSeal {
     inserted_scalars: u32,
     inserted_utf16: u32,
     operation_result: super::ResolvedSelection,
-    admission: LocalizedInsertAdmission,
+    admission: LocalizedTextblockEditAdmission,
 }
 
 impl PreparedSelectionMutationSeal {
     pub(crate) fn capture(compiled: &CompiledTransaction) -> Option<Self> {
-        let admission = compiled.localized_insert_admission.as_ref()?;
+        let admission = compiled.localized_textblock_edit_admission.as_ref()?;
         let [YrsMutationAction::InsertText {
             target,
             index_utf16,
@@ -208,7 +208,7 @@ impl PreparedSelectionMutationSeal {
         compiled: &CompiledTransaction,
         authority: &dyn DerivedStateAuthority,
     ) -> bool {
-        let Some(admission) = compiled.localized_insert_admission.as_ref() else {
+        let Some(admission) = compiled.localized_textblock_edit_admission.as_ref() else {
             return false;
         };
         let Ok(authority_seed) = authority.lookup_seed(self.request_id) else {
@@ -293,7 +293,7 @@ pub(crate) struct CompiledTransaction {
     /// Stage E2 admission evidence. The semantic shortcut revalidates it during
     /// compilation; Stage E3 uses the resulting prepared evidence to install
     /// post-commit derived state without rebuilding it.
-    pub localized_insert_admission: Option<LocalizedInsertAdmission>,
+    pub localized_textblock_edit_admission: Option<LocalizedTextblockEditAdmission>,
     pub prepared_derived_evidence: Option<PreparedDerivedEvidence>,
     pub prepared_candidate_validation: Option<super::derived_state::PreparedCandidateValidation>,
     pub prepared_active_state_transition:

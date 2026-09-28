@@ -44,6 +44,7 @@ fn localized_insert_compile_only_skips_every_proved_full_pass() {
     assert_eq!(
         take_full_pass_counts_for_test(),
         FullPassCounts {
+            canonical_mark_nodes_visited: 2,
             canonical_projections: 1,
             canonical_serializations: 2,
             canonical_hashes: 1,
@@ -321,7 +322,7 @@ fn localized_insert_semantic_preview_matches_forced_generic_matrix() {
         let localized = engine
             .compile_typed_transaction(transaction.clone())
             .unwrap();
-        assert!(localized.localized_insert_admission.is_some(), "{case}");
+        assert!(localized.localized_textblock_edit_admission.is_some(), "{case}");
         assert_eq!(
             localized.affected_top_level_blocks, expected_affected,
             "{case}"
@@ -447,7 +448,7 @@ fn localized_insert_semantic_preview_matches_forced_generic_matrix() {
     let fallback = engine.compile_typed_transaction(transaction.clone());
     force_localized_semantic_allocation_failure_for_test(false);
     let fallback = fallback.unwrap();
-    assert!(fallback.localized_insert_admission.is_some());
+    assert!(fallback.localized_textblock_edit_admission.is_some());
     assert_eq!(
         take_full_pass_counts_for_test().ordinary_step_applications,
         1
@@ -546,7 +547,7 @@ fn localized_insert_exact_limits_and_one_under_errors_match_generic() {
     assert!(exact_length
         .compile_typed_transaction(transaction(&exact_length))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_some());
     let rejected_length = fixture(Some(4), EditingLimits::default());
     let generic_length = fixture(Some(4), EditingLimits::default());
@@ -560,7 +561,7 @@ fn localized_insert_exact_limits_and_one_under_errors_match_generic() {
     assert!(exact_output_engine
         .compile_typed_transaction(transaction(&exact_output_engine))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_some());
     let rejected_output_limits = EditingLimits {
         max_derived_output_bytes: exact_output - 1,
@@ -578,7 +579,7 @@ fn localized_insert_exact_limits_and_one_under_errors_match_generic() {
     assert!(exact_undo_engine
         .compile_typed_transaction(transaction(&exact_undo_engine))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_some());
     let rejected_undo_limits = EditingLimits {
         max_undo_retained_units: exact_undo - 1,

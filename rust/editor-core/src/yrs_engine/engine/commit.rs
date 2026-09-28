@@ -243,17 +243,16 @@ impl YrsDocumentEngine {
                             "prepared selection core seal does not match compiled transaction",
                         ));
                     }
-                    let rematerialized =
-                        compiled
-                            .localized_insert_admission
-                            .as_ref()
-                            .and_then(|admission| {
-                                self.materialize_prewrite_selection_state(
-                                    &compiled,
-                                    admission,
-                                    commit_authority.txn(),
-                                )
-                            });
+                    let rematerialized = compiled
+                        .localized_textblock_edit_admission
+                        .as_ref()
+                        .and_then(|admission| {
+                            self.materialize_prewrite_selection_state(
+                                &compiled,
+                                admission,
+                                commit_authority.txn(),
+                            )
+                        });
                     if rematerialized.as_ref() != Some(prepared) {
                         compiled.prepared_selection_state = None;
                         compiled.prepared_selection_mutation_seal = None;

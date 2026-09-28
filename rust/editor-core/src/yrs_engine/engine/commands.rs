@@ -41,9 +41,11 @@ impl YrsDocumentEngine {
             None,
             None,
             yrs_engine::TransactionOrigin::LocalCommand,
+            false,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn plan_command_internal_at_selection<'a>(
         &'a self,
         request_id: u64,
@@ -54,6 +56,7 @@ impl YrsDocumentEngine {
         selection: Option<&'a yrs_engine::ResolvedSelection>,
         initial_selection: Option<&'a yrs_engine::SelectionInput>,
         origin: yrs_engine::TransactionOrigin,
+        admits_textblock_local_intents: bool,
     ) -> yrs_engine::OperationResult<yrs_engine::CommandPlan> {
         let state = self
             .derived_state
@@ -95,6 +98,7 @@ impl YrsDocumentEngine {
                 canonical_artifact: &state.canonical_artifact,
                 allow_deferred_admission,
                 preparation,
+                localized_textblock_state: admits_textblock_local_intents.then_some(state),
             },
             command,
         )
@@ -142,6 +146,7 @@ impl YrsDocumentEngine {
             Some(&resolved),
             Some(&selection),
             origin,
+            true,
         )? {
             yrs_engine::CommandPlan::NotApplicable => return Ok(None),
             yrs_engine::CommandPlan::SelectionOnly(transaction) => {

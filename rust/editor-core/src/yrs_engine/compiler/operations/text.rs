@@ -106,8 +106,10 @@ impl OperationCompiler<'_> {
                     let (plan, promotion) =
                         localized.compile_with_promotion(operation_index, pos, text, marks)?;
                     prelowered_plan = Some(plan);
-                    prelowered_lookup_transition =
-                        Some(MutationLookupTransition::Promote(promotion));
+                    prelowered_lookup_transition = Some(promotion.map_or(
+                        MutationLookupTransition::Invalidate { request_id },
+                        MutationLookupTransition::Promote,
+                    ));
                 }
                 operation_result = Some(Selection::cursor(step_map.map_pos(pos)));
                 composed_map = composed_map.compose(&step_map);

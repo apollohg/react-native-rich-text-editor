@@ -156,6 +156,7 @@ pub(crate) struct PlanningContext<'a> {
     pub canonical_artifact: &'a crate::yrs_engine::canonical::CanonicalArtifact,
     pub allow_deferred_admission: bool,
     pub preparation: Option<&'a std::cell::RefCell<Option<PreparedCommandProof>>>,
+    pub localized_textblock_state: Option<&'a crate::yrs_engine::derived_state::DerivedStateCache>,
 }
 
 pub(crate) fn plan(
@@ -303,6 +304,7 @@ pub(crate) fn table_action_plan_for_test(
         canonical_artifact: &canonical_artifact,
         allow_deferred_admission: false,
         preparation: None,
+        localized_textblock_state: None,
     };
     table_action_transaction(&context, prepared)
 }

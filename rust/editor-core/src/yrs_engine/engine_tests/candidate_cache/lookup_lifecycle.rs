@@ -239,7 +239,7 @@ fn ordinary_lookup_collection_fails_fast_while_codec_projection_finishes() {
 }
 
 #[test]
-fn missing_text_fallback_rebuilds_once_then_next_insert_localizes() {
+fn created_text_insert_localizes_then_next_insert_rebuilds_the_seed_once() {
     use crate::yrs_engine::mutation::{
         reset_localized_lookup_counts_for_test, take_localized_lookup_counts_for_test,
     };
@@ -255,7 +255,7 @@ fn missing_text_fallback_rebuilds_once_then_next_insert_localizes() {
         .unwrap()
         .expect("existing text insert must apply");
 
-    assert_eq!(take_localized_lookup_counts_for_test(), (1, 1, 1));
+    assert_eq!(take_localized_lookup_counts_for_test(), (1, 2, 1));
 }
 
 #[test]
@@ -289,7 +289,7 @@ fn selection_only_change_retains_document_scoped_lookup_seed() {
 }
 
 #[test]
-fn localized_root_invalidation_rebuilds_ready_once_then_localizes() {
+fn localized_root_invalidation_localizes_created_text_then_rebuilds_ready_once() {
     use crate::yrs_engine::mutation::{
         reset_localized_lookup_counts_for_test, take_localized_lookup_counts_for_test,
     };
@@ -340,20 +340,20 @@ fn localized_root_invalidation_rebuilds_ready_once_then_localizes() {
         .apply_command(70_113_102, TypedCommand::InsertText { text: "x".into() })
         .unwrap()
         .unwrap();
-    assert_eq!(take_localized_lookup_counts_for_test(), (2, 0, 0));
+    assert_eq!(take_localized_lookup_counts_for_test(), (1, 1, 0));
     assert!(engine
         .derived_state
         .as_ref()
         .unwrap()
         .mutation_lookup_seed
-        .is_ready_for_test());
+        .is_unavailable_for_test());
 
     reset_localized_lookup_counts_for_test();
     engine
         .apply_command(70_113_103, TypedCommand::InsertText { text: "y".into() })
         .unwrap()
         .unwrap();
-    assert_eq!(take_localized_lookup_counts_for_test(), (0, 1, 1));
+    assert_eq!(take_localized_lookup_counts_for_test(), (1, 1, 1));
     assert!(engine
         .derived_state
         .as_ref()

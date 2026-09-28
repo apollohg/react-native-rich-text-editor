@@ -64,7 +64,7 @@ fn changed_commit_survives_optional_index_allocation_failure_exactly() {
             history_policy: HistoryPolicy::Auto,
         })
         .unwrap();
-    assert!(compiled.localized_insert_admission.is_none());
+    assert!(compiled.localized_textblock_edit_admission.is_none());
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn changed_commit_survives_each_optional_index_allocation_stage() {
                 history_policy: HistoryPolicy::Auto,
             })
             .unwrap();
-        assert!(compiled.localized_insert_admission.is_none());
+        assert!(compiled.localized_textblock_edit_admission.is_none());
     }
 }
 
@@ -254,7 +254,7 @@ fn selection_only_optional_index_copy_failure_degrades_evidence_to_none() {
             history_policy: HistoryPolicy::Auto,
         })
         .unwrap();
-    assert!(compiled.localized_insert_admission.is_none());
+    assert!(compiled.localized_textblock_edit_admission.is_none());
 }
 
 #[test]
@@ -305,7 +305,7 @@ fn selection_only_revision_reseal_allows_following_strict_insert_admission() {
             history_policy: HistoryPolicy::Auto,
         })
         .unwrap();
-    assert!(compiled.localized_insert_admission.is_some());
+    assert!(compiled.localized_textblock_edit_admission.is_some());
 
     engine
         .apply_command(
@@ -345,7 +345,7 @@ fn selection_only_revision_reseal_allows_following_strict_insert_admission() {
             history_policy: HistoryPolicy::Auto,
         })
         .unwrap();
-    assert!(compiled.localized_insert_admission.is_some());
+    assert!(compiled.localized_textblock_edit_admission.is_some());
 }
 
 #[test]
@@ -505,7 +505,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             canonical_mark_tree_scans: 0,
             canonical_mark_validation_attempts: 0,
             canonical_mark_validation_completions: 0,
-            canonical_mark_nodes_visited: 0,
+            canonical_mark_nodes_visited: 2,
             canonical_identity_predicate_nodes_visited: 0,
             canonical_projections: 1,
             canonical_serializations: 2,
@@ -545,7 +545,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             canonical_mark_tree_scans: 0,
             canonical_mark_validation_attempts: 0,
             canonical_mark_validation_completions: 0,
-            canonical_mark_nodes_visited: 0,
+            canonical_mark_nodes_visited: 2,
             canonical_identity_predicate_nodes_visited: 0,
             canonical_projections: 1,
             canonical_serializations: 2,
@@ -585,7 +585,7 @@ fn benchmark_shaped_bursts_decompose_direct_result_and_command_full_passes() {
             canonical_mark_tree_scans: 0,
             canonical_mark_validation_attempts: 0,
             canonical_mark_validation_completions: 0,
-            canonical_mark_nodes_visited: 0,
+            canonical_mark_nodes_visited: 2,
             canonical_identity_predicate_nodes_visited: 321,
             canonical_projections: 1,
             canonical_serializations: 1,

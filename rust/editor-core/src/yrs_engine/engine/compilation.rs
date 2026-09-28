@@ -170,62 +170,64 @@ impl YrsDocumentEngine {
             compiled.preview_derivations = Some(derivations.clone());
         }
         let state = authority.installed();
-        let eligible_admission = compiled
-            .localized_insert_admission
-            .as_ref()
-            .filter(|admission| {
-                let current_at_insertion = matches!(
-                    &state.resolved_selection,
-                    yrs_engine::ResolvedSelection::Text { anchor, head }
-                        if anchor == head
-                            && anchor.document == admission.inserted_document_position()
-                );
-                let operation_result = admission.operation_result_selection();
-                let operation_result_legacy =
-                    yrs_engine::derived_state::resolved_to_legacy(operation_result);
-                compiled.origin == yrs_engine::TransactionOrigin::LocalCommand
-                    && compiled.history_policy == yrs_engine::HistoryPolicy::Boundary
-                    && compiled.history_class == yrs_engine::compiler::HistoryClass::Insert
-                    && compiled.localized_semantic_used
-                    && admission.inserted_scalars() > 0
-                    && current_at_insertion
-                    && matches!(
-                        &compiled.selection_plan,
-                        SelectionPlan::Explicit(selection)
-                            if *selection == operation_result_legacy
-                                && *selection == *proof_selection
-                    )
-                    && compiled.relative_selection_plan == RelativeSelectionPlan::OperationResult
-                    && matches!(
-                        &compiled.stored_marks_plan,
-                        StoredMarksPlan::Set(stored_marks)
-                            if *stored_marks == state.stored_marks
-                    )
-                    && compiled.preview == *proof_document
-                    && *operation_result
-                        == yrs_engine::derived_state::resolved_from_legacy_with_view(
-                            &compiled.preview,
-                            &operation_result_legacy,
-                            &self.schema,
-                            compiled
-                                .preview_derivations
-                                .as_ref()
-                                .map(|derivations| &derivations.position_map)
-                                .unwrap_or(&state.position_map),
-                            compiled
-                                .preview_derivations
-                                .as_ref()
-                                .map(|derivations| derivations.rendered_text.as_str())
-                                .unwrap_or(state.rendered_text.as_str()),
-                            &yrs_engine::derived_state::selection_table_index(
+        let eligible_admission =
+            compiled
+                .localized_textblock_edit_admission
+                .as_ref()
+                .filter(|admission| {
+                    let current_at_insertion = matches!(
+                        &state.resolved_selection,
+                        yrs_engine::ResolvedSelection::Text { anchor, head }
+                            if anchor == head
+                                && anchor.document == admission.inserted_document_position()
+                    );
+                    let operation_result = admission.operation_result_selection();
+                    let operation_result_legacy =
+                        yrs_engine::derived_state::resolved_to_legacy(operation_result);
+                    compiled.origin == yrs_engine::TransactionOrigin::LocalCommand
+                        && compiled.history_policy == yrs_engine::HistoryPolicy::Boundary
+                        && compiled.history_class == yrs_engine::compiler::HistoryClass::Insert
+                        && compiled.localized_semantic_used
+                        && admission.inserted_scalars() > 0
+                        && current_at_insertion
+                        && matches!(
+                            &compiled.selection_plan,
+                            SelectionPlan::Explicit(selection)
+                                if *selection == operation_result_legacy
+                                    && *selection == *proof_selection
+                        )
+                        && compiled.relative_selection_plan
+                            == RelativeSelectionPlan::OperationResult
+                        && matches!(
+                            &compiled.stored_marks_plan,
+                            StoredMarksPlan::Set(stored_marks)
+                                if *stored_marks == state.stored_marks
+                        )
+                        && compiled.preview == *proof_document
+                        && *operation_result
+                            == yrs_engine::derived_state::resolved_from_legacy_with_view(
                                 &compiled.preview,
                                 &operation_result_legacy,
                                 &self.schema,
-                                &self.resource_limits,
-                            ),
-                        )
-                        .unwrap_or(yrs_engine::ResolvedSelection::All)
-            });
+                                compiled
+                                    .preview_derivations
+                                    .as_ref()
+                                    .map(|derivations| &derivations.position_map)
+                                    .unwrap_or(&state.position_map),
+                                compiled
+                                    .preview_derivations
+                                    .as_ref()
+                                    .map(|derivations| derivations.rendered_text.as_str())
+                                    .unwrap_or(state.rendered_text.as_str()),
+                                &yrs_engine::derived_state::selection_table_index(
+                                    &compiled.preview,
+                                    &operation_result_legacy,
+                                    &self.schema,
+                                    &self.resource_limits,
+                                ),
+                            )
+                            .unwrap_or(yrs_engine::ResolvedSelection::All)
+                });
         let transition = eligible_admission
             .map(|admission| {
                 let StoredMarksPlan::Set(stored_marks) = &compiled.stored_marks_plan else {
@@ -294,7 +296,7 @@ impl YrsDocumentEngine {
     pub(super) fn materialize_prewrite_selection_state<T: ReadTxn>(
         &self,
         compiled: &CompiledTransaction,
-        admission: &yrs_engine::derived_state::LocalizedInsertAdmission,
+        admission: &yrs_engine::derived_state::LocalizedTextblockEditAdmission,
         txn: &T,
     ) -> Option<FinalizedSelectionState> {
         let state = self.derived_state.as_ref()?;

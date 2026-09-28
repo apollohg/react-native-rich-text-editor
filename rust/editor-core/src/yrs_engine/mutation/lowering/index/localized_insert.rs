@@ -213,7 +213,8 @@ impl LocalizedInsertCompiler {
                     .copied()
                     != Some(signature.capture_work)
             }
-            ResolvedTargetKind::Missing { .. } | ResolvedTargetKind::Prepared { .. } => true,
+            ResolvedTargetKind::Missing { .. } => false,
+            ResolvedTargetKind::Prepared { .. } => true,
         }) {
             return Ok(None);
         }
@@ -264,10 +265,22 @@ impl LocalizedInsertCompiler {
         position: u32,
         text: &str,
         marks: &[Mark],
-    ) -> OperationResult<(YrsMutationPlan, MutationLookupPromotion)> {
+    ) -> OperationResult<(YrsMutationPlan, Option<MutationLookupPromotion>)> {
         let base_pending_traversal_work = self.compiler.pending_traversal_work;
         self.compiler
             .insert(operation_index, position, text, marks)?;
+        if self.compiler.actions.iter().any(|slot| {
+            matches!(
+                slot,
+                ActionSlot::Concrete(action)
+                    if matches!(action.as_ref(), YrsMutationAction::CreateText { .. })
+            )
+        }) {
+            return self
+                .compiler
+                .finish(Some(operation_index))
+                .map(|plan| (plan, None));
+        }
         let (target_id, previous_materialization_work) = self
             .compiler
             .actions
@@ -359,6 +372,6 @@ impl LocalizedInsertCompiler {
         };
         self.compiler
             .finish(Some(operation_index))
-            .map(|plan| (plan, promotion))
+            .map(|plan| (plan, Some(promotion)))
     }
 }

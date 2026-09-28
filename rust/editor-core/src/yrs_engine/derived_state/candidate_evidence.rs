@@ -240,7 +240,7 @@ impl PreparedCandidateEvidence {
         {
             return None;
         }
-        Some(state.render_blocks.transition_localized_insert(
+        Some(state.render_blocks.transition_localized_textblock(
             &state.document,
             document,
             schema,

@@ -147,126 +147,127 @@ impl YrsDocumentEngine {
                 &self.resource_limits,
             )
         };
-        let (active_state, prepared_active_cache) =
-            if let Some(transition) = &compiled.prepared_active_state_transition {
-                yrs_engine::derived_state::record_active_state_cache_attempt();
-                let structural = compiled.localized_insert_admission.as_ref().map(
-                yrs_engine::derived_state::LocalizedInsertAdmission::active_state_structural_seal,
+        let (active_state, prepared_active_cache) = if let Some(transition) =
+            &compiled.prepared_active_state_transition
+        {
+            yrs_engine::derived_state::record_active_state_cache_attempt();
+            let structural = compiled.localized_textblock_edit_admission.as_ref().map(
+                yrs_engine::derived_state::LocalizedTextblockEditAdmission::active_state_structural_seal,
             );
-                let validated = if let Some(structural) = structural.as_ref() {
-                    current.validate_active_state_transition(
-                        commit_authority.derived(),
-                        transition,
-                        structural,
-                        &compiled.preview,
-                        &selection,
-                        stored_marks.as_deref(),
-                        &self.resource_limits,
-                        &self.editing_limits,
-                        self.max_length,
-                        self.yrs_state_epoch,
-                    )
-                } else {
-                    None
-                };
-                match validated {
-                    Some(cached) => {
-                        yrs_engine::derived_state::record_active_state_candidate_build();
-                        let warm_cached = cached.filter(|_| {
-                            !yrs_engine::derived_state::active_state_cache_hit_fallback_forced()
-                        });
-                        let was_warm = warm_cached.is_some();
-                        let cached = if let Some(cached) = warm_cached {
-                            cached
-                        } else {
-                            yrs_engine::derived_state::record_active_state_cache_fallback();
-                            let generic = generic_active_state();
-                            match yrs_engine::derived_state::CachedActiveState::try_new(
-                                generic,
-                                &self.resource_limits,
-                                &self.editing_limits,
-                            ) {
-                                Ok(cached) => cached,
-                                Err(generic) => {
-                                    let result = yrs_engine::TypedTransactionResult {
-                                        request_id: compiled.request_id,
-                                        origin: compiled.origin,
-                                        changed: current.document != compiled.preview,
-                                        document_revision: self.revision,
-                                        state_revision: self.state_revision,
-                                        selection,
-                                        active_state: generic,
-                                        history_state: crate::editor_state::HistoryState {
-                                            can_undo: self.can_undo(),
-                                            can_redo: self.can_redo(),
-                                        },
-                                        render_update,
-                                    };
-                                    self.admit_typed_result(compiled.request_id, &result)?;
-                                    return Ok((result, None));
-                                }
-                            }
-                        };
-                        #[cfg(test)]
-                        debug_assert_eq!(
-                            cached.value(),
-                            &crate::editor_state::active_state_for_debug_invariant(
-                                &compiled.preview,
-                                &self.schema,
-                                &legacy_selection,
-                                stored_marks.as_deref(),
-                                &self.resource_limits,
-                                document_node_count,
-                            )
-                        );
-                        if let Some(active_state) =
-                            cached.clone_public(&self.resource_limits, &self.editing_limits)
-                        {
-                            if was_warm {
-                                yrs_engine::derived_state::record_active_state_cache_hit();
-                            }
-                            (active_state, Some(cached))
-                        } else {
-                            if was_warm {
-                                yrs_engine::derived_state::record_active_state_cache_fallback();
-                                (generic_active_state(), None)
-                            } else {
-                                let generic =
-                                    yrs_engine::derived_state::CachedActiveState::try_into_value(
-                                        cached,
-                                    )
-                                    .unwrap_or_else(|cached| cached.value().clone());
-                                (generic, None)
+            let validated = if let Some(structural) = structural.as_ref() {
+                current.validate_active_state_transition(
+                    commit_authority.derived(),
+                    transition,
+                    structural,
+                    &compiled.preview,
+                    &selection,
+                    stored_marks.as_deref(),
+                    &self.resource_limits,
+                    &self.editing_limits,
+                    self.max_length,
+                    self.yrs_state_epoch,
+                )
+            } else {
+                None
+            };
+            match validated {
+                Some(cached) => {
+                    yrs_engine::derived_state::record_active_state_candidate_build();
+                    let warm_cached = cached.filter(|_| {
+                        !yrs_engine::derived_state::active_state_cache_hit_fallback_forced()
+                    });
+                    let was_warm = warm_cached.is_some();
+                    let cached = if let Some(cached) = warm_cached {
+                        cached
+                    } else {
+                        yrs_engine::derived_state::record_active_state_cache_fallback();
+                        let generic = generic_active_state();
+                        match yrs_engine::derived_state::CachedActiveState::try_new(
+                            generic,
+                            &self.resource_limits,
+                            &self.editing_limits,
+                        ) {
+                            Ok(cached) => cached,
+                            Err(generic) => {
+                                let result = yrs_engine::TypedTransactionResult {
+                                    request_id: compiled.request_id,
+                                    origin: compiled.origin,
+                                    changed: current.document != compiled.preview,
+                                    document_revision: self.revision,
+                                    state_revision: self.state_revision,
+                                    selection,
+                                    active_state: generic,
+                                    history_state: crate::editor_state::HistoryState {
+                                        can_undo: self.can_undo(),
+                                        can_redo: self.can_redo(),
+                                    },
+                                    render_update,
+                                };
+                                self.admit_typed_result(compiled.request_id, &result)?;
+                                return Ok((result, None));
                             }
                         }
-                    }
-                    None => {
-                        yrs_engine::derived_state::record_active_state_cache_fallback();
-                        (generic_active_state(), None)
+                    };
+                    #[cfg(test)]
+                    debug_assert_eq!(
+                        cached.value(),
+                        &crate::editor_state::active_state_for_debug_invariant(
+                            &compiled.preview,
+                            &self.schema,
+                            &legacy_selection,
+                            stored_marks.as_deref(),
+                            &self.resource_limits,
+                            document_node_count,
+                        )
+                    );
+                    if let Some(active_state) =
+                        cached.clone_public(&self.resource_limits, &self.editing_limits)
+                    {
+                        if was_warm {
+                            yrs_engine::derived_state::record_active_state_cache_hit();
+                        }
+                        (active_state, Some(cached))
+                    } else {
+                        if was_warm {
+                            yrs_engine::derived_state::record_active_state_cache_fallback();
+                            (generic_active_state(), None)
+                        } else {
+                            let generic =
+                                yrs_engine::derived_state::CachedActiveState::try_into_value(
+                                    cached,
+                                )
+                                .unwrap_or_else(|cached| cached.value().clone());
+                            (generic, None)
+                        }
                     }
                 }
-            } else {
-                // Non-eligible result paths retain the existing generic behavior
-                // and are outside the active-state cache lifecycle counters.
-                let commands = crate::editor_state::command_applicability_with_known_node_count(
+                None => {
+                    yrs_engine::derived_state::record_active_state_cache_fallback();
+                    (generic_active_state(), None)
+                }
+            }
+        } else {
+            // Non-eligible result paths retain the existing generic behavior
+            // and are outside the active-state cache lifecycle counters.
+            let commands = crate::editor_state::command_applicability_with_known_node_count(
+                &compiled.preview,
+                &self.schema,
+                &legacy_selection,
+                &self.resource_limits,
+                document_node_count,
+            );
+            (
+                crate::editor_state::active_state(
                     &compiled.preview,
                     &self.schema,
                     &legacy_selection,
+                    stored_marks.as_deref(),
+                    commands,
                     &self.resource_limits,
-                    document_node_count,
-                );
-                (
-                    crate::editor_state::active_state(
-                        &compiled.preview,
-                        &self.schema,
-                        &legacy_selection,
-                        stored_marks.as_deref(),
-                        commands,
-                        &self.resource_limits,
-                    ),
-                    None,
-                )
-            };
+                ),
+                None,
+            )
+        };
         let result = yrs_engine::TypedTransactionResult {
             request_id: compiled.request_id,
             origin: compiled.origin,

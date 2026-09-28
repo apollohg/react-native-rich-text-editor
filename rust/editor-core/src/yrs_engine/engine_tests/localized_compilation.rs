@@ -182,7 +182,7 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
             canonical_mark_tree_scans: 0,
             canonical_mark_validation_attempts: 0,
             canonical_mark_validation_completions: 0,
-            canonical_mark_nodes_visited: 0,
+            canonical_mark_nodes_visited: 2,
             canonical_identity_predicate_nodes_visited: 3,
             canonical_projections: 1,
             canonical_serializations: 1,
@@ -255,7 +255,7 @@ fn existing_text_admission_certificate_matches_legacy_compiler_and_commit() {
         .compile_typed_transaction(transaction.clone())
         .unwrap();
     let proof = compiled
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .as_ref()
         .expect("strict-inside existing text produces E1 admission evidence")
         .clone();
@@ -279,6 +279,7 @@ fn existing_text_admission_certificate_matches_legacy_compiler_and_commit() {
             admission_document_position,
             &read_txn,
             &fragment,
+            &engine.schema,
             &engine.resource_limits,
             &engine.editing_limits,
             engine.max_length,
@@ -299,6 +300,7 @@ fn existing_text_admission_certificate_matches_legacy_compiler_and_commit() {
             admission_document_position,
             &read_txn,
             &fragment,
+            &engine.schema,
             &engine.resource_limits,
             &engine.editing_limits,
             engine.max_length,
@@ -314,6 +316,7 @@ fn existing_text_admission_certificate_matches_legacy_compiler_and_commit() {
                     admission_document_position,
                     &read_txn,
                     &fragment,
+                    &engine.schema,
                     &engine.resource_limits,
                     &engine.editing_limits,
                     engine.max_length,
@@ -592,7 +595,7 @@ fn admission_evidence_rejects_unsupported_selection_and_history_contracts() {
     assert!(engine
         .compile_typed_transaction(transaction(SelectionIntent::Preserve, HistoryPolicy::Auto,))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_none());
     assert!(engine
         .compile_typed_transaction(transaction(
@@ -600,7 +603,7 @@ fn admission_evidence_rejects_unsupported_selection_and_history_contracts() {
             HistoryPolicy::Skip,
         ))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_none());
 }
 
@@ -660,42 +663,31 @@ fn localized_insert_admission_eligibility_is_exact() {
                 HistoryPolicy::Auto,
             ))
             .unwrap()
-            .localized_insert_admission
+            .localized_textblock_edit_admission
             .is_some());
     }
 
-    for boundary in [point(0), point(3)] {
+    for leaf_edge in [point(0), point(3)] {
         assert!(engine
             .compile_typed_transaction(transaction(
                 &engine,
                 TransactionOrigin::LocalInput,
-                boundary,
+                leaf_edge,
                 "x",
                 Vec::new(),
                 SelectionIntent::UseOperationResult,
                 HistoryPolicy::Auto,
             ))
             .unwrap()
-            .localized_insert_admission
-            .is_none());
+            .localized_textblock_edit_admission
+            .is_some());
     }
 
-    for history_policy in [HistoryPolicy::Boundary, HistoryPolicy::Skip] {
-        assert!(engine
-            .compile_typed_transaction(transaction(
-                &engine,
-                TransactionOrigin::LocalInput,
-                point(1),
-                "x",
-                Vec::new(),
-                SelectionIntent::UseOperationResult,
-                history_policy,
-            ))
-            .unwrap()
-            .localized_insert_admission
-            .is_none());
-    }
-    for origin in [TransactionOrigin::LocalCommand, TransactionOrigin::LocalApi] {
+    for origin in [
+        TransactionOrigin::LocalInput,
+        TransactionOrigin::LocalCommand,
+        TransactionOrigin::LocalApi,
+    ] {
         assert!(engine
             .compile_typed_transaction(transaction(
                 &engine,
@@ -707,9 +699,22 @@ fn localized_insert_admission_eligibility_is_exact() {
                 HistoryPolicy::Boundary,
             ))
             .unwrap()
-            .localized_insert_admission
-            .is_none());
+            .localized_textblock_edit_admission
+            .is_some());
     }
+    assert!(engine
+        .compile_typed_transaction(transaction(
+            &engine,
+            TransactionOrigin::LocalInput,
+            point(1),
+            "x",
+            Vec::new(),
+            SelectionIntent::UseOperationResult,
+            HistoryPolicy::Skip,
+        ))
+        .unwrap()
+        .localized_textblock_edit_admission
+        .is_none());
     assert!(engine
         .compile_typed_transaction(transaction(
             &engine,
@@ -721,7 +726,7 @@ fn localized_insert_admission_eligibility_is_exact() {
             HistoryPolicy::Auto,
         ))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_none());
     assert!(engine
         .compile_typed_transaction(transaction(
@@ -737,7 +742,7 @@ fn localized_insert_admission_eligibility_is_exact() {
             HistoryPolicy::Auto,
         ))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_none());
 
     let mut multiple = transaction(
@@ -753,7 +758,7 @@ fn localized_insert_admission_eligibility_is_exact() {
     assert!(engine
         .compile_typed_transaction(multiple)
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_none());
 
     let marked_engine = fixture(true);
@@ -769,7 +774,7 @@ fn localized_insert_admission_eligibility_is_exact() {
             HistoryPolicy::Auto,
         ))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_some());
     assert!(marked_engine
         .compile_typed_transaction(transaction(
@@ -782,7 +787,7 @@ fn localized_insert_admission_eligibility_is_exact() {
             HistoryPolicy::Auto,
         ))
         .unwrap()
-        .localized_insert_admission
+        .localized_textblock_edit_admission
         .is_none());
 }
 

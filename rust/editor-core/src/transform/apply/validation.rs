@@ -22,13 +22,21 @@ pub(crate) struct DocumentValidationReport {
 
 pub struct DocumentValidator;
 
+const VALIDATION_WORK_PER_NODE: usize = 128;
+
+pub(crate) fn document_validation_work_limit(limits: &ResourceLimits) -> usize {
+    limits
+        .max_document_nodes
+        .saturating_mul(VALIDATION_WORK_PER_NODE)
+}
+
 impl DocumentValidator {
     pub fn validate(
         doc: &Document,
         schema: &Schema,
         limits: &ResourceLimits,
     ) -> BoundaryResult<DocumentStats> {
-        let work_limit = limits.max_document_nodes.saturating_mul(128);
+        let work_limit = document_validation_work_limit(limits);
         let budget = WorkBudget::new(work_limit);
         Self::validate_with_budget(doc, schema, limits, &budget, work_limit)
     }
@@ -38,9 +46,22 @@ impl DocumentValidator {
         schema: &Schema,
         limits: &ResourceLimits,
     ) -> BoundaryResult<DocumentValidationReport> {
-        let work_limit = limits.max_document_nodes.saturating_mul(128);
+        let work_limit = document_validation_work_limit(limits);
         let budget = WorkBudget::new(work_limit);
         Self::validate_report_with_budget(doc, schema, limits, &budget, work_limit)
+    }
+
+    pub(crate) fn validate_subtree_report(
+        node: &Node,
+        schema: &Schema,
+        limits: &ResourceLimits,
+        depth: usize,
+    ) -> BoundaryResult<DocumentValidationReport> {
+        let work_limit = document_validation_work_limit(limits);
+        let budget = WorkBudget::new(work_limit);
+        let mut state = DocumentValidationState::new(limits, work_limit);
+        validate_node(node, schema, limits, depth, &mut state, &budget, work_limit)?;
+        Ok(state.report(&budget, work_limit, 0))
     }
 
     pub(crate) fn validate_with_budget(
@@ -80,34 +101,17 @@ impl DocumentValidator {
             ));
         }
 
-        let mut state = DocumentValidationState {
-            stats: DocumentStats {
-                node_count: 0,
-                max_depth: 0,
-            },
-            metadata_meter: JsonValueMeter::new(
-                limits.max_input_bytes,
-                work_limit,
-                limits.max_document_depth,
-                0,
-            ),
-        };
+        let mut state = DocumentValidationState::new(limits, work_limit);
         validate_node(
             doc.root(),
             schema,
             limits,
-            1,
+            DOCUMENT_ROOT_DEPTH,
             &mut state,
             budget,
             work_limit,
         )?;
-        Ok(DocumentValidationReport {
-            stats: state.stats,
-            metrics: DocumentValidationMetrics {
-                metadata_bytes: state.metadata_meter.bytes(),
-                validation_work: budget.consumed(work_limit).saturating_sub(work_before),
-            },
-        })
+        Ok(state.report(budget, work_limit, work_before))
     }
 }
 
@@ -235,47 +239,15 @@ fn validate_marks_with_evidence<'schema>(
     schema: &'schema Schema,
     require_canonical_order: bool,
 ) -> BoundaryResult<CanonicalMarksEvidence<'schema>> {
-    fn visit(root: &Node, schema: &Schema, require_canonical_order: bool) -> BoundaryResult<bool> {
-        let mut pending = vec![root];
-        let mut is_canonical = true;
-        while let Some(node) = pending.pop() {
-            #[cfg(test)]
-            crate::yrs_engine::observability::record_canonical_mark_node_visited();
-            if node.is_text()
-                && validate_mark_set(node.marks(), schema, require_canonical_order)?
-                    == MarkSetOrder::NeedsCanonicalization
-            {
-                is_canonical = false;
-            }
-            if let Some(content) = node.content() {
-                let mut previous = None;
-                for child in content.iter() {
-                    if child.text_str().is_some_and(str::is_empty)
-                        || previous.is_some_and(|previous: &Node| {
-                            previous.is_text()
-                                && child.is_text()
-                                && super::steps::marks_eq(previous.marks(), child.marks())
-                        })
-                    {
-                        is_canonical = false;
-                    }
-                    previous = Some(child);
-                }
-                pending.extend(content.iter().rev());
-            }
-        }
-        Ok(is_canonical)
-    }
-
     #[cfg(test)]
     crate::yrs_engine::observability::record_canonical_mark_validation_attempt();
-    let result = visit(document.root(), schema, require_canonical_order).map(|is_canonical| {
-        CanonicalMarksEvidence {
+    let result = visit_subtree_marks(document.root(), schema, require_canonical_order).map(
+        |is_canonical| CanonicalMarksEvidence {
             source_root: document.root().clone(),
             source_schema: schema,
             is_canonical,
-        }
-    });
+        },
+    );
     #[cfg(test)]
     if result.is_ok() {
         crate::yrs_engine::observability::record_canonical_mark_validation_completion();
@@ -283,9 +255,83 @@ fn validate_marks_with_evidence<'schema>(
     result
 }
 
+pub(crate) fn validate_subtree_marks(node: &Node, schema: &Schema) -> BoundaryResult<()> {
+    visit_subtree_marks(node, schema, true).map(|_| ())
+}
+
+fn visit_subtree_marks(
+    root: &Node,
+    schema: &Schema,
+    require_canonical_order: bool,
+) -> BoundaryResult<bool> {
+    let mut pending = vec![root];
+    let mut is_canonical = true;
+    while let Some(node) = pending.pop() {
+        #[cfg(test)]
+        crate::yrs_engine::observability::record_canonical_mark_node_visited();
+        if node.is_text()
+            && validate_mark_set(node.marks(), schema, require_canonical_order)?
+                == MarkSetOrder::NeedsCanonicalization
+        {
+            is_canonical = false;
+        }
+        if let Some(content) = node.content() {
+            let mut previous = None;
+            for child in content.iter() {
+                if child.text_str().is_some_and(str::is_empty)
+                    || previous.is_some_and(|previous: &Node| {
+                        previous.is_text()
+                            && child.is_text()
+                            && super::steps::marks_eq(previous.marks(), child.marks())
+                    })
+                {
+                    is_canonical = false;
+                }
+                previous = Some(child);
+            }
+            pending.extend(content.iter().rev());
+        }
+    }
+    Ok(is_canonical)
+}
+
+pub(crate) const DOCUMENT_ROOT_DEPTH: usize = 1;
+
 struct DocumentValidationState {
     stats: DocumentStats,
     metadata_meter: JsonValueMeter,
+}
+
+impl DocumentValidationState {
+    fn new(limits: &ResourceLimits, work_limit: usize) -> Self {
+        Self {
+            stats: DocumentStats {
+                node_count: 0,
+                max_depth: 0,
+            },
+            metadata_meter: JsonValueMeter::new(
+                limits.max_input_bytes,
+                work_limit,
+                limits.max_document_depth,
+                0,
+            ),
+        }
+    }
+
+    fn report(
+        &self,
+        budget: &WorkBudget,
+        work_limit: usize,
+        work_before: usize,
+    ) -> DocumentValidationReport {
+        DocumentValidationReport {
+            stats: self.stats,
+            metrics: DocumentValidationMetrics {
+                metadata_bytes: self.metadata_meter.bytes(),
+                validation_work: budget.consumed(work_limit).saturating_sub(work_before),
+            },
+        }
+    }
 }
 
 fn validate_node(

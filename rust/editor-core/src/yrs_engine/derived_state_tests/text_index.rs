@@ -1,5 +1,5 @@
 #[test]
-fn localized_text_index_only_proves_strict_inside_same_marked_leaf() {
+fn localized_text_index_proves_same_marked_leaf_edges_and_refuses_mark_changes() {
     let schema = tiptap_schema();
     let limits = ResourceLimits::default();
     let state = initialize_test_document(
@@ -35,14 +35,14 @@ fn localized_text_index_only_proves_strict_inside_same_marked_leaf() {
     let proof = state
         .localized_insert_admission_for_test(at, inserted, &marks, &schema, &limits, Some(64), 0)
         .expect("strict-inside same-mark insertion is provable");
-    assert_eq!(proof.leaf.block_index, 0);
-    assert_eq!(proof.leaf.child_ordinal, 0);
-    assert_eq!(proof.inserted_scalars, 5);
-    assert_eq!(proof.inserted_utf8_bytes, inserted.len());
-    assert_eq!(proof.inserted_utf16, 6);
-    assert_eq!(proof.next_raw_text_scalars, 14);
-    assert_eq!(proof.next_raw_text_utf8_bytes, 22);
-    assert_eq!(proof.history_undo_units, 6);
+    assert_eq!(proof.plan.leaf.block_index, 0);
+    assert_eq!(proof.plan.leaf.child_ordinal, 0);
+    assert_eq!(proof.plan.inserted_scalars, 5);
+    assert_eq!(proof.plan.inserted_utf8_bytes, inserted.len());
+    assert_eq!(proof.plan.inserted_utf16, 6);
+    assert_eq!(proof.plan.next_raw_text_scalars, 14);
+    assert_eq!(proof.plan.next_raw_text_utf8_bytes, 22);
+    assert_eq!(proof.plan.history_undo_units, 6);
     assert_eq!(proof.document_revision, state.document_revision);
     assert_eq!(proof.state_revision, state.state_revision);
     assert_eq!(proof.yrs_state_epoch, 0);
@@ -60,12 +60,12 @@ fn localized_text_index_only_proves_strict_inside_same_marked_leaf() {
         state.canonical_artifact.sha256()
     );
     assert_eq!(
-        proof.next_canonical_serialized_len,
-        state.canonical_artifact.serialized_len() + proof.inserted_escaped_json_bytes
+        proof.plan.next_canonical_serialized_len,
+        state.canonical_artifact.serialized_len() + proof.plan.canonical_growth_bytes
     );
     assert_eq!(
-        proof.next_rendered_scalars,
-        state.rendered_scalars + proof.inserted_scalars
+        proof.plan.next_rendered_scalars,
+        state.rendered_scalars + proof.plan.inserted_scalars
     );
     assert!(Arc::ptr_eq(&proof.render_seal, &state.render_blocks));
     assert!(Arc::ptr_eq(&proof.lookup_seal, &state.mutation_lookup_seed));
@@ -87,14 +87,14 @@ fn localized_text_index_only_proves_strict_inside_same_marked_leaf() {
         .schema_context()
         .derive(&preview)
         .unwrap();
-    assert_eq!(full_artifact.text_scalar_len(), proof.next_raw_text_scalars);
+    assert_eq!(full_artifact.text_scalar_len(), proof.plan.next_raw_text_scalars);
     assert_eq!(
         full_artifact.text_utf8_bytes(),
-        proof.next_raw_text_utf8_bytes
+        proof.plan.next_raw_text_utf8_bytes
     );
     assert_eq!(
         full_artifact.serialized_len(),
-        proof.next_canonical_serialized_len
+        proof.plan.next_canonical_serialized_len
     );
     let mut full_position_map = state.position_map.clone();
     full_position_map.update(
@@ -107,14 +107,14 @@ fn localized_text_index_only_proves_strict_inside_same_marked_leaf() {
     full_position_map.compact();
     assert_eq!(
         full_position_map.total_scalars(),
-        proof.next_rendered_scalars
+        proof.plan.next_rendered_scalars
     );
     let full_rendered = crate::render::rendered_text(&preview, &schema);
     assert_eq!(
         u32::try_from(full_rendered.chars().count()).unwrap(),
-        proof.next_rendered_scalars
+        proof.plan.next_rendered_scalars
     );
-    let expected_selection = Selection::cursor(at + proof.inserted_scalars);
+    let expected_selection = Selection::cursor(at + proof.plan.inserted_scalars);
     let full_resolved = resolved_from_legacy_with_view(
         &preview,
         &expected_selection,
@@ -124,18 +124,14 @@ fn localized_text_index_only_proves_strict_inside_same_marked_leaf() {
         &crate::tables::admission::TableProjectionIndex::empty(),
     )
     .unwrap();
-    assert_eq!(full_resolved, proof.operation_result);
-    assert!(state
-        .localized_insert_admission_for_test(
-            leaf.doc_start(),
-            "x",
-            &marks,
-            &schema,
-            &limits,
-            Some(64),
-            0,
-        )
-        .is_none());
+    assert_eq!(full_resolved, proof.plan.operation_result);
+    for edge in [leaf.doc_start(), leaf.doc_end()] {
+        let edge_proof = state
+            .localized_insert_admission_for_test(edge, "x", &marks, &schema, &limits, Some(64), 0)
+            .expect("a same-marked leaf edge joins the existing leaf");
+        assert_eq!(edge_proof.plan.leaf, *leaf, "edge {edge}");
+        assert!(!edge_proof.plan.creates_leaf, "edge {edge}");
+    }
     assert!(state
         .localized_insert_admission_for_test(at, "x", &marks, &schema, &limits, Some(9), 0)
         .is_none());
@@ -155,20 +151,22 @@ fn localized_text_index_only_proves_strict_inside_same_marked_leaf() {
     assert!(state
         .localized_insert_admission_for_test(at, "x", &marks, &schema, &limits, Some(64), 1)
         .is_none());
-    assert!(state
-        .localized_insert_admission_for_test(
-            leaf.doc_end(),
-            "x",
-            &marks,
-            &schema,
-            &limits,
-            Some(64),
-            0,
-        )
-        .is_none());
-    assert!(state
-        .localized_insert_admission_for_test(at, "x", &[], &schema, &limits, Some(64), 0,)
-        .is_none());
+    for position in [leaf.doc_start(), at, leaf.doc_end()] {
+        assert!(
+            state
+                .localized_insert_admission_for_test(
+                    position,
+                    "x",
+                    &[],
+                    &schema,
+                    &limits,
+                    Some(64),
+                    0,
+                )
+                .is_none(),
+            "a mark change at {position} would create a new text leaf"
+        );
+    }
     let mut stale_index = state;
     stale_index
         .localized_text_index
@@ -181,7 +179,7 @@ fn localized_text_index_only_proves_strict_inside_same_marked_leaf() {
 }
 
 #[test]
-fn localized_text_index_maps_list_prefixes_without_admitting_void_boundaries() {
+fn localized_text_index_maps_list_prefixes_and_joins_the_leaves_beside_a_void() {
     let schema = tiptap_schema();
     let limits = ResourceLimits::default();
     let state = initialize_test_document(
@@ -225,10 +223,13 @@ fn localized_text_index_maps_list_prefixes_without_admitting_void_boundaries() {
             0,
         )
         .is_some());
-    assert!(state
-        .localized_insert_admission_for_test(left.doc_end, "x", &[], &schema, &limits, None, 0,)
-        .is_none());
     assert!(right.doc_start > left.doc_end);
+    for (position, joined) in [(left.doc_end, left), (right.doc_start, right)] {
+        let proof = state
+            .localized_insert_admission_for_test(position, "x", &[], &schema, &limits, None, 0)
+            .expect("text beside a void joins its adjoining same-marked leaf");
+        assert_eq!(proof.plan.leaf, *joined, "position {position}");
+    }
 }
 
 #[test]
@@ -254,7 +255,9 @@ fn localized_text_index_build_is_linear_and_lookup_is_logarithmic() {
     let index = state.localized_text_index.as_ref().unwrap();
     let last = index.leaves().last().unwrap();
     reset_localized_index_metrics_for_test();
-    assert!(index.strict_inside(last.doc_start + 1).is_some());
+    assert!(index
+        .joined_leaf(last.block_index, last.doc_start + 1, last.marks_sha256)
+        .is_some());
     let (_, _, comparisons, _, _) = take_localized_index_metrics_for_test();
     assert!(
         comparisons <= 8,

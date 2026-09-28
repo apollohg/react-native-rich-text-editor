@@ -1,10 +1,11 @@
 use super::{CommandPlan, PlanningContext, TypedCommand};
 use crate::boundary::{BoundedInput, InputKind};
 use crate::serialize::{FromHtmlOptions, UnknownTypeMode};
+use crate::yrs_engine::derived_state::LocalizedTextblockEdit;
 use crate::yrs_engine::{
     Affinity, EditorOffsetKind, HistoryPolicy, OperationError, OperationResult, RevisionedPosition,
-    RevisionedRange, SelectionInput, SelectionIntent, StructuralReplacement, TypedOperation,
-    TypedTransaction,
+    RevisionedRange, SelectionInput, SelectionIntent, StructuralReplacement, TransactionOrigin,
+    TypedOperation, TypedTransaction,
 };
 
 fn point(offset: u32) -> RevisionedPosition {
@@ -327,6 +328,56 @@ fn semantic_transaction_impl(
         &simulated.selection,
     )?;
     Ok(CommandPlan::Transaction(transaction))
+}
+
+fn textblock_local_or_semantic_transaction(
+    context: &PlanningContext<'_>,
+    selection: &crate::selection::Selection,
+    plan: crate::command_planner::SemanticCommandPlan,
+) -> OperationResult<CommandPlan> {
+    let (
+        Some(state),
+        [crate::command_planner::SemanticOperation::InsertText { pos, text, marks }],
+        TransactionOrigin::LocalInput
+        | TransactionOrigin::LocalCommand
+        | TransactionOrigin::LocalApi,
+    ) = (
+        context.localized_textblock_state,
+        plan.operations.as_slice(),
+        context.origin,
+    )
+    else {
+        return semantic_transaction(context, selection, plan);
+    };
+    let Some(block_path) = state
+        .localized_textblock_path(*pos)
+        .filter(|_| plan.operations.len() <= context.editing_limits.max_operations_per_transaction)
+    else {
+        return semantic_transaction(context, selection, plan);
+    };
+    crate::tables::mutation_guard::admit_textblock_ancestry(
+        context.document,
+        context.schema,
+        block_path,
+    )
+    .map_err(|refusal| refusal.into_operation_error(context.request_id))?;
+    let edit = LocalizedTextblockEdit {
+        block_path,
+        replaced: *pos..*pos,
+        text,
+        marks,
+    };
+    if state.admits_localized_textblock_edit(
+        &edit,
+        context.schema,
+        context.editing_limits,
+        context.max_length,
+    ) {
+        if let Some(transaction) = preferred_direct_transaction(context, selection, &plan) {
+            return Ok(CommandPlan::Transaction(transaction));
+        }
+    }
+    semantic_transaction(context, selection, plan)
 }
 
 fn sealed_batch_transaction(
@@ -903,7 +954,7 @@ pub(super) fn plan(
             ) else {
                 return Ok(CommandPlan::NotApplicable);
             };
-            return semantic_transaction(&context, &selection, plan);
+            return textblock_local_or_semantic_transaction(&context, &selection, plan);
         }
         TypedCommand::ReplaceSelectionText { text } => {
             let selection = crate::yrs_engine::derived_state::resolved_to_legacy(context.selection);
@@ -939,7 +990,7 @@ pub(super) fn plan(
             else {
                 return Ok(CommandPlan::NotApplicable);
             };
-            return semantic_transaction(&context, &selection, plan);
+            return textblock_local_or_semantic_transaction(&context, &selection, plan);
         }
         command => command,
     };

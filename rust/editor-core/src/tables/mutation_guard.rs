@@ -12,6 +12,7 @@ const LOCAL_MUTATION_WORK_FIELD: &str = "nestedTableAdmissionWork";
 const NODE_OPENING_TOKENS: u32 = 1;
 const NODE_CLOSING_TOKENS: u32 = 1;
 const DOCUMENT_CONTENT_START: u32 = 0;
+const EDITABLE_CELL_ANCESTORS: usize = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum LocalMutationRefusal {
@@ -86,6 +87,36 @@ pub(crate) fn admit_local_mutation(
                 .map_err(|()| LocalMutationRefusal::Unreplayable)?,
         );
         remaining = rest;
+    }
+    Ok(())
+}
+
+pub(crate) fn admit_textblock_ancestry(
+    document: &Document,
+    schema: &Schema,
+    block_path: &[u32],
+) -> Result<(), LocalMutationRefusal> {
+    let roles = match TableRoles::resolve(schema) {
+        Ok(Some(roles)) => roles,
+        Ok(None) => return Ok(()),
+        Err(error) => return Err(LocalMutationRefusal::Unreadable(error)),
+    };
+    let mut node = document.root();
+    let mut cell_ancestors = 0usize;
+    for index in block_path {
+        let Some(child) = usize::try_from(*index)
+            .ok()
+            .and_then(|index| node.child(index))
+        else {
+            return Err(LocalMutationRefusal::Unreplayable);
+        };
+        if child.node_type() == roles.cell || child.node_type() == roles.header_cell {
+            cell_ancestors += 1;
+        }
+        node = child;
+    }
+    if cell_ancestors > EDITABLE_CELL_ANCESTORS {
+        return Err(LocalMutationRefusal::NestedTableDescendant);
     }
     Ok(())
 }

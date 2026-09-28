@@ -1,7 +1,7 @@
-use crate::model::{Document, Fragment, Node};
+use crate::model::Document;
 use crate::position::update::UpdateMode;
 use crate::position::PositionMap;
-use crate::transform::{DocumentValidator, StepMap};
+use crate::transform::{DocumentValidator, Step, StepMap};
 use crate::yrs_engine;
 use crate::yrs_engine::canonical::{CanonicalArtifact, CanonicalSchemaContext};
 use crate::yrs_engine::compiler::admission::PreparedSemanticAdmission;
@@ -10,7 +10,7 @@ use crate::yrs_engine::compiler::observability::FORCE_LOCALIZED_SEMANTIC_ALLOCAT
 use crate::yrs_engine::compiler::{
     document_text_bytes, CompilationContext, CompiledDocumentDerivations, PreparedSemanticContext,
 };
-use crate::yrs_engine::derived_state::ValidatedLocalizedInsertAdmission;
+use crate::yrs_engine::derived_state::ValidatedLocalizedTextblockEditAdmission;
 use crate::yrs_engine::editing_limits::CheckedWork;
 use crate::yrs_engine::{OperationError, OperationResult, TypedOperation, TypedTransaction};
 use std::sync::Arc;
@@ -188,48 +188,10 @@ pub(super) fn scalar_byte_offset(text: &str, scalar_offset: u32) -> Option<usize
     (scalars == scalar_offset).then_some(text.len())
 }
 
-pub(super) fn try_rebuild_element(parent: &Node, children: Vec<Node>) -> Node {
-    Node::element(
-        parent.node_type().to_owned(),
-        parent.attrs().clone(),
-        Fragment::from(children),
-    )
-}
-
-pub(super) fn try_replace_node_at_path(
-    current: &Node,
-    path: &[u32],
-    replacement: Node,
-) -> Option<Node> {
-    if path.is_empty() {
-        return Some(replacement);
-    }
-    let replace_index = usize::try_from(path[0]).ok()?;
-    let content = current.content()?;
-    if replace_index >= content.child_count() {
-        return None;
-    }
-    let mut children = Vec::new();
-    children.try_reserve_exact(content.child_count()).ok()?;
-    let mut replacement = Some(replacement);
-    for (index, child) in content.iter().enumerate() {
-        if index == replace_index {
-            children.push(try_replace_node_at_path(
-                child,
-                &path[1..],
-                replacement.take()?,
-            )?);
-        } else {
-            children.push(child.clone());
-        }
-    }
-    Some(try_rebuild_element(current, children))
-}
-
 pub(super) fn try_localized_semantic_compilation(
     context: CompilationContext<'_>,
     transaction: &TypedTransaction,
-    validated: &ValidatedLocalizedInsertAdmission<'_>,
+    validated: &ValidatedLocalizedTextblockEditAdmission<'_>,
 ) -> Option<LocalizedSemanticCompilation> {
     #[cfg(test)]
     if FORCE_LOCALIZED_SEMANTIC_ALLOCATION_FAILURE.get() {
@@ -239,56 +201,37 @@ pub(super) fn try_localized_semantic_compilation(
         return None;
     };
     let position = validated.document_position();
-    let block_path = validated.block_path();
-    let block = context.document.node_at(block_path)?;
-    let child_index = usize::try_from(validated.child_ordinal()).ok()?;
-    let live_leaf = block.child(child_index)?;
-    let live_text = live_leaf.text_str()?;
-    if live_leaf.marks() != marks {
-        return None;
-    }
-    let local_scalar = position.checked_sub(validated.leaf_doc_start())?;
-    if local_scalar == 0 || local_scalar >= live_leaf.node_size() {
-        return None;
-    }
-    let local_byte = scalar_byte_offset(live_text, local_scalar)?;
-    let next_text_bytes = live_text.len().checked_add(text.len())?;
-    let mut next_text = String::new();
-    next_text.try_reserve_exact(next_text_bytes).ok()?;
-    next_text.push_str(&live_text[..local_byte]);
-    next_text.push_str(text);
-    next_text.push_str(&live_text[local_byte..]);
-
-    let mut next_marks = Vec::new();
-    next_marks.try_reserve_exact(live_leaf.marks().len()).ok()?;
-    next_marks.extend_from_slice(live_leaf.marks());
-    let mut next_leaf = Some(Node::text(next_text, next_marks));
-    let content = block.content()?;
-    let mut block_children = Vec::new();
-    block_children
-        .try_reserve_exact(content.child_count())
-        .ok()?;
-    for (index, child) in content.iter().enumerate() {
-        block_children.push(if index == child_index {
-            next_leaf.take()?
-        } else {
-            child.clone()
-        });
-    }
-    if next_leaf.is_some() {
-        return None;
-    }
-    let next_block = try_rebuild_element(block, block_children);
-    let next_root = try_replace_node_at_path(context.document.root(), block_path, next_block)?;
-    let preview = Document::new(next_root);
-    let step_map = StepMap::try_from_insert(position, validated.inserted_scalars())?;
-
-    let rendered_scalar = validated.rendered_scalar_position();
-    let rendered_byte = scalar_byte_offset(validated.rendered_text(), rendered_scalar)?;
-    let rendered_capacity = validated.rendered_text().len().checked_add(text.len())?;
+    let (preview, step_map) = crate::transform::apply_step(
+        context.document,
+        &Step::InsertText {
+            pos: position,
+            text: text.clone(),
+            marks: marks.clone(),
+        },
+        context.schema,
+    )
+    .ok()?;
+    let rendered_byte = scalar_byte_offset(
+        validated.rendered_text(),
+        validated.rendered_scalar_position(),
+    )?;
+    let prefix_end = if validated.creates_leaf() {
+        let placeholder = crate::render::empty_text_block_placeholder_string();
+        if !validated.rendered_text()[..rendered_byte].ends_with(placeholder.as_str()) {
+            return None;
+        }
+        rendered_byte.checked_sub(placeholder.len())?
+    } else {
+        rendered_byte
+    };
+    let rendered_capacity = validated
+        .rendered_text()
+        .len()
+        .checked_sub(rendered_byte.checked_sub(prefix_end)?)?
+        .checked_add(text.len())?;
     let mut rendered_text = String::new();
     rendered_text.try_reserve_exact(rendered_capacity).ok()?;
-    rendered_text.push_str(&validated.rendered_text()[..rendered_byte]);
+    rendered_text.push_str(&validated.rendered_text()[..prefix_end]);
     rendered_text.push_str(text);
     rendered_text.push_str(&validated.rendered_text()[rendered_byte..]);
 
@@ -313,7 +256,9 @@ pub(super) fn try_localized_semantic_compilation(
             rendered_text,
             rendered_scalars: validated.next_rendered_scalars(),
             document_text_bytes: validated.next_raw_text_utf8_bytes(),
-            document_node_count: validated.document_node_count(),
+            document_node_count: validated
+                .document_node_count()
+                .checked_add(usize::from(validated.creates_leaf()))?,
             raw_text_scalars: validated.next_raw_text_scalars(),
             raw_text_utf8_bytes: validated.next_raw_text_utf8_bytes(),
         },
