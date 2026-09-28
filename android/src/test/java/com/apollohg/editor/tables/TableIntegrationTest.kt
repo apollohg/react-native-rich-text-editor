@@ -263,6 +263,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         }
 
     @Test
+    @Config(qualifiers = WINDOW_COVERING_THE_EDITOR)
     fun `horizontal table scroll moves the rectangle with the cell and clips it to the table`() =
         withTable(WIDE_DOCUMENT) { fixture ->
             val second = fixture.positions()[GRID_SECOND]
@@ -340,7 +341,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
                 drawing.tableAccessibilityLocation(surface, row * PlainTableFixture.LARGE_COLUMNS + column)
             ) { "cell $row,$column has an accessibility node" }
             val firstBodyId = location(1, 0).cellNodeId
-            WALKED_ROWS.forEach { row ->
+            PlainTableFixture.ACCESSIBILITY_WALK_ROWS.forEach { row ->
                 val column = row % PlainTableFixture.LARGE_COLUMNS
                 val id = location(row, column).cellNodeId
                 assertTrue("focus reaches row $row", provider.performAction(id, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
@@ -757,7 +758,6 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         const val RELEASE_VIEWPORT_WIDTH = 390
         const val RELEASE_VIEWPORT_HEIGHT = 844
         const val RELEASE_VIEWPORT = "w${RELEASE_VIEWPORT_WIDTH}dp-h${RELEASE_VIEWPORT_HEIGHT}dp-mdpi"
-        val WALKED_ROWS = listOf(1, 150, 400, 999)
         const val GC_ATTEMPTS = 3
         val TEARDOWN_SETTLE: Duration = Duration.ofSeconds(1)
         const val WINDOW_COVERING_THE_EDITOR = "w1000dp-h700dp"

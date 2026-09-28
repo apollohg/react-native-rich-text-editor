@@ -199,6 +199,8 @@ public final class PreparedProseDrawingView: UIView {
         static let indicatorWidth: CGFloat = 2
     }
 
+    private static let redrawHysteresisViewports: CGFloat = 0.5
+
     @objc public func install(layout: PreparedProseLayout?) {
         guard self.layout !== layout else { return }
         self.layout = layout
@@ -786,7 +788,10 @@ public final class PreparedProseDrawingView: UIView {
 
     private func redrawIfVisibleRectLeftDrawnWindow() {
         guard let visible = configuredVisibleRect(),
-              drawnPresentationWindow?.contains(visible.insetBy(dx: -visible.width / 2, dy: -visible.height / 2)) != true
+              drawnPresentationWindow?.contains(visible.insetBy(
+                  dx: -visible.width * Self.redrawHysteresisViewports,
+                  dy: -visible.height * Self.redrawHysteresisViewports
+              )) != true
         else { return }
         setNeedsDisplay()
     }

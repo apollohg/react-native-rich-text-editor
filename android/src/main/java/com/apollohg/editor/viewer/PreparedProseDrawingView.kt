@@ -192,7 +192,9 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     private fun redrawIfVisibleRectLeftDrawnWindow() {
         val visible = (presentationViewport() as? ViewerTablePresentationViewport.Known)?.rect ?: return
-        val margin = Rect(visible).apply { inset(-visible.width() / 2, -visible.height() / 2) }
+        val margin = Rect(visible).apply {
+            inset(-(visible.width() * REDRAW_HYSTERESIS_VIEWPORTS).toInt(), -(visible.height() * REDRAW_HYSTERESIS_VIEWPORTS).toInt())
+        }
         if (drawnPresentationWindow?.contains(margin) != true) invalidate()
     }
 
@@ -206,6 +208,8 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         private const val HANDLE_INSET_DP = 8f
         private const val HANDLE_HIT_SIZE_DP = 48f
         private const val RESIZE_INDICATOR_WIDTH_DP = 2f
+        private const val REDRAW_HYSTERESIS_VIEWPORTS = 0.5f
+        private const val HIT_PROBE_PX = 1f
         const val IMAGE_PIXEL_MAP_RETAINED_BYTES = 48L
         const val IMAGE_PIXEL_ENTRY_RETAINED_BYTES = 48L
 
@@ -372,7 +376,9 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         val table = preparedLayout?.let(ViewerTablePresentation::rootTables)
             ?.lastOrNull { it.bounds.contains(x, y) && it.clip.contains(x, y) } ?: return null
         val contentX = table.bounds.left - tablePresentationOwner.physicalOffset(table.surface)
-        return table.surface.cellsIntersecting(x - contentX, y - table.bounds.top, x - contentX + 1f, y - table.bounds.top + 1f)
+        val left = x - contentX
+        val top = y - table.bounds.top
+        return table.surface.cellsIntersecting(left, top, left + HIT_PROBE_PX, top + HIT_PROBE_PX)
             .lastOrNull()?.let { ViewerTablePresentation.present(it, table, tablePresentationOwner) }
             ?.takeIf { it.bounds.contains(x, y) }
     }
@@ -542,10 +548,10 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         tableCellRects(tableId, selectedTableCellSourcePositions[tableId].orEmpty())
 
     internal fun tableCellRects(tableId: String, sourcePositions: Set<Int>): List<RectF>? {
-        val table = presentationSnapshot()?.tableWithId(tableId) ?: return null
-        return sourcePositions.sorted().mapNotNull(table.surface::cellAtSourcePosition)
-            .filter { it.sourceCellIndex != null }
-            .map { ViewerTablePresentation.present(it, table, tablePresentationOwner) }
+        val snapshot = presentationSnapshot() ?: return null
+        val table = snapshot.tableWithId(tableId) ?: return null
+        return snapshot.cells.filter { it.surface === table.surface && isRealTableCell(it, sourcePositions) }
+            .sortedBy { it.sourcePosition }
             .mapNotNull { cell ->
                 RectF(cell.bounds).takeIf { it.intersect(cell.clip) }
                     ?.apply { offset(contentOriginXPx.toFloat(), contentOriginYPx.toFloat()) }
