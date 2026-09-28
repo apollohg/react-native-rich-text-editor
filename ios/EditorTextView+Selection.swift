@@ -40,6 +40,7 @@ extension EditorTextView {
             && !hasImageAttachment(at: point)
             && !hasTaskListMarker(at: point)
             && atomAttachmentRange(at: point) == nil
+            && rootTableContains?(point) != true
     }
 
     @discardableResult

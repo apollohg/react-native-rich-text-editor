@@ -1267,6 +1267,25 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    func testRootCaretPlacementOverATableKeepsTheCellSelection() throws {
+        try withMountedTable(document: proseThenFixedWidthTableDocument, cellSelection: (anchor: 0, head: 1)) { fixture in
+            let root = fixture.view.textView
+            XCTAssertTrue(root.becomeFirstResponder())
+            root.selectedRange = NSRange(location: 2, length: 0)
+            root.textViewDidChangeSelection(root)
+            XCTAssertTrue(root.authoritativeCellSelectionActive, "the cell selection stays authoritative under a prose caret")
+            let selected = try fixture.selection()
+            let cell = try fixture.presentedCell(1)
+            let overCell = fixture.drawing.convert(CGPoint(x: cell.bounds.midX, y: cell.bounds.midY), to: root)
+
+            XCTAssertFalse(root.canPlaceCaret(at: overCell), "a caret tap never lands on a table")
+            XCTAssertFalse(root.placeCaret(at: overCell), "a tap on a selected cell leaves caret placement to the table")
+            XCTAssertTrue(root.authoritativeCellSelectionActive, "the cell selection survives the tap")
+            XCTAssertEqual(try fixture.selection().0, selected.0)
+            XCTAssertEqual(try fixture.selection().1, selected.1)
+        }
+    }
+
     private final class ScriptedTouch: UITouch {
         private let windowPoint: CGPoint
         private let touchedView: UIView
