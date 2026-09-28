@@ -35,6 +35,9 @@ class TableCellPreparationBenchmarkTest {
         const val CHANGED_CELL_EDITS = 200
         const val NANOS_PER_MICROSECOND = 1_000.0
         const val NANOS_PER_MILLISECOND = 1_000_000.0
+        const val PROFILE_DENSITY = 3f
+        const val PROFILE_WIDTH_PX = 186
+        const val PROFILE_LINES_PER_CELL = 2
         const val TABLE_MEASUREMENT_BATCH_CELLS = 256
         const val SEMANTIC_GENERATION = "table-cell-preparation-benchmark"
     }
@@ -153,6 +156,41 @@ class TableCellPreparationBenchmarkTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun profileDirectMeasurementStages() {
+        val paint = PreparedProseTheme.resolve(null, PROFILE_DENSITY).paragraph.newTextPaint()
+        val width = PROFILE_WIDTH_PX
+        val texts = List(CELL_COUNT) { index -> String.format(Locale.ROOT, "R%04dC%04dXY", index / COLUMNS, index % COLUMNS).toCharArray() }
+        val breaker = LineBreaker.Builder().setBreakStrategy(LineBreaker.BREAK_STRATEGY_HIGH_QUALITY)
+            .setHyphenationFrequency(LineBreaker.HYPHENATION_FREQUENCY_NONE).build()
+        val constraints = LineBreaker.ParagraphConstraints().apply {
+            setWidth(width.toFloat())
+            setIndent(width.toFloat(), 1)
+        }
+        val shapeSamples = mutableListOf<Double>()
+        val breakSamples = mutableListOf<Double>()
+        var checksum = 0L
+        repeat(WARMUP_RUNS + MEASURED_RUNS) { run ->
+            val measured = arrayOfNulls<MeasuredText>(CELL_COUNT)
+            val shapeNanos = measureNanoTime {
+                texts.forEachIndexed { index, text ->
+                    measured[index] = MeasuredText.Builder(text).setComputeHyphenation(false)
+                        .setComputeLayout(false).appendStyleRun(paint, text.size, false).build()
+                }
+            }
+            val breakNanos = measureNanoTime {
+                measured.forEach { text -> checksum += breaker.computeLineBreaks(requireNotNull(text), constraints, 0).lineCount }
+            }
+            if (run >= WARMUP_RUNS) {
+                shapeSamples += shapeNanos / NANOS_PER_MICROSECOND / CELL_COUNT
+                breakSamples += breakNanos / NANOS_PER_MICROSECOND / CELL_COUNT
+            }
+        }
+        println("TABLE_CELL_STAGE_PROFILE shapeUs=${median(shapeSamples)} breakUs=${median(breakSamples)} " +
+            "shapeRuns=$shapeSamples breakRuns=$breakSamples checksum=$checksum")
+        assertEquals((CELL_COUNT * (WARMUP_RUNS + MEASURED_RUNS) * PROFILE_LINES_PER_CELL).toLong(), checksum)
     }
 
     private fun document(text: String) = ViewerDocument(text, listOf(ViewerBlock("paragraph", 0, false,
