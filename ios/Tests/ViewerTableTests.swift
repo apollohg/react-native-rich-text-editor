@@ -158,9 +158,7 @@ final class ViewerTableTests: XCTestCase {
     }
 
     func testLiveMountedViewerHorizontalThenVerticalPan() throws {
-        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
-            throw XCTSkip("Live simulator gesture probe is opt in")
-        }
+        try LiveGestureProbe.requireOptIn()
         let layout = try prepare(try nestedHeaderImageSource(nestedOverflow: true))
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
         let window = UIWindow(frame: UIScreen.main.bounds)
@@ -202,9 +200,7 @@ final class ViewerTableTests: XCTestCase {
     }
 
     func testLiveTableEdgeHandoff() throws {
-        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
-            throw XCTSkip("Live simulator gesture probe is opt in")
-        }
+        try LiveGestureProbe.requireOptIn()
         let layout = try prepare(try nestedHeaderImageSource(nestedOverflow: true))
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)
         let window = UIWindow(frame: UIScreen.main.bounds)
@@ -306,9 +302,7 @@ final class ViewerTableTests: XCTestCase {
     }
 
     func testLiveAtomPanPrecedesTable() throws {
-        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
-            throw XCTSkip("Live simulator gesture probe is opt in")
-        }
+        try LiveGestureProbe.requireOptIn()
         let source = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"card"}]},{"type":"table_cell","attrs":{"colwidth":[500]},"content":[{"type":"paragraph","content":[{"type":"text","text":"body"}]}]}]}]}]}"#
         let layout = try prepare(source, themeJSON: #"{"viewerAtoms":{"generation":"gesture","revision":"1","nodeTypes":["card"],"estimatedHeights":{"card":80}}}"#)
         let surface = try XCTUnwrap(layout.blocks.first { $0.tableSurface != nil }?.tableSurface)

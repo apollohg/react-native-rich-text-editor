@@ -33,6 +33,17 @@ private let cellSelectionType = "cell"
 private let documentPositionKind = "document"
 private let roomInitializationType = "room"
 
+enum LiveGestureProbe {
+    static let environmentKey = "NATIVE_TABLE_GESTURE_PROBE"
+    static let enabledValue = "1"
+
+    static func requireOptIn() throws {
+        guard ProcessInfo.processInfo.environment[environmentKey] == enabledValue else {
+            throw XCTSkip("Live simulator gesture probe is opt in")
+        }
+    }
+}
+
 enum TableToolbarTestItems {
     static let strongMark = "strong"
     static let strongLabel = "Bold"

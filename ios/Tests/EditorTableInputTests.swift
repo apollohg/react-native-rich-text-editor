@@ -1115,9 +1115,7 @@ final class EditorTableInputTests: XCTestCase {
     }
 
     func testLiveCellHandleGestureChangesEngineSelection() throws {
-        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
-            throw XCTSkip("Live simulator gesture probe is opt in")
-        }
+        try LiveGestureProbe.requireOptIn()
         let editorId = makeV2Editor(configJson: tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
@@ -1183,9 +1181,7 @@ final class EditorTableInputTests: XCTestCase {
     }
 
     func testLiveColumnResizeChangesFirstColumnWhileSecondCellIsSelected() throws {
-        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
-            throw XCTSkip("Live simulator gesture probe is opt in")
-        }
+        try LiveGestureProbe.requireOptIn()
         try withMountedHandles(document: fixedWidthFourCellDocument, size: CGSize(width: 360, height: 400),
                                anchorIndex: 3, headIndex: 3) { fixture in
             fixture.view.frame = CGRect(x: 0, y: 100, width: 360, height: 240)
@@ -1239,9 +1235,7 @@ final class EditorTableInputTests: XCTestCase {
     }
 
     private func withLiveProbeTable(_ body: (MountedTableFixture) throws -> Void) throws {
-        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
-            throw XCTSkip("Live simulator gesture probe is opt in")
-        }
+        try LiveGestureProbe.requireOptIn()
         try withMountedTable(document: try narrowColumnGridDocument(headerRow: false),
                              size: Self.liveProbeWindowSize, cellSelection: nil) { fixture in
             fixture.view.frame = Self.liveProbeHostFrame
@@ -1456,9 +1450,7 @@ final class EditorTableInputTests: XCTestCase {
     }
 
     func testLiveMountedEditorPansInactiveAndActiveCellWithoutDocumentMutation() throws {
-        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
-            throw XCTSkip("Live simulator gesture probe is opt in")
-        }
+        try LiveGestureProbe.requireOptIn()
         let editorId = makeV2Editor(configJson: tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
@@ -1539,9 +1531,7 @@ final class EditorTableInputTests: XCTestCase {
     }
 
     func testLiveNativeSelectionHandlePrecedesTablePan() throws {
-        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
-            throw XCTSkip("Live simulator gesture probe is opt in")
-        }
+        try LiveGestureProbe.requireOptIn()
         let editorId = makeV2Editor(configJson: tableConfig)
         defer { destroyV2Editor(id: editorId) }
         let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
@@ -2460,7 +2450,7 @@ final class EditorTableInputTests: XCTestCase {
             var focusEvents: [[String: Any]] = []
             fixture.host.onFocusChangeForTesting = { focusEvents.append($0) }
             _ = try fixture.activateCell(1)
-            flushMainQueue()
+            RunLoop.main.run(until: Date())
             XCTAssertEqual(focusEvents.compactMap { $0["isFocused"] as? Bool }, [true], "\(focusEvents)")
             XCTAssertEqual(focusEvents.last?["editorId"] as? String, fixture.adapter.editorId)
         }
