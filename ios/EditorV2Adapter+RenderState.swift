@@ -344,6 +344,31 @@ extension EditorV2Adapter {
         return refreshInternal(mirrorSelection: lastSyncedScalarSelection)?.updateJSON
     }
 
+    func currentSelectionStateJSON() -> String? {
+        guard hasCurrentSelectionState || currentStateJSON() != nil,
+              hasCurrentSelectionState,
+              let documentRevision = cachedAtomicRenderDocumentRevision,
+              let selection = cachedAtomicRenderSelectionObject,
+              let activeState = cachedActiveState,
+              let history = cachedHistoryState,
+              let data = try? JSONSerialization.data(withJSONObject: [
+                  "documentVersion": String(documentRevision),
+                  "selection": selection,
+                  "activeState": activeState,
+                  "historyState": ["canUndo": history.canUndo, "canRedo": history.canRedo]
+              ])
+        else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private var hasCurrentSelectionState: Bool {
+        guard !destroyed, cachedAtomicRenderDocumentRevision == baseDocumentRevision,
+              let rendered = cachedAuthoritativeScalarSelection
+        else { return false }
+        guard let synced = lastSyncedScalarSelection else { return true }
+        return synced == rendered
+    }
+
     /// The initial bind render. The host passes this exact snapshot directly
     /// to the text view and toolbar, so it must not be replayed by a later
     /// independent current-state read.

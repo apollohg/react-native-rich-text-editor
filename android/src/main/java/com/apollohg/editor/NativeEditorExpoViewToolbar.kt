@@ -20,10 +20,9 @@ internal fun NativeEditorExpoView.refreshToolbarStateFromEditorSelection(): Stri
         noteDocumentVersionFromUpdateJSON(stateJson)
         return stateJson
     }
-    val driver = richTextView.editorEditText.v2Driver
-    val stateJson = driver?.currentStateJson() ?: return null
+    val stateJson = richTextView.editorEditText.v2Driver?.currentSelectionStateJson() ?: return null
     noteDocumentVersionFromUpdateJSON(stateJson)
-    val state = NativeToolbarState.fromUpdateJson(stateJson, driver as? EditorV2Adapter) ?: return null
+    val state = NativeToolbarState.fromUpdateJson(stateJson) ?: return null
     toolbarState = state
     keyboardToolbarView.applyState(state)
     return stateJson

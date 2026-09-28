@@ -2369,6 +2369,7 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(event["editorId"] as? String, fixture.adapter.editorId)
             let stateJSON = try XCTUnwrap(event["stateJson"] as? String, "\(event)")
             let state = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(stateJSON.utf8)) as? [String: Any])
+            XCTAssertEqual(Set(state.keys), Self.selectionStateKeys, "the selection event carries only what JS reads")
             let commands = try XCTUnwrap((state["activeState"] as? [String: Any])?["commands"] as? [String: Bool])
             let published = TableAccessibilityAction.all.filter { commands[$0.applicability] == true }.map(\.key)
             let native = try XCTUnwrap(fixture.adapter.cachedActiveState?["commands"] as? [String: Any])
@@ -3765,4 +3766,8 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertEqual(coordinator.inputInstanceCountForTesting, 1)
         XCTAssertEqual(coordinator.phase, .bound(cellSourcePos: 30, documentRevision: "4", positionEpoch: "9"))
     }
+}
+
+private extension EditorTableInputTests {
+    static let selectionStateKeys: Set<String> = ["documentVersion", "selection", "activeState", "historyState"]
 }

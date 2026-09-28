@@ -317,7 +317,7 @@ internal class NativeEditorExpoViewControlledUpdateReconciliationTest :
 
             assertEquals(
                 "backend calls=${backend.calls}",
-                renderCallsBeforeControlledUpdate + 2,
+                renderCallsBeforeControlledUpdate + 1,
                 adapter.renderUpdateCallCountForTesting
             )
             assertEquals("native", editText.text?.toString())

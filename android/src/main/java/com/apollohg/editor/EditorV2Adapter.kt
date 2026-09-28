@@ -239,10 +239,13 @@ internal class EditorV2Adapter private constructor(
                 nativeOwnerToken = token
                 nativeOwnerId = token.toString()
                 positionEpoch = null
-                cachedTableInputMappings = null
             }
         }
         releasedOwner?.let { backend.releaseNativeBinding(editorId, it) }
+        val renderedRevision = cachedAtomicRenderDocumentRevision
+        val repinned = releasedOwner != null && !destroyed && renderedRevision == baseDocumentRevision &&
+            renderedRevision != null && pinCurrentPositionEpoch(renderedRevision)
+        if (!repinned) cachedTableInputMappings = null
     }
 
     internal fun releaseNativeBindingOwner(token: Long) {
@@ -461,6 +464,21 @@ internal class EditorV2Adapter private constructor(
 
     override fun currentStateJson(): String? =
         refreshInternal(cachedAuthoritativeScalarSelection?.copyOf(), stripViewSelection = false)
+
+    override fun currentSelectionStateJson(): String? {
+        if (!hasCurrentSelectionState()) currentStateJson() ?: return null
+        if (!hasCurrentSelectionState()) return null
+        return JSONObject()
+            .put("documentVersion", requireNotNull(cachedAtomicRenderDocumentRevision).toString())
+            .put("selection", cachedAtomicRenderSelectionObject)
+            .put("activeState", cachedActiveState)
+            .put("historyState", cachedHistoryState)
+            .toString()
+    }
+
+    private fun hasCurrentSelectionState(): Boolean =
+        !destroyed && cachedAtomicRenderDocumentRevision == baseDocumentRevision &&
+            cachedAtomicRenderSelectionObject != null && cachedActiveState != null && cachedHistoryState != null
 
     override fun documentHtml(): String? {
         if (destroyed) return null

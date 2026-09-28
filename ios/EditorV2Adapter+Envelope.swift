@@ -120,13 +120,21 @@ extension EditorV2Adapter {
         nativeOwnerId = Self.nextNativeOwnerId
         nativeOwnerToken = token
         Self.nativeOwnerLock.unlock()
-        if cachedTablePresentation != nil, positionEpoch == nil {
-            guard let renderJSON = cachedAtomicRenderJSON,
-                  adoptExternalRender(renderJSON) != nil
+        if let presentation = cachedTablePresentation, positionEpoch == nil {
+            guard presentation.documentRevision == baseDocumentRevision,
+                  pinCurrentPositionEpoch(presentation.documentRevision)
             else {
                 releaseNativeOwner()
                 return
             }
+            cachedTablePresentation = EditorTablePresentationSnapshot(
+                documentRevision: presentation.documentRevision,
+                positionEpoch: positionEpoch,
+                tableAttributes: presentation.tableAttributes,
+                tableRecords: presentation.tableRecords,
+                tableSourceIDs: presentation.tableSourceIDs,
+                tableInputMappings: presentation.tableInputMappings
+            )
         }
     }
 

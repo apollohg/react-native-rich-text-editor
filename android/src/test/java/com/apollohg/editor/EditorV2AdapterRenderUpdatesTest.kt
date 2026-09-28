@@ -158,6 +158,24 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
         assertNull(adapter.cachedTableInputMappings)
     }
 
+    @Test
+    fun `owner replacement re-pins the epoch and keeps the current table input mappings`() {
+        val adapter = makeAdapter()
+        adapter.claimNativeBindingIfUnowned(1L)
+        sessionOf(adapter).revision = TABLE_SNAPSHOT_REVISION
+        assertNotNull(adoptExternalRender(adapter, tableInputMappingSnapshot().put("positionEpoch", "1").toString()))
+        val mappings = requireNotNull(adapter.cachedTableInputMappings)
+        backend.calls.clear()
+
+        adapter.bindAutonomousErrorOwner(2L, {}) {}
+
+        println("owner replacement backend calls: ${backend.calls}")
+        assertTrue("the replacement owner pins its own epoch", backend.calls.contains("pinPositionEpoch"))
+        assertEquals("no second full render", 0, backend.calls.count { it == "renderUpdate" })
+        assertNotNull(adapter.positionEpoch)
+        assertTrue("the mappings of the current render survive", mappings === adapter.cachedTableInputMappings)
+    }
+
     private fun tableInputMappingSnapshot(): JSONObject {
         val attrsKey = "a".repeat(64)
         val table = JSONObject("""{
@@ -170,7 +188,7 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
                     {"type":"blockStart","nodeType":"paragraph","depth":0},
                     {"type":"textRun","text":"base","marks":[]},{"type":"blockEnd"}]}]
         }""")
-        return JSONObject(atomicRenderSnapshot("base", "1"))
+        return JSONObject(atomicRenderSnapshot("base", TABLE_SNAPSHOT_REVISION.toString()))
             .put("renderBlocks", org.json.JSONArray().put(org.json.JSONArray().put(JSONObject().put("type", "table").put("tableId", "t0"))))
             .put("tableAttributes", JSONObject().put(attrsKey, "{}"))
             .put("tableRecords", JSONObject().put("t0", table))
@@ -895,5 +913,9 @@ internal class EditorV2AdapterRenderUpdatesTest : EditorV2AdapterTestFixture() {
         val session = sessionOf(adapter)
         assertEquals(2uL, session.revision)
         assertEquals(2uL, adapter.baseDocumentRevision)
+    }
+
+    private companion object {
+        const val TABLE_SNAPSHOT_REVISION = 1uL
     }
 }
