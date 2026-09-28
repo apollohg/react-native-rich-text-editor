@@ -10,6 +10,7 @@ final class CoreTextProseLayoutEngine {
     var tableCellPreparationObserver: ((Int) -> Void)?
     var tableCellShapeBuildObserver: ((Int) -> Void)?
     var tableCellBindingObserver: ((Int) -> Void)?
+    var reusableTableCellContent: ((FfiViewerTableCell, Int) -> PreparedProseLayout?)?
 
     final class HighlightingScope {
         let configuration: NativeCodeHighlightConfiguration
@@ -177,6 +178,11 @@ final class CoreTextProseLayoutEngine {
                     sourceTable: table,
                     sourceAttributes: document.tableAttributes
                 ) { cell, cellWidth in
+                    if !cellMode, let source = cellsByPosition[cell.sourcePosition],
+                       let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: cellWidth, scale: displayScale),
+                       let reused = self.reusableTableCellContent?(source, widthPixels) {
+                        return reused
+                    }
                     guard let source = cellsByPosition[cell.sourcePosition],
                           let child = try? document.cellDocument(for: source).withPreparedTheme(cellTheme)
                     else {

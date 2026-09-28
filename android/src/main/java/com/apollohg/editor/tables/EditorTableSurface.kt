@@ -68,6 +68,7 @@ import com.apollohg.editor.viewer.StaticLayoutAndroidProseLayoutEngine
 import com.apollohg.editor.viewer.ViewerBlock
 import com.apollohg.editor.viewer.ViewerDocument
 import org.json.JSONObject
+import uniffi.editor_core.FfiViewerTableCell
 
 internal class RootTableHeightSpan(val heightPx: Int) : ReplacementSpan() {
     override fun getSize(paint: Paint, text: CharSequence?, start: Int, end: Int,
@@ -129,7 +130,33 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         const val MAXIMUM_COLUMN_WIDTH = 10_000
     }
     private data class Entry(val surface: ViewerTableSurface, val localBounds: Rect,
-                             val occupiedHeight: Int, val minimumColumnWidth: Int)
+                             val occupiedHeight: Int, val minimumColumnWidth: Int, val appearance: String)
+
+    private class ReusableCellContents(entry: Entry?, appearance: String) {
+        private data class Key(val contentKey: String, val header: Boolean, val attributesKey: String, val widthPx: Int)
+
+        private val contents = mutableMapOf<Key, ArrayDeque<PreparedProseLayout>>()
+
+        init {
+            val reusable = entry?.takeIf { it.appearance == appearance }
+            val source = reusable?.surface?.sourceTable
+            reusable?.surface?.cells?.forEach { cell ->
+                val sourceCell = cell.sourceCellIndex?.let { source?.cells?.getOrNull(it) }
+                if (sourceCell != null && isPositionFree(cell.content)) {
+                    contents.getOrPut(Key(sourceCell.contentKey, sourceCell.header, sourceCell.attrsKey,
+                        cell.content.key.widthPx)) { ArrayDeque() }.addLast(cell.content)
+                }
+            }
+        }
+
+        fun take(cell: FfiViewerTableCell, widthPx: Int): PreparedProseLayout? =
+            contents[Key(cell.contentKey, cell.header, cell.attrsKey, widthPx)]?.removeFirstOrNull()
+
+        private fun isPositionFree(layout: PreparedProseLayout): Boolean =
+            layout.error == null && layout.viewerAtoms.isEmpty() &&
+                layout.blocks.all { it.imageAttachment == null && it.tableSurface == null } &&
+                layout.interactions.all { it.docPos == null }
+    }
     private data class TableResizePreview(val edge: TableResizeEdge, val width: Int)
     private data class PreparationKey(val adapter: EditorV2Adapter, val revision: ULong,
                                       val width: Int, val appearanceRevision: Long,
@@ -168,6 +195,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     private var pendingCellDrag: PendingCellDrag? = null
     private var cellDragLifted = false
     val isCellEditMenuVisible: Boolean get() = cellEditMenu.isVisible
+    internal var onTableCellPreparedForTesting: ((Int) -> Unit)? = null
     private data class ActiveCell(val tableId: String, val cellIndex: Int, val sourcePos: Long)
     private var activeCell: ActiveCell? = null
     private var applyingCellUpdate = false
@@ -897,7 +925,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 semanticGeneration = "editor-table", editorTheme = theme)
                 .copy(insetTopPx = 0, insetRightPx = 0, insetBottomPx = 0, insetLeftPx = 0,
                     tableDirection = tableDirection)
-            val engine = StaticLayoutAndroidProseLayoutEngine()
+            val engine = StaticLayoutAndroidProseLayoutEngine().apply {
+                tableCellPreparationObserver = onTableCellPreparedForTesting
+            }
+            val appearance = "${input.renderAppearanceRevision}:$tableDirection:$density"
             val presentationIdentities = adapter.cachedTableRecords.mapValues { (_, record) ->
                 "${adapter.editorId}:${adapter.tablePresentationDocumentGeneration}:${record.getString("sourceId")}"
             }
@@ -921,13 +952,15 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 val layoutKey = ProseLayoutKey(semantic, width, "editor-table-${input.renderAppearanceRevision}",
                     0, 0, density.toBits().toLong(), revision.toLong(), semantic,
                     tableDirection = tableDirection)
+                val reusable = ReusableCellContents(entries[id], appearance)
+                engine.reusableTableCellContent = reusable::take
                 val result = engine.prepare(document, layoutKey, preparedTheme, width, density, false)
                 val block = result.blocks.firstOrNull { it.tableSurface != null }
                     ?: return@mapNotNull null
                 val bounds = block.tableBounds ?: return@mapNotNull null
                 if (result.error != null || result.heightPx <= 0) return@mapNotNull null
                 id to Entry(requireNotNull(block.tableSurface), bounds, result.heightPx,
-                    minimumColumnWidth)
+                    minimumColumnWidth, appearance)
             }.toMap()
             entries = prepared
             key = nextKey

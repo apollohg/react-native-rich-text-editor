@@ -35,6 +35,7 @@ import com.apollohg.editor.tables.TableLayoutDirection
 import com.apollohg.editor.tables.physical
 import com.apollohg.editor.tables.ViewerTableSurface
 import java.text.Bidi
+import uniffi.editor_core.FfiViewerTableCell
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
@@ -205,6 +206,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
     internal var staticLayoutsBuilt: Int = 0
         private set
     internal var tableCellPreparationObserver: ((Int) -> Unit)? = null
+    internal var reusableTableCellContent: ((FfiViewerTableCell, Int) -> PreparedProseLayout?)? = null
 
     override fun prepare(
         document: ViewerDocument,
@@ -431,21 +433,20 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     sourceAttributes = document.tableAttributes
                 ) { cell, cellWidth ->
                     val source = cellsByPosition[cell.sourcePosition]
+                    val childWidth = cellWidth.toInt().coerceAtLeast(1)
+                    if (!cellMode) {
+                        source?.let { reusableTableCellContent?.invoke(it, childWidth) }?.let { return@ViewerTableSurface it }
+                    }
                     val child = source?.let { document.cellDocument(it) }
                     if (child == null) return@ViewerTableSurface PreparedProseLayout.error(
                         key, cellWidth.toInt(), ProseViewerError.layout("Invalid table cell.")
                     )
-                    val childWidth = cellWidth.toInt().coerceAtLeast(1)
                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
                     val childTheme = theme.copy(
                         insetTopPx = 0,
                         insetRightPx = 0,
                         insetBottomPx = 0,
                         insetLeftPx = 0
-                    )
-                    val shapeKey = cellShapeKey(
-                        cell.contentKey, child, childWidth, childTheme, density,
-                        key.nativeFontRevision, key.fontEnvironmentRevision
                     )
                     val build = {
                         tableCellPreparationObserver?.invoke(cell.sourcePosition)
@@ -457,6 +458,10 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                     if (cellShapeContext == null || theme.codeHighlighting != null) {
                         build()
                     } else {
+                        val shapeKey = cellShapeKey(
+                            cell.contentKey, child, childWidth, childTheme, density,
+                            key.nativeFontRevision, key.fontEnvironmentRevision
+                        )
                         cellShapeContext.resolve(shapeKey, build) { shape ->
                             bindCellShape(
                                 shape, child, childKey, childTheme, childWidth, density,

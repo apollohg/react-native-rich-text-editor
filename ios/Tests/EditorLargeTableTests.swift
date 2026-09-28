@@ -33,6 +33,12 @@ final class EditorLargeTableTests: XCTestCase {
         static let straddlingCells = 1
     }
 
+    private enum EditedTable {
+        static let rows = 50
+        static let columns = 4
+        static let typed = "x"
+    }
+
     private static let twentyThousandSlotTables = [(rows: 1000, columns: 20), (rows: 100, columns: 200)]
 
     private var maximumRetainedPresentations: Int {
@@ -91,5 +97,36 @@ final class EditorLargeTableTests: XCTestCase {
                 XCTAssertNotNil(surface.cellHit(at: centre), "\(label): the cell under the viewport centre is presented")
             }
         }
+    }
+
+    func testTypingInOneCellPreparesOnlyThatCell() throws {
+        let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let window = UIWindow(frame: CGRect(origin: .zero, size: Window.viewport))
+        let view = RichTextEditorView(frame: window.bounds)
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        let document = try plainTableDocument(rows: EditedTable.rows, columns: EditedTable.columns)
+        XCTAssertTrue(view.textView.applyUpdateJSON(try XCTUnwrap(adapter.setContentJson(document))))
+        view.layoutIfNeeded()
+        let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let point = CGPoint(x: surface.bounds.midX, y: surface.bounds.midY)
+        let edited = try XCTUnwrap(surface.cellHit(at: point))
+        XCTAssertTrue(view.activateTableCell(at: point))
+        let input = view.activeTextInput
+        XCTAssertTrue(input.becomeFirstResponder())
+        var prepared: [Int] = []
+        surface.onTableCellPreparedForTesting = { prepared.append($0) }
+
+        input.insertText(EditedTable.typed)
+        view.layoutIfNeeded()
+
+        let editedText = try adapter.tableCellTexts().joined().filter { $0.contains(EditedTable.typed) }
+        print("typing into cell \(edited.cellIndex) prepared cells \(prepared) of \(EditedTable.rows * EditedTable.columns)")
+        XCTAssertEqual(editedText.count, 1, "the keystroke lands in exactly one cell")
+        XCTAssertEqual(prepared.count, 1, "only the edited cell is measured again: \(prepared)")
     }
 }

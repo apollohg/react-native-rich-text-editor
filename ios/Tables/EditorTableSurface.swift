@@ -94,6 +94,43 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         let surface: ViewerTableSurface
         let localTableBounds: CGRect
         let occupiedHeight: CGFloat
+        let themeDigest: String
+    }
+
+    private struct ReusableCellContents {
+        private struct Key: Hashable {
+            let contentKey: String
+            let header: Bool
+            let attributesKey: String
+            let widthPixels: Int
+        }
+
+        private var contents: [Key: [PreparedProseLayout]] = [:]
+
+        init(_ entry: Entry?, themeDigest: String) {
+            guard let entry, entry.themeDigest == themeDigest, let source = entry.surface.sourceTable else { return }
+            for cell in entry.surface.cells.reversed() {
+                guard let index = cell.sourceCellIndex, source.cells.indices.contains(index),
+                      Self.isPositionFree(cell.content)
+                else { continue }
+                let sourceCell = source.cells[index]
+                contents[Key(contentKey: sourceCell.contentKey, header: sourceCell.header,
+                             attributesKey: sourceCell.attrsKey, widthPixels: cell.content.key.widthPixels),
+                         default: []].append(cell.content)
+            }
+        }
+
+        mutating func take(_ cell: FfiViewerTableCell, widthPixels: Int) -> PreparedProseLayout? {
+            let key = Key(contentKey: cell.contentKey, header: cell.header, attributesKey: cell.attrsKey,
+                          widthPixels: widthPixels)
+            return contents[key]?.popLast()
+        }
+
+        private static func isPositionFree(_ layout: PreparedProseLayout) -> Bool {
+            layout.error == nil
+                && layout.blocks.allSatisfy { $0.atomSlot == nil && $0.imageAttachment == nil && $0.tableSurface == nil }
+                && layout.interactions.allSatisfy { $0.docPos == nil }
+        }
     }
 
     let inputCoordinator: EditorTableInputCoordinator
@@ -195,6 +232,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private(set) var resizePreview: TableResizePreview?
     private var preparedResizePreview: TableResizePreview?
     var onSelectionGeometryMayChange: (() -> Void)?
+    var onTableCellPreparedForTesting: ((Int) -> Void)?
     private lazy var cellEditMenu = TableCellEditMenu(
         anchor: { [weak self] in self?.cellEditMenuAnchor() },
         visibilityChanged: { [weak self] in self?.onSelectionGeometryMayChange?() }
@@ -1192,6 +1230,10 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 tableSourceIDs: presentation.tableSourceIDs
             )
             guard let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: width, scale: displayScale) else { return }
+            var reusable = ReusableCellContents(self.entries[tableID], themeDigest: themeDigest)
+            let engine = CoreTextProseLayoutEngine()
+            engine.tableCellPreparationObserver = onTableCellPreparedForTesting
+            engine.reusableTableCellContent = { cell, widthPixels in reusable.take(cell, widthPixels: widthPixels) }
             let key = ProseLayoutKey(
                 semanticKey: document.semanticKey,
                 widthPixels: widthPixels,
@@ -1203,7 +1245,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 generationIdentity: document.semanticKey,
                 semanticGenerationIdentity: document.semanticKey
             )
-            guard let prepared = try? CoreTextProseLayoutEngine().prepare(
+            guard let prepared = try? engine.prepare(
                 document: document,
                 key: key,
                 widthPoints: width,
@@ -1216,7 +1258,8 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
                 tableID: tableID,
                 surface: surface,
                 localTableBounds: localTableBounds,
-                occupiedHeight: prepared.size.height
+                occupiedHeight: prepared.size.height,
+                themeDigest: themeDigest
             )
         }
     }
