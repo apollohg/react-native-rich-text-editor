@@ -1,4 +1,5 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 
 use yrs::{IndexScope, StickyIndex};
 
@@ -8,7 +9,7 @@ use crate::session::{ErrorDomain, SessionError};
 pub(crate) struct BoundaryAnchors {
     pub(crate) before: StickyIndex,
     pub(crate) after: StickyIndex,
-    pub(crate) ancestor: Option<u32>,
+    pub(crate) ancestor: Option<Arc<AncestorNode>>,
     pub(crate) pinned_cell: Option<CellTextPosition>,
 }
 
@@ -17,7 +18,6 @@ pub(crate) struct AncestorAnchors {
     pub(crate) before: StickyIndex,
     pub(crate) after: StickyIndex,
     pub(crate) table_cell: bool,
-    pub(crate) parent: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,44 +53,183 @@ pub(crate) struct PinnedTableCell {
     pub(crate) run_structure: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AncestorNode {
+    pub(crate) anchors: AncestorAnchors,
+    pub(crate) parent: Option<Arc<AncestorNode>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PinnedCellSpan {
+    pub(crate) cell: PinnedTableCell,
+    pub(crate) points: Vec<(u32, CellTextPoint)>,
+}
+
 #[derive(Debug)]
-pub(crate) struct EpochBoundaries {
+pub(crate) struct EpochBlockChunk {
     pub(crate) anchors: Vec<BoundaryAnchors>,
-    pub(crate) ancestors: Vec<AncestorAnchors>,
-    pub(crate) cells: Vec<PinnedTableCell>,
+    pub(crate) ancestor: Option<Arc<AncestorNode>>,
+    pub(crate) retained_bytes: usize,
 }
 
-impl EpochBoundaries {
-    pub(crate) fn ancestor_chain<'epoch>(
-        &'epoch self,
-        boundary: &BoundaryAnchors,
-    ) -> impl Iterator<Item = &'epoch AncestorAnchors> + Clone + 'epoch {
-        ancestor_chain(&self.ancestors, boundary.ancestor)
+#[derive(Debug)]
+pub(crate) struct EpochSnapshot {
+    pub(crate) yrs_state_epoch: u64,
+    pub(crate) document_revision: u64,
+    pub(crate) chunks: Arc<[Arc<EpochBlockChunk>]>,
+    pub(crate) scalar_starts: Arc<[u32]>,
+    pub(crate) cells: Arc<[Arc<PinnedCellSpan>]>,
+    pub(crate) retained_bytes: usize,
+}
+
+impl BoundaryAnchors {
+    pub(crate) fn ancestor_chain(&self) -> impl Iterator<Item = &AncestorAnchors> + Clone {
+        std::iter::successors(self.ancestor.as_deref(), |node| node.parent.as_deref())
+            .map(|node| &node.anchors)
     }
 
-    pub(crate) fn inside_table_cell(&self, boundary: &BoundaryAnchors) -> bool {
-        self.ancestor_chain(boundary)
-            .any(|ancestor| ancestor.table_cell)
+    pub(crate) fn inside_table_cell(&self) -> bool {
+        self.ancestor_chain().any(|ancestor| ancestor.table_cell)
     }
 }
 
-fn ancestor_chain(
-    ancestors: &[AncestorAnchors],
-    innermost: Option<u32>,
-) -> impl Iterator<Item = &AncestorAnchors> + Clone {
-    std::iter::successors(
-        innermost.and_then(|index| ancestors.get(usize::try_from(index).ok()?)),
-        move |ancestor| {
-            ancestor
-                .parent
-                .and_then(|index| ancestors.get(usize::try_from(index).ok()?))
-        },
-    )
+impl EpochBlockChunk {
+    pub(crate) fn new(anchors: Vec<BoundaryAnchors>) -> Option<Self> {
+        let retained_bytes = anchors.iter().try_fold(
+            anchors
+                .capacity()
+                .checked_mul(std::mem::size_of::<BoundaryAnchors>())?,
+            |total, boundary| {
+                total
+                    .checked_add(sticky_heap_bytes(&boundary.before))?
+                    .checked_add(sticky_heap_bytes(&boundary.after))
+            },
+        )?;
+        Some(Self {
+            ancestor: anchors
+                .first()
+                .and_then(|boundary| boundary.ancestor.clone()),
+            anchors,
+            retained_bytes,
+        })
+    }
+}
+
+impl EpochSnapshot {
+    pub(crate) fn new(
+        yrs_state_epoch: u64,
+        document_revision: u64,
+        chunks: Vec<Arc<EpochBlockChunk>>,
+        cells: Vec<Arc<PinnedCellSpan>>,
+    ) -> Option<Self> {
+        let mut scalar_starts = Vec::with_capacity(chunks.len());
+        let mut start = 0u32;
+        let mut retained_bytes = chunks
+            .len()
+            .checked_mul(std::mem::size_of::<Arc<EpochBlockChunk>>() + std::mem::size_of::<u32>())?
+            .checked_add(
+                cells
+                    .len()
+                    .checked_mul(std::mem::size_of::<Arc<PinnedCellSpan>>())?,
+            )?;
+        let mut ancestors = HashSet::new();
+        for chunk in &chunks {
+            scalar_starts.push(start);
+            start = start.checked_add(u32::try_from(chunk.anchors.len()).ok()?)?;
+            retained_bytes = retained_bytes
+                .checked_add(chunk.retained_bytes)?
+                .checked_add(std::mem::size_of::<EpochBlockChunk>())?;
+            let mut previous = None;
+            for innermost in std::iter::once(chunk.ancestor.as_deref()).chain(
+                chunk
+                    .anchors
+                    .iter()
+                    .map(|boundary| boundary.ancestor.as_deref()),
+            ) {
+                let identity = innermost.map(|node| node as *const AncestorNode);
+                if identity == previous {
+                    continue;
+                }
+                previous = identity;
+                let mut current = innermost;
+                while let Some(node) = current {
+                    if !ancestors.insert(node as *const AncestorNode) {
+                        break;
+                    }
+                    retained_bytes = retained_bytes
+                        .checked_add(std::mem::size_of::<AncestorNode>())?
+                        .checked_add(sticky_heap_bytes(&node.anchors.before))?
+                        .checked_add(sticky_heap_bytes(&node.anchors.after))?;
+                    current = node.parent.as_deref();
+                }
+            }
+        }
+        for span in &cells {
+            retained_bytes = retained_bytes
+                .checked_add(std::mem::size_of::<PinnedCellSpan>())?
+                .checked_add(
+                    span.points
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<(u32, CellTextPoint)>())?,
+                )?;
+        }
+        Some(Self {
+            yrs_state_epoch,
+            document_revision,
+            chunks: chunks.into(),
+            scalar_starts: scalar_starts.into(),
+            cells: cells.into(),
+            retained_bytes,
+        })
+    }
+
+    pub(crate) fn boundary_count(&self) -> usize {
+        self.scalar_starts
+            .last()
+            .zip(self.chunks.last())
+            .map_or(0, |(start, chunk)| *start as usize + chunk.anchors.len())
+    }
+
+    pub(crate) fn boundary(&self, index: u32) -> Option<EpochBoundary<'_>> {
+        let block = self
+            .scalar_starts
+            .partition_point(|start| *start <= index)
+            .checked_sub(1)?;
+        let anchors = self
+            .chunks
+            .get(block)?
+            .anchors
+            .get(usize::try_from(index.checked_sub(self.scalar_starts[block])?).ok()?)?;
+        Some(EpochBoundary {
+            anchors,
+            pinned_cell: anchors.pinned_cell.and_then(|position| {
+                Some(PinnedCellBoundary {
+                    cell: &self.cells.get(position.cell)?.cell,
+                    point: position.point,
+                })
+            }),
+            document_revision: self.document_revision,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ancestor_count(&self) -> usize {
+        let mut ancestors = HashSet::new();
+        for boundary in self.chunks.iter().flat_map(|chunk| &chunk.anchors) {
+            let mut current = boundary.ancestor.as_deref();
+            while let Some(node) = current {
+                if !ancestors.insert(node as *const AncestorNode) {
+                    break;
+                }
+                current = node.parent.as_deref();
+            }
+        }
+        ancestors.len()
+    }
 }
 
 pub(crate) struct EpochBoundary<'epoch> {
     pub(crate) anchors: &'epoch BoundaryAnchors,
-    pub(crate) ancestors: &'epoch [AncestorAnchors],
     pub(crate) pinned_cell: Option<PinnedCellBoundary<'epoch>>,
     pub(crate) document_revision: u64,
 }
@@ -99,7 +238,7 @@ impl<'epoch> EpochBoundary<'epoch> {
     pub(crate) fn ancestor_chain(
         &self,
     ) -> impl Iterator<Item = &'epoch AncestorAnchors> + Clone + 'epoch {
-        ancestor_chain(self.ancestors, self.anchors.ancestor)
+        self.anchors.ancestor_chain()
     }
 }
 
@@ -127,8 +266,7 @@ pub(crate) struct ResolvedEpochRange {
 #[derive(Debug)]
 struct PositionEpoch {
     editor_lineage: u64,
-    document_revision: u64,
-    boundaries: EpochBoundaries,
+    snapshot: Arc<EpochSnapshot>,
     retained_bytes: usize,
 }
 
@@ -184,10 +322,9 @@ impl PositionEpochStore {
         &mut self,
         owner_id: u64,
         editor_lineage: u64,
-        document_revision: u64,
-        boundaries: EpochBoundaries,
+        snapshot: Arc<EpochSnapshot>,
     ) -> Result<u64, SessionError> {
-        self.admit_boundary_count(boundaries.anchors.len())?;
+        self.admit_boundary_count(snapshot.boundary_count())?;
         let replacing = self.owner_pins.get(&owner_id).copied();
         if replacing.is_none() && self.owner_pins.len() >= self.limits.max_owners {
             return Err(limit_error(
@@ -197,7 +334,7 @@ impl PositionEpochStore {
             ));
         }
 
-        let retained_bytes = retained_bytes(&boundaries)?;
+        let retained_bytes = snapshot.retained_bytes;
         let replaced_bytes = replacing
             .and_then(|epoch_id| self.epochs.get(&epoch_id))
             .map_or(0, |epoch| epoch.retained_bytes);
@@ -237,8 +374,7 @@ impl PositionEpochStore {
             epoch_id,
             PositionEpoch {
                 editor_lineage,
-                document_revision,
-                boundaries,
+                snapshot,
                 retained_bytes,
             },
         );
@@ -260,27 +396,12 @@ impl PositionEpochStore {
         if epoch.editor_lineage != editor_lineage {
             return Err(invalid_epoch());
         }
-        let anchors = epoch
-            .boundaries
-            .anchors
-            .get(usize::try_from(index).map_err(|_| invalid_epoch())?)
-            .ok_or_else(|| {
-                SessionError::new(
-                    ErrorDomain::Boundary,
-                    "POSITION_INVALID",
-                    "position epoch offset is outside the rendered document",
-                )
-            })?;
-        Ok(EpochBoundary {
-            anchors,
-            ancestors: &epoch.boundaries.ancestors,
-            pinned_cell: anchors.pinned_cell.and_then(|position| {
-                Some(PinnedCellBoundary {
-                    cell: epoch.boundaries.cells.get(position.cell)?,
-                    point: position.point,
-                })
-            }),
-            document_revision: epoch.document_revision,
+        epoch.snapshot.boundary(index).ok_or_else(|| {
+            SessionError::new(
+                ErrorDomain::Boundary,
+                "POSITION_INVALID",
+                "position epoch offset is outside the rendered document",
+            )
         })
     }
 
@@ -298,34 +419,6 @@ impl PositionEpochStore {
         self.owner_pins.clear();
         self.retained_bytes = 0;
     }
-}
-
-fn retained_bytes(boundaries: &EpochBoundaries) -> Result<usize, SessionError> {
-    let overflow = || limit_error("maxPositionEpochRetainedBytes", usize::MAX, usize::MAX);
-    fn allocated<T>(values: &Vec<T>) -> Option<usize> {
-        values.capacity().checked_mul(std::mem::size_of::<T>())
-    }
-    let fixed = allocated(&boundaries.anchors)
-        .zip(allocated(&boundaries.ancestors))
-        .zip(allocated(&boundaries.cells))
-        .and_then(|((anchors, ancestors), cells)| {
-            anchors.checked_add(ancestors)?.checked_add(cells)
-        })
-        .ok_or_else(overflow)?;
-    boundaries
-        .anchors
-        .iter()
-        .flat_map(|boundary| [&boundary.before, &boundary.after])
-        .chain(
-            boundaries
-                .ancestors
-                .iter()
-                .flat_map(|ancestor| [&ancestor.before, &ancestor.after]),
-        )
-        .try_fold(fixed, |total, sticky| {
-            total.checked_add(sticky_heap_bytes(sticky))
-        })
-        .ok_or_else(overflow)
 }
 
 fn sticky_heap_bytes(sticky: &StickyIndex) -> usize {

@@ -1,12 +1,12 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::Arc;
 
 use crate::model::{Document, Node};
 use crate::position::PositionMap;
 use crate::position_epoch::{
-    CellTextAttachment, CellTextPoint, PinnedCellBoundary, PinnedTableCell,
+    CellTextAttachment, CellTextPoint, PinnedCellBoundary, PinnedCellSpan, PinnedTableCell,
 };
 use crate::schema::Schema;
-use crate::serialize::node_to_prosemirror_json;
 use crate::tables::admission::TableProjectionIndex;
 use crate::tables::commands::{node_starting_at, NODE_OPENING_TOKENS};
 use crate::tables::projection::{ProjectedCell, ProjectedTable};
@@ -16,9 +16,17 @@ const ADJACENT_TEXT_POSITION: u32 = 1;
 const TEXT_STEP: u32 = 1;
 const RUN_STEP: u32 = 1;
 
-pub(super) struct PinnedCellSpan {
-    pub(super) cell: PinnedTableCell,
-    pub(super) points: Vec<(u32, CellTextPoint)>,
+struct CellFingerprintSink(DefaultHasher);
+
+impl std::io::Write for CellFingerprintSink {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.write(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 pub(super) struct CellPinning<'state> {
@@ -29,9 +37,9 @@ pub(super) struct CellPinning<'state> {
 }
 
 impl CellPinning<'_> {
-    pub(super) fn spans(&self) -> Vec<PinnedCellSpan> {
+    pub(super) fn spans(&self, doc_positions: &[Vec<u32>]) -> Vec<Arc<PinnedCellSpan>> {
         let cells = self.cells_in_document_order();
-        let points = self.text_points(&cells);
+        let points = self.text_points(&cells, doc_positions.iter().flatten().copied());
         let starts: Vec<u32> = cells.iter().map(|(_, cell)| cell.source_pos).collect();
         let nodes = nodes_starting_at(self.document, &starts);
         cells
@@ -39,10 +47,10 @@ impl CellPinning<'_> {
             .zip(nodes)
             .zip(points)
             .filter_map(|(((table, cell), node), points)| {
-                Some(PinnedCellSpan {
+                Some(Arc::new(PinnedCellSpan {
                     cell: self.pin(table, cell, node?, &points)?,
                     points,
-                })
+                }))
             })
             .collect()
     }
@@ -116,19 +124,26 @@ impl CellPinning<'_> {
         cells: &[(&ProjectedTable, &ProjectedCell)],
         target: usize,
     ) -> Option<Vec<(u32, CellTextPoint)>> {
-        self.text_points(cells).into_iter().nth(target)
+        self.text_points(
+            cells,
+            (0..=self.position_map.total_scalars())
+                .map(|scalar| self.position_map.scalar_to_doc(scalar, self.document)),
+        )
+        .into_iter()
+        .nth(target)
     }
 
     fn text_points(
         &self,
         cells: &[(&ProjectedTable, &ProjectedCell)],
+        doc_positions: impl Iterator<Item = u32>,
     ) -> Vec<Vec<(u32, CellTextPoint)>> {
         let mut points: Vec<Vec<(u32, CellTextPoint)>> = vec![Vec::new(); cells.len()];
         let mut previous: Vec<Option<(u32, CellTextPoint)>> = vec![None; cells.len()];
         let mut open: Vec<usize> = Vec::new();
         let mut next_cell = 0;
-        for scalar in 0..=self.position_map.total_scalars() {
-            let doc_pos = self.position_map.scalar_to_doc(scalar, self.document);
+        for (scalar, doc_pos) in doc_positions.enumerate() {
+            let scalar = u32::try_from(scalar).expect("position map scalar bounds fit u32");
             while open
                 .last()
                 .is_some_and(|&innermost| cells[innermost].1.source_end <= doc_pos)
@@ -164,11 +179,16 @@ impl CellPinning<'_> {
         node: &Node,
         points: &[(u32, CellTextPoint)],
     ) -> Option<PinnedTableCell> {
-        let mut content_fingerprint = DefaultHasher::new();
+        let mut content_fingerprint = CellFingerprintSink(DefaultHasher::new());
         for child in node.content()?.iter() {
-            node_to_prosemirror_json(child, self.schema)
-                .to_string()
-                .hash(&mut content_fingerprint);
+            crate::serialize::json_out::write_node_json(
+                &mut content_fingerprint,
+                child,
+                self.schema,
+            )
+            .expect("cell fingerprint writes are infallible");
+            const STRING_HASH_TERMINATOR: u8 = 0xff;
+            content_fingerprint.0.write_u8(STRING_HASH_TERMINATOR);
         }
         Some(PinnedTableCell {
             row: cell.rect.row,
@@ -177,7 +197,7 @@ impl CellPinning<'_> {
             colspan: cell.rect.colspan,
             table_rows: table.rows,
             table_columns: table.columns,
-            content_fingerprint: content_fingerprint.finish(),
+            content_fingerprint: content_fingerprint.0.finish(),
             text_fingerprint: text_fingerprint_of(node),
             run_structure: run_structure_of(points),
         })

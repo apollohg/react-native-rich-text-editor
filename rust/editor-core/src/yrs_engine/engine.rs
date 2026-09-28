@@ -559,23 +559,25 @@ impl YrsDocumentEngine {
         self.derived_state.as_ref().map(|state| &state.position_map)
     }
 
-    pub(crate) fn build_position_epoch_boundaries(
+    pub(crate) fn build_position_epoch_snapshot(
         &self,
-    ) -> Option<crate::position_epoch::EpochBoundaries> {
+    ) -> Option<crate::position_epoch::EpochSnapshot> {
         self.debug_assert_derived_revision_keys();
         let state = self.derived_state.as_ref()?;
         let txn = self.doc.transact();
         let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
-        let total_scalars = state.position_map.total_scalars();
-        let mut doc_positions = Vec::new();
-        doc_positions
-            .try_reserve_exact(usize::try_from(total_scalars).ok()?.checked_add(1)?)
-            .ok()?;
-        doc_positions.extend(
-            (0..=total_scalars)
-                .map(|scalar| state.position_map.scalar_to_doc(scalar, &state.document)),
-        );
-        let mut boundaries = super::position::boundary_anchors_at_doc_positions(
+        let doc_positions = if state.position_map.block_count() == 0 {
+            vec![vec![0]]
+        } else {
+            (0..state.position_map.block_count())
+                .map(|index| {
+                    state
+                        .position_map
+                        .block_doc_positions(index, &state.document)
+                })
+                .collect::<Option<Vec<_>>>()?
+        };
+        let mut chunks = super::position::boundary_chunks_at_doc_positions(
             &txn,
             &fragment,
             &doc_positions,
@@ -584,27 +586,40 @@ impl YrsDocumentEngine {
         #[cfg(test)]
         (0..state.position_map.block_count())
             .for_each(|_| super::observability::record_epoch_block_rebuild());
-        let spans = self.cell_pinning(state).spans();
+        let spans = self.cell_pinning(state).spans(&doc_positions);
+        let mut scalar_starts = Vec::with_capacity(chunks.len());
+        let mut start = 0u32;
+        for chunk in &chunks {
+            scalar_starts.push(start);
+            start = start.checked_add(u32::try_from(chunk.anchors.len()).ok()?)?;
+        }
         for (cell, span) in spans.iter().enumerate() {
-            for (scalar, point) in &span.points {
-                let Some(index) = usize::try_from(*scalar).ok().filter(|index| {
-                    boundaries
-                        .anchors
-                        .get(*index)
-                        .is_some_and(|boundary| boundaries.inside_table_cell(boundary))
-                }) else {
-                    continue;
-                };
-                boundaries.anchors[index].pinned_cell =
-                    Some(crate::position_epoch::CellTextPosition {
-                        cell,
-                        point: *point,
-                    });
+            let mut points = span.points.iter().peekable();
+            while let Some((scalar, _)) = points.peek() {
+                let block = scalar_starts
+                    .partition_point(|start| start <= scalar)
+                    .checked_sub(1)?;
+                let end = scalar_starts.get(block + 1).copied().unwrap_or(u32::MAX);
+                let chunk = Arc::get_mut(&mut chunks[block])?;
+                while points.peek().is_some_and(|(scalar, _)| *scalar < end) {
+                    let (scalar, point) = points.next()?;
+                    let offset = usize::try_from(scalar.checked_sub(scalar_starts[block])?).ok()?;
+                    let boundary = chunk.anchors.get_mut(offset)?;
+                    if boundary.inside_table_cell() {
+                        boundary.pinned_cell = Some(crate::position_epoch::CellTextPosition {
+                            cell,
+                            point: *point,
+                        });
+                    }
+                }
             }
         }
-        boundaries.cells = spans.into_iter().map(|span| span.cell).collect();
-        boundaries.cells.shrink_to_fit();
-        Some(boundaries)
+        crate::position_epoch::EpochSnapshot::new(
+            self.yrs_state_epoch,
+            self.revision,
+            chunks,
+            spans,
+        )
     }
 
     #[cfg(test)]

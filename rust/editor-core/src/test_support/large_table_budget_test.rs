@@ -233,3 +233,28 @@ fn viewer_compile_budget_probe() {
         "viewer medians exceed budget: {results:?}"
     );
 }
+
+const COLD_EPOCH_BUDGET_MS: f64 = 25.0;
+
+#[test]
+#[ignore = "release-mode wall-clock probe"]
+fn cold_position_epoch_budget_probe() {
+    let mut violations = Vec::new();
+    for (rows, columns) in PROBE_FIXTURES {
+        let mut session = session_with_document(&plain_table_document(rows, columns));
+        let start = Instant::now();
+        session
+            .pin_position_epoch(LEDGER_EPOCH_OWNER, session.engine.revision())
+            .expect("cold epoch pins");
+        let elapsed = elapsed_ms(start);
+        println!(
+            "PROBE epoch {rows}x{columns} cold {elapsed:.3} ms, budget {COLD_EPOCH_BUDGET_MS}"
+        );
+        if elapsed > COLD_EPOCH_BUDGET_MS {
+            violations.push(format!(
+                "{rows}x{columns}: cold epoch {elapsed:.3} ms exceeds {COLD_EPOCH_BUDGET_MS} ms"
+            ));
+        }
+    }
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
+}

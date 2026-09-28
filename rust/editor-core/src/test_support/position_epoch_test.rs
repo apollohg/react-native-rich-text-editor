@@ -291,22 +291,26 @@ const LARGE_TABLE_OWNER: u64 = 7;
 fn twenty_thousand_slot_tables_pin_an_epoch_whose_ancestors_are_shared_per_element() {
     for (rows, columns) in [(1000, 20), (100, 200)] {
         let mut session = session_with_document(&plain_table_document(rows, columns));
-        let boundaries = session.engine.build_position_epoch_boundaries().unwrap();
+        let boundaries = session.engine.build_position_epoch_snapshot().unwrap();
         let cells = rows * columns;
         let elements = 1 + rows + 2 * cells;
         eprintln!(
             "{rows}x{columns}: {} boundaries share {} ancestor anchors",
-            boundaries.anchors.len(),
-            boundaries.ancestors.len()
+            boundaries.boundary_count(),
+            boundaries.ancestor_count()
         );
         assert_eq!(
-            boundaries.ancestors.len(),
+            boundaries.ancestor_count(),
             elements,
             "{rows}x{columns}: one ancestor anchor per entered element, not per boundary"
         );
-        let last = boundaries.anchors.len() - 2;
+        let last = boundaries.boundary_count() - 2;
         assert!(
-            boundaries.inside_table_cell(&boundaries.anchors[last]),
+            boundaries
+                .boundary(u32::try_from(last).unwrap())
+                .unwrap()
+                .anchors
+                .inside_table_cell(),
             "{rows}x{columns}: the last cell's text keeps its table cell ancestry"
         );
 
@@ -317,4 +321,59 @@ fn twenty_thousand_slot_tables_pin_an_epoch_whose_ancestors_are_shared_per_eleme
             "{rows}x{columns}: the 20,000-slot fixture pins under the default budget, got {pinned:?}"
         );
     }
+}
+
+#[test]
+fn shared_epoch_snapshots_are_charged_in_full_for_each_owner() {
+    use crate::position_epoch::{PositionEpochLimits, PositionEpochStore};
+    use std::sync::Arc;
+
+    const FIRST_OWNER: u64 = 17;
+    const SECOND_OWNER: u64 = 18;
+    const OWNER_LIMIT: usize = 2;
+    let session = session_with_document(&plain_table_document(2, 2));
+    let snapshot = Arc::new(session.engine.build_position_epoch_snapshot().unwrap());
+    let lineage = session.engine.client_id();
+    let mut store = PositionEpochStore::new(PositionEpochLimits {
+        max_owners: OWNER_LIMIT,
+        max_boundaries: snapshot.boundary_count(),
+        max_retained_bytes: snapshot.retained_bytes,
+    });
+    let first = store
+        .install(FIRST_OWNER, lineage, snapshot.clone())
+        .unwrap();
+    assert!(store.boundary(FIRST_OWNER, first, lineage, 0).is_ok());
+    let error = store
+        .install(SECOND_OWNER, lineage, snapshot.clone())
+        .unwrap_err();
+    assert_eq!(error.code, "POSITION_EPOCH_LIMIT_EXCEEDED");
+    assert_eq!(
+        error.details,
+        Some(serde_json::json!({"field": "maxPositionEpochRetainedBytes"}))
+    );
+    assert!(
+        store.boundary(FIRST_OWNER, first, lineage, 0).is_ok(),
+        "rejection preserves the existing owner"
+    );
+    let replacement = store
+        .install(FIRST_OWNER, lineage, snapshot.clone())
+        .unwrap();
+    assert!(store.boundary(FIRST_OWNER, first, lineage, 0).is_err());
+    let last = u32::try_from(snapshot.boundary_count() - 1).unwrap();
+    assert!(store
+        .boundary(FIRST_OWNER, replacement, lineage, last)
+        .is_ok());
+    assert_eq!(
+        store
+            .boundary(FIRST_OWNER, replacement, lineage, last + 1)
+            .err()
+            .unwrap()
+            .code,
+        "POSITION_INVALID"
+    );
+    store.release_owner(FIRST_OWNER);
+    assert!(
+        store.install(SECOND_OWNER, lineage, snapshot).is_ok(),
+        "release returns the full charge"
+    );
 }

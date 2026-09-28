@@ -79,21 +79,18 @@ impl EditorSession {
             )
         })?;
         self.position_epochs.admit_boundary_count(count)?;
-        let boundaries = self
-            .engine
-            .build_position_epoch_boundaries()
-            .ok_or_else(|| {
-                SessionError::new(
-                    ErrorDomain::Operation,
-                    "ENGINE_INVARIANT_FAILED",
-                    "authoritative position epoch could not be built",
-                )
-            })?;
+        let snapshot = self.engine.build_position_epoch_snapshot().ok_or_else(|| {
+            SessionError::new(
+                ErrorDomain::Operation,
+                "ENGINE_INVARIANT_FAILED",
+                "authoritative position epoch could not be built",
+            )
+        })?;
+        debug_assert_eq!(snapshot.yrs_state_epoch, self.engine.yrs_state_epoch());
         let epoch = self.position_epochs.install(
             owner_id,
             self.engine.client_id(),
-            document_revision,
-            boundaries,
+            std::sync::Arc::new(snapshot),
         )?;
         let render_blocks = self
             .engine

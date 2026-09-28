@@ -6,12 +6,12 @@ use yrs::types::xml::{XmlElementRef, XmlFragment, XmlFragmentRef, XmlOut, XmlTex
 use yrs::{Assoc, ReadTxn, StickyIndex};
 
 use super::{
-    boundary_anchors_at, boundary_anchors_at_doc_positions, is_table_cell_element, scalar_len,
+    boundary_anchors_at, boundary_chunks_at_doc_positions, is_table_cell_element, scalar_len,
     scalar_offset_to_utf16, sticky_at, xml_out_pm_size, xml_text_plain_string,
     BOUNDARY_WALK_NODE_VISITS,
 };
 use crate::model::Node;
-use crate::position_epoch::{BoundaryAnchors, EpochBoundaries};
+use crate::position_epoch::BoundaryAnchors;
 use crate::schema::content_rule::ContentRule;
 use crate::schema::presets::prosemirror_table_schema;
 use crate::schema::{AttrSpec, NodeRole, NodeSpec, Schema};
@@ -365,6 +365,17 @@ fn corpus() -> Vec<(&'static str, YrsDocumentEngine)> {
     vec![
         ("rich prose", engine_with(corpus_schema(), rich_prose())),
         ("tables", engine_with(corpus_schema(), tables())),
+        (
+            "multi-paragraph and nested cells",
+            engine_with(
+                corpus_schema(),
+                crate::test_support::large_table_fixture::multi_paragraph_cell_document()
+                    ["content"]
+                    .as_array()
+                    .unwrap()
+                    .clone(),
+            ),
+        ),
         ("long prose", engine_with(corpus_schema(), long_prose())),
         (
             "edited rich prose",
@@ -414,8 +425,8 @@ impl DescentAnchors {
         }
     }
 
-    fn batched(boundaries: &EpochBoundaries, anchors: &BoundaryAnchors) -> Self {
-        let chain = boundaries.ancestor_chain(anchors);
+    fn batched(anchors: &BoundaryAnchors) -> Self {
+        let chain = anchors.ancestor_chain();
         Self {
             before: anchors.before.clone(),
             after: anchors.after.clone(),
@@ -569,7 +580,17 @@ fn anchors_by_descent_in_sequence<'a, T: ReadTxn>(
         .map(DescentAnchors::leaf)
 }
 
-fn assert_batch_matches_descent(label: &str, engine: &YrsDocumentEngine, doc_positions: &[u32]) {
+fn assert_batch_matches_descent(
+    label: &str,
+    engine: &YrsDocumentEngine,
+    doc_positions: &[u32],
+    scalar_snapshot: bool,
+) {
+    let snapshot = scalar_snapshot.then(|| {
+        engine
+            .build_position_epoch_snapshot()
+            .expect("scalar snapshot builds")
+    });
     let schema = engine.schema();
     engine
         .read_fragment_for_test(|txn, fragment| {
@@ -585,12 +606,14 @@ fn assert_batch_matches_descent(label: &str, engine: &YrsDocumentEngine, doc_pos
                 unresolved.is_empty(),
                 "{label}: per-position descent cannot anchor doc positions {unresolved:?}"
             );
-            let batched = boundary_anchors_at_doc_positions(txn, fragment, doc_positions, schema)
-                .unwrap_or_else(|| panic!("{label}: the batched walk failed to anchor every position"));
-            assert_eq!(batched.anchors.len(), expected.len(), "{label}: one boundary per position");
-            for (index, (actual, wanted)) in batched.anchors.iter().zip(&expected).enumerate() {
+            let batched = snapshot.as_ref().map(|snapshot| snapshot.chunks.to_vec()).unwrap_or_else(||
+                boundary_chunks_at_doc_positions(txn, fragment, &[doc_positions.to_vec()], schema)
+                    .unwrap_or_else(|| panic!("{label}: the batched walk failed to anchor every position")));
+            let flattened: Vec<_> = batched.iter().flat_map(|chunk| &chunk.anchors).collect();
+            assert_eq!(flattened.len(), expected.len(), "{label}: one boundary per position");
+            for (index, (actual, wanted)) in flattened.iter().zip(&expected).enumerate() {
                 assert_eq!(
-                    &DescentAnchors::batched(&batched, actual),
+                    &DescentAnchors::batched(actual),
                     wanted,
                     "{label}: boundary {index} at doc position {} differs from per-position descent",
                     doc_positions[index]
@@ -605,7 +628,7 @@ fn batched_boundary_anchors_match_per_position_descent_at_every_scalar() {
     for (label, engine) in corpus() {
         let doc_positions = scalar_doc_positions(&engine);
         eprintln!("{label}: {} scalar boundaries", doc_positions.len());
-        assert_batch_matches_descent(label, &engine, &doc_positions);
+        assert_batch_matches_descent(label, &engine, &doc_positions, true);
     }
 }
 
@@ -614,9 +637,9 @@ fn batched_boundary_anchors_match_per_position_descent_at_every_document_positio
     for (label, engine) in corpus() {
         let mut doc_positions = every_doc_position(&engine);
         eprintln!("{label}: {} document positions", doc_positions.len());
-        assert_batch_matches_descent(label, &engine, &doc_positions);
+        assert_batch_matches_descent(label, &engine, &doc_positions, false);
         doc_positions.reverse();
-        assert_batch_matches_descent(label, &engine, &doc_positions);
+        assert_batch_matches_descent(label, &engine, &doc_positions, false);
     }
 }
 
@@ -642,13 +665,13 @@ fn pinning_visits_every_yrs_node_once_however_many_boundaries_it_anchors() {
         BOUNDARY_WALK_NODE_VISITS.set(0);
 
         let boundaries = engine
-            .build_position_epoch_boundaries()
+            .build_position_epoch_snapshot()
             .unwrap_or_else(|| panic!("{label}: the position epoch builds"));
 
         let visits = BOUNDARY_WALK_NODE_VISITS.replace(0);
         eprintln!(
             "{label}: {} boundaries anchored with {visits} node visits over {node_count} Yrs nodes",
-            boundaries.anchors.len()
+            boundaries.boundary_count()
         );
         assert_eq!(
             visits, node_count,

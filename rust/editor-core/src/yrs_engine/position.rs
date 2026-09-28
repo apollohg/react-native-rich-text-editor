@@ -6,10 +6,11 @@ use yrs::{Any, Assoc, IndexScope, Offset, ReadTxn, StickyIndex};
 
 use crate::model::Document;
 use crate::position::PositionMap;
-use crate::position_epoch::{AncestorAnchors, BoundaryAnchors, EpochBoundaries};
+use crate::position_epoch::{AncestorAnchors, AncestorNode, BoundaryAnchors, EpochBlockChunk};
 use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::commands::{NODE_CLOSING_TOKENS, NODE_OPENING_TOKENS};
+use std::sync::Arc;
 
 use super::{Affinity, EditorOffsetKind, RevisionedPosition};
 
@@ -426,71 +427,89 @@ fn forward_doc_pos_to_sticky_index<T: ReadTxn>(
     )
 }
 
-pub(crate) fn boundary_anchors_at_doc_positions<T: ReadTxn>(
+pub(crate) fn boundary_chunks_at_doc_positions<T: ReadTxn>(
     txn: &T,
     fragment: &XmlFragmentRef,
-    doc_positions: &[u32],
+    doc_positions: &[Vec<u32>],
     schema: &Schema,
-) -> Option<EpochBoundaries> {
+) -> Option<Vec<Arc<EpochBlockChunk>>> {
     #[cfg(test)]
     super::observability::record_yrs_tree_walk();
     let mut targets = Vec::new();
-    targets.try_reserve_exact(doc_positions.len()).ok()?;
-    targets.extend_from_slice(doc_positions);
+    let count = doc_positions.iter().try_fold(0usize, |total, positions| {
+        total.checked_add(positions.len())
+    })?;
+    targets.try_reserve_exact(count).ok()?;
+    for (block, positions) in doc_positions.iter().enumerate() {
+        targets.extend(
+            positions
+                .iter()
+                .enumerate()
+                .map(|(offset, position)| (*position, block, offset)),
+        );
+    }
     targets.sort_unstable();
-    targets.dedup();
     let mut walk = BoundaryAnchorWalk {
         txn,
         schema,
         targets: &targets,
-        anchors: Vec::new(),
-        ancestors: Vec::new(),
+        resolved: 0,
+        chunks: doc_positions
+            .iter()
+            .map(|positions| vec![None; positions.len()])
+            .collect(),
         open: Vec::new(),
     };
-    walk.anchors.try_reserve_exact(targets.len()).ok()?;
     walk.walk_sequence(
         fragment.children(txn),
         BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment)),
         0,
         None,
     )?;
-    if walk.anchors.len() != targets.len() {
+    if walk.resolved != targets.len() {
         return None;
     }
-    let mut boundaries = Vec::new();
-    boundaries.try_reserve_exact(doc_positions.len()).ok()?;
-    for doc_pos in doc_positions {
-        let target = targets.binary_search(doc_pos).ok()?;
-        boundaries.push(walk.anchors[target].clone());
-    }
-    walk.ancestors.shrink_to_fit();
-    Some(EpochBoundaries {
-        anchors: boundaries,
-        ancestors: walk.ancestors,
-        cells: Vec::new(),
-    })
+    walk.chunks
+        .into_iter()
+        .map(|anchors| {
+            let anchors = anchors.into_iter().collect::<Option<Vec<_>>>()?;
+            EpochBlockChunk::new(anchors).map(Arc::new)
+        })
+        .collect()
 }
 
 struct BoundaryAnchorWalk<'walk, T> {
     txn: &'walk T,
     schema: &'walk Schema,
-    targets: &'walk [u32],
-    anchors: Vec<BoundaryAnchors>,
-    ancestors: Vec<AncestorAnchors>,
-    open: Vec<u32>,
+    targets: &'walk [(u32, usize, usize)],
+    resolved: usize,
+    chunks: Vec<Vec<Option<BoundaryAnchors>>>,
+    open: Vec<Arc<AncestorNode>>,
 }
 
 impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
     fn pending(&self, sequence_end: Option<u32>) -> Option<u32> {
         self.targets
-            .get(self.anchors.len())
-            .copied()
+            .get(self.resolved)
+            .map(|target| target.0)
             .filter(|target| sequence_end.is_none_or(|end| *target < end))
     }
 
     fn resolve(&mut self, mut leaf: BoundaryAnchors) {
-        leaf.ancestor = self.open.last().copied();
-        self.anchors.push(leaf);
+        leaf.ancestor = self.open.last().cloned();
+        let position = self.targets[self.resolved].0;
+        while self
+            .targets
+            .get(self.resolved + 1)
+            .is_some_and(|target| target.0 == position)
+        {
+            let (_, block, offset) = self.targets[self.resolved];
+            self.chunks[block][offset] = Some(leaf.clone());
+            self.resolved += 1;
+        }
+        let (_, block, offset) = self.targets[self.resolved];
+        self.chunks[block][offset] = Some(leaf);
+        self.resolved += 1;
     }
 
     fn resolve_at_child(
@@ -507,12 +526,13 @@ impl<T: ReadTxn> BoundaryAnchorWalk<'_, T> {
     }
 
     fn enter(&mut self, branch: BranchPtr, index: u32, table_cell: bool) -> Option<()> {
-        let entered = u32::try_from(self.ancestors.len()).ok()?;
-        self.ancestors.push(AncestorAnchors {
-            before: sticky_at(self.txn, branch, index, Assoc::Before)?,
-            after: sticky_at(self.txn, branch, index.checked_add(1)?, Assoc::After)?,
-            table_cell,
-            parent: self.open.last().copied(),
+        let entered = Arc::new(AncestorNode {
+            anchors: AncestorAnchors {
+                before: sticky_at(self.txn, branch, index, Assoc::Before)?,
+                after: sticky_at(self.txn, branch, index.checked_add(1)?, Assoc::After)?,
+                table_cell,
+            },
+            parent: self.open.last().cloned(),
         });
         self.open.push(entered);
         Some(())

@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::tables::commands_tests::engine_with;
 use crate::tables::tests::{
@@ -58,10 +59,32 @@ fn pin_and_resolution_walks_give_every_cell_the_same_text_points() {
     let pinning = engine.cell_pinning(state);
     let cells = pinning.cells_in_document_order();
 
-    let spans = pinning.spans();
+    let doc_positions: Vec<_> = (0..state.position_map.block_count())
+        .map(|index| {
+            state
+                .position_map
+                .block_doc_positions(index, &state.document)
+                .unwrap()
+        })
+        .collect();
+    let spans = pinning.spans(&doc_positions);
 
     assert_eq!(spans.len(), cells.len(), "every cell is pinned");
     for (target, span) in spans.iter().enumerate() {
+        let node =
+            crate::tables::commands::node_starting_at(&state.document, cells[target].1.source_pos)
+                .unwrap();
+        let mut expected_fingerprint = DefaultHasher::new();
+        for child in node.content().unwrap().iter() {
+            crate::serialize::node_to_prosemirror_json(child, &engine.schema)
+                .to_string()
+                .hash(&mut expected_fingerprint);
+        }
+        assert_eq!(
+            span.cell.content_fingerprint,
+            expected_fingerprint.finish(),
+            "cell {target}: streamed fingerprint preserves the materialized JSON hash"
+        );
         assert_eq!(
             pinning.cell_text_points(&cells, target).as_ref(),
             Some(&span.points),

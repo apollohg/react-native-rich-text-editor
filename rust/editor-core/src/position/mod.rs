@@ -123,6 +123,46 @@ impl PositionMap {
             .unwrap_or(0)
     }
 
+    pub(crate) fn block_doc_positions(
+        &self,
+        block_index: usize,
+        doc: &Document,
+    ) -> Option<Vec<u32>> {
+        let block = self.block(block_index)?;
+        let scalar_start = self.effective_scalar_start(block_index);
+        let scalar_end = if block_index + 1 < self.block_count() {
+            self.effective_scalar_start(block_index + 1)
+        } else {
+            self.total_scalars().checked_add(1)?
+        };
+        let doc_start = self.effective_doc_start(block_index);
+        let mut node = doc.root();
+        for &index in &block.node_path {
+            node = node.child(usize::try_from(index).ok()?)?;
+        }
+        let mut positions = Vec::new();
+        positions
+            .try_reserve_exact(usize::try_from(scalar_end.checked_sub(scalar_start)?).ok()?)
+            .ok()?;
+        for scalar in scalar_start..scalar_end {
+            let intra = scalar - scalar_start;
+            let position = if block.is_void_block {
+                doc_start.checked_add(u32::from(intra >= block.scalar_len))?
+            } else if intra < block.scalar_prefix_len {
+                doc_start
+            } else {
+                doc_start.checked_add(scalar_to_doc_intra_block_metered(
+                    node,
+                    intra - block.scalar_prefix_len,
+                    &self.hard_break_node_types,
+                    &mut |_| true,
+                )?)?
+            };
+            positions.push(position);
+        }
+        Some(positions)
+    }
+
     pub(crate) fn scalar_to_doc_metered(
         &self,
         scalar_offset: u32,
