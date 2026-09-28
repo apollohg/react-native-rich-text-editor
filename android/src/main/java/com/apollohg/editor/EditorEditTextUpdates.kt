@@ -91,7 +91,7 @@ internal fun EditorEditText.applyUpdateJSONImpl(
     val previousVisibleText = text?.toString().orEmpty()
     val parseStartedAt = totalStartedAt
     val update = try {
-        org.json.JSONObject(updateJSON)
+        (v2Driver as? EditorV2Adapter).parsedUpdate(updateJSON)
     } catch (error: Exception) {
         recordImeTraceForTesting(
             "applyUpdateJSONNoop",

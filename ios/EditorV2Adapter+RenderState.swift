@@ -110,6 +110,7 @@ extension EditorV2Adapter {
         cachedHistoryState = snapshot.historyState
         cachedViewUpdateJSON = updateJSON
         cachedAtomicRenderJSON = snapshot.atomicRenderJSON
+        cachedAtomicRenderSelectionObject = snapshot.renderObject["selection"] as? [String: Any]
         cachedAtomicRenderDocumentRevision = snapshot.documentRevision
         cachedSemanticRenderBlocks = candidate
         cachedTableAttributes = snapshot.tableAttributes

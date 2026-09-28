@@ -33,11 +33,15 @@ class NativeTableHostActivity : Activity() {
         }
         val id = JSONObject(created).getString("editorId")
         adapter = requireNotNull(EditorV2Adapter.attach(UniffiEditorV2Backend, id, roomBound = false))
+        val plainRows = intent.getIntExtra(EXTRA_PLAIN_ROWS, 0)
         requireNotNull(adapter.setContentJson(
-            if (intent.getBooleanExtra(EXTRA_OVERFLOW, false)) {
-                overflowingDocument(intent.getBooleanExtra(EXTRA_RTL, false))
-            } else DOCUMENT
-        ))
+            when {
+                plainRows > 0 -> plainTableDocument(plainRows, intent.getIntExtra(EXTRA_PLAIN_COLUMNS, 0))
+                intent.getBooleanExtra(EXTRA_OVERFLOW, false) ->
+                    overflowingDocument(intent.getBooleanExtra(EXTRA_RTL, false))
+                else -> DOCUMENT
+            }
+        )) { "the fixture renders: ${adapter.debugNotes}" }
         documentBeforeMount = requireNotNull(adapter.documentJson())
         historyBeforeMount = adapter.historyCanUndo() to adapter.historyCanRedo()
         revisionBeforeMount = adapter.baseDocumentRevision
@@ -91,6 +95,10 @@ class NativeTableHostActivity : Activity() {
         const val EXTRA_DARK = "dark"
         const val EXTRA_OVERFLOW = "overflow"
         const val EXTRA_RTL = "rtl"
+        const val EXTRA_PLAIN_ROWS = "plainRows"
+        const val EXTRA_PLAIN_COLUMNS = "plainColumns"
+        private const val PLAIN_CELL_TEXT = "abcdefghijkl"
+        private const val PLAIN_HEADER_ROW = 0
         private const val SCROLL_EXTRA_COLUMNS = 16
         private const val SCROLL_COLUMN_WIDTH = 140
         private const val SCROLL_FOLLOWING_PARAGRAPHS = 80
@@ -98,6 +106,20 @@ class NativeTableHostActivity : Activity() {
         internal const val CONFIG = """{"schema":{"nodes":[{"name":"doc","content":"block+","role":"doc"},{"name":"paragraph","content":"inline*","group":"block","role":"textBlock"},{"name":"text","content":"","group":"inline","role":"text"},{"name":"table","content":"table_row+","group":"block","role":"block","tableRole":"table","attrs":{"dir":{"default":null}}},{"name":"table_row","content":"(table_cell | table_header)*","role":"block","tableRole":"row"},{"name":"table_cell","content":"block+","role":"block","tableRole":"cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}},{"name":"table_header","content":"block+","role":"block","tableRole":"header_cell","attrs":{"colspan":{"type":"number","default":1,"min":1},"rowspan":{"type":"number","default":1,"min":1},"colwidth":{"default":null}}}],"marks":[]},"initialization":{"type":"localEmpty"}}"""
 
         private const val DOCUMENT = """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Before table."}]},{"type":"table","content":[{"type":"table_row","content":[{"type":"table_header","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Project"}]}]},{"type":"table_header","content":[{"type":"paragraph","content":[{"type":"text","text":"Status"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Alpha"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"Owner"}]}]},{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Ready"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"Beta"}]}]}]}]},{"type":"paragraph","content":[{"type":"text","text":"After table."}]}]}"""
+
+        internal fun plainTableDocument(rows: Int, columns: Int): String {
+            fun node(type: String, content: JSONArray) = JSONObject().put("type", type).put("content", content)
+            fun cell(type: String) = node(type, JSONArray().put(node("paragraph", JSONArray().put(
+                JSONObject().put("type", "text").put("text", PLAIN_CELL_TEXT)
+            ))))
+            val tableRows = JSONArray()
+            repeat(rows) { row ->
+                val cells = JSONArray()
+                repeat(columns) { cells.put(cell(if (row == PLAIN_HEADER_ROW) "table_header" else "table_cell")) }
+                tableRows.put(node("table_row", cells))
+            }
+            return node("doc", JSONArray().put(node("table", tableRows))).toString()
+        }
 
         internal fun overflowingDocument(rtl: Boolean = false): String {
             val document = JSONObject(DOCUMENT)

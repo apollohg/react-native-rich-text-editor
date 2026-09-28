@@ -38,9 +38,7 @@ internal fun EditorV2Adapter.selectedTableCellsMutationAdmission(): TableMutatio
 }
 
 internal fun EditorV2Adapter.cachedAtomicRenderSelection(): JSONObject? =
-    cachedAtomicRenderJson?.let { raw ->
-        runCatching { JSONObject(raw).getJSONObject("selection") }.getOrNull()
-    }
+    cachedAtomicRenderSelectionObject?.let { JSONObject(it.toString()) }
 
 internal const val AWARENESS_CELL_SELECTION_STALE = "AWARENESS_CELL_SELECTION_STALE"
 
@@ -75,7 +73,7 @@ internal fun EditorV2Adapter.selectExactTableCells(
         return null
     }
     val update = refreshFromRustState(null) ?: return null
-    val admitted = runCatching { JSONObject(update).getJSONObject("selection") }.getOrNull()
+    val admitted = runCatching { parsedUpdate(update).getJSONObject("selection") }.getOrNull()
         ?: return null
     if (cellSelectionEndpoints(admitted) != anchorCell to headCell ||
         !admitsTableMutation(admission) || positionEpoch == null) return null
@@ -139,7 +137,7 @@ internal fun EditorV2Adapter.selectAtomNode(docPos: Int): String? {
         is EditorV2CallResult.Ok -> {
             invalidateCachedAtomicState(null)
             recoverNativeRender()?.also { update ->
-                val selection = runCatching { JSONObject(update).getJSONObject("selection") }.getOrNull()
+                val selection = runCatching { parsedUpdate(update).getJSONObject("selection") }.getOrNull()
                 val pos = exactV2ScalarInt(selection?.opt("pos") as? Number)
                 if (selection?.optString("type") == "node" && pos != null) {
                     publishCollaborationSelection(pos, pos + 1)
@@ -155,7 +153,9 @@ internal fun EditorV2Adapter.invalidateCachedAtomicState(selection: IntArray?) {
     cachedActiveState = null
     cachedHistoryState = null
     cachedViewUpdateJson = null
+    cachedViewUpdateObject = null
     cachedAtomicRenderJson = null
+    cachedAtomicRenderSelectionObject = null
     cachedTableAttributes = emptyMap()
     cachedTableRecords = emptyMap()
     cachedTableInputMappings = null
@@ -203,7 +203,9 @@ internal fun EditorV2Adapter.ensureSelection(anchor: Int, head: Int): SelectionS
             // Keep the last history result until a document mutation replaces it.
             cachedActiveState = null
             cachedViewUpdateJson = null
+            cachedViewUpdateObject = null
             cachedAtomicRenderJson = null
+            cachedAtomicRenderSelectionObject = null
             cachedTableAttributes = emptyMap()
             cachedTableRecords = emptyMap()
             cachedTableInputMappings = null

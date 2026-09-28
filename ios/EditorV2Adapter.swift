@@ -76,6 +76,7 @@ final class EditorV2Adapter {
     var cachedHistoryState: (canUndo: Bool, canRedo: Bool)?
     var cachedViewUpdateJSON: String?
     var cachedAtomicRenderJSON: String?
+    var cachedAtomicRenderSelectionObject: [String: Any]?
     var cachedAtomicRenderDocumentRevision: UInt64?
     var cachedSemanticRenderBlocks: [[[String: Any]]]?
     var cachedTableAttributes: [String: [String: Any]] = [:]

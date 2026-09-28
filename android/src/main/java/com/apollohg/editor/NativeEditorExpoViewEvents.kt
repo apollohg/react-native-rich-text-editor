@@ -12,7 +12,6 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.apollohg.editor.tables.TableSelectionGeometry
 import com.apollohg.editor.tables.TableSelectionObstructions
-import org.json.JSONObject
 
 internal class TableSelectionGeometryPublisher(
     private val frameHost: View,
@@ -101,7 +100,7 @@ internal fun NativeEditorExpoView.documentVersionFromUpdateJSON(updateJSON: Stri
         if (updateJSON == null) {
             null
         } else {
-            canonicalV2U64(JSONObject(updateJSON).opt("documentVersion") as? String)
+            canonicalV2U64((richTextView.editorEditText.v2Driver as? EditorV2Adapter).parsedUpdate(updateJSON).opt("documentVersion") as? String)
         }
     } catch (_: Throwable) {
         null
@@ -190,7 +189,7 @@ internal fun NativeEditorExpoView.dispatchEditorUpdate(
     val noteNanos = System.nanoTime() - startedAt
     val toolbarStartedAt = System.nanoTime()
     if (applyViewState) {
-        NativeToolbarState.fromUpdateJson(updateJSON)?.let { state ->
+        NativeToolbarState.fromUpdateJson(updateJSON, richTextView.editorEditText.v2Driver as? EditorV2Adapter)?.let { state ->
             toolbarState = state
             keyboardToolbarView.applyState(state)
         }

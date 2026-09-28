@@ -34,6 +34,38 @@ class NativeTableHostTest {
     }
 
     @Test
+    fun twentyThousandSlotTableRendersAndScrollsOnDevice() {
+        val intent = Intent(instrumentation.targetContext, NativeTableHostActivity::class.java)
+            .putExtra(NativeTableHostActivity.EXTRA_PLAIN_ROWS, LARGE_TABLE_ROWS)
+            .putExtra(NativeTableHostActivity.EXTRA_PLAIN_COLUMNS, LARGE_TABLE_COLUMNS)
+        ActivityScenario.launch<NativeTableHostActivity>(intent).use { scenario ->
+            awaitTableLayout(scenario, "native-table-large-timeout.png", timeoutMs = LARGE_TABLE_LAYOUT_TIMEOUT_MS)
+            listOf(0f, LARGE_TABLE_SCROLL_MIDDLE, 1f).forEach { fraction ->
+                scenario.onActivity { activity ->
+                    val scroll = activity.richTextView.editorScrollView
+                    val bottom = (scroll.getChildAt(0).height - scroll.height).coerceAtLeast(0)
+                    scroll.scrollTo(0, (bottom * fraction).toInt())
+                }
+                instrumentation.waitForIdleSync()
+                scenario.onActivity { activity ->
+                    val drawing = tableHosts(activity.richTextView).single()
+                    val surface = requireNotNull(drawing.preparedLayout).blocks.mapNotNull { it.tableSurface }.single()
+                    assertEquals("every cell is prepared", LARGE_TABLE_ROWS * LARGE_TABLE_COLUMNS, surface.cells.size)
+                    val visible = android.graphics.Rect()
+                    assertTrue("the table is on screen at $fraction", drawing.getLocalVisibleRect(visible))
+                    val presented = drawing.presentedTableCells()
+                    println("large table at $fraction: ${presented.size} presented, visible $visible")
+                    assertTrue("the presentation stays within the viewport window at $fraction: ${presented.size}",
+                        presented.size < surface.cells.size / LARGE_TABLE_WINDOW_FRACTION)
+                    assertTrue("the cell under the viewport centre is presented at $fraction",
+                        presented.any { it.bounds.contains(visible.exactCenterX(), visible.exactCenterY()) })
+                }
+            }
+            instrumentation.saveDeviceScreenshot("native-table-large-scrolled.png")
+        }
+    }
+
+    @Test
     fun darkTableHostRendersOnDevice() {
         runFixture(dark = true, screenshotName = "native-table-host-dark.png", reflow = false)
     }
@@ -320,9 +352,10 @@ class NativeTableHostTest {
         scenario: ActivityScenario<NativeTableHostActivity>,
         timeoutScreenshotName: String,
         expectedEditorWidth: Int? = null,
-        previous: Widths? = null
+        previous: Widths? = null,
+        timeoutMs: Long = TABLE_LAYOUT_TIMEOUT_MS
     ) {
-        val deadline = SystemClock.uptimeMillis() + 5_000L
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
         var lastReadinessState = "activity not observed"
         do {
             instrumentation.waitForIdleSync()
@@ -444,4 +477,13 @@ class NativeTableHostTest {
         return self + (0 until children.childCount).sumOf { countEditorInputs(children.getChildAt(it)) }
     }
 
+
+    private companion object {
+        const val TABLE_LAYOUT_TIMEOUT_MS = 5_000L
+        const val LARGE_TABLE_LAYOUT_TIMEOUT_MS = 300_000L
+        const val LARGE_TABLE_ROWS = 1000
+        const val LARGE_TABLE_COLUMNS = 20
+        const val LARGE_TABLE_SCROLL_MIDDLE = 0.5f
+        const val LARGE_TABLE_WINDOW_FRACTION = 4
+    }
 }

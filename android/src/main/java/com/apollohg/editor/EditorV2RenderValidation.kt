@@ -2,6 +2,7 @@ package com.apollohg.editor
 
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 import com.apollohg.editor.tables.resolveEditorCellSelection
 
 internal fun ulongField(jsonObject: JSONObject, key: String): ULong? =
@@ -665,9 +666,16 @@ internal data class PinnedAtomicRenderSnapshot(
     val positionEpoch: String?
 )
 
+internal fun parseSharedStringJsonObject(json: String): JSONObject {
+    val strings = HashMap<String, String>()
+    return JSONObject(object : JSONTokener(json) {
+        override fun nextString(quote: Char): String = super.nextString(quote).let { strings.getOrPut(it) { it } }
+    })
+}
+
 internal fun parseAtomicRenderSnapshot(json: String): AtomicRenderSnapshot? {
     return try {
-        val jsonObject = JSONObject(json)
+        val jsonObject = parseSharedStringJsonObject(json)
         val requiredKeys =
             setOf(
                 "renderBlocks",

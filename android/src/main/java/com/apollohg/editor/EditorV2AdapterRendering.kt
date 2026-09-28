@@ -27,9 +27,12 @@ internal fun EditorV2Adapter.adopt(
         }
     }
     if (candidate != null && !validSemanticRenderElements(candidate.flatten(), snapshot.tableAttributes, snapshot.tableRecords)) return null
-    val update = JSONObject(snapshot.viewUpdateJson)
-    if (stripViewSelection) update.remove("selection")
-    val updateJson = update.toString()
+    val updateObject = if (stripViewSelection) {
+        JSONObject(snapshot.viewUpdateJson).apply { remove("selection") }
+    } else {
+        snapshot.renderObject
+    }
+    val updateJson = if (stripViewSelection) updateObject.toString() else snapshot.viewUpdateJson
     baseDocumentRevision = snapshot.documentRevision
     stateRevision = snapshot.stateRevision
     cachedScalarLength = snapshot.scalarLength
@@ -39,7 +42,9 @@ internal fun EditorV2Adapter.adopt(
     cachedActiveState = snapshot.activeState
     cachedHistoryState = snapshot.historyState
     cachedViewUpdateJson = updateJson
+    cachedViewUpdateObject = updateObject
     cachedAtomicRenderJson = snapshot.atomicRenderJson
+    cachedAtomicRenderSelectionObject = snapshot.renderObject.optJSONObject("selection")
     cachedAtomicRenderDocumentRevision = snapshot.documentRevision
     cachedSemanticRenderBlocks = candidate
     cachedSemanticRenderBlocksRevision = snapshot.documentRevision
@@ -49,6 +54,9 @@ internal fun EditorV2Adapter.adopt(
     if (resolvedPositionEpoch != null) positionEpoch = resolvedPositionEpoch
     return updateJson
 }
+
+internal fun EditorV2Adapter?.parsedUpdate(updateJson: String): JSONObject =
+    this?.cachedViewUpdateObject?.takeIf { updateJson === cachedViewUpdateJson } ?: parseSharedStringJsonObject(updateJson)
 
 internal fun EditorV2Adapter.fetchDocumentJson(): String? =
     when (val result = backend.getDocumentJson(editorId)) {
@@ -89,6 +97,7 @@ internal fun EditorV2Adapter.refreshInternal(
         is EditorV2CallResult.Ok -> result.value
     }
     renderUpdateCallCountForTesting += 1
+    cachedViewUpdateObject = null
     val snapshot = parseAtomicRenderSnapshot(derived)
     return if (snapshot == null) {
         emit(EditorV2Adapter.contractError("v2 render update violates the frozen shape"))

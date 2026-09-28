@@ -31,10 +31,7 @@ extension EditorV2Adapter {
     }
 
     func cachedAtomicRenderSelection() -> [String: Any]? {
-        guard let render = cachedAtomicRenderJSON?.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: render) as? [String: Any]
-        else { return nil }
-        return object["selection"] as? [String: Any]
+        cachedAtomicRenderSelectionObject
     }
 
     func admitsTableMutation(_ admission: TableMutationAdmission) -> Bool {

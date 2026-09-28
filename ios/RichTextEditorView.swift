@@ -351,10 +351,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
               input.editorId == editorId,
               let adapter = EditorV2Registry.adapter(forLegacyId: editorId),
               hasTableCellBindingAuthority(adapter),
-              let atomic = adapter.cachedAtomicRenderJSON,
-              let data = atomic.data(using: .utf8),
-              let snapshot = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let selection = snapshot["selection"] as? [String: Any],
+              let selection = adapter.cachedAtomicRenderSelection(),
               selection["type"] as? String == "text"
         else { return }
         if input === textView {
@@ -420,10 +417,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
               tableInputCoordinator.positionMap?.binding == currentMap.binding,
               tableInputCoordinator.positionMap?.segments == currentMap.segments,
               let selection = input.currentScalarSelection(),
-              let atomic = adapter.cachedAtomicRenderJSON,
-              let data = atomic.data(using: .utf8),
-              let snapshot = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let authoritativeSelection = snapshot["selection"] as? [String: Any],
+              let authoritativeSelection = adapter.cachedAtomicRenderSelection(),
               authoritativeSelection["type"] as? String == "text"
         else { return }
 
@@ -589,10 +583,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func authoritativeTextSelectionIsAt(_ scalar: UInt32, adapter: EditorV2Adapter) -> Bool {
-        guard let atomic = adapter.cachedAtomicRenderJSON,
-              let data = atomic.data(using: .utf8),
-              let snapshot = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let selection = snapshot["selection"] as? [String: Any],
+        guard let selection = adapter.cachedAtomicRenderSelection(),
               selection["type"] as? String == "text"
         else { return false }
         return v2ExactUInt32(selection["anchorScalar"] as? NSNumber) == scalar
@@ -1356,9 +1347,7 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
             tableSurface.clearPresentation()
             return
         }
-        let selectionValue = adapter.cachedAtomicRenderJSON?.data(using: .utf8)
-            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-            .flatMap { $0["selection"] }
+        let selectionValue = adapter.cachedAtomicRenderSelection()
         let selection = selectionValue.flatMap {
             EditorCellSelection.resolve($0, records: adapter.cachedTableRecords)
         }

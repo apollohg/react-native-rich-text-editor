@@ -60,7 +60,9 @@ internal class EditorV2Adapter private constructor(
     internal var cachedActiveState: JSONObject? = null
     internal var cachedHistoryState: JSONObject? = null
     internal var cachedViewUpdateJson: String? = null
+    internal var cachedViewUpdateObject: JSONObject? = null
     internal var cachedAtomicRenderJson: String? = null
+    internal var cachedAtomicRenderSelectionObject: JSONObject? = null
     internal var cachedSemanticRenderBlocks: List<List<Any?>>? = null
     internal var cachedSemanticRenderBlocksRevision: ULong? = null
     internal var cachedTableAttributes: Map<String, JSONObject> = emptyMap()
@@ -508,7 +510,7 @@ internal class EditorV2Adapter private constructor(
             )
                 ?: return null
         return try {
-            JSONObject(update).getJSONObject("selection").toString()
+            parsedUpdate(update).getJSONObject("selection").toString()
         } catch (error: Exception) {
             null
         }

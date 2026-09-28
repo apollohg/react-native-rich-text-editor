@@ -92,6 +92,7 @@ tasks.withType(Test).configureEach {
     dependsOn tasks.named('buildHostEditorCore')
     inputs.files(hostTestJnaClasspath).withPropertyName('hostTestJnaClasspath')
     systemProperty 'uniffi.component.editor_core.libraryOverride', hostEditorCoreLibrary.absolutePath
+    maxHeapSize = '2g'
     doFirst {
         classpath = hostTestJnaClasspath.plus(classpath)
     }
