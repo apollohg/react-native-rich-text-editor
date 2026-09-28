@@ -20,6 +20,7 @@ const LEDGER_EPOCH_OWNER: u64 = 7;
 const PROBE_FIXTURES: [(usize, usize); 2] = [(1000, 20), (100, 200)];
 const PROBE_WARMUP_KEYSTROKES: usize = 5;
 const PROBE_MEASURED_KEYSTROKES: usize = 20;
+const PROBE_KEYSTROKES: usize = PROBE_WARMUP_KEYSTROKES + PROBE_MEASURED_KEYSTROKES;
 const PROBE_OWNER_ID: &str = "41";
 const PROBE_KEYSTROKE_TEXT: &str = "x";
 const PROBE_FIRST_KEYSTROKE_REQUEST_ID: usize = 2;
@@ -128,7 +129,7 @@ fn large_table_keystroke_budget_probe() {
         let mut epoch = position_epoch(&render);
         let mut apply_samples = Vec::with_capacity(PROBE_MEASURED_KEYSTROKES);
         let mut frame_samples = Vec::with_capacity(PROBE_MEASURED_KEYSTROKES);
-        for keystroke in 0..PROBE_WARMUP_KEYSTROKES + PROBE_MEASURED_KEYSTROKES {
+        for keystroke in 0..PROBE_KEYSTROKES {
             let caret = content_end + keystroke * PROBE_KEYSTROKE_TEXT.chars().count();
             let intent = json!({
                 "version": 1,
@@ -156,6 +157,19 @@ fn large_table_keystroke_budget_probe() {
         }
         println!("PROBE {fixture} apply {:.3}", median_ms(apply_samples));
         println!("PROBE {fixture} frame {:.3}", median_ms(frame_samples));
+        let cell = keystroke_cell(rows, columns);
+        let (row, column) = (cell / columns, cell % columns);
+        let document = ffi_value(&v2::editor_v2_get_document_json(editor_id.clone()));
+        assert_eq!(
+            document["content"][0]["content"][row]["content"][column]["content"][0]["content"][0]
+                ["text"],
+            format!(
+                "{}{}",
+                fixture_cell_text(row, column),
+                PROBE_KEYSTROKE_TEXT.repeat(PROBE_KEYSTROKES)
+            ),
+            "{fixture}: every probe keystroke lands at the end of the keystroke cell"
+        );
         assert!(
             v2::editor_v2_destroy(editor_id).error.is_none(),
             "the probe editor is destroyed"

@@ -87,6 +87,7 @@ fn localized_insert_compile_only_skips_every_proved_full_pass() {
             cell_content_keys: 0,
             attribute_serializations: 0,
             epoch_block_rebuilds: 0,
+            cell_content_generations: 0,
             ..FullPassCounts::default()
         }
     );

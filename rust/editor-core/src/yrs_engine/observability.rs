@@ -33,6 +33,7 @@ pub(crate) struct FullPassCounts {
     pub cell_content_keys: usize,
     pub attribute_serializations: usize,
     pub epoch_block_rebuilds: usize,
+    pub cell_content_generations: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +93,7 @@ std::thread_local! {
             cell_content_keys: 0,
             attribute_serializations: 0,
             epoch_block_rebuilds: 0,
+            cell_content_generations: 0,
         })
     };
     static PREPARED_ADMISSION_COUNTS: std::cell::Cell<PreparedAdmissionCounts> = const {
@@ -170,6 +172,7 @@ recorder!(record_whole_state_encoding, whole_state_encodings);
 recorder!(record_cell_content_key, cell_content_keys);
 recorder!(record_attribute_serialization, attribute_serializations);
 recorder!(record_epoch_block_rebuild, epoch_block_rebuilds);
+recorder!(record_cell_content_generation, cell_content_generations);
 
 pub(crate) fn reset_full_pass_counts_for_test() {
     FULL_PASS_COUNTS.set(FullPassCounts::default());

@@ -9,6 +9,7 @@ use crate::render::RenderElement;
 use crate::tables::tests::{tabled_schema, PROSEMIRROR_TABLE_NAMES};
 
 const REKEYED_CELLS_PER_TABLE_TRANSITION: usize = 2;
+const CHANGED_CELLS_PER_TRANSITION: usize = 1;
 
 fn cell(text: &str) -> serde_json::Value {
     json!({ "type": "table_cell", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": text }] }] })
@@ -297,9 +298,14 @@ fn changing_one_cell_reuses_unchanged_content_and_rebases_source_positions() {
     let transition = cache
         .transition(&old, &new, &schema, &[0], &limits)
         .unwrap();
+    let passes = crate::yrs_engine::observability::take_full_pass_counts_for_test();
     assert_eq!(
-        crate::yrs_engine::observability::take_full_pass_counts_for_test().cell_content_keys,
-        REKEYED_CELLS_PER_TABLE_TRANSITION,
+        passes.cell_content_keys, REKEYED_CELLS_PER_TABLE_TRANSITION,
+        "every cell of the transitioned table is keyed: {passes:#?}"
+    );
+    assert_eq!(
+        passes.cell_content_generations, CHANGED_CELLS_PER_TRANSITION,
+        "only the changed cell generates content; the unchanged cell is reused and rebased: {passes:#?}"
     );
     let new_blocks = transition.cache.materialize();
     let RenderElement::Table { table: old_table } = &old_blocks[0][0] else {

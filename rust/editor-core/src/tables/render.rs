@@ -501,6 +501,8 @@ pub(crate) fn generate_table(
                 Arc::new(elements)
             }
         } else {
+            #[cfg(test)]
+            crate::yrs_engine::observability::record_cell_content_generation();
             let mut elements = Vec::new();
             let mut pos = projected_cell.source_pos + 1;
             for index in 0..cell.child_count() {

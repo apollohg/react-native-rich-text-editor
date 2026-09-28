@@ -205,6 +205,7 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
             cell_content_keys: 0,
             attribute_serializations: 0,
             epoch_block_rebuilds: 0,
+            cell_content_generations: 0,
         }
     );
 }
