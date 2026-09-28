@@ -32,41 +32,6 @@ final class TableSelectionHandleGestureRecognizer: UIGestureRecognizer {
     }
 }
 
-final class TableResizePanGestureRecognizer: UIPanGestureRecognizer {
-    private enum Constants {
-        static let intentSlop: CGFloat = 8
-    }
-
-    private var initialLocation: CGPoint?
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        guard event.allTouches?.count == 1, let touch = touches.first else {
-            state = state == .possible ? .failed : .cancelled
-            return
-        }
-        if state == .possible { initialLocation = touch.location(in: view) }
-        super.touchesBegan(touches, with: event)
-    }
-
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-        if state == .possible, let initialLocation, let touch = touches.first {
-            let location = touch.location(in: view)
-            let delta = CGPoint(x: location.x - initialLocation.x, y: location.y - initialLocation.y)
-            if hypot(delta.x, delta.y) >= Constants.intentSlop,
-               !TableInteractionController.isHorizontalIntent(delta) {
-                state = .failed
-                return
-            }
-        }
-        super.touchesMoved(touches, with: event)
-    }
-
-    override func reset() {
-        super.reset()
-        initialLocation = nil
-    }
-}
-
 struct TableSelectionObstructions: Equatable {
     let safeArea: CGRect
     let keyboard: CGRect?
@@ -163,8 +128,8 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         interaction.isEnabled = true
         return interaction
     }()
-    private lazy var resizeGesture: TableResizePanGestureRecognizer = {
-        let recognizer = TableResizePanGestureRecognizer(target: self, action: #selector(handleResizeGesture(_:)))
+    private lazy var resizeGesture: TableHorizontalPanGestureRecognizer = {
+        let recognizer = TableHorizontalPanGestureRecognizer(target: self, action: #selector(handleResizeGesture(_:)))
         recognizer.maximumNumberOfTouches = 1
         recognizer.delegate = self
         recognizer.cancelsTouchesInView = true
@@ -890,7 +855,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         }
     }
 
-    @objc private func handleResizeGesture(_ recognizer: TableResizePanGestureRecognizer) {
+    @objc private func handleResizeGesture(_ recognizer: TableHorizontalPanGestureRecognizer) {
         guard recognizer === resizeGesture, let host = interactionHost else { return }
         let point = recognizer.location(in: host)
         switch recognizer.state {

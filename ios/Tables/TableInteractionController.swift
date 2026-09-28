@@ -1,5 +1,40 @@
 import UIKit
 
+final class TableHorizontalPanGestureRecognizer: UIPanGestureRecognizer {
+    private enum Constants {
+        static let intentSlop: CGFloat = 8
+    }
+
+    private var initialLocation: CGPoint?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard event.allTouches?.count == 1, let touch = touches.first else {
+            state = state == .possible ? .failed : .cancelled
+            return
+        }
+        if state == .possible { initialLocation = touch.location(in: view) }
+        super.touchesBegan(touches, with: event)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        if state == .possible, let initialLocation, let touch = touches.first {
+            let location = touch.location(in: view)
+            let delta = CGPoint(x: location.x - initialLocation.x, y: location.y - initialLocation.y)
+            if hypot(delta.x, delta.y) >= Constants.intentSlop,
+               !TableInteractionController.isHorizontalIntent(delta) {
+                state = .failed
+                return
+            }
+        }
+        super.touchesMoved(touches, with: event)
+    }
+
+    override func reset() {
+        super.reset()
+        initialLocation = nil
+    }
+}
+
 final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
     private final class WeakScrollView {
         weak var value: UIScrollView?
@@ -11,13 +46,14 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
 
     private enum Constants {
         static let horizontalRatio: CGFloat = 1.25
+        static let scrollDirections: [CGFloat] = [-1, 1]
         static let minimumVelocity: CGFloat = 5
         static let millisecondsPerSecond: Double = 1_000
     }
 
     private weak var host: UIView?
     private weak var drawing: PreparedProseDrawingView?
-    private let pan = UIPanGestureRecognizer()
+    private let pan = TableHorizontalPanGestureRecognizer()
     private var touchPoint = CGPoint.zero
     private weak var touchedView: UIView?
     private var chain: [String] = []
@@ -79,14 +115,13 @@ final class TableInteractionController: NSObject, UIGestureRecognizerDelegate {
         guard gestureRecognizer === pan, let host, let drawing, drawing.window != nil,
               !nativeSelectionGestureIsActive()
         else { return false }
-        let translation = pan.translation(in: host)
-        guard Self.isHorizontalIntent(translation) else { return false }
         let selectedChain = drawing.tableChain(at: touchPoint)
         guard !selectedChain.isEmpty else { return false }
         let outer = horizontalScrollAncestors(of: host)
-        guard drawing.canScrollTables(in: selectedChain, by: translation.x)
-                || outer.contains(where: { canScroll($0, by: translation.x) })
-        else { return false }
+        guard Constants.scrollDirections.contains(where: { direction in
+            drawing.canScrollTables(in: selectedChain, by: direction)
+                || outer.contains { canScroll($0, by: direction) }
+        }) else { return false }
         cancelMotion()
         chain = selectedChain
         outerScrollViews = outer.map(WeakScrollView.init)

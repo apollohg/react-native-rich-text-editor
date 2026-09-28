@@ -1222,6 +1222,57 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    private static let liveProbeTimeout: TimeInterval = 180
+    private static let liveProbeHostFrame = CGRect(x: 0, y: 120, width: 360, height: 380)
+    private static let liveProbeWindowSize = CGSize(width: 360, height: 500)
+    private static let liveScrollThreshold: CGFloat = 40
+
+    private func awaitLiveGesture(_ banner: String, from start: CGPoint, to end: CGPoint, in fixture: MountedTableFixture,
+                                  until done: @escaping () -> Bool) -> Bool {
+        let window = fixture.view.window
+        let from = fixture.view.convert(start, to: window)
+        let to = fixture.view.convert(end, to: window)
+        print("\(banner)_GESTURE_START \(Int(from.x)) \(Int(from.y)) END \(Int(to.x)) \(Int(to.y))")
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in done() }, object: nil)
+        return XCTWaiter.wait(for: [expectation], timeout: Self.liveProbeTimeout) == .completed
+    }
+
+    private func withLiveProbeTable(_ body: (MountedTableFixture) throws -> Void) throws {
+        guard ProcessInfo.processInfo.environment["NATIVE_TABLE_GESTURE_PROBE"] == "1" else {
+            throw XCTSkip("Live simulator gesture probe is opt in")
+        }
+        try withMountedTable(document: try narrowColumnGridDocument(headerRow: false),
+                             size: Self.liveProbeWindowSize, cellSelection: nil) { fixture in
+            fixture.view.frame = Self.liveProbeHostFrame
+            fixture.view.layoutIfNeeded()
+            fixture.surface.updateGeometry(from: fixture.view.textView)
+            try body(fixture)
+        }
+    }
+
+    func testLiveSlowSwipesFromAMidCellAndABodyRowColumnEdgeScrollTheTable() throws {
+        try withLiveProbeTable { fixture in
+            let before = try fixture.documentObject()
+            let bodyCell = Self.gridSize + 1
+            let offset = { fixture.drawing.tableLogicalOffset(for: fixture.tableID) }
+            let midCell = try fixture.hostPoint(inCell: bodyCell)
+            XCTAssertTrue(awaitLiveGesture("MID_CELL_SCROLL", from: midCell,
+                                           to: CGPoint(x: midCell.x - Self.bodySwipeDistance * 2, y: midCell.y),
+                                           in: fixture) { offset() > Self.liveScrollThreshold },
+                          "a slow swipe from mid-cell must scroll the table, offset \(offset())")
+            fixture.drawing.cancelTableMotion()
+            fixture.drawing.setTableLogicalOffset(0, sourceIdentity: fixture.tableID)
+            try fixture.assertBodyEdgeDoesNotClaimAResize(
+                cellIndex: bodyCell, physicalDelta: -Self.bodySwipeDistance, "a body-row column edge")
+            let edge = try fixture.trailingEdgeHostPoint(cellIndex: bodyCell)
+            XCTAssertTrue(awaitLiveGesture("BODY_EDGE_SCROLL", from: edge,
+                                           to: CGPoint(x: edge.x - Self.bodySwipeDistance * 2, y: edge.y),
+                                           in: fixture) { offset() > Self.liveScrollThreshold },
+                          "a slow swipe from a body-row column edge must scroll the table, offset \(offset())")
+            XCTAssertEqual(try fixture.documentObject(), before, "scrolling never mutates the document")
+        }
+    }
+
     func testMountedOffsetFollowsSourceIdentityAcrossProseTypingAndClearsOnReset() throws {
         let editorId = makeV2Editor(configJson: tableConfig)
         defer { destroyV2Editor(id: editorId) }
