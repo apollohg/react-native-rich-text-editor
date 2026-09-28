@@ -428,7 +428,8 @@ impl YrsDocumentEngine {
         let mut outbound = OutboundUpdateSink::from_optional_outbox(outbox);
         let matches_source = matches!(transaction.operations.as_slice(),
             [yrs_engine::TypedOperation::ReplaceStructure(replacement)]
-                if source.document.root().content() == Some(replacement.content()));
+                if source.document.root().content() == Some(replacement.content()))
+            && self.document() != Some(&source.document);
         let (commit, _) = if matches_source {
             if source
                 .canonical_artifact
