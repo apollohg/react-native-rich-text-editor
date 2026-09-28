@@ -2,7 +2,9 @@ import XCTest
 
 final class EditorLargeTableTests: XCTestCase {
     private enum PlainTable {
-        static let cellText = "abcdefghijkl"
+        static func cellText(row: Int, column: Int) -> String {
+            String(format: "R%04dC%04dXY", row, column)
+        }
         static let headerRow = 0
         static let document = "doc"
         static let table = "table"
@@ -16,9 +18,9 @@ final class EditorLargeTableTests: XCTestCase {
     private func plainTableDocument(rows: Int, columns: Int) throws -> String {
         let tableRows: [[String: Any]] = (0..<rows).map { row in
             let type = row == PlainTable.headerRow ? PlainTable.headerCell : PlainTable.cell
-            return ["type": PlainTable.row, "content": (0..<columns).map { _ in [
+            return ["type": PlainTable.row, "content": (0..<columns).map { column in [
                 "type": type,
-                "content": [["type": PlainTable.paragraph, "content": [["type": PlainTable.text, "text": PlainTable.cellText]]]]
+                "content": [["type": PlainTable.paragraph, "content": [["type": PlainTable.text, "text": PlainTable.cellText(row: row, column: column)]]]]
             ] }]
         }
         let data = try JSONSerialization.data(withJSONObject: [
@@ -76,6 +78,44 @@ final class EditorLargeTableTests: XCTestCase {
         let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         try body(view, surface, drawing)
+    }
+
+    func testColdLayoutRetainsOnlyWindowLayouts() throws {
+        try withMountedTable(rows: 1000, columns: 20) { _, _, drawing in
+            let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            XCTAssertEqual(table.cells.count, 20_000)
+            XCTAssertLessThanOrEqual(table.cells.filter { $0.cachedContent != nil }.count, maximumRetainedPresentations)
+            XCTAssertLessThanOrEqual(table.layoutStore.unmountedRetainedBytes,
+                                     PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget)
+            XCTAssertEqual(table.cells.map(\.contentSize.height).count, 20_000)
+        }
+    }
+
+    func testScrollingPreparesOnlyEnteringCells() throws {
+        try withMountedTable(rows: 1000, columns: 20) { view, surface, drawing in
+            var preparations: [Int] = []
+            surface.onTableCellPreparedForTesting = { preparations.append($0) }
+            view.textView.contentOffset.y = view.textView.contentSize.height / 2
+            view.layoutIfNeeded()
+            let first = try XCTUnwrap(drawing.mountedTablePresentation())
+            XCTAssertFalse(first.cells.isEmpty)
+            XCTAssertGreaterThan(preparations.count, 0, "Entering an uncached region must prepare cells")
+            preparations.removeAll()
+            _ = drawing.mountedTablePresentation()
+            XCTAssertTrue(preparations.isEmpty, "Repeated presentation must reuse entering-cell layouts")
+            XCTAssertLessThanOrEqual(first.cells.count, maximumRetainedPresentations)
+        }
+    }
+
+    func testAccessibilityMetadataCoversTheWholeTable() throws {
+        try withMountedTable(rows: 1000, columns: 20) { _, _, drawing in
+            let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first?.surface)
+            let before = table.layoutStore.count
+            XCTAssertEqual(table.cells.count, 20_000)
+            XCTAssertTrue(table.cells.allSatisfy { !$0.accessibilityNodes.isEmpty })
+            XCTAssertFalse(try XCTUnwrap(table.cell(sourceIndex: 19_999)).accessibilityNodes.map(\.label).joined().isEmpty)
+            XCTAssertEqual(table.layoutStore.count, before, "Offscreen metadata must not prepare drawing layouts")
+        }
     }
 
     func testTwentyThousandSlotTablesRenderAndPresentOnlyTheirViewportWindow() throws {
@@ -140,9 +180,9 @@ final class EditorLargeTableTests: XCTestCase {
                 print("row \(row) column \(column): frame \(frame), headers \(headers.compactMap { ($0 as? NSObject)?.accessibilityLabel }), offset \(view.textView.contentOffset)")
                 XCTAssertTrue(screen.contains(CGPoint(x: frame.midX, y: frame.midY)), "row \(row) is revealed on screen: \(frame)")
                 XCTAssertEqual(element.accessibilityRowRange(), NSRange(location: row, length: 1))
-                XCTAssertEqual(element.accessibilityLabel, PlainTable.cellText)
+                XCTAssertEqual(element.accessibilityLabel, PlainTable.cellText(row: row, column: column))
                 XCTAssertEqual(headers.count, 1, "row \(row) announces its column header")
-                XCTAssertEqual((headers.first as? NSObject)?.accessibilityLabel, PlainTable.cellText)
+                XCTAssertEqual((headers.first as? NSObject)?.accessibilityLabel, PlainTable.cellText(row: PlainTable.headerRow, column: column))
                 XCTAssertTrue(try tableElement() === table, "row \(row) keeps the same table element")
                 XCTAssertTrue(table.accessibilityDataTableCellElement(forRow: row, column: column) === element,
                               "row \(row) keeps focus on the same element after its reveal")

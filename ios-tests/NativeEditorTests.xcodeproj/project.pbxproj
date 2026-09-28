@@ -136,6 +136,7 @@
 		9E0E70548BFAF02E1EF711DE /* NativeCollaborationTransportRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2261CB51C233C88B5737A00A /* NativeCollaborationTransportRegistry.swift */; };
 		9E7DACEBB0DD1AD90F33066C /* EditorV2AdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80892297FFD41613BE083EF1 /* EditorV2AdapterTests.swift */; };
 		A15E00000000000000000011 /* TableCellMeasurementCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000001 /* TableCellMeasurementCache.swift */; };
+		A32010000000000000000011 /* TableCellLayoutStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A32010000000000000000001 /* TableCellLayoutStore.swift */; };
 		A15E00000000000000000012 /* TableGridLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000002 /* TableGridLayout.swift */; };
 		CF676BC9CF65054EE1C926BA /* TableSurfaceSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 507050FA0ACA34D01005E2FD /* TableSurfaceSource.swift */; };
 		A15E00000000000000000013 /* TableStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000003 /* TableStyle.swift */; };
@@ -152,6 +153,7 @@
 		A22B00000000000000000011 /* TableAccessibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = A22B00000000000000000001 /* TableAccessibility.swift */; };
 		A17000000000000000000014 /* EditorTableInputTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17000000000000000000004 /* EditorTableInputTests.swift */; };
 		A17100000000000000000011 /* TableCellPositionMapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17100000000000000000001 /* TableCellPositionMapTests.swift */; };
+		A32000000000000000000011 /* TableCellLayoutStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A32000000000000000000001 /* TableCellLayoutStoreTests.swift */; };
 		A17200000000000000000011 /* EditorCellSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17200000000000000000001 /* EditorCellSelection.swift */; };
 		A17900000000000000000011 /* TableInteractionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17900000000000000000001 /* TableInteractionController.swift */; };
 		A18000000000000000000011 /* EditorTableNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A18000000000000000000001 /* EditorTableNavigationTests.swift */; };
@@ -384,6 +386,7 @@
 		A11CE551A11CE551A11CE551 /* NativeEditorViewRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeEditorViewRegistry.swift; sourceTree = "<group>"; };
 		A11CE700A11CE700A11CE700 /* NativeToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeToolbar.swift; sourceTree = "<group>"; };
 		A15E00000000000000000001 /* TableCellMeasurementCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellMeasurementCache.swift; sourceTree = "<group>"; };
+		A32010000000000000000001 /* TableCellLayoutStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellLayoutStore.swift; sourceTree = "<group>"; };
 		A15E00000000000000000002 /* TableGridLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGridLayout.swift; sourceTree = "<group>"; };
 		507050FA0ACA34D01005E2FD /* TableSurfaceSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableSurfaceSource.swift; sourceTree = "<group>"; };
 		A15E00000000000000000003 /* TableStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableStyle.swift; sourceTree = "<group>"; };
@@ -401,6 +404,7 @@
 		A22B00000000000000000001 /* TableAccessibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableAccessibility.swift; sourceTree = "<group>"; };
 		A17000000000000000000004 /* EditorTableInputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableInputTests.swift; sourceTree = "<group>"; };
 		A17100000000000000000001 /* TableCellPositionMapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellPositionMapTests.swift; sourceTree = "<group>"; };
+		A32000000000000000000001 /* TableCellLayoutStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellLayoutStoreTests.swift; sourceTree = "<group>"; };
 		A17200000000000000000001 /* EditorCellSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorCellSelection.swift; sourceTree = "<group>"; };
 		A17900000000000000000001 /* TableInteractionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableInteractionController.swift; sourceTree = "<group>"; };
 		A18000000000000000000001 /* EditorTableNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorTableNavigationTests.swift; sourceTree = "<group>"; };
@@ -726,6 +730,7 @@
 			isa = PBXGroup;
 			children = (
 				A15E00000000000000000001 /* TableCellMeasurementCache.swift */,
+				A32010000000000000000001 /* TableCellLayoutStore.swift */,
 				A15E00000000000000000002 /* TableGridLayout.swift */,
 				A19000000000000000000002 /* EditorTableIndex.swift */,
 				507050FA0ACA34D01005E2FD /* TableSurfaceSource.swift */,
@@ -766,6 +771,7 @@
 				A24B00000000000000000002 /* EditorLargeTableTests.swift */,
 				A31000000000000000000001 /* TableCellPreparationBenchmarkTests.swift */,
 				A17100000000000000000001 /* TableCellPositionMapTests.swift */,
+				A32000000000000000000001 /* TableCellLayoutStoreTests.swift */,
 				0A70A1000000000000000002 /* AtomMountingTests.swift */,
 				80892297FFD41613BE083EF1 /* EditorV2AdapterTests.swift */,
 				ECAFF80F4C89E1EA1418FA4A /* EditorV2AdapterTests+CommandsAndRender.swift */,
@@ -1347,6 +1353,7 @@
 				B449DB726B51D7148CBF6B43 /* NativeSVGImageDecoder.mm in Sources */,
 				795FC94EAF1080186A91073B /* NativeSVGPreflight.mm in Sources */,
 				A15E00000000000000000011 /* TableCellMeasurementCache.swift in Sources */,
+				A32010000000000000000011 /* TableCellLayoutStore.swift in Sources */,
 				A15E00000000000000000012 /* TableGridLayout.swift in Sources */,
 				A19000000000000000000012 /* EditorTableIndex.swift in Sources */,
 				CF676BC9CF65054EE1C926BA /* TableSurfaceSource.swift in Sources */,
@@ -1377,6 +1384,7 @@
 				A24B0000000000000000000C /* EditorLargeTableTests.swift in Sources */,
 				A31000000000000000000011 /* TableCellPreparationBenchmarkTests.swift in Sources */,
 				A17100000000000000000011 /* TableCellPositionMapTests.swift in Sources */,
+				A32000000000000000000011 /* TableCellLayoutStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

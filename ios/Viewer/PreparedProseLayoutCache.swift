@@ -5,6 +5,7 @@ import Foundation
 /// handoff before a later component can acquire it.
 final class PreparedProseLayoutCache {
     static let pixelGridRoundingSlackPixels = 1
+    static let preparedLayoutUnmountedByteBudget = 32 * 1024 * 1024
 
     private final class Preparation {
         var result: Result<PreparedProseLayout, Error>?
@@ -68,7 +69,7 @@ final class PreparedProseLayoutCache {
         private var publicationRetirementCandidates: Set<ProseLayoutKey> = []
     #endif
     private let byteBudget: Int
-    init(byteBudget: Int = 32 * 1024 * 1024) {
+    init(byteBudget: Int = PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget) {
         self.byteBudget = byteBudget
     }
 

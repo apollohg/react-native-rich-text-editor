@@ -1,17 +1,59 @@
 import UIKit
 
-struct PreparedViewerTableCell {
+final class PreparedViewerTableCell {
     let sourceIndex: Int
     let row: Int
     let column: Int
     let rowspan: Int
     let colspan: Int
     let contentOrigin: CGPoint
-    let content: PreparedProseLayout
     let isHeader: Bool
     let attributesKey: String?
+    let contentKey: ProseLayoutKey
+    let contentSize: CGSize
+    let accessibilityNodes: [PreparedProseAccessibilityNode]
+    let hasNestedTables: Bool
+    let hasAtoms: Bool
+    let hasImages: Bool
+    let isPositionFree: Bool
+    let contentError: ProseViewerError?
+    let layoutStore: TableCellLayoutStore
+    private let prepareContent: () -> PreparedProseLayout
 
-    var retainedBytes: Int { 96 + content.retainedBytes }
+    var content: PreparedProseLayout { layoutStore.value(for: contentKey, build: prepareContent) }
+    var cachedContent: PreparedProseLayout? { layoutStore.peek(contentKey) }
+    var retainedBytes: Int {
+        96 + (cachedContent?.retainedBytes ?? 0) + accessibilityNodes.reduce(0) { $0 + $1.estimatedRetainedBytes }
+    }
+
+    init(sourceIndex: Int, row: Int, column: Int, rowspan: Int, colspan: Int,
+         contentOrigin: CGPoint, content: PreparedProseLayout, isHeader: Bool, attributesKey: String?,
+         layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
+         prepareContent: (() -> PreparedProseLayout)? = nil) {
+        self.sourceIndex = sourceIndex
+        self.row = row
+        self.column = column
+        self.rowspan = rowspan
+        self.colspan = colspan
+        self.contentOrigin = contentOrigin
+        self.isHeader = isHeader
+        self.attributesKey = attributesKey
+        self.contentKey = content.key
+        self.contentSize = content.size
+        self.contentError = content.error
+        self.accessibilityNodes = TableAccessibility.contentNodes(of: content)
+        self.hasNestedTables = content.blocks.contains { $0.tableSurface != nil }
+        self.hasAtoms = content.blocks.contains { $0.atomSlot != nil || $0.tableSurface?.hasAtoms == true }
+        self.hasImages = !content.imageAttachments.isEmpty || content.blocks.contains {
+            $0.imageAttachment != nil || $0.tableSurface?.cells.contains(where: \.hasImages) == true
+        }
+        self.isPositionFree = content.error == nil && !hasNestedTables && !hasAtoms && !hasImages
+            && content.interactions.allSatisfy { $0.docPos == nil }
+        self.layoutStore = layoutStore
+        self.prepareContent = prepareContent ?? { content }
+        layoutStore.insert(content)
+    }
+
 }
 
 final class ViewerTableSurface {
@@ -29,6 +71,7 @@ final class ViewerTableSurface {
     let preparationError: ProseViewerError?
     private let cellIndex: ViewerTableCellIndex
     let displayScale: CGFloat
+    let layoutStore: TableCellLayoutStore
 
     var bounds: CGRect { CGRect(origin: .zero, size: layout.contentSize) }
     var retainedBytes: Int {
@@ -51,8 +94,10 @@ final class ViewerTableSurface {
         textScale: CGFloat = 1,
         sourceTable: TableSurfaceSource? = nil,
         sourceAttributes: [String: [String: Any]] = [:],
-        prepareCell: (TableGridCell, CGFloat) -> PreparedProseLayout
+        layoutStore: TableCellLayoutStore = TableCellLayoutStore(),
+        prepareCell: @escaping (TableGridCell, CGFloat) -> PreparedProseLayout
     ) {
+        self.layoutStore = layoutStore
         self.displayScale = displayScale
         self.identity = identity
         self.scrollIdentity = scrollIdentity ?? identity
@@ -81,7 +126,15 @@ final class ViewerTableSurface {
             failure: record.failure,
             compatibilityDiagnostic: record.compatibilityDiagnostic
         )
-        var prepared: [Int: PreparedProseLayout] = [:]
+        var prepared: [Int: PreparedViewerTableCell] = [:]
+        func capture(_ cell: TableGridCell, width: CGFloat, content: PreparedProseLayout) -> PreparedViewerTableCell {
+            let sourceCell = sourceTable?.cells[cell.sourceIndex]
+            let inset = style.cellPadding + style.borderWidth
+            return PreparedViewerTableCell(sourceIndex: cell.sourceIndex, row: cell.row, column: cell.column,
+                rowspan: cell.rowspan, colspan: cell.colspan, contentOrigin: CGPoint(x: inset, y: inset),
+                content: content, isHeader: sourceCell?.header ?? false, attributesKey: sourceCell?.attrsKey,
+                layoutStore: layoutStore, prepareContent: { prepareCell(cell, width) })
+        }
         var firstPreparationError: ProseViewerError?
         let canonicalScale = displayScale.isFinite && displayScale > 0 ? displayScale : 1
         let grid = TableGridLayout(displayScale: canonicalScale)
@@ -95,35 +148,24 @@ final class ViewerTableSurface {
             textScale: textScale
         ) { measuredCell, width in
             guard let cell = sourceCells[measuredCell.sourceIndex] else { return nil }
-            let content = prepareCell(cell, width)
+            let content = capture(cell, width: width, content: prepareCell(cell, width))
             prepared[cell.sourceIndex] = content
-            if let error = content.error, firstPreparationError == nil { firstPreparationError = error }
-            return content.size.height
+            if let error = content.contentError, firstPreparationError == nil { firstPreparationError = error }
+            return content.contentSize.height
         }
         for cell in record.cells where prepared[cell.sourceIndex] == nil {
             guard let frame = resolvedLayout.rectangles[cell.sourceIndex] else { continue }
             let inner = max(0, frame.width - 2 * (style.cellPadding + style.borderWidth))
             let pixels = (inner * canonicalScale).rounded()
             guard pixels.isFinite, pixels >= 0, let widthPixels = Int(exactly: pixels) else { continue }
-            let content = prepareCell(cell, CGFloat(widthPixels) / canonicalScale)
-            if let error = content.error, firstPreparationError == nil { firstPreparationError = error }
+            let content = capture(cell, width: CGFloat(widthPixels) / canonicalScale,
+                                  content: prepareCell(cell, CGFloat(widthPixels) / canonicalScale))
+            if let error = content.contentError, firstPreparationError == nil { firstPreparationError = error }
             prepared[cell.sourceIndex] = content
         }
         layout = resolvedLayout
         preparationError = firstPreparationError
-        let preparedCells = resolvedLayout.sourceOrder.compactMap { sourceIndex -> PreparedViewerTableCell? in
-            guard let gridCell = sourceCells[sourceIndex], let content = prepared[sourceIndex] else {
-                return nil
-            }
-            let sourceCell = sourceTable?.cells[sourceIndex]
-            let inset = style.cellPadding + style.borderWidth
-            return PreparedViewerTableCell(sourceIndex: sourceIndex,
-                                           row: gridCell.row, column: gridCell.column,
-                                           rowspan: gridCell.rowspan, colspan: gridCell.colspan,
-                                           contentOrigin: CGPoint(x: inset, y: inset), content: content,
-                                           isHeader: sourceCell?.header ?? false,
-                                           attributesKey: sourceCell?.attrsKey)
-        }
+        let preparedCells = resolvedLayout.sourceOrder.compactMap { prepared[$0] }
         cells = preparedCells
         cellIndex = ViewerTableCellIndex(cells: preparedCells, direction: direction)
     }
@@ -148,6 +190,7 @@ final class ViewerTableSurface {
         self.style = style
         self.direction = direction
         self.layout = layout
+        self.layoutStore = cells.first?.layoutStore ?? TableCellLayoutStore()
         self.cells = cells
         self.cellIndex = ViewerTableCellIndex(cells: cells, direction: direction)
         self.sourceTable = sourceTable
@@ -162,30 +205,37 @@ final class ViewerTableSurface {
 
     func replacingCells(_ contents: [Int: PreparedProseLayout], contentHeights: [Int: CGFloat],
                         sourceTable: TableSurfaceSource? = nil,
-                        sourceAttributes: [String: [String: Any]]? = nil) -> ViewerTableSurface {
+                        sourceAttributes: [String: [String: Any]]? = nil,
+                        prepareCell: ((TableGridCell, CGFloat) -> PreparedProseLayout)? = nil) -> ViewerTableSurface {
         let source = sourceTable ?? self.sourceTable
         let updated = cells.map { cell in
-            PreparedViewerTableCell(sourceIndex: cell.sourceIndex, row: cell.row, column: cell.column,
-                                    rowspan: cell.rowspan, colspan: cell.colspan, contentOrigin: cell.contentOrigin,
-                                    content: contents[cell.sourceIndex] ?? cell.content,
-                                    isHeader: source?.cells[cell.sourceIndex].header ?? cell.isHeader,
-                                    attributesKey: source?.cells[cell.sourceIndex].attrsKey ?? cell.attributesKey)
+            guard let content = contents[cell.sourceIndex] else { return cell }
+            return PreparedViewerTableCell(sourceIndex: cell.sourceIndex, row: cell.row, column: cell.column,
+                rowspan: cell.rowspan, colspan: cell.colspan, contentOrigin: cell.contentOrigin,
+                content: content, isHeader: source?.cells[cell.sourceIndex].header ?? cell.isHeader,
+                attributesKey: source?.cells[cell.sourceIndex].attrsKey ?? cell.attributesKey,
+                layoutStore: layoutStore, prepareContent: prepareCell.map { prepare in
+                    let gridCell = TableGridCell(sourceIndex: cell.sourceIndex, row: cell.row, column: cell.column,
+                        rowspan: cell.rowspan, colspan: cell.colspan, contentKey: content.key.semanticKey)
+                    let width = content.size.width
+                    return { prepare(gridCell, width) }
+                })
         }
         let record = source.map { TableGridRecord(table: $0, documentOwner: identity) }
             ?? TableGridRecord(documentOwner: identity, columns: layout.columnWidths.count,
                                rows: layout.rowOffsets.count - 1, columnWidths: layout.columnWidths.map { $0 },
                                cells: updated.map { TableGridCell(sourceIndex: $0.sourceIndex, row: $0.row,
                                    column: $0.column, rowspan: $0.rowspan, colspan: $0.colspan,
-                                   contentKey: $0.content.key.semanticKey) })
+                                   contentKey: $0.contentKey.semanticKey) })
         let heights = Dictionary(uniqueKeysWithValues: updated.map {
-            ($0.sourceIndex, contentHeights[$0.sourceIndex] ?? $0.content.size.height)
+            ($0.sourceIndex, contentHeights[$0.sourceIndex] ?? $0.contentSize.height)
         })
         let next = TableGridLayout(displayScale: displayScale).relayout(
             record: record, viewportWidth: hostViewportWidth, style: style, direction: direction,
             cachedContentHeights: heights)
         return ViewerTableSurface(identity: identity, scrollIdentity: scrollIdentity,
                                   hostViewportWidth: hostViewportWidth, style: style, direction: direction,
-                                  layout: next, cells: updated, preparationError: updated.compactMap { $0.content.error }.first,
+                                  layout: next, cells: updated, preparationError: updated.compactMap { $0.contentError }.first,
                                   displayScale: displayScale, sourceTable: source,
                                   sourceAttributes: sourceAttributes ?? self.sourceAttributes)
     }
@@ -222,7 +272,7 @@ final class ViewerTableSurface {
             for index in layout.imageAttachments.indices { appendAttachment(index) }
         }
         func append(_ surface: ViewerTableSurface, at origin: CGPoint) {
-            for cell in surface.cells {
+            for cell in surface.cells where cell.hasImages {
                 let frame = surface.frame(ofCell: cell)
                 append(cell.content, at: CGPoint(x: origin.x + frame.minX + cell.contentOrigin.x,
                                                   y: origin.y + frame.minY + cell.contentOrigin.y))
@@ -286,12 +336,8 @@ private struct ViewerTableCellIndex {
                 direction == .rightToLeft ? cells[$0].column > cells[$1].column : cells[$0].column < cells[$1].column
             })
         }
-        nestedTableCells = cells.indices.filter { index in
-            cells[index].content.blocks.contains { $0.tableSurface != nil }
-        }
-        atomCells = cells.indices.filter { index in
-            cells[index].content.blocks.contains { $0.atomSlot != nil || $0.tableSurface?.hasAtoms == true }
-        }
+        nestedTableCells = cells.indices.filter { cells[$0].hasNestedTables }
+        atomCells = cells.indices.filter { cells[$0].hasAtoms }
         bySourceIndex = Dictionary(cells.indices.map { (cells[$0].sourceIndex, $0) }, uniquingKeysWith: min)
     }
 
@@ -331,6 +377,30 @@ final class ViewerTablePresentationOwner {
         let withinColumn: CGFloat
     }
     private var positions: [String: Position] = [:]
+    private var pinnedStores: [ObjectIdentifier: (store: TableCellLayoutStore, keys: Set<ProseLayoutKey>)] = [:]
+
+    deinit {
+        for entry in pinnedStores.values { entry.keys.forEach(entry.store.unpin) }
+    }
+
+    func retainCells(_ cells: [ViewerTablePresentedCell]) {
+        var next: [ObjectIdentifier: (store: TableCellLayoutStore, keys: Set<ProseLayoutKey>)] = [:]
+        for cell in cells {
+            let store = cell.cell.layoutStore
+            let identifier = ObjectIdentifier(store)
+            if next[identifier] == nil { next[identifier] = (store, []) }
+            next[identifier]?.keys.insert(cell.cell.contentKey)
+        }
+        for (identifier, entry) in pinnedStores {
+            for key in entry.keys.subtracting(next[identifier]?.keys ?? []) { entry.store.unpin(key) }
+        }
+        for (identifier, entry) in next {
+            for key in entry.keys.subtracting(pinnedStores[identifier]?.keys ?? []) { entry.store.pin(key) }
+        }
+        for cell in cells where cell.cell.cachedContent == nil { cell.cell.layoutStore.insert(cell.content) }
+        pinnedStores = next
+    }
+
 
     var retainedBytes: Int {
         guard !positions.isEmpty else { return 0 }
@@ -498,7 +568,7 @@ enum ViewerTablePresentation {
             sourceIndex: cell.sourceIndex,
             content: cell.content,
             bounds: cellBounds,
-            contentBounds: CGRect(origin: childOrigin, size: cell.content.size),
+            contentBounds: CGRect(origin: childOrigin, size: cell.contentSize),
             clip: clip
         )
     }
@@ -556,8 +626,10 @@ enum ViewerTablePresentation {
         case .unknown: window = nil
         case .known: window = viewport.window ?? .null
         }
-        return project(layout: root, owner: owner, window: window, origin: .zero, clip: .infinite,
-                       parentScrollIdentity: nil)
+        let snapshot = project(layout: root, owner: owner, window: window, origin: .zero, clip: .infinite,
+                               parentScrollIdentity: nil)
+        owner.retainCells(snapshot.cells)
+        return snapshot
     }
 
     private static func project(

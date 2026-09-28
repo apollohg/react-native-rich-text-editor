@@ -2232,7 +2232,12 @@ final class EditorTableInputTests: XCTestCase {
             let stub = StubKeyboardGuide(in: fixture.host, window: try XCTUnwrap(fixture.host.window), frame: docked)
             fixture.host.trackKeyboardOcclusion(of: stub.guide)
             try fixture.selectCells(anchor: 0, head: 3)
-            waitForGeometryFrame()
+            let geometryTimeout: TimeInterval = 2
+            let publication = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                !fixture.recorder.payloads.isEmpty
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [publication], timeout: geometryTimeout), .completed,
+                           "The scheduled geometry frame must publish before its payload is inspected")
 
             let payload = try XCTUnwrap(fixture.recorder.payloads.last)
             XCTAssertEqual(try GeometryRecorder.rect(try XCTUnwrap(payload["keyboard"] as? [String: Double],

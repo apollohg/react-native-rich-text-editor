@@ -49,6 +49,7 @@ final class PreparedCellShapeBuildContext {
         build: () throws -> PreparedProseLayout,
         bind: (PreparedCellShape) -> PreparedProseLayout?
     ) throws -> PreparedProseLayout {
+        if closed { return try build() }
         if let shape = resolved[key] {
             if let bound = bind(shape) { return bound.withCellShape(shape) }
             return try build()
@@ -62,7 +63,7 @@ final class PreparedCellShapeBuildContext {
             return try build()
         }
         let fresh = try build()
-        let candidate = PreparedCellShape(key: key, localLayout: fresh.sourceNeutralized())
+        let candidate = PreparedCellShape(key: key, localLayout: fresh.sourceNeutralized(semanticKey: UUID().uuidString))
         let shape = catalog.stageForBuild(candidate)
         rememberPinned(shape)
         resolved[key] = shape
@@ -90,9 +91,14 @@ final class PreparedCellShapeBuildContext {
 /// Private index owned by `PreparedProseLayoutCache`; it never publishes a layout.
 final class PreparedCellShapeCatalog {
     private let lock = NSLock()
-    private var entries: [PreparedCellShapeKey: PreparedCellShape] = [:]
+    private final class Reference {
+        weak var shape: PreparedCellShape?
+        init(_ shape: PreparedCellShape) { self.shape = shape }
+    }
+
+    private var entries: [PreparedCellShapeKey: Reference] = [:]
     private var buildPins: [ObjectIdentifier: Int] = [:]
-    private var owners: [ObjectIdentifier: [PreparedCellShapeKey: PreparedCellShape]] = [:]
+    private var owners: [ObjectIdentifier: Set<PreparedCellShapeKey>] = [:]
     private var ownerCounts: [ObjectIdentifier: Int] = [:]
 
     func newBuildContext() -> PreparedCellShapeBuildContext {
@@ -102,15 +108,15 @@ final class PreparedCellShapeCatalog {
     func acquireForBuild(_ key: PreparedCellShapeKey) -> PreparedCellShape? {
         lock.lock()
         defer { lock.unlock() }
-        guard let shape = entries[key] else { return nil }
+        guard let shape = entries[key]?.shape else { return nil }
         buildPins[ObjectIdentifier(shape), default: 0] += 1
         return shape
     }
 
     func stageForBuild(_ shape: PreparedCellShape) -> PreparedCellShape {
         lock.lock()
-        let retained = entries[shape.key] ?? shape
-        if entries[shape.key] == nil { entries[shape.key] = shape }
+        let retained = entries[shape.key]?.shape ?? shape
+        if entries[shape.key]?.shape == nil { entries[shape.key] = Reference(shape) }
         buildPins[ObjectIdentifier(retained), default: 0] += 1
         lock.unlock()
         return retained
@@ -134,8 +140,8 @@ final class PreparedCellShapeCatalog {
         if owners[identifier] == nil {
             var shapes: [PreparedCellShapeKey: PreparedCellShape] = [:]
             collectShapes(in: layout, into: &shapes)
-            owners[identifier] = shapes
-            for (key, shape) in shapes where entries[key] == nil { entries[key] = shape }
+            owners[identifier] = Set(shapes.keys)
+            for (key, shape) in shapes where entries[key]?.shape == nil { entries[key] = Reference(shape) }
         }
         lock.unlock()
     }
@@ -156,18 +162,21 @@ final class PreparedCellShapeCatalog {
 
     var countForTesting: Int {
         lock.lock(); defer { lock.unlock() }
+        pruneLocked()
         return entries.count
     }
 
     var retainedBytesForTesting: Int {
         lock.lock(); defer { lock.unlock() }
-        return entries.values.reduce(0) { $0 + $1.catalogRetainedBytes }
+        pruneLocked()
+        return entries.values.reduce(0) { $0 + ($1.shape?.catalogRetainedBytes ?? 0) }
     }
 
     private func pruneLocked() {
-        let owned = Set(owners.values.flatMap { $0.keys })
-        entries = entries.filter { key, shape in
-            owned.contains(key) || buildPins[ObjectIdentifier(shape), default: 0] > 0
+        let owned = Set(owners.values.flatMap { $0 })
+        entries = entries.filter { key, reference in
+            guard let shape = reference.shape else { return false }
+            return owned.contains(key) || buildPins[ObjectIdentifier(shape), default: 0] > 0
         }
     }
 
@@ -178,13 +187,15 @@ final class PreparedCellShapeCatalog {
         if let shape = layout.cellShape { destination[shape.key] = shape }
         for block in layout.blocks {
             guard let table = block.tableSurface else { continue }
-            for cell in table.cells { collectShapes(in: cell.content, into: &destination) }
+            for cell in table.cells {
+                if let content = cell.cachedContent { collectShapes(in: content, into: &destination) }
+            }
         }
     }
 }
 
 private extension PreparedProseLayout {
-    func sourceNeutralized() -> PreparedProseLayout {
+    func sourceNeutralized(semanticKey: String) -> PreparedProseLayout {
         let neutralBlocks = blocks.map { block -> PreparedProseBlock in
             let neutralTable = block.tableSurface.map { $0.sourceNeutralized() }
             let neutralAtom = block.atomSlot.map {
@@ -204,7 +215,7 @@ private extension PreparedProseLayout {
         }
         return PreparedProseLayout(
             key: ProseLayoutKey(
-                semanticKey: "cell-shape",
+                semanticKey: semanticKey,
                 widthPixels: key.widthPixels,
                 themeDigest: key.themeDigest,
                 nativeFontRevision: key.nativeFontRevision,
@@ -233,25 +244,21 @@ private extension PreparedProseLayout {
 
 private extension ViewerTableSurface {
     func sourceNeutralized() -> ViewerTableSurface {
-        return ViewerTableSurface(
-            identity: "cell-table",
-            hostViewportWidth: hostViewportWidth,
-            style: style,
-            direction: direction,
-            layout: layout,
-            cells: cells.map { cell in
-                PreparedViewerTableCell(
-                    sourceIndex: cell.sourceIndex,
-                    row: cell.row, column: cell.column, rowspan: cell.rowspan, colspan: cell.colspan,
-                    contentOrigin: cell.contentOrigin,
-                    content: cell.content.cellShape?.localLayout ?? cell.content.sourceNeutralized(),
-                    isHeader: cell.isHeader,
-                    attributesKey: nil
-                )
-            },
-            preparationError: preparationError
-        )
+        let store = TableCellLayoutStore()
+        return ViewerTableSurface(identity: "cell-table", hostViewportWidth: hostViewportWidth,
+            style: style, direction: direction, layout: layout, cells: cells.map { cell in
+                let prepare = {
+                    let content = cell.content
+                    return content.cellShape?.localLayout ?? content.sourceNeutralized(
+                        semanticKey: "cell-shape:\(cell.sourceIndex)")
+                }
+                return PreparedViewerTableCell(sourceIndex: cell.sourceIndex, row: cell.row, column: cell.column,
+                    rowspan: cell.rowspan, colspan: cell.colspan, contentOrigin: cell.contentOrigin,
+                    content: prepare(), isHeader: cell.isHeader, attributesKey: nil,
+                    layoutStore: store, prepareContent: prepare)
+            }, preparationError: preparationError, displayScale: displayScale)
     }
+
 }
 
 func preparedCellShapeKey(

@@ -122,7 +122,7 @@ public final class PreparedProseLayoutRegistry: NSObject {
     }
 
     init(
-        byteBudget: Int = 32 * 1024 * 1024,
+        byteBudget: Int = PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget,
         compiledByteBudget: Int = 8 * 1024 * 1024,
         compilationFailureBudget: Int = 128,
         themeByteBudget: Int = 512 * 1024,

@@ -375,12 +375,16 @@ public final class PreparedProseLayout: NSObject {
         func visit(_ layout: PreparedProseLayout) {
             collect(layout.cellShape)
             for block in layout.blocks {
-                for cell in block.tableSurface?.cells ?? [] { visit(cell.content) }
+                for cell in block.tableSurface?.cells ?? [] {
+                    if let content = cell.cachedContent { visit(content) }
+                }
             }
         }
         collect(cellShape)
         for block in blocks {
-            for cell in block.tableSurface?.cells ?? [] { visit(cell.content) }
+            for cell in block.tableSurface?.cells ?? [] {
+                if let content = cell.cachedContent { visit(content) }
+            }
         }
         return shapes.values.reduce(0) { $0 + $1.catalogRetainedBytes }
     }

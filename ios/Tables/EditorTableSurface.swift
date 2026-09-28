@@ -111,14 +111,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             guard let entry, entry.themeDigest == themeDigest, let source = entry.surface.sourceTable else { return }
             for cell in entry.surface.cells.reversed() {
                 let index = cell.sourceIndex
-                guard source.cells.indices.contains(index),
-                      Self.isPositionFree(cell.content)
-                else { continue }
+                guard source.cells.indices.contains(index), cell.isPositionFree,
+                      let content = cell.cachedContent else { continue }
                 let sourceCell = source.cells[index]
                 contents[Key(contentKey: sourceCell.contentKey, header: sourceCell.header,
-                             attributesKey: sourceCell.attrsKey, widthPixels: cell.content.key.widthPixels,
-                             displayScaleBits: cell.content.key.displayScaleBits),
-                         default: []].append(cell.content)
+                             attributesKey: sourceCell.attrsKey, widthPixels: content.key.widthPixels,
+                             displayScaleBits: content.key.displayScaleBits),
+                         default: []].append(content)
             }
         }
 
@@ -126,12 +125,6 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             let key = Key(contentKey: cell.contentKey, header: cell.header, attributesKey: cell.attrsKey,
                           widthPixels: widthPixels, displayScaleBits: Double(displayScale).bitPattern)
             return contents[key]?.popLast()
-        }
-
-        static func isPositionFree(_ layout: PreparedProseLayout) -> Bool {
-            layout.error == nil
-                && layout.blocks.allSatisfy { $0.atomSlot == nil && $0.imageAttachment == nil && $0.tableSurface == nil }
-                && layout.interactions.allSatisfy { $0.docPos == nil }
         }
     }
 
@@ -141,6 +134,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     private var entries: [String: Entry] = [:]
     private(set) var incrementalRelayoutsForTesting = 0
     private var latestPresentation: EditorV2Adapter.EditorTablePresentationSnapshot?
+    private var pinnedInputCell: PreparedViewerTableCell?
     private var presentationRevision: UInt64?
     private var preparedWidth: CGFloat = 0
     private var appearanceRevision: UInt64 = 0
@@ -294,6 +288,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     deinit {
+        if let pinnedInputCell { pinnedInputCell.layoutStore.unpin(pinnedInputCell.contentKey) }
         discardActiveDrag()
         selectionGesture.view?.removeGestureRecognizer(selectionGesture)
         resizeGesture.view?.removeGestureRecognizer(resizeGesture)
@@ -356,6 +351,8 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         drawingView.setTableOwnerIdentity(nil)
         entries.removeAll()
         latestPresentation = nil
+        if let pinnedInputCell { pinnedInputCell.layoutStore.unpin(pinnedInputCell.contentKey) }
+        pinnedInputCell = nil
         presentationRevision = nil
         preparedWidth = 0
         preparedAppearanceRevision = nil
@@ -1250,10 +1247,16 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             let previousEntry = self.entries[tableID]
             var reusable: ReusableCellContents?
             let engine = CoreTextProseLayoutEngine()
-            engine.tableCellPreparationObserver = onTableCellPreparedForTesting
+            engine.tableCellPreparationObserver = { [weak self] index in self?.onTableCellPreparedForTesting?(index) }
+            defer {
+                engine.incrementalTableSurface = nil
+                engine.reusableTableCellContent = nil
+                engine.tableIncrementalRelayoutObserver = nil
+            }
             if let previous = self.entries[tableID], previous.themeDigest == themeDigest,
                !presentation.changes.fullReset, !presentation.changes.replacedTables.contains(tableID),
-               previous.surface.cells.allSatisfy({ ReusableCellContents.isPositionFree($0.content) }) {
+               previous.surface.scrollIdentity == (document.tableSourceIDs[tableID] ?? tableID),
+               previous.surface.cells.allSatisfy(\.isPositionFree) {
                 engine.incrementalTableSurface = { key in
                     guard key == tableID else { return nil }
                     return (previous.surface, presentation.changes.changedCells[key] ?? [])
@@ -1421,6 +1424,8 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     private func updateExcludedCellContent() {
+        if let pinnedInputCell { pinnedInputCell.layoutStore.unpin(pinnedInputCell.contentKey) }
+        pinnedInputCell = nil
         drawingView.tableLayerCell = activeCell.map {
             PreparedProseDrawingView.TableLayerCell(tableID: $0.tableID, sourceIndex: Int($0.cellIndex))
         }
@@ -1429,6 +1434,9 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             drawingView.excludedTableCellContentLayout = nil
             return
         }
+        presented.cell.layoutStore.pin(presented.cell.contentKey)
+        presented.cell.layoutStore.insert(presented.content)
+        pinnedInputCell = presented.cell
         drawingView.excludedTableCellContentLayout = presented.content
         if let heights = nestedTableHeights(
             tableID: activeCell.tableID,

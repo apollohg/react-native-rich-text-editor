@@ -253,7 +253,7 @@ enum TableAccessibility {
         return items
     }
 
-    private static func contentNodes(of layout: PreparedProseLayout) -> [PreparedProseAccessibilityNode] {
+    static func contentNodes(of layout: PreparedProseLayout) -> [PreparedProseAccessibilityNode] {
         let byBlock = Dictionary(grouping: layout.accessibilityNodes.indices.compactMap { index in
             layout.accessibilityNodes[index].sourceBlockIndex.map { ($0, index) }
         }, by: { $0.0 })
@@ -265,7 +265,7 @@ enum TableAccessibility {
         }
         for (blockIndex, block) in layout.blocks.enumerated() {
             for (_, index) in byBlock[blockIndex] ?? [] { append(index) }
-            block.tableSurface?.cells.forEach { nodes.append(contentsOf: contentNodes(of: $0.content)) }
+            block.tableSurface?.cells.forEach { nodes.append(contentsOf: $0.accessibilityNodes) }
         }
         layout.accessibilityNodes.indices.forEach(append)
         return nodes
@@ -277,7 +277,7 @@ enum TableAccessibility {
             let index = cell.sourceIndex
             guard let sourceCell = source?.cells[index]
             else { return nil }
-            let nodes = contentNodes(of: cell.content)
+            let nodes = cell.accessibilityNodes
             return TableAccessibilityCell(
                 surface: surface,
                 cell: cell,

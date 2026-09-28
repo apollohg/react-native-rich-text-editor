@@ -36,7 +36,7 @@ final class TableCellMeasurementCache {
 
     init(capacity: Int = 32_768, byteLimit: Int? = nil) {
         self.capacity = max(1, capacity)
-        self.byteLimit = byteLimit ?? 32 * 1024 * 1024
+        self.byteLimit = byteLimit ?? PreparedProseLayoutCache.preparedLayoutUnmountedByteBudget
     }
 
     func value(for key: TableCellMeasurementKey) -> CGFloat? {

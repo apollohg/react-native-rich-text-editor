@@ -98,6 +98,7 @@ final class CoreTextProseLayoutEngine {
             scope?.preassign(document: document)
         }
         let highlighting = scope.flatMap { PreparedViewerHighlightingStore.result(for: $0.generation) }
+        let tableLayoutStore = TableCellLayoutStore()
         var cursorY = theme.contentInsets.top
         var blocks: [PreparedProseBlock] = []
         var containerBounds: [Int: CGRect] = [:]
@@ -251,7 +252,8 @@ final class CoreTextProseLayoutEngine {
                     }
                     surface = previous.replacingCells(contents,
                         contentHeights: contents.mapValues { $0.size.height },
-                        sourceTable: surfaceSource, sourceAttributes: document.tableAttributes)
+                        sourceTable: surfaceSource, sourceAttributes: document.tableAttributes,
+                        prepareCell: { prepareCell($0, width: $1, reuseContent: false) })
                     tableIncrementalRelayoutObserver?()
                 } else {
                     surface = ViewerTableSurface(
@@ -267,6 +269,7 @@ final class CoreTextProseLayoutEngine {
                         textScale: theme.fontScale,
                         sourceTable: surfaceSource,
                         sourceAttributes: document.tableAttributes,
+                        layoutStore: tableLayoutStore,
                         prepareCell: { prepareCell($0, width: $1) })
                 }
                 let bounds = CGRect(x: tableX, y: cursorY + tableBox.margin.top, width: surface.bounds.width, height: surface.bounds.height)
