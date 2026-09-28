@@ -413,10 +413,62 @@ internal object ViewerTablePresentation {
         return surfaces
     }
 
+    private val UNBOUNDED = RectF(-Float.MAX_VALUE, -Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE)
+
+    private fun intersect(left: RectF, right: RectF): RectF = RectF(
+        maxOf(left.left, right.left),
+        maxOf(left.top, right.top),
+        minOf(left.right, right.right),
+        minOf(left.bottom, right.bottom)
+    )
+
+    private fun presentTable(
+        surface: ViewerTableSurface,
+        tableBounds: Rect,
+        originX: Float,
+        originY: Float,
+        clip: RectF
+    ): ViewerTablePresentedSurface {
+        val hostX = originX + tableBounds.left
+        val hostY = originY + tableBounds.top
+        val hostWidth = minOf(surface.hostViewportWidth, surface.bounds.width())
+        val bounds = RectF(hostX, hostY, hostX + hostWidth, hostY + surface.bounds.height())
+        return ViewerTablePresentedSurface(surface, bounds, intersect(clip, bounds))
+    }
+
+    fun rootTables(root: PreparedProseLayout): List<ViewerTablePresentedSurface> = root.blocks.mapNotNull { block ->
+        val surface = block.tableSurface ?: return@mapNotNull null
+        val tableBounds = block.tableBounds ?: return@mapNotNull null
+        presentTable(surface, tableBounds, 0f, 0f, UNBOUNDED)
+    }
+
+    fun contentAccessibilityNodes(
+        cell: ViewerTablePresentedCell,
+        owner: ViewerTablePresentationOwner
+    ): List<ViewerTablePresentedAccessibilityNode> = project(
+        cell.content, owner, null, cell.contentBounds.left, cell.contentBounds.top,
+        intersect(cell.clip, cell.contentBounds)
+    ).accessibilityNodes
+
     fun project(
         root: PreparedProseLayout,
         owner: ViewerTablePresentationOwner,
         viewport: ViewerTablePresentationViewport
+    ): ViewerTablePresentationSnapshot {
+        val window = when (viewport) {
+            ViewerTablePresentationViewport.Unknown -> null
+            is ViewerTablePresentationViewport.Known -> viewport.window ?: Rect()
+        }
+        return project(root, owner, window, 0f, 0f, UNBOUNDED)
+    }
+
+    private fun project(
+        root: PreparedProseLayout,
+        owner: ViewerTablePresentationOwner,
+        window: Rect?,
+        rootX: Float,
+        rootY: Float,
+        rootClip: RectF
     ): ViewerTablePresentationSnapshot {
         val layouts = mutableListOf<ViewerTablePresentedLayout>()
         val blocks = mutableListOf<ViewerTablePresentedBlock>()
@@ -434,15 +486,6 @@ internal object ViewerTablePresentation {
             rect.top + y,
             rect.right + x,
             rect.bottom + y
-        )
-
-        val window = (viewport as? ViewerTablePresentationViewport.Known)?.window
-
-        fun intersect(left: RectF, right: RectF): RectF = RectF(
-            maxOf(left.left, right.left),
-            maxOf(left.top, right.top),
-            minOf(left.right, right.right),
-            minOf(left.bottom, right.bottom)
         )
 
         fun appendLayout(layout: PreparedProseLayout, originX: Float, originY: Float, clip: RectF) {
@@ -513,14 +556,11 @@ internal object ViewerTablePresentation {
 
                 val surface = block.tableSurface ?: return@forEachIndexed
                 val tableBounds = block.tableBounds ?: return@forEachIndexed
-                val hostX = originX + tableBounds.left
-                val hostY = originY + tableBounds.top
-                val hostWidth = minOf(surface.hostViewportWidth, surface.bounds.width())
-                val hostClip = intersect(clip, RectF(hostX, hostY, hostX + hostWidth, hostY + surface.bounds.height()))
-                tables += ViewerTablePresentedSurface(
-                    surface, RectF(hostX, hostY, hostX + hostWidth, hostY + surface.bounds.height()), hostClip
-                )
-                val contentX = hostX - owner.physicalOffset(surface)
+                val table = presentTable(surface, tableBounds, originX, originY, clip)
+                tables += table
+                val hostY = table.bounds.top
+                val hostClip = table.clip
+                val contentX = table.bounds.left - owner.physicalOffset(surface)
                 val windowCells = window?.let {
                     surface.presentationCells(it.left - contentX, it.top - hostY, it.right - contentX, it.bottom - hostY)
                 } ?: surface.cells
@@ -545,16 +585,13 @@ internal object ViewerTablePresentation {
             layout.accessibilityNodes.indices.forEach(::appendAccessibility)
         }
 
-        appendLayout(root, 0f, 0f, RectF(-Float.MAX_VALUE, -Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE))
-        val mountedCells = when (viewport) {
-            ViewerTablePresentationViewport.Unknown -> cells
-            is ViewerTablePresentationViewport.Known -> window?.let { candidate ->
-                cells.filter {
-                    it.bounds.right > candidate.left && it.bounds.left < candidate.right &&
-                        it.bounds.bottom > candidate.top && it.bounds.top < candidate.bottom
-                }
-            }.orEmpty()
-        }
+        appendLayout(root, rootX, rootY, rootClip)
+        val mountedCells = window?.let { candidate ->
+            cells.filter {
+                it.bounds.right > candidate.left && it.bounds.left < candidate.right &&
+                    it.bounds.bottom > candidate.top && it.bounds.top < candidate.bottom
+            }
+        } ?: cells
         return ViewerTablePresentationSnapshot(layouts, blocks, tables, cells, mountedCells, images, atoms, interactions, accessibilityNodes)
     }
 }

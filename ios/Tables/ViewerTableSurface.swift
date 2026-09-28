@@ -487,10 +487,58 @@ enum ViewerTablePresentation {
         return surfaces
     }
 
+    private static func presentTable(
+        _ surface: ViewerTableSurface,
+        tableBounds: CGRect,
+        origin: CGPoint,
+        clip: CGRect,
+        parentScrollIdentity: String?
+    ) -> ViewerTablePresentedTable {
+        let hostOrigin = CGPoint(x: origin.x + tableBounds.minX, y: origin.y + tableBounds.minY)
+        let hostWidth = min(surface.hostViewportWidth, surface.bounds.width)
+        let hostBounds = CGRect(origin: hostOrigin, size: CGSize(width: hostWidth, height: surface.bounds.height))
+        return ViewerTablePresentedTable(surface: surface, bounds: hostBounds, clip: clip.intersection(hostBounds),
+                                         parentScrollIdentity: parentScrollIdentity)
+    }
+
+    static func rootTables(in root: PreparedProseLayout) -> [ViewerTablePresentedTable] {
+        root.blocks.compactMap { block in
+            guard let surface = block.tableSurface, let tableBounds = block.tableBounds else { return nil }
+            return presentTable(surface, tableBounds: tableBounds, origin: .zero, clip: .infinite,
+                                parentScrollIdentity: nil)
+        }
+    }
+
+    static func contentAccessibilityNodes(
+        of cell: ViewerTablePresentedCell,
+        owner: ViewerTablePresentationOwner
+    ) -> [ViewerTablePresentedAccessibilityNode] {
+        project(layout: cell.content, owner: owner, window: nil, origin: cell.contentBounds.origin,
+                clip: cell.clip.intersection(cell.contentBounds),
+                parentScrollIdentity: cell.surface.scrollIdentity).accessibilityNodes
+    }
+
     static func project(
         layout root: PreparedProseLayout,
         owner: ViewerTablePresentationOwner,
         viewport: ViewerTablePresentationViewport
+    ) -> ViewerTablePresentationSnapshot {
+        let window: CGRect?
+        switch viewport {
+        case .unknown: window = nil
+        case .known: window = viewport.window ?? .null
+        }
+        return project(layout: root, owner: owner, window: window, origin: .zero, clip: .infinite,
+                       parentScrollIdentity: nil)
+    }
+
+    private static func project(
+        layout root: PreparedProseLayout,
+        owner: ViewerTablePresentationOwner,
+        window: CGRect?,
+        origin rootOrigin: CGPoint,
+        clip rootClip: CGRect,
+        parentScrollIdentity rootParent: String?
     ) -> ViewerTablePresentationSnapshot {
         var layouts: [ViewerTablePresentedLayout] = []
         var blocks: [ViewerTablePresentedBlock] = []
@@ -506,8 +554,6 @@ enum ViewerTablePresentation {
         func transformed(_ rect: CGRect, by origin: CGPoint) -> CGRect {
             rect.offsetBy(dx: origin.x, dy: origin.y)
         }
-        let window = viewport.window
-
         func appendLayout(_ layout: PreparedProseLayout, origin: CGPoint, clip: CGRect,
                           parentScrollIdentity: String?) {
             layouts.append(ViewerTablePresentedLayout(layout: layout, origin: origin, clip: clip))
@@ -571,15 +617,11 @@ enum ViewerTablePresentation {
                 for (_, index) in interactionsByBlock[blockIndex] ?? [] { appendInteraction(index) }
                 for (_, index) in accessibilityByBlock[blockIndex] ?? [] { appendAccessibility(index) }
                 guard let surface = block.tableSurface, let tableBounds = block.tableBounds else { continue }
-                let hostOrigin = CGPoint(x: origin.x + tableBounds.minX, y: origin.y + tableBounds.minY)
-                let hostWidth = min(surface.hostViewportWidth, surface.bounds.width)
-                let hostBounds = CGRect(origin: hostOrigin, size: CGSize(width: hostWidth, height: surface.bounds.height))
-                let hostClip = clip.intersection(hostBounds)
-                tables.append(ViewerTablePresentedTable(
-                    surface: surface, bounds: hostBounds, clip: hostClip,
-                    parentScrollIdentity: parentScrollIdentity
-                ))
-                let contentOrigin = CGPoint(x: hostOrigin.x - owner.physicalOffset(for: surface), y: hostOrigin.y)
+                let table = presentTable(surface, tableBounds: tableBounds, origin: origin, clip: clip,
+                                         parentScrollIdentity: parentScrollIdentity)
+                tables.append(table)
+                let hostClip = table.clip
+                let contentOrigin = CGPoint(x: table.bounds.minX - owner.physicalOffset(for: surface), y: table.bounds.minY)
                 let windowCells = window.map {
                     surface.presentationCells(intersecting: $0.offsetBy(dx: -contentOrigin.x, dy: -contentOrigin.y))
                 } ?? surface.cells
@@ -605,14 +647,8 @@ enum ViewerTablePresentation {
             for index in layout.accessibilityNodes.indices { appendAccessibility(index) }
         }
 
-        appendLayout(root, origin: .zero, clip: .infinite, parentScrollIdentity: nil)
-        let mountedCells: [ViewerTablePresentedCell]
-        switch viewport {
-        case .unknown:
-            mountedCells = cells
-        case .known:
-            mountedCells = window.map { window in cells.filter { $0.bounds.intersects(window) } } ?? []
-        }
+        appendLayout(root, origin: rootOrigin, clip: rootClip, parentScrollIdentity: rootParent)
+        let mountedCells = window.map { window in cells.filter { $0.bounds.intersects(window) } } ?? cells
         return ViewerTablePresentationSnapshot(
             layouts: layouts,
             blocks: blocks,

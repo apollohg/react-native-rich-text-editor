@@ -304,9 +304,10 @@ extension EditorTableInputTests {
                            "activation binds the cell position before the table is queried")
             XCTAssertEqual(input.accessibilityCustomActions?.map(\.name), try publishedActionLabels(fixture))
             let fresh = try accessibleTable(fixture, containing: "one")
-            let slots = try XCTUnwrap(fresh.accessibilityElements)
-            XCTAssertEqual(slots.count, 4)
-            XCTAssertTrue(slots[3] as? EditorTextView === input, "the active cell slot is the real text input")
+            XCTAssertEqual(fresh.accessibilityElementCount(), 4)
+            XCTAssertTrue(fresh.accessibilityElement(at: 3) as? EditorTextView === input,
+                          "the active cell slot is the real text input")
+            XCTAssertEqual(fresh.index(ofAccessibilityElement: input), 3)
             XCTAssertTrue(fresh.accessibilityDataTableCellElement(forRow: 1, column: 1) === input)
             XCTAssertEqual(input.accessibilityRowRange(), NSRange(location: 1, length: 1))
             XCTAssertEqual(input.accessibilityColumnRange(), NSRange(location: 1, length: 1))

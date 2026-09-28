@@ -33,6 +33,10 @@ final class EditorLargeTableTests: XCTestCase {
         static let straddlingCells = 1
     }
 
+    private enum AccessibilityWalk {
+        static let rows = [1, 150, 400, 999]
+    }
+
     private enum EditedTable {
         static let rows = 50
         static let columns = 4
@@ -50,52 +54,102 @@ final class EditorLargeTableTests: XCTestCase {
         return columns * rows
     }
 
+    private func withMountedTable(
+        rows: Int,
+        columns: Int,
+        _ body: (RichTextEditorView, EditorTableSurface, PreparedProseDrawingView) throws -> Void
+    ) throws {
+        let label = "\(rows)x\(columns)"
+        let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
+        defer { destroyV2Editor(id: editorId) }
+        let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
+        let window = UIWindow(frame: CGRect(origin: .zero, size: Window.viewport))
+        let view = RichTextEditorView(frame: window.bounds)
+        window.addSubview(view)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
+        let update = try XCTUnwrap(adapter.setContentJson(try plainTableDocument(rows: rows, columns: columns)),
+                                   "\(label): the fixture renders instead of failing: \(adapter.debugNotes)")
+        XCTAssertTrue(view.textView.applyUpdateJSON(update), "\(label): the render applies")
+        view.layoutIfNeeded()
+        let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
+        let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
+        try body(view, surface, drawing)
+    }
+
     func testTwentyThousandSlotTablesRenderAndPresentOnlyTheirViewportWindow() throws {
         for (rows, columns) in Self.twentyThousandSlotTables {
             let label = "\(rows)x\(columns)"
-            let editorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
-            defer { destroyV2Editor(id: editorId) }
-            let adapter = try XCTUnwrap(EditorV2Registry.adapter(forLegacyId: editorId))
-            let window = UIWindow(frame: CGRect(origin: .zero, size: Window.viewport))
-            let view = RichTextEditorView(frame: window.bounds)
-            window.addSubview(view)
-            window.makeKeyAndVisible()
-            defer { window.isHidden = true }
-            view.bindEditor(id: editorId, initialUpdateJSON: try XCTUnwrap(adapter.initialUpdateJSON()))
-            let update = try XCTUnwrap(adapter.setContentJson(try plainTableDocument(rows: rows, columns: columns)),
-                                       "\(label): the fixture renders instead of failing: \(adapter.debugNotes)")
-            XCTAssertTrue(view.textView.applyUpdateJSON(update), "\(label): the render applies")
-            view.layoutIfNeeded()
-            let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
-            let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
-            let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first, "\(label): the table is mounted")
-            XCTAssertEqual(table.surface.cells.count, rows * columns, "\(label): every cell is prepared")
-            var drawnCells: [Int] = []
-            drawing.onMountedTableCellsDrawnForTesting = { drawnCells.append($0) }
-            let renderer = UIGraphicsImageRenderer(bounds: drawing.bounds)
-            let textView = view.textView
-            let chain = [table.surface.scrollIdentity]
-            let bottom = max(0, textView.contentSize.height - textView.bounds.height)
-            let horizontalRoom = table.surface.bounds.width - table.surface.hostViewportWidth
-            let stops: [(offsetY: CGFloat, physicalDelta: CGFloat)] = [
-                (0, 0), (bottom / 2, -horizontalRoom / 2), (bottom, -horizontalRoom / 2)
-            ]
-            for (offsetY, physicalDelta) in stops {
-                textView.contentOffset.y = offsetY
-                drawing.scrollTables(in: chain, by: physicalDelta)
-                view.layoutIfNeeded()
-                _ = renderer.image { _ in drawing.draw(drawing.bounds) }
-                let presented = try XCTUnwrap(drawing.mountedTablePresentation())
-                print("\(label) at y \(offsetY), table offset \(drawing.tableLogicalOffset(for: table.surface.identity)): \(presented.cells.count) presented, \(drawnCells.last ?? -1) drawn, bound \(maximumRetainedPresentations)")
-                XCTAssertLessThanOrEqual(presented.cells.count, maximumRetainedPresentations,
-                                         "\(label): the presentation is bounded by the viewport window, not the table")
-                XCTAssertLessThanOrEqual(presented.layouts.count, maximumRetainedPresentations + 1,
-                                         "\(label): only window cells reach the recursive traversal")
-                XCTAssertLessThanOrEqual(try XCTUnwrap(drawnCells.last), maximumRetainedPresentations,
-                                         "\(label): drawing mounts only the window")
-                let centre = CGPoint(x: surface.bounds.midX, y: surface.bounds.midY)
-                XCTAssertNotNil(surface.cellHit(at: centre), "\(label): the cell under the viewport centre is presented")
+            try withMountedTable(rows: rows, columns: columns) { view, surface, drawing in
+                let table = try XCTUnwrap(drawing.mountedTablePresentation()?.tables.first, "\(label): the table is mounted")
+                XCTAssertEqual(table.surface.cells.count, rows * columns, "\(label): every cell is prepared")
+                var drawnCells: [Int] = []
+                drawing.onMountedTableCellsDrawnForTesting = { drawnCells.append($0) }
+                let renderer = UIGraphicsImageRenderer(bounds: drawing.bounds)
+                let textView = view.textView
+                let chain = [table.surface.scrollIdentity]
+                let bottom = max(0, textView.contentSize.height - textView.bounds.height)
+                let horizontalRoom = table.surface.bounds.width - table.surface.hostViewportWidth
+                let stops: [(offsetY: CGFloat, physicalDelta: CGFloat)] = [
+                    (0, 0), (bottom / 2, -horizontalRoom / 2), (bottom, -horizontalRoom / 2)
+                ]
+                for (offsetY, physicalDelta) in stops {
+                    textView.contentOffset.y = offsetY
+                    drawing.scrollTables(in: chain, by: physicalDelta)
+                    view.layoutIfNeeded()
+                    _ = renderer.image { _ in drawing.draw(drawing.bounds) }
+                    let presented = try XCTUnwrap(drawing.mountedTablePresentation())
+                    print("\(label) at y \(offsetY), table offset \(drawing.tableLogicalOffset(for: table.surface.identity)): \(presented.cells.count) presented, \(drawnCells.last ?? -1) drawn, bound \(maximumRetainedPresentations)")
+                    XCTAssertLessThanOrEqual(presented.cells.count, maximumRetainedPresentations,
+                                             "\(label): the presentation is bounded by the viewport window, not the table")
+                    XCTAssertLessThanOrEqual(presented.layouts.count, maximumRetainedPresentations + 1,
+                                             "\(label): only window cells reach the recursive traversal")
+                    XCTAssertLessThanOrEqual(try XCTUnwrap(drawnCells.last), maximumRetainedPresentations,
+                                             "\(label): drawing mounts only the window")
+                    let centre = CGPoint(x: surface.bounds.midX, y: surface.bounds.midY)
+                    XCTAssertNotNil(surface.cellHit(at: centre), "\(label): the cell under the viewport centre is presented")
+                }
             }
+        }
+    }
+
+    func testLargeTableAccessibilityFocusWalksPastTheWindowWithHeadersAndStableElements() throws {
+        let size = Self.twentyThousandSlotTables[0]
+        try withMountedTable(rows: size.rows, columns: size.columns) { view, _, drawing in
+            let screen = try XCTUnwrap(view.window).bounds
+            func tableElement() throws -> TableAccessibilityTableElement {
+                try XCTUnwrap((0..<drawing.accessibilityElementCount()).lazy.compactMap {
+                    drawing.accessibilityElement(at: $0) as? TableAccessibilityTableElement
+                }.first)
+            }
+            let table = try tableElement()
+            XCTAssertEqual(table.accessibilityRowCount(), size.rows)
+            XCTAssertEqual(table.accessibilityColumnCount(), size.columns)
+            let firstBody = try XCTUnwrap(table.accessibilityDataTableCellElement(forRow: 1, column: 0) as? NSObject)
+            for row in AccessibilityWalk.rows {
+                let column = row % size.columns
+                let element = try XCTUnwrap(
+                    table.accessibilityDataTableCellElement(forRow: row, column: column) as? TableAccessibilityCellElement,
+                    "row \(row) has an element before it is scrolled into view"
+                )
+                element.accessibilityElementDidBecomeFocused()
+                view.layoutIfNeeded()
+                let frame = element.accessibilityFrame
+                let headers = table.accessibilityHeaderElements(forColumn: column) ?? []
+                print("row \(row) column \(column): frame \(frame), headers \(headers.compactMap { ($0 as? NSObject)?.accessibilityLabel }), offset \(view.textView.contentOffset)")
+                XCTAssertTrue(screen.contains(CGPoint(x: frame.midX, y: frame.midY)), "row \(row) is revealed on screen: \(frame)")
+                XCTAssertEqual(element.accessibilityRowRange(), NSRange(location: row, length: 1))
+                XCTAssertEqual(element.accessibilityLabel, PlainTable.cellText)
+                XCTAssertEqual(headers.count, 1, "row \(row) announces its column header")
+                XCTAssertEqual((headers.first as? NSObject)?.accessibilityLabel, PlainTable.cellText)
+                XCTAssertTrue(try tableElement() === table, "row \(row) keeps the same table element")
+                XCTAssertTrue(table.accessibilityDataTableCellElement(forRow: row, column: column) === element,
+                              "row \(row) keeps focus on the same element after its reveal")
+                XCTAssertTrue(drawing.isLiveAccessibilityElement(table), "row \(row) keeps the table element live")
+            }
+            XCTAssertTrue(table.accessibilityDataTableCellElement(forRow: 1, column: 0) === firstBody,
+                          "cell elements do not change identity while scrolling")
         }
     }
 

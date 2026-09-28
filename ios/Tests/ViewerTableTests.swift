@@ -788,7 +788,7 @@ final class ViewerTableTests: XCTestCase {
         drawing.install(layout: layout)
         let table = try tableElement(in: drawing)
         XCTAssertEqual(table.cellElements.compactMap(\.accessibilityLabel), ["tall", "wide", "later"])
-        XCTAssertEqual(table.accessibilityElements?.count, 3, "synthetic slots expose no element")
+        XCTAssertEqual(table.accessibilityElementCount(), 3, "synthetic slots expose no element")
         for region in surface.syntheticRegions {
             XCTAssertNil(table.accessibilityDataTableCellElement(forRow: Int(region.row), column: Int(region.column)),
                          "synthetic slot \(region.row),\(region.column) must not resolve to a cell")

@@ -171,8 +171,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     internal var tableAccessibilityGeneration = 0L
         private set
     private val tableAccessibility = TableAccessibilityNodes(
-        this, this, { tableAccessibilityItems() },
-        { tableAccessibilityGeneration to (presentationViewport() as? ViewerTablePresentationViewport.Known)?.rect },
+        this, this, { tableAccessibilityItems() }, { tableAccessibilityGeneration },
         { contentOriginXPx to contentOriginYPx },
         { bounds -> accessibilityVisibilityForTesting?.invoke(bounds) ?: accessibilityNodeVisibleOnScreen(bounds) },
         { clearVirtualAccessibilityFocus() }
@@ -341,10 +340,10 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     internal fun invalidateTableAccessibility() {
         tableAccessibilityGeneration += 1
+        accessibilityNodeRegistry.clear()
     }
 
     private fun tableOffsetChanged() {
-        invalidateTableAccessibility()
         reportRetainedTablePresentation()
         clearVirtualAccessibilityFocus()
         onTableGeometryChanged?.invoke()
@@ -368,6 +367,15 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     internal fun presentedTableCells(): List<ViewerTablePresentedCell> =
         presentationSnapshot()?.cells.orEmpty()
+
+    internal fun rootTableCellAt(x: Float, y: Float): ViewerTablePresentedCell? {
+        val table = preparedLayout?.let(ViewerTablePresentation::rootTables)
+            ?.lastOrNull { it.bounds.contains(x, y) && it.clip.contains(x, y) } ?: return null
+        val contentX = table.bounds.left - tablePresentationOwner.physicalOffset(table.surface)
+        return table.surface.cellsIntersecting(x - contentX, y - table.bounds.top, x - contentX + 1f, y - table.bounds.top + 1f)
+            .lastOrNull()?.let { ViewerTablePresentation.present(it, table, tablePresentationOwner) }
+            ?.takeIf { it.bounds.contains(x, y) }
+    }
 
     internal fun presentedTableCell(
         tableId: String,
@@ -534,9 +542,10 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         tableCellRects(tableId, selectedTableCellSourcePositions[tableId].orEmpty())
 
     internal fun tableCellRects(tableId: String, sourcePositions: Set<Int>): List<RectF>? {
-        val snapshot = presentationSnapshot() ?: return null
-        val table = snapshot.tableWithId(tableId) ?: return null
-        return snapshot.cells.filter { it.surface === table.surface && isRealTableCell(it, sourcePositions) }
+        val table = presentationSnapshot()?.tableWithId(tableId) ?: return null
+        return sourcePositions.sorted().mapNotNull(table.surface::cellAtSourcePosition)
+            .filter { it.sourceCellIndex != null }
+            .map { ViewerTablePresentation.present(it, table, tablePresentationOwner) }
             .mapNotNull { cell ->
                 RectF(cell.bounds).takeIf { it.intersect(cell.clip) }
                     ?.apply { offset(contentOriginXPx.toFloat(), contentOriginYPx.toFloat()) }
@@ -600,13 +609,24 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     private fun presentedInteractions() = presentationSnapshot()?.interactions.orEmpty()
 
-    private fun presentedAccessibilityNodes(): List<ViewerTablePresentedAccessibilityNode> =
-        presentationSnapshot()?.accessibilityNodes.orEmpty().filter { presented ->
-            when (presented.node.role) {
-                PreparedProseAccessibilityNode.Role.LINK -> linkInteractionsEnabled
-                PreparedProseAccessibilityNode.Role.MENTION -> mentionInteractionsEnabled
-            }
-        }
+    private fun accessibleRole(node: ViewerTablePresentedAccessibilityNode): Boolean = when (node.node.role) {
+        PreparedProseAccessibilityNode.Role.LINK -> linkInteractionsEnabled
+        PreparedProseAccessibilityNode.Role.MENTION -> mentionInteractionsEnabled
+    }
+
+    private fun rootAccessibilityNodes(): List<ViewerTablePresentedAccessibilityNode> {
+        val artifact = preparedLayout ?: return emptyList()
+        return presentationSnapshot()?.accessibilityNodes.orEmpty().filter { it.layout === artifact && accessibleRole(it) }
+    }
+
+    internal val tablePresentationOwnerForAccessibility: ViewerTablePresentationOwner
+        get() = tablePresentationOwner
+
+    internal fun presentedRootTable(surface: ViewerTableSurface): ViewerTablePresentedSurface? =
+        preparedLayout?.let(ViewerTablePresentation::rootTables)?.firstOrNull { it.surface === surface }
+
+    internal fun presentedCellAccessibilityNodes(cell: ViewerTablePresentedCell): List<ViewerTablePresentedAccessibilityNode> =
+        ViewerTablePresentation.contentAccessibilityNodes(cell, tablePresentationOwner).filter(::accessibleRole)
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -1151,35 +1171,87 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         accessibilityChildIds().forEach { info.addChild(this, it) }
     }
 
-    internal fun accessibilityChildIds(): List<Int> {
-        val nodes = nodes()
-        return tableAccessibility.hostChildren { virtualId(nodes, it) }
-    }
+    internal fun accessibilityChildIds(): List<Int> =
+        tableAccessibility.hostChildren { node -> rootNodeId(node) }
 
     internal fun tableAccessibilityItems(): List<TableAccessibilityItem> {
         val artifact = preparedLayout ?: return emptyList()
-        val snapshot = presentationSnapshot() ?: return emptyList()
-        return TableAccessibility.items(snapshot, artifact, nodes())
+        return TableAccessibility.items(artifact, rootAccessibilityNodes())
     }
+
+    private fun rootNodeId(node: ViewerTablePresentedAccessibilityNode): Int {
+        val identity = node.sourceIdentity
+        return accessibilityNodeRegistry.idOf(identity, null) {
+            rootAccessibilityNodes().firstOrNull { it.sourceIdentity == identity }
+        }
+    }
+
+    private fun cellNodeId(
+        node: ViewerTablePresentedAccessibilityNode,
+        parentId: Int,
+        resolve: () -> ViewerTablePresentedAccessibilityNode?
+    ): Int = accessibilityNodeRegistry.idOf(node.sourceIdentity, parentId, resolve)
+
+    private class AccessibilityNodeRegistry {
+        private class Entry(val parentId: Int?, val resolve: () -> ViewerTablePresentedAccessibilityNode?)
+
+        private val ids = mutableMapOf<String, Int>()
+        private val entries = mutableMapOf<Int, Entry>()
+
+        fun idOf(identity: String, parentId: Int?, resolve: () -> ViewerTablePresentedAccessibilityNode?): Int =
+            ids.getOrPut(identity) { (ids.size + 1).also { entries[it] = Entry(parentId, resolve) } }
+
+        fun node(id: Int): ViewerTablePresentedAccessibilityNode? = entries[id]?.resolve?.invoke()
+
+        fun idOf(identity: String): Int? = ids[identity]
+
+        fun parentId(id: Int): Int? = entries[id]?.parentId
+
+        fun clear() {
+            ids.clear()
+            entries.clear()
+        }
+    }
+
+    private val accessibilityNodeRegistry = AccessibilityNodeRegistry()
+
+    private fun registeredAccessibilityNode(id: Int): ViewerTablePresentedAccessibilityNode? =
+        accessibilityNodeRegistry.node(id) ?: run {
+            accessibilityChildIds()
+            accessibilityNodeRegistry.node(id)
+        }
+
+    private fun registeredAccessibilityParent(id: Int): Int? = accessibilityNodeRegistry.parentId(id)
+
+    internal fun accessibilityVirtualIdForTesting(sourceIdentity: String): Int? {
+        accessibilityChildIds()
+        tableAccessibility.registerInteractionsForTesting(::cellNodeId)
+        return accessibilityNodeRegistry.idOf(sourceIdentity)
+    }
+
+    internal fun presentedAccessibilityCell(cell: TableAccessibilityCell): ViewerTablePresentedCell? =
+        tableAccessibility.presentedCell(cell)
 
     internal fun tableAccessibilityLocation(surface: ViewerTableSurface, sourceCellIndex: Int): TableAccessibilityLocation? =
         tableAccessibility.locate(surface, sourceCellIndex)
 
     internal fun revealTableAccessibilityCell(cell: TableAccessibilityCell) {
-        val presented = cell.presented
+        val presented = tableAccessibility.presentedCell(cell) ?: return
         val visible = RectF(presented.bounds)
         val fullyVisible = visible.intersect(presented.clip) &&
             visible.width() >= minOf(presented.bounds.width(), presented.clip.width())
-        if (fullyVisible) return
-        val surface = presented.surface
+        val surface = cell.surface
         val logical = surface.layout.columnWidths.take(cell.column).sum()
-        if (tablePresentationOwner.logicalOffset(surface) == logical) return
-        tablePresentationOwner.setLogicalOffset(logical, surface)
-        tableOffsetChanged()
+        if (!fullyVisible && tablePresentationOwner.logicalOffset(surface) != logical) {
+            tablePresentationOwner.setLogicalOffset(logical, surface)
+            tableOffsetChanged()
+        }
+        val revealed = tableAccessibility.presentedCell(cell) ?: return
+        requestRectangleOnScreen(Rect(
+            revealed.bounds.left.toInt(), revealed.bounds.top.toInt(),
+            revealed.bounds.right.toInt(), revealed.bounds.bottom.toInt()
+        ).apply { offset(contentOriginXPx, contentOriginYPx) }, true)
     }
-
-    private fun virtualId(nodes: List<ViewerTablePresentedAccessibilityNode>, node: ViewerTablePresentedAccessibilityNode): Int? =
-        nodes.indexOfFirst { it.sourceIdentity == node.sourceIdentity }.takeIf { it >= 0 }?.plus(1)
 
     override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = provider
 
@@ -1196,13 +1268,12 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                     this@PreparedProseDrawingView
                 ).also(::onInitializeAccessibilityNodeInfo)
             }
-            val nodes = nodes()
             if (tableAccessibility.isTableNode(id)) {
-                return tableAccessibility.create(id) { virtualId(nodes, it) }
+                return tableAccessibility.create(id, ::cellNodeId)
             }
-            val presented = nodes.getOrNull(id - 1) ?: return null
+            val presented = registeredAccessibilityNode(id) ?: return null
             val node = presented.node
-            val parentCell = tableAccessibility.parentOf(presented)
+            val parentCell = registeredAccessibilityParent(id)
             val parentBounds = accessibilityParentBounds(presented)
             val screen = accessibilityScreenBounds(parentBounds)
             val visibleToUser = accessibilityNodeVisible(presented)
@@ -1240,7 +1311,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             if (tableAccessibility.isTableNode(id)) {
                 return tableAccessibility.perform(id, action)
             }
-            val node = nodes().getOrNull(id - 1) ?: return false
+            val node = registeredAccessibilityNode(id) ?: return false
             return when (action) {
                 AccessibilityNodeInfo.ACTION_CLICK -> if (accessibilityNodeVisible(node)) {
                     node.node.interactionIndex?.let { index -> node.layout.interactions.getOrNull(index) }?.let {
@@ -1265,7 +1336,6 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         }
     }
 
-    private fun nodes(): List<ViewerTablePresentedAccessibilityNode> = presentedAccessibilityNodes()
 
     private fun interactionEnabled(kind: PreparedProseInteraction.Kind): Boolean = when (kind) {
         PreparedProseInteraction.Kind.LINK -> linkInteractionsEnabled
@@ -1273,7 +1343,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     private fun requestVirtualAccessibilityFocus(id: Int): Boolean {
-        val node = nodes().getOrNull(id - 1) ?: return false
+        val node = registeredAccessibilityNode(id) ?: return false
         if (!accessibilityNodeVisible(node)) return false
         val identity = identity(node)
         if (focusedVirtualNode?.identity == identity) return false
@@ -1299,13 +1369,8 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     private fun reconcileVirtualAccessibilityFocus() {
         tableAccessibility.reconcile()
         val focused = focusedVirtualNode ?: return
-        val nodes = nodes()
-        val index = nodes.indexOfFirst { identity(it) == focused.identity }
-        if (index < 0 || index + 1 != focused.virtualId) {
-            clearVirtualAccessibilityFocus(focused.virtualId)
-            return
-        }
-        if (!accessibilityNodeVisible(nodes[index])) {
+        val node = registeredAccessibilityNode(focused.virtualId)
+        if (node == null || identity(node) != focused.identity || !accessibilityNodeVisible(node)) {
             clearVirtualAccessibilityFocus(focused.virtualId)
         }
     }

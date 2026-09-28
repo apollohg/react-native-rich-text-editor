@@ -18,6 +18,8 @@ import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.widget.FrameLayout
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
+import android.view.accessibility.AccessibilityNodeInfo
 import com.apollohg.editor.EditorEditText
 import com.apollohg.editor.EditorV2Adapter
 import com.apollohg.editor.EditorV2CallResult
@@ -261,7 +263,6 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         }
 
     @Test
-    @Config(qualifiers = WINDOW_COVERING_THE_EDITOR)
     fun `horizontal table scroll moves the rectangle with the cell and clips it to the table`() =
         withTable(WIDE_DOCUMENT) { fixture ->
             val second = fixture.positions()[GRID_SECOND]
@@ -325,6 +326,35 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             assertNull("$label: the destroyed adapter is collectable", releasedAdapter.get())
         }
     }
+
+    @Test
+    @Config(qualifiers = RELEASE_VIEWPORT)
+    fun `large table screen reader focus walks past the window with headers and stable ids`() =
+        withTable(PlainTableFixture.document(PlainTableFixture.LARGE_ROWS, PlainTableFixture.LARGE_COLUMNS), Size(RELEASE_VIEWPORT_WIDTH, RELEASE_VIEWPORT_HEIGHT)) { fixture ->
+            val drawing = fixture.drawing
+            val screen = Rect(0, 0, RELEASE_VIEWPORT_WIDTH, RELEASE_VIEWPORT_HEIGHT)
+            drawing.accessibilityVisibilityForTesting = { bounds -> Rect.intersects(bounds, screen) }
+            val provider = drawing.accessibilityNodeProvider
+            val surface = ViewerTablePresentation.surfaces(requireNotNull(drawing.preparedLayout)).single()
+            fun location(row: Int, column: Int) = requireNotNull(
+                drawing.tableAccessibilityLocation(surface, row * PlainTableFixture.LARGE_COLUMNS + column)
+            ) { "cell $row,$column has an accessibility node" }
+            val firstBodyId = location(1, 0).cellNodeId
+            WALKED_ROWS.forEach { row ->
+                val column = row % PlainTableFixture.LARGE_COLUMNS
+                val id = location(row, column).cellNodeId
+                assertTrue("focus reaches row $row", provider.performAction(id, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
+                val info = requireNotNull(provider.createAccessibilityNodeInfo(id))
+                val item = requireNotNull(AccessibilityNodeInfoCompat.wrap(info).collectionItemInfo)
+                println("row $row column $column: id $id focused ${info.isAccessibilityFocused} " +
+                    "rowIndex ${item.rowIndex} title '${item.columnTitle}' text '${info.text}'")
+                assertTrue("row $row keeps focus after its reveal", info.isAccessibilityFocused)
+                assertEquals(row, item.rowIndex)
+                assertEquals("row $row announces its column header", PlainTableFixture.CELL_TEXT, item.columnTitle)
+                assertEquals("row $row is read from its own text", PlainTableFixture.CELL_TEXT, info.text?.toString())
+            }
+            assertEquals("cell node ids do not shift while scrolling", firstBodyId, location(1, 0).cellNodeId)
+        }
 
     @Test
     fun `right to left table mirrors the remote rectangle`() =
@@ -727,6 +757,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         const val RELEASE_VIEWPORT_WIDTH = 390
         const val RELEASE_VIEWPORT_HEIGHT = 844
         const val RELEASE_VIEWPORT = "w${RELEASE_VIEWPORT_WIDTH}dp-h${RELEASE_VIEWPORT_HEIGHT}dp-mdpi"
+        val WALKED_ROWS = listOf(1, 150, 400, 999)
         const val GC_ATTEMPTS = 3
         val TEARDOWN_SETTLE: Duration = Duration.ofSeconds(1)
         const val WINDOW_COVERING_THE_EDITOR = "w1000dp-h700dp"

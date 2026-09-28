@@ -1054,7 +1054,9 @@ class ViewerTableTest {
             fun hrefOf(node: ViewerTablePresentedAccessibilityNode): String? =
                 node.node.interactionIndex?.let { node.layout.interactions.getOrNull(it)?.href }
             fun idFor(snapshot: ViewerTablePresentationSnapshot, href: String): Int =
-                snapshot.accessibilityNodes.indexOfFirst { hrefOf(it) == href } + 1
+                requireNotNull(view.accessibilityVirtualIdForTesting(
+                    snapshot.accessibilityNodes.first { hrefOf(it) == href }.sourceIdentity
+                ))
             val first = initial.accessibilityNodes.first { hrefOf(it) == "https://cell-one.example" }
             val surface = layout.blocks.first { it.tableSurface != null }.tableSurface!!
             val tableBounds = layout.blocks.first { it.tableSurface?.identity == surface.identity }.tableBounds!!
@@ -1155,8 +1157,8 @@ class ViewerTableTest {
             fun href(node: ViewerTablePresentedAccessibilityNode) = interaction(node).href
             fun nodeForHref(snapshot: ViewerTablePresentationSnapshot, targetHref: String) =
                 snapshot.accessibilityNodes.first { href(it) == targetHref }
-            fun idFor(snapshot: ViewerTablePresentationSnapshot, node: ViewerTablePresentedAccessibilityNode) =
-                snapshot.accessibilityNodes.indexOf(node) + 1
+            fun idFor(node: ViewerTablePresentedAccessibilityNode) =
+                requireNotNull(view.accessibilityVirtualIdForTesting(node.sourceIdentity))
             fun tap(node: ViewerTablePresentedAccessibilityNode): Boolean =
                 tap(view, node.bounds.centerX() + 7f, node.bounds.centerY() + 11f)
 
@@ -1197,17 +1199,16 @@ class ViewerTableTest {
             assertEquals(mentionInteraction.attrsJson, activated.last().attrsJson)
 
             val provider = view.accessibilityNodeProvider
-            val nestedMentionId = idFor(initial, nestedMention)
+            val nestedMentionId = idFor(nestedMention)
             assertTrue(provider.performAction(nestedMentionId, AccessibilityNodeInfo.ACTION_CLICK, null))
             assertEquals(21L, activated.last().docPos)
             assertEquals(mentionInteraction.attrsJson, activated.last().attrsJson)
-            val cellOneId = idFor(initial, cellOne)
             val activationCountBeforeCapabilities = activated.size
             view.linkInteractionsEnabled = false
             assertFalse(tap(rootBefore))
             assertEquals(activationCountBeforeCapabilities, activated.size)
             assertEquals(1, requireNotNull(provider.createAccessibilityNodeInfo(android.view.View.NO_ID)).childCount)
-            assertEquals("Ada", requireNotNull(provider.createAccessibilityNodeInfo(1)).contentDescription)
+            assertEquals("Ada", requireNotNull(provider.createAccessibilityNodeInfo(idFor(nestedMention))).contentDescription)
             view.linkInteractionsEnabled = true
             view.mentionInteractionsEnabled = false
             assertFalse(tap(nestedMention))
@@ -1218,6 +1219,7 @@ class ViewerTableTest {
             )
             view.mentionInteractionsEnabled = true
             assertTrue(tap(nestedMention))
+            val cellOneId = idFor(cellOne)
             assertTrue(provider.performAction(cellOneId, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
             assertTrue(requireNotNull(provider.createAccessibilityNodeInfo(cellOneId)).isAccessibilityFocused)
 
@@ -1234,7 +1236,7 @@ class ViewerTableTest {
             assertEquals("https://cell-two.example", activated.last().href)
             assertFalse(requireNotNull(provider.createAccessibilityNodeInfo(cellOneId)).isAccessibilityFocused)
 
-            val revealedCellTwoId = idFor(revealed, revealedCellTwo)
+            val revealedCellTwoId = idFor(revealedCellTwo)
             assertTrue(provider.performAction(revealedCellTwoId, AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null))
             assertTrue(requireNotNull(provider.createAccessibilityNodeInfo(revealedCellTwoId)).isAccessibilityFocused)
             view.visibility = android.view.View.INVISIBLE

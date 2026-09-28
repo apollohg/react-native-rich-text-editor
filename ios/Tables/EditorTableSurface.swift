@@ -435,6 +435,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         drawingOffset = textView.contentOffset
         let visibleBounds = CGRect(
             origin: drawingOffset,
+        drawingView.accessibilityRevealScrollView = textView
             size: bounds.size
         )
         if drawingView.bounds != visibleBounds {

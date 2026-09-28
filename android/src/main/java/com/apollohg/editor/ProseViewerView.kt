@@ -641,7 +641,7 @@ class ProseViewerView @JvmOverloads constructor(
                 }
             }
             if (tableAccessibility.isTableNode(virtualViewId)) {
-                return tableAccessibility.create(virtualViewId, ::annotationId)
+                return tableAccessibility.create(virtualViewId) { node, _, _ -> annotationId(node) }
             }
             return preparedAccessibilityNodeInfo(virtualViewId)
         }

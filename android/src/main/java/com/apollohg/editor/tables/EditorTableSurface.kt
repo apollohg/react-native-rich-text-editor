@@ -1072,9 +1072,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     }
 
     private fun rootCellAt(x: Float, y: Float): Pair<String, ViewerTablePresentedCell>? {
-        val presented = drawingView.presentedTableCells().asReversed().firstOrNull {
-            it.bounds.contains(x, y) && it.clip.contains(x, y)
-        } ?: return null
+        val presented = drawingView.rootTableCellAt(x, y) ?: return null
         return (tableIdFor(presented.surface) ?: return null) to presented
     }
 
@@ -1574,7 +1572,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     }
 
     override fun tableAccessibilityActions(cell: TableAccessibilityCell): List<TableAccessibilityAction> {
-        val tableId = tableIdFor(cell.presented.surface) ?: return emptyList()
+        val tableId = tableIdFor(cell.surface) ?: return emptyList()
         if (!ownsAccessibilitySelection(tableId, cell)) return emptyList()
         val (adapter) = tableMutationContext(tableId) ?: return emptyList()
         val commands = adapter.cachedActiveState?.optJSONObject("commands") ?: return emptyList()
@@ -1583,22 +1581,23 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
 
     override fun performTableAccessibilityAction(action: TableAccessibilityAction, cell: TableAccessibilityCell): Boolean {
         if (action !in tableAccessibilityActions(cell)) return false
-        val tableId = tableIdFor(cell.presented.surface) ?: return false
+        val tableId = tableIdFor(cell.surface) ?: return false
         val (adapter, admission) = tableMutationContext(tableId) ?: return false
         val update = adapter.applyTableCommandAtSelection(action.commandJson(), admission) ?: return false
         return applyTableMutationUpdate(update)
     }
 
     override fun activateTableAccessibilityCell(cell: TableAccessibilityCell): Boolean {
-        val tableId = tableIdFor(cell.presented.surface) ?: return false
-        val visible = RectF(cell.presented.bounds)
-        if (!visible.intersect(cell.presented.clip)) return false
+        val tableId = tableIdFor(cell.surface) ?: return false
+        val presented = drawingView.presentedAccessibilityCell(cell) ?: return false
+        val visible = RectF(presented.bounds)
+        if (!visible.intersect(presented.clip)) return false
         return activateCell(tableId, cell.sourceCellIndex, visible.centerX(), visible.centerY())
     }
 
     override fun activeTableAccessibilityInput(cell: TableAccessibilityCell): EditorEditText? {
         val active = activeCell ?: return null
-        if (active.tableId != tableIdFor(cell.presented.surface) || active.cellIndex != cell.sourceCellIndex) return null
+        if (active.tableId != tableIdFor(cell.surface) || active.cellIndex != cell.sourceCellIndex) return null
         return activeInput
     }
 

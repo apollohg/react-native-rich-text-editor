@@ -563,7 +563,6 @@ public final class PreparedProseDrawingView: UIView {
         if changed {
             updateSidecarInstrumentation()
             updateConfiguredImagesForVisibleWindow()
-            invalidateAccessibilityNodes()
             onTableGeometryChanged?()
             setNeedsDisplay()
         }
@@ -579,7 +578,6 @@ public final class PreparedProseDrawingView: UIView {
         tablePresentationOwner.setLogicalOffset(offset, for: surface)
         updateSidecarInstrumentation()
         updateConfiguredImagesForVisibleWindow()
-        invalidateAccessibilityNodes()
         onTableGeometryChanged?()
         setNeedsDisplay()
     }
@@ -658,7 +656,7 @@ public final class PreparedProseDrawingView: UIView {
         }
     }
     private var accessibilityElementsByIndex: [Int: NSObject] = [:]
-    private var accessibilityItemsCache: (generation: Int, window: CGRect?, items: [TableAccessibilityItem])?
+    private var accessibilityItemsCache: (generation: Int, items: [TableAccessibilityItem])?
     private enum AccessibilityAnnouncement {
         case structure
         case content(NSObject)
@@ -669,6 +667,7 @@ public final class PreparedProseDrawingView: UIView {
     var accessibilityFocusProbe: (NSObject) -> Bool = { $0.accessibilityElementIsFocused() }
     var onAccessibilityLayoutChangedForTesting: ((Any?) -> Void)?
     weak var tableAccessibilityEditing: TableAccessibilityEditing?
+    weak var accessibilityRevealScrollView: UIScrollView?
     internal var materializedAccessibilityElementCountForTesting: Int { accessibilityElementsByIndex.count }
 
     private lazy var tapRecognizer: UITapGestureRecognizer = {
@@ -760,14 +759,18 @@ public final class PreparedProseDrawingView: UIView {
         return visible
     }
 
-    private func refreshScrollObservations() {
+    private var ancestorScrollViews: [UIScrollView] {
         var scrollViews: [UIScrollView] = []
         var ancestor = superview
         while let view = ancestor {
             if let scrollView = view as? UIScrollView { scrollViews.append(scrollView) }
             ancestor = view.superview
         }
-        let activeScrollViews = window == nil ? [] : scrollViews
+        return scrollViews
+    }
+
+    private func refreshScrollObservations() {
+        let activeScrollViews = window == nil ? [] : ancestorScrollViews
         let nextIDs = activeScrollViews.map(ObjectIdentifier.init)
         guard nextIDs != observedScrollViewIDs else { return }
         scrollObservations.removeAll()
@@ -875,7 +878,7 @@ public final class PreparedProseDrawingView: UIView {
 
     private func focusableAccessibilityElements() -> [NSObject] {
         accessibilityElementsByIndex.values.flatMap { element -> [NSObject] in
-            (element as? TableAccessibilityTableElement)?.cellElements ?? [element]
+            (element as? TableAccessibilityTableElement)?.materializedElements ?? [element]
         }
     }
 
@@ -916,7 +919,8 @@ public final class PreparedProseDrawingView: UIView {
             case let node as PreparedProseDrawingAccessibilityElement where node.presented.node.role == .link:
                 return [node]
             case let table as TableAccessibilityTableElement:
-                return table.cellElements.filter { !$0.linkNodes.isEmpty }
+                return table.table.cells.indices.filter { table.table.cells[$0].containsLink }
+                    .compactMap(table.cellElement(at:))
             default:
                 return []
             }
@@ -937,19 +941,18 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     private var accessibilityItems: [TableAccessibilityItem] {
-        let window = configuredVisibleRect()
-        if let cached = accessibilityItemsCache, cached.generation == accessibilityPresentationGeneration,
-           cached.window == window {
+        if let cached = accessibilityItemsCache, cached.generation == accessibilityPresentationGeneration {
             return cached.items
         }
         var items: [TableAccessibilityItem] = []
         if let layout, let snapshot = presentationSnapshot() {
             items = TableAccessibility.items(
-                snapshot: snapshot, root: layout, nodes: accessibilityNodes(in: snapshot),
+                root: layout, rootNodes: readableAccessibilityNodes(snapshot.accessibilityNodes).filter { $0.layout === layout },
+                linksEnabled: linkInteractionsEnabled,
                 detachedFrames: tableAccessibilityEditing?.detachedTableAccessibilityFrames() ?? []
             )
         }
-        accessibilityItemsCache = (accessibilityPresentationGeneration, window, items)
+        accessibilityItemsCache = (accessibilityPresentationGeneration, items)
         reconcileAccessibilityElements(with: items)
         return items
     }
@@ -960,8 +963,10 @@ public final class PreparedProseDrawingView: UIView {
 
     func tableAccessibilityCell(tableID: String, sourceCellIndex: Int) -> TableAccessibilityCell? {
         accessibilityItems.lazy.compactMap { item -> TableAccessibilityCell? in
-            guard case let .table(table) = item, table.identity == tableID else { return nil }
-            return table.cells.first { $0.sourceCellIndex == sourceCellIndex }
+            guard case let .table(table) = item, table.identity == tableID,
+                  let cell = table.surface.cell(sourceCellIndex: sourceCellIndex)
+            else { return nil }
+            return table.cellIndex(sourcePosition: cell.sourcePosition).map { table.cells[$0] }
         }.first
     }
 
@@ -973,24 +978,53 @@ public final class PreparedProseDrawingView: UIView {
         return UIAccessibility.convertToScreenCoordinates(visible, in: self)
     }
 
-    func revealTableAccessibilityCell(_ cell: TableAccessibilityCell) {
-        let presented = cell.presented
-        let visible = presented.bounds.intersection(presented.clip)
-        guard visible.isNull || visible.width < min(presented.bounds.width, presented.clip.width) else { return }
-        let surface = presented.surface
-        let logical = surface.layout.columnWidths.prefix(cell.columns.location).reduce(CGFloat.zero, +)
-        guard tableLogicalOffset(for: surface.identity) != logical else { return }
-        setTableLogicalOffset(logical, sourceIdentity: surface.identity)
-        let revealed = (0..<accessibilityElementCount()).lazy.compactMap { index in
-            (self.accessibilityElement(at: index) as? TableAccessibilityTableElement)?.cellElements.first {
-                $0.tableID == cell.presented.surface.identity && $0.cell.sourcePosition == cell.sourcePosition
-            }
-        }.first
-        UIAccessibility.post(notification: .layoutChanged, argument: revealed)
+    func presentedRootTable(_ surface: ViewerTableSurface) -> ViewerTablePresentedTable? {
+        layout.flatMap { ViewerTablePresentation.rootTables(in: $0).first { $0.surface === surface } }
     }
 
-    private func accessibilityNodes(in snapshot: ViewerTablePresentationSnapshot) -> [ViewerTablePresentedAccessibilityNode] {
-        snapshot.accessibilityNodes.map { presented in
+    func presentedAccessibilityCell(_ cell: TableAccessibilityCell) -> ViewerTablePresentedCell? {
+        presentedRootTable(cell.surface).map {
+            ViewerTablePresentation.present(cell.cell, in: $0, owner: tablePresentationOwner)
+        }
+    }
+
+    func tableAccessibilityInteractions(for cell: TableAccessibilityCell) -> [ViewerTablePresentedAccessibilityNode] {
+        guard let presented = presentedAccessibilityCell(cell) else { return [] }
+        return readableAccessibilityNodes(
+            ViewerTablePresentation.contentAccessibilityNodes(of: presented, owner: tablePresentationOwner)
+        ).filter { $0.node.interactionIndex != nil }
+    }
+
+    func revealTableAccessibilityCell(_ cell: TableAccessibilityCell) {
+        guard let presented = presentedAccessibilityCell(cell) else { return }
+        let visible = presented.bounds.intersection(presented.clip)
+        if !visible.isNull, visible.width >= min(presented.bounds.width, presented.clip.width) {
+            revealInEnclosingScrollView(presented.bounds)
+            return
+        }
+        let surface = cell.surface
+        let logical = surface.layout.columnWidths.prefix(cell.columns.location).reduce(CGFloat.zero, +)
+        if tableLogicalOffset(for: surface.identity) != logical {
+            setTableLogicalOffset(logical, sourceIdentity: surface.identity)
+        }
+        guard let revealed = presentedAccessibilityCell(cell) else { return }
+        revealInEnclosingScrollView(revealed.bounds)
+        let element = (0..<accessibilityElementCount()).lazy.compactMap { index in
+            (self.accessibilityElement(at: index) as? TableAccessibilityTableElement)
+                .flatMap { $0.table.identity == surface.identity ? $0.cellElement(sourcePosition: cell.sourcePosition) : nil }
+        }.first
+        UIAccessibility.post(notification: .layoutChanged, argument: element)
+    }
+
+    private func revealInEnclosingScrollView(_ rect: CGRect) {
+        guard let scrollView = accessibilityRevealScrollView ?? ancestorScrollViews.first else { return }
+        scrollView.scrollRectToVisible(convert(rect, to: scrollView), animated: false)
+    }
+
+    private func readableAccessibilityNodes(
+        _ nodes: [ViewerTablePresentedAccessibilityNode]
+    ) -> [ViewerTablePresentedAccessibilityNode] {
+        nodes.map { presented in
             guard !linkInteractionsEnabled, presented.node.role == .link else { return presented }
             return ViewerTablePresentedAccessibilityNode(
                 node: PreparedProseAccessibilityNode(

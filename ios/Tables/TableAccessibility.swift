@@ -89,15 +89,16 @@ struct TableAccessibilityAction: Equatable {
 }
 
 struct TableAccessibilityCell {
-    let presented: ViewerTablePresentedCell
+    let surface: ViewerTableSurface
+    let cell: PreparedViewerTableCell
     let sourceCellIndex: Int
     let rows: NSRange
     let columns: NSRange
     let isHeader: Bool
     let label: String
-    let interactions: [ViewerTablePresentedAccessibilityNode]
+    let containsLink: Bool
 
-    var sourcePosition: Int { presented.sourcePosition }
+    var sourcePosition: Int { cell.sourcePosition }
 
     var spanDescription: String? {
         let parts = [
@@ -114,40 +115,75 @@ struct TableAccessibilityTable {
         case failed
     }
 
-    let presented: ViewerTablePresentedTable
+    let surface: ViewerTableSurface
     let rowCount: Int
     let columnCount: Int
     let cells: [TableAccessibilityCell]
+    private let slots: [Int: Int]
+    private let positions: [Int: Int]
+    private let columnHeaderCells: [Int: [Int]]
+    private let rowHeaderCells: [Int: [Int]]
 
-    var identity: String { presented.surface.identity }
-    var tablePos: UInt32? { presented.surface.sourceTable?.tablePos }
+    init(surface: ViewerTableSurface, rowCount: Int, columnCount: Int, cells: [TableAccessibilityCell]) {
+        self.surface = surface
+        self.rowCount = rowCount
+        self.columnCount = columnCount
+        self.cells = cells
+        let rowStride = max(columnCount, 1)
+        var slots: [Int: Int] = [:]
+        for (index, cell) in cells.enumerated() {
+            for row in cell.rows.location..<NSMaxRange(cell.rows) {
+                for column in cell.columns.location..<NSMaxRange(cell.columns) where slots[row * rowStride + column] == nil {
+                    slots[row * rowStride + column] = index
+                }
+            }
+        }
+        self.slots = slots
+        positions = Dictionary(cells.enumerated().map { ($1.sourcePosition, $0) }, uniquingKeysWith: { first, _ in first })
+        func headerLines(_ line: (TableAccessibilityCell) -> Int) -> Set<Int> {
+            Set(Dictionary(grouping: cells, by: line).filter { $0.value.allSatisfy(\.isHeader) }.keys)
+        }
+        func headerCells(in lines: Set<Int>, line: (TableAccessibilityCell) -> Int,
+                         covered: (TableAccessibilityCell) -> NSRange) -> [Int: [Int]] {
+            var headers: [Int: [Int]] = [:]
+            for (index, cell) in cells.enumerated() where cell.isHeader && lines.contains(line(cell)) {
+                let range = covered(cell)
+                for crossing in range.location..<NSMaxRange(range) { headers[crossing, default: []].append(index) }
+            }
+            return headers
+        }
+        columnHeaderCells = headerCells(in: headerLines { $0.rows.location }, line: { $0.rows.location }, covered: \.columns)
+        rowHeaderCells = headerCells(in: headerLines { $0.columns.location }, line: { $0.columns.location }, covered: \.rows)
+    }
+
+    var identity: String { surface.identity }
+    var tablePos: UInt32? { surface.sourceTable?.tablePos }
 
     var frame: Frame? {
         guard cells.isEmpty else { return nil }
-        let unfilled = presented.surface.sourceTable?.failure == nil && (rowCount == 0 || columnCount == 0)
+        let unfilled = surface.sourceTable?.failure == nil && (rowCount == 0 || columnCount == 0)
         return unfilled ? .empty : .failed
     }
 
+    func cellIndex(row: Int, column: Int) -> Int? {
+        guard (0..<max(columnCount, 1)).contains(column) else { return nil }
+        return slots[row * max(columnCount, 1) + column]
+    }
+
+    func cellIndex(sourcePosition: Int) -> Int? {
+        positions[sourcePosition]
+    }
+
     func cell(row: Int, column: Int) -> TableAccessibilityCell? {
-        cells.first { NSLocationInRange(row, $0.rows) && NSLocationInRange(column, $0.columns) }
+        cellIndex(row: row, column: column).map { cells[$0] }
     }
 
     func columnHeaders(_ column: Int) -> [TableAccessibilityCell] {
-        cells.filter { $0.isHeader && NSLocationInRange(column, $0.columns) && isHeaderRow($0.rows.location) }
+        columnHeaderCells[column, default: []].map { cells[$0] }
     }
 
     func rowHeaders(_ row: Int) -> [TableAccessibilityCell] {
-        cells.filter { $0.isHeader && NSLocationInRange(row, $0.rows) && isHeaderColumn($0.columns.location) }
-    }
-
-    private func isHeaderRow(_ row: Int) -> Bool {
-        let starting = cells.filter { $0.rows.location == row }
-        return !starting.isEmpty && starting.allSatisfy(\.isHeader)
-    }
-
-    private func isHeaderColumn(_ column: Int) -> Bool {
-        let starting = cells.filter { $0.columns.location == column }
-        return !starting.isEmpty && starting.allSatisfy(\.isHeader)
+        rowHeaderCells[row, default: []].map { cells[$0] }
     }
 }
 
@@ -174,9 +210,9 @@ enum TableAccessibility {
     static let descriptionSeparator = ", "
 
     static func items(
-        snapshot: ViewerTablePresentationSnapshot,
         root: PreparedProseLayout,
-        nodes: [ViewerTablePresentedAccessibilityNode],
+        rootNodes: [ViewerTablePresentedAccessibilityNode],
+        linksEnabled: Bool,
         detachedFrames: [TableAccessibilityDetachedFrame]
     ) -> [TableAccessibilityItem] {
         var pendingFrames = detachedFrames.sorted { $0.tablePos < $1.tablePos }
@@ -187,7 +223,7 @@ enum TableAccessibility {
                 pendingFrames.removeFirst()
             }
         }
-        for item in drawnItems(snapshot: snapshot, root: root, nodes: nodes) {
+        for item in drawnItems(root: root, rootNodes: rootNodes, linksEnabled: linksEnabled) {
             if case let .table(table) = item { flushFrames(before: table.tablePos ?? UInt32.max) }
             merged.append(item)
         }
@@ -196,40 +232,13 @@ enum TableAccessibility {
     }
 
     private static func drawnItems(
-        snapshot: ViewerTablePresentationSnapshot,
         root: PreparedProseLayout,
-        nodes: [ViewerTablePresentedAccessibilityNode]
+        rootNodes: [ViewerTablePresentedAccessibilityNode],
+        linksEnabled: Bool
     ) -> [TableAccessibilityItem] {
-        let rootTables = snapshot.tables.filter { $0.parentScrollIdentity == nil }
-        let rootCells = rootTables.map { table in snapshot.cells.filter { $0.surface === table.surface } }
-        var owners: [ObjectIdentifier: (table: Int, cell: Int)] = [:]
-        func claim(_ layout: PreparedProseLayout, owner: (table: Int, cell: Int)) {
-            owners[ObjectIdentifier(layout)] = owner
-            for block in layout.blocks {
-                block.tableSurface?.cells.forEach { claim($0.content, owner: owner) }
-            }
+        var pending = root.blocks.enumerated().compactMap { blockIndex, block in
+            block.tableSurface.map { (blockIndex, table($0, linksEnabled: linksEnabled)) }
         }
-        for (tableIndex, cells) in rootCells.enumerated() {
-            for (cellIndex, cell) in cells.enumerated() {
-                claim(cell.content, owner: (tableIndex, cellIndex))
-            }
-        }
-        var rootNodes: [ViewerTablePresentedAccessibilityNode] = []
-        var cellNodes = rootCells.map { cells in cells.map { _ in [ViewerTablePresentedAccessibilityNode]() } }
-        for node in nodes {
-            if node.layout === root {
-                rootNodes.append(node)
-            } else if let owner = owners[ObjectIdentifier(node.layout)] {
-                cellNodes[owner.table][owner.cell].append(node)
-            }
-        }
-        let tables = rootTables.enumerated().map { index, presented in
-            table(presented, cells: rootCells[index], nodes: cellNodes[index])
-        }
-        let blockIndexes = rootTables.map { presented in
-            root.blocks.firstIndex { $0.tableSurface === presented.surface } ?? root.blocks.count
-        }
-        var pending = Array(zip(blockIndexes, tables))
         var items: [TableAccessibilityItem] = []
         func flushTables(before blockIndex: Int) {
             while let next = pending.first, next.0 < blockIndex {
@@ -245,30 +254,46 @@ enum TableAccessibility {
         return items
     }
 
-    private static func table(
-        _ presented: ViewerTablePresentedTable,
-        cells: [ViewerTablePresentedCell],
-        nodes: [[ViewerTablePresentedAccessibilityNode]]
-    ) -> TableAccessibilityTable {
-        let source = presented.surface.sourceTable
-        let accessibleCells = zip(cells, nodes).compactMap { cell, nodes -> TableAccessibilityCell? in
-            guard let index = cell.cell.sourceCellIndex,
+    private static func contentNodes(of layout: PreparedProseLayout) -> [PreparedProseAccessibilityNode] {
+        let byBlock = Dictionary(grouping: layout.accessibilityNodes.indices.compactMap { index in
+            layout.accessibilityNodes[index].sourceBlockIndex.map { ($0, index) }
+        }, by: { $0.0 })
+        var emitted = Set<Int>()
+        var nodes: [PreparedProseAccessibilityNode] = []
+        func append(_ index: Int) {
+            guard emitted.insert(index).inserted else { return }
+            nodes.append(layout.accessibilityNodes[index])
+        }
+        for (blockIndex, block) in layout.blocks.enumerated() {
+            for (_, index) in byBlock[blockIndex] ?? [] { append(index) }
+            block.tableSurface?.cells.forEach { nodes.append(contentsOf: contentNodes(of: $0.content)) }
+        }
+        layout.accessibilityNodes.indices.forEach(append)
+        return nodes
+    }
+
+    private static func table(_ surface: ViewerTableSurface, linksEnabled: Bool) -> TableAccessibilityTable {
+        let source = surface.sourceTable
+        let accessibleCells = surface.cells.compactMap { cell -> TableAccessibilityCell? in
+            guard let index = cell.sourceCellIndex,
                   let sourceCell = source?.cells[index]
             else { return nil }
+            let nodes = contentNodes(of: cell.content)
             return TableAccessibilityCell(
-                presented: cell,
+                surface: surface,
+                cell: cell,
                 sourceCellIndex: index,
                 rows: NSRange(location: Int(sourceCell.row), length: Int(sourceCell.rowspan)),
                 columns: NSRange(location: Int(sourceCell.column), length: Int(sourceCell.colspan)),
                 isHeader: sourceCell.header,
-                label: nodes.map(\.node.label).filter { !$0.isEmpty }.joined(separator: labelSeparator),
-                interactions: nodes.filter { $0.node.interactionIndex != nil }
+                label: nodes.map(\.label).filter { !$0.isEmpty }.joined(separator: labelSeparator),
+                containsLink: linksEnabled && nodes.contains { $0.role == .link && $0.interactionIndex != nil }
             )
         }
         return TableAccessibilityTable(
-            presented: presented,
-            rowCount: source.map { Int($0.rows) } ?? max(0, presented.surface.layout.rowOffsets.count - 1),
-            columnCount: source.map { Int($0.columns) } ?? presented.surface.layout.columnWidths.count,
+            surface: surface,
+            rowCount: source.map { Int($0.rows) } ?? max(0, surface.layout.rowOffsets.count - 1),
+            columnCount: source.map { Int($0.columns) } ?? surface.layout.columnWidths.count,
             cells: accessibleCells
         )
     }
@@ -361,7 +386,7 @@ class TableAccessibilityGeneratedElement: UIAccessibilityElement {
 
 final class TableAccessibilityTableElement: TableAccessibilityGeneratedElement, UIAccessibilityContainerDataTable {
     private(set) var table: TableAccessibilityTable
-    private(set) var cellElements: [TableAccessibilityCellElement] = []
+    private var materializedCellElements: [Int: TableAccessibilityCellElement] = [:]
 
     init(drawingView: PreparedProseDrawingView, table: TableAccessibilityTable) {
         self.table = table
@@ -369,25 +394,54 @@ final class TableAccessibilityTableElement: TableAccessibilityGeneratedElement, 
         isAccessibilityElement = false
         accessibilityContainerType = .dataTable
         accessibilityLabel = TableAccessibilityText.table.localized
-        cellElements = table.cells.map {
-            TableAccessibilityCellElement(drawingView: drawingView, tableElement: self, cell: $0, tableID: table.identity)
-        }
     }
 
     func refresh(_ table: TableAccessibilityTable) {
         self.table = table
-        zip(cellElements, table.cells).forEach { $0.refresh($1, tableID: table.identity) }
+        materializedCellElements.forEach { $1.refresh(table.cells[$0], tableID: table.identity) }
     }
 
-    override var accessibilityElements: [Any]? {
-        get { cellElements.map(element(for:)) }
-        set { }
+    var cellElements: [TableAccessibilityCellElement] {
+        table.cells.indices.compactMap(cellElement(at:))
+    }
+
+    var materializedElements: [TableAccessibilityCellElement] {
+        Array(materializedCellElements.values)
+    }
+
+    func cellElement(at index: Int) -> TableAccessibilityCellElement? {
+        guard table.cells.indices.contains(index), let drawingView else { return nil }
+        if let existing = materializedCellElements[index] { return existing }
+        let element = TableAccessibilityCellElement(drawingView: drawingView, tableElement: self,
+                                                    cell: table.cells[index], tableID: table.identity)
+        materializedCellElements[index] = element
+        return element
+    }
+
+    func cellElement(sourcePosition: Int) -> TableAccessibilityCellElement? {
+        table.cellIndex(sourcePosition: sourcePosition).flatMap(cellElement(at:))
+    }
+
+    override func accessibilityElementCount() -> Int { table.cells.count }
+
+    override func accessibilityElement(at index: Int) -> Any? {
+        cellElement(at: index).map(element(for:))
+    }
+
+    override func index(ofAccessibilityElement element: Any) -> Int {
+        let position: Int?
+        switch element {
+        case let cellElement as TableAccessibilityCellElement: position = cellElement.cell.sourcePosition
+        case let input as TableCellInputTextView: position = input.tableAccessibilityCell?.cell()?.sourcePosition
+        default: position = nil
+        }
+        return position.flatMap(table.cellIndex(sourcePosition:)) ?? NSNotFound
     }
 
     override var accessibilityFrame: CGRect {
         get {
-            guard isCurrent else { return .zero }
-            return screenFrame(table.presented.bounds, clip: table.presented.clip)
+            guard isCurrent, let presented = drawingView?.presentedRootTable(table.surface) else { return .zero }
+            return screenFrame(presented.bounds, clip: presented.clip)
         }
         set { }
     }
@@ -402,13 +456,11 @@ final class TableAccessibilityTableElement: TableAccessibilityGeneratedElement, 
     }
 
     private func elements(_ cells: [TableAccessibilityCell]) -> [UIAccessibilityContainerDataTableCell] {
-        cells.compactMap { cell in
-            cellElements.first { $0.cell.sourcePosition == cell.sourcePosition }.map(element(for:))
-        }
+        cells.compactMap { cellElement(sourcePosition: $0.sourcePosition).map(element(for:)) }
     }
 
     func accessibilityDataTableCellElement(forRow row: Int, column: Int) -> UIAccessibilityContainerDataTableCell? {
-        table.cell(row: row, column: column).flatMap { elements([$0]).first }
+        table.cellIndex(row: row, column: column).flatMap(cellElement(at:)).map(element(for:))
     }
 
     func accessibilityRowCount() -> Int { table.rowCount }
@@ -449,8 +501,8 @@ final class TableAccessibilityCellElement: TableAccessibilityGeneratedElement, U
 
     private var editing: TableAccessibilityEditing? { isCurrent ? drawingView?.tableAccessibilityEditing : nil }
 
-    var linkNodes: [ViewerTablePresentedAccessibilityNode] {
-        cell.interactions.filter { $0.node.role == .link }
+    private var interactions: [ViewerTablePresentedAccessibilityNode] {
+        drawingView?.tableAccessibilityInteractions(for: cell) ?? []
     }
 
     override var accessibilityLabel: String? {
@@ -471,9 +523,9 @@ final class TableAccessibilityCellElement: TableAccessibilityGeneratedElement, U
 
     override var accessibilityFrame: CGRect {
         get {
-            guard isCurrent else { return .zero }
-            let visible = screenFrame(cell.presented.bounds, clip: cell.presented.clip)
-            return visible.isEmpty ? screenFrame(cell.presented.bounds, clip: .infinite) : visible
+            guard isCurrent, let presented = drawingView?.presentedAccessibilityCell(cell) else { return .zero }
+            let visible = screenFrame(presented.bounds, clip: presented.clip)
+            return visible.isEmpty ? screenFrame(presented.bounds, clip: .infinite) : visible
         }
         set { }
     }
@@ -481,7 +533,7 @@ final class TableAccessibilityCellElement: TableAccessibilityGeneratedElement, U
     override var accessibilityCustomActions: [UIAccessibilityCustomAction]? {
         get {
             guard isCurrent else { return [] }
-            let interactions = cell.interactions.map { node in
+            let interactions = interactions.map { node in
                 let name = node.node.role == .mention
                     ? TableAccessibilityText.openMention(node.node.label).localized
                     : TableAccessibilityText.openLink(node.node.label).localized
@@ -497,7 +549,7 @@ final class TableAccessibilityCellElement: TableAccessibilityGeneratedElement, U
 
     private func activateInteraction(_ identity: String) -> Bool {
         guard isCurrent, let drawingView,
-              let node = cell.interactions.first(where: { $0.sourceIdentity == identity })
+              let node = interactions.first(where: { $0.sourceIdentity == identity })
         else { return false }
         return drawingView.activateAccessibilityNode(node)
     }
@@ -555,7 +607,9 @@ final class TableAccessibilityFrameElement: TableAccessibilityGeneratedElement {
         get {
             guard isCurrent else { return .zero }
             switch source {
-            case let .drawn(table): return screenFrame(table.presented.bounds, clip: table.presented.clip)
+            case let .drawn(table):
+                guard let presented = drawingView?.presentedRootTable(table.surface) else { return .zero }
+                return screenFrame(presented.bounds, clip: presented.clip)
             case let .detached(frame): return frame.screenFrame()
             }
         }
