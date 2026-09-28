@@ -176,3 +176,46 @@ fn large_table_keystroke_budget_probe() {
         );
     }
 }
+
+#[test]
+#[ignore = "release-mode wall-clock probe"]
+fn viewer_compile_budget_probe() {
+    const VIEWER_PROBE_SAMPLES: usize = 10;
+    const VIEWER_COMPILE_BUDGET_MS: f64 = 75.0;
+    let mut results = Vec::new();
+    for (rows, columns) in PROBE_FIXTURES {
+        let source = plain_table_document(rows, columns).to_string();
+        let config_json = json!({
+            "schema": crate::tables::tests::tabled_schema_json(crate::tables::tests::PROSEMIRROR_TABLE_NAMES),
+            "initialization": {"type":"localEmpty"}
+        }).to_string();
+        let mut samples = Vec::with_capacity(VIEWER_PROBE_SAMPLES);
+        for _ in 0..VIEWER_PROBE_SAMPLES {
+            let request = crate::viewer::FfiViewerCompileRequest {
+                source_kind: crate::viewer::FfiViewerSourceKind::Json,
+                source: source.clone(),
+                config_json: config_json.clone(),
+                images_enabled: true,
+                mention_prefix: None,
+            };
+            let start = Instant::now();
+            let result = crate::viewer::viewer_compile(request);
+            samples.push(elapsed_ms(start));
+            assert!(
+                result.error.is_none(),
+                "{rows}x{columns}: {:?}",
+                result.error
+            );
+            assert!(result.value.is_some(), "compile returns a document");
+        }
+        let median = median_ms(samples);
+        println!("PROBE viewer {rows}x{columns} median {median:.3} ms, budget {VIEWER_COMPILE_BUDGET_MS}");
+        results.push(median);
+    }
+    assert!(
+        results
+            .iter()
+            .all(|median| *median <= VIEWER_COMPILE_BUDGET_MS),
+        "viewer medians exceed budget: {results:?}"
+    );
+}

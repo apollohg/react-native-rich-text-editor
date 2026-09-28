@@ -448,34 +448,67 @@ pub(crate) fn json_objects_equal_stack_safe(
         })
 }
 
-pub(crate) fn serialize_json_value_stack_safe(
-    value: &serde_json::Value,
-    initial_capacity: usize,
-) -> Vec<u8> {
-    enum Frame<'a> {
-        Value(&'a serde_json::Value),
-        String(&'a str),
-        Raw(&'static [u8]),
-    }
+pub(crate) enum JsonWriteFrame<'a, T = ()> {
+    Value(&'a serde_json::Value),
+    OwnedValue(StackSafeJsonValue),
+    String(&'a str),
+    OwnedString(String),
+    Raw(&'static [u8]),
+    Expand(T),
+}
 
-    let mut output = Vec::with_capacity(initial_capacity);
-    let mut frames = vec![Frame::Value(value)];
+pub(crate) fn write_json_frames<'a, T>(
+    output: &mut impl std::io::Write,
+    mut frames: Vec<JsonWriteFrame<'a, T>>,
+    mut expand: impl FnMut(T, &mut Vec<JsonWriteFrame<'a, T>>),
+) -> std::io::Result<()> {
+    use JsonWriteFrame as Frame;
     while let Some(frame) = frames.pop() {
         match frame {
-            Frame::Raw(bytes) => output.extend_from_slice(bytes),
-            Frame::String(value) => serde_json::to_writer(&mut output, value)
-                .expect("JSON strings always serialize to an in-memory buffer"),
-            Frame::Value(value) => match value {
-                serde_json::Value::Null => output.extend_from_slice(b"null"),
-                serde_json::Value::Bool(true) => output.extend_from_slice(b"true"),
-                serde_json::Value::Bool(false) => output.extend_from_slice(b"false"),
-                serde_json::Value::Number(value) => {
-                    output.extend_from_slice(value.to_string().as_bytes());
+            Frame::Expand(value) => expand(value, &mut frames),
+            Frame::Raw(bytes) => output.write_all(bytes)?,
+            Frame::String(value) => serde_json::to_writer(&mut *output, value)?,
+            Frame::OwnedString(value) => serde_json::to_writer(&mut *output, &value)?,
+            Frame::OwnedValue(mut owned) => {
+                let value = std::mem::replace(&mut owned.value, serde_json::Value::Null);
+                match value {
+                    serde_json::Value::Array(values) => {
+                        frames.push(Frame::Raw(b"]"));
+                        let count = values.len();
+                        for (index, value) in values.into_iter().enumerate().rev() {
+                            if index + 1 < count {
+                                frames.push(Frame::Raw(b","));
+                            }
+                            frames.push(Frame::OwnedValue(StackSafeJsonValue::new(value)));
+                        }
+                        frames.push(Frame::Raw(b"["));
+                    }
+                    serde_json::Value::Object(values) => {
+                        frames.push(Frame::Raw(b"}"));
+                        let count = values.len();
+                        for (index, (key, value)) in values.into_iter().enumerate().rev() {
+                            if index + 1 < count {
+                                frames.push(Frame::Raw(b","));
+                            }
+                            frames.push(Frame::OwnedValue(StackSafeJsonValue::new(value)));
+                            frames.push(Frame::Raw(b":"));
+                            frames.push(Frame::OwnedString(key));
+                        }
+                        frames.push(Frame::Raw(b"{"));
+                    }
+                    scalar => serde_json::to_writer(&mut *output, &scalar)?,
                 }
-                serde_json::Value::String(value) => serde_json::to_writer(&mut output, value)
-                    .expect("JSON strings always serialize to an in-memory buffer"),
+            }
+            Frame::Value(value) => match value {
+                serde_json::Value::Null => output.write_all(b"null")?,
+                serde_json::Value::Bool(true) => output.write_all(b"true")?,
+                serde_json::Value::Bool(false) => output.write_all(b"false")?,
+                serde_json::Value::Number(value) => {
+                    output.write_all(value.to_string().as_bytes())?
+                }
+                serde_json::Value::String(value) => serde_json::to_writer(&mut *output, value)?,
                 serde_json::Value::Array(values) => {
-                    output.push(b'[');
+                    output.write_all(b"[")?;
                     frames.push(Frame::Raw(b"]"));
                     for (index, value) in values.iter().enumerate().rev() {
                         if index + 1 < values.len() {
@@ -485,7 +518,7 @@ pub(crate) fn serialize_json_value_stack_safe(
                     }
                 }
                 serde_json::Value::Object(values) => {
-                    output.push(b'{');
+                    output.write_all(b"{")?;
                     frames.push(Frame::Raw(b"}"));
                     for (index, (key, value)) in values.iter().enumerate().rev() {
                         if index + 1 < values.len() {
@@ -499,6 +532,23 @@ pub(crate) fn serialize_json_value_stack_safe(
             },
         }
     }
+    Ok(())
+}
+
+pub(crate) fn write_json_value_stack_safe(
+    output: &mut impl std::io::Write,
+    value: &serde_json::Value,
+) -> std::io::Result<()> {
+    write_json_frames(output, vec![JsonWriteFrame::Value(value)], |(): (), _| {})
+}
+
+pub(crate) fn serialize_json_value_stack_safe(
+    value: &serde_json::Value,
+    initial_capacity: usize,
+) -> Vec<u8> {
+    let mut output = Vec::with_capacity(initial_capacity);
+    write_json_value_stack_safe(&mut output, value)
+        .expect("JSON values always serialize to an in-memory buffer");
     output
 }
 

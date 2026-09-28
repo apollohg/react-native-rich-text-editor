@@ -156,3 +156,81 @@ fn build_attrs_json(node: &Node, schema: &Schema) -> Map<String, Value> {
 
     attrs_map
 }
+
+pub(crate) fn write_node_json(
+    sink: &mut impl std::io::Write,
+    node: &Node,
+    schema: &Schema,
+) -> std::io::Result<()> {
+    use crate::boundary::{JsonWriteFrame as Frame, StackSafeJsonValue};
+    crate::boundary::write_json_frames(sink, vec![Frame::Expand(node)], |node, frames| {
+        let value = node_to_json_shallow(node, schema);
+        if node.node_type() == "__opaque_json" {
+            frames.push(Frame::OwnedValue(StackSafeJsonValue::new(value)));
+            return;
+        }
+        let Value::Object(mut fields) = value else {
+            unreachable!()
+        };
+        let children = node
+            .content()
+            .map(|content| content.children())
+            .unwrap_or(&[]);
+        if !children.is_empty() {
+            fields.insert("content".into(), Value::Null);
+        }
+        frames.push(Frame::Raw(b"}"));
+        let count = fields.len();
+        for (index, (key, value)) in fields.into_iter().enumerate().rev() {
+            if index + 1 < count {
+                frames.push(Frame::Raw(b","));
+            }
+            if key == "content" {
+                frames.push(Frame::Raw(b"]"));
+                for (index, child) in children.iter().enumerate().rev() {
+                    if index + 1 < children.len() {
+                        frames.push(Frame::Raw(b","));
+                    }
+                    frames.push(Frame::Expand(child));
+                }
+                frames.push(Frame::Raw(b"["));
+            } else {
+                frames.push(Frame::OwnedValue(StackSafeJsonValue::new(value)));
+            }
+            frames.push(Frame::Raw(b":"));
+            frames.push(Frame::OwnedString(key));
+        }
+        frames.push(Frame::Raw(b"{"));
+    })
+}
+
+pub(crate) fn filtered_attrs(node: &Node, cell: bool) -> Vec<(&String, &Value)> {
+    let mut attrs: Vec<_> = node
+        .attrs()
+        .iter()
+        .filter(|(key, _)| !cell || !matches!(key.as_str(), "colspan" | "rowspan" | "colwidth"))
+        .collect();
+    attrs.sort_unstable_by_key(|(key, _)| *key);
+    attrs
+}
+
+pub(crate) fn write_attrs_json(output: &mut String, node: &Node, cell: bool) {
+    #[cfg(test)]
+    crate::yrs_engine::observability::record_attribute_serialization();
+    use crate::boundary::JsonWriteFrame as Frame;
+    let attrs = filtered_attrs(node, cell);
+    let mut frames = vec![Frame::Raw(b"}")];
+    for (index, (key, value)) in attrs.iter().enumerate().rev() {
+        if index + 1 < attrs.len() {
+            frames.push(Frame::Raw(b","));
+        }
+        frames.push(Frame::Value(value));
+        frames.push(Frame::Raw(b":"));
+        frames.push(Frame::String(key));
+    }
+    frames.push(Frame::Raw(b"{"));
+    let mut bytes = Vec::new();
+    crate::boundary::write_json_frames(&mut bytes, frames, |(): (), _| {})
+        .expect("JSON attributes serialize to memory");
+    output.push_str(std::str::from_utf8(&bytes).expect("JSON is UTF-8"));
+}

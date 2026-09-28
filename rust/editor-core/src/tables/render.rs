@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -249,6 +250,8 @@ pub(crate) struct TableRenderContext {
     pub schema_key: String,
     pub attributes: BTreeMap<String, Arc<str>>,
     attribute_nodes: HashMap<(usize, bool), (Node, String)>,
+    attribute_keys: HashMap<String, String>,
+    attribute_values: HashMap<u64, Vec<(Node, bool, String)>>,
 }
 
 impl TableRenderContext {
@@ -296,6 +299,8 @@ impl TableRenderContext {
             schema_key: crate::schema::schema_fingerprint(schema),
             attributes: BTreeMap::new(),
             attribute_nodes: HashMap::new(),
+            attribute_keys: HashMap::new(),
+            attribute_values: HashMap::new(),
         }
     }
 
@@ -304,7 +309,28 @@ impl TableRenderContext {
         if let Some((_, key)) = self.attribute_nodes.get(&identity) {
             return key.clone();
         }
-        let json = attrs_json(node, cell);
+        let attrs = crate::serialize::json_out::filtered_attrs(node, cell);
+        let fingerprint = attrs_fingerprint(&attrs);
+        if let Some(values) = self.attribute_values.get(&fingerprint) {
+            for (prior, prior_cell, json) in values {
+                let prior_attrs = crate::serialize::json_out::filtered_attrs(prior, *prior_cell);
+                if attrs.len() == prior_attrs.len()
+                    && attrs.iter().zip(prior_attrs).all(
+                        |((key, value), (prior_key, prior_value))| {
+                            key == &prior_key
+                                && crate::boundary::json_values_equal_stack_safe(value, prior_value)
+                        },
+                    )
+                {
+                    let key = &self.attribute_keys[json];
+                    self.attribute_nodes
+                        .insert(identity, (node.clone(), key.clone()));
+                    return key.clone();
+                }
+            }
+        }
+        let mut json = String::new();
+        crate::serialize::json_out::write_attrs_json(&mut json, node, cell);
         let mut digest: [u8; 32] = Sha256::digest(json.as_bytes()).into();
         let mut key = attribute_key(&digest);
         let mut collision = 0usize;
@@ -317,6 +343,12 @@ impl TableRenderContext {
             increment_attribute_key(&mut digest);
             key = attribute_key(&digest);
         }
+        self.attribute_keys.insert(json.clone(), key.clone());
+        self.attribute_values.entry(fingerprint).or_default().push((
+            node.clone(),
+            cell,
+            json.clone(),
+        ));
         self.attributes
             .entry(key.clone())
             .or_insert_with(|| Arc::from(json));
@@ -355,39 +387,59 @@ fn increment_attribute_key(digest: &mut [u8; 32]) {
     }
 }
 
-fn attrs_json(node: &Node, cell: bool) -> String {
-    #[cfg(test)]
-    crate::yrs_engine::observability::record_attribute_serialization();
-    let value = serde_json::Value::Object(
-        node.attrs()
-            .iter()
-            .filter(|(key, _)| !cell || !matches!(key.as_str(), "colspan" | "rowspan" | "colwidth"))
-            .map(|(key, value)| {
-                (
-                    key.clone(),
-                    crate::boundary::clone_json_value_stack_safe(value),
-                )
-            })
-            .collect(),
-    );
-    let bytes = crate::boundary::serialize_json_value_stack_safe(&value, 0);
-    crate::boundary::drop_json_value_stack_safe(value);
-    String::from_utf8(bytes).expect("JSON is UTF-8")
+fn attrs_fingerprint(attrs: &[(&String, &serde_json::Value)]) -> u64 {
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    attrs.len().hash(&mut hash);
+    for (key, value) in attrs {
+        key.hash(&mut hash);
+        let mut pending = vec![*value];
+        while let Some(value) = pending.pop() {
+            std::mem::discriminant(value).hash(&mut hash);
+            match value {
+                serde_json::Value::Null => {}
+                serde_json::Value::Bool(value) => value.hash(&mut hash),
+                serde_json::Value::Number(value) => value.hash(&mut hash),
+                serde_json::Value::String(value) => value.hash(&mut hash),
+                serde_json::Value::Array(values) => {
+                    values.len().hash(&mut hash);
+                    pending.extend(values.iter().rev());
+                }
+                serde_json::Value::Object(values) => {
+                    values.len().hash(&mut hash);
+                    for key in values.keys() {
+                        key.hash(&mut hash);
+                    }
+                    pending.extend(values.values().rev());
+                }
+            }
+        }
+    }
+    hash.finish()
+}
+
+struct ContentKeySink(Sha256);
+
+impl std::io::Write for ContentKeySink {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn content_key(cell: &Node, schema: &Schema, schema_key: &str) -> String {
     #[cfg(test)]
     crate::yrs_engine::observability::record_cell_content_key();
-    let mut hash = Sha256::new();
-    hash.update(schema_key.as_bytes());
+    let mut sink = ContentKeySink(Sha256::new());
+    sink.0.update(schema_key.as_bytes());
     for index in 0..cell.child_count() {
-        let value = crate::serialize::json_out::node_to_json(cell.child(index).unwrap(), schema);
-        let bytes = crate::boundary::serialize_json_value_stack_safe(&value, 0);
-        hash.update((bytes.len() as u64).to_be_bytes());
-        hash.update(bytes);
-        crate::boundary::drop_json_value_stack_safe(value);
+        crate::serialize::json_out::write_node_json(&mut sink, cell.child(index).unwrap(), schema)
+            .expect("content hash writes are infallible");
     }
-    format!("{:x}", hash.finalize())
+    format!("{:x}", sink.0.finalize())
 }
 
 pub(crate) fn generate_table(

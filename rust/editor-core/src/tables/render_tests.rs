@@ -149,31 +149,6 @@ fn fixture(first: &str) -> crate::model::Document {
     }] }), &schema, crate::serialize::UnknownTypeMode::Preserve).unwrap()
 }
 
-fn distinct_table_attrs_storages(
-    document: &crate::model::Document,
-    schema: &crate::schema::Schema,
-) -> usize {
-    let storage =
-        |node: &crate::model::Node, cell: bool| (std::ptr::from_ref(node.attrs()) as usize, cell);
-    let index = crate::tables::admission::TableProjectionIndex::derive_or_fallback(
-        document,
-        schema,
-        &ResourceLimits::default(),
-    );
-    let table = document.root().child(0).unwrap();
-    let mut storages = std::collections::HashSet::from([storage(table, false)]);
-    for row in (0..table.child_count()).map(|index| table.child(index).unwrap()) {
-        storages.insert(storage(row, false));
-        for cell in (0..row.child_count()).map(|index| row.child(index).unwrap()) {
-            storages.insert(storage(cell, true));
-        }
-    }
-    for region in &index.table_at(0).unwrap().synthetic {
-        storages.insert(storage(&region.node, true));
-    }
-    storages.len()
-}
-
 fn shared_default_fixture() -> (crate::model::Document, crate::schema::Schema, String) {
     let payload = "shared-attribute-payload".repeat(4096);
     let mut config = crate::tables::tests::tabled_schema_json(PROSEMIRROR_TABLE_NAMES);
@@ -203,7 +178,7 @@ fn shared_default_fixture() -> (crate::model::Document, crate::schema::Schema, S
 #[test]
 fn shared_synthetic_attributes_are_retained_and_serialized_once() {
     let (document, schema, payload) = shared_default_fixture();
-    let distinct_attrs = distinct_table_attrs_storages(&document, &schema);
+    let distinct_attrs = 2;
     crate::yrs_engine::observability::reset_full_pass_counts_for_test();
     let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
     let json =
@@ -221,7 +196,7 @@ fn shared_synthetic_attributes_are_retained_and_serialized_once() {
         crate::yrs_engine::observability::take_full_pass_counts_for_test().attribute_serializations;
     assert_eq!(
         serializations, distinct_attrs,
-        "each distinct attrs storage, including the shared synthetic default, must be serialized exactly once"
+        "each distinct attrs value, including the shared synthetic default, must be serialized exactly once"
     );
     assert!(
         cache
@@ -657,3 +632,5 @@ fn table_is_one_outer_semantic_element() {
 }
 
 mod position_free;
+
+mod streamed_keys;

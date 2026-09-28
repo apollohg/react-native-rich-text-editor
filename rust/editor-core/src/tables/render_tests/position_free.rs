@@ -9,7 +9,7 @@ const OWNER_ID: &str = "71";
 const MULTI_PARAGRAPH_CELL_INDEX: usize = 4;
 const OPEN_TOKEN_SIZE: u32 = 1;
 
-fn fixtures() -> Vec<(&'static str, serde_json::Value)> {
+pub(super) fn fixtures() -> Vec<(&'static str, serde_json::Value)> {
     let regular = plain_table_document(FIXTURE_ROWS, FIXTURE_COLUMNS);
     let mut merged = regular.clone();
     merged["content"][0]["content"][0]["content"][0]["attrs"] = json!({"colspan": 2});
