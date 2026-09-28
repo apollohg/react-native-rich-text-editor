@@ -185,7 +185,7 @@ extension EditorV2Adapter {
 extension PreparedProseDrawingView {
     func presentedRealCell(tableID: String, position: UInt32) throws -> ViewerTablePresentedCell {
         try XCTUnwrap(mountedTablePresentation()?.cells.first {
-            $0.surface.identity == tableID && $0.sourcePosition == Int(position) && $0.cell.sourceCellIndex != nil
+            $0.surface.identity == tableID && tableCellDocumentPosition?(tableID, $0.sourceIndex) == position && $0.surface.sourceTable != nil
         }, "cell \(position) is not presented")
     }
 }

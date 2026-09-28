@@ -24,7 +24,7 @@ final class PreparedProseRenderingTests: XCTestCase {
                 1
             )
 
-            let cellDocument = try document.cellDocument(for: try XCTUnwrap(outer.cells.first))
+            let cellDocument = try document.cellDocument(for: try XCTUnwrap(TableSurfaceSource(viewerTable: outer).cells.first), in: "t\(outer.tablePos)")
             XCTAssertEqual(cellDocument.blocks.map(\.nodeType), ["table"])
             XCTAssertEqual(cellDocument.blocks.first?.table?.tablePos, nested.tablePos)
             XCTAssertEqual(cellDocument.tableRecords[nestedID]?.cells.count, 1)

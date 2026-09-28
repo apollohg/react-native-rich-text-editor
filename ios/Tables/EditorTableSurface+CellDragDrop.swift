@@ -5,7 +5,7 @@ struct TableCellDragSource: Equatable {
     let tableID: String
     let anchor: UInt32
     let head: UInt32
-    let sourcePositions: Set<Int>
+    let sourceIndices: Set<Int>
 }
 
 final class TableCellDragContext {
@@ -137,11 +137,11 @@ extension EditorTableSurface: TableCellDropHandling {
         guard let hit = cellHit(at: point) else {
             return rootTableContains(point) ? .refused : nil
         }
-        let target = TableCellDropTarget(tableID: hit.tableID, sourcePosition: hit.sourcePosition)
+        let target = TableCellDropTarget(tableID: hit.tableID, sourceIndex: Int(hit.cellIndex))
         let local = session.localDragSession?.localContext as? TableCellDragContext
         let sameEditorDrag = local.flatMap { $0.editorId == host.editorId ? $0 : nil }
         if let sameEditorDrag, sameEditorDrag.source.tableID == target.tableID,
-           sameEditorDrag.source.sourcePositions.contains(target.sourcePosition) {
+           sameEditorDrag.source.sourceIndices.contains(target.sourceIndex) {
             return .selfDrop
         }
         guard host.textView.pasteMode != .disabled,
@@ -177,7 +177,8 @@ extension EditorTableSurface: TableCellDropHandling {
               mutation.adapter.baseDocumentRevision == drop.revision
         else { return }
         if !drop.pastesIntoSelection {
-            var cellDrop: [String: Any] = [TableCellDropCommand.targetCellKey: drop.target.sourcePosition]
+            guard let position = cellDocumentPosition(tableID: drop.target.tableID, sourceIndex: drop.target.sourceIndex) else { return }
+            var cellDrop: [String: Any] = [TableCellDropCommand.targetCellKey: position]
             if let moved {
                 cellDrop[TableCellDropCommand.movedCellsKey] = [
                     TableCellDropCommand.anchorCellKey: Int(moved.anchor),

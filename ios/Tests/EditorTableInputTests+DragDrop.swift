@@ -85,7 +85,7 @@ extension EditorTableInputTests {
     }
 
     private func dropTarget(_ fixture: MountedTableFixture, cell index: Int) -> TableCellDropTarget {
-        TableCellDropTarget(tableID: fixture.tableID, sourcePosition: Int(fixture.positions[index]))
+        TableCellDropTarget(tableID: fixture.tableID, sourceIndex: index)
     }
 
     private func assertSingleUndoRestores(_ fixture: MountedTableFixture, _ before: NSDictionary,
@@ -331,7 +331,7 @@ extension EditorTableInputTests {
             let gap = CGPoint(x: (later.bounds.maxX + wide.bounds.maxX) / 2, y: later.bounds.midY)
             XCTAssertFalse(wide.surface.syntheticRegions.isEmpty, "the fixture must project a synthetic gap")
             XCTAssertFalse(try XCTUnwrap(fixture.drawing.mountedTablePresentation()).cells.contains {
-                $0.cell.sourceCellIndex != nil && $0.bounds.contains(gap)
+                $0.surface.sourceTable != nil && $0.bounds.contains(gap)
             }, "the gap holds no real cell")
             let gapInWindow = fixture.drawing.convert(gap, to: nil)
             let drag = try startCellDrag(fixture, at: try windowPoint(fixture, inCell: CellDrag.irregularLaterCell))

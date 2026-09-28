@@ -209,13 +209,13 @@ final class RemoteSelectionOverlayView: UIView {
         records: [String: [String: Any]]
     ) -> RemoteTableCellSelection? {
         guard let rectangle = selection.cellRectangle,
-              case let .drawable(tableID, sourcePositions) = EditorCellSelection.resolve(
+              case let .drawable(tableID, sourceIndices) = EditorCellSelection.resolve(
                   anchor: rectangle.anchorCell, head: rectangle.headCell, records: records
               )
         else { return nil }
         return RemoteTableCellSelection(
             tableID: tableID,
-            sourcePositions: sourcePositions,
+            sourceIndices: sourceIndices,
             color: selection.color.withAlphaComponent(Self.selectionAlpha)
         )
     }

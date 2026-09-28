@@ -132,6 +132,7 @@
 		9E7DACEBB0DD1AD90F33066C /* EditorV2AdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80892297FFD41613BE083EF1 /* EditorV2AdapterTests.swift */; };
 		A15E00000000000000000011 /* TableCellMeasurementCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000001 /* TableCellMeasurementCache.swift */; };
 		A15E00000000000000000012 /* TableGridLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000002 /* TableGridLayout.swift */; };
+		CF676BC9CF65054EE1C926BA /* TableSurfaceSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 507050FA0ACA34D01005E2FD /* TableSurfaceSource.swift */; };
 		A15E00000000000000000013 /* TableStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000003 /* TableStyle.swift */; };
 		A15E00000000000000000014 /* TableGridLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A15E00000000000000000004 /* TableGridLayoutTests.swift */; };
 		A16000000000000000000011 /* ViewerTableSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = A16000000000000000000001 /* ViewerTableSurface.swift */; };
@@ -374,6 +375,7 @@
 		A11CE700A11CE700A11CE700 /* NativeToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeToolbar.swift; sourceTree = "<group>"; };
 		A15E00000000000000000001 /* TableCellMeasurementCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableCellMeasurementCache.swift; sourceTree = "<group>"; };
 		A15E00000000000000000002 /* TableGridLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGridLayout.swift; sourceTree = "<group>"; };
+		507050FA0ACA34D01005E2FD /* TableSurfaceSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableSurfaceSource.swift; sourceTree = "<group>"; };
 		A15E00000000000000000003 /* TableStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableStyle.swift; sourceTree = "<group>"; };
 		A15E00000000000000000004 /* TableGridLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableGridLayoutTests.swift; sourceTree = "<group>"; };
 		A16000000000000000000001 /* ViewerTableSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewerTableSurface.swift; sourceTree = "<group>"; };
@@ -714,6 +716,7 @@
 			children = (
 				A15E00000000000000000001 /* TableCellMeasurementCache.swift */,
 				A15E00000000000000000002 /* TableGridLayout.swift */,
+				507050FA0ACA34D01005E2FD /* TableSurfaceSource.swift */,
 				A15E00000000000000000003 /* TableStyle.swift */,
 				A16000000000000000000001 /* ViewerTableSurface.swift */,
 				A17000000000000000000001 /* TableCellPositionMap.swift */,
@@ -1328,6 +1331,7 @@
 				795FC94EAF1080186A91073B /* NativeSVGPreflight.mm in Sources */,
 				A15E00000000000000000011 /* TableCellMeasurementCache.swift in Sources */,
 				A15E00000000000000000012 /* TableGridLayout.swift in Sources */,
+				CF676BC9CF65054EE1C926BA /* TableSurfaceSource.swift in Sources */,
 				A15E00000000000000000013 /* TableStyle.swift in Sources */,
 				A15E00000000000000000014 /* TableGridLayoutTests.swift in Sources */,
 				A16000000000000000000011 /* ViewerTableSurface.swift in Sources */,

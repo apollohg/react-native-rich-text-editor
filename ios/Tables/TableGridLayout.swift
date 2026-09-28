@@ -14,7 +14,7 @@ func tablePhysicalX(logicalX: CGFloat, width: CGFloat, totalWidth: CGFloat, rtl:
 }
 
 struct TableGridCell: Hashable {
-    let sourcePosition: Int
+    let sourceIndex: Int
     let row: Int
     let column: Int
     let rowspan: Int
@@ -22,9 +22,9 @@ struct TableGridCell: Hashable {
     let contentKey: String
     let attachmentRevision: Int
 
-    init(sourcePosition: Int, row: Int, column: Int, rowspan: Int = 1, colspan: Int = 1,
+    init(sourceIndex: Int, row: Int, column: Int, rowspan: Int = 1, colspan: Int = 1,
          contentKey: String, attachmentRevision: Int = 0) {
-        self.sourcePosition = sourcePosition; self.row = row; self.column = column
+        self.sourceIndex = sourceIndex; self.row = row; self.column = column
         self.rowspan = rowspan; self.colspan = colspan; self.contentKey = contentKey
         self.attachmentRevision = attachmentRevision
     }
@@ -46,16 +46,17 @@ struct TableGridRecord {
         self.compatibilityDiagnostic = compatibilityDiagnostic
     }
 
-    init(table: FfiViewerTable, documentOwner: String) {
-        self.init(documentOwner: documentOwner, columns: Int(table.columns), rows: Int(table.rows),
-                  columnWidths: table.columnWidths.map { $0.map(CGFloat.init) },
-                  cells: table.cells.map { TableGridCell(sourcePosition: Int($0.sourcePos), row: Int($0.row), column: Int($0.column), rowspan: Int($0.rowspan), colspan: Int($0.colspan), contentKey: $0.contentKey) },
+    init(table: TableSurfaceSource, documentOwner: String) {
+        self.init(documentOwner: documentOwner, columns: table.columns, rows: table.rows,
+                  columnWidths: table.columnWidths,
+                  cells: table.cells.map { TableGridCell(sourceIndex: $0.sourceIndex, row: $0.row, column: $0.column, rowspan: $0.rowspan, colspan: $0.colspan, contentKey: $0.contentKey) },
                   failure: table.failure, compatibilityDiagnostic: table.compatibilityDiagnostic)
     }
 }
 
 struct TableLayoutResult {
     let columnWidths: [CGFloat]
+    let columnOffsets: [CGFloat]
     let rowOffsets: [CGFloat]
     let rectangles: [Int: CGRect]
     let sourceOrder: [Int]
@@ -110,7 +111,7 @@ final class TableGridLayout {
             xOffsets.append(offset)
         }
         var heights = Array(repeating: fallbackHeight, count: record.rows)
-        let ordered = record.cells.sorted { $0.sourcePosition < $1.sourcePosition }
+        let ordered = record.cells.sorted { $0.sourceIndex < $1.sourceIndex }
         guard ordered.allSatisfy({ valid($0, in: record) }) else {
             return fallback(.invalidStructure, record, width: fallbackWidth, height: fallbackHeight)
         }
@@ -162,9 +163,9 @@ final class TableGridLayout {
         var rectangles: [Int: CGRect] = [:]
         for cell in ordered where valid(cell, in: record) {
             let logical = xOffsets[cell.column], width = xOffsets[cell.column + cell.colspan] - logical
-            rectangles[cell.sourcePosition] = CGRect(x: tablePhysicalX(logicalX: logical, width: width, totalWidth: total, rtl: direction == .rightToLeft), y: rows[cell.row], width: width, height: rows[cell.row + cell.rowspan] - rows[cell.row])
+            rectangles[cell.sourceIndex] = CGRect(x: tablePhysicalX(logicalX: logical, width: width, totalWidth: total, rtl: direction == .rightToLeft), y: rows[cell.row], width: width, height: rows[cell.row + cell.rowspan] - rows[cell.row])
         }
-        return TableLayoutResult(columnWidths: widths, rowOffsets: rows, rectangles: rectangles, sourceOrder: ordered.map(\.sourcePosition), contentSize: CGSize(width: total, height: rows.last!), failure: nil, compatibilityDiagnostic: record.compatibilityDiagnostic)
+        return TableLayoutResult(columnWidths: widths, columnOffsets: xOffsets, rowOffsets: rows, rectangles: rectangles, sourceOrder: ordered.map(\.sourceIndex), contentSize: CGSize(width: total, height: rows.last!), failure: nil, compatibilityDiagnostic: record.compatibilityDiagnostic)
     }
 
     private func valid(_ cell: TableGridCell, in record: TableGridRecord) -> Bool {
@@ -173,7 +174,7 @@ final class TableGridLayout {
     }
 
     private func fallback(_ failure: TableRenderFailure, _ record: TableGridRecord, width: CGFloat, height: CGFloat) -> TableLayoutResult {
-        TableLayoutResult(columnWidths: [], rowOffsets: [0, height], rectangles: [:], sourceOrder: [], contentSize: CGSize(width: width, height: height), failure: failure, compatibilityDiagnostic: record.compatibilityDiagnostic)
+        TableLayoutResult(columnWidths: [], columnOffsets: [0, width], rowOffsets: [0, height], rectangles: [:], sourceOrder: [], contentSize: CGSize(width: width, height: height), failure: failure, compatibilityDiagnostic: record.compatibilityDiagnostic)
     }
 
     private func snapOutward(_ value: CGFloat) -> CGFloat { ceil(value * displayScale) / displayScale }

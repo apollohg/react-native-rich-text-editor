@@ -23,6 +23,61 @@ private final class TablePanLifecycleProbe: NSObject {
 }
 
 final class ViewerTableTests: XCTestCase {
+    func testSurfaceSourceFromViewerTableKeepsSourceOrder() throws {
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json, source: try twoLinkCellSource(), configJson: Self.linkConfig,
+            imagesEnabled: true, mentionPrefix: nil
+        ))
+        let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value))
+        let table = try XCTUnwrap(document.blocks.compactMap(\.table).first)
+        let source = TableSurfaceSource(viewerTable: table)
+        XCTAssertEqual(source.cells.map(\.sourceIndex), Array(table.cells.indices))
+        XCTAssertNotEqual(table.cells.map { Int($0.sourcePos) }, source.cells.map(\.sourceIndex))
+        XCTAssertEqual(source.cells.map(\.contentKey), table.cells.map(\.contentKey))
+        XCTAssertEqual(source.cells.map(\.elements), table.cells.map(\.elements))
+        XCTAssertEqual(source.cells.map(\.header), table.cells.map(\.header))
+        XCTAssertEqual(source.syntheticRegions, table.syntheticRegions)
+    }
+
+    func testCellFramesFollowRowOffsets() throws {
+        let source = try jsonSource(["type": "doc", "content": [["type": "table", "content": [
+            ["type": "table_row", "content": [cell("first")]],
+            ["type": "table_row", "content": [cell("later")]]
+        ]]]])
+        let compiled = viewerCompile(request: FfiViewerCompileRequest(
+            sourceKind: .json, source: source, configJson: Self.config, imagesEnabled: true, mentionPrefix: nil
+        ))
+        let document = try ViewerDocument(compiled: try XCTUnwrap(compiled.value))
+        let engine = CoreTextProseLayoutEngine()
+        var preparations = 0
+        engine.tableCellPreparationObserver = { _ in preparations += 1 }
+        let prepared = try prepare(document, engine: engine)
+        let original = try XCTUnwrap(prepared.blocks.compactMap(\.tableSurface).first)
+        XCTAssertGreaterThan(preparations, 0)
+        preparations = 0
+        let translation: CGFloat = 100
+        var rows = original.layout.rowOffsets
+        for index in 1..<rows.count { rows[index] += translation }
+        let layout = TableLayoutResult(
+            columnWidths: original.layout.columnWidths, columnOffsets: original.layout.columnOffsets,
+            rowOffsets: rows, rectangles: original.layout.rectangles, sourceOrder: original.layout.sourceOrder,
+            contentSize: CGSize(width: original.bounds.width, height: original.bounds.height + translation),
+            failure: nil, compatibilityDiagnostic: nil
+        )
+        let shifted = ViewerTableSurface(
+            identity: original.identity, hostViewportWidth: original.hostViewportWidth,
+            style: original.style, direction: original.direction, layout: layout,
+            cells: original.cells, preparationError: nil
+        )
+        let originalCell = try XCTUnwrap(original.cell(sourceIndex: 1))
+        let shiftedCell = try XCTUnwrap(shifted.cell(sourceIndex: 1))
+        XCTAssertTrue(originalCell.content === shiftedCell.content)
+        XCTAssertEqual(shifted.frame(ofCell: shiftedCell).minY,
+                       original.frame(ofCell: originalCell).minY + translation, accuracy: 0.01)
+        XCTAssertEqual(shifted.visibleCells(in: shifted.frame(ofCell: shiftedCell)).map(\.sourceIndex), [1])
+        XCTAssertEqual(preparations, 0)
+    }
+
     func testNativeTablePanAxisTieAndReversalDecision() {
         let verticalTravel: CGFloat = 100
         let boundaryHorizontalTravel: CGFloat = 125
@@ -350,7 +405,7 @@ final class ViewerTableTests: XCTestCase {
         let childIdentities = surface.cells.map { ObjectIdentifier($0.content) }
         XCTAssertEqual(surface.cells.count, Set(childIdentities).count)
         let originalSourceOrder = surface.layout.sourceOrder
-        XCTAssertEqual(Set(surface.cells.map(\.sourcePosition)), Set(preparations))
+        XCTAssertEqual(Set(surface.cells.map(\.sourceIndex)), Set(preparations))
         let initialPreparations = preparations.count
         XCTAssertGreaterThan(initialPreparations, 0)
 
@@ -442,7 +497,7 @@ final class ViewerTableTests: XCTestCase {
             return [red, green, blue, alpha].map { UInt8(($0 * 255).rounded()) }
         }
         let header = try XCTUnwrap(surface.cells.first { $0.isHeader })
-        let headerPoint = CGPoint(x: outer.tableBounds!.minX + header.frame.minX + 2, y: outer.tableBounds!.minY + header.frame.minY + 2)
+        let headerPoint = CGPoint(x: outer.tableBounds!.minX + surface.frame(ofCell: header).minX + 2, y: outer.tableBounds!.minY + surface.frame(ofCell: header).minY + 2)
         let headerPixel = try rgba(rendered, headerPoint)
         let snapshot = ViewerTablePresentation.project(layout: layout, owner: ViewerTablePresentationOwner(), viewport: .unknown)
         let projectedImage = try XCTUnwrap(
@@ -1012,8 +1067,8 @@ final class ViewerTableTests: XCTestCase {
         let document = try ViewerDocument(compiled: try XCTUnwrap(result.value))
         result.value = nil
         let table = try XCTUnwrap(document.blocks.first?.table)
-        let atomPositions = try table.cells.map { cell -> UInt32 in
-            let child = try document.cellDocument(for: cell)
+        let atomPositions = try TableSurfaceSource(viewerTable: table).cells.map { cell -> UInt32 in
+            let child = try document.cellDocument(for: cell, in: "t\(table.tablePos)")
             let inline = try XCTUnwrap(child.blocks.first?.inlines.first)
             guard case let .atom(_, docPos, _, _) = inline else {
                 throw ProseViewerError.layout(message: "Expected a compiler-lowered block atom.")
@@ -1036,10 +1091,10 @@ final class ViewerTableTests: XCTestCase {
 
         XCTAssertEqual(atomHeights, [20, 100])
         for cell in surface.cells {
-            XCTAssertGreaterThanOrEqual(cell.frame.height, cell.content.size.height + chrome)
+            XCTAssertGreaterThanOrEqual(surface.frame(ofCell: cell).height, cell.content.size.height + chrome)
         }
         let tallCell = try XCTUnwrap(surface.cells.first(where: { $0.content.size.height == 100 }))
-        XCTAssertGreaterThanOrEqual(tallCell.frame.height, 100 + chrome)
+        XCTAssertGreaterThanOrEqual(surface.frame(ofCell: tallCell).height, 100 + chrome)
     }
 
     func testCompilerBackedCellsKeepRichBlocksAndNestedImagesInParentOrder() throws {
@@ -1065,8 +1120,8 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertTrue(layout.imageAttachments.allSatisfy { finite($0.bounds) })
         let localCellImage = try XCTUnwrap(surface.cells[0].content.imageAttachments.first)
         let parentCellImage = try XCTUnwrap(layout.imageAttachments.first { $0.source == "https://example.test/cell.png" })
-        XCTAssertEqual(parentCellImage.bounds.minX, table.bounds.minX + surface.cells[0].frame.minX + surface.cells[0].contentOrigin.x + localCellImage.bounds.minX, accuracy: 0.01)
-        XCTAssertEqual(parentCellImage.bounds.minY, table.bounds.minY + surface.cells[0].frame.minY + surface.cells[0].contentOrigin.y + localCellImage.bounds.minY, accuracy: 0.01)
+        XCTAssertEqual(parentCellImage.bounds.minX, table.bounds.minX + surface.frame(ofCell: surface.cells[0]).minX + surface.cells[0].contentOrigin.x + localCellImage.bounds.minX, accuracy: 0.01)
+        XCTAssertEqual(parentCellImage.bounds.minY, table.bounds.minY + surface.frame(ofCell: surface.cells[0]).minY + surface.cells[0].contentOrigin.y + localCellImage.bounds.minY, accuracy: 0.01)
         let nestedSurface = try XCTUnwrap(surface.cells[0].content.blocks.first { $0.tableSurface != nil }?.tableSurface)
         XCTAssertEqual(
             surface.cells[0].content.imageAttachments.map(\.source),
@@ -1088,7 +1143,7 @@ final class ViewerTableTests: XCTestCase {
         let layout = try prepare(source)
         let surface = try XCTUnwrap(layout.blocks.first?.tableSurface)
         XCTAssertNil(surface.layout.failure)
-        XCTAssertEqual(surface.cells.map(\.sourcePosition), surface.layout.sourceOrder)
+        XCTAssertEqual(surface.cells.map(\.sourceIndex), surface.layout.sourceOrder)
         XCTAssertEqual(surface.cells.count, 3)
         XCTAssertTrue(surface.layout.contentSize.width.isFinite && surface.layout.contentSize.height.isFinite)
         XCTAssertTrue(surface.layout.rectangles.values.allSatisfy(finite))
@@ -1225,8 +1280,21 @@ final class ViewerTableTests: XCTestCase {
         let layout = try prepare(source)
         let cells = try XCTUnwrap(layout.blocks.first?.tableSurface).cells
         XCTAssertEqual(cells.count, 2)
-        XCTAssertNotEqual(cells[0].sourcePosition, cells[1].sourcePosition)
+        XCTAssertNotEqual(cells[0].sourceIndex, cells[1].sourceIndex)
         XCTAssertNotEqual(cells[0].content.key.semanticKey, cells[1].content.key.semanticKey)
+    }
+
+    func testIdenticalCellsInSeparateTablesKeepDistinctSemanticKeys() throws {
+        let table: [String: Any] = ["type": "table", "content": [
+            ["type": "table_row", "content": [cell("same")]]
+        ]]
+        let layout = try prepare(try jsonSource(["type": "doc", "content": [table, table]]))
+        let surfaces = layout.blocks.compactMap(\.tableSurface)
+        XCTAssertEqual(surfaces.count, 2)
+        let first = try XCTUnwrap(surfaces.first?.cells.first)
+        let second = try XCTUnwrap(surfaces.last?.cells.first)
+        XCTAssertEqual(first.sourceIndex, second.sourceIndex)
+        XCTAssertNotEqual(first.content.key.semanticKey, second.content.key.semanticKey)
     }
 
     func testCellModeSuppressesOnlyCellContentBoxAndOuterContainersEncloseTable() throws {
@@ -1395,7 +1463,7 @@ final class ViewerTableTests: XCTestCase {
 
         let firstOwner = ViewerTablePresentationOwner()
         let full = ViewerTablePresentation.project(layout: layout, owner: firstOwner, viewport: .unknown)
-        XCTAssertEqual(full.cells.filter { $0.surface === surface }.map(\.sourcePosition), surface.layout.sourceOrder)
+        XCTAssertEqual(full.cells.filter { $0.surface === surface }.map(\.sourceIndex), surface.layout.sourceOrder)
         XCTAssertEqual(full.mountedCells.filter { $0.surface === surface }.count, surface.cells.count)
         XCTAssertEqual(full.images.count, 2)
         XCTAssertEqual(full.atoms.count, 1)
@@ -1404,7 +1472,7 @@ final class ViewerTableTests: XCTestCase {
         let first = try XCTUnwrap(full.cells.first)
         XCTAssertEqual(first.bounds.maxX, first.clip.maxX, accuracy: 0.01)
         let nestedCell = try XCTUnwrap(full.cells.first { $0.surface !== surface })
-        let containingCell = try XCTUnwrap(full.cells.first { $0.surface === surface && $0.sourcePosition == surface.layout.sourceOrder[1] })
+        let containingCell = try XCTUnwrap(full.cells.first { $0.surface === surface && $0.sourceIndex == surface.layout.sourceOrder[1] })
         let nestedBlock = try XCTUnwrap(full.blocks.first { $0.layout === containingCell.content && $0.block.tableSurface != nil })
         let nestedSurface = try XCTUnwrap(nestedBlock.block.tableSurface)
         let nestedFrame = try XCTUnwrap(nestedBlock.block.tableBounds)
@@ -1439,7 +1507,7 @@ final class ViewerTableTests: XCTestCase {
             owner: secondOwner,
             viewport: .known(CGRect(x: table.tableBounds!.minX, y: table.tableBounds!.minY, width: 100, height: 100))
         )
-        XCTAssertEqual(known.mountedCells.filter { $0.surface === surface }.map(\.sourcePosition), Array(surface.layout.sourceOrder.suffix(2)))
+        XCTAssertEqual(known.mountedCells.filter { $0.surface === surface }.map(\.sourceIndex), Array(surface.layout.sourceOrder.suffix(2)))
         XCTAssertEqual(
             ViewerTablePresentation.project(layout: layout, owner: secondOwner, viewport: .known(.zero)).mountedCells.count,
             0
@@ -1476,9 +1544,9 @@ final class ViewerTableTests: XCTestCase {
         let verticalBlock = try XCTUnwrap(vertical.blocks.first { $0.tableSurface != nil })
         let verticalSurface = try XCTUnwrap(verticalBlock.tableSurface)
         let middle = verticalSurface.cells[1]
-        let verticalWindow = CGRect(x: verticalBlock.tableBounds!.minX, y: verticalBlock.tableBounds!.minY + middle.frame.minY, width: 20, height: middle.frame.height)
+        let verticalWindow = CGRect(x: verticalBlock.tableBounds!.minX, y: verticalBlock.tableBounds!.minY + verticalSurface.frame(ofCell: middle).minY, width: 20, height: verticalSurface.frame(ofCell: middle).height)
         let verticalSnapshot = ViewerTablePresentation.project(layout: vertical, owner: ViewerTablePresentationOwner(), viewport: .known(verticalWindow))
-        XCTAssertEqual(verticalSnapshot.mountedCells.map(\.sourcePosition), Array(verticalSurface.layout.sourceOrder.prefix(3)))
+        XCTAssertEqual(verticalSnapshot.mountedCells.map(\.sourceIndex), Array(verticalSurface.layout.sourceOrder.prefix(3)))
     }
 
     func testCompilerBackedMountedPresentationTraversesAdmittedDepthWithoutDroppingMetadata() throws {
@@ -1682,8 +1750,8 @@ final class ViewerTableTests: XCTestCase {
         var authoredCardPosition: UInt32?
         var authoredImagePosition: UInt32?
         func collectCurrentRecords(_ table: FfiViewerTable) throws {
-            for cell in table.cells {
-                expectedCellPositions.append(Int(cell.sourcePos))
+            for cell in TableSurfaceSource(viewerTable: table).cells {
+                expectedCellPositions.append(cell.sourceIndex)
                 for element in cell.elements {
                     switch element {
                     case let .blockAtom(nodeType, docPos, _, _):
@@ -1705,7 +1773,7 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertNotEqual(authoredReplacement.semanticKey, initial.key.semanticKey)
         XCTAssertNotEqual(expectedCardPosition, initialAtom.atom.docPos)
         XCTAssertNotEqual(expectedImageID, initialImage.id)
-        XCTAssertNotEqual(expectedCellPositions, initialSnapshot.cells.map(\.sourcePosition))
+        XCTAssertEqual(expectedCellPositions, initialSnapshot.cells.map(\.sourceIndex))
 
         let replacement = registry.measure(request: replacementRequest, widthPoints: 390, scale: 1)
         XCTAssertNil(replacement.error)
@@ -1736,7 +1804,7 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertEqual(replacementAtom.atom.docPos, expectedCardPosition)
         XCTAssertEqual(replacementImage.id, expectedImageID)
         XCTAssertEqual(replacementImage.ordinal, 0)
-        XCTAssertEqual(replacementSnapshot.cells.map(\.sourcePosition), expectedCellPositions)
+        XCTAssertEqual(replacementSnapshot.cells.map(\.sourceIndex), expectedCellPositions)
         XCTAssertEqual(replacementLink.interaction.href, "https://cell.example/link")
         XCTAssertTrue(replacementLink.sourceIdentity.hasPrefix("\(authoredReplacement.semanticKey):"))
         XCTAssertNotEqual(replacementLink.sourceIdentity, initialLink.sourceIdentity)
@@ -2161,8 +2229,8 @@ final class ViewerTableTests: XCTestCase {
         let replacementSurface = try XCTUnwrap(replacement.blocks.first { $0.tableSurface != nil }?.tableSurface)
         XCTAssertTrue(replacementSurface.cells[0].content.cellShape === replacementSurface.cells[1].content.cellShape)
         XCTAssertEqual(shapeBuilds, 1)
-        XCTAssertNotEqual(initialSurface.cells.map(\.sourcePosition), replacementSurface.cells.map(\.sourcePosition))
-        XCTAssertNotEqual(replacementSurface.cells[0].sourcePosition, replacementSurface.cells[1].sourcePosition)
+        XCTAssertEqual(initialSurface.cells.map(\.sourceIndex), replacementSurface.cells.map(\.sourceIndex))
+        XCTAssertNotEqual(replacementSurface.cells[0].sourceIndex, replacementSurface.cells[1].sourceIndex)
     }
 
     func testChangedCellTextReshapesOnlyItsCellAndPreservesSiblingShape() throws {
@@ -2827,8 +2895,8 @@ final class ViewerTableTests: XCTestCase {
                 if case let .atom("card", docPos, _, _) = inline { return docPos }
             }
             if let table = block.table {
-                for cell in table.cells {
-                    if let position = try? firstCardPosition(in: document.cellDocument(for: cell)) { return position }
+                for cell in TableSurfaceSource(viewerTable: table).cells {
+                    if let position = try? firstCardPosition(in: document.cellDocument(for: cell, in: "t\(table.tablePos)")) { return position }
                 }
             }
         }
@@ -2852,7 +2920,7 @@ final class ViewerTableTests: XCTestCase {
         let cell = try XCTUnwrap(surface.cells.first {
             $0.content.imageAttachments.contains { $0.id == attachmentID }
         })
-        let sourceIndex = try XCTUnwrap(cell.sourceCellIndex)
+        let sourceIndex = cell.sourceIndex
         let sourceTable = try XCTUnwrap(surface.sourceTable)
         let sourceCell = try XCTUnwrap(
             sourceTable.cells.indices.contains(sourceIndex) ? sourceTable.cells[sourceIndex] : nil
@@ -2862,7 +2930,7 @@ final class ViewerTableTests: XCTestCase {
         XCTAssertGreaterThan(offsets.count, row + 1)
         return (
             image.bounds,
-            cell.frame.height,
+            surface.frame(ofCell: cell).height,
             row,
             offsets[row + 1] - offsets[row],
             offsets[1] - offsets[0],

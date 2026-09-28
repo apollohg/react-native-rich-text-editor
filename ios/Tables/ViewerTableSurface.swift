@@ -1,21 +1,19 @@
 import UIKit
 
-/// Immutable table preparation retained by one parent prose artifact. Scrolling
-/// state intentionally belongs to the mounted drawing view, never this value.
 struct PreparedViewerTableCell {
-    let sourcePosition: Int
-    let frame: CGRect
+    let sourceIndex: Int
+    let row: Int
+    let column: Int
+    let rowspan: Int
+    let colspan: Int
     let contentOrigin: CGPoint
     let content: PreparedProseLayout
-    let sourceCellIndex: Int?
     let isHeader: Bool
     let attributesKey: String?
 
     var retainedBytes: Int { 96 + content.retainedBytes }
 }
 
-/// A rendering-only table. It owns grid geometry and rich cell artifacts, but
-/// has no cache, lease, editor session, or mutable viewport state.
 final class ViewerTableSurface {
     let identity: String
     let scrollIdentity: String
@@ -24,7 +22,7 @@ final class ViewerTableSurface {
     let direction: TableLayoutDirection
     let layout: TableLayoutResult
     let cells: [PreparedViewerTableCell]
-    let sourceTable: FfiViewerTable?
+    let sourceTable: TableSurfaceSource?
     let sourceAttributes: [String: [String: Any]]
     let syntheticRegions: [TableRenderSyntheticRegion]
     let columnEdgeHandleRows: [Int: Int]
@@ -35,7 +33,7 @@ final class ViewerTableSurface {
     var retainedBytes: Int {
         256 + cells.reduce(0) { $0 + $1.retainedBytes }
             + (sourceTable?.cells.count ?? 0) * 16 + syntheticRegions.count * 64 + columnEdgeHandleRows.count * 16
-            + layout.columnWidths.count * 16 + layout.rowOffsets.count * 16
+            + (layout.columnWidths.count + layout.columnOffsets.count + layout.rowOffsets.count) * 16
             + layout.rectangles.count * 96 + layout.sourceOrder.count * 16
     }
 
@@ -50,7 +48,7 @@ final class ViewerTableSurface {
         themeDigest: String = "",
         fontEnvironmentRevision: Int = 0,
         textScale: CGFloat = 1,
-        sourceTable: FfiViewerTable? = nil,
+        sourceTable: TableSurfaceSource? = nil,
         sourceAttributes: [String: [String: Any]] = [:],
         prepareCell: (TableGridCell, CGFloat) -> PreparedProseLayout
     ) {
@@ -66,17 +64,16 @@ final class ViewerTableSurface {
             (sourceTable?.cells ?? []).map { (Int($0.column + $0.colspan) - 1, Int($0.row)) },
             uniquingKeysWith: min
         )
-        let sourceCellIndexes = Dictionary(uniqueKeysWithValues: (sourceTable?.cells ?? []).enumerated().map { (Int($0.element.sourcePos), $0.offset) })
-        let sourceCells = Dictionary(uniqueKeysWithValues: record.cells.map { ($0.sourcePosition, $0) })
+        let sourceCells = Dictionary(uniqueKeysWithValues: record.cells.map { ($0.sourceIndex, $0) })
         let measurementRecord = TableGridRecord(
             documentOwner: record.documentOwner,
             columns: record.columns,
             rows: record.rows,
             columnWidths: record.columnWidths,
             cells: record.cells.map {
-                TableGridCell(sourcePosition: $0.sourcePosition, row: $0.row, column: $0.column,
+                TableGridCell(sourceIndex: $0.sourceIndex, row: $0.row, column: $0.column,
                               rowspan: $0.rowspan, colspan: $0.colspan,
-                              contentKey: "\($0.contentKey):\($0.sourcePosition)",
+                              contentKey: "\($0.contentKey):\($0.sourceIndex)",
                               attachmentRevision: $0.attachmentRevision)
             },
             failure: record.failure,
@@ -95,40 +92,38 @@ final class ViewerTableSurface {
             fontEnvironmentRevision: fontEnvironmentRevision,
             textScale: textScale
         ) { measuredCell, width in
-            guard let cell = sourceCells[measuredCell.sourcePosition] else { return nil }
+            guard let cell = sourceCells[measuredCell.sourceIndex] else { return nil }
             let content = prepareCell(cell, width)
-            prepared[cell.sourcePosition] = content
+            prepared[cell.sourceIndex] = content
             if let error = content.error, firstPreparationError == nil { firstPreparationError = error }
             return content.size.height
         }
-        for cell in record.cells where prepared[cell.sourcePosition] == nil {
-            guard let frame = resolvedLayout.rectangles[cell.sourcePosition] else { continue }
+        for cell in record.cells where prepared[cell.sourceIndex] == nil {
+            guard let frame = resolvedLayout.rectangles[cell.sourceIndex] else { continue }
             let inner = max(0, frame.width - 2 * (style.cellPadding + style.borderWidth))
             let pixels = (inner * canonicalScale).rounded()
             guard pixels.isFinite, pixels >= 0, let widthPixels = Int(exactly: pixels) else { continue }
             let content = prepareCell(cell, CGFloat(widthPixels) / canonicalScale)
             if let error = content.error, firstPreparationError == nil { firstPreparationError = error }
-            prepared[cell.sourcePosition] = content
+            prepared[cell.sourceIndex] = content
         }
         layout = resolvedLayout
         preparationError = firstPreparationError
-        let preparedCells = resolvedLayout.sourceOrder.compactMap { sourcePosition -> PreparedViewerTableCell? in
-            guard let frame = resolvedLayout.rectangles[sourcePosition], let content = prepared[sourcePosition] else {
+        let preparedCells = resolvedLayout.sourceOrder.compactMap { sourceIndex -> PreparedViewerTableCell? in
+            guard let gridCell = sourceCells[sourceIndex], let content = prepared[sourceIndex] else {
                 return nil
             }
-            let sourceCellIndex = sourceCellIndexes[sourcePosition]
-            let sourceCell = sourceCellIndex.flatMap { sourceTable?.cells[$0] }
+            let sourceCell = sourceTable?.cells[sourceIndex]
             let inset = style.cellPadding + style.borderWidth
-            return PreparedViewerTableCell(sourcePosition: sourcePosition, frame: frame,
+            return PreparedViewerTableCell(sourceIndex: sourceIndex,
+                                           row: gridCell.row, column: gridCell.column,
+                                           rowspan: gridCell.rowspan, colspan: gridCell.colspan,
                                            contentOrigin: CGPoint(x: inset, y: inset), content: content,
-                                           sourceCellIndex: sourceCellIndex, isHeader: sourceCell?.header ?? false,
+                                           isHeader: sourceCell?.header ?? false,
                                            attributesKey: sourceCell?.attrsKey)
         }
         cells = preparedCells
-        cellIndex = ViewerTableCellIndex(
-            cells: preparedCells,
-            spanningPositions: Set(record.cells.filter { $0.rowspan > 1 || $0.colspan > 1 }.map(\.sourcePosition))
-        )
+        cellIndex = ViewerTableCellIndex(cells: preparedCells, direction: direction)
     }
 
     init(
@@ -148,7 +143,7 @@ final class ViewerTableSurface {
         self.direction = direction
         self.layout = layout
         self.cells = cells
-        self.cellIndex = ViewerTableCellIndex(cells: cells, spanningPositions: Set(cells.map(\.sourcePosition)))
+        self.cellIndex = ViewerTableCellIndex(cells: cells, direction: direction)
         self.sourceTable = nil
         self.sourceAttributes = [:]
         self.syntheticRegions = []
@@ -189,8 +184,9 @@ final class ViewerTableSurface {
         }
         func append(_ surface: ViewerTableSurface, at origin: CGPoint) {
             for cell in surface.cells {
-                append(cell.content, at: CGPoint(x: origin.x + cell.frame.minX + cell.contentOrigin.x,
-                                                  y: origin.y + cell.frame.minY + cell.contentOrigin.y))
+                let frame = surface.frame(ofCell: cell)
+                append(cell.content, at: CGPoint(x: origin.x + frame.minX + cell.contentOrigin.x,
+                                                  y: origin.y + frame.minY + cell.contentOrigin.y))
             }
         }
         append(self, at: tableOrigin)
@@ -202,78 +198,76 @@ final class ViewerTableSurface {
     }
 
     func cells(intersecting rect: CGRect) -> [PreparedViewerTableCell] {
-        cellIndex.indexes(intersecting: rect, in: cells).map { cells[$0] }
+        cellIndex.indexes(intersecting: rect, in: self).map { cells[$0] }
     }
 
     var hasAtoms: Bool { !cellIndex.atomCells.isEmpty }
 
     func presentationCells(intersecting window: CGRect) -> [PreparedViewerTableCell] {
-        Set(cellIndex.indexes(intersecting: window, in: cells)).union(cellIndex.atomCells).sorted().map { cells[$0] }
+        Set(cellIndex.indexes(intersecting: window, in: self)).union(cellIndex.atomCells).sorted().map { cells[$0] }
     }
 
     var nestedTableCells: [PreparedViewerTableCell] {
         cellIndex.nestedTableCells.map { cells[$0] }
     }
 
-    func cell(sourceCellIndex: Int) -> PreparedViewerTableCell? {
-        cellIndex.bySourceCellIndex[sourceCellIndex].map { cells[$0] }
+    func cell(sourceIndex: Int) -> PreparedViewerTableCell? {
+        cellIndex.bySourceIndex[sourceIndex].map { cells[$0] }
     }
 
-    func cell(sourcePosition: Int) -> PreparedViewerTableCell? {
-        cellIndex.bySourcePosition[sourcePosition].map { cells[$0] }
+    func frame(ofCell cell: PreparedViewerTableCell) -> CGRect {
+        let x = layout.columnOffsets[cell.column]
+        let width = layout.columnOffsets[cell.column + cell.colspan] - x
+        let y = layout.rowOffsets[cell.row]
+        return CGRect(x: tablePhysicalX(logicalX: x, width: width, totalWidth: layout.contentSize.width,
+                                        rtl: direction == .rightToLeft),
+                      y: y, width: width, height: layout.rowOffsets[cell.row + cell.rowspan] - y)
     }
+
 }
 
 private struct ViewerTableCellIndex {
     private struct Band {
-        let minY: CGFloat
+        let row: Int
         let cells: [Int]
     }
 
     private let bands: [Band]
     private let spanning: [Int]
-    private let maximumHeight: CGFloat
-    private let maximumWidth: CGFloat
     let nestedTableCells: [Int]
     let atomCells: [Int]
-    let bySourceCellIndex: [Int: Int]
-    let bySourcePosition: [Int: Int]
+    let bySourceIndex: [Int: Int]
 
-    init(cells: [PreparedViewerTableCell], spanningPositions: Set<Int>) {
-        spanning = cells.indices.filter { spanningPositions.contains(cells[$0].sourcePosition) }
-        let slotted = cells.indices.filter { !spanningPositions.contains(cells[$0].sourcePosition) }
-        let rows = Dictionary(grouping: slotted, by: { cells[$0].frame.minY })
-        bands = rows.keys.sorted().map { minY in
-            Band(minY: minY, cells: rows[minY, default: []].sorted { cells[$0].frame.minX < cells[$1].frame.minX })
+    init(cells: [PreparedViewerTableCell], direction: TableLayoutDirection) {
+        spanning = cells.indices.filter { cells[$0].rowspan > 1 || cells[$0].colspan > 1 }
+        let slotted = cells.indices.filter { cells[$0].rowspan == 1 && cells[$0].colspan == 1 }
+        let rows = Dictionary(grouping: slotted, by: { cells[$0].row })
+        bands = rows.keys.sorted().map { row in
+            Band(row: row, cells: rows[row, default: []].sorted {
+                direction == .rightToLeft ? cells[$0].column > cells[$1].column : cells[$0].column < cells[$1].column
+            })
         }
-        maximumHeight = slotted.map { cells[$0].frame.height }.max() ?? 0
-        maximumWidth = slotted.map { cells[$0].frame.width }.max() ?? 0
         nestedTableCells = cells.indices.filter { index in
             cells[index].content.blocks.contains { $0.tableSurface != nil }
         }
         atomCells = cells.indices.filter { index in
             cells[index].content.blocks.contains { $0.atomSlot != nil || $0.tableSurface?.hasAtoms == true }
         }
-        bySourceCellIndex = Dictionary(
-            cells.indices.compactMap { index in cells[index].sourceCellIndex.map { ($0, index) } },
-            uniquingKeysWith: min
-        )
-        bySourcePosition = Dictionary(cells.indices.map { (cells[$0].sourcePosition, $0) }, uniquingKeysWith: min)
+        bySourceIndex = Dictionary(cells.indices.map { (cells[$0].sourceIndex, $0) }, uniquingKeysWith: min)
     }
 
-    func indexes(intersecting rect: CGRect, in cells: [PreparedViewerTableCell]) -> [Int] {
+    func indexes(intersecting rect: CGRect, in surface: ViewerTableSurface) -> [Int] {
         guard !rect.isNull, !rect.isEmpty else { return [] }
-        var result = spanning.filter { cells[$0].frame.intersects(rect) }
-        let firstBand = Self.partition(bands.count) { bands[$0].minY > rect.minY - maximumHeight }
+        func frame(_ index: Int) -> CGRect { surface.frame(ofCell: surface.cells[index]) }
+        var result = spanning.filter { frame($0).intersects(rect) }
+        let firstBand = Self.partition(bands.count) { surface.layout.rowOffsets[bands[$0].row + 1] > rect.minY }
         for band in bands[firstBand...] {
-            guard band.minY < rect.maxY else { break }
-            let firstCell = Self.partition(band.cells.count) {
-                cells[band.cells[$0]].frame.minX > rect.minX - maximumWidth
-            }
+            guard surface.layout.rowOffsets[band.row] < rect.maxY else { break }
+            let firstCell = Self.partition(band.cells.count) { frame(band.cells[$0]).maxX > rect.minX }
             for index in band.cells[firstCell...] {
-                let frame = cells[index].frame
-                guard frame.minX < rect.maxX else { break }
-                if frame.intersects(rect) { result.append(index) }
+                let cellFrame = frame(index)
+                guard cellFrame.minX < rect.maxX else { break }
+                if cellFrame.intersects(rect) { result.append(index) }
             }
         }
         return result.sorted()
@@ -290,7 +284,6 @@ private struct ViewerTableCellIndex {
     }
 }
 
-/// Mutable mounted state deliberately kept outside the immutable prepared surface.
 final class ViewerTablePresentationOwner {
     private static let mapRetainedBytes = 48
     private static let entryRetainedBytes = 80
@@ -372,8 +365,6 @@ struct ViewerTablePresentedBlock {
     let clip: CGRect
 }
 
-/// One entry per immutable layout reached by the mounted traversal. Keeping
-/// decorations here prevents consumers from rebuilding table transforms.
 struct ViewerTablePresentedLayout {
     let layout: PreparedProseLayout
     let origin: CGPoint
@@ -383,7 +374,7 @@ struct ViewerTablePresentedLayout {
 struct ViewerTablePresentedCell {
     let surface: ViewerTableSurface
     let cell: PreparedViewerTableCell
-    let sourcePosition: Int
+    let sourceIndex: Int
     let content: PreparedProseLayout
     let bounds: CGRect
     let contentBounds: CGRect
@@ -398,7 +389,6 @@ struct ViewerTablePresentedTable {
 }
 
 struct ViewerTablePresentedImage {
-    /// The root attachment remains the publication owner; this is only a mounted geometry projection.
     let attachment: ViewerImageAttachment
     let sourceIdentity: String
     let bounds: CGRect
@@ -445,7 +435,6 @@ struct ViewerTablePresentationSnapshot {
     let accessibilityNodes: [ViewerTablePresentedAccessibilityNode]
 }
 
-/// One recursive coordinate seam for drawing, rich hits, media, atoms, and accessibility.
 enum ViewerTablePresentation {
     static func present(
         _ cell: PreparedViewerTableCell,
@@ -462,12 +451,12 @@ enum ViewerTablePresentation {
         contentOrigin: CGPoint,
         clip: CGRect
     ) -> ViewerTablePresentedCell {
-        let cellBounds = cell.frame.offsetBy(dx: contentOrigin.x, dy: contentOrigin.y)
+        let cellBounds = surface.frame(ofCell: cell).offsetBy(dx: contentOrigin.x, dy: contentOrigin.y)
         let childOrigin = CGPoint(x: cellBounds.minX + cell.contentOrigin.x, y: cellBounds.minY + cell.contentOrigin.y)
         return ViewerTablePresentedCell(
             surface: surface,
             cell: cell,
-            sourcePosition: cell.sourcePosition,
+            sourceIndex: cell.sourceIndex,
             content: cell.content,
             bounds: cellBounds,
             contentBounds: CGRect(origin: childOrigin, size: cell.content.size),

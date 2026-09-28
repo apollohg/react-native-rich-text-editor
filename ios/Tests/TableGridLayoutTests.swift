@@ -1,10 +1,26 @@
 import XCTest
 
 final class TableGridLayoutTests: XCTestCase {
+    func testLayoutRectanglesAreKeyedBySourceIndex() {
+        let cells = [
+            TableGridCell(sourceIndex: 1, row: 0, column: 1, contentKey: "second"),
+            TableGridCell(sourceIndex: 0, row: 0, column: 0, contentKey: "first")
+        ]
+        let layout = TableGridLayout(displayScale: 1).layout(
+            record: record(cells: cells), viewportWidth: 160,
+            style: TableStyle(), direction: .leftToRight
+        ) { _, _ in 10 }
+        XCTAssertEqual(Set(layout.rectangles.keys), [0, 1])
+        XCTAssertEqual(layout.sourceOrder, [0, 1])
+        XCTAssertEqual(layout.columnOffsets, [0, 80, 160])
+        XCTAssertEqual(layout.rectangles[0]?.minX, 0)
+        XCTAssertEqual(layout.rectangles[1]?.minX, 80)
+    }
+
     func testViewerSurfaceRetainsOnePreparedCellPerSourceAnchor() {
         let cells = [
-            TableGridCell(sourcePosition: 10, row: 0, column: 0, contentKey: "a"),
-            TableGridCell(sourcePosition: 20, row: 0, column: 1, contentKey: "b")
+            TableGridCell(sourceIndex: 10, row: 0, column: 0, contentKey: "a"),
+            TableGridCell(sourceIndex: 20, row: 0, column: 1, contentKey: "b")
         ]
         let record = TableGridRecord(documentOwner: "viewer", columns: 2, rows: 1,
                                      columnWidths: [nil, nil], cells: cells)
@@ -24,7 +40,7 @@ final class TableGridLayoutTests: XCTestCase {
             )
         }
 
-        XCTAssertEqual(surface.cells.map(\.sourcePosition), [10, 20])
+        XCTAssertEqual(surface.cells.map(\.sourceIndex), [10, 20])
         XCTAssertEqual(surface.cells.count, 2)
         XCTAssertTrue(surface.bounds.height.isFinite)
         XCTAssertEqual(surface.visibleCells(in: surface.bounds).count, 2)
@@ -32,8 +48,8 @@ final class TableGridLayoutTests: XCTestCase {
 
     func testViewerSurfaceMeasuresEqualContentOncePerSourceAndKeepsSourceArtifacts() {
         let cells = [
-            TableGridCell(sourcePosition: 10, row: 0, column: 0, contentKey: "same"),
-            TableGridCell(sourcePosition: 20, row: 0, column: 1, contentKey: "same")
+            TableGridCell(sourceIndex: 10, row: 0, column: 0, contentKey: "same"),
+            TableGridCell(sourceIndex: 20, row: 0, column: 1, contentKey: "same")
         ]
         var preparedSources: [Int] = []
         var preparedContentKeys: [String] = []
@@ -44,10 +60,10 @@ final class TableGridLayoutTests: XCTestCase {
             style: TableStyle(),
             direction: .leftToRight
         ) { cell, width in
-            preparedSources.append(cell.sourcePosition)
+            preparedSources.append(cell.sourceIndex)
             preparedContentKeys.append(cell.contentKey)
             return PreparedProseLayout.error(
-                key: ProseLayoutKey(semanticKey: "\(cell.sourcePosition)", widthPixels: Int(width), themeDigest: "", nativeFontRevision: 0,
+                key: ProseLayoutKey(semanticKey: "\(cell.sourceIndex)", widthPixels: Int(width), themeDigest: "", nativeFontRevision: 0,
                                     fontEnvironmentRevision: 0, displayScale: 1, attachmentRevision: 0,
                                     generationIdentity: "test", semanticGenerationIdentity: "test"),
                 width: width,
@@ -55,7 +71,7 @@ final class TableGridLayoutTests: XCTestCase {
             )
         }
 
-        XCTAssertEqual(surface.cells.map(\.sourcePosition), [10, 20])
+        XCTAssertEqual(surface.cells.map(\.sourceIndex), [10, 20])
         XCTAssertNotEqual(surface.cells[0].content.key.semanticKey, surface.cells[1].content.key.semanticKey)
         XCTAssertEqual(preparedSources, [10, 20])
         XCTAssertEqual(preparedContentKeys, ["same", "same"])
@@ -84,15 +100,15 @@ final class TableGridLayoutTests: XCTestCase {
 
     func testSpansMeasureInnerWidthAndRowspanAddsDeficitToLastCoveredRow() {
         let cells = [
-            TableGridCell(sourcePosition: 10, row: 0, column: 0, rowspan: 2, colspan: 1, contentKey: "a"),
-            TableGridCell(sourcePosition: 20, row: 0, column: 1, contentKey: "b"),
-            TableGridCell(sourcePosition: 30, row: 1, column: 1, contentKey: "c")
+            TableGridCell(sourceIndex: 10, row: 0, column: 0, rowspan: 2, colspan: 1, contentKey: "a"),
+            TableGridCell(sourceIndex: 20, row: 0, column: 1, contentKey: "b"),
+            TableGridCell(sourceIndex: 30, row: 1, column: 1, contentKey: "c")
         ]
         var measuredWidths: [CGFloat] = []
         let result = TableGridLayout().layout(record: record(rows: 2, cells: cells), viewportWidth: 160,
                                               style: TableStyle(), direction: .leftToRight) { cell, width in
             measuredWidths.append(width)
-            return cell.sourcePosition == 10 ? 80 : 20
+            return cell.sourceIndex == 10 ? 80 : 20
         }
         XCTAssertEqual(measuredWidths.first, 62)
         XCTAssertEqual(result.rowOffsets, [0, 38, 98])
@@ -101,8 +117,8 @@ final class TableGridLayoutTests: XCTestCase {
 
     func testRtlMirrorsPhysicalXWithoutChangingSourceOrder() {
         let cells = [
-            TableGridCell(sourcePosition: 10, row: 0, column: 0, contentKey: "a"),
-            TableGridCell(sourcePosition: 20, row: 0, column: 1, contentKey: "b")
+            TableGridCell(sourceIndex: 10, row: 0, column: 0, contentKey: "a"),
+            TableGridCell(sourceIndex: 20, row: 0, column: 1, contentKey: "b")
         ]
         let result = TableGridLayout().layout(record: record(cells: cells), viewportWidth: 160,
                                               style: TableStyle(), direction: .rightToLeft) { _, _ in 10 }
@@ -147,7 +163,7 @@ final class TableGridLayoutTests: XCTestCase {
     func testCacheMeasuresAtItsPixelKeyWidthAcrossFractionalChromeChanges() {
         let cache = TableCellMeasurementCache()
         let grid = TableGridLayout(displayScale: 2, cache: cache)
-        let cell = TableGridCell(sourcePosition: 1, row: 0, column: 0, contentKey: "cell")
+        let cell = TableGridCell(sourceIndex: 1, row: 0, column: 0, contentKey: "cell")
         let input = record(columns: 1, widths: [100], cells: [cell])
         var widths: [CGFloat] = []
         _ = grid.layout(record: input, viewportWidth: 100, style: TableStyle(cellPadding: 8.05), direction: .leftToRight) { _, width in
@@ -173,7 +189,7 @@ final class TableGridLayoutTests: XCTestCase {
     }
 
     func testNonFiniteMeasurementReturnsFailureInsteadOfZeroHeightSuccess() {
-        let result = TableGridLayout().layout(record: record(cells: [TableGridCell(sourcePosition: 1, row: 0, column: 0, contentKey: "cell")]), viewportWidth: 160,
+        let result = TableGridLayout().layout(record: record(cells: [TableGridCell(sourceIndex: 1, row: 0, column: 0, contentKey: "cell")]), viewportWidth: 160,
                                               style: TableStyle(), direction: .leftToRight) { _, _ in .infinity }
         XCTAssertEqual(result.failure, TableRenderFailure.invalidAttributes)
         XCTAssertEqual(result.contentSize.height, 18)
@@ -181,13 +197,13 @@ final class TableGridLayoutTests: XCTestCase {
 
     func testHorizontalSpanKeepsSyntheticGapAnchorFreeAndProcessesLaterSingleRowMinimum() {
         let cells = [
-            TableGridCell(sourcePosition: 10, row: 0, column: 0, rowspan: 2, contentKey: "span"),
-            TableGridCell(sourcePosition: 20, row: 0, column: 1, colspan: 2, contentKey: "wide"),
-            TableGridCell(sourcePosition: 30, row: 1, column: 2, contentKey: "later")
+            TableGridCell(sourceIndex: 10, row: 0, column: 0, rowspan: 2, contentKey: "span"),
+            TableGridCell(sourceIndex: 20, row: 0, column: 1, colspan: 2, contentKey: "wide"),
+            TableGridCell(sourceIndex: 30, row: 1, column: 2, contentKey: "later")
         ]
         let result = TableGridLayout().layout(record: record(columns: 3, rows: 2, widths: [80, 80, 80], cells: cells), viewportWidth: 240,
                                               style: TableStyle(), direction: .leftToRight) { cell, _ in
-            switch cell.sourcePosition {
+            switch cell.sourceIndex {
             case 10: return 102
             case 20: return 20
             default: return 60
@@ -197,7 +213,7 @@ final class TableGridLayoutTests: XCTestCase {
         XCTAssertEqual(result.rectangles[20]?.width, 160)
         XCTAssertEqual(result.rowOffsets, [0, 38, 120])
         XCTAssertEqual(result.rectangles.count, cells.count)
-        XCTAssertEqual(Set(result.rectangles.keys), Set(cells.map(\.sourcePosition)))
+        XCTAssertEqual(Set(result.rectangles.keys), Set(cells.map(\.sourceIndex)))
         XCTAssertEqual(result.sourceOrder, [10, 20, 30])
     }
 
@@ -205,8 +221,8 @@ final class TableGridLayoutTests: XCTestCase {
         let cache = TableCellMeasurementCache()
         let grid = TableGridLayout(cache: cache)
         var cells = [
-            TableGridCell(sourcePosition: 10, row: 0, column: 0, contentKey: "a"),
-            TableGridCell(sourcePosition: 20, row: 1, column: 0, contentKey: "b")
+            TableGridCell(sourceIndex: 10, row: 0, column: 0, contentKey: "a"),
+            TableGridCell(sourceIndex: 20, row: 1, column: 0, contentKey: "b")
         ]
         var calls = 0
         var measuredPositions: [Int] = []
@@ -215,7 +231,7 @@ final class TableGridLayoutTests: XCTestCase {
                         style: TableStyle(), direction: .leftToRight, themeDigest: theme,
                         fontEnvironmentRevision: fontRevision) { cell, _ in
                 calls += 1
-                measuredPositions.append(cell.sourcePosition)
+                measuredPositions.append(cell.sourceIndex)
                 return 20
             }
         }
@@ -225,12 +241,12 @@ final class TableGridLayoutTests: XCTestCase {
         XCTAssertEqual(first.rectangles, warm.rectangles)
         XCTAssertEqual(calls, 2)
 
-        cells[0] = TableGridCell(sourcePosition: 10, row: 0, column: 0, contentKey: "a", attachmentRevision: 1)
+        cells[0] = TableGridCell(sourceIndex: 10, row: 0, column: 0, contentKey: "a", attachmentRevision: 1)
         _ = layout()
         XCTAssertEqual(calls, 3)
         XCTAssertEqual(measuredPositions.last, 10)
 
-        cells[0] = TableGridCell(sourcePosition: 10, row: 0, column: 0, contentKey: "updated", attachmentRevision: 1)
+        cells[0] = TableGridCell(sourceIndex: 10, row: 0, column: 0, contentKey: "updated", attachmentRevision: 1)
         let contentChanged = layout()
         XCTAssertEqual(calls, 4)
         XCTAssertEqual(measuredPositions.last, 10)
@@ -262,7 +278,7 @@ final class TableGridLayoutTests: XCTestCase {
 
     func testPixelWidthAtIntMaximumFallsBackWithoutTrapping() {
         let result = TableGridLayout(displayScale: 1).layout(record: record(columns: 1, widths: [CGFloat(Int.max)],
-                                                              cells: [TableGridCell(sourcePosition: 1, row: 0, column: 0, contentKey: "cell")]),
+                                                              cells: [TableGridCell(sourceIndex: 1, row: 0, column: 0, contentKey: "cell")]),
                                               viewportWidth: CGFloat(Int.max), style: TableStyle(cellPadding: 0, borderWidth: 0),
                                               direction: .leftToRight) { _, _ in 10 }
         XCTAssertEqual(result.failure, .invalidAttributes)

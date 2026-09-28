@@ -171,8 +171,8 @@ extension EditorTableNavigationTests {
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let prepared = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface)
-        let finalCell = try XCTUnwrap(prepared.cells.first { $0.sourceCellIndex == 2 })
-        XCTAssertLessThan(finalCell.frame.maxX, prepared.bounds.maxX,
+        let finalCell = try XCTUnwrap(prepared.cells.first { $0.sourceIndex == 2 })
+        XCTAssertLessThan(prepared.frame(ofCell: finalCell).maxX, prepared.bounds.maxX,
                           "The final authored cell must stop before the synthetic trailing slot")
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 2, contentRect: .zero))
         let input = view.activeTextInput
@@ -554,11 +554,11 @@ extension EditorTableNavigationTests {
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let prepared = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface)
-        let source = try XCTUnwrap(prepared.cells.first { $0.sourceCellIndex == 2 })
+        let source = try XCTUnwrap(prepared.cells.first { $0.sourceIndex == 2 })
         if rightToLeft {
-            XCTAssertGreaterThan(source.frame.minX, prepared.bounds.minX)
+            XCTAssertGreaterThan(prepared.frame(ofCell: source).minX, prepared.bounds.minX)
         } else {
-            XCTAssertLessThan(source.frame.maxX, prepared.bounds.maxX)
+            XCTAssertLessThan(prepared.frame(ofCell: source).maxX, prepared.bounds.maxX)
         }
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 2, contentRect: .zero))
         let input = view.activeTextInput

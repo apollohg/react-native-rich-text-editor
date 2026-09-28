@@ -10,7 +10,7 @@ final class CoreTextProseLayoutEngine {
     var tableCellPreparationObserver: ((Int) -> Void)?
     var tableCellShapeBuildObserver: ((Int) -> Void)?
     var tableCellBindingObserver: ((Int) -> Void)?
-    var reusableTableCellContent: ((FfiViewerTableCell, Int) -> PreparedProseLayout?)?
+    var reusableTableCellContent: ((TableSurfaceCell, Int) -> PreparedProseLayout?)?
 
     final class HighlightingScope {
         let configuration: NativeCodeHighlightConfiguration
@@ -27,8 +27,8 @@ final class CoreTextProseLayoutEngine {
             for (index, block) in document.blocks.enumerated() {
                 register(document: document, index: index, block: block)
                 guard let table = block.table else { continue }
-                for cell in table.cells.sorted(by: { $0.sourcePos < $1.sourcePos }) {
-                    guard let child = try? document.cellDocument(for: cell) else { continue }
+                for cell in TableSurfaceSource(viewerTable: table).cells {
+                    guard let child = try? document.cellDocument(for: cell, in: "t\(table.tablePos)") else { continue }
                     preassign(document: child)
                 }
             }
@@ -162,8 +162,9 @@ final class CoreTextProseLayoutEngine {
                 let tableX = theme.contentInsets.left + tableAncestors.left + tableBox.margin.left + placement.listInset + placement.quoteInset + tableBox.inset.left
                 let tableWidth = max(1, canonicalWidth - theme.contentInsets.left - theme.contentInsets.right
                     - tableAncestors.left - tableAncestors.right - tableBox.margin.left - tableBox.margin.right - tableBox.inset.left - tableBox.inset.right - placement.listInset - placement.quoteInset)
-                let record = TableGridRecord(table: table, documentOwner: document.semanticKey)
-                let cellsByPosition = Dictionary(uniqueKeysWithValues: table.cells.map { (Int($0.sourcePos), $0) })
+                let surfaceSource = TableSurfaceSource(viewerTable: table)
+                let record = TableGridRecord(table: surfaceSource, documentOwner: document.semanticKey)
+                let cellsByIndex = Dictionary(uniqueKeysWithValues: surfaceSource.cells.map { ($0.sourceIndex, $0) })
                 let surface = ViewerTableSurface(
                     identity: "t\(table.tablePos)",
                     scrollIdentity: document.tableSourceIDs["t\(table.tablePos)"],
@@ -175,16 +176,16 @@ final class CoreTextProseLayoutEngine {
                     themeDigest: key.themeDigest,
                     fontEnvironmentRevision: Int(key.fontEnvironmentRevision),
                     textScale: theme.fontScale,
-                    sourceTable: table,
+                    sourceTable: surfaceSource,
                     sourceAttributes: document.tableAttributes
                 ) { cell, cellWidth in
-                    if !cellMode, let source = cellsByPosition[cell.sourcePosition],
+                    if !cellMode, let source = cellsByIndex[cell.sourceIndex],
                        let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: cellWidth, scale: displayScale),
                        let reused = self.reusableTableCellContent?(source, widthPixels) {
                         return reused
                     }
-                    guard let source = cellsByPosition[cell.sourcePosition],
-                          let child = try? document.cellDocument(for: source).withPreparedTheme(cellTheme)
+                    guard let source = cellsByIndex[cell.sourceIndex],
+                          let child = try? document.cellDocument(for: source, in: "t\(table.tablePos)").withPreparedTheme(cellTheme)
                     else {
                         return .error(key: key, width: cellWidth, error: .layout(message: "Invalid table cell."))
                     }
@@ -204,8 +205,8 @@ final class CoreTextProseLayoutEngine {
                             semanticGenerationIdentity: key.semanticGenerationIdentity
                         )
                         let build = {
-                            self.tableCellPreparationObserver?(cell.sourcePosition)
-                            self.tableCellShapeBuildObserver?(cell.sourcePosition)
+                            self.tableCellPreparationObserver?(cell.sourceIndex)
+                            self.tableCellShapeBuildObserver?(cell.sourceIndex)
                             let prepared = try self.prepare(
                                 document: child,
                                 key: cellKey,
@@ -216,7 +217,7 @@ final class CoreTextProseLayoutEngine {
                                 highlightingScope: scope,
                                 cellShapeContext: cellShapeContext
                             )
-                            self.tableCellBindingObserver?(cell.sourcePosition)
+                            self.tableCellBindingObserver?(cell.sourceIndex)
                             return prepared
                         }
                         guard let cellShapeContext, theme.codeHighlighting == nil else { return try build() }
@@ -238,7 +239,7 @@ final class CoreTextProseLayoutEngine {
                                 warningSemanticGeneration: warningSemanticGeneration,
                                 context: cellShapeContext
                             )
-                            if bound != nil { self.tableCellBindingObserver?(cell.sourcePosition) }
+                            if bound != nil { self.tableCellBindingObserver?(cell.sourceIndex) }
                             return bound
                         }
                     } catch let error as ProseViewerError {
@@ -516,13 +517,14 @@ final class CoreTextProseLayoutEngine {
         warningSemanticGeneration: String,
         context: PreparedCellShapeBuildContext
     ) -> ViewerTableSurface? {
-        let cellsByPosition = Dictionary(uniqueKeysWithValues: table.cells.map { (Int($0.sourcePos), $0) })
+        let surfaceSource = TableSurfaceSource(viewerTable: table)
+        let cellsByIndex = Dictionary(uniqueKeysWithValues: surfaceSource.cells.map { ($0.sourceIndex, $0) })
         var childTheme = theme
         childTheme.contentInsets = .zero
         let surface = ViewerTableSurface(
             identity: "t\(table.tablePos)",
             scrollIdentity: document.tableSourceIDs["t\(table.tablePos)"],
-            record: TableGridRecord(table: table, documentOwner: document.semanticKey),
+            record: TableGridRecord(table: surfaceSource, documentOwner: document.semanticKey),
             viewportWidth: cachedSurface.hostViewportWidth,
             style: cachedSurface.style,
             direction: cachedSurface.direction,
@@ -530,11 +532,11 @@ final class CoreTextProseLayoutEngine {
             themeDigest: key.themeDigest,
             fontEnvironmentRevision: Int(key.fontEnvironmentRevision),
             textScale: theme.fontScale,
-            sourceTable: table,
+            sourceTable: surfaceSource,
             sourceAttributes: document.tableAttributes
         ) { cell, cellWidth in
-            guard let source = cellsByPosition[cell.sourcePosition],
-                  let child = try? document.cellDocument(for: source).withPreparedTheme(childTheme),
+            guard let source = cellsByIndex[cell.sourceIndex],
+                  let child = try? document.cellDocument(for: source, in: "t\(table.tablePos)").withPreparedTheme(childTheme),
                   let widthPixels = ProseLayoutMetrics.widthPixels(widthPoints: cellWidth, scale: displayScale)
             else { return .error(key: key, width: cellWidth, error: .layout(message: "Invalid table cell.")) }
             let childKey = ProseLayoutKey(
@@ -551,14 +553,14 @@ final class CoreTextProseLayoutEngine {
             let shapeKey = preparedCellShapeKey(contentKey: cell.contentKey, document: child, widthPixels: widthPixels, theme: childTheme, key: childKey)
             do {
                 return try context.resolve(shapeKey, build: {
-                    self.tableCellPreparationObserver?(cell.sourcePosition)
-                    self.tableCellShapeBuildObserver?(cell.sourcePosition)
+                    self.tableCellPreparationObserver?(cell.sourceIndex)
+                    self.tableCellShapeBuildObserver?(cell.sourceIndex)
                     let prepared = try self.prepare(document: child, key: childKey, widthPoints: cellWidth, displayScale: displayScale, semanticGenerationIdentity: warningSemanticGeneration, cellMode: true, highlightingScope: nil, cellShapeContext: context)
-                    self.tableCellBindingObserver?(cell.sourcePosition)
+                    self.tableCellBindingObserver?(cell.sourceIndex)
                     return prepared
                 }) { nestedShape in
                     let bound = self.bindCellShape(nestedShape, document: child, key: childKey, widthPoints: cellWidth, displayScale: displayScale, theme: childTheme, warningSemanticGeneration: warningSemanticGeneration, context: context)
-                    if bound != nil { self.tableCellBindingObserver?(cell.sourcePosition) }
+                    if bound != nil { self.tableCellBindingObserver?(cell.sourceIndex) }
                     return bound
                 }
             } catch {

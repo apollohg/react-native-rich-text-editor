@@ -84,7 +84,7 @@ final class EditorTableInputTests: XCTestCase {
 
         func hostPoint(inCell index: Int) throws -> CGPoint {
             let cell = try XCTUnwrap(drawing.mountedTablePresentation()?.cells.first {
-                $0.surface.identity == tableID && $0.sourcePosition == Int(positions[index])
+                $0.surface.identity == tableID && $0.sourceIndex == index
             })
             let visible = cell.bounds.intersection(cell.clip).intersection(drawing.bounds)
             XCTAssertFalse(visible.isEmpty)
@@ -127,7 +127,7 @@ final class EditorTableInputTests: XCTestCase {
 
         func presentedCell(_ index: Int) throws -> ViewerTablePresentedCell {
             try XCTUnwrap(drawing.mountedTablePresentation()?.cells.first {
-                $0.surface.identity == tableID && $0.sourcePosition == Int(positions[index])
+                $0.surface.identity == tableID && $0.sourceIndex == index
             }, "cell \(index) is not mounted")
         }
 
@@ -421,7 +421,7 @@ final class EditorTableInputTests: XCTestCase {
         try withMountedHandles(document: wideTwoCellDocument, anchorIndex: 0, headIndex: 1) { fixture in
             XCTAssertEqual(fixture.drawing.selectionHandles().map(\.role), [.anchor])
             let offscreenHead = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.first {
-                $0.surface.identity == fixture.tableID && $0.sourcePosition == Int(fixture.positions[1])
+                $0.surface.identity == fixture.tableID && $0.sourceIndex == 1
             })
             XCTAssertNil(fixture.drawing.hitSelectionHandle(at: CGPoint(x: offscreenHead.bounds.maxX - 8,
                                                                           y: offscreenHead.bounds.maxY - 8)))
@@ -475,9 +475,9 @@ final class EditorTableInputTests: XCTestCase {
                                anchorIndex: 0, headIndex: 24) { fixture in
             XCTAssertEqual(fixture.drawing.selectionHandles().map(\.role), [.anchor])
             XCTAssertFalse(fixture.drawing.mountedTablePresentation()?.cells.contains {
-                $0.sourcePosition == Int(fixture.positions[24])
+                $0.sourceIndex == 24
             } ?? true, "a row two viewports below is outside the presentation window")
-            let last = try XCTUnwrap(fixture.drawing.presentedTableCell(tableID: fixture.tableID, sourceCellIndex: 24))
+            let last = try XCTUnwrap(fixture.drawing.presentedTableCell(tableID: fixture.tableID, sourceIndex: 24))
             XCTAssertTrue(fixture.surface.beginHandleDrag(at: try fixture.hostPoint(for: .anchor)))
             fixture.surface.updateHandleDrag(at: fixture.drawing.convert(
                 CGPoint(x: last.bounds.midX, y: last.bounds.midY), to: fixture.view
@@ -516,11 +516,11 @@ final class EditorTableInputTests: XCTestCase {
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"rowspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"tall"}]}]},{"type":"table_cell","attrs":{"colspan":2},"content":[{"type":"paragraph","content":[{"type":"text","text":"wide"}]}]}]},{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"later"}]}]}]}]}]}"#
         try withMountedHandles(document: document, anchorIndex: 0, headIndex: 2) { fixture in
             let cells = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.filter {
-                $0.surface.identity == fixture.tableID && $0.cell.sourceCellIndex != nil
+                $0.surface.identity == fixture.tableID && $0.surface.sourceTable != nil
             })
             XCTAssertEqual(cells.count, 3)
-            let first = try XCTUnwrap(cells.first { $0.sourcePosition == Int(fixture.positions[0]) })
-            let last = try XCTUnwrap(cells.first { $0.sourcePosition == Int(fixture.positions[2]) })
+            let first = try XCTUnwrap(cells.first { $0.sourceIndex == 0 })
+            let last = try XCTUnwrap(cells.first { $0.sourceIndex == 2 })
             let anchor = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .anchor })
             let head = try XCTUnwrap(fixture.drawing.selectionHandles().first { $0.role == .head })
             XCTAssertEqual(anchor.center.x, first.bounds.minX + 8, accuracy: 1)
@@ -540,7 +540,7 @@ final class EditorTableInputTests: XCTestCase {
         let document = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"nested"}]}]}]}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"outer"}]}]}]}]}]}"#
         try withMountedHandles(document: document, anchorIndex: 1, headIndex: 1) { fixture in
             let nested = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.first {
-                $0.surface.identity != fixture.tableID && $0.cell.sourceCellIndex != nil
+                $0.surface.identity != fixture.tableID && $0.surface.sourceTable != nil
             })
             let point = CGPoint(x: nested.bounds.midX, y: nested.bounds.midY)
             XCTAssertEqual(fixture.drawing.selectedTableCell(at: point, tableID: fixture.tableID),
@@ -951,7 +951,7 @@ final class EditorTableInputTests: XCTestCase {
         let nestedDocument = #"{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[200]},"content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"in"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"ner"}]}]}]}]}]},{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"outer"}]}]}]}]}]}"#
         try withMountedTable(document: nestedDocument, cellSelection: nil) { fixture in
             let nestedCells = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.filter {
-                $0.surface.identity != fixture.tableID && $0.cell.sourceCellIndex != nil
+                $0.surface.identity != fixture.tableID && $0.surface.sourceTable != nil
             })
             XCTAssertEqual(nestedCells.count, 2)
             let innerEdge = try XCTUnwrap(nestedCells.min { $0.bounds.minX < $1.bounds.minX })
@@ -1060,8 +1060,8 @@ final class EditorTableInputTests: XCTestCase {
             [("d", 1, 1), ("e", 1, 1)]
         ])
         try withMountedTable(document: document, cellSelection: (4, 2)) { fixture in
-            XCTAssertTrue(fixture.drawing.selectedTableCellSourcePositions[fixture.tableID]?
-                .contains(Int(fixture.positions[0])) == true,
+            XCTAssertTrue(fixture.drawing.selectedTableCellSourceIndices[fixture.tableID]?
+                .contains(0) == true,
                           "the merged cell must grow the drawn rectangle to the first row")
             for index in [2, 3] {
                 let edge = fixture.drawing.convert(try fixture.trailingEdgeHostPoint(cellIndex: index), from: fixture.view)
@@ -1145,7 +1145,7 @@ final class EditorTableInputTests: XCTestCase {
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let head = try XCTUnwrap(drawing.selectionHandles().first { $0.role == .head })
         let target = try XCTUnwrap(drawing.mountedTablePresentation()?.cells.first {
-            $0.surface.identity == tableID && $0.sourcePosition == Int(positions[3])
+            $0.surface.identity == tableID && $0.sourceIndex == 3
         })
         let start = drawing.convert(head.center, to: window)
         let end = drawing.convert(CGPoint(x: target.bounds.midX, y: target.bounds.midY), to: window)
@@ -1191,7 +1191,7 @@ final class EditorTableInputTests: XCTestCase {
                 $0.surface.identity == fixture.tableID
             })
             let first = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.first {
-                $0.surface.identity == fixture.tableID && $0.sourcePosition == Int(fixture.positions[0])
+                $0.surface.identity == fixture.tableID && $0.sourceIndex == 0
             })
             let start = fixture.drawing.convert(
                 CGPoint(x: first.bounds.maxX, y: first.bounds.midY), to: fixture.view.window
@@ -1649,12 +1649,12 @@ final class EditorTableInputTests: XCTestCase {
                                               space: CGColorSpaceCreateDeviceRGB(),
                                               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
         bitmap.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
-        let selectedPositions = drawing.selectedTableCellSourcePositions
-        drawing.selectedTableCellSourcePositions = [:]
+        let selectedPositions = drawing.selectedTableCellSourceIndices
+        drawing.selectedTableCellSourceIndices = [:]
         let baselineImage = UIGraphicsImageRenderer(size: drawing.bounds.size, format: format).image { _ in
             drawing.draw(drawing.bounds)
         }
-        drawing.selectedTableCellSourcePositions = selectedPositions
+        drawing.selectedTableCellSourceIndices = selectedPositions
         let baselineCG = try XCTUnwrap(baselineImage.cgImage)
         var baselinePixels = [UInt8](repeating: 0, count: baselineCG.width * baselineCG.height * 4)
         let baselineBitmap = try XCTUnwrap(CGContext(data: &baselinePixels, width: baselineCG.width, height: baselineCG.height,
@@ -1663,8 +1663,8 @@ final class EditorTableInputTests: XCTestCase {
                                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
         baselineBitmap.draw(baselineCG, in: CGRect(x: 0, y: 0, width: baselineCG.width, height: baselineCG.height))
         let offset = { (cell: PreparedViewerTableCell) -> Int in
-            let x = Int(origin.x + cell.frame.maxX - 6)
-            let y = Int(origin.y + cell.frame.maxY - 6)
+            let x = Int(origin.x + table.frame(ofCell: cell).maxX - 6)
+            let y = Int(origin.y + table.frame(ofCell: cell).maxY - 6)
             return (y * cgImage.width + x) * 4
         }
         let alpha = { (cell: PreparedViewerTableCell) -> UInt8 in
@@ -1711,7 +1711,7 @@ final class EditorTableInputTests: XCTestCase {
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
         let presentation = try XCTUnwrap(drawing.mountedTablePresentation())
         let selected = presentation.cells.filter {
-            $0.surface.identity == tableID && drawing.selectedTableCellSourcePositions[tableID]?.contains($0.sourcePosition) == true
+            $0.surface.identity == tableID && drawing.selectedTableCellSourceIndices[tableID]?.contains($0.sourceIndex) == true
         }
         XCTAssertEqual(selected.count, 2)
         let first = try XCTUnwrap(selected.min { $0.bounds.minX < $1.bounds.minX })
@@ -1797,7 +1797,7 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertFalse(root.rootTableSelectionInputBlocked)
         let surface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(surface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
-        XCTAssertTrue(drawing.selectedTableCellSourcePositions.isEmpty)
+        XCTAssertTrue(drawing.selectedTableCellSourceIndices.isEmpty)
         let proseSnapshot = try XCTUnwrap(adapter.cachedAtomicRenderJSON)
         let proseObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(proseSnapshot.utf8)) as? [String: Any])
         XCTAssertEqual((proseObject["selection"] as? [String: Any])?["type"] as? String, "text")
@@ -1811,7 +1811,7 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertTrue(view.activateTableCell(at: CGPoint(x: cellFrame.midX, y: cellFrame.midY)))
         let cellInput = view.activeTextInput
         flushMainQueue()
-        XCTAssertTrue(drawing.selectedTableCellSourcePositions.isEmpty)
+        XCTAssertTrue(drawing.selectedTableCellSourceIndices.isEmpty)
         XCTAssertFalse(root.authoritativeCellSelectionActive)
         XCTAssertEqual(cellInput.tableCellPositionMap?.binding.positionEpoch, adapter.positionEpoch)
         let cellSnapshot = try XCTUnwrap(adapter.cachedAtomicRenderJSON)
@@ -1846,7 +1846,7 @@ final class EditorTableInputTests: XCTestCase {
         ]
         let selection: [String: Any] = ["type": "cell", "anchorCell": 3, "headCell": 17]
         XCTAssertEqual(EditorCellSelection.resolve(selection, records: records),
-                       .drawable(tableID: "t1", sourcePositions: Set([3, 7, 13, 17, 21])))
+                       .drawable(tableID: "t1", sourceIndices: Set([0, 1, 2, 3, 4])))
         XCTAssertNil(EditorCellSelection.resolve(selection.merging(["anchorScalar": 0]) { _, new in new }, records: records))
         XCTAssertNil(EditorCellSelection.resolve(["type": "cell", "anchorCell": 3.5, "headCell": 17], records: records))
         XCTAssertNil(EditorCellSelection.resolve(["type": "cell", "anchorCell": 3, "headCell": 42], records: records))
@@ -1863,7 +1863,7 @@ final class EditorTableInputTests: XCTestCase {
             ]]]
         let forward: [String: Any] = ["type": "cell", "anchorCell": 11, "headCell": 15]
         let backward: [String: Any] = ["type": "cell", "anchorCell": 15, "headCell": 11]
-        let closed = EditorCellSelection.drawable(tableID: "t1", sourcePositions: Set([3, 7, 11, 15]))
+        let closed = EditorCellSelection.drawable(tableID: "t1", sourceIndices: Set([0, 1, 2, 3]))
         XCTAssertEqual(EditorCellSelection.resolve(forward, records: chained), closed)
         XCTAssertEqual(EditorCellSelection.resolve(backward, records: chained), closed)
     }
@@ -1933,12 +1933,12 @@ final class EditorTableInputTests: XCTestCase {
             return input
         }
 
-        func expectedWindowRects(sourcePositions: Set<Int>? = nil) throws -> [CGRect] {
+        func expectedWindowRects(sourceIndices: Set<Int>? = nil) throws -> [CGRect] {
             let visible = try XCTUnwrap(drawing.tableSelectionViewport())
-            let selected = try sourcePositions ?? XCTUnwrap(drawing.selectedTableCellSourcePositions[tableID])
+            let selected = try sourceIndices ?? XCTUnwrap(drawing.selectedTableCellSourceIndices[tableID])
             return try XCTUnwrap(drawing.mountedTablePresentation()).cells.filter {
-                $0.surface.identity == tableID && $0.cell.sourceCellIndex != nil
-                    && selected.contains($0.sourcePosition)
+                $0.surface.identity == tableID && $0.surface.sourceTable != nil
+                    && selected.contains($0.sourceIndex)
             }.map { $0.bounds.intersection($0.clip).intersection(visible) }
                 .filter { !$0.isNull && !$0.isEmpty }
                 .map { windowRect(drawing.convert($0, to: host)) }
@@ -2098,7 +2098,7 @@ final class EditorTableInputTests: XCTestCase {
             assertRects(after, try fixture.expectedWindowRects())
             XCTAssertNotEqual(after, before, "rects follow the table scroll offset")
             let firstCell = try XCTUnwrap(fixture.drawing.mountedTablePresentation()?.cells.first {
-                $0.surface.identity == fixture.tableID && $0.sourcePosition == Int(fixture.positions[0])
+                $0.surface.identity == fixture.tableID && $0.sourceIndex == 0
             })
             let scrolledEdge = fixture.windowRect(fixture.drawing.convert(firstCell.bounds, to: fixture.host)).maxX
             XCTAssertEqual(after.first?.maxX ?? .nan, scrolledEdge, accuracy: 0.001,
@@ -2334,7 +2334,7 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertTrue(fixture.recorder.payloads.isEmpty, "a prose caret has no geometry: \(fixture.recorder.payloads)")
             let input = try fixture.activateCell(1)
             XCTAssertEqual(input.selectedRange.length, 0, "activation leaves a caret")
-            XCTAssertTrue(fixture.drawing.selectedTableCellSourcePositions.isEmpty, "a caret draws no cell rectangle")
+            XCTAssertTrue(fixture.drawing.selectedTableCellSourceIndices.isEmpty, "a caret draws no cell rectangle")
             waitForGeometryFrame()
 
             XCTAssertEqual(fixture.recorder.payloads.count, 1, "\(fixture.recorder.payloads)")
@@ -2344,7 +2344,7 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(payload["tablePos"] as? Int,
                            Int(try XCTUnwrap(EditorV2Adapter.uint32Field(record, "tablePos"))))
             assertRects(try fixture.recorder.rects(at: 0),
-                        try fixture.expectedWindowRects(sourcePositions: [Int(fixture.positions[1])]),
+                        try fixture.expectedWindowRects(sourceIndices: [1]),
                         "the active cell anchors the table toolbar")
 
             fixture.host.richTextView.invalidateTableCellBinding()
@@ -2454,8 +2454,8 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(focusEvents.compactMap { $0["isFocused"] as? Bool }, [],
                            "leaving the cell for a rectangle is not a blur: \(focusEvents)")
             XCTAssertTrue(fixture.host.richTextView.textView.isFirstResponder, "the root takes focus for the rectangle")
-            XCTAssertEqual(fixture.drawing.selectedTableCellSourcePositions[fixture.tableID],
-                           Set([Int(fixture.positions[0]), Int(fixture.positions[1])]))
+            XCTAssertEqual(fixture.drawing.selectedTableCellSourceIndices[fixture.tableID],
+                           Set([0, 1]))
             waitForGeometryFrame()
             XCTAssertGreaterThan(fixture.recorder.payloads.count, before, "\(fixture.recorder.payloads)")
             assertRects(try fixture.recorder.rects(at: fixture.recorder.payloads.count - 1),
@@ -2557,7 +2557,7 @@ final class EditorTableInputTests: XCTestCase {
             XCTAssertEqual(try authoritativeSelection(fixture.adapter) as NSDictionary, originalSelection,
                            "undo resolves to the selection before the edit")
             XCTAssertFalse(root.authoritativeCellSelectionActive, "undo leaves no stale rectangle on the root")
-            XCTAssertEqual(fixture.drawing.selectedTableCellSourcePositions, [:], "undo clears the drawn rectangle")
+            XCTAssertEqual(fixture.drawing.selectedTableCellSourceIndices, [:], "undo clears the drawn rectangle")
             XCTAssertTrue(view.activeTextInput === cellInput, "the cell holding the restored caret takes the input")
             XCTAssertEqual(view.activeTableCellPosition, fixture.positions[0])
             XCTAssertTrue(cellInput.isFirstResponder, "the bound cell takes focus")
@@ -2993,7 +2993,7 @@ final class EditorTableInputTests: XCTestCase {
         let block = try XCTUnwrap(drawing.layout?.blocks.first)
         let surface = try XCTUnwrap(block.tableSurface)
         let tableBounds = try XCTUnwrap(block.tableBounds)
-        let activeHeader = try XCTUnwrap(surface.cells.first { $0.sourceCellIndex == 0 })
+        let activeHeader = try XCTUnwrap(surface.cells.first { $0.sourceIndex == 0 })
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         func paint() -> (rich: Int, chrome: Int, image: CGImage?) {
@@ -3017,7 +3017,7 @@ final class EditorTableInputTests: XCTestCase {
         XCTAssertEqual(bound.chrome, 2)
 
         let image = try XCTUnwrap(bound.image)
-        let point = CGPoint(x: tableBounds.minX + activeHeader.frame.minX + 3, y: tableBounds.minY + activeHeader.frame.minY + 3)
+        let point = CGPoint(x: tableBounds.minX + surface.frame(ofCell: activeHeader).minX + 3, y: tableBounds.minY + surface.frame(ofCell: activeHeader).minY + 3)
         var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
         let context = try XCTUnwrap(CGContext(data: &pixels, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
@@ -3031,7 +3031,7 @@ final class EditorTableInputTests: XCTestCase {
 
         tableSurface.invalidateAppearance()
         tableSurface.updateGeometry(from: view.textView)
-        let refreshedCell = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface?.cells.first { $0.sourceCellIndex == 0 })
+        let refreshedCell = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface?.cells.first { $0.sourceIndex == 0 })
         XCTAssertFalse(refreshedCell.content === activeHeader.content)
         XCTAssertEqual(paint().rich, bound.rich)
 
@@ -3202,12 +3202,13 @@ final class EditorTableInputTests: XCTestCase {
         let tableID = try XCTUnwrap(adapter.cachedTableInputMappings?.tables.keys.first)
         let tableSurface = try XCTUnwrap(view.subviews.compactMap { $0 as? EditorTableSurface }.first)
         let drawing = try XCTUnwrap(tableSurface.subviews.compactMap { $0 as? PreparedProseDrawingView }.first)
-        let cell = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface?.cells.first)
+        let preparedSurface = try XCTUnwrap(drawing.layout?.blocks.first?.tableSurface)
+        let cell = try XCTUnwrap(preparedSurface.cells.first)
         XCTAssertTrue(view.bindTableCell(tableID: tableID, cellIndex: 0, contentRect: .zero))
         let input = view.activeTextInput
         let origin = try XCTUnwrap(drawing.layout?.blocks.first?.tableBounds?.origin)
         XCTAssertEqual(input.convert(.zero, to: tableSurface).x,
-                       (origin.x + cell.frame.minX + cell.contentOrigin.x).rounded(), accuracy: 1)
+                       (origin.x + preparedSurface.frame(ofCell: cell).minX + cell.contentOrigin.x).rounded(), accuracy: 1)
         XCTAssertEqual(input.textContainerInset, .zero)
         XCTAssertEqual(input.textContainer.lineFragmentPadding, 0)
     }

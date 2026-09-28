@@ -100,7 +100,7 @@ final class TableIntegrationTests: XCTestCase {
         }
 
         func remoteRects(_ selection: RemoteTableCellSelection) throws -> [CGRect] {
-            try XCTUnwrap(drawing.tableCellRects(tableID: selection.tableID, sourcePositions: selection.sourcePositions))
+            try XCTUnwrap(drawing.tableCellRects(tableID: selection.tableID, sourceIndices: selection.sourceIndices))
         }
 
         func activeCellPosition() -> UInt32? {
@@ -162,7 +162,7 @@ final class TableIntegrationTests: XCTestCase {
             let remote = try XCTUnwrap(fixture.drawing.remoteTableCellSelections.first)
             XCTAssertEqual(fixture.drawing.remoteTableCellSelections.count, 1)
             XCTAssertEqual(remote.tableID, fixture.tableID)
-            XCTAssertEqual(remote.sourcePositions, [Int(first), Int(second)])
+            XCTAssertEqual(remote.sourceIndices, [Integration.gridFirst, Integration.gridSecond])
             XCTAssertEqual(rgba(remote.color), expectedPeerFill(Integration.firstPeerFill))
             let expected = try [first, second].map { position -> CGRect in
                 let cell = try fixture.presentedCell(position)
@@ -219,7 +219,7 @@ final class TableIntegrationTests: XCTestCase {
                            "the remote merge must land")
             let merged = try fixture.presentedCell(first)
             let remote = try XCTUnwrap(fixture.drawing.remoteTableCellSelections.first)
-            XCTAssertEqual(remote.sourcePositions, [Int(first)])
+            XCTAssertEqual(remote.sourceIndices, [Integration.gridFirst])
             let rects = try fixture.remoteRects(remote)
             XCTAssertEqual(rects.count, 1)
             XCTAssertEqual(try XCTUnwrap(rects.first), merged.bounds.intersection(merged.clip))
@@ -238,12 +238,12 @@ final class TableIntegrationTests: XCTestCase {
             let secondPeer = Peer(clientId: Integration.secondPeer, color: Integration.secondPeerColor,
                                   anchor: last, head: last, cellRectangle: (last, last))
             try fixture.setPeers([firstPeer, secondPeer])
-            XCTAssertEqual(fixture.drawing.remoteTableCellSelections.map(\.sourcePositions),
-                           [[Int(first)], [Int(last)]])
+            XCTAssertEqual(fixture.drawing.remoteTableCellSelections.map(\.sourceIndices),
+                           [[Integration.gridFirst], [Integration.gridLast]])
 
             try fixture.setPeers([secondPeer])
 
-            XCTAssertEqual(fixture.drawing.remoteTableCellSelections.map(\.sourcePositions), [[Int(last)]])
+            XCTAssertEqual(fixture.drawing.remoteTableCellSelections.map(\.sourceIndices), [[Integration.gridLast]])
             XCTAssertEqual(rgba(try XCTUnwrap(fixture.drawing.remoteTableCellSelections.first).color),
                            expectedPeerFill(Integration.secondPeerFill))
 
@@ -314,7 +314,7 @@ final class TableIntegrationTests: XCTestCase {
             fixture.expo.setEditorId(fixture.editorId)
             fixture.expo.layoutIfNeeded()
             let restored = try XCTUnwrap(fixture.drawing.remoteTableCellSelections.first)
-            XCTAssertEqual(restored.sourcePositions, [Int(first)])
+            XCTAssertEqual(restored.sourceIndices, [Integration.gridFirst])
             XCTAssertEqual(try fixture.remoteRects(restored).count, 1)
 
             let otherEditorId = makeV2Editor(configJson: TableInputTestSchema.tableConfig)
@@ -414,8 +414,8 @@ final class TableIntegrationTests: XCTestCase {
                              width: wideCell.bounds.maxX - laterCell.bounds.maxX, height: laterCell.bounds.height)
                 .insetBy(dx: 1, dy: 1)
             XCTAssertFalse(gap.isEmpty, "the gap sits after the last real cell of the second row")
-            let rectangle: Set<Int> = [Int(wide), Int(later)]
-            XCTAssertEqual(fixture.drawing.selectedTableCellSourcePositions[fixture.tableID], rectangle)
+            let rectangle: Set<Int> = [Integration.wideCell, Integration.laterCell]
+            XCTAssertEqual(fixture.drawing.selectedTableCellSourceIndices[fixture.tableID], rectangle)
             let selectedRects = try XCTUnwrap(fixture.drawing.selectedTableCellRects(tableID: fixture.tableID))
             XCTAssertEqual(selectedRects.count, rectangle.count)
             XCTAssertFalse(selectedRects.contains { $0.intersects(gap) }, "the gap slot is never selected")
@@ -423,7 +423,7 @@ final class TableIntegrationTests: XCTestCase {
             try fixture.setPeers([Peer(clientId: Integration.firstPeer, color: Integration.firstPeerColor,
                                        anchor: wide, head: later, cellRectangle: (wide, later))])
             let remote = try XCTUnwrap(fixture.drawing.remoteTableCellSelections.first)
-            XCTAssertEqual(remote.sourcePositions, rectangle, "presence shares the local effective rectangle")
+            XCTAssertEqual(remote.sourceIndices, rectangle, "presence shares the local effective rectangle")
             XCTAssertFalse(try fixture.remoteRects(remote).contains { $0.intersects(gap) })
 
             root.copy(nil)
@@ -457,7 +457,7 @@ final class TableIntegrationTests: XCTestCase {
             XCTAssertTrue(root.applyUpdateJSON(try XCTUnwrap(fixture.adapter.undo())))
             XCTAssertEqual(try fixture.documentObject(), beforeCut, "one undo restores the whole cut")
             XCTAssertEqual(fixture.adapter.historyFlags()?.canUndo, true, "the composition entry remains")
-            XCTAssertEqual(fixture.drawing.selectedTableCellSourcePositions[fixture.tableID], rectangle)
+            XCTAssertEqual(fixture.drawing.selectedTableCellSourceIndices[fixture.tableID], rectangle)
         }
     }
 
@@ -485,7 +485,7 @@ final class TableIntegrationTests: XCTestCase {
             XCTAssertTrue(fixture.adapter.cachedTableRecords.isEmpty, "the remote peer deleted the table")
             XCTAssertEqual(fixture.adapter.baseDocumentRevision, revision + 1, "only the remote change was applied")
             XCTAssertFalse(fixture.view.textView.authoritativeCellSelectionActive)
-            XCTAssertTrue(fixture.drawing.selectedTableCellSourcePositions.isEmpty)
+            XCTAssertTrue(fixture.drawing.selectedTableCellSourceIndices.isEmpty)
             XCTAssertFalse(fixture.surface.isCellEditMenuVisible, "the menu closes with its selection")
             XCTAssertTrue(fixture.drawing.remoteTableCellSelections.isEmpty, "the dead rectangle is removed")
             XCTAssertFalse(fixture.view.remoteSelectionOverlaySubviewsForTesting().isEmpty,

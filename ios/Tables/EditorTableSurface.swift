@@ -85,7 +85,6 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     struct RootTableCellHit: Equatable {
         let tableID: String
         let cellIndex: UInt32
-        let sourcePosition: Int
         let contentRect: CGRect
     }
 
@@ -111,7 +110,8 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         init(_ entry: Entry?, themeDigest: String) {
             guard let entry, entry.themeDigest == themeDigest, let source = entry.surface.sourceTable else { return }
             for cell in entry.surface.cells.reversed() {
-                guard let index = cell.sourceCellIndex, source.cells.indices.contains(index),
+                let index = cell.sourceIndex
+                guard source.cells.indices.contains(index),
                       Self.isPositionFree(cell.content)
                 else { continue }
                 let sourceCell = source.cells[index]
@@ -122,7 +122,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             }
         }
 
-        mutating func take(_ cell: FfiViewerTableCell, widthPixels: Int, displayScale: CGFloat) -> PreparedProseLayout? {
+        mutating func take(_ cell: TableSurfaceCell, widthPixels: Int, displayScale: CGFloat) -> PreparedProseLayout? {
             let key = Key(contentKey: cell.contentKey, header: cell.header, attributesKey: cell.attrsKey,
                           widthPixels: widthPixels, displayScaleBits: Double(displayScale).bitPattern)
             return contents[key]?.popLast()
@@ -270,6 +270,18 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             self?.selectionGeometryMayChange()
         }
         drawingView.tableAccessibilityEditing = self
+        drawingView.tableDocumentPosition = { [weak self] tableID in
+            self?.latestPresentation?.tableRecords[tableID]?.tablePos
+        }
+        drawingView.tableCellDocumentPosition = { [weak self] tableID, sourceIndex in
+            self?.cellDocumentPosition(tableID: tableID, sourceIndex: sourceIndex)
+        }
+    }
+
+    func cellDocumentPosition(tableID: String, sourceIndex: Int) -> UInt32? {
+        guard let cells = latestPresentation?.tableRecords[tableID]?.cells,
+              cells.indices.contains(sourceIndex) else { return nil }
+        return cells[sourceIndex].sourcePos
     }
 
     override var accessibilityElements: [Any]? {
@@ -318,13 +330,13 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
             drawingView.invalidateTableAccessibility()
         }
         if let drag = resizeDrag, !validResizeDrag(drag) { discardActiveDrag() }
-        if case let .drawable(tableID, sourcePositions) = selection {
-            drawingView.selectedTableCellSourcePositions = [tableID: sourcePositions]
+        if case let .drawable(tableID, sourceIndices) = selection {
+            drawingView.selectedTableCellSourceIndices = [tableID: sourceIndices]
             drawingView.selectedTableCellEndpoints = endpoints.map {
                 TableSelectionEndpoints(tableID: tableID, anchor: $0.anchor, head: $0.head)
             }
         } else {
-            drawingView.selectedTableCellSourcePositions = [:]
+            drawingView.selectedTableCellSourceIndices = [:]
             drawingView.selectedTableCellEndpoints = nil
         }
         reprepareIfNeeded(from: textView)
@@ -354,7 +366,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         drawingOffset = .zero
         drawingView.bounds.origin = .zero
         drawingView.excludedTableCellContentLayout = nil
-        drawingView.selectedTableCellSourcePositions = [:]
+        drawingView.selectedTableCellSourceIndices = [:]
         drawingView.selectedTableCellEndpoints = nil
         drawingView.install(layout: nil)
     }
@@ -366,7 +378,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     func clearCellSelection() {
         defer { selectionGeometryMayChange() }
         cancelHandleDrag()
-        drawingView.selectedTableCellSourcePositions = [:]
+        drawingView.selectedTableCellSourceIndices = [:]
         drawingView.selectedTableCellEndpoints = nil
     }
 
@@ -459,7 +471,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
               let tablePos = presentation.tableRecords[anchor.tableID]?.tablePos,
               let visible = drawingView.tableSelectionViewport(),
               let rects = clipped(drawingView.tableCellRects(tableID: anchor.tableID,
-                                                             sourcePositions: anchor.sourcePositions),
+                                                             sourceIndices: anchor.sourceIndices),
                                   to: visible)
         else { return nil }
         return TableSelectionGeometry(
@@ -474,14 +486,14 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
         )
     }
 
-    private func toolbarAnchorCells() -> (tableID: String, sourcePositions: Set<Int>)? {
-        if let selected = drawingView.selectedTableCellSourcePositions.first {
+    private func toolbarAnchorCells() -> (tableID: String, sourceIndices: Set<Int>)? {
+        if let selected = drawingView.selectedTableCellSourceIndices.first {
             return (selected.key, selected.value)
         }
         guard let activeCell,
               let presented = presentedCell(tableID: activeCell.tableID, cellIndex: activeCell.cellIndex)
         else { return nil }
-        return (activeCell.tableID, [presented.sourcePosition])
+        return (activeCell.tableID, [presented.sourceIndex])
     }
 
     private func clipped(_ rects: [CGRect]?, to visible: CGRect) -> [CGRect]? {
@@ -510,10 +522,10 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
               actionableResizeEdge(at: convert(point, to: drawingView)) == nil,
               interactionHost?.hasPendingCompositionForExternalRefresh == false,
               let endpoints = drawingView.selectedTableCellEndpoints,
-              let sourcePositions = drawingView.selectedTableCellSourcePositions[endpoints.tableID]
+              let sourceIndices = drawingView.selectedTableCellSourceIndices[endpoints.tableID]
         else { return nil }
         return TableCellDragSource(tableID: endpoints.tableID, anchor: endpoints.anchor, head: endpoints.head,
-                                   sourcePositions: sourcePositions)
+                                   sourceIndices: sourceIndices)
     }
 
     func cellDragPreview() -> UITargetedDragPreview? {
@@ -537,7 +549,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     func cellSelectionIncludes(_ target: TableCellDropTarget) -> Bool {
-        drawingView.selectedTableCellSourcePositions[target.tableID]?.contains(target.sourcePosition) == true
+        drawingView.selectedTableCellSourceIndices[target.tableID]?.contains(target.sourceIndex) == true
     }
 
     private func visibleSelectedCellRects() -> [CGRect]? {
@@ -596,14 +608,14 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
 
     func placeActiveInput(tableID: String, cellIndex: UInt32, fallback contentRect: CGRect) {
         activeCell = (tableID, cellIndex)
-        let sourceCellIndex = Int(cellIndex)
+        let sourceIndex = Int(cellIndex)
         inputCoordinator.cellInput.tableAccessibilityCell = TableAccessibilityActiveCell(
             cell: { [weak self] in
-                self?.drawingView.tableAccessibilityCell(tableID: tableID, sourceCellIndex: sourceCellIndex)
+                self?.drawingView.tableAccessibilityCell(tableID: tableID, sourceIndex: sourceIndex)
             },
             actions: { [weak self] in
                 guard let self,
-                      let cell = self.drawingView.tableAccessibilityCell(tableID: tableID, sourceCellIndex: sourceCellIndex)
+                      let cell = self.drawingView.tableAccessibilityCell(tableID: tableID, sourceIndex: sourceIndex)
                 else { return [] }
                 return TableAccessibility.customActions(for: cell, tableID: tableID, editing: self)
             }
@@ -640,50 +652,51 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     func arrowDestination(tableID: String, cellIndex: UInt32,
                           direction: TableCellArrowDirection, caret: CGPoint) -> ArrowDestination? {
         guard let presented = presentedCell(tableID: tableID, cellIndex: cellIndex),
-              let source = presented.surface.cells.first(where: { $0.sourceCellIndex == Int(cellIndex) })
+              let source = presented.surface.cells.first(where: { $0.sourceIndex == Int(cellIndex) })
         else { return nil }
-        let origin = CGPoint(x: presented.bounds.minX - source.frame.minX - drawingOffset.x,
-                             y: presented.bounds.minY - source.frame.minY - drawingOffset.y)
-        let cells = presented.surface.cells.filter { $0.sourceCellIndex != nil && $0.sourceCellIndex != Int(cellIndex) }
-        let x = min(max(caret.x - origin.x, source.frame.minX), source.frame.maxX.nextDown)
-        let y = min(max(caret.y - origin.y, source.frame.minY), source.frame.maxY.nextDown)
+        func frame(_ cell: PreparedViewerTableCell) -> CGRect { presented.surface.frame(ofCell: cell) }
+        let origin = CGPoint(x: presented.bounds.minX - frame(source).minX - drawingOffset.x,
+                             y: presented.bounds.minY - frame(source).minY - drawingOffset.y)
+        let cells = presented.surface.cells.filter { $0.sourceIndex != Int(cellIndex) }
+        let x = min(max(caret.x - origin.x, frame(source).minX), frame(source).maxX.nextDown)
+        let y = min(max(caret.y - origin.y, frame(source).minY), frame(source).maxY.nextDown)
         let candidates: [PreparedViewerTableCell]
         switch direction {
         case .left:
             candidates = cells.filter {
-                $0.frame.minY <= y && y < $0.frame.maxY
-                    && $0.frame.minX < source.frame.minX && $0.frame.maxX <= source.frame.minX
-            }.sorted { $0.frame.maxX > $1.frame.maxX }
+                frame($0).minY <= y && y < frame($0).maxY
+                    && frame($0).minX < frame(source).minX && frame($0).maxX <= frame(source).minX
+            }.sorted { frame($0).maxX > frame($1).maxX }
         case .right:
             candidates = cells.filter {
-                $0.frame.minY <= y && y < $0.frame.maxY
-                    && $0.frame.minX >= source.frame.maxX && $0.frame.maxX > source.frame.maxX
-            }.sorted { $0.frame.minX < $1.frame.minX }
+                frame($0).minY <= y && y < frame($0).maxY
+                    && frame($0).minX >= frame(source).maxX && frame($0).maxX > frame(source).maxX
+            }.sorted { frame($0).minX < frame($1).minX }
         case .up:
             candidates = cells.filter {
-                $0.frame.minX <= x && x < $0.frame.maxX
-                    && $0.frame.minY < source.frame.minY && $0.frame.maxY <= source.frame.minY
-            }.sorted { $0.frame.maxY > $1.frame.maxY }
+                frame($0).minX <= x && x < frame($0).maxX
+                    && frame($0).minY < frame(source).minY && frame($0).maxY <= frame(source).minY
+            }.sorted { frame($0).maxY > frame($1).maxY }
         case .down:
             candidates = cells.filter {
-                $0.frame.minX <= x && x < $0.frame.maxX
-                    && $0.frame.minY >= source.frame.maxY && $0.frame.maxY > source.frame.maxY
-            }.sorted { $0.frame.minY < $1.frame.minY }
+                frame($0).minX <= x && x < frame($0).maxX
+                    && frame($0).minY >= frame(source).maxY && frame($0).maxY > frame(source).maxY
+            }.sorted { frame($0).minY < frame($1).minY }
         }
-        if let index = candidates.first?.sourceCellIndex {
+        if let index = candidates.first?.sourceIndex {
             return .cell(UInt32(index))
         }
         if direction == .left || direction == .right {
             let forward = (direction == .right) != (presented.surface.direction == .rightToLeft)
             let nextIndex = Int(cellIndex) + (forward ? 1 : -1)
-            if presented.surface.cells.contains(where: { $0.sourceCellIndex == nextIndex }) {
+            if presented.surface.cells.contains(where: { $0.sourceIndex == nextIndex }) {
                 return .cell(UInt32(nextIndex))
             }
             return .surroundingProse
         }
         let outerEdge = direction == .up
-            ? source.frame.minY == presented.surface.bounds.minY
-            : source.frame.maxY == presented.surface.bounds.maxY
+            ? frame(source).minY == presented.surface.bounds.minY
+            : frame(source).maxY == presented.surface.bounds.maxY
         return outerEdge ? .surroundingProse : .blocked
     }
 
@@ -727,13 +740,12 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     func cellHit(at point: CGPoint) -> RootTableCellHit? {
         let contentPoint = CGPoint(x: point.x + drawingOffset.x, y: point.y + drawingOffset.y)
         guard let presented = drawingView.mountedTablePresentation()?.cells.last(where: {
-            $0.cell.sourceCellIndex != nil && $0.clip.contains(contentPoint) && $0.bounds.contains(contentPoint)
-        }), let sourceCellIndex = presented.cell.sourceCellIndex else { return nil }
+            $0.surface.sourceTable != nil && $0.clip.contains(contentPoint) && $0.bounds.contains(contentPoint)
+        }) else { return nil }
         let inset = presented.surface.style.cellPadding + presented.surface.style.borderWidth
         return RootTableCellHit(
             tableID: presented.surface.identity,
-            cellIndex: UInt32(sourceCellIndex),
-            sourcePosition: presented.sourcePosition,
+            cellIndex: UInt32(presented.sourceIndex),
             contentRect: presented.bounds.offsetBy(dx: -drawingOffset.x, dy: -drawingOffset.y)
                 .insetBy(dx: inset, dy: inset)
         )
@@ -1369,7 +1381,7 @@ final class EditorTableSurface: UIView, UIGestureRecognizerDelegate {
     }
 
     private func presentedCell(tableID: String, cellIndex: UInt32) -> ViewerTablePresentedCell? {
-        drawingView.presentedTableCell(tableID: tableID, sourceCellIndex: Int(cellIndex))
+        drawingView.presentedTableCell(tableID: tableID, sourceIndex: Int(cellIndex))
     }
 
     private func placeInput(in presented: ViewerTablePresentedCell?, fallback: CGRect) {
@@ -1438,9 +1450,9 @@ extension EditorTableSurface: TableAccessibilityEditing {
 
     private func ownsAccessibilitySelection(_ cell: TableAccessibilityCell, tableID: String) -> Bool {
         if let activeCell {
-            return activeCell.tableID == tableID && Int(activeCell.cellIndex) == cell.sourceCellIndex
+            return activeCell.tableID == tableID && Int(activeCell.cellIndex) == cell.sourceIndex
         }
-        return drawingView.selectedTableCellSourcePositions[tableID]?.contains(cell.sourcePosition) == true
+        return drawingView.selectedTableCellSourceIndices[tableID]?.contains(cell.sourceIndex) == true
     }
 
     func tableAccessibilityActions(for cell: TableAccessibilityCell, tableID: String) -> [TableAccessibilityAction] {
@@ -1462,7 +1474,7 @@ extension EditorTableSurface: TableAccessibilityEditing {
 
     func activateTableAccessibilityCell(_ cell: TableAccessibilityCell, tableID: String) -> Bool {
         guard let host = interactionHost,
-              let index = UInt32(exactly: cell.sourceCellIndex),
+              let index = UInt32(exactly: cell.sourceIndex),
               let presented = presentedCell(tableID: tableID, cellIndex: index)
         else { return false }
         let visible = presented.bounds.intersection(presented.clip)
@@ -1476,7 +1488,7 @@ extension EditorTableSurface: TableAccessibilityEditing {
     func activeTableAccessibilityElement(for cell: TableAccessibilityCell, tableID: String) -> TableCellInputTextView? {
         let input = inputCoordinator.cellInput
         guard let activeCell, activeCell.tableID == tableID,
-              Int(activeCell.cellIndex) == cell.sourceCellIndex, !input.isHidden
+              Int(activeCell.cellIndex) == cell.sourceIndex, !input.isHidden
         else { return nil }
         return input
     }

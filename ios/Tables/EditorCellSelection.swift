@@ -1,11 +1,12 @@
 import Foundation
 
 enum EditorCellSelection: Equatable {
-    case drawable(tableID: String, sourcePositions: Set<Int>)
+    case drawable(tableID: String, sourceIndices: Set<Int>)
     case unavailable(tableID: String)
 
     private struct Cell {
-        let sourcePosition: UInt32
+        let sourceIndex: Int
+        let documentPosition: UInt32
         let top: UInt32
         let left: UInt32
         let bottom: UInt32
@@ -55,7 +56,7 @@ enum EditorCellSelection: Equatable {
                   let rawCells = record["cells"] as? [[String: Any]]
             else { continue }
             var cells: [Cell] = []
-            for raw in rawCells {
+            for (index, raw) in rawCells.enumerated() {
                 guard let source = EditorV2Adapter.uint32Field(raw, "sourcePos"),
                       let row = EditorV2Adapter.uint32Field(raw, "row"),
                       let column = EditorV2Adapter.uint32Field(raw, "column"),
@@ -66,13 +67,13 @@ enum EditorCellSelection: Equatable {
                       rowspan <= rows - row, colspan <= columns - column,
                       tableStart < source, source < tableEnd
                 else { return nil }
-                cells.append(Cell(sourcePosition: source, top: row, left: column,
+                cells.append(Cell(sourceIndex: index, documentPosition: source, top: row, left: column,
                                   bottom: row + rowspan, right: column + colspan))
             }
-            guard cells.filter({ $0.sourcePosition == anchor }).count == 1,
-                  cells.filter({ $0.sourcePosition == head }).count == 1,
-                  let first = cells.first(where: { $0.sourcePosition == anchor }),
-                  let last = cells.first(where: { $0.sourcePosition == head })
+            guard cells.filter({ $0.documentPosition == anchor }).count == 1,
+                  cells.filter({ $0.documentPosition == head }).count == 1,
+                  let first = cells.first(where: { $0.documentPosition == anchor }),
+                  let last = cells.first(where: { $0.documentPosition == head })
             else { continue }
             var bounds = Bounds(top: min(first.top, last.top), left: min(first.left, last.left),
                                 bottom: max(first.bottom, last.bottom), right: max(first.right, last.right))
@@ -81,7 +82,7 @@ enum EditorCellSelection: Equatable {
                 for cell in cells where cell.intersects(previous) { bounds.include(cell) }
                 if bounds == previous { break }
             }
-            drawable.append(.drawable(tableID: tableID, sourcePositions: Set(cells.filter { $0.intersects(bounds) }.map { Int($0.sourcePosition) })))
+            drawable.append(.drawable(tableID: tableID, sourceIndices: Set(cells.filter { $0.intersects(bounds) }.map { $0.sourceIndex })))
         }
         if drawable.count == 1 { return drawable[0] }
         if !drawable.isEmpty { return nil }

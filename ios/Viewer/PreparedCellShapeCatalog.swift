@@ -233,31 +233,18 @@ private extension PreparedProseLayout {
 
 private extension ViewerTableSurface {
     func sourceNeutralized() -> ViewerTableSurface {
-        let localSourcePositions = Dictionary(uniqueKeysWithValues: cells.enumerated().map { ($0.element.sourcePosition, $0.offset) })
-        let localLayout = TableLayoutResult(
-            columnWidths: layout.columnWidths,
-            rowOffsets: layout.rowOffsets,
-            rectangles: Dictionary(uniqueKeysWithValues: layout.rectangles.compactMap { sourcePosition, rect in
-                localSourcePositions[sourcePosition].map { ($0, rect) }
-            }),
-            sourceOrder: layout.sourceOrder.compactMap { localSourcePositions[$0] },
-            contentSize: layout.contentSize,
-            failure: layout.failure,
-            compatibilityDiagnostic: layout.compatibilityDiagnostic
-        )
         return ViewerTableSurface(
             identity: "cell-table",
             hostViewportWidth: hostViewportWidth,
             style: style,
             direction: direction,
-            layout: localLayout,
-            cells: cells.enumerated().map { index, cell in
+            layout: layout,
+            cells: cells.map { cell in
                 PreparedViewerTableCell(
-                    sourcePosition: index,
-                    frame: cell.frame,
+                    sourceIndex: cell.sourceIndex,
+                    row: cell.row, column: cell.column, rowspan: cell.rowspan, colspan: cell.colspan,
                     contentOrigin: cell.contentOrigin,
                     content: cell.content.cellShape?.localLayout ?? cell.content.sourceNeutralized(),
-                    sourceCellIndex: nil,
                     isHeader: cell.isHeader,
                     attributesKey: nil
                 )
@@ -292,8 +279,8 @@ func preparedCellShapeKey(
                 }
             }
             guard let table = block.table else { continue }
-            for cell in table.cells {
-                if let child = try? current.cellDocument(for: cell) { append(child) }
+            for cell in TableSurfaceSource(viewerTable: table).cells {
+                if let child = try? current.cellDocument(for: cell, in: "t\(table.tablePos)") { append(child) }
             }
         }
     }

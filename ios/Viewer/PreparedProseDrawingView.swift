@@ -23,13 +23,13 @@ struct TableSelectionEndpoints: Equatable {
 
 struct RemoteTableCellSelection: Equatable {
     let tableID: String
-    let sourcePositions: Set<Int>
+    let sourceIndices: Set<Int>
     let color: UIColor
 }
 
 struct TableCellDropTarget: Equatable {
     let tableID: String
-    let sourcePosition: Int
+    let sourceIndex: Int
 }
 
 struct TableResizeEdge: Equatable {
@@ -164,9 +164,9 @@ public final class PreparedProseDrawingView: UIView {
             if oldValue !== excludedTableCellContentLayout { setNeedsDisplay() }
         }
     }
-    var selectedTableCellSourcePositions: [String: Set<Int>] = [:] {
+    var selectedTableCellSourceIndices: [String: Set<Int>] = [:] {
         didSet {
-            if selectedTableCellSourcePositions != oldValue { setNeedsDisplay() }
+            if selectedTableCellSourceIndices != oldValue { setNeedsDisplay() }
         }
     }
     var selectedTableCellEndpoints: TableSelectionEndpoints? {
@@ -317,9 +317,9 @@ public final class PreparedProseDrawingView: UIView {
         presentationSnapshot()
     }
 
-    func presentedTableCell(tableID: String, sourceCellIndex: Int) -> ViewerTablePresentedCell? {
+    func presentedTableCell(tableID: String, sourceIndex: Int) -> ViewerTablePresentedCell? {
         guard let table = presentationSnapshot()?.tables.first(where: { $0.surface.identity == tableID }),
-              let cell = table.surface.cell(sourceCellIndex: sourceCellIndex)
+              let cell = table.surface.cell(sourceIndex: sourceIndex)
         else { return nil }
         return ViewerTablePresentation.present(cell, in: table, owner: tablePresentationOwner)
     }
@@ -329,53 +329,57 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     func selectedTableCellRects(tableID: String) -> [CGRect]? {
-        tableCellRects(tableID: tableID, sourcePositions: selectedTableCellSourcePositions[tableID] ?? [])
+        tableCellRects(tableID: tableID, sourceIndices: selectedTableCellSourceIndices[tableID] ?? [])
     }
 
-    func tableCellRects(tableID: String, sourcePositions: Set<Int>) -> [CGRect]? {
+    func tableCellRects(tableID: String, sourceIndices: Set<Int>) -> [CGRect]? {
         guard let snapshot = presentationSnapshot(),
               snapshot.tables.contains(where: { $0.surface.identity == tableID })
         else { return nil }
-        return snapshot.cells.filter { $0.surface.identity == tableID && isRealTableCell($0, in: sourcePositions) }
+        return snapshot.cells.filter { $0.surface.identity == tableID && isRealTableCell($0, in: sourceIndices) }
             .map { $0.bounds.intersection($0.clip) }
             .filter { !$0.isNull && !$0.isEmpty }
     }
 
     private func isSelectedTableCell(_ cell: ViewerTablePresentedCell) -> Bool {
-        isRealTableCell(cell, in: selectedTableCellSourcePositions[cell.surface.identity] ?? [])
+        isRealTableCell(cell, in: selectedTableCellSourceIndices[cell.surface.identity] ?? [])
     }
 
-    private func isRealTableCell(_ cell: ViewerTablePresentedCell, in sourcePositions: Set<Int>) -> Bool {
-        cell.cell.sourceCellIndex != nil && sourcePositions.contains(cell.sourcePosition)
+    private func isRealTableCell(_ cell: ViewerTablePresentedCell, in sourceIndices: Set<Int>) -> Bool {
+        cell.surface.sourceTable != nil && sourceIndices.contains(cell.sourceIndex)
     }
 
     func selectionHandles(visibleIn requestedViewport: CGRect? = nil) -> [TableSelectionHandle] {
         guard let snapshot = presentationSnapshot(),
               let endpoints = selectedTableCellEndpoints,
               let table = snapshot.tables.first(where: { $0.surface.identity == endpoints.tableID }),
-              let selectedPositions = selectedTableCellSourcePositions[endpoints.tableID],
+              let selectedPositions = selectedTableCellSourceIndices[endpoints.tableID],
               let visible = configuredVisibleRect()?.intersection(requestedViewport ?? .infinite),
               !visible.isNull, !visible.isEmpty
         else { return [] }
         let cells = snapshot.cells.filter {
-            $0.surface === table.surface && $0.cell.sourceCellIndex != nil
-                && selectedPositions.contains($0.sourcePosition)
+            $0.surface === table.surface && $0.surface.sourceTable != nil
+                && selectedPositions.contains($0.sourceIndex)
         }
-        let selected = selectedPositions.compactMap { table.surface.cell(sourcePosition: $0) }
-            .filter { $0.sourceCellIndex != nil }
-        guard selected.contains(where: { $0.sourcePosition == Int(endpoints.anchor) }),
-              selected.contains(where: { $0.sourcePosition == Int(endpoints.head) }),
+        let selected = selectedPositions.compactMap { table.surface.cell(sourceIndex: $0) }
+            .filter { _ in table.surface.sourceTable != nil }
+        guard selected.contains(where: { tableCellDocumentPosition?(endpoints.tableID, $0.sourceIndex) == endpoints.anchor }),
+              selected.contains(where: { tableCellDocumentPosition?(endpoints.tableID, $0.sourceIndex) == endpoints.head }),
               let firstCell = selected.min(by: { lhs, rhs in
-                  if lhs.frame.minY != rhs.frame.minY { return lhs.frame.minY < rhs.frame.minY }
-                  let left = table.surface.direction == .rightToLeft ? -lhs.frame.maxX : lhs.frame.minX
-                  let right = table.surface.direction == .rightToLeft ? -rhs.frame.maxX : rhs.frame.minX
-                  return left == right ? lhs.sourcePosition < rhs.sourcePosition : left < right
+                  let lhsFrame = table.surface.frame(ofCell: lhs)
+                  let rhsFrame = table.surface.frame(ofCell: rhs)
+                  if lhsFrame.minY != rhsFrame.minY { return lhsFrame.minY < rhsFrame.minY }
+                  let left = table.surface.direction == .rightToLeft ? -lhsFrame.maxX : lhsFrame.minX
+                  let right = table.surface.direction == .rightToLeft ? -rhsFrame.maxX : rhsFrame.minX
+                  return left == right ? lhs.sourceIndex < rhs.sourceIndex : left < right
               }),
               let lastCell = selected.max(by: { lhs, rhs in
-                  if lhs.frame.maxY != rhs.frame.maxY { return lhs.frame.maxY < rhs.frame.maxY }
-                  let left = table.surface.direction == .rightToLeft ? -lhs.frame.minX : lhs.frame.maxX
-                  let right = table.surface.direction == .rightToLeft ? -rhs.frame.minX : rhs.frame.maxX
-                  return left == right ? lhs.sourcePosition < rhs.sourcePosition : left < right
+                  let lhsFrame = table.surface.frame(ofCell: lhs)
+                  let rhsFrame = table.surface.frame(ofCell: rhs)
+                  if lhsFrame.maxY != rhsFrame.maxY { return lhsFrame.maxY < rhsFrame.maxY }
+                  let left = table.surface.direction == .rightToLeft ? -lhsFrame.minX : lhsFrame.maxX
+                  let right = table.surface.direction == .rightToLeft ? -rhsFrame.minX : rhsFrame.maxX
+                  return left == right ? lhs.sourceIndex < rhs.sourceIndex : left < right
               })
         else { return [] }
         let first = ViewerTablePresentation.present(firstCell, in: table, owner: tablePresentationOwner)
@@ -423,9 +427,9 @@ public final class PreparedProseDrawingView: UIView {
               let table = snapshot.tables.first(where: { $0.surface.identity == tableID })
         else { return nil }
         return snapshot.cells.first(where: {
-            $0.surface === table.surface && $0.cell.sourceCellIndex != nil
+            $0.surface === table.surface && $0.surface.sourceTable != nil
                 && $0.bounds.contains(point) && $0.clip.contains(point)
-        }).flatMap { UInt32(exactly: $0.sourcePosition) }
+        }).flatMap { tableCellDocumentPosition?(tableID, $0.sourceIndex) }
     }
 
     func tableLogicalOffset(for identity: String) -> CGFloat {
@@ -471,7 +475,8 @@ public final class PreparedProseDrawingView: UIView {
             let selectedColumns = selectedWholeColumns(tableID: table.surface.identity, in: sourceTable)
             let rightToLeft = table.surface.direction == .rightToLeft
             for cell in snapshot.cells where cell.surface === table.surface {
-                guard let index = cell.cell.sourceCellIndex, index < sourceCells.count,
+                let index = cell.cell.sourceIndex
+                guard index < sourceCells.count,
                       cell.bounds.minY <= point.y, point.y < cell.bounds.maxY
                 else { continue }
                 let source = sourceCells[index]
@@ -503,15 +508,15 @@ public final class PreparedProseDrawingView: UIView {
         return best?.hit
     }
 
-    private func selectedWholeColumns(tableID: String, in table: FfiViewerTable) -> Range<Int> {
+    private func selectedWholeColumns(tableID: String, in table: TableSurfaceSource) -> Range<Int> {
         guard let endpoints = selectedTableCellEndpoints, endpoints.tableID == tableID,
-              let positions = selectedTableCellSourcePositions[tableID],
-              let anchor = table.cells.first(where: { $0.sourcePos == endpoints.anchor }),
-              let head = table.cells.first(where: { $0.sourcePos == endpoints.head }),
+              let positions = selectedTableCellSourceIndices[tableID],
+              let anchor = table.cells.first(where: { tableCellDocumentPosition?(tableID, $0.sourceIndex) == endpoints.anchor }),
+              let head = table.cells.first(where: { tableCellDocumentPosition?(tableID, $0.sourceIndex) == endpoints.head }),
               min(anchor.row, head.row) == 0,
               max(anchor.row + anchor.rowspan, head.row + head.rowspan) == table.rows
         else { return 0..<0 }
-        let selected = table.cells.filter { positions.contains(Int($0.sourcePos)) }
+        let selected = table.cells.filter { positions.contains($0.sourceIndex) }
         guard let left = selected.map(\.column).min(),
               let right = selected.map({ $0.column + $0.colspan }).max()
         else { return 0..<0 }
@@ -668,6 +673,8 @@ public final class PreparedProseDrawingView: UIView {
     private var accessibilityAnnouncementScheduled = false
     var accessibilityFocusProbe: (NSObject) -> Bool = { $0.accessibilityElementIsFocused() }
     var onAccessibilityLayoutChangedForTesting: ((Any?) -> Void)?
+    var tableDocumentPosition: ((String) -> UInt32?)?
+    var tableCellDocumentPosition: ((String, Int) -> UInt32?)?
     weak var tableAccessibilityEditing: TableAccessibilityEditing?
     weak var accessibilityRevealScrollView: UIScrollView?
     internal var materializedAccessibilityElementCountForTesting: Int { accessibilityElementsByIndex.count }
@@ -954,7 +961,8 @@ public final class PreparedProseDrawingView: UIView {
             items = TableAccessibility.items(
                 root: layout, rootNodes: readableAccessibilityNodes(snapshot.accessibilityNodes).filter { $0.layout === layout },
                 linksEnabled: linkInteractionsEnabled,
-                detachedFrames: tableAccessibilityEditing?.detachedTableAccessibilityFrames() ?? []
+                detachedFrames: tableAccessibilityEditing?.detachedTableAccessibilityFrames() ?? [],
+                tableDocumentPosition: tableDocumentPosition
             )
         }
         accessibilityItemsCache = (accessibilityPresentationGeneration, items)
@@ -966,12 +974,12 @@ public final class PreparedProseDrawingView: UIView {
         invalidateAccessibilityNodes()
     }
 
-    func tableAccessibilityCell(tableID: String, sourceCellIndex: Int) -> TableAccessibilityCell? {
+    func tableAccessibilityCell(tableID: String, sourceIndex: Int) -> TableAccessibilityCell? {
         accessibilityItems.lazy.compactMap { item -> TableAccessibilityCell? in
             guard case let .table(table) = item, table.identity == tableID,
-                  let cell = table.surface.cell(sourceCellIndex: sourceCellIndex)
+                  let cell = table.surface.cell(sourceIndex: sourceIndex)
             else { return nil }
-            return table.cellIndex(sourcePosition: cell.sourcePosition).map { table.cells[$0] }
+            return table.cellIndex(sourceIndex: cell.sourceIndex).map { table.cells[$0] }
         }.first
     }
 
@@ -1016,7 +1024,7 @@ public final class PreparedProseDrawingView: UIView {
         revealInEnclosingScrollView(revealed.bounds)
         let element = (0..<accessibilityElementCount()).lazy.compactMap { index in
             (self.accessibilityElement(at: index) as? TableAccessibilityTableElement)
-                .flatMap { $0.table.identity == surface.identity ? $0.cellElement(sourcePosition: cell.sourcePosition) : nil }
+                .flatMap { $0.table.identity == surface.identity ? $0.cellElement(sourceIndex: cell.sourceIndex) : nil }
         }.first
         UIAccessibility.post(notification: .layoutChanged, argument: element)
     }
@@ -1149,7 +1157,7 @@ public final class PreparedProseDrawingView: UIView {
         drawHierarchicalBackgrounds(snapshot, mountedLayoutIDs: mountedLayoutIDs, excludedLayoutID: excludedLayoutID, dirtyRect: rect, context: context)
         for remote in remoteTableCellSelections {
             for cell in snapshot.mountedCells
-            where cell.surface.identity == remote.tableID && isRealTableCell(cell, in: remote.sourcePositions) {
+            where cell.surface.identity == remote.tableID && isRealTableCell(cell, in: remote.sourceIndices) {
                 fillTableCell(cell, color: remote.color, context: context)
             }
         }
@@ -1158,7 +1166,7 @@ public final class PreparedProseDrawingView: UIView {
         }
         if let target = tableCellDropTarget {
             for cell in snapshot.mountedCells
-            where cell.surface.identity == target.tableID && isRealTableCell(cell, in: [target.sourcePosition]) {
+            where cell.surface.identity == target.tableID && isRealTableCell(cell, in: [target.sourceIndex]) {
                 fillTableCell(cell, color: cell.surface.style.selectionColor, context: context)
             }
         }
@@ -1297,7 +1305,7 @@ public final class PreparedProseDrawingView: UIView {
     }
 
     private func drawTableChromeBorder(_ cell: ViewerTablePresentedCell, context: CGContext) {
-        onTableChromeDrawnForTesting?(cell.sourcePosition)
+        onTableChromeDrawnForTesting?(cell.sourceIndex)
         context.saveGState()
         context.clip(to: flipped(cell.clip))
         let rect = flipped(cell.bounds).insetBy(dx: cell.surface.style.borderWidth / 2, dy: cell.surface.style.borderWidth / 2)

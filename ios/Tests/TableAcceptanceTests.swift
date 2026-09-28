@@ -109,7 +109,11 @@ final class TableAcceptanceTests: XCTestCase {
         }
 
         func selectedCells() throws -> Set<Int> {
-            try drawing.selectedTableCellSourcePositions[try tableID] ?? []
+            let drawing = try self.drawing
+            let tableID = try self.tableID
+            return Set((drawing.selectedTableCellSourceIndices[tableID] ?? []).compactMap { index in
+                drawing.tableCellDocumentPosition?(tableID, index).map(Int.init)
+            })
         }
 
         func presentedCell(_ position: UInt32) throws -> ViewerTablePresentedCell {
@@ -212,7 +216,8 @@ final class TableAcceptanceTests: XCTestCase {
         }
 
         private func cellElement(_ position: UInt32) throws -> TableAccessibilityCellElement {
-            try XCTUnwrap(try tableElement().allCellElements.first { $0.cell.sourcePosition == Int(position) },
+            let drawing = try self.drawing
+            return try XCTUnwrap(try tableElement().allCellElements.first { drawing.tableCellDocumentPosition?($0.cell.surface.identity, $0.cell.sourceIndex) == position },
                           "cell \(position) has no accessibility element")
         }
 
@@ -680,12 +685,12 @@ final class TableAcceptanceTests: XCTestCase {
     }
 
     private func tableGeometry(_ drawing: PreparedProseDrawingView) throws -> [CellGeometry] {
-        let cells = try XCTUnwrap(drawing.mountedTablePresentation()?.cells.filter { $0.cell.sourceCellIndex != nil })
-            .sorted { $0.sourcePosition < $1.sourcePosition }
+        let cells = try XCTUnwrap(drawing.mountedTablePresentation()?.cells.filter { $0.surface.sourceTable != nil })
+            .sorted { $0.sourceIndex < $1.sourceIndex }
         let originX = try XCTUnwrap(cells.map(\.bounds.minX).min())
         let originY = try XCTUnwrap(cells.map(\.bounds.minY).min())
         return cells.map { cell in
-            CellGeometry(position: cell.sourcePosition, edges: [
+            CellGeometry(position: cell.sourceIndex, edges: [
                 cell.bounds.minX - originX, cell.bounds.minY - originY, cell.bounds.width, cell.bounds.height
             ])
         }

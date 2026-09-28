@@ -638,9 +638,9 @@ struct ViewerDocument {
         }
     }
 
-    func cellDocument(for cell: FfiViewerTableCell) throws -> ViewerDocument {
+    func cellDocument(for cell: TableSurfaceCell, in tableID: String) throws -> ViewerDocument {
         ViewerDocument(
-            semanticKey: "\(semanticKey):\(cell.sourcePos):\(cell.contentKey)",
+            semanticKey: "\(semanticKey):\(tableID):\(cell.sourceIndex):\(cell.contentKey)",
             blocks: try Self.lowerElements(
                 cell.elements,
                 preferredTextBlockName: preferredTextBlockName,
