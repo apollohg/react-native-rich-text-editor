@@ -553,6 +553,72 @@ internal class EditorTableSurfaceMountTest {
         assertEquals(GRID_CELLS, after.cells.count { next -> before.cells.any { it.content === next.content } })
     }
 
+    private fun recordTableDrawing(view: RichTextEditorView): PreparedProseDrawingView {
+        val drawing = requireNotNull(drawing(view))
+        val node = android.graphics.RenderNode("table-test-host")
+        val canvas = node.beginRecording(drawing.width, drawing.height)
+        try { drawing.draw(canvas) } finally { node.endRecording(); node.discardDisplayList() }
+        return drawing
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `non wrapping typing records only the bound cell node`() = withMountedView(gridDocument) { view, _, _ ->
+        tapFirstCell(view)
+        val input = view.activeTextInput
+        input.setSelection(input.text.length)
+        val drawing = recordTableDrawing(view)
+        val before = drawing.nodeRecordsForTesting.toMap()
+        assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText(TYPED, 1))
+        measure(view, TABLE_HOST_WIDTH)
+        recordTableDrawing(view)
+        for (name in listOf("above", "boundRow", "below")) assertEquals(name, before[name], drawing.nodeRecordsForTesting[name])
+        assertEquals(before.getValue("boundCell") + 1, drawing.nodeRecordsForTesting["boundCell"])
+        requireNotNull(drawing.belowNode).discardDisplayList()
+        recordTableDrawing(view)
+        assertTrue(requireNotNull(drawing.belowNode).hasDisplayList())
+        assertEquals("a discarded display list is restored", before.getValue("below") + 1,
+            drawing.nodeRecordsForTesting["below"])
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `wrapping typing records the bound row and translates the below node`() = withMountedView(gridDocument) { view, _, _ ->
+        tapFirstCell(view)
+        val input = view.activeTextInput
+        input.setSelection(input.text.length)
+        val drawing = recordTableDrawing(view)
+        val before = drawing.nodeRecordsForTesting.toMap()
+        val translation = requireNotNull(drawing.belowNode).translationY
+        assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText(" wrapping text".repeat(GRID_ROWS), 1))
+        measure(view, TABLE_HOST_WIDTH)
+        recordTableDrawing(view)
+        for (name in listOf("above", "below")) assertEquals(name, before[name], drawing.nodeRecordsForTesting[name])
+        assertEquals(before.getValue("boundRow") + 1, drawing.nodeRecordsForTesting["boundRow"])
+        assertTrue(requireNotNull(drawing.belowNode).translationY > translation)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `unbound table window records one node and releases it on clear`() = withMountedView(gridDocument) { view, _, _ ->
+        val drawing = recordTableDrawing(view)
+        val nodes = listOf(drawing.aboveNode, drawing.boundRowNode, drawing.boundCellNode, drawing.belowNode)
+        assertEquals(1, nodes.count { it?.hasDisplayList() == true })
+        assertEquals(1, drawing.nodeRecordsForTesting.values.sum())
+        drawing.install(null)
+        assertTrue(nodes.all { it?.hasDisplayList() == false })
+    }
+
+    @Test
+    @Config(sdk = [24, 28])
+    fun `pre Q table drawing uses the software path without render nodes`() = withMountedView(gridDocument) { view, _, _ ->
+        val drawing = requireNotNull(drawing(view))
+        val bitmap = android.graphics.Bitmap.createBitmap(TABLE_HOST_WIDTH, view.height, android.graphics.Bitmap.Config.ARGB_8888)
+        try { drawing.draw(android.graphics.Canvas(bitmap)) } finally { bitmap.recycle() }
+        assertNull(drawing.aboveNode)
+        assertTrue(drawing.nodeRecordsForTesting.isEmpty())
+    }
+
     @Test
     fun `identical cells shape once when the table reflows`() = withMountedView(gridDocument) { view, _, _ ->
         measure(view, TABLE_HOST_WIDTH)

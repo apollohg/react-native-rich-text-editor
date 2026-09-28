@@ -85,6 +85,14 @@ class NativeTableHostTest {
                 assertTrue(drawing.accessibilityNodeProvider.performAction(nodeId, AccessibilityNodeInfo.ACTION_CLICK, null))
             }
             instrumentation.waitForIdleSync()
+            var retainedNodeRecords = emptyMap<String, Int>()
+            scenario.onActivity { activity ->
+                val drawing = tableHosts(activity.richTextView).single()
+                val probe = android.graphics.RenderNode("typing-probe")
+                val canvas = probe.beginRecording(drawing.width, drawing.height)
+                try { drawing.draw(canvas) } finally { probe.endRecording(); probe.discardDisplayList() }
+                retainedNodeRecords = drawing.nodeRecordsForTesting.toMap()
+            }
             repeat(PlainTableFixture.TYPING_PROBE_CHARACTERS) { keystroke ->
                 scenario.onActivity { activity ->
                     val view = activity.richTextView
@@ -100,6 +108,18 @@ class NativeTableHostTest {
                     }
                 }
                 instrumentation.waitForIdleSync()
+            }
+            scenario.onActivity { activity ->
+                val drawing = tableHosts(activity.richTextView).single()
+                val probe = android.graphics.RenderNode("typing-probe")
+                val canvas = probe.beginRecording(drawing.width, drawing.height)
+                try { drawing.draw(canvas) } finally { probe.endRecording(); probe.discardDisplayList() }
+                for (name in listOf("above", "below")) {
+                    assertEquals("$name is retained over ${PlainTableFixture.TYPING_PROBE_CHARACTERS} keystrokes",
+                        retainedNodeRecords[name], drawing.nodeRecordsForTesting[name])
+                }
+                assertTrue("the bound node actually recorded typing",
+                    drawing.nodeRecordsForTesting.getValue("boundCell") > retainedNodeRecords.getValue("boundCell"))
             }
             instrumentation.saveDeviceScreenshot("native-table-large-scrolled.png")
         }

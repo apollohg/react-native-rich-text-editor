@@ -2,6 +2,7 @@ package com.apollohg.editor.viewer
 
 import android.content.Context
 import android.content.res.Configuration
+import android.graphics.RenderNode
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
@@ -72,6 +73,27 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     private val accessibilityManager = context.getSystemService(AccessibilityManager::class.java)
     var preparedLayout: PreparedProseLayout? = null
         private set
+    internal var usesEditAnchoredNodes = false
+    internal var tableNodeRevision: ULong? = null
+    internal var tableNodeChanges: com.apollohg.editor.tables.TableFrameChanges? = null
+    internal var tableNodeAppearance = ""
+    internal val aboveNode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) RenderNode(NODE_ABOVE) else null
+    internal val boundRowNode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) RenderNode(NODE_BOUND_ROW) else null
+    internal val boundCellNode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) RenderNode(NODE_BOUND_CELL) else null
+    internal val belowNode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) RenderNode(NODE_BELOW) else null
+    internal val nodeRecordsForTesting = mutableMapOf<String, Int>()
+    private data class TableNodeState(val cell: Pair<String, Int>?, val window: Rect, val frame: RectF,
+        val row: RectF, val rowOffsets: List<Float>, val revision: ULong?, val appearance: String)
+    private var tableNodeState: TableNodeState? = null
+    private val tableNodes get() = listOfNotNull(aboveNode, boundRowNode, boundCellNode, belowNode)
+
+    private fun clearTableNodes() {
+        tableNodeState = null
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            tableNodes.forEach { it.discardDisplayList(); it.translationY = 0f }
+        }
+    }
+
     var onCodeHighlightsReady: (() -> Unit)? = null
     private val codeHighlighting = ViewerCodeHighlighting(this)
     var onUsableMetricsChanged: (() -> Unit)? = null
@@ -90,36 +112,42 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         set(value) {
             if (field == value) return
             field = value
+            tableNodeState = null
             invalidate()
         }
     internal var selectedTableCellSourceIndices: Map<String, Set<Int>> = emptyMap()
         set(value) {
             if (field == value) return
             field = value
+            tableNodeState = null
             invalidate()
         }
     internal var selectedTableCellEndpoints: Triple<String, Int, Int>? = null
         set(value) {
             if (field == value) return
             field = value
+            tableNodeState = null
             invalidate()
         }
     internal var remoteTableCellSelections: List<RemoteTableCellSelection> = emptyList()
         set(value) {
             if (field == value) return
             field = value
+            tableNodeState = null
             invalidate()
         }
     internal var activeTableResizeEdge: TableResizeEdge? = null
         set(value) {
             if (field == value) return
             field = value
+            tableNodeState = null
             invalidate()
         }
     internal var tableCellDropTarget: TableCellDropTarget? = null
         set(value) {
             if (field == value) return
             field = value
+            tableNodeState = null
             invalidate()
         }
     private var tablePresentationOwner = ViewerTablePresentationOwner()
@@ -205,6 +233,10 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     internal companion object {
+        private const val NODE_ABOVE = "above"
+        private const val NODE_BOUND_ROW = "boundRow"
+        private const val NODE_BOUND_CELL = "boundCell"
+        private const val NODE_BELOW = "below"
         private const val HANDLE_RADIUS_DP = 8f
         private const val HANDLE_INSET_DP = 8f
         private const val HANDLE_HIT_SIZE_DP = 48f
@@ -235,6 +267,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     fun putImageLease(id: String, lease: DecodedBitmapLease) {
         synchronized(imagePixelsLock) { imagePixels.put(id, lease) }?.close()
+        tableNodeState = null
         reportRetainedImagePixels()
         postInvalidate()
     }
@@ -243,6 +276,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         val released = synchronized(imagePixelsLock) { ids.mapNotNull(imagePixels::remove) }
         if (released.isEmpty()) return
         released.forEach(DecodedBitmapLease::close)
+        tableNodeState = null
         reportRetainedImagePixels()
         postInvalidate()
     }
@@ -253,6 +287,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         }
         if (released.isEmpty()) return
         released.forEach(DecodedBitmapLease::close)
+        tableNodeState = null
         reportRetainedImagePixels()
         postInvalidate()
     }
@@ -266,13 +301,14 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     internal val tablePresentationRetainedBytesForTesting: Long
-        get() = tablePresentationOwner.retainedBytes
+        get() = tablePresentationOwner.retainedBytes + if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q)
+            tableNodes.sumOf { it.computeApproximateMemoryUsage() } else 0L
 
     private fun reportRetainedTablePresentation() {
         PreparedProseInstrumentation.retained(
             PreparedProseInstrumentation.Owner.SIDECARS,
             "table-presentation-${System.identityHashCode(this)}",
-            if (preparedLayout == null) 0L else tablePresentationOwner.retainedBytes
+            if (preparedLayout == null) 0L else tablePresentationRetainedBytesForTesting
         )
     }
 
@@ -317,6 +353,8 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             pendingTap = null
             pendingTableTap = null
         }
+        if (layout == null) clearTableNodes()
+        else if (tableNodeState?.revision == tableNodeRevision) tableNodeState = null
         preparedLayout = layout
         invalidateTableAccessibility()
         if (layout != null) {
@@ -349,6 +387,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     private fun tableOffsetChanged() {
+        tableNodeState = null
         reportRetainedTablePresentation()
         clearVirtualAccessibilityFocus()
         onTableGeometryChanged?.invoke()
@@ -675,87 +714,188 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                         )
                     }
                 )
-                val mountedLayouts = Collections.newSetFromMap(IdentityHashMap<PreparedProseLayout, Boolean>())
-                snapshot.mountedCells.forEach { mountedLayouts += it.content }
-                val visible = snapshot.blocks.filter { presented ->
-                    (presented.layout === artifact || presented.layout in mountedLayouts) &&
-                        presented.block.bounds.let { bounds ->
-                        bounds.right + presented.originX > paintClip.left &&
-                            bounds.left + presented.originX < paintClip.right &&
-                            bounds.bottom + presented.originY > paintClip.top &&
-                            bounds.top + presented.originY < paintClip.bottom
-                    }
-                }
-                // Phases stay global across blocks: later code backgrounds cannot cover
-                // an earlier quote border, and text/labels always remain foreground.
-                drawHierarchicalBackgrounds(canvas, artifact, snapshot, mountedLayouts, paintClip)
-                remoteTableCellSelections.forEach { remote ->
-                    snapshot.mountedCells.filter {
-                        it.surface.editorTableId == remote.tableId && isRealTableCell(it, remote.sourceIndices)
-                    }.forEach { fillTableCell(canvas, it, remote.color) }
-                }
-                snapshot.mountedCells.filter(::isSelectedTableCell).forEach {
-                    fillTableCell(canvas, it, it.surface.style.selectionColor)
-                }
-                tableCellDropTarget?.let { target ->
-                    snapshot.mountedCells.filter {
-                        it.surface.editorTableId == target.tableId &&
-                            isRealTableCell(it, setOf(target.sourceIndex))
-                    }.forEach { fillTableCell(canvas, it, it.surface.style.selectionColor) }
-                }
-                snapshot.mountedCells.forEach { drawTableChromeBorder(canvas, it) }
-                visible.forEach { drawPresented(canvas, it, snapshot) { drawBorderOrRule(canvas, it) } }
-                visible.filter { it.block.tableSurface?.layout?.failure != null }.forEach { drawTableFailure(canvas, it) }
-                val attachmentsByBlock = snapshot.images.mapNotNull { image ->
-                    image.block?.let { block -> block to image.attachment }
-                }.toMap()
-                val activeCellContent = snapshot.mountedCells.firstOrNull {
-                    (it.surface.editorTableId to it.sourceIndex) == suppressedTableCell
-                }?.content
-                visible.filter { it.layout !== activeCellContent }.forEach { presented ->
-                    drawPresented(canvas, presented, snapshot) {
-                        val attachment = attachmentsByBlock[presented.block]
-                        if (presented.layout !== artifact && it.kind == PreparedProseFragmentKind.TEXT) {
-                            onTableRichFragmentDrawnForTesting?.invoke()
-                        }
-                        drawForeground(canvas, it, attachment)
-                    }
-                }
-                val handleTable = selectedTableCellEndpoints?.first?.let { tableId ->
-                    snapshot.tableWithId(tableId)
-                }
-                if (handleTable != null) {
-                    paint.style = Paint.Style.FILL
-                    val handleColor = handleTable.surface.style.selectionColor
-                    paint.color = Color.rgb(Color.red(handleColor), Color.green(handleColor), Color.blue(handleColor))
-                    val radius = HANDLE_RADIUS_DP * resources.displayMetrics.density
-                    val handleClip = canvas.save()
-                    canvas.clipRect(handleTable.clip)
-                    selectionHandles(snapshot).forEach { handle ->
-                        canvas.drawCircle(handle.x, handle.y, radius, paint)
-                    }
-                    canvas.restoreToCount(handleClip)
-                }
-                val resizeEdge = activeTableResizeEdge
-                val resizeTable = resizeEdge?.let { edge ->
-                    snapshot.rootTables().firstOrNull { it.surface.editorTableId == edge.tableId }
-                }
-                val resizeX = resizeTable?.let { columnTrailingEdgeX(it, requireNotNull(resizeEdge).column) }
-                if (resizeTable != null && resizeX != null) {
-                    val halfWidth = RESIZE_INDICATOR_WIDTH_DP * resources.displayMetrics.density / 2f
-                    val indicatorClip = canvas.save()
-                    canvas.clipRect(resizeTable.clip)
-                    paint.style = Paint.Style.FILL
-                    paint.color = resizeTable.surface.style.resizeHandleColor
-                    canvas.drawRect(resizeX - halfWidth, resizeTable.bounds.top,
-                        resizeX + halfWidth, resizeTable.bounds.bottom, paint)
-                    canvas.restoreToCount(indicatorClip)
-                }
-                visible.size
+                if (usesEditAnchoredNodes && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q && canvas.isHardwareAccelerated) {
+                    val window = if (presentationViewport is ViewerTablePresentationViewport.Known) presentationViewport.rect else paintClip
+                    drawTableNodes(canvas, artifact, snapshot, window)
+                    snapshot.blocks.size
+                } else paintTableWindow(canvas, artifact, snapshot, paintClip)
             }
         } finally {
             canvas.restoreToCount(saved)
         }
+    }
+
+    private fun paintTableWindow(canvas: Canvas, artifact: PreparedProseLayout,
+        snapshot: com.apollohg.editor.tables.ViewerTablePresentationSnapshot, paintClip: Rect,
+        excluded: RectF? = null, filterCells: Boolean = false): Int {
+        val cells = if (filterCells) snapshot.mountedCells.filter { cell ->
+            val intersection = RectF(cell.bounds)
+            intersection.intersect(RectF(paintClip)) && !intersection.isEmpty && excluded?.contains(intersection) != true
+        } else snapshot.mountedCells
+        val mountedLayouts = Collections.newSetFromMap(IdentityHashMap<PreparedProseLayout, Boolean>())
+        cells.forEach { mountedLayouts += it.content }
+        val visible = snapshot.blocks.filter { presented ->
+            (presented.layout === artifact || presented.layout in mountedLayouts) &&
+                presented.block.bounds.let { bounds ->
+                bounds.right + presented.originX > paintClip.left &&
+                    bounds.left + presented.originX < paintClip.right &&
+                    bounds.bottom + presented.originY > paintClip.top &&
+                    bounds.top + presented.originY < paintClip.bottom
+            }
+        }
+        drawHierarchicalBackgrounds(canvas, artifact, snapshot, mountedLayouts, paintClip, cells)
+        remoteTableCellSelections.forEach { remote ->
+            cells.filter {
+                it.surface.editorTableId == remote.tableId && isRealTableCell(it, remote.sourceIndices)
+            }.forEach { fillTableCell(canvas, it, remote.color) }
+        }
+        cells.filter(::isSelectedTableCell).forEach {
+            fillTableCell(canvas, it, it.surface.style.selectionColor)
+        }
+        tableCellDropTarget?.let { target ->
+            cells.filter {
+                it.surface.editorTableId == target.tableId &&
+                    isRealTableCell(it, setOf(target.sourceIndex))
+            }.forEach { fillTableCell(canvas, it, it.surface.style.selectionColor) }
+        }
+        cells.forEach { drawTableChromeBorder(canvas, it) }
+        visible.forEach { drawPresented(canvas, it, snapshot) { drawBorderOrRule(canvas, it) } }
+        visible.filter { it.block.tableSurface?.layout?.failure != null }.forEach { drawTableFailure(canvas, it) }
+        val attachmentsByBlock = snapshot.images.mapNotNull { image ->
+            image.block?.let { block -> block to image.attachment }
+        }.toMap()
+        val activeCellContent = cells.firstOrNull {
+            (it.surface.editorTableId to it.sourceIndex) == suppressedTableCell
+        }?.content
+        visible.filter { it.layout !== activeCellContent }.forEach { presented ->
+            drawPresented(canvas, presented, snapshot) {
+                val attachment = attachmentsByBlock[presented.block]
+                if (presented.layout !== artifact && it.kind == PreparedProseFragmentKind.TEXT) {
+                    onTableRichFragmentDrawnForTesting?.invoke()
+                }
+                drawForeground(canvas, it, attachment)
+            }
+        }
+        val handleTable = selectedTableCellEndpoints?.first?.let { tableId ->
+            snapshot.tableWithId(tableId)
+        }
+        if (handleTable != null) {
+            paint.style = Paint.Style.FILL
+            val handleColor = handleTable.surface.style.selectionColor
+            paint.color = Color.rgb(Color.red(handleColor), Color.green(handleColor), Color.blue(handleColor))
+            val radius = HANDLE_RADIUS_DP * resources.displayMetrics.density
+            val handleClip = canvas.save()
+            canvas.clipRect(handleTable.clip)
+            selectionHandles(snapshot).forEach { handle ->
+                canvas.drawCircle(handle.x, handle.y, radius, paint)
+            }
+            canvas.restoreToCount(handleClip)
+        }
+        val resizeEdge = activeTableResizeEdge
+        val resizeTable = resizeEdge?.let { edge ->
+            snapshot.rootTables().firstOrNull { it.surface.editorTableId == edge.tableId }
+        }
+        val resizeX = resizeTable?.let { columnTrailingEdgeX(it, requireNotNull(resizeEdge).column) }
+        if (resizeTable != null && resizeX != null) {
+            val halfWidth = RESIZE_INDICATOR_WIDTH_DP * resources.displayMetrics.density / 2f
+            val indicatorClip = canvas.save()
+            canvas.clipRect(resizeTable.clip)
+            paint.style = Paint.Style.FILL
+            paint.color = resizeTable.surface.style.resizeHandleColor
+            canvas.drawRect(resizeX - halfWidth, resizeTable.bounds.top,
+                resizeX + halfWidth, resizeTable.bounds.bottom, paint)
+            canvas.restoreToCount(indicatorClip)
+        }
+        return visible.size
+    }
+
+    private fun recordTableNode(node: RenderNode, name: String, region: RectF,
+        artifact: PreparedProseLayout, snapshot: com.apollohg.editor.tables.ViewerTablePresentationSnapshot,
+        excluded: RectF? = null) {
+        if (region.isEmpty) { node.discardDisplayList(); return }
+        val bounds = Rect().also(region::roundOut)
+        node.setPosition(bounds)
+        node.translationY = 0f
+        val recording = node.beginRecording(bounds.width(), bounds.height())
+        try {
+            recording.translate(-bounds.left.toFloat(), -bounds.top.toFloat())
+            recording.clipRect(region)
+            if (excluded != null) recording.clipOutRect(excluded)
+            paintTableWindow(recording, artifact, snapshot, bounds, excluded, filterCells = true)
+        } finally { node.endRecording() }
+        nodeRecordsForTesting[name] = nodeRecordsForTesting.getOrDefault(name, 0) + 1
+    }
+
+    private fun drawTableNodes(canvas: Canvas, artifact: PreparedProseLayout,
+        snapshot: com.apollohg.editor.tables.ViewerTablePresentationSnapshot, window: Rect) {
+        if (window.isEmpty) { clearTableNodes(); return }
+        val above = requireNotNull(aboveNode)
+        val rowNode = requireNotNull(boundRowNode)
+        val cellNode = requireNotNull(boundCellNode)
+        val below = requireNotNull(belowNode)
+        val binding = suppressedTableCell
+        val presented = binding?.let { (id, index) -> snapshot.tableWithId(id)?.let { table ->
+            table.surface.cell(index)?.let { ViewerTablePresentation.present(it, table, tablePresentationOwner) }
+        } }
+        if (binding == null || presented == null) {
+            if (tableNodeState?.cell != null || tableNodeState?.window != window ||
+                tableNodeState?.revision != tableNodeRevision || tableNodeState?.appearance != tableNodeAppearance ||
+                !above.hasDisplayList()) {
+                clearTableNodes()
+                recordTableNode(above, NODE_ABOVE, RectF(window), artifact, snapshot)
+            }
+            tableNodeState = TableNodeState(null, Rect(window), RectF(), RectF(), emptyList(), tableNodeRevision, tableNodeAppearance)
+        } else {
+            val frame = presented.bounds
+            var firstRow = presented.cell.row
+            var lastRow = firstRow + presented.cell.rowspan
+            val cells = snapshot.mountedCells.filter { it.surface.editorTableId == binding.first }
+            do {
+                val previous = firstRow until lastRow
+                for (cell in cells) if (cell.cell.row < lastRow && cell.cell.row + cell.cell.rowspan > firstRow) {
+                    firstRow = minOf(firstRow, cell.cell.row)
+                    lastRow = maxOf(lastRow, cell.cell.row + cell.cell.rowspan)
+                }
+            } while (previous != firstRow until lastRow)
+            val offsets = presented.surface.layout.rowOffsets
+            val originY = frame.top - offsets[presented.cell.row]
+            val row = RectF(window.left.toFloat(), originY + offsets[firstRow], window.right.toFloat(), originY + offsets[lastRow])
+            val rowOffsets = offsets.subList(firstRow, lastRow + 1).map { it - offsets[firstRow] }
+            val old = tableNodeState
+            val changedRevision = old?.revision != tableNodeRevision
+            val changesAreBoundCellOnly = tableNodeChanges?.let { changes ->
+                !changes.fullReset && changes.replacedTables.isEmpty() && changes.removedTables.isEmpty() &&
+                    changes.changedCells.all { (key, indexes) -> key == binding.first && indexes.all { it == binding.second } }
+            } == true
+            val reusable = old?.cell == binding && old.window == window && old.appearance == tableNodeAppearance &&
+                old.row.top == row.top && old.frame.left == frame.left && old.frame.width() == frame.width() &&
+                (!changedRevision || changesAreBoundCellOnly) &&
+                (row.top <= window.top || above.hasDisplayList()) &&
+                (row.bottom >= window.bottom || below.hasDisplayList())
+            fun belowRegion() = RectF(window.left.toFloat(), maxOf(row.bottom, window.top.toFloat()),
+                window.right.toFloat(), window.bottom.toFloat())
+            fun clipped(region: RectF) = RectF(region).apply { if (!intersect(RectF(window))) setEmpty() }
+            if (!reusable) {
+                clearTableNodes()
+                recordTableNode(above, NODE_ABOVE, RectF(window.left.toFloat(), window.top.toFloat(), window.right.toFloat(),
+                    maxOf(window.top.toFloat(), minOf(row.top, window.bottom.toFloat()))), artifact, snapshot)
+                recordTableNode(below, NODE_BELOW, belowRegion(), artifact, snapshot)
+            } else if (old != null && old.row.height() != row.height()) {
+                below.translationY += row.height() - old.row.height()
+                if (below.bottom + below.translationY < window.bottom) {
+                    recordTableNode(below, NODE_BELOW, belowRegion(), artifact, snapshot)
+                }
+            }
+            if (!reusable || old?.rowOffsets != rowOffsets || !rowNode.hasDisplayList()) {
+                recordTableNode(rowNode, NODE_BOUND_ROW, clipped(row), artifact, snapshot, frame)
+            }
+            if (!reusable || changedRevision || old?.frame != frame || !cellNode.hasDisplayList()) {
+                recordTableNode(cellNode, NODE_BOUND_CELL, clipped(frame), artifact, snapshot)
+            }
+            tableNodeState = TableNodeState(binding, Rect(window), RectF(frame), row, rowOffsets, tableNodeRevision, tableNodeAppearance)
+        }
+        for (node in tableNodes) if (node.hasDisplayList()) canvas.drawRenderNode(node)
+        reportRetainedTablePresentation()
     }
 
     private fun fillTableCell(canvas: Canvas, cell: ViewerTablePresentedCell, color: Int) {
@@ -797,14 +937,15 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         root: PreparedProseLayout,
         snapshot: com.apollohg.editor.tables.ViewerTablePresentationSnapshot,
         mountedLayouts: Set<PreparedProseLayout>,
-        paintClip: Rect
+        paintClip: Rect,
+        visibleCells: List<ViewerTablePresentedCell>
     ) {
         val layouts = IdentityHashMap<PreparedProseLayout, com.apollohg.editor.tables.ViewerTablePresentedLayout>()
         snapshot.layouts.forEach { layouts[it.layout] = it }
         val blocks = IdentityHashMap<PreparedProseLayout, MutableList<ViewerTablePresentedBlock>>()
         snapshot.blocks.forEach { blocks.getOrPut(it.layout) { mutableListOf() }.add(it) }
         val cells = IdentityHashMap<ViewerTableSurface, MutableList<ViewerTablePresentedCell>>()
-        snapshot.mountedCells.forEach { cells.getOrPut(it.surface) { mutableListOf() }.add(it) }
+        visibleCells.forEach { cells.getOrPut(it.surface) { mutableListOf() }.add(it) }
 
         fun drawLayout(presented: com.apollohg.editor.tables.ViewerTablePresentedLayout) {
             blocks[presented.layout].orEmpty().forEach { block ->
@@ -1003,6 +1144,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
+        clearTableNodes()
         tableInteraction.cancel()
         pendingTap = null
         pendingTableTap = null

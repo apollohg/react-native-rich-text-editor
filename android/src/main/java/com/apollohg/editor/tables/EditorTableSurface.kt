@@ -177,6 +177,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     var onSelectionGeometryMayChange: (() -> Unit)? = null
 
     val drawingView = PreparedProseDrawingView(host.context).apply {
+        usesEditAnchoredNodes = true
         isFocusable = false
         linkInteractionsEnabled = false
         mentionInteractionsEnabled = false
@@ -880,6 +881,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val input = host.editorEditText
         val adapter = input.v2Driver as? EditorV2Adapter
         val revision = adapter?.cachedAtomicRenderDocumentRevision
+        drawingView.tableNodeRevision = revision
+        drawingView.tableNodeChanges = adapter?.cachedTablePresentation?.changes
+        drawingView.tableNodeAppearance = "${input.renderAppearanceRevision}:$hostTableDirection:${host.layoutDirection}:${adapter?.tablePresentationDocumentGeneration}"
         val width = (input.measuredWidth - input.compoundPaddingLeft - input.compoundPaddingRight)
             .coerceAtLeast(0)
         val markers = markers(input)
