@@ -55,6 +55,37 @@ impl TableProjectionIndex {
         }
     }
 
+    pub(crate) fn carry_after_textblock_edit(&self, edit_position: u32, delta: i32) -> Self {
+        let shift = |position: u32| {
+            if position > edit_position {
+                position.checked_add_signed(delta)
+            } else {
+                Some(position)
+            }
+        };
+        let mut carried = Self {
+            tables: BTreeMap::new(),
+            projection_failure: self.projection_failure,
+            exact_failure: self.exact_failure.clone(),
+        };
+        for (position, table) in &self.tables {
+            let Some(position) = shift(*position) else {
+                return Self::fallback(TableError::Allocation);
+            };
+            let mut table = table.clone();
+            for cell in &mut table.cells {
+                let (Some(start), Some(end)) = (shift(cell.source_pos), shift(cell.source_end))
+                else {
+                    return Self::fallback(TableError::Allocation);
+                };
+                cell.source_pos = start;
+                cell.source_end = end;
+            }
+            carried.tables.insert(position, table);
+        }
+        carried
+    }
+
     pub(crate) fn derive_or_fallback(
         document: &Document,
         schema: &Schema,

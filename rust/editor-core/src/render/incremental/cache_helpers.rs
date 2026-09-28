@@ -356,3 +356,42 @@ fn cached_patch_reconstructs(
             .zip(new_suffix)
             .all(|(old, new)| old.elements == new.elements)
 }
+
+fn changed_textblock_position(
+    old: &Node,
+    new: &Node,
+    mut position: u32,
+    schema: &Schema,
+) -> Option<u32> {
+    let (mut old, mut new) = (old, new);
+    loop {
+        if old.node_type() != new.node_type()
+            || !crate::boundary::json_objects_equal_stack_safe(old.attrs(), new.attrs())
+        {
+            return None;
+        }
+        if schema
+            .node(old.node_type())
+            .is_some_and(|spec| matches!(spec.role, NodeRole::TextBlock))
+        {
+            return position.checked_add(crate::tables::commands::NODE_OPENING_TOKENS);
+        }
+        if old.child_count() != new.child_count() {
+            return None;
+        }
+        let mut changed = None;
+        let mut child_pos = position.checked_add(crate::tables::commands::NODE_OPENING_TOKENS)?;
+        for index in 0..old.child_count() {
+            let old_child = old.child(index)?;
+            let new_child = new.child(index)?;
+            if !old_child.shares_storage_with(new_child) {
+                if changed.is_some() {
+                    return None;
+                }
+                changed = Some((old_child, new_child, child_pos));
+            }
+            child_pos = child_pos.checked_add(old_child.node_size())?;
+        }
+        (old, new, position) = changed?;
+    }
+}

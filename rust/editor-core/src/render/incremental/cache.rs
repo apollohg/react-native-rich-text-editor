@@ -329,16 +329,6 @@ impl CachedRenderBlocks {
         document_delta: i32,
         limits: &ResourceLimits,
     ) -> Result<CachedRenderTransition, CachedRenderError> {
-        let table_projection_index = Arc::new(TableProjectionIndex::derive_or_fallback(
-            new_document,
-            schema,
-            limits,
-        ));
-        let mut context = TableRenderContext::new(Arc::clone(&table_projection_index), schema);
-        for block in &self.blocks {
-            context.retain_cells(&block.elements);
-        }
-        context.attributes = self.table_attributes.clone();
         check_forced_cached_render_error()?;
         if self.schema_fingerprint.as_ref() != schema_fingerprint(schema)
             || !self.matches_document(old_document)
@@ -372,6 +362,31 @@ impl CachedRenderBlocks {
             return Err(CachedRenderError::CacheInvariantViolation);
         }
 
+        let table_projection_index = Arc::new(
+            changed_textblock_position(
+                old_target_node,
+                new_target_node,
+                old_target_block.start_pos,
+                schema,
+            )
+            .map(|position| {
+                self.table_projection_index
+                    .carry_after_textblock_edit(position, document_delta)
+            })
+            .unwrap_or_else(|| {
+                TableProjectionIndex::derive_or_fallback(new_document, schema, limits)
+            }),
+        );
+        let mut context = TableRenderContext::new(Arc::clone(&table_projection_index), schema);
+        context.attributes = self.table_attributes.clone();
+        for block in &self.blocks {
+            context.retain_cells(
+                &block.elements,
+                &block.node,
+                block.start_pos,
+                &self.table_projection_index,
+            );
+        }
         check_forced_localized_render_allocation_failure()?;
         let mut blocks = Vec::new();
         blocks
@@ -496,10 +511,15 @@ impl CachedRenderBlocks {
             limits,
         ));
         let mut context = TableRenderContext::new(Arc::clone(&table_projection_index), schema);
-        for block in &self.blocks {
-            context.retain_cells(&block.elements);
-        }
         context.attributes = self.table_attributes.clone();
+        for block in &self.blocks {
+            context.retain_cells(
+                &block.elements,
+                &block.node,
+                block.start_pos,
+                &self.table_projection_index,
+            );
+        }
         record_cached_transition();
         check_forced_cached_render_error()?;
         ensure_document_render_limits(new_document, schema, limits)?;

@@ -245,7 +245,8 @@ pub(crate) fn element_count(elements: &[RenderElement]) -> usize {
 
 pub(crate) struct TableRenderContext {
     pub index: Arc<TableProjectionIndex>,
-    pub prior_cells: HashMap<String, Arc<Vec<RenderElement>>>,
+    pub prior_cells: HashMap<usize, (Node, Arc<TableRenderCell>)>,
+    prior_content: HashMap<String, Arc<Vec<RenderElement>>>,
     pub coordinate_origin: u32,
     pub schema_key: String,
     pub attributes: BTreeMap<String, Arc<str>>,
@@ -295,6 +296,7 @@ impl TableRenderContext {
         Self {
             index,
             prior_cells: HashMap::new(),
+            prior_content: HashMap::new(),
             coordinate_origin: 0,
             schema_key: crate::schema::schema_fingerprint(schema),
             attributes: BTreeMap::new(),
@@ -357,15 +359,88 @@ impl TableRenderContext {
         key
     }
 
-    pub(crate) fn retain_cells(&mut self, elements: &[RenderElement]) {
-        let mut pending = vec![elements];
-        while let Some(elements) = pending.pop() {
+    fn retain_attributes(&mut self, node: &Node, cell: bool, key: &str) {
+        let Some(json) = self.attributes.get(key) else {
+            return;
+        };
+        let identity = (node.attrs() as *const _ as usize, cell);
+        self.attribute_nodes
+            .insert(identity, (node.clone(), key.to_owned()));
+        if !self.attribute_keys.contains_key(json.as_ref()) {
+            let fingerprint =
+                attrs_fingerprint(&crate::serialize::json_out::filtered_attrs(node, cell));
+            self.attribute_keys.insert(json.to_string(), key.to_owned());
+            self.attribute_values.entry(fingerprint).or_default().push((
+                node.clone(),
+                cell,
+                json.to_string(),
+            ));
+        }
+    }
+
+    pub(crate) fn retain_cells(
+        &mut self,
+        elements: &[RenderElement],
+        root: &Node,
+        start: u32,
+        projection: &TableProjectionIndex,
+    ) {
+        if !elements
+            .iter()
+            .any(|element| matches!(element, RenderElement::Table { .. }))
+        {
+            return;
+        }
+        let mut nodes = HashMap::new();
+        let mut pending = vec![(start, root)];
+        while let Some((position, node)) = pending.pop() {
+            nodes.insert(position, node);
+            let mut child_pos = position + NODE_OPENING_TOKENS;
+            if let Some(content) = node.content() {
+                for child in content.iter() {
+                    if child.is_element() {
+                        pending.push((child_pos, child));
+                    }
+                    child_pos += child.node_size();
+                }
+            }
+        }
+        let mut pending = vec![(0, elements)];
+        while let Some((origin, elements)) = pending.pop() {
             for element in elements {
-                if let RenderElement::Table { table, .. } = element {
-                    for cell in &table.cells {
-                        self.prior_cells
+                if let RenderElement::Table { table, doc_offset } = element {
+                    let table_pos = origin + doc_offset;
+                    if let Some(node) = nodes.get(&table_pos) {
+                        self.retain_attributes(node, false, &table.structure.attrs_key);
+                    }
+                    for row in absolute_source_rows(table, table_pos) {
+                        if let Some(node) = nodes.get(&row.source_pos) {
+                            self.retain_attributes(node, false, &row.attrs_key);
+                        }
+                    }
+                    if let Some(projected) = projection.table_at(table_pos) {
+                        for (region, rendered) in projected
+                            .synthetic
+                            .iter()
+                            .zip(&table.structure.synthetic_regions)
+                        {
+                            self.retain_attributes(&region.node, true, &rendered.attrs_key);
+                        }
+                    }
+                    for (cell_pos, cell) in absolute_cell_starts(table, table_pos)
+                        .into_iter()
+                        .zip(&table.cells)
+                    {
+                        if let Some(node) = nodes.get(&cell_pos) {
+                            self.prior_cells.insert(
+                                node.attrs() as *const _ as usize,
+                                ((*node).clone(), Arc::clone(cell)),
+                            );
+                            self.retain_attributes(node, true, &cell.attrs_key);
+                        }
+                        self.prior_content
                             .insert(cell.content_key.clone(), Arc::clone(&cell.elements));
-                        pending.push(&cell.elements);
+                        pending.push((cell_pos, cell.elements.as_slice()));
                     }
                 }
             }
@@ -509,8 +584,23 @@ pub(crate) fn generate_table(
         let (source_row, cell) = real_cells
             .get(&projected_cell.source_pos)
             .ok_or(CachedRenderError::CacheInvariantViolation)?;
+        if let Some((prior_node, prior)) = context
+            .prior_cells
+            .get(&(cell.attrs() as *const _ as usize))
+        {
+            if prior_node.shares_storage_with(cell)
+                && prior.source_row as usize == *source_row
+                && prior.row == projected_cell.rect.row
+                && prior.column == projected_cell.rect.column
+                && prior.rowspan == projected_cell.rect.rowspan
+                && prior.colspan == projected_cell.rect.colspan
+            {
+                cells.push(Arc::clone(prior));
+                continue;
+            }
+        }
         let key = content_key(cell, schema, &context.schema_key);
-        let elements = if let Some(prior) = context.prior_cells.get(&key) {
+        let elements = if let Some(prior) = context.prior_content.get(&key) {
             Arc::clone(prior)
         } else {
             #[cfg(test)]

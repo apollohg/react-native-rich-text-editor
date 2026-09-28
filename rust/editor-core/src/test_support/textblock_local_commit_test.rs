@@ -661,41 +661,134 @@ fn localized_render_transitions_equal_a_fresh_full_render() {
         } else {
             assert!(inserted.is_ok(), "{}: {inserted:?}", case.name);
         }
-        let transitioned = session
-            .engine
-            .cached_render_blocks()
-            .expect("the fixture is ready");
+        assert_render_matches_fresh(&session, case.name);
+        if inserted.is_ok() && session.engine.can_undo() {
+            NativeTransactionBridge::new(&mut session)
+                .undo(UNDO_REQUEST_ID)
+                .unwrap();
+            assert_render_matches_fresh(&session, &format!("{} undo", case.name));
+            NativeTransactionBridge::new(&mut session)
+                .redo(REDO_REQUEST_ID)
+                .unwrap();
+            assert_render_matches_fresh(&session, &format!("{} redo", case.name));
+        }
+    }
+    use crate::tables::commands::{TableCommand, TableEdge};
+    use crate::yrs_engine::{InitializationMode, TypedCommand, YrsDocumentEngine, YrsEngineConfig};
+    const FIRST_REQUEST: u64 = 20;
+    const REQUESTS_PER_COMMAND: u64 = 4;
+    let mut session = session_with_document(&plain_table_document(TABLE_SIZE, TABLE_SIZE));
+    let mut replica = YrsDocumentEngine::new(YrsEngineConfig {
+        schema: session.engine.schema().clone(),
+        fragment_name: "prosemirror".into(),
+        initialization_mode: InitializationMode::AwaitRemote,
+        resource_limits: ResourceLimits::default(),
+        editing_limits: EditingLimits::default(),
+        max_length: None,
+        scope: None,
+    })
+    .unwrap();
+    replica
+        .apply_remote_update_v1(FIRST_REQUEST, &session.engine.encoded_state().unwrap())
+        .unwrap();
+    for (index, command) in [
+        TableCommand::AddTableRow {
+            side: TableEdge::Before,
+        },
+        TableCommand::AddTableColumn {
+            side: TableEdge::Before,
+        },
+        TableCommand::DeleteTableRows,
+        TableCommand::DeleteTableColumns,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let request = FIRST_REQUEST + REQUESTS_PER_COMMAND * (index as u64 + 1);
+        let name = format!("structural {command:?}");
+        assert!(
+            session
+                .engine
+                .apply_command(request, TypedCommand::Table(command))
+                .unwrap()
+                .is_some(),
+            "{name} applies"
+        );
+        assert_render_matches_fresh(&session, &name);
+        session.engine.undo(request + 1).unwrap();
+        assert_render_matches_fresh(&session, &format!("{name} undo"));
+        session.engine.redo(request + 2).unwrap();
+        assert_render_matches_fresh(&session, &format!("{name} redo"));
+        replica
+            .apply_remote_update_v1(request, &session.engine.encoded_state().unwrap())
+            .unwrap();
+        let cache = replica.cached_render_blocks().unwrap();
         let fresh = CachedRenderBlocks::build(
-            session.engine.document().expect("the fixture is ready"),
-            session.engine.schema(),
+            replica.document().unwrap(),
+            replica.schema(),
             &ResourceLimits::default(),
         )
-        .expect("the committed document renders");
-        eprintln!(
-            "{}: {} blocks, {} table records, {} pooled attributes",
-            case.name,
-            fresh.materialize().len(),
-            table_records(&fresh).len(),
-            fresh.table_attributes.len()
-        );
+        .unwrap();
         assert_eq!(
-            transitioned.materialize(),
+            cache.materialize(),
             fresh.materialize(),
-            "{}: render elements",
-            case.name
+            "{name} remote render"
         );
         assert_eq!(
-            table_records(&transitioned),
-            table_records(&fresh),
-            "{}: table records",
-            case.name
+            cache.table_projection_index, fresh.table_projection_index,
+            "{name} remote projection"
         );
         assert_eq!(
-            transitioned.table_attributes, fresh.table_attributes,
-            "{}: attribute pool",
-            case.name
+            cache.table_attributes, fresh.table_attributes,
+            "{name} remote attributes"
+        );
+        assert_eq!(
+            session.engine.document_json(),
+            replica.document_json(),
+            "{name} remote document converges"
         );
     }
+}
+
+fn assert_render_matches_fresh(session: &EditorSession, name: &str) {
+    let transitioned = session
+        .engine
+        .cached_render_blocks()
+        .expect("the fixture is ready");
+    let fresh = CachedRenderBlocks::build(
+        session.engine.document().expect("the fixture is ready"),
+        session.engine.schema(),
+        &ResourceLimits::default(),
+    )
+    .expect("the committed document renders");
+    eprintln!(
+        "{}: {} blocks, {} table records, {} pooled attributes",
+        name,
+        fresh.materialize().len(),
+        table_records(&fresh).len(),
+        fresh.table_attributes.len()
+    );
+    assert_eq!(
+        transitioned.materialize(),
+        fresh.materialize(),
+        "{}: render elements",
+        name
+    );
+    assert_eq!(
+        table_records(&transitioned),
+        table_records(&fresh),
+        "{}: table records",
+        name
+    );
+    assert_eq!(
+        transitioned.table_attributes, fresh.table_attributes,
+        "{}: attribute pool",
+        name
+    );
+    assert_eq!(
+        transitioned.table_projection_index, fresh.table_projection_index,
+        "{name}: table projection"
+    );
 }
 
 #[test]
@@ -781,4 +874,94 @@ fn assert_large_table_edit_is_validated_locally(intent: &str) {
     ] {
         assert_eq!(count, 0, "a single-textblock keystroke ran {kind}");
     }
+}
+
+fn storage_reuse_audit() -> (
+    FullPassCounts,
+    Vec<TableRenderRecord>,
+    Vec<TableRenderRecord>,
+) {
+    const ROWS: usize = 50;
+    const COLUMNS: usize = 4;
+    let mut session = session_with_document(&plain_table_document(ROWS, COLUMNS));
+    let before = table_records(&session.engine.cached_render_blocks().unwrap());
+    let target = keystroke_cell(ROWS, COLUMNS);
+    let path = [0, (target / COLUMNS) as u32, (target % COLUMNS) as u32, 0];
+    let caret = caret_scalar(&session, &path, CaretOffset::At(MIDDLE_OFFSET));
+    let request = insert_request(&mut session, caret);
+    reset_full_pass_counts_for_test();
+    submit_insert(&mut session, &request).expect("the keystroke applies");
+    let counts = take_full_pass_counts_for_test();
+    let after = table_records(&session.engine.cached_render_blocks().unwrap());
+    for (index, (old, new)) in before[0].cells.iter().zip(&after[0].cells).enumerate() {
+        if index == target {
+            assert_ne!(
+                old.content_key, new.content_key,
+                "edited cell gets new content"
+            );
+        } else {
+            assert_eq!(
+                old.content_key, new.content_key,
+                "cell {index} retains content"
+            );
+        }
+    }
+    (counts, before, after)
+}
+
+#[test]
+fn storage_identical_cells_reuse_their_render_entry_without_hashing() {
+    let (counts, before, after) = storage_reuse_audit();
+    assert_eq!(
+        counts.cell_content_keys, 1,
+        "one key for the edited cell: {counts:#?}"
+    );
+    assert_eq!(
+        counts.attribute_serializations, 0,
+        "no attributes changed: {counts:#?}"
+    );
+    for (index, (old, new)) in before[0].cells.iter().zip(&after[0].cells).enumerate() {
+        if old.content_key == new.content_key {
+            assert!(
+                std::sync::Arc::ptr_eq(old, new),
+                "cell {index} reuses its whole entry"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_textblock_edit_carries_the_table_projection() {
+    let case = textblock_edit_cases()
+        .into_iter()
+        .find(|case| case.name == "cell mid-leaf")
+        .unwrap();
+    let (mut session, request) = prepared_session(&case, true);
+    let old = session.engine.document().unwrap().clone();
+    let cache = session.engine.cached_render_blocks().unwrap();
+    submit_insert(&mut session, &request).unwrap();
+    let new = session.engine.document().unwrap();
+    reset_full_pass_counts_for_test();
+    let carried = cache
+        .transition_localized_textblock(
+            &old,
+            new,
+            session.engine.schema(),
+            PROSE_TABLE_INDEX as usize,
+            INSERTED_TEXT.chars().count() as i32,
+            &ResourceLimits::default(),
+        )
+        .unwrap();
+    let counts = take_full_pass_counts_for_test();
+    assert_eq!(
+        counts.table_projection_derivations, 0,
+        "text does not change table geometry: {counts:#?}"
+    );
+    let fresh = CachedRenderBlocks::build(new, session.engine.schema(), &ResourceLimits::default())
+        .unwrap();
+    assert_eq!(
+        carried.cache.table_projection_index,
+        fresh.table_projection_index
+    );
+    assert_eq!(carried.cache.materialize(), fresh.materialize());
 }
