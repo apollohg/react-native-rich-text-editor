@@ -108,13 +108,6 @@ internal class TableAccessibilityTable(
             return if (unfilled) Frame.EMPTY else Frame.FAILED
         }
 
-    private val slots: Map<Long, TableAccessibilityCell> = buildMap {
-        cells.forEach { cell ->
-            for (row in cell.row until cell.row + cell.rowSpan) {
-                for (column in cell.column until cell.column + cell.columnSpan) putIfAbsent(slot(row, column), cell)
-            }
-        }
-    }
     private val headerRows: Set<Int> = cells.groupBy { it.row }.filterValues { it.all(TableAccessibilityCell::isHeader) }.keys
     private val headerColumns: Set<Int> =
         cells.groupBy { it.column }.filterValues { it.all(TableAccessibilityCell::isHeader) }.keys
@@ -125,8 +118,6 @@ internal class TableAccessibilityTable(
         it.row until it.row + it.rowSpan
     }
 
-    private fun slot(row: Int, column: Int): Long = row.toLong() * columnCount.coerceAtLeast(1) + column
-
     private fun headerCellsBy(
         headerLines: Set<Int>,
         line: (TableAccessibilityCell) -> Int,
@@ -136,9 +127,6 @@ internal class TableAccessibilityTable(
             covered(cell).forEach { getOrPut(it) { mutableListOf() } += cell }
         }
     }
-
-    fun cellAt(row: Int, column: Int): TableAccessibilityCell? =
-        slots[slot(row, column)]
 
     fun columnHeaders(column: Int): List<TableAccessibilityCell> = columnHeaderCells[column].orEmpty()
 
@@ -313,7 +301,12 @@ internal class TableAccessibilityNodes(
         data class Detached(val frame: TableAccessibilityDetachedFrame) : Entry
     }
 
-    private data class Snapshot(val items: List<TableAccessibilityItem>, val entries: List<Entry>)
+    private class Snapshot(val items: List<TableAccessibilityItem>, val entries: List<Entry>) {
+        val tableIndexes: Map<String, Int> = entries.indices.filter { entries[it] is Entry.Table }
+            .associateBy { (entries[it] as Entry.Table).table.surface.identity }
+        val cellIndexes: Map<Pair<String, Int>, Int> = entries.indices.filter { entries[it] is Entry.Cell }
+            .associateBy { index -> (entries[index] as Entry.Cell).let { it.table.surface.identity to it.cell.sourceCellIndex } }
+    }
     private data class Identity(val table: String, val sourcePosition: Int?)
     private data class Focused(val virtualId: Int, val identity: Identity)
 
@@ -344,11 +337,12 @@ internal class TableAccessibilityNodes(
         is Entry.Detached -> Identity(entry.frame.tableId, null)
     }
 
-    private fun idOf(entries: List<Entry>, table: TableAccessibilityTable): Int =
-        FIRST_TABLE_NODE_ID + entries.indexOfFirst { it is Entry.Table && it.table === table }
+    private fun idOf(snapshot: Snapshot, table: TableAccessibilityTable): Int =
+        FIRST_TABLE_NODE_ID + requireNotNull(snapshot.tableIndexes[table.surface.identity])
 
     fun hostChildren(nodeId: (ViewerTablePresentedAccessibilityNode) -> Int?): List<Int> {
-        val (items, entries) = snapshot()
+        val snapshot = snapshot()
+        val (items, entries) = snapshot.items to snapshot.entries
         val detached = entries.indices.filter { entries[it] is Entry.Detached }
             .map { (entries[it] as Entry.Detached).frame.tablePos to FIRST_TABLE_NODE_ID + it }
             .sortedBy { it.first }.toMutableList()
@@ -361,7 +355,7 @@ internal class TableAccessibilityNodes(
                 is TableAccessibilityItem.Node -> nodeId(item.node)?.let { children += it }
                 is TableAccessibilityItem.Table -> {
                     flushDetached(item.table.tablePos ?: Int.MAX_VALUE)
-                    children += idOf(entries, item.table)
+                    children += idOf(snapshot, item.table)
                 }
             }
         }
@@ -375,12 +369,11 @@ internal class TableAccessibilityNodes(
     private fun presentedCell(entry: Entry.Cell): ViewerTablePresentedCell? = presentedCell(entry.cell)
 
     fun locate(surface: ViewerTableSurface, sourceCellIndex: Int): TableAccessibilityLocation? {
-        val entries = snapshot().entries
-        val index = entries.indexOfFirst {
-            it is Entry.Cell && it.table.surface === surface && it.cell.sourceCellIndex == sourceCellIndex
-        }
-        val cell = entries.getOrNull(index) as? Entry.Cell ?: return null
-        return TableAccessibilityLocation(idOf(entries, cell.table), FIRST_TABLE_NODE_ID + index, cell.table, cell.cell)
+        val snapshot = snapshot()
+        val index = snapshot.cellIndexes[surface.identity to sourceCellIndex] ?: return null
+        val cell = snapshot.entries[index] as Entry.Cell
+        if (cell.table.surface !== surface) return null
+        return TableAccessibilityLocation(idOf(snapshot, cell.table), FIRST_TABLE_NODE_ID + index, cell.table, cell.cell)
     }
 
     fun presentedCell(cell: TableAccessibilityCell): ViewerTablePresentedCell? =
@@ -426,7 +419,8 @@ internal class TableAccessibilityNodes(
 
     @Suppress("DEPRECATION")
     fun create(virtualId: Int, nodeId: TableAccessibilityNodeId): AccessibilityNodeInfo? {
-        val entries = snapshot().entries
+        val snapshot = snapshot()
+        val entries = snapshot.entries
         val entry = entries.getOrNull(virtualId - FIRST_TABLE_NODE_ID) ?: return null
         reconcile()
         val own = geometry(entry)
@@ -445,7 +439,7 @@ internal class TableAccessibilityNodes(
             when (entry) {
                 is Entry.Table -> entry.table.frame?.let { describeFrame(this, it, entry.table.tableId) }
                     ?: describeTable(this, entries, entry.table)
-                is Entry.Cell -> describeCell(this, entries, entry, virtualId, nodeId)
+                is Entry.Cell -> describeCell(this, snapshot, entry, virtualId, nodeId)
                 is Entry.Detached -> describeFrame(this, entry.frame.kind, entry.frame.tableId)
             }
         }
@@ -484,12 +478,12 @@ internal class TableAccessibilityNodes(
 
     private fun describeCell(
         info: AccessibilityNodeInfo,
-        entries: List<Entry>,
+        snapshot: Snapshot,
         entry: Entry.Cell,
         virtualId: Int,
         nodeId: TableAccessibilityNodeId
     ) {
-        info.setParent(host, idOf(entries, entry.table))
+        info.setParent(host, idOf(snapshot, entry.table))
         info.className = android.widget.TextView::class.java.name
         info.text = TableAccessibility.cellLabel(host, entry.cell)
         info.isFocusable = true
@@ -569,9 +563,8 @@ internal class TableAccessibilityNodes(
 
     fun reconcile() {
         val current = focused ?: return
-        val entries = snapshot().entries
-        val index = entries.indexOfFirst { identity(it) == current.identity }
-        if (index < 0 || FIRST_TABLE_NODE_ID + index != current.virtualId || !visible(entries[index])) {
+        val entry = snapshot().entries.getOrNull(current.virtualId - FIRST_TABLE_NODE_ID)
+        if (entry == null || identity(entry) != current.identity || !visible(entry)) {
             clearFocus(current.virtualId)
         }
     }
