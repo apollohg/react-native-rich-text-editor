@@ -99,6 +99,7 @@ tasks.withType(Test).configureEach {
 
 def largeTableUnitTests = 'com.apollohg.editor.tables.TableIntegrationTest.large table*'
 afterEvaluate {
+    if (!tasks.names.contains('testDebugUnitTest')) return
     def debugUnitTest = tasks.named('testDebugUnitTest')
     debugUnitTest.configure { filter.excludeTestsMatching largeTableUnitTests }
     tasks.register('testDebugLargeTableUnitTest', Test) { largeTableTest ->
@@ -130,11 +131,15 @@ android {
         // no implicit/generated DEBUG field is relied on by release drawing.
         buildConfig = true
     }
+    if (project.hasProperty("tableBenchmarkRelease")) {
+        testBuildType "release"
+    }
     buildTypes {
         debug {
             buildConfigField "boolean", "PREPARED_PROSE_INSTRUMENTATION", "true"
         }
         release {
+            if (project.hasProperty("tableBenchmarkRelease")) signingConfig signingConfigs.debug
             buildConfigField "boolean", "PREPARED_PROSE_INSTRUMENTATION", "false"
         }
     }

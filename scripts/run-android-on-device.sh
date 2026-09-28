@@ -9,7 +9,7 @@ require_native_artifacts android
 
 project_dir="example/android"
 local_env_file="example/.android-device-test.env"
-task=":apollohg_react-native-rich-text-editor:connectedDebugAndroidTest"
+build_type="debug"
 device_id="${ANDROID_DEVICE_ID:-${ANDROID_SERIAL:-}}"
 test_class=""
 extra_args=()
@@ -22,7 +22,7 @@ fi
 
 usage() {
   cat <<'EOF'
-Usage: scripts/run-android-on-device.sh [--device-id <serial>] [--class <fqcn>] [--] [gradle args...]
+Usage: scripts/run-android-on-device.sh [--device-id <serial>] [--class <fqcn>] [--build-type <debug|release>] [--] [gradle args...]
 
 Runs Android instrumentation tests for the native editor library on a connected
 device or emulator. If no device id is provided, the first attached device in
@@ -31,6 +31,7 @@ device or emulator. If no device id is provided, the first attached device in
 Options:
   --device-id <serial>   Specific adb serial to target.
   --class <fqcn>         Fully-qualified instrumentation test class filter.
+  --build-type <type>    debug (default) or release.
   --help                 Show this help text.
 
 Environment:
@@ -60,6 +61,14 @@ while (($# > 0)); do
         exit 1
       fi
       test_class="$2"
+      shift 2
+      ;;
+    --build-type)
+      if (($# < 2)) || [[ "$2" != "debug" && "$2" != "release" ]]; then
+        echo "--build-type must be debug or release" >&2
+        exit 1
+      fi
+      build_type="$2"
       shift 2
       ;;
     --help|-h)
@@ -106,6 +115,12 @@ device_id="$(resolve_device_id)"
 export ANDROID_SERIAL="$device_id"
 
 gradle_args=()
+if [[ "$build_type" == "release" ]]; then
+  task=":apollohg_react-native-rich-text-editor:connectedReleaseAndroidTest"
+  gradle_args+=("-PtableBenchmarkRelease")
+else
+  task=":apollohg_react-native-rich-text-editor:connectedDebugAndroidTest"
+fi
 if [[ -n "$test_class" ]]; then
   gradle_args+=("-Pandroid.testInstrumentationRunnerArguments.class=$test_class")
 fi

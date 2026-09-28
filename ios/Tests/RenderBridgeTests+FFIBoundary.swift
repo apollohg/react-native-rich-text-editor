@@ -283,6 +283,7 @@ extension RenderBridgeTests {
         XCTAssertNil(finalResult?.error)
     }
 
+    #if DEBUG
     func testRetiringModuleDoesNotClearReplacementCollaborationState() {
         let firstOwner = UUID()
         let replacementOwner = UUID()
@@ -306,6 +307,8 @@ extension RenderBridgeTests {
         )
         NativeCollaborationTransportRegistry.destroyAll(owner: replacementOwner)
     }
+
+    #endif
 
     func testUnpairedDestroyReservesBeforeFfiAndFinalizesLifecycleAlreadyDestroyed() {
         let editorId: UInt64 = 900004
