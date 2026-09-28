@@ -56,7 +56,7 @@ use outbound::OutboundUpdateSink;
 use remote::admit_max_encoded_state_len;
 pub use remote::PreparedRemoteUpdate;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 #[cfg(test)]
 use test_hooks::{
@@ -105,6 +105,8 @@ pub struct EngineCommit {
     pub revision: u64,
 }
 
+const DOCUMENT_CHANGE_SCOPE_LOG_CAPACITY: usize = 64;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DocumentChangeScope {
     Textblock { block_index: usize },
@@ -127,6 +129,7 @@ pub struct YrsDocumentEngine {
     document_scope_revision: u64,
     last_recorded_revision: u64,
     last_change_scope: DocumentChangeScope,
+    change_scopes: VecDeque<(u64, DocumentChangeScope)>,
     #[cfg(test)]
     recorded_change_count: u64,
     state_revision: u64,
@@ -259,6 +262,7 @@ impl YrsDocumentEngine {
             document_scope_revision: 0,
             last_recorded_revision: 0,
             last_change_scope: DocumentChangeScope::Document,
+            change_scopes: VecDeque::with_capacity(DOCUMENT_CHANGE_SCOPE_LOG_CAPACITY),
             #[cfg(test)]
             recorded_change_count: 0,
             state_revision: 0,
@@ -278,6 +282,10 @@ impl YrsDocumentEngine {
         debug_assert!(self.revision > self.last_recorded_revision);
         self.last_recorded_revision = self.revision;
         self.last_change_scope = scope;
+        if self.change_scopes.len() == DOCUMENT_CHANGE_SCOPE_LOG_CAPACITY {
+            self.change_scopes.pop_front();
+        }
+        self.change_scopes.push_back((self.revision, scope));
         if scope == DocumentChangeScope::Document {
             self.document_scope_revision = self.revision;
         }
@@ -285,6 +293,26 @@ impl YrsDocumentEngine {
         {
             self.recorded_change_count += 1;
         }
+    }
+
+    pub(crate) fn change_scopes_since(&self, revision: u64) -> Option<Vec<DocumentChangeScope>> {
+        if revision > self.revision {
+            return None;
+        }
+        let mut expected = revision;
+        let mut scopes = Vec::new();
+        for &(changed, scope) in self
+            .change_scopes
+            .iter()
+            .filter(|(changed, _)| *changed > revision)
+        {
+            expected = expected.checked_add(1)?;
+            if changed != expected {
+                return None;
+            }
+            scopes.push(scope);
+        }
+        (expected == self.revision).then_some(scopes)
     }
 
     pub(crate) fn document_scope_revision(&self) -> u64 {
@@ -587,38 +615,127 @@ impl YrsDocumentEngine {
         (0..state.position_map.block_count())
             .for_each(|_| super::observability::record_epoch_block_rebuild());
         let spans = self.cell_pinning(state).spans(&doc_positions);
-        let mut scalar_starts = Vec::with_capacity(chunks.len());
-        let mut start = 0u32;
-        for chunk in &chunks {
-            scalar_starts.push(start);
-            start = start.checked_add(u32::try_from(chunk.anchors.len()).ok()?)?;
-        }
-        for (cell, span) in spans.iter().enumerate() {
-            let mut points = span.points.iter().peekable();
-            while let Some((scalar, _)) = points.peek() {
-                let block = scalar_starts
-                    .partition_point(|start| start <= scalar)
-                    .checked_sub(1)?;
-                let end = scalar_starts.get(block + 1).copied().unwrap_or(u32::MAX);
-                let chunk = Arc::get_mut(&mut chunks[block])?;
-                while points.peek().is_some_and(|(scalar, _)| *scalar < end) {
-                    let (scalar, point) = points.next()?;
-                    let offset = usize::try_from(scalar.checked_sub(scalar_starts[block])?).ok()?;
-                    let boundary = chunk.anchors.get_mut(offset)?;
-                    if boundary.inside_table_cell() {
-                        boundary.pinned_cell = Some(crate::position_epoch::CellTextPosition {
-                            cell,
-                            point: *point,
-                        });
-                    }
-                }
-            }
-        }
+        let scalar_starts = crate::position_epoch::EpochSnapshot::scalar_starts(&chunks)?;
+        crate::position_epoch::EpochSnapshot::attach_cells(
+            &mut chunks,
+            &scalar_starts,
+            spans.iter().enumerate(),
+        )?;
         crate::position_epoch::EpochSnapshot::new(
             self.yrs_state_epoch,
             self.revision,
             chunks,
             spans,
+        )
+    }
+
+    pub(crate) fn update_position_epoch_snapshot(
+        &self,
+        previous: &crate::position_epoch::EpochSnapshot,
+    ) -> Option<crate::position_epoch::EpochSnapshot> {
+        use std::collections::BTreeSet;
+        use yrs::types::xml::XmlElementRef;
+        let scopes = self.change_scopes_since(previous.document_revision)?;
+        if scopes.is_empty() {
+            return None;
+        }
+        let state = self.derived_state.as_ref()?;
+        if state.position_map.block_count() != previous.chunks.len() {
+            return None;
+        }
+        let mut blocks = BTreeSet::new();
+        let mut cells = BTreeSet::new();
+        for scope in scopes {
+            let DocumentChangeScope::Textblock { block_index } = scope else {
+                return None;
+            };
+            let path = state.position_map.block(block_index)?.node_path.as_slice();
+            let outer = (1..path.len()).find_map(|depth| {
+                let prefix = &path[..depth];
+                let node = state.document.node_at(prefix)?;
+                matches!(
+                    self.schema.node(node.node_type())?.table_role,
+                    Some(crate::tables::TableRole::Cell | crate::tables::TableRole::HeaderCell)
+                )
+                .then_some(prefix)
+            });
+            if let Some(path) = outer {
+                let first = previous
+                    .cells
+                    .partition_point(|span| span.node_path.as_slice() < path);
+                let outer = previous
+                    .cells
+                    .get(first)
+                    .filter(|span| span.node_path == path)?;
+                blocks.extend(outer.block_range.clone());
+                for index in first..previous.cells.len() {
+                    if !previous.cells[index].node_path.starts_with(path) {
+                        break;
+                    }
+                    cells.insert(index);
+                }
+            } else {
+                blocks.insert(block_index);
+            }
+        }
+        let blocks: Vec<_> = blocks.into_iter().collect();
+        let cell_indexes: Vec<_> = cells.into_iter().collect();
+        let positions = blocks
+            .iter()
+            .map(|index| {
+                Some((
+                    *index,
+                    state
+                        .position_map
+                        .block_doc_positions(*index, &state.document)?,
+                ))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let updated_cells = self.cell_pinning(state).rebuild_spans(
+            &cell_indexes
+                .iter()
+                .map(|index| previous.cells[*index].as_ref())
+                .collect::<Vec<_>>(),
+            &positions,
+        )?;
+        let mut cells = previous.cells.to_vec();
+        for (&index, span) in cell_indexes.iter().zip(updated_cells) {
+            cells[index] = span;
+        }
+        let mut chunks = previous.chunks.to_vec();
+        let txn = self.doc.transact();
+        let branches = state.block_branch_index.as_ref()?;
+        for (index, positions) in positions {
+            if state.position_map.block(index)?.is_void_block {
+                let mut anchors = previous.chunks[index].anchors.clone();
+                for boundary in &mut anchors {
+                    boundary.pinned_cell = None;
+                }
+                chunks[index] = Arc::new(crate::position_epoch::EpochBlockChunk::new(anchors)?);
+                #[cfg(test)]
+                super::observability::record_epoch_block_rebuild();
+                continue;
+            }
+            let block = branches.block_branches(index)?;
+            let element = XmlElementRef::from(block.element.get_branch(&txn)?);
+            chunks[index] = super::position::boundary_chunk_for_block(
+                &txn,
+                &element,
+                state.position_map.effective_doc_start(index),
+                positions,
+                &self.schema,
+                previous.chunks[index].ancestor.clone(),
+            )?;
+            #[cfg(test)]
+            super::observability::record_epoch_block_rebuild();
+        }
+        previous.with_rebuilt_chunks(
+            self.yrs_state_epoch,
+            self.revision,
+            chunks,
+            cells,
+            &blocks,
+            &cell_indexes,
         )
     }
 

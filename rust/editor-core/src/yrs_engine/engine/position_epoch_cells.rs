@@ -39,7 +39,19 @@ pub(super) struct CellPinning<'state> {
 impl CellPinning<'_> {
     pub(super) fn spans(&self, doc_positions: &[Vec<u32>]) -> Vec<Arc<PinnedCellSpan>> {
         let cells = self.cells_in_document_order();
-        let points = self.text_points(&cells, doc_positions.iter().flatten().copied());
+        let points = self.text_points(
+            &cells,
+            doc_positions
+                .iter()
+                .flatten()
+                .enumerate()
+                .map(|(scalar, position)| {
+                    (
+                        u32::try_from(scalar).expect("admitted scalar fits u32"),
+                        *position,
+                    )
+                }),
+        );
         let starts: Vec<u32> = cells.iter().map(|(_, cell)| cell.source_pos).collect();
         let nodes = nodes_starting_at(self.document, &starts);
         cells
@@ -47,12 +59,90 @@ impl CellPinning<'_> {
             .zip(nodes)
             .zip(points)
             .filter_map(|(((table, cell), node), points)| {
-                Some(Arc::new(PinnedCellSpan {
-                    cell: self.pin(table, cell, node?, &points)?,
-                    points,
-                }))
+                let (node_path, node) = node?;
+                self.span(table, cell, node, node_path, points)
+                    .map(Arc::new)
             })
             .collect()
+    }
+
+    pub(super) fn rebuild_spans(
+        &self,
+        previous: &[&PinnedCellSpan],
+        positions: &[(usize, Vec<u32>)],
+    ) -> Option<Vec<Arc<PinnedCellSpan>>> {
+        let mut cells = Vec::with_capacity(previous.len());
+        for span in previous {
+            let table_path = span.node_path.get(..span.node_path.len().checked_sub(2)?)?;
+            let table_position = crate::yrs_engine::compiler::node_boundary_position(
+                self.document.root(),
+                table_path,
+            )?;
+            let table = self.index.table_at(table_position)?;
+            let cell_position = crate::yrs_engine::compiler::node_boundary_position(
+                self.document.root(),
+                &span.node_path,
+            )?;
+            let index = table
+                .cells
+                .binary_search_by_key(&cell_position, |cell| cell.source_pos)
+                .ok()?;
+            cells.push((table, &table.cells[index]));
+        }
+        let points = self.text_points(
+            &cells,
+            positions.iter().flat_map(|(block, positions)| {
+                let start = self.position_map.effective_scalar_start(*block);
+                positions.iter().enumerate().map(move |(offset, position)| {
+                    (
+                        start + u32::try_from(offset).expect("block offset fits u32"),
+                        *position,
+                    )
+                })
+            }),
+        );
+        previous
+            .iter()
+            .zip(cells)
+            .zip(points)
+            .map(|((previous, (table, cell)), points)| {
+                self.span(
+                    table,
+                    cell,
+                    self.document.node_at(&previous.node_path)?,
+                    previous.node_path.clone(),
+                    points,
+                )
+                .map(Arc::new)
+            })
+            .collect()
+    }
+
+    fn span(
+        &self,
+        table: &ProjectedTable,
+        cell: &ProjectedCell,
+        node: &Node,
+        node_path: Vec<u32>,
+        mut points: Vec<(u32, CellTextPoint)>,
+    ) -> Option<PinnedCellSpan> {
+        let pinned = self.pin(table, cell, node, &points)?;
+        let block_range = self.position_map.block_range_for_path(&node_path);
+        if !points.is_empty() {
+            if block_range.is_empty() {
+                return None;
+            }
+            let start = self.position_map.effective_scalar_start(block_range.start);
+            for (scalar, _) in &mut points {
+                *scalar = scalar.checked_sub(start)?;
+            }
+        }
+        Some(PinnedCellSpan {
+            node_path,
+            block_range,
+            cell: pinned,
+            points,
+        })
     }
 
     pub(super) fn reanchor_in_surviving_cell(
@@ -126,8 +216,12 @@ impl CellPinning<'_> {
     ) -> Option<Vec<(u32, CellTextPoint)>> {
         self.text_points(
             cells,
-            (0..=self.position_map.total_scalars())
-                .map(|scalar| self.position_map.scalar_to_doc(scalar, self.document)),
+            (0..=self.position_map.total_scalars()).map(|scalar| {
+                (
+                    scalar,
+                    self.position_map.scalar_to_doc(scalar, self.document),
+                )
+            }),
         )
         .into_iter()
         .nth(target)
@@ -136,14 +230,13 @@ impl CellPinning<'_> {
     fn text_points(
         &self,
         cells: &[(&ProjectedTable, &ProjectedCell)],
-        doc_positions: impl Iterator<Item = u32>,
+        doc_positions: impl Iterator<Item = (u32, u32)>,
     ) -> Vec<Vec<(u32, CellTextPoint)>> {
         let mut points: Vec<Vec<(u32, CellTextPoint)>> = vec![Vec::new(); cells.len()];
         let mut previous: Vec<Option<(u32, CellTextPoint)>> = vec![None; cells.len()];
         let mut open: Vec<usize> = Vec::new();
         let mut next_cell = 0;
-        for (scalar, doc_pos) in doc_positions.enumerate() {
-            let scalar = u32::try_from(scalar).expect("position map scalar bounds fit u32");
+        for (scalar, doc_pos) in doc_positions {
             while open
                 .last()
                 .is_some_and(|&innermost| cells[innermost].1.source_end <= doc_pos)
@@ -241,9 +334,12 @@ fn attach_run_starts(points: &mut [(u32, CellTextPoint)]) {
     }
 }
 
-fn nodes_starting_at<'doc>(document: &'doc Document, positions: &[u32]) -> Vec<Option<&'doc Node>> {
+fn nodes_starting_at<'doc>(
+    document: &'doc Document,
+    positions: &[u32],
+) -> Vec<Option<(Vec<u32>, &'doc Node)>> {
     let mut found = Vec::with_capacity(positions.len());
-    collect_nodes_starting_at(document.root(), 0, positions, &mut found);
+    collect_nodes_starting_at(document.root(), 0, positions, &mut Vec::new(), &mut found);
     found.resize(positions.len(), None);
     found
 }
@@ -252,13 +348,15 @@ fn collect_nodes_starting_at<'doc>(
     parent: &'doc Node,
     content_start: u32,
     positions: &[u32],
-    found: &mut Vec<Option<&'doc Node>>,
+    path: &mut Vec<u32>,
+    found: &mut Vec<Option<(Vec<u32>, &'doc Node)>>,
 ) {
     let Some(content) = parent.content() else {
         return;
     };
     let mut position = content_start;
-    for child in content.iter() {
+    for (index, child) in content.iter().enumerate() {
+        path.push(u32::try_from(index).expect("admitted child index fits u32"));
         let end = position.saturating_add(child.node_size());
         while positions
             .get(found.len())
@@ -267,7 +365,7 @@ fn collect_nodes_starting_at<'doc>(
             found.push(None);
         }
         if positions.get(found.len()) == Some(&position) {
-            found.push(Some(child));
+            found.push(Some((path.clone(), child)));
         }
         if positions
             .get(found.len())
@@ -277,10 +375,12 @@ fn collect_nodes_starting_at<'doc>(
                 child,
                 position.saturating_add(NODE_OPENING_TOKENS),
                 positions,
+                path,
                 found,
             );
         }
         position = end;
+        path.pop();
     }
 }
 

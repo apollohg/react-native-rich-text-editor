@@ -61,6 +61,8 @@ pub(crate) struct AncestorNode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PinnedCellSpan {
+    pub(crate) node_path: Vec<u32>,
+    pub(crate) block_range: std::ops::Range<usize>,
     pub(crate) cell: PinnedTableCell,
     pub(crate) points: Vec<(u32, CellTextPoint)>,
 }
@@ -115,6 +117,22 @@ impl EpochBlockChunk {
     }
 }
 
+impl PinnedCellSpan {
+    fn retained_bytes(&self) -> Option<usize> {
+        std::mem::size_of::<Self>()
+            .checked_add(
+                self.node_path
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<u32>())?,
+            )?
+            .checked_add(
+                self.points
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<(u32, CellTextPoint)>())?,
+            )
+    }
+}
+
 impl EpochSnapshot {
     pub(crate) fn new(
         yrs_state_epoch: u64,
@@ -165,19 +183,116 @@ impl EpochSnapshot {
             }
         }
         for span in &cells {
-            retained_bytes = retained_bytes
-                .checked_add(std::mem::size_of::<PinnedCellSpan>())?
-                .checked_add(
-                    span.points
-                        .capacity()
-                        .checked_mul(std::mem::size_of::<(u32, CellTextPoint)>())?,
-                )?;
+            retained_bytes = retained_bytes.checked_add(span.retained_bytes()?)?;
         }
         Some(Self {
             yrs_state_epoch,
             document_revision,
             chunks: chunks.into(),
             scalar_starts: scalar_starts.into(),
+            cells: cells.into(),
+            retained_bytes,
+        })
+    }
+
+    pub(crate) fn scalar_starts(chunks: &[Arc<EpochBlockChunk>]) -> Option<Vec<u32>> {
+        let mut starts = Vec::with_capacity(chunks.len());
+        let mut start = 0u32;
+        for chunk in chunks {
+            starts.push(start);
+            start = start.checked_add(u32::try_from(chunk.anchors.len()).ok()?)?;
+        }
+        Some(starts)
+    }
+
+    pub(crate) fn attach_cells<'a>(
+        chunks: &mut [Arc<EpochBlockChunk>],
+        starts: &[u32],
+        cells: impl Iterator<Item = (usize, &'a Arc<PinnedCellSpan>)>,
+    ) -> Option<()> {
+        for (cell, span) in cells {
+            if span.points.is_empty() {
+                continue;
+            }
+            let origin = *starts.get(span.block_range.start)?;
+            let mut points = span.points.iter().peekable();
+            while let Some((relative, _)) = points.peek() {
+                let scalar = relative.checked_add(origin)?;
+                let block = starts
+                    .partition_point(|start| *start <= scalar)
+                    .checked_sub(1)?;
+                let end = starts.get(block + 1).copied().unwrap_or(u32::MAX);
+                let chunk = Arc::get_mut(&mut chunks[block])?;
+                while points.peek().is_some_and(|(relative, _)| {
+                    relative
+                        .checked_add(origin)
+                        .is_some_and(|scalar| scalar < end)
+                }) {
+                    let (relative, point) = points.next()?;
+                    let offset =
+                        usize::try_from(relative.checked_add(origin)?.checked_sub(starts[block])?)
+                            .ok()?;
+                    let boundary = chunk.anchors.get_mut(offset)?;
+                    if boundary.inside_table_cell() {
+                        boundary.pinned_cell = Some(CellTextPosition {
+                            cell,
+                            point: *point,
+                        });
+                    }
+                }
+            }
+        }
+        Some(())
+    }
+
+    pub(crate) fn with_rebuilt_chunks(
+        &self,
+        yrs_state_epoch: u64,
+        document_revision: u64,
+        mut chunks: Vec<Arc<EpochBlockChunk>>,
+        cells: Vec<Arc<PinnedCellSpan>>,
+        replaced_chunks: &[usize],
+        replaced_cells: &[usize],
+    ) -> Option<Self> {
+        if chunks.len() != self.chunks.len() || cells.len() != self.cells.len() {
+            return None;
+        }
+        let mut starts = self.scalar_starts.to_vec();
+        let mut delta = 0i64;
+        for (replacement, &index) in replaced_chunks.iter().enumerate() {
+            delta = delta
+                .checked_add(i64::try_from(chunks[index].anchors.len()).ok()?)?
+                .checked_sub(i64::try_from(self.chunks[index].anchors.len()).ok()?)?;
+            let end = replaced_chunks
+                .get(replacement + 1)
+                .map_or(starts.len(), |next| next + 1);
+            if delta != 0 {
+                for start in &mut starts[index + 1..end] {
+                    *start = u32::try_from(i64::from(*start).checked_add(delta)?).ok()?;
+                }
+            }
+        }
+        Self::attach_cells(
+            &mut chunks,
+            &starts,
+            replaced_cells.iter().map(|index| (*index, &cells[*index])),
+        )?;
+        let mut retained_bytes = self.retained_bytes;
+        for &index in replaced_chunks {
+            retained_bytes = retained_bytes
+                .checked_sub(self.chunks.get(index)?.retained_bytes)?
+                .checked_add(chunks.get(index)?.retained_bytes)?;
+        }
+        for &index in replaced_cells {
+            retained_bytes = retained_bytes
+                .checked_sub(self.cells.get(index)?.retained_bytes()?)?
+                .checked_add(cells.get(index)?.retained_bytes()?)?;
+        }
+        Some(Self {
+            yrs_state_epoch,
+            document_revision,
+            chunks: chunks.into(),
+            scalar_starts: starts.into(),
             cells: cells.into(),
             retained_bytes,
         })
@@ -403,6 +518,12 @@ impl PositionEpochStore {
                 "position epoch offset is outside the rendered document",
             )
         })
+    }
+
+    pub(crate) fn is_snapshot_pinned(&self, snapshot: &Arc<EpochSnapshot>) -> bool {
+        self.epochs
+            .values()
+            .any(|epoch| Arc::ptr_eq(&epoch.snapshot, snapshot))
     }
 
     pub(crate) fn release_owner(&mut self, owner_id: u64) {

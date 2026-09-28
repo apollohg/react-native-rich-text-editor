@@ -87,7 +87,19 @@ fn pin_and_resolution_walks_give_every_cell_the_same_text_points() {
         );
         assert_eq!(
             pinning.cell_text_points(&cells, target).as_ref(),
-            Some(&span.points),
+            Some(
+                &span
+                    .points
+                    .iter()
+                    .map(|(scalar, point)| (
+                        scalar
+                            + state
+                                .position_map
+                                .effective_scalar_start(span.block_range.start),
+                        *point
+                    ))
+                    .collect::<Vec<_>>()
+            ),
             "cell {target} at doc position {} resolves to the points it was pinned with",
             cells[target].1.source_pos
         );

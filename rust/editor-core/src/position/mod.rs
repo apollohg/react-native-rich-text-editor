@@ -123,6 +123,16 @@ impl PositionMap {
             .unwrap_or(0)
     }
 
+    pub(crate) fn block_range_for_path(&self, path: &[u32]) -> std::ops::Range<usize> {
+        let start = self
+            .blocks
+            .partition_point(|block| block.node_path.as_slice() < path);
+        let end = self.blocks.partition_point(|block| {
+            block.node_path.as_slice() < path || block.node_path.starts_with(path)
+        });
+        start..end
+    }
+
     pub(crate) fn block_doc_positions(
         &self,
         block_index: usize,

@@ -435,6 +435,47 @@ pub(crate) fn boundary_chunks_at_doc_positions<T: ReadTxn>(
 ) -> Option<Vec<Arc<EpochBlockChunk>>> {
     #[cfg(test)]
     super::observability::record_yrs_tree_walk();
+    boundary_chunks_in_sequence(
+        txn,
+        fragment.children(txn),
+        BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment)),
+        0,
+        doc_positions,
+        schema,
+        None,
+    )
+}
+
+pub(crate) fn boundary_chunk_for_block<T: ReadTxn>(
+    txn: &T,
+    element: &XmlElementRef,
+    doc_start: u32,
+    positions: Vec<u32>,
+    schema: &Schema,
+    ancestor: Option<Arc<AncestorNode>>,
+) -> Option<Arc<EpochBlockChunk>> {
+    boundary_chunks_in_sequence(
+        txn,
+        element.children(txn),
+        BranchPtr::from(<XmlElementRef as AsRef<Branch>>::as_ref(element)),
+        doc_start,
+        &[positions],
+        schema,
+        ancestor,
+    )?
+    .into_iter()
+    .next()
+}
+
+fn boundary_chunks_in_sequence<T: ReadTxn>(
+    txn: &T,
+    children: impl Iterator<Item = XmlOut>,
+    branch: BranchPtr,
+    start: u32,
+    doc_positions: &[Vec<u32>],
+    schema: &Schema,
+    ancestor: Option<Arc<AncestorNode>>,
+) -> Option<Vec<Arc<EpochBlockChunk>>> {
     let mut targets = Vec::new();
     let count = doc_positions.iter().try_fold(0usize, |total, positions| {
         total.checked_add(positions.len())
@@ -458,14 +499,9 @@ pub(crate) fn boundary_chunks_at_doc_positions<T: ReadTxn>(
             .iter()
             .map(|positions| vec![None; positions.len()])
             .collect(),
-        open: Vec::new(),
+        open: ancestor.into_iter().collect(),
     };
-    walk.walk_sequence(
-        fragment.children(txn),
-        BranchPtr::from(<XmlFragmentRef as AsRef<Branch>>::as_ref(fragment)),
-        0,
-        None,
-    )?;
+    walk.walk_sequence(children, branch, start, None)?;
     if walk.resolved != targets.len() {
         return None;
     }

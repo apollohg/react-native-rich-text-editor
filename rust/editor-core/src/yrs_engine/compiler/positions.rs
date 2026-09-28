@@ -466,7 +466,7 @@ pub(super) fn direct_attribute_target(document: &Document, position: u32) -> Opt
     })
 }
 
-pub(super) fn node_boundary_position(root: &Node, path: &[u32]) -> Option<u32> {
+pub(in crate::yrs_engine) fn node_boundary_position(root: &Node, path: &[u32]) -> Option<u32> {
     let mut node = root;
     let mut content_start = 0u32;
     for (depth, child_index) in path.iter().copied().enumerate() {

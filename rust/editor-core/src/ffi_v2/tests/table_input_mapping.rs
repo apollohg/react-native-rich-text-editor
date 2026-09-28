@@ -591,7 +591,7 @@ fn table_input_mapping_preserves_extent_without_editable_cells_for_nested_failur
 }
 
 #[test]
-fn a_render_after_a_keystroke_walks_the_yrs_tree_only_to_pin() {
+fn a_render_after_a_keystroke_does_not_walk_the_yrs_tree() {
     use crate::test_support::large_table_fixture::{
         ffi_editor_with_document, ffi_value, plain_table_document,
     };
@@ -628,7 +628,7 @@ fn a_render_after_a_keystroke_walks_the_yrs_tree_only_to_pin() {
     let rendered = ffi_value(&rendered);
     assert!(rendered["renderPatch"].is_object());
     assert_eq!(
-        counts.yrs_tree_walks, 1,
-        "only the legacy full epoch pin walks: {counts:?}"
+        counts.yrs_tree_walks, 0,
+        "the edited epoch chunks use indexed branches: {counts:?}"
     );
 }

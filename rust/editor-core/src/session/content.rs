@@ -65,6 +65,7 @@ impl EditorSession {
             .restore_snapshot(snapshot)
             .map_err(|error| snapshot_session_error(error, request_id))?;
         self.position_epochs.clear();
+        self.latest_epoch_snapshot = None;
         self.native_request_ledgers.clear();
         self.native_render_cursors.clear();
         if self.document_state == DocumentState::AwaitRemote {

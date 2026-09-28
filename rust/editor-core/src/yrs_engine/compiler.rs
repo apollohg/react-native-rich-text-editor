@@ -56,6 +56,7 @@ use observability::{
 };
 #[allow(unused_imports)]
 pub(crate) use positions::map_position;
+pub(in crate::yrs_engine) use positions::node_boundary_position;
 use preview::LocalizedSemanticCompilation;
 #[allow(unused_imports)]
 pub(crate) use selection::{cell_admission_error, resolve_cell_opening, selectable_void_at};

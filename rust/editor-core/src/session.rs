@@ -66,6 +66,7 @@ pub(crate) struct EditorSession {
     pub(crate) document_state: DocumentState,
     pub(crate) collaboration: CollaborationLifecycle,
     position_epochs: crate::position_epoch::PositionEpochStore,
+    latest_epoch_snapshot: Option<std::sync::Arc<crate::position_epoch::EpochSnapshot>>,
     native_request_ledgers: std::collections::BTreeMap<u64, NativeRequestLedger>,
     native_render_cursors: std::collections::BTreeMap<u64, NativeRenderCursor>,
 }

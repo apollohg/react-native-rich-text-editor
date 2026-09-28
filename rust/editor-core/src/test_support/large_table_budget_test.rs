@@ -258,3 +258,45 @@ fn cold_position_epoch_budget_probe() {
     }
     assert!(violations.is_empty(), "{}", violations.join("\n"));
 }
+
+const KEYSTROKE_EPOCH_BUDGET_MS: f64 = 0.2;
+
+#[test]
+#[ignore = "release-mode wall-clock probe"]
+fn incremental_position_epoch_budget_probe() {
+    let mut violations = Vec::new();
+    for (rows, columns) in PROBE_FIXTURES {
+        let mut session = session_with_document(&plain_table_document(rows, columns));
+        let block = keystroke_cell(rows, columns);
+        let mut epoch = session
+            .pin_position_epoch(LEDGER_EPOCH_OWNER, session.engine.revision())
+            .unwrap();
+        let mut samples = Vec::with_capacity(PROBE_MEASURED_KEYSTROKES);
+        for keystroke in 0..PROBE_KEYSTROKES {
+            let map = session.engine.position_map().unwrap();
+            let caret = map.effective_scalar_start(block) + map.block(block).unwrap().scalar_len;
+            let request = json!({
+                "version": 1, "requestId": (PROBE_FIRST_KEYSTROKE_REQUEST_ID + keystroke).to_string(),
+                "ownerId": LEDGER_EPOCH_OWNER.to_string(), "positionEpoch": epoch.to_string(),
+                "intent": {"type":"insertText", "anchor":caret, "head":caret, "text":PROBE_KEYSTROKE_TEXT}
+            });
+            crate::native_transaction_bridge::NativeTransactionBridge::new(&mut session)
+                .submit_native_intent(&request.to_string())
+                .unwrap();
+            let start = Instant::now();
+            epoch = session
+                .pin_position_epoch(LEDGER_EPOCH_OWNER, session.engine.revision())
+                .unwrap();
+            let elapsed = elapsed_ms(start);
+            if keystroke >= PROBE_WARMUP_KEYSTROKES {
+                samples.push(elapsed);
+            }
+        }
+        let median = median_ms(samples);
+        println!("PROBE epoch {rows}x{columns} keystroke median {median:.3} ms, budget {KEYSTROKE_EPOCH_BUDGET_MS}");
+        if median > KEYSTROKE_EPOCH_BUDGET_MS {
+            violations.push(format!("{rows}x{columns}: keystroke epoch {median:.3} ms exceeds {KEYSTROKE_EPOCH_BUDGET_MS} ms"));
+        }
+    }
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
+}
