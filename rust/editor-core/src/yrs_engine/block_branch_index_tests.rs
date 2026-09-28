@@ -90,3 +90,20 @@ fn index_conversions_equal_root_walks_at_every_position() {
             .unwrap();
     }
 }
+
+#[test]
+fn path_keyed_identities_equal_position_keyed_identities() {
+    let _clients = crate::test_support::deterministic_clients::DeterministicClients::new();
+    let mut input = multi_paragraph_cell_document();
+    input["content"]
+        .as_array_mut()
+        .unwrap()
+        .insert(0, json!({"type":"horizontal_rule"}));
+    let session = session_with_document(&input);
+    let index = session.engine.block_branch_index_for_test().unwrap();
+    assert_eq!(index.table_key(&[1]), Some("y1-2"));
+    assert_eq!(index.table_key(&[1, 2, 2, 0]), Some("y1-163"));
+    assert_eq!(index.atom_id(&[0]), Some("y1-1"));
+    assert_eq!(index.table_key(&[0]), None);
+    assert_eq!(index.atom_id(&[1]), None);
+}

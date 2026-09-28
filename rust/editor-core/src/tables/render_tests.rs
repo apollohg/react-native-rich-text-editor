@@ -104,8 +104,11 @@ fn raised_depth_table_transport_has_bounded_json_container_depth() {
         )
         .unwrap();
         let cache = CachedRenderBlocks::build(&document, &schema, &limits).unwrap();
-        let wire =
-            crate::ffi_v2::render::serialize_render_cache_for_test(&cache, &test_table_ids(&cache));
+        let wire = crate::ffi_v2::render::serialize_render_cache_for_test(
+            &cache,
+            &document,
+            &test_table_ids(&cache),
+        );
         let mut depth = 0usize;
         let mut maximum = 0usize;
         let mut quoted = false;
@@ -181,8 +184,11 @@ fn shared_synthetic_attributes_are_retained_and_serialized_once() {
     let distinct_attrs = 2;
     crate::yrs_engine::observability::reset_full_pass_counts_for_test();
     let cache = CachedRenderBlocks::build(&document, &schema, &ResourceLimits::default()).unwrap();
-    let json =
-        crate::ffi_v2::render::serialize_render_cache_for_test(&cache, &test_table_ids(&cache));
+    let json = crate::ffi_v2::render::serialize_render_cache_for_test(
+        &cache,
+        &document,
+        &test_table_ids(&cache),
+    );
     assert_eq!(
         json.matches(&payload).count(),
         1,
@@ -516,10 +522,13 @@ fn grid_limit_failure_keeps_the_real_table_extent_without_inventing_cells() {
     assert!(table.cells.is_empty());
     assert!(table.structure.source_rows.is_empty());
     assert!(table.structure.synthetic_regions.is_empty());
-    let wire: serde_json::Value = serde_json::from_str(
-        &crate::ffi_v2::render::serialize_render_cache_for_test(&cache, &test_table_ids(&cache)),
-    )
-    .unwrap();
+    let wire: serde_json::Value =
+        serde_json::from_str(&crate::ffi_v2::render::serialize_render_cache_for_test(
+            &cache,
+            &document,
+            &test_table_ids(&cache),
+        ))
+        .unwrap();
     let id = wire["renderBlocks"][0][0]["tableId"].as_str().unwrap();
     assert_eq!(wire["tableRecords"][id]["tablePos"], json!(0));
     assert_eq!(

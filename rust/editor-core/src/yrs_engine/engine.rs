@@ -411,10 +411,11 @@ impl YrsDocumentEngine {
             .map(|state| Arc::clone(&state.render_blocks))
     }
 
-    pub(crate) fn block_source_ids(&self) -> Option<super::position::BlockSourceIds> {
-        let txn = self.doc.transact();
-        let fragment = txn.get_xml_fragment(self.fragment_name.as_str())?;
-        super::position::block_source_ids(&txn, &fragment, &self.schema)
+    pub(crate) fn block_branch_index(
+        &self,
+    ) -> Option<&super::block_branch_index::BlockBranchIndex> {
+        self.debug_assert_derived_revision_keys();
+        self.derived_state.as_ref()?.block_branch_index.as_deref()
     }
 
     pub fn document_json(&self) -> Option<serde_json::Value> {

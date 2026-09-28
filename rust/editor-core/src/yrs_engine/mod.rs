@@ -40,6 +40,7 @@ pub use awareness::{
     AwarenessCodec, AwarenessLimits, AwarenessPeer, RelativeCellRectangle,
     AWARENESS_CELL_RECTANGLE_KEY,
 };
+pub(crate) use block_branch_index::BlockBranchIndex;
 pub(crate) use codec::YrsDocumentCodec;
 pub(crate) use commands::TableCommandSurface;
 pub use commands::{CommandPlan, MovedTableCells, TableCellDrop, TypedCommand};
@@ -65,7 +66,6 @@ pub use operation::{
 pub use operation::{ReplacementHistory, RootReplacementError};
 pub use origin::{DocumentOrigin, TransactionOrigin};
 pub(crate) use position::editor_offset_to_doc_pos;
-pub(crate) use position::BlockSourceIds;
 #[allow(unused_imports)]
 pub(crate) use position::{
     cursor_sticky_index_from_doc_pos, relative_selection_resolves, sticky_index_to_doc_pos,

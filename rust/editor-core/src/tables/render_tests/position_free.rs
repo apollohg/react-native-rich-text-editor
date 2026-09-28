@@ -247,9 +247,14 @@ fn rich_cell_elements_survive_sibling_and_root_position_changes() {
         assert_eq!(
             crate::ffi_v2::render::serialize_render_cache_for_test(
                 &transition.cache,
+                &next,
                 &test_table_ids(&transition.cache)
             ),
-            crate::ffi_v2::render::serialize_render_cache_for_test(&fresh, &test_table_ids(&fresh)),
+            crate::ffi_v2::render::serialize_render_cache_for_test(
+                &fresh,
+                &next,
+                &test_table_ids(&fresh)
+            ),
             "absolute nested tables and atoms agree after changed cell={changes_cell}",
         );
     }

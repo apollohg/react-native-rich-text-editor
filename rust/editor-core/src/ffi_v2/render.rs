@@ -349,12 +349,20 @@ fn render_snapshot_json(
     let position_map = engine.position_map().ok_or_else(engine_not_ready)?;
     let schema = registered_schema(&editor_id)?;
     let current_render_blocks = engine.cached_render_blocks().ok_or_else(engine_not_ready)?;
-    let source_ids = engine.block_source_ids().ok_or_else(engine_not_ready)?;
+    let source_ids = RenderSourceIds {
+        index: engine.block_branch_index().ok_or_else(|| {
+            SessionError::from(YrsEngineError::new(
+                "ENGINE_INVARIANT_FAILED",
+                "render source identities are unavailable",
+            ))
+        })?,
+        document,
+    };
     let mut cached_tables = Vec::new();
     current_render_blocks.visit_table_records(&mut cached_tables);
     let mut unique_table_ids = std::collections::HashSet::new();
     for (table_pos, _) in cached_tables {
-        let Some(source_id) = source_ids.table_ids.get(&table_pos) else {
+        let Some(source_id) = source_ids.table_key(table_pos) else {
             return Err(SessionError::from(YrsEngineError::new(
                 "ENGINE_INVARIANT_FAILED",
                 "render table is missing its live Yrs source identity",
@@ -551,6 +559,7 @@ pub fn editor_v2_scalar_to_doc(editor_id: String, scalar: u32) -> FfiJsonResult 
 #[cfg(test)]
 pub(crate) fn serialize_render_cache_for_test(
     cache: &crate::render::incremental::CachedRenderBlocks,
+    document: &crate::model::Document,
     table_ids: &HashMap<u32, String>,
 ) -> String {
     let attributes: std::collections::BTreeMap<_, _> = cache
@@ -559,16 +568,49 @@ pub(crate) fn serialize_render_cache_for_test(
         .map(|(key, json)| (key, json.as_ref()))
         .collect();
     let mut records = std::collections::BTreeMap::new();
-    let source_ids = crate::yrs_engine::BlockSourceIds {
-        atom_ids: HashMap::new(),
-        table_ids: table_ids.clone(),
+    let table_keys = table_ids
+        .iter()
+        .map(|(position, id)| {
+            (
+                crate::tables::commands::node_path_starting_at(document, *position).unwrap(),
+                id.clone(),
+            )
+        })
+        .collect();
+    let index = crate::yrs_engine::BlockBranchIndex::with_table_keys_for_test(table_keys);
+    let source_ids = RenderSourceIds {
+        index: &index,
+        document,
     };
     serde_json::json!({"renderBlocks": serialize_render_blocks(&cache.materialize(), &source_ids, &mut records), "tableAttributes": attributes, "tableRecords": records}).to_string()
 }
 
+struct RenderSourceIds<'a> {
+    index: &'a crate::yrs_engine::BlockBranchIndex,
+    document: &'a crate::model::Document,
+}
+
+impl RenderSourceIds<'_> {
+    fn table_key(&self, position: u32) -> Option<&str> {
+        self.index
+            .table_key(&crate::tables::commands::node_path_starting_at(
+                self.document,
+                position,
+            )?)
+    }
+
+    fn atom_id(&self, position: u32) -> Option<&str> {
+        self.index
+            .atom_id(&crate::tables::commands::node_path_starting_at(
+                self.document,
+                position,
+            )?)
+    }
+}
+
 fn serialize_render_elements(
     elements: &[crate::render::RenderElement],
-    source_ids: &crate::yrs_engine::BlockSourceIds,
+    source_ids: &RenderSourceIds<'_>,
     table_records: &mut std::collections::BTreeMap<String, Value>,
     origin: u32,
 ) -> serde_json::Value {
@@ -581,7 +623,7 @@ fn serialize_render_elements(
                 let table_id = format!("t{table_pos}");
                 let record = serde_json::json!({
                         "tablePos": table_pos,
-                        "sourceId": source_ids.table_ids.get(&table_pos).expect("table identity preflight required"),
+                        "sourceId": source_ids.table_key(table_pos).expect("table identity preflight required"),
                         "sourceEnd": table_pos + table.structure.doc_size,
                         "rows": table.structure.rows,
                         "columns": table.structure.columns,
@@ -666,8 +708,8 @@ fn serialize_render_elements(
                             .collect(),
                     );
                 }
-                if let Some(atom_id) = source_ids.atom_ids.get(&(origin + doc_pos)) {
-                    obj["atomId"] = Value::String(atom_id.clone());
+                if let Some(atom_id) = source_ids.atom_id(origin + doc_pos) {
+                    obj["atomId"] = Value::String(atom_id.to_owned());
                 }
                 obj
             }
@@ -797,7 +839,7 @@ fn serialize_render_mark(mark: &crate::render::RenderMark) -> serde_json::Value 
 
 fn serialize_render_blocks(
     blocks: &[Vec<crate::render::RenderElement>],
-    source_ids: &crate::yrs_engine::BlockSourceIds,
+    source_ids: &RenderSourceIds<'_>,
     table_records: &mut std::collections::BTreeMap<String, Value>,
 ) -> serde_json::Value {
     serde_json::Value::Array(
@@ -810,7 +852,7 @@ fn serialize_render_blocks(
 
 fn serialize_render_patch(
     patch: &crate::render::incremental::RenderBlocksPatch,
-    source_ids: &crate::yrs_engine::BlockSourceIds,
+    source_ids: &RenderSourceIds<'_>,
     base_document_version: u64,
     table_records: &mut std::collections::BTreeMap<String, Value>,
 ) -> Value {

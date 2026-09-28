@@ -366,14 +366,18 @@ impl<'a> TableTarget<'a> {
 }
 
 pub(crate) fn node_starting_at(document: &Document, position: u32) -> Option<&Node> {
-    let Ok(resolved) = document.resolve(position) else {
-        return None;
-    };
+    document.node_at(&node_path_starting_at(document, position)?)
+}
+
+pub(crate) fn node_path_starting_at(document: &Document, position: u32) -> Option<Vec<u32>> {
+    let resolved = document.resolve(position).ok()?;
     let parent = resolved.parent(document);
     let mut cursor = 0u32;
-    for child in parent.content()?.iter() {
+    for (index, child) in parent.content()?.iter().enumerate() {
         if cursor == resolved.parent_offset {
-            return Some(child);
+            let mut path = resolved.node_path.to_vec();
+            path.push(u32::try_from(index).ok()?);
+            return Some(path);
         }
         cursor = cursor.checked_add(child.node_size())?;
     }

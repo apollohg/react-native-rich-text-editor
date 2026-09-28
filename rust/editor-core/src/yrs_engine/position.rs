@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use yrs::branch::{Branch, BranchID, BranchPtr};
 use yrs::types::text::{Text, YChange};
 use yrs::types::xml::{XmlElementRef, XmlFragment, XmlFragmentRef, XmlOut, XmlTextRef};
@@ -9,7 +7,7 @@ use yrs::{Any, Assoc, IndexScope, Offset, ReadTxn, StickyIndex};
 use crate::model::Document;
 use crate::position::PositionMap;
 use crate::position_epoch::{AncestorAnchors, BoundaryAnchors, EpochBoundaries};
-use crate::schema::{NodeRole, Schema};
+use crate::schema::Schema;
 use crate::selection::Selection;
 use crate::tables::commands::{NODE_CLOSING_TOKENS, NODE_OPENING_TOKENS};
 
@@ -812,73 +810,6 @@ pub(super) fn xml_out_pm_size<T: ReadTxn>(txn: &T, node: &XmlOut, schema: &Schem
             size.checked_add(xml_out_pm_size(txn, &child, schema)?)
         }),
     }
-}
-
-pub(crate) struct BlockSourceIds {
-    pub atom_ids: HashMap<u32, String>,
-    pub table_ids: HashMap<u32, String>,
-}
-
-pub(crate) fn block_source_ids<T: ReadTxn>(
-    txn: &T,
-    fragment: &XmlFragmentRef,
-    schema: &Schema,
-) -> Option<BlockSourceIds> {
-    #[cfg(test)]
-    super::observability::record_yrs_tree_walk();
-    let mut ids = BlockSourceIds {
-        atom_ids: HashMap::new(),
-        table_ids: HashMap::new(),
-    };
-    collect_block_source_ids(txn, fragment.children(txn), 0, schema, &mut ids)?;
-    Some(ids)
-}
-
-fn collect_block_source_ids<T: ReadTxn>(
-    txn: &T,
-    children: impl Iterator<Item = XmlOut>,
-    start: u32,
-    schema: &Schema,
-    ids: &mut BlockSourceIds,
-) -> Option<u32> {
-    let mut position = start;
-    for child in children {
-        position = match &child {
-            XmlOut::Element(element) if is_void_element(element, txn, schema) => {
-                let spec = super::codec::wire_element_node_spec(element, txn, schema);
-                if spec.is_some_and(|spec| matches!(spec.role, NodeRole::Block)) {
-                    if let BranchID::Nested(id) = AsRef::<Branch>::as_ref(element).id() {
-                        ids.atom_ids
-                            .insert(position, format!("y{}-{}", id.client, id.clock));
-                    }
-                }
-                position.checked_add(xml_out_pm_size(txn, &child, schema)?)?
-            }
-            XmlOut::Element(element) => {
-                let spec = super::codec::wire_element_node_spec(element, txn, schema);
-                if spec.is_some_and(|spec| spec.table_role == Some(crate::tables::TableRole::Table))
-                {
-                    if let BranchID::Nested(id) = AsRef::<Branch>::as_ref(element).id() {
-                        ids.table_ids
-                            .insert(position, format!("y{}-{}", id.client, id.clock));
-                    }
-                }
-                collect_block_source_ids(
-                    txn,
-                    element.children(txn),
-                    position.checked_add(1)?,
-                    schema,
-                    ids,
-                )?
-                .checked_add(1)?
-            }
-            XmlOut::Fragment(nested) => {
-                collect_block_source_ids(txn, nested.children(txn), position, schema, ids)?
-            }
-            XmlOut::Text(_) => position.checked_add(xml_out_pm_size(txn, &child, schema)?)?,
-        };
-    }
-    Some(position)
 }
 
 pub(super) fn xml_text_plain_string<T: ReadTxn>(text: &XmlTextRef, txn: &T) -> Option<String> {

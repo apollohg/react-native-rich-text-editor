@@ -7,7 +7,7 @@ use crate::position::PositionMap;
 use crate::schema::Schema;
 use crate::tables::commands::NODE_OPENING_TOKENS;
 use smallvec::SmallVec;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use yrs::branch::{Branch, BranchID, BranchPtr};
 use yrs::types::xml::{XmlElementRef, XmlFragment, XmlFragmentRef, XmlOut};
 use yrs::{Assoc, Offset, ReadTxn, StickyIndex};
@@ -16,6 +16,8 @@ use yrs::{Assoc, Offset, ReadTxn, StickyIndex};
 pub(crate) struct BlockBranchIndex {
     blocks: Vec<BlockBranches>,
     by_branch: HashMap<BranchID, usize>,
+    table_keys: BTreeMap<Vec<u32>, String>,
+    atom_ids: BTreeMap<Vec<u32>, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,14 +79,34 @@ impl BlockBranchIndex {
         let mut blocks = vec![None; position_map.block_count()];
         let mut pending = Vec::new();
         let mut position = 0u32;
-        for child in fragment.children(txn) {
+        for (child_index, child) in fragment.children(txn).enumerate() {
             let size = xml_out_pm_size(txn, &child, schema)?;
-            pending.push((position, child));
+            pending.push((position, vec![u32::try_from(child_index).ok()?], child));
             position = position.checked_add(size)?;
         }
-        while let Some((position, node)) = pending.pop() {
+        let mut table_keys = BTreeMap::new();
+        let mut atom_ids = BTreeMap::new();
+        let mut unique_table_keys = HashSet::new();
+        while let Some((position, path, node)) = pending.pop() {
             match node {
                 XmlOut::Element(element) => {
+                    let spec = super::codec::wire_element_node_spec(&element, txn, schema);
+                    if let BranchID::Nested(id) = AsRef::<Branch>::as_ref(&element).id() {
+                        if spec.is_some_and(|spec| {
+                            spec.table_role == Some(crate::tables::TableRole::Table)
+                        }) {
+                            let key = format!("y{}-{}", id.client, id.clock);
+                            if !unique_table_keys.insert(key.clone()) {
+                                return None;
+                            }
+                            table_keys.insert(path.clone(), key);
+                        }
+                        if spec.is_some_and(|spec| {
+                            spec.is_void && matches!(spec.role, crate::schema::NodeRole::Block)
+                        }) {
+                            atom_ids.insert(path.clone(), format!("y{}-{}", id.client, id.clock));
+                        }
+                    }
                     if let Some(index) = starts.get(&position) {
                         blocks[*index] = Some(BlockBranches {
                             element: AsRef::<Branch>::as_ref(&element).id(),
@@ -93,17 +115,21 @@ impl BlockBranchIndex {
                         continue;
                     }
                     let mut child_pos = position.checked_add(NODE_OPENING_TOKENS)?;
-                    for child in element.children(txn) {
+                    for (child_index, child) in element.children(txn).enumerate() {
                         let size = xml_out_pm_size(txn, &child, schema)?;
-                        pending.push((child_pos, child));
+                        let mut child_path = path.clone();
+                        child_path.push(u32::try_from(child_index).ok()?);
+                        pending.push((child_pos, child_path, child));
                         child_pos = child_pos.checked_add(size)?;
                     }
                 }
                 XmlOut::Fragment(fragment) => {
                     let mut child_pos = position;
-                    for child in fragment.children(txn) {
+                    for (child_index, child) in fragment.children(txn).enumerate() {
                         let size = xml_out_pm_size(txn, &child, schema)?;
-                        pending.push((child_pos, child));
+                        let mut child_path = path.clone();
+                        *child_path.last_mut()? += u32::try_from(child_index).ok()?;
+                        pending.push((child_pos, child_path, child));
                         child_pos = child_pos.checked_add(size)?;
                     }
                 }
@@ -119,7 +145,12 @@ impl BlockBranchIndex {
                 }
             }
         }
-        Some(Self { blocks, by_branch })
+        Some(Self {
+            blocks,
+            by_branch,
+            table_keys,
+            atom_ids,
+        })
     }
 
     pub(crate) fn with_block_replaced<T: ReadTxn>(
@@ -151,6 +182,24 @@ impl BlockBranchIndex {
         }
         next.blocks[block_index].texts = texts;
         Some(next)
+    }
+
+    pub(crate) fn table_key(&self, path: &[u32]) -> Option<&str> {
+        self.table_keys.get(path).map(String::as_str)
+    }
+
+    pub(crate) fn atom_id(&self, path: &[u32]) -> Option<&str> {
+        self.atom_ids.get(path).map(String::as_str)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_table_keys_for_test(table_keys: BTreeMap<Vec<u32>, String>) -> Self {
+        Self {
+            blocks: Vec::new(),
+            by_branch: HashMap::new(),
+            table_keys,
+            atom_ids: BTreeMap::new(),
+        }
     }
 
     pub(crate) fn block_branches(&self, block_index: usize) -> Option<&BlockBranches> {

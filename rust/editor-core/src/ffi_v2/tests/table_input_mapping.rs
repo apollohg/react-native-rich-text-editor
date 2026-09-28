@@ -574,6 +574,7 @@ fn table_input_mapping_preserves_extent_without_editable_cells_for_nested_failur
     let records: serde_json::Value =
         serde_json::from_str(&super::render::serialize_render_cache_for_test(
             &cache,
+            &document,
             &std::collections::HashMap::from([(0, "y0-0".to_owned())]),
         ))
         .unwrap();
@@ -586,5 +587,40 @@ fn table_input_mapping_preserves_extent_without_editable_cells_for_nested_failur
     assert_eq!(
         mapping["tables"]["t0"]["extent"],
         serde_json::json!({ "scalarStart": 0, "scalarEnd": 6 })
+    );
+}
+
+#[test]
+fn a_render_after_a_keystroke_walks_the_yrs_tree_only_to_pin() {
+    use crate::test_support::large_table_fixture::{
+        ffi_editor_with_document, ffi_value, plain_table_document,
+    };
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+    const OWNER: &str = "92";
+    const REQUEST: &str = "93";
+    const SIDE: usize = 3;
+    let editor_id = ffi_editor_with_document(&plain_table_document(SIDE, SIDE));
+    let first = ffi_value(&super::render::editor_v2_render_native(
+        editor_id.clone(),
+        OWNER.into(),
+        None,
+        None,
+    ));
+    ffi_value(&super::editor::editor_v2_apply_native_intent(editor_id.clone(), json!({
+        "version":1, "requestId":REQUEST, "ownerId":OWNER, "positionEpoch":first["positionEpoch"],
+        "intent":{"type":"insertText","anchor":0,"head":0,"text":"x"}
+    }).to_string()));
+    reset_full_pass_counts_for_test();
+    let rendered =
+        super::render::editor_v2_render_native(editor_id.clone(), OWNER.into(), None, None);
+    let counts = take_full_pass_counts_for_test();
+    assert!(super::editor::editor_v2_destroy(editor_id).error.is_none());
+    let rendered = ffi_value(&rendered);
+    assert!(rendered["renderPatch"].is_object());
+    assert_eq!(
+        counts.yrs_tree_walks, 1,
+        "only the legacy full epoch pin walks: {counts:?}"
     );
 }
