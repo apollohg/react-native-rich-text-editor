@@ -809,6 +809,10 @@ final class RichTextEditorView: UIView, UIGestureRecognizerDelegate {
         textView.addGestureRecognizer(tableCellDoubleTapRecognizer)
         addSubview(tableSurface)
         tableSurface.installTableInteraction(on: self)
+        textView.rootTableContains = { [weak self] point in
+            guard let self else { return false }
+            return self.tableSurface.rootTableContains(self.textView.convert(point, to: self.tableSurface))
+        }
         textView.focusedTableCellInput = { [weak self] in
             guard let self, self.activeTextInput !== self.textView, self.activeTextInput.isFirstResponder
             else { return nil }

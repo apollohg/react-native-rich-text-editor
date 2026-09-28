@@ -1251,6 +1251,28 @@ final class EditorTableInputTests: XCTestCase {
         }
     }
 
+    func testRootTextPositioningOverATableKeepsTheEditingCaret() throws {
+        try withMountedTable(document: proseThenFixedWidthTableDocument, cellSelection: nil) { fixture in
+            let root = fixture.view.textView
+            XCTAssertTrue(root.becomeFirstResponder())
+            root.selectedRange = NSRange(location: 2, length: 0)
+            root.textViewDidChangeSelection(root)
+            let caret = try XCTUnwrap(root.selectedTextRange).start
+            let cell = try fixture.presentedCell(1)
+            let overCell = fixture.drawing.convert(CGPoint(x: cell.bounds.midX, y: cell.bounds.midY), to: root)
+            let full = try XCTUnwrap(root.textRange(from: root.beginningOfDocument, to: root.endOfDocument))
+            let positions = [root.closestPosition(to: overCell), root.closestPosition(to: overCell, within: full)]
+            for (index, position) in positions.enumerated() {
+                let resolved = try XCTUnwrap(position, "text positioning \(index) over a body cell")
+                XCTAssertEqual(root.offset(from: caret, to: resolved), 0,
+                               "a long-press or loupe over a table cell must not move the root caret (variant \(index))")
+            }
+            let overProse = try XCTUnwrap(root.closestPosition(to: root.caretRect(for: root.beginningOfDocument).origin))
+            XCTAssertEqual(root.offset(from: root.beginningOfDocument, to: overProse), 0,
+                           "positioning over prose is unchanged")
+        }
+    }
+
     func testTextInputGesturesWaitForTheColumnResizeHandle() throws {
         try withMountedTable(document: try narrowColumnGridDocument(headerRow: false), cellSelection: nil) { fixture in
             XCTAssertTrue(fixture.view.textView.becomeFirstResponder())

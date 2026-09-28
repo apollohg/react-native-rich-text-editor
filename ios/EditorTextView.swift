@@ -455,6 +455,7 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
     var keyboardFrameInScreen: CGRect?
     var keyboardBottomInset: CGFloat = 0
     var focusedTableCellInput: (() -> EditorTextView?)?
+    var rootTableContains: ((CGPoint) -> Bool)?
 
     override var contentOffset: CGPoint {
         didSet {
@@ -545,24 +546,21 @@ class EditorTextView: UITextView, UIGestureRecognizerDelegate, UITextDragDelegat
     }
 
     override func closestPosition(to point: CGPoint) -> UITextPosition? {
-        if atomAttachmentRange(at: point) != nil,
-           let selectedTextRange,
-           selectedTextRange.isEmpty {
-            return selectedTextRange.start
-        }
-        return super.closestPosition(to: point)
+        heldCaretPosition(at: point) ?? super.closestPosition(to: point)
     }
 
     override func closestPosition(
         to point: CGPoint,
         within range: UITextRange
     ) -> UITextPosition? {
-        if atomAttachmentRange(at: point) != nil,
-           let selectedTextRange,
-           selectedTextRange.isEmpty {
-            return selectedTextRange.start
-        }
-        return super.closestPosition(to: point, within: range)
+        heldCaretPosition(at: point) ?? super.closestPosition(to: point, within: range)
+    }
+
+    private func heldCaretPosition(at point: CGPoint) -> UITextPosition? {
+        guard let selectedTextRange, selectedTextRange.isEmpty,
+              atomAttachmentRange(at: point) != nil || rootTableContains?(point) == true
+        else { return nil }
+        return selectedTextRange.start
     }
 
     // MARK: - Input Interception: Text Insertion
