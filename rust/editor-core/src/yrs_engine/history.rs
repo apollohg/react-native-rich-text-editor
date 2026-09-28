@@ -611,7 +611,7 @@ fn encode_full_state(doc: &Doc) -> Vec<u8> {
     }
 }
 
-fn apply_update_bytes(
+pub(in crate::yrs_engine) fn apply_update_bytes(
     request_id: u64,
     doc: &Doc,
     bytes: &[u8],

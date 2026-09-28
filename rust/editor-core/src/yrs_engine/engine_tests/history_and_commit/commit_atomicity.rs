@@ -681,3 +681,56 @@ fn the_replay_guard_is_limit_free_and_defers_to_the_existing_encoded_state_admis
         .unwrap()
         .expect("the pop succeeds once the ceiling admits the restored document");
 }
+
+#[test]
+fn replay_guard_accepts_equivalent_text_item_splits() {
+    use yrs::Text;
+    const INSERT_REQUEST: u64 = 76_500;
+    const SPLIT_UTF16_OFFSET: u32 = 3;
+    const EMPTY_RANGE: u32 = 0;
+    let mut engine = transaction_engine();
+    engine.import_json(r#"{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"🦀x"}]}]}"#, TransactionOrigin::DocumentImport).unwrap();
+    engine
+        .apply_command(
+            INSERT_REQUEST,
+            TypedCommand::InsertText { text: "z".into() },
+        )
+        .unwrap()
+        .unwrap();
+    let before = engine.encoded_state().unwrap();
+    {
+        let mut txn = engine.doc.transact_mut();
+        let fragment = txn.get_xml_fragment(engine.fragment_name.as_str()).unwrap();
+        let XmlOut::Element(paragraph) = fragment.get(&txn, 0).unwrap() else {
+            panic!("paragraph fixture")
+        };
+        let XmlOut::Text(text) = paragraph.get(&txn, 0).unwrap() else {
+            panic!("text fixture")
+        };
+        text.remove_range(&mut txn, SPLIT_UTF16_OFFSET, EMPTY_RANGE);
+    }
+    assert_ne!(
+        before,
+        engine.encoded_state().unwrap(),
+        "the fixture changes item boundaries without editing text"
+    );
+    reset_history_replay_guard_encodings_for_test();
+    engine
+        .validate_history_replay_for_test(INSERT_REQUEST + 1)
+        .unwrap();
+    assert_eq!(
+        take_history_replay_guard_encodings_for_test(),
+        4,
+        "raw mismatch additionally normalizes both states"
+    );
+    assert!(engine.undo(INSERT_REQUEST + 2).unwrap().is_some());
+    assert_eq!(
+        engine.document_json().unwrap()["content"][0]["content"][0]["text"],
+        "🦀x"
+    );
+    assert!(engine.redo(INSERT_REQUEST + 3).unwrap().is_some());
+    assert_eq!(
+        engine.document_json().unwrap()["content"][0]["content"][0]["text"],
+        "z🦀x"
+    );
+}

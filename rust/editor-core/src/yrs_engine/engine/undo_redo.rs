@@ -312,12 +312,31 @@ impl YrsDocumentEngine {
         )))
     }
 
+    #[cfg(test)]
+    pub(crate) fn validate_history_replay_for_test(
+        &self,
+        request_id: u64,
+    ) -> yrs_engine::OperationResult<()> {
+        let candidate = self.new_history_candidate_doc();
+        self.history.seed_candidate(request_id, &candidate)?;
+        let fragment = candidate.get_or_insert_xml_fragment(self.fragment_name.as_str());
+        let _history = self
+            .history
+            .replay_into(request_id, &candidate, &fragment)?;
+        self.verify_replayed_candidate_matches_live(request_id, &candidate)
+    }
+
     fn verify_replayed_candidate_matches_live(
         &self,
         request_id: u64,
         candidate_doc: &Doc,
     ) -> yrs_engine::OperationResult<()> {
-        if replay_comparison_state(&self.doc) != replay_comparison_state(candidate_doc) {
+        let live = replay_comparison_state(&self.doc);
+        let replay = replay_comparison_state(candidate_doc);
+        if live != replay
+            && self.normalized_replay_comparison_state(request_id, &live)?
+                != self.normalized_replay_comparison_state(request_id, &replay)?
+        {
             return Err(yrs_engine::OperationError::engine_invariant_failed(
                 request_id,
                 None,
@@ -325,6 +344,21 @@ impl YrsDocumentEngine {
             ));
         }
         Ok(())
+    }
+
+    fn normalized_replay_comparison_state(
+        &self,
+        request_id: u64,
+        encoded: &[u8],
+    ) -> yrs_engine::OperationResult<Vec<u8>> {
+        let normalized = self.new_history_candidate_doc();
+        yrs_engine::history::apply_update_bytes(
+            request_id,
+            &normalized,
+            encoded,
+            TransactionOrigin::DocumentImport,
+        )?;
+        Ok(replay_comparison_state(&normalized))
     }
 
     fn commit_prepared_history_pop(
