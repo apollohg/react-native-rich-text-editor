@@ -397,6 +397,14 @@ impl YrsHistory {
     }
 
     #[cfg(test)]
+    pub(crate) fn stack_depths_for_test(&self) -> (usize, usize) {
+        (
+            self.manager.undo_stack().len(),
+            self.manager.redo_stack().len(),
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn replay_metadata_bytes_for_test(&self) -> usize {
         self.replay_metadata_bytes
     }

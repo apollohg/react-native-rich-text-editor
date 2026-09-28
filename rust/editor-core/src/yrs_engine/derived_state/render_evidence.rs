@@ -57,7 +57,7 @@ pub(crate) struct PreparedDerivedEvidence {
     pub(super) preview_document_node_count: usize,
     pub(super) preview_position_total_scalars: u32,
     pub(super) preview_position_block_count: usize,
-    pub(super) canonical_fingerprint: [u8; 32],
+    pub(super) canonical_artifact: CanonicalArtifact,
     pub(super) canonical_serialized_len: usize,
     pub(super) validation_certificate: DocumentValidationCertificate,
     pub(super) localized_text_index: Option<LocalizedTextLeafIndex>,
@@ -68,6 +68,12 @@ pub(crate) struct PreparedDerivedEvidence {
 pub(crate) struct FinalizedDerivedEvidence {
     pub(super) validation_certificate: DocumentValidationCertificate,
     pub(super) localized_text_index: Option<LocalizedTextLeafIndex>,
+}
+
+impl FinalizedDerivedEvidence {
+    pub(crate) fn validation_depth_slots(&self) -> usize {
+        self.validation_certificate.depth_counts.len()
+    }
 }
 
 impl PreparedDerivedEvidence {
@@ -270,17 +276,17 @@ impl PreparedDerivedEvidence {
             || editing_limits.max_undo_retained_units != self.max_undo_retained_units
             || max_length != self.max_length
             || !Arc::ptr_eq(&derivations.identity_seal, &self.derivation_identity_seal)
-            || canonical_artifact.sha256() != self.canonical_fingerprint
+            || !canonical_artifact.ptr_eq(&self.canonical_artifact)
             || canonical_artifact.serialized_len() != self.canonical_serialized_len
             || canonical_artifact.schema_fingerprint() != schema_fingerprint
             || !self
                 .validation_certificate
                 .canonical_artifact
                 .ptr_eq(canonical_artifact)
-            || !self
+            || (self
                 .validation_certificate
                 .canonical_fingerprint_materialized
-            || self.validation_certificate.canonical_fingerprint != canonical_artifact.sha256()
+                && self.validation_certificate.canonical_fingerprint != canonical_artifact.sha256())
             || self.validation_certificate.canonical_serialized_len
                 != canonical_artifact.serialized_len()
             || self.validation_certificate.raw_text_scalars != canonical_artifact.text_scalar_len()
@@ -303,7 +309,10 @@ impl PreparedDerivedEvidence {
         self.validation_certificate.yrs_state_epoch = next_yrs_state_epoch;
         if let Some(index) = self.localized_text_index.as_mut() {
             index.document_revision = next_document_revision;
-            index.canonical_fingerprint = canonical_artifact.sha256();
+            index.canonical_fingerprint = self.validation_certificate.canonical_fingerprint;
+            index.canonical_fingerprint_materialized = self
+                .validation_certificate
+                .canonical_fingerprint_materialized;
             index.schema_fingerprint = Arc::clone(&self.validation_certificate.schema_fingerprint);
         }
         Some(FinalizedDerivedEvidence {
@@ -381,13 +390,22 @@ impl PreparedDerivedEvidence {
                 self.preview_position_block_count =
                     self.preview_position_block_count.saturating_add(1)
             }
-            "canonicalFingerprint" => self.canonical_fingerprint[0] ^= 1,
+            "canonicalFingerprint" => {
+                self.canonical_artifact = self.base_validation.canonical_artifact.clone()
+            }
             "canonicalLength" => {
                 self.canonical_serialized_len = self.canonical_serialized_len.saturating_add(1)
             }
-            "promotedValidation" => self.validation_certificate.canonical_fingerprint[0] ^= 1,
+            "promotedValidation" => {
+                self.validation_certificate
+                    .canonical_fingerprint_materialized = true;
+                self.validation_certificate.canonical_fingerprint =
+                    self.canonical_artifact.sha256();
+                self.validation_certificate.canonical_fingerprint[0] ^= 1;
+            }
             "promotedIndex" => {
                 if let Some(index) = self.localized_text_index.as_mut() {
+                    index.canonical_fingerprint_materialized = true;
                     index.canonical_fingerprint[0] ^= 1;
                 }
             }

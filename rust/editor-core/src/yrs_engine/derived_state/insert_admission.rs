@@ -531,7 +531,7 @@ impl ValidatedLocalizedTextblockEditAdmission<'_> {
             preview_document_node_count: derivations.document_node_count,
             preview_position_total_scalars: derivations.position_map.total_scalars(),
             preview_position_block_count: derivations.position_map.block_count(),
-            canonical_fingerprint: canonical_artifact.sha256(),
+            canonical_artifact: canonical_artifact.clone(),
             canonical_serialized_len: canonical_artifact.serialized_len(),
             validation_certificate,
             localized_text_index,
@@ -582,8 +582,8 @@ impl ValidatedLocalizedTextblockEditAdmission<'_> {
         self.state.document_node_count
     }
 
-    pub(crate) fn base_raw_text_scalars(&self) -> u64 {
-        self.state.validation_certificate.raw_text_scalars
+    pub(crate) fn canonical_artifact(&self) -> &CanonicalArtifact {
+        &self.state.canonical_artifact
     }
 
     pub(crate) fn base_raw_text_utf8_bytes(&self) -> usize {

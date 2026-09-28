@@ -317,6 +317,7 @@ impl HistoryDocumentSnapshotRetainedBytes {
     }
 }
 
+#[cfg(test)]
 pub(crate) struct HistoryDocumentSnapshotRetainedInput<'a> {
     pub document: &'a Document,
     pub canonical_artifact: &'a CanonicalArtifact,
@@ -334,6 +335,7 @@ pub(super) fn arc_allocation_bound(payload_bytes: usize) -> Option<usize> {
     payload_bytes.checked_add(std::mem::size_of::<[usize; 3]>())
 }
 
+#[cfg(test)]
 pub(crate) fn history_document_snapshot_retained_bytes(
     input: HistoryDocumentSnapshotRetainedInput<'_>,
 ) -> Option<HistoryDocumentSnapshotRetainedBytes> {
@@ -364,7 +366,7 @@ pub(crate) fn history_document_snapshot_retained_bytes(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn history_document_snapshot_retained_bytes_with_canonical_charge(
     document: &Document,
     canonical_retained_bytes: usize,

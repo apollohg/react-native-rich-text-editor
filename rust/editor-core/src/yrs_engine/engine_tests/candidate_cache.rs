@@ -84,7 +84,7 @@ fn apply_command_runs_one_semantic_compilation() {
 
     assert!(result.is_some());
     assert_eq!(take_semantic_compilation_count_for_test(), 1);
-    assert_eq!(take_canonical_artifact_counts_for_test(), (1, 2));
+    assert_eq!(take_canonical_artifact_counts_for_test(), (1, 1));
 }
 
 #[test]

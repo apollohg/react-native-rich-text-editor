@@ -467,7 +467,7 @@ fn private_prepared_command_orchestrator_finalizes_deferred_admission_once() {
 }
 
 #[test]
-fn first_imported_prepared_insert_traverses_each_history_document_once() {
+fn first_imported_prepared_insert_reuses_the_before_history_charge() {
     use crate::model::{
         reset_history_snapshot_retained_bytes_traversals_for_test,
         take_history_snapshot_retained_bytes_traversals_for_test,
@@ -484,8 +484,8 @@ fn first_imported_prepared_insert_traverses_each_history_document_once() {
 
     assert_eq!(
         take_history_snapshot_retained_bytes_traversals_for_test(),
-        2,
-        "history admission must traverse the before and after source documents once each"
+        1,
+        "history admission reuses the before charge and traverses only the prepared after document"
     );
 }
 

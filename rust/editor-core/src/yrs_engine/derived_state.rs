@@ -34,15 +34,17 @@ pub(crate) use active_state::{
 };
 pub(crate) use candidate_evidence::{PreparedCandidateEvidence, PreparedCandidateValidation};
 #[cfg(test)]
-pub(crate) use history_snapshot::prepare_history_candidate_read_for_test;
-#[allow(unused_imports)]
 pub(crate) use history_snapshot::{
     history_document_snapshot_retained_bytes,
     history_document_snapshot_retained_bytes_with_canonical_charge,
+    prepare_history_candidate_read_for_test, HistoryDocumentSnapshotRetainedInput,
+};
+#[allow(unused_imports)]
+pub(crate) use history_snapshot::{
     history_document_snapshot_retained_bytes_with_precomputed_document_charge,
     AdmittedHistoryCandidateRead, AdmittedHistoryMutationLookupProof, HistoryDocumentSnapshot,
-    HistoryDocumentSnapshotRetainedBytes, HistoryDocumentSnapshotRetainedInput,
-    HistoryMutationLookupCapability, PreparedHistoryCandidateRead, RestoredHistoryDocumentState,
+    HistoryDocumentSnapshotRetainedBytes, HistoryMutationLookupCapability,
+    PreparedHistoryCandidateRead, RestoredHistoryDocumentState,
 };
 pub(crate) use insert_admission::{
     LocalizedTextblockEdit, LocalizedTextblockEditAdmission,
@@ -167,6 +169,22 @@ impl DerivedStateCache {
                     yrs_state_epoch,
                 )
             })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn materialized_identity_for_test(
+        &self,
+    ) -> (
+        DocumentValidationCertificate,
+        Option<LocalizedTextLeafIndex>,
+    ) {
+        let mut validation = self.validation_certificate.clone();
+        let mut index = self.localized_text_index.clone();
+        validation.materialize_canonical_artifact();
+        if let Some(index) = index.as_mut() {
+            index.materialize_canonical_fingerprint(&validation);
+        }
+        (validation, index)
     }
 
     #[cfg(test)]

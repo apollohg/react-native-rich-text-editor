@@ -12,9 +12,8 @@ use crate::yrs_engine::canonical::{CanonicalArtifact, CanonicalSchemaContext};
 use crate::yrs_engine::compiler::input_limits::validate_preview_marks;
 use crate::yrs_engine::compiler::positions::map_position;
 use crate::yrs_engine::compiler::preview::{
-    charge_canonical_output, charge_localized_preview_output, charge_prepared_preview_output,
-    charge_preview_output, prepared_candidate_matches, LocalizedSemanticCompilation,
-    LocalizedSemanticDerivations,
+    charge_canonical_output, charge_prepared_preview_output, charge_preview_output,
+    prepared_candidate_matches, LocalizedSemanticCompilation, LocalizedSemanticDerivations,
 };
 use crate::yrs_engine::compiler::{
     CompilationContext, HistoryClass, MutationLookupTransition, PreparedSemanticContext,
@@ -253,16 +252,14 @@ impl OperationCompiler<'_> {
                     context,
                 )?
             } else if let Some(localized) = localized_derivations.as_ref() {
-                charge_localized_preview_output(
+                charge_canonical_output(
                     &mut work,
                     request_id,
                     operation_index,
-                    &preview,
-                    canonical_schema,
+                    &localized.canonical_artifact,
                     context,
-                    localized.raw_text_scalars,
-                    localized.raw_text_utf8_bytes,
-                )?
+                )?;
+                localized.canonical_artifact.clone()
             } else {
                 charge_preview_output(
                     &mut work,

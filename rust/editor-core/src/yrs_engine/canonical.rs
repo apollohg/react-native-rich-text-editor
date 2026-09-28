@@ -3,7 +3,7 @@ use std::sync::{Arc, OnceLock};
 use sha2::{Digest, Sha256};
 
 use crate::boundary::{serialize_json_value_stack_safe, StackSafeJsonValue};
-use crate::model::Document;
+use crate::model::{Document, Node};
 use crate::schema::{schema_fingerprint, Schema};
 use crate::serialize::to_prosemirror_json;
 
@@ -72,22 +72,8 @@ impl CanonicalSchemaContext {
         CanonicalArtifact::derive_with_context_and_admission(
             document,
             self,
-            None,
             Some(serialized_len),
             Some(serialized_len),
-        )
-    }
-
-    pub(crate) fn derive_with_known_text_metrics(
-        &self,
-        document: &Document,
-        text_scalar_len: u64,
-        text_utf8_bytes: usize,
-    ) -> Result<CanonicalArtifact, serde_json::Error> {
-        CanonicalArtifact::derive_with_context_and_text_metrics(
-            document,
-            self,
-            Some((text_scalar_len, text_utf8_bytes)),
         )
     }
 
@@ -102,7 +88,6 @@ impl CanonicalSchemaContext {
         CanonicalArtifact::derive_with_context_and_admission(
             document,
             self,
-            None,
             None,
             admission_upper_bound,
         )
@@ -188,7 +173,8 @@ fn validated_json_admission_upper_bound(
 #[derive(Debug)]
 struct CanonicalArtifactInner {
     source_document: Document,
-    value: StackSafeJsonValue,
+    value: OnceLock<StackSafeJsonValue>,
+    retained_charge: OnceLock<Option<CanonicalHistorySnapshotRetainedCharge>>,
     serialized_len: OnceLock<usize>,
     sha256: OnceLock<[u8; 32]>,
     admission_upper_bound: usize,
@@ -210,6 +196,7 @@ pub(crate) struct CanonicalHistorySnapshotRetainedCharge {
 pub(crate) struct PreparedCanonicalCandidate {
     source_document: Document,
     value: StackSafeJsonValue,
+    retained_charge: OnceLock<Option<CanonicalHistorySnapshotRetainedCharge>>,
     serialized_len: OnceLock<usize>,
     sha256: OnceLock<[u8; 32]>,
     sha256_provenance: OnceLock<[u8; 32]>,
@@ -261,27 +248,12 @@ impl CanonicalArtifact {
         document: &Document,
         schema_context: &CanonicalSchemaContext,
     ) -> Result<Self, serde_json::Error> {
-        Self::derive_with_context_and_text_metrics(document, schema_context, None)
-    }
-
-    fn derive_with_context_and_text_metrics(
-        document: &Document,
-        schema_context: &CanonicalSchemaContext,
-        known_text_metrics: Option<(u64, usize)>,
-    ) -> Result<Self, serde_json::Error> {
-        Self::derive_with_context_and_admission(
-            document,
-            schema_context,
-            known_text_metrics,
-            None,
-            None,
-        )
+        Self::derive_with_context_and_admission(document, schema_context, None, None)
     }
 
     fn derive_with_context_and_admission(
         document: &Document,
         schema_context: &CanonicalSchemaContext,
-        known_text_metrics: Option<(u64, usize)>,
         known_serialized_len: Option<usize>,
         admission_upper_bound: Option<usize>,
     ) -> Result<Self, serde_json::Error> {
@@ -307,29 +279,103 @@ impl CanonicalArtifact {
         } else {
             None
         };
-        let (text_scalar_len, text_utf8_bytes) =
-            known_text_metrics.unwrap_or_else(|| raw_text_metrics(document));
-        Ok(Self(Arc::new(CanonicalArtifactInner {
+        let (text_scalar_len, text_utf8_bytes) = raw_text_metrics(document);
+        let artifact = Self(Arc::new(CanonicalArtifactInner {
             source_document: document.clone(),
-            value,
+            value: OnceLock::from(value),
+            retained_charge: OnceLock::new(),
             serialized_len,
             sha256: OnceLock::new(),
             admission_upper_bound: admission_upper_bound.or(exact_len).unwrap_or(usize::MAX),
             text_scalar_len,
             text_utf8_bytes,
             schema_context: schema_context.clone(),
+        }));
+        artifact.history_snapshot_retained_charge();
+        Ok(artifact)
+    }
+
+    pub(crate) fn derive_localized(
+        previous: &Self,
+        document: &Document,
+        old_block: &Node,
+        new_block: &Node,
+    ) -> Option<Self> {
+        let schema = &previous.0.schema_context.0.schema;
+        let old_json = StackSafeJsonValue::new(crate::serialize::node_to_prosemirror_json(
+            old_block, schema,
+        ));
+        let new_json = StackSafeJsonValue::new(crate::serialize::node_to_prosemirror_json(
+            new_block, schema,
+        ));
+        let serialized_len = previous
+            .serialized_len()
+            .checked_sub(serialize_json_value_stack_safe(old_json.as_value(), 0).len())?
+            .checked_add(serialize_json_value_stack_safe(new_json.as_value(), 0).len())?;
+        let old_text = old_block.text_content();
+        let new_text = new_block.text_content();
+        let text_scalar_len = previous
+            .text_scalar_len()
+            .checked_sub(u64::try_from(old_text.chars().count()).ok()?)?
+            .checked_add(u64::try_from(new_text.chars().count()).ok()?)?;
+        let text_utf8_bytes = previous
+            .text_utf8_bytes()
+            .checked_sub(old_text.len())?
+            .checked_add(new_text.len())?;
+        let retained_charge = previous
+            .history_snapshot_retained_charge()
+            .and_then(|charge| {
+                let old_document_bytes = old_block.history_snapshot_retained_bytes()?;
+                let new_document_bytes = new_block.history_snapshot_retained_bytes()?;
+                Some(CanonicalHistorySnapshotRetainedCharge {
+                    source_document_retained_bytes: charge
+                        .source_document_retained_bytes
+                        .checked_sub(old_document_bytes)?
+                        .checked_add(new_document_bytes)?,
+                    canonical_retained_bytes: charge
+                        .canonical_retained_bytes
+                        .checked_sub(old_document_bytes)?
+                        .checked_add(new_document_bytes)?
+                        .checked_sub(crate::model::json_value_retained_bytes(
+                            old_json.as_value(),
+                        )?)?
+                        .checked_add(crate::model::json_value_retained_bytes(
+                            new_json.as_value(),
+                        )?)?,
+                })
+            });
+        Some(Self(Arc::new(CanonicalArtifactInner {
+            source_document: document.clone(),
+            value: OnceLock::new(),
+            retained_charge: OnceLock::from(retained_charge),
+            serialized_len: OnceLock::from(serialized_len),
+            sha256: OnceLock::new(),
+            admission_upper_bound: serialized_len,
+            text_scalar_len,
+            text_utf8_bytes,
+            schema_context: previous.0.schema_context.clone(),
         })))
     }
 
     pub(crate) fn value(&self) -> &serde_json::Value {
-        self.0.value.as_value()
+        self.0
+            .value
+            .get_or_init(|| {
+                #[cfg(test)]
+                super::observability::record_canonical_projection();
+                StackSafeJsonValue::new(to_prosemirror_json(
+                    &self.0.source_document,
+                    &self.0.schema_context.0.schema,
+                ))
+            })
+            .as_value()
     }
 
     pub(crate) fn serialized_len(&self) -> usize {
         *self.0.serialized_len.get_or_init(|| {
             #[cfg(test)]
             super::observability::record_canonical_serialization();
-            let len = serialize_json_value_stack_safe(self.0.value.as_value(), 0).len();
+            let len = serialize_json_value_stack_safe(self.value(), 0).len();
             #[cfg(test)]
             SERIALIZATION_COUNT.set(SERIALIZATION_COUNT.get().saturating_add(1));
             len
@@ -338,10 +384,8 @@ impl CanonicalArtifact {
 
     pub(crate) fn sha256(&self) -> [u8; 32] {
         *self.0.sha256.get_or_init(|| {
-            let serialized = serialize_canonical_json_with_hint(
-                self.0.value.as_value(),
-                self.0.admission_upper_bound,
-            );
+            let serialized =
+                serialize_canonical_json_with_hint(self.value(), self.0.admission_upper_bound);
             #[cfg(test)]
             super::observability::record_canonical_serialization();
             #[cfg(test)]
@@ -367,6 +411,7 @@ impl CanonicalArtifact {
         Self(Arc::new(CanonicalArtifactInner {
             source_document: self.0.source_document.clone(),
             value: self.0.value.clone(),
+            retained_charge: self.0.retained_charge.clone(),
             serialized_len: self.0.serialized_len.clone(),
             sha256: self.0.sha256.clone(),
             admission_upper_bound,
@@ -400,6 +445,9 @@ impl CanonicalArtifact {
     /// its sealed schema context. Callers must not combine independently
     /// supplied documents and artifacts without this check.
     pub(crate) fn matches_document(&self, document: &Document) -> bool {
+        if self.matches_exact_source_document(document) {
+            return true;
+        }
         #[cfg(test)]
         super::observability::record_canonical_projection();
         let value = StackSafeJsonValue::new(to_prosemirror_json(
@@ -422,6 +470,7 @@ impl CanonicalArtifact {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
+    #[cfg(test)]
     pub(crate) fn history_snapshot_retained_bytes(&self) -> Option<usize> {
         self.history_snapshot_retained_charge()
             .map(|charge| charge.canonical_retained_bytes)
@@ -430,22 +479,19 @@ impl CanonicalArtifact {
     pub(crate) fn history_snapshot_retained_charge(
         &self,
     ) -> Option<CanonicalHistorySnapshotRetainedCharge> {
-        // The engine permanently owns the canonical schema context. The source
-        // document normally aliases the separately metered snapshot Document,
-        // but counting it again keeps this helper conservative even if a future
-        // caller loses that identity invariant.
-        let source_document_retained_bytes =
-            self.0.source_document.history_snapshot_retained_bytes()?;
-        let canonical_retained_bytes = crate::model::arc_allocation_retained_bytes(
-            std::mem::size_of::<CanonicalArtifactInner>(),
-        )?
-        .checked_add(source_document_retained_bytes)?
-        .checked_add(crate::model::json_value_retained_bytes(
-            self.0.value.as_value(),
-        )?)?;
-        Some(CanonicalHistorySnapshotRetainedCharge {
-            canonical_retained_bytes,
-            source_document_retained_bytes,
+        *self.0.retained_charge.get_or_init(|| {
+            let source_document_retained_bytes =
+                self.0.source_document.history_snapshot_retained_bytes()?;
+            let canonical_retained_bytes =
+                crate::model::arc_allocation_retained_bytes(std::mem::size_of::<
+                    CanonicalArtifactInner,
+                >())?
+                .checked_add(source_document_retained_bytes)?
+                .checked_add(crate::model::json_value_retained_bytes(self.value())?)?;
+            Some(CanonicalHistorySnapshotRetainedCharge {
+                canonical_retained_bytes,
+                source_document_retained_bytes,
+            })
         })
     }
 }
@@ -467,6 +513,7 @@ impl PreparedCanonicalCandidate {
         Self {
             source_document: document.clone(),
             value,
+            retained_charge: OnceLock::new(),
             serialized_len: OnceLock::new(),
             sha256: OnceLock::new(),
             sha256_provenance: OnceLock::new(),
@@ -531,6 +578,7 @@ impl PreparedCanonicalCandidate {
         self.source_document.shares_root_storage_with(document)
     }
 
+    #[cfg(test)]
     pub(crate) fn history_snapshot_retained_bytes(&self) -> Option<usize> {
         self.history_snapshot_retained_charge()
             .map(|charge| charge.canonical_retained_bytes)
@@ -539,20 +587,21 @@ impl PreparedCanonicalCandidate {
     pub(crate) fn history_snapshot_retained_charge(
         &self,
     ) -> Option<CanonicalHistorySnapshotRetainedCharge> {
-        // Finalization moves these exact owned fields into a CanonicalArtifact.
-        // Charge the future Arc payload now without copying or sealing it.
-        let source_document_retained_bytes =
-            self.source_document.history_snapshot_retained_bytes()?;
-        let canonical_retained_bytes = crate::model::arc_allocation_retained_bytes(
-            std::mem::size_of::<CanonicalArtifactInner>(),
-        )?
-        .checked_add(source_document_retained_bytes)?
-        .checked_add(crate::model::json_value_retained_bytes(
-            self.value.as_value(),
-        )?)?;
-        Some(CanonicalHistorySnapshotRetainedCharge {
-            canonical_retained_bytes,
-            source_document_retained_bytes,
+        *self.retained_charge.get_or_init(|| {
+            let source_document_retained_bytes =
+                self.source_document.history_snapshot_retained_bytes()?;
+            let canonical_retained_bytes =
+                crate::model::arc_allocation_retained_bytes(std::mem::size_of::<
+                    CanonicalArtifactInner,
+                >())?
+                .checked_add(source_document_retained_bytes)?
+                .checked_add(crate::model::json_value_retained_bytes(
+                    self.value.as_value(),
+                )?)?;
+            Some(CanonicalHistorySnapshotRetainedCharge {
+                canonical_retained_bytes,
+                source_document_retained_bytes,
+            })
         })
     }
 
@@ -575,7 +624,8 @@ impl PreparedCanonicalCandidate {
         let _ = self.serialized_len.set(exact_len);
         Some(CanonicalArtifact(Arc::new(CanonicalArtifactInner {
             source_document: self.source_document,
-            value: self.value,
+            value: OnceLock::from(self.value),
+            retained_charge: self.retained_charge,
             serialized_len: self.serialized_len,
             sha256: self.sha256,
             admission_upper_bound: self.admission_upper_bound,

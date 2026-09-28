@@ -19,7 +19,7 @@ mod collaboration_transport_state_test;
 pub(crate) mod deterministic_clients;
 mod ffi_v2_test;
 mod large_table_budget_test;
-mod large_table_fixture;
+pub(crate) mod large_table_fixture;
 mod model_test;
 mod native_intent_test;
 mod native_transaction_bridge_test;

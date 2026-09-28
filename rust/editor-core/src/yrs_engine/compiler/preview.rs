@@ -32,8 +32,7 @@ pub(super) struct LocalizedSemanticDerivations {
     pub(super) rendered_scalars: u32,
     pub(super) document_text_bytes: usize,
     pub(super) document_node_count: usize,
-    pub(super) raw_text_scalars: u64,
-    pub(super) raw_text_utf8_bytes: usize,
+    pub(super) canonical_artifact: CanonicalArtifact,
 }
 
 pub(super) fn charge_preview_output(
@@ -51,30 +50,6 @@ pub(super) fn charge_preview_output(
             format!("preview serialization failed: {error}"),
         )
     })?;
-    charge_canonical_output(work, request_id, operation_index, &artifact, context)?;
-    Ok(artifact)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn charge_localized_preview_output(
-    work: &mut CheckedWork,
-    request_id: u64,
-    operation_index: usize,
-    preview: &Document,
-    canonical_schema: &CanonicalSchemaContext,
-    context: CompilationContext<'_>,
-    raw_text_scalars: u64,
-    raw_text_utf8_bytes: usize,
-) -> OperationResult<CanonicalArtifact> {
-    let artifact = canonical_schema
-        .derive_with_known_text_metrics(preview, raw_text_scalars, raw_text_utf8_bytes)
-        .map_err(|error| {
-            OperationError::engine_invariant_failed(
-                request_id,
-                Some(operation_index),
-                format!("preview serialization failed: {error}"),
-            )
-        })?;
     charge_canonical_output(work, request_id, operation_index, &artifact, context)?;
     Ok(artifact)
 }
@@ -204,7 +179,6 @@ pub(super) fn try_localized_semantic_compilation(
     let position = validated.document_position();
     let old_block = context.document.node_at(validated.block_path())?;
     let old_text = old_block.text_content();
-    let old_text_scalars = u64::try_from(old_text.chars().count()).ok()?;
     let original_start_scalar = validated.rendered_scalar_position();
     let rendered_byte = scalar_byte_offset(validated.rendered_text(), original_start_scalar)?;
     let placeholder = crate::render::empty_text_block_placeholder_string();
@@ -233,6 +207,7 @@ pub(super) fn try_localized_semantic_compilation(
     let mut steps = std::collections::VecDeque::new();
     steps.try_reserve(transaction.operations.len()).ok()?;
     let mut current_document = context.document.clone();
+    let mut current_artifact = validated.canonical_artifact().clone();
     for operation in &transaction.operations {
         let (step, text) = match operation {
             TypedOperation::InsertText { text, marks, .. } => (
@@ -279,10 +254,6 @@ pub(super) fn try_localized_semantic_compilation(
         rendered_text.push_str(inserted);
         rendered_text.push_str(&validated.rendered_text()[suffix_start..]);
         let block_text = block.text_content();
-        let raw_text_scalars = validated
-            .base_raw_text_scalars()
-            .checked_sub(old_text_scalars)?
-            .checked_add(u64::try_from(block_text.chars().count()).ok()?)?;
         let raw_text_utf8_bytes = validated
             .base_raw_text_utf8_bytes()
             .checked_sub(old_text.len())?
@@ -296,6 +267,12 @@ pub(super) fn try_localized_semantic_compilation(
             .try_reserve_exact(top_level_count.checked_sub(affected_start)?)
             .ok()?;
         affected_top_level_blocks.extend(affected_start..top_level_count);
+        current_artifact = CanonicalArtifact::derive_localized(
+            &current_artifact,
+            &preview,
+            current_document.node_at(validated.block_path())?,
+            block,
+        )?;
         current_document = preview.clone();
         steps.push_back(LocalizedSemanticStep {
             position,
@@ -310,8 +287,7 @@ pub(super) fn try_localized_semantic_compilation(
                     .checked_add(u32::try_from(inserted.chars().count()).ok()?)?,
                 document_text_bytes: raw_text_utf8_bytes,
                 document_node_count,
-                raw_text_scalars,
-                raw_text_utf8_bytes,
+                canonical_artifact: current_artifact.clone(),
             },
         });
     }

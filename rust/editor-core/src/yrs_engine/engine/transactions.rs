@@ -145,14 +145,7 @@ impl YrsDocumentEngine {
             );
         }
         let request_id = transaction.request_id;
-        let requires_identity = matches!(
-            transaction.operations.as_slice(),
-            [yrs_engine::TypedOperation::InsertText { .. }]
-        );
-        let mut context = self.prepare_mutation_lookup_seed(request_id)?;
-        if requires_identity {
-            self.prepare_mutation_identity(&mut context)?;
-        }
+        let context = self.prepare_mutation_lookup_seed(request_id)?;
         let compiled = self.with_compiled_base_authority(
             request_id,
             Some(&context),

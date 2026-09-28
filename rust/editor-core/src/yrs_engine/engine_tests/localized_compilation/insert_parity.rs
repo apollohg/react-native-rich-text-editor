@@ -45,9 +45,9 @@ fn localized_insert_compile_only_skips_every_proved_full_pass() {
         take_full_pass_counts_for_test(),
         FullPassCounts {
             canonical_mark_nodes_visited: 2,
-            canonical_projections: 1,
-            canonical_serializations: 2,
-            canonical_hashes: 1,
+            canonical_projections: 0,
+            canonical_serializations: 0,
+            canonical_hashes: 0,
             position_map_clones: 1,
             position_map_compactions: 1,
             render_identity_scans: 0,
@@ -322,7 +322,10 @@ fn localized_insert_semantic_preview_matches_forced_generic_matrix() {
         let localized = engine
             .compile_typed_transaction(transaction.clone())
             .unwrap();
-        assert!(localized.localized_textblock_edit_admission.is_some(), "{case}");
+        assert!(
+            localized.localized_textblock_edit_admission.is_some(),
+            "{case}"
+        );
         assert_eq!(
             localized.affected_top_level_blocks, expected_affected,
             "{case}"
@@ -370,11 +373,13 @@ fn localized_insert_semantic_preview_matches_forced_generic_matrix() {
         let localized_state = engine.derived_state.as_ref().unwrap();
         let generic_state = generic_engine.derived_state.as_ref().unwrap();
         assert_eq!(
-            localized_state.validation_certificate, generic_state.validation_certificate,
+            localized_state.materialized_identity_for_test().0,
+            generic_state.materialized_identity_for_test().0,
             "{case}"
         );
         assert_eq!(
-            localized_state.localized_text_index, generic_state.localized_text_index,
+            localized_state.materialized_identity_for_test().1,
+            generic_state.materialized_identity_for_test().1,
             "{case}"
         );
         assert_eq!(
@@ -776,8 +781,18 @@ fn localized_index_promotion_obeys_exact_transient_budget_boundary() {
     assert_eq!(exact.document_json(), generic.document_json());
     assert_eq!(history_audit(&exact), history_audit(&generic));
     assert_eq!(
-        exact.derived_state.as_ref().unwrap().localized_text_index,
-        generic.derived_state.as_ref().unwrap().localized_text_index
+        exact
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .materialized_identity_for_test()
+            .1,
+        generic
+            .derived_state
+            .as_ref()
+            .unwrap()
+            .materialized_identity_for_test()
+            .1
     );
 
     let mut one_under = fixture();

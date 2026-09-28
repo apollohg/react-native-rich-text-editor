@@ -639,45 +639,46 @@ impl YrsDocumentEngine {
         // original relative cursor can remain valid yet resolve beside the
         // redone content. Preserve the document-relative snapshot as the CRDT
         // metadata and reseal it from the exact resolved fallback on restore.
-        let restored_relative = if canonical_fingerprint == restored.canonical_fingerprint {
-            history_selection_to_relative(
-                &txn,
-                &fragment,
-                &restored.relative_selection,
-                &restored.resolved_selection,
-                &self.schema,
-            )
-            .ok_or_else(|| {
-                yrs_engine::OperationError::engine_invariant_failed(
-                    request_id,
-                    None,
-                    "history selection affinity is not exactly representable in the candidate",
+        let restored_relative =
+            if canonical_fingerprint == restored.canonical_fingerprint.fingerprint() {
+                history_selection_to_relative(
+                    &txn,
+                    &fragment,
+                    &restored.relative_selection,
+                    &restored.resolved_selection,
+                    &self.schema,
                 )
-            })?
-        } else if relative_selection_resolves(
-            &txn,
-            &fragment,
-            &restored.relative_selection,
-            &self.schema,
-        ) {
-            restored.relative_selection.clone()
-        } else {
-            let surviving = surviving_selection(
-                &restored.relative_selection,
-                resolved_to_legacy(&restored.resolved_selection),
+                .ok_or_else(|| {
+                    yrs_engine::OperationError::engine_invariant_failed(
+                        request_id,
+                        None,
+                        "history selection affinity is not exactly representable in the candidate",
+                    )
+                })?
+            } else if relative_selection_resolves(
                 &txn,
                 &fragment,
-                &document,
+                &restored.relative_selection,
                 &self.schema,
-                &PositionMap::build(&document, &self.schema),
-                &TableProjectionIndex::derive_or_fallback(
+            ) {
+                restored.relative_selection.clone()
+            } else {
+                let surviving = surviving_selection(
+                    &restored.relative_selection,
+                    resolved_to_legacy(&restored.resolved_selection),
+                    &txn,
+                    &fragment,
                     &document,
                     &self.schema,
-                    &self.resource_limits,
-                ),
-            );
-            operation_result_to_relative(&txn, &fragment, &surviving, &self.schema)
-        };
+                    &PositionMap::build(&document, &self.schema),
+                    &TableProjectionIndex::derive_or_fallback(
+                        &document,
+                        &self.schema,
+                        &self.resource_limits,
+                    ),
+                );
+                operation_result_to_relative(&txn, &fragment, &surviving, &self.schema)
+            };
         let stored_marks = restored
             .stored_marks
             .as_deref()

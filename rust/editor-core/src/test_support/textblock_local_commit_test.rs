@@ -27,6 +27,7 @@ const EMPTY_CELL: (usize, usize) = (1, 1);
 const TEXT_CELL: (usize, usize) = (0, 1);
 const MIDDLE_OFFSET: u32 = 3;
 const LEAF_START: u32 = 0;
+const IDENTITY_PREDICATE_VISIT_CEILING: usize = 64;
 const LARGE_TABLE_ROWS: usize = 1000;
 const LARGE_TABLE_COLUMNS: usize = 20;
 const PROSE_PATH: [u32; 1] = [0];
@@ -344,6 +345,9 @@ fn run_case(case: &TextblockEditCase, localized: bool, intent: &str) -> (RunAudi
 fn assert_route(case: &TextblockEditCase, audit: &RunAudit, passes: &FullPassCounts) {
     let name = case.name;
     let document_wide = [
+        ("canonical_projections", passes.canonical_projections),
+        ("canonical_serializations", passes.canonical_serializations),
+        ("canonical_hashes", passes.canonical_hashes),
         ("document_validations", passes.document_validations),
         ("planner_simulations", passes.planner_simulations),
         (
@@ -740,6 +744,20 @@ fn assert_large_table_edit_is_validated_locally(intent: &str) {
             format!("{}{}", &text[..middle - 1], &text[middle..])
         },
         "the keystroke lands in the keystroke cell"
+    );
+    assert!(
+        passes.canonical_identity_predicate_nodes_visited <= IDENTITY_PREDICATE_VISIT_CEILING,
+        "canonical identity walked {} nodes",
+        passes.canonical_identity_predicate_nodes_visited,
+    );
+    assert_eq!(
+        (
+            passes.canonical_projections,
+            passes.canonical_serializations,
+            passes.canonical_hashes
+        ),
+        (1, 1, 1),
+        "an over-budget history snapshot retains one eager digest",
     );
     for (kind, count) in [
         ("document_validations", passes.document_validations),

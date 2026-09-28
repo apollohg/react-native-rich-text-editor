@@ -185,8 +185,8 @@ fn existing_text_command_skips_every_proved_document_wide_compiler_pass() {
             canonical_mark_nodes_visited: 2,
             canonical_identity_predicate_nodes_visited: 3,
             canonical_projections: 1,
-            canonical_serializations: 1,
-            canonical_hashes: 1,
+            canonical_serializations: 0,
+            canonical_hashes: 0,
             affected_top_level_scans: 0,
             position_map_clones: 1,
             position_map_compactions: 1,
@@ -899,3 +899,220 @@ include!("localized_compilation/optional_indexes.rs");
 include!("localized_compilation/active_state_evidence.rs");
 
 include!("localized_compilation/active_state_parity.rs");
+
+#[test]
+fn a_lazily_materialized_canonical_value_equals_eager_derivation() {
+    use crate::test_support::large_table_fixture::{
+        multi_paragraph_cell_document, plain_table_document, session_with_document,
+    };
+    const TABLE_SIZE: usize = 3;
+    const MULTI_PARAGRAPH_SECOND_PARAGRAPH: [u32; 4] = [0, 1, 1, 2];
+    use crate::transform::{apply_step, Step};
+    use crate::yrs_engine::canonical::{CanonicalArtifact, CanonicalSchemaContext};
+
+    const EQUIVALENCE_SEEDED_STEPS: usize = 200;
+    const SEED: u64 = 0x8a4f_31cb;
+    const MULTIPLIER: u64 = 6364136223846793005;
+    const INCREMENT: u64 = 1442695040888963407;
+    const INSERTIONS: [&str; 5] = ["x", "😀", "\"\n", "é", "ab"];
+    let fixtures = [
+        (
+            plain_table_document(TABLE_SIZE, TABLE_SIZE),
+            vec![0, 1, 1, 0],
+        ),
+        (
+            serde_json::json!({"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Prose"}]}]}),
+            vec![0],
+        ),
+        (
+            multi_paragraph_cell_document(),
+            MULTI_PARAGRAPH_SECOND_PARAGRAPH.to_vec(),
+        ),
+    ];
+    for (fixture, path) in fixtures {
+        let session = session_with_document(&fixture);
+        let schema = session.engine.schema();
+        let context = CanonicalSchemaContext::new(schema);
+        let mut document = session.engine.document().unwrap().clone();
+        let mut artifact = context.derive(&document).unwrap();
+        let mut seed = SEED;
+        for step_index in 0..EQUIVALENCE_SEEDED_STEPS {
+            seed = seed.wrapping_mul(MULTIPLIER).wrapping_add(INCREMENT);
+            let old_block = document.node_at(&path).unwrap();
+            let length = old_block.text_content().chars().count() as u32;
+            let offset = (seed >> u32::BITS) as u32 % (length + 1);
+            let mut position = 0;
+            let mut parent = document.root();
+            for index in &path {
+                for sibling in 0..*index {
+                    position += parent.child(sibling as usize).unwrap().node_size();
+                }
+                parent = parent.child(*index as usize).unwrap();
+                position += 1;
+            }
+            let step = if length > 0 && step_index % INSERTIONS.len() == 0 {
+                let from = position + offset.min(length - 1);
+                Step::DeleteRange { from, to: from + 1 }
+            } else {
+                Step::InsertText {
+                    pos: position + offset,
+                    text: INSERTIONS[seed as usize % INSERTIONS.len()].into(),
+                    marks: Vec::new(),
+                }
+            };
+            let (next, _) = apply_step(&document, &step, schema).unwrap();
+            crate::yrs_engine::observability::reset_full_pass_counts_for_test();
+            let localized = CanonicalArtifact::derive_localized(
+                &artifact,
+                &next,
+                old_block,
+                next.node_at(&path).unwrap(),
+            )
+            .expect("a textblock delta fits");
+            let counts = crate::yrs_engine::observability::take_full_pass_counts_for_test();
+            assert_eq!(
+                counts.canonical_projections, 0,
+                "lazy projection at step {step_index}"
+            );
+            assert_eq!(
+                counts.canonical_serializations, 0,
+                "lazy serialization at step {step_index}"
+            );
+            assert_eq!(counts.canonical_hashes, 0, "lazy hash at step {step_index}");
+            let eager = context.derive(&next).unwrap();
+            assert_eq!(
+                localized.serialized_len(),
+                eager.serialized_len(),
+                "path {path:?}, step {step_index}"
+            );
+            assert_eq!(
+                localized.history_snapshot_retained_charge(),
+                eager.history_snapshot_retained_charge(),
+                "retention path {path:?}, step {step_index}"
+            );
+            assert_eq!(
+                localized.value(),
+                eager.value(),
+                "JSON path {path:?}, step {step_index}"
+            );
+            assert_eq!(
+                localized.sha256(),
+                eager.sha256(),
+                "hash path {path:?}, step {step_index}"
+            );
+            artifact = localized;
+            document = next;
+        }
+    }
+}
+
+#[test]
+fn large_table_canonical_history_charge_exceeds_the_snapshot_budget() {
+    use crate::test_support::large_table_fixture::{plain_table_document, session_with_document};
+    const ROWS: usize = 1000;
+    const COLUMNS: usize = 20;
+    let session = session_with_document(&plain_table_document(ROWS, COLUMNS));
+    let state = session.engine.derived_state.as_ref().unwrap();
+    let charge = state
+        .canonical_artifact
+        .history_snapshot_retained_charge()
+        .unwrap();
+    let budget = session.engine.editing_limits.max_derived_output_bytes;
+    eprintln!(
+        "canonical retained bytes={}, source document bytes={}, history snapshot budget={budget}",
+        charge.canonical_retained_bytes, charge.source_document_retained_bytes
+    );
+    assert!(charge.canonical_retained_bytes > budget);
+}
+
+#[test]
+fn localized_history_charges_and_eviction_equal_the_generic_path() {
+    use crate::native_transaction_bridge::NativeTransactionBridge;
+    use crate::test_support::large_table_fixture::{
+        plain_table_document, session_with_document_and_editing_limits,
+    };
+    use crate::yrs_engine::EditingLimits;
+    const HISTORY_EVICTION_KEYSTROKES: usize = 40;
+    const RETAINED_UNITS: u64 = 16;
+    const OWNER_ID: u64 = 71;
+    const FIRST_REQUEST_ID: u64 = 100;
+    const CARET: u32 = 3;
+    let run = |localized: bool| {
+        let _clients = crate::test_support::deterministic_clients::DeterministicClients::new();
+        let mut session = session_with_document_and_editing_limits(
+            &plain_table_document(3, 3),
+            EditingLimits {
+                max_undo_retained_units: RETAINED_UNITS,
+                ..EditingLimits::default()
+            },
+        );
+        let mut records = Vec::new();
+        let mut evicted = false;
+        for index in 0..HISTORY_EVICTION_KEYSTROKES {
+            session.engine.history.force_next_capture_boundary();
+            if !localized {
+                session.engine.drop_localized_text_index_for_test();
+            }
+            let epoch = session
+                .pin_position_epoch(OWNER_ID, session.engine.revision())
+                .unwrap();
+            let request = serde_json::json!({
+                "version": 1,
+                "requestId": (FIRST_REQUEST_ID + index as u64).to_string(),
+                "ownerId": OWNER_ID.to_string(),
+                "positionEpoch": epoch.to_string(),
+                "intent": {"type": "insertText", "anchor": CARET, "head": CARET, "text": "x"},
+            })
+            .to_string();
+            crate::yrs_engine::observability::reset_full_pass_counts_for_test();
+            NativeTransactionBridge::new(&mut session)
+                .submit_native_intent(&request)
+                .unwrap();
+            let counts = crate::yrs_engine::observability::take_full_pass_counts_for_test();
+            if localized {
+                assert_eq!(
+                    (
+                        counts.canonical_projections,
+                        counts.canonical_serializations,
+                        counts.canonical_hashes
+                    ),
+                    (0, 0, 0),
+                    "native edit {index}"
+                );
+            }
+            let counts = session.engine.history.stack_depths_for_test();
+            evicted |= counts.0 < index + 1;
+            records.push((
+                counts,
+                session.engine.retained_history_for_test(),
+                session.engine.document_json().unwrap(),
+            ));
+        }
+        assert!(
+            evicted,
+            "the fixture must evict before {HISTORY_EVICTION_KEYSTROKES} keystrokes"
+        );
+        let mut undo_results = Vec::new();
+        while session.engine.can_undo() {
+            NativeTransactionBridge::new(&mut session)
+                .undo(
+                    FIRST_REQUEST_ID
+                        + HISTORY_EVICTION_KEYSTROKES as u64
+                        + undo_results.len() as u64,
+                )
+                .unwrap();
+            undo_results.push((
+                session.engine.document_json().unwrap(),
+                session.engine.retained_history_for_test(),
+                session.engine.resolved_selection().cloned(),
+            ));
+            assert!(undo_results.len() <= HISTORY_EVICTION_KEYSTROKES);
+        }
+        (records, undo_results)
+    };
+    assert_eq!(
+        run(true),
+        run(false),
+        "history charges, stack depth and every retained undo must agree"
+    );
+}

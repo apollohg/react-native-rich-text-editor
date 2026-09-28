@@ -103,12 +103,56 @@ fn reserve_replay_roll_baseline(
 }
 
 #[derive(Debug, Clone)]
+pub(crate) enum HistoryCanonicalIdentity {
+    Materialized([u8; 32]),
+    Retained(super::canonical::CanonicalArtifact),
+}
+
+impl HistoryCanonicalIdentity {
+    pub(crate) fn from_artifact(
+        artifact: &super::canonical::CanonicalArtifact,
+        snapshot_retained: bool,
+    ) -> Self {
+        if snapshot_retained {
+            Self::Retained(artifact.clone())
+        } else {
+            Self::Materialized(artifact.sha256())
+        }
+    }
+
+    pub(crate) fn fingerprint(&self) -> [u8; 32] {
+        match self {
+            Self::Materialized(fingerprint) => *fingerprint,
+            Self::Retained(artifact) => artifact.sha256(),
+        }
+    }
+
+    pub(crate) fn matches_artifact(&self, artifact: &super::canonical::CanonicalArtifact) -> bool {
+        matches!(self, Self::Retained(retained) if retained.ptr_eq(artifact))
+            || self.fingerprint() == artifact.sha256()
+    }
+}
+
+impl PartialEq for HistoryCanonicalIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        if let (Self::Retained(left), Self::Retained(right)) = (self, other) {
+            if left.ptr_eq(right) {
+                return true;
+            }
+        }
+        self.fingerprint() == other.fingerprint()
+    }
+}
+
+impl Eq for HistoryCanonicalIdentity {}
+
+#[derive(Debug, Clone)]
 pub(crate) struct HistorySnapshot {
     pub relative_selection: RelativeSelection,
     pub resolved_selection: ResolvedSelection,
     pub stored_marks: Option<Vec<Mark>>,
     pub text_length: u64,
-    pub canonical_fingerprint: [u8; 32],
+    pub canonical_fingerprint: HistoryCanonicalIdentity,
     pub derived_output_bytes: usize,
     pub metadata_bytes: usize,
     pub document_snapshot: Option<Arc<super::derived_state::HistoryDocumentSnapshot>>,
@@ -151,7 +195,7 @@ pub(crate) struct PreparedHistoryLimits {
 pub(crate) struct HistorySnapshotTemplate {
     pub stored_marks: Option<Vec<Mark>>,
     pub text_length: u64,
-    pub canonical_fingerprint: [u8; 32],
+    pub canonical_fingerprint: HistoryCanonicalIdentity,
     pub derived_output_bytes: usize,
     pub metadata_bytes: usize,
     pub document_snapshot_retained_bytes:

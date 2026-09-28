@@ -135,7 +135,7 @@ fn history_snapshot(metadata_bytes: usize) -> HistorySnapshot {
         resolved_selection: ResolvedSelection::All,
         stored_marks: None,
         text_length: 0,
-        canonical_fingerprint: [0; 32],
+        canonical_fingerprint: super::HistoryCanonicalIdentity::Materialized([0; 32]),
         derived_output_bytes: 0,
         metadata_bytes,
         document_snapshot: None,

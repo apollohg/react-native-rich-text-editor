@@ -371,6 +371,10 @@ impl DocumentValidationCertificate {
         Some(certificate)
     }
 
+    pub(crate) fn depth_slots(&self) -> usize {
+        self.depth_counts.len()
+    }
+
     pub(crate) fn stats(&self) -> DocumentStats {
         self.stats
     }
@@ -526,7 +530,6 @@ impl DocumentValidationCertificate {
         derivations: &CompiledDocumentDerivations,
         plan: &LocalizedTextblockEditPlan,
     ) -> Option<Self> {
-        let canonical_fingerprint = canonical_artifact.sha256();
         if canonical_artifact.schema_fingerprint() != self.schema_fingerprint.as_ref()
             || canonical_artifact.format_version()
                 != yrs_engine::canonical::CANONICAL_ARTIFACT_FORMAT_VERSION
@@ -541,9 +544,9 @@ impl DocumentValidationCertificate {
         }
         Some(Self {
             canonical_artifact: canonical_artifact.clone(),
-            canonical_fingerprint,
+            canonical_fingerprint: [0; 32],
             canonical_serialized_len: canonical_artifact.serialized_len(),
-            canonical_fingerprint_materialized: true,
+            canonical_fingerprint_materialized: false,
             raw_text_scalars: canonical_artifact.text_scalar_len(),
             raw_text_utf8_bytes: canonical_artifact.text_utf8_bytes(),
             ..self

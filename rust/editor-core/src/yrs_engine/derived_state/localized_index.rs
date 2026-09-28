@@ -60,6 +60,7 @@ impl LocalizedTextLeafCertificate {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct LocalizedTextLeafIndex {
     pub(super) leaves: Vec<LocalizedTextLeafCertificate>,
     pub(super) schema_fingerprint: Arc<str>,
@@ -462,8 +463,8 @@ impl LocalizedTextLeafIndex {
             leaves,
             schema_fingerprint: Arc::clone(&validation.schema_fingerprint),
             canonical_artifact: canonical_artifact.clone(),
-            canonical_fingerprint: canonical_artifact.sha256(),
-            canonical_fingerprint_materialized: true,
+            canonical_fingerprint: [0; 32],
+            canonical_fingerprint_materialized: false,
             document_revision: validation.document_revision,
             retained_bytes,
         })

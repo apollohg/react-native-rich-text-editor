@@ -437,6 +437,7 @@ impl YrsDocumentEngine {
             state,
             expected_document,
             candidate_artifact,
+            None,
             &candidate_derivations,
             &candidate_render.cache,
             state.stored_marks.as_deref(),
@@ -605,7 +606,9 @@ impl YrsDocumentEngine {
         );
         let after = history_snapshot_template_from_identity(
             evidence.canonical_text_scalar_len,
-            evidence.canonical_fingerprint,
+            yrs_engine::history::HistoryCanonicalIdentity::Materialized(
+                evidence.canonical_fingerprint,
+            ),
             evidence.canonical_serialized_len,
             state.stored_marks.as_deref(),
             &self.fragment_name,

@@ -463,9 +463,13 @@ impl YrsDocumentEngine {
                     .derived_state
                     .as_ref()
                     .expect("captured history has a current derived state");
-                if before.canonical_fingerprint != current.canonical_artifact.sha256()
+                if !before
+                    .canonical_fingerprint
+                    .matches_artifact(&current.canonical_artifact)
                     || before.derived_output_bytes != current.canonical_artifact.serialized_len()
-                    || after.canonical_fingerprint != canonical_artifact.sha256()
+                    || !after
+                        .canonical_fingerprint
+                        .matches_artifact(&canonical_artifact)
                     || after.derived_output_bytes != canonical_artifact.serialized_len()
                 {
                     return Err(yrs_engine::OperationError::engine_invariant_failed(
@@ -495,6 +499,9 @@ impl YrsDocumentEngine {
                             before,
                             &compiled.preview,
                             &canonical_artifact,
+                            finalized_derived_evidence
+                                .as_ref()
+                                .map(|evidence| evidence.validation_depth_slots()),
                             after_derivations,
                             &render_transition.as_ref()?.cache,
                             stored_marks.as_deref(),
