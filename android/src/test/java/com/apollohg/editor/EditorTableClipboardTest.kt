@@ -31,6 +31,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowWindowManagerGlobal
 import org.robolectric.util.ReflectionHelpers
+import com.apollohg.editor.tables.activeTableCellPosition
 import com.apollohg.editor.tables.TableCellDragShadow
 import com.apollohg.editor.tables.TableCellDragState
 import com.apollohg.editor.viewer.PreparedProseDrawingView
@@ -669,7 +670,7 @@ internal class EditorTableClipboardTest {
             val input = fixture.view.activeTextInput
             assertTrue("the double tap edits a cell", input !== fixture.root)
             assertEquals(fixture.openings()[LAST_CELL].toLong(),
-                requireNotNull(input.tableCellPositionMap).binding.cellSourcePos)
+                fixture.view.activeTableCellPosition)
         }
 
     @Test

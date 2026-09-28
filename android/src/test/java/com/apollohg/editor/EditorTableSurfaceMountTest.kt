@@ -970,6 +970,52 @@ internal class EditorTableSurfaceMountTest {
     }
 
     @Test
+    fun `binding survives a keystroke before its cell`() = withMountedView(wideTableDocument.replace("600", "120")) { view, adapter, _ ->
+        tapFirstCell(view, 1)
+        val input = view.activeTextInput
+        val binding = requireNotNull(input.tableCellPositionMap).binding
+        val key = adapter.tableIndex.rootExtents.keys.single()
+        val oldDoc = requireNotNull(adapter.tableIndex.docStart(key, 1))
+        val firstScalar = requireNotNull(adapter.tableIndex.scalarStart(key, 0)).toInt()
+        assertNotNull(adapter.insertText("X", firstScalar))
+        val shifted = requireNotNull(adapter.tableIndex.scalarStart(key, 1)).toInt()
+        assertNotNull(adapter.syncSelection(shifted, shifted))
+        assertTrue(input.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
+        val refreshed = requireNotNull(input.tableCellPositionMap).binding
+        assertEquals(binding.tableKey, refreshed.tableKey)
+        assertEquals(binding.cellIndex, refreshed.cellIndex)
+        assertEquals(oldDoc + 1u, adapter.tableIndex.docStart(key, 1))
+        assertSame(input, view.activeTextInput)
+        assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText("!", 1))
+        assertEquals("XLeft", cellText(adapter, 0))
+        assertEquals("!Right", cellText(adapter, 1))
+    }
+
+    @Test
+    fun `structural replacement rebinds before input`() = withMountedView(wideTableDocument.replace("600", "120")) { view, adapter, _ ->
+        tapFirstCell(view, 1)
+        val input = view.activeTextInput
+        val oldBinding = requireNotNull(input.tableCellPositionMap).binding
+        val connection = requireNotNull(input.onCreateInputConnection(EditorInfo()))
+        val replacement = wideTableDocument.replace("600", "120").replace("Left", "longer").replace("Right", "replacement")
+        assertNotNull(adapter.setContentJson(replacement))
+        val key = adapter.tableIndex.rootExtents.keys.single()
+        val scalar = requireNotNull(adapter.tableIndex.scalarStart(key, 1)).toInt()
+        assertNotNull(adapter.syncSelection(scalar, scalar))
+        assertTrue(input.applyUpdateJSON(requireNotNull(adapter.refreshFromRustState(null))))
+        assertSame(input, view.activeTextInput)
+        val refreshed = requireNotNull(input.tableCellPositionMap).binding
+        assertNotEquals(oldBinding.tableKey, refreshed.tableKey)
+        assertEquals(key, refreshed.tableKey)
+        assertEquals(1, refreshed.cellIndex)
+        assertEquals("replacement", input.text.toString())
+        assertFalse(connection.beginBatchEdit())
+        assertTrue(requireNotNull(input.onCreateInputConnection(EditorInfo())).commitText("!", 1))
+        assertEquals("longer", cellText(adapter, 0))
+        assertEquals("!replacement", cellText(adapter, 1))
+    }
+
+    @Test
     fun `external same-position replacement retires mounted cell connection`() = withMountedView { view, adapter, _ ->
         tapFirstCell(view)
         val connection = requireNotNull(view.activeTextInput.onCreateInputConnection(EditorInfo()))

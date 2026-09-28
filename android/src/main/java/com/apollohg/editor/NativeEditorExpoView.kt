@@ -51,7 +51,8 @@ class NativeEditorExpoView(context: Context, appContext: AppContext) :
         val hadVisibleToolbar: Boolean,
         val selectionAnchor: Int?,
         val selectionHead: Int?,
-        val cellSourcePos: Long? = null,
+        val cellTableKey: String? = null,
+        val cellIndex: Int? = null,
         val mentionAnchor: Int? = null,
         val mentionHead: Int? = null,
         val mentionQuery: String? = null

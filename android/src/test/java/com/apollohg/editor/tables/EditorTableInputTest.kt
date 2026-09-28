@@ -19,8 +19,9 @@ import org.robolectric.annotation.Config
 class EditorTableInputTest {
     private fun input(): EditorEditText = EditorEditText(RuntimeEnvironment.getApplication())
 
-    private fun binding(cellSourcePos: Long = 10) = TableCellPositionMap.Binding(
-        cellSourcePos = cellSourcePos,
+    private fun binding(cellIndex: Int = 10) = TableCellPositionMap.Binding(
+        tableKey = "table",
+        cellIndex = cellIndex,
         revision = "4",
         epoch = "9"
     )
@@ -129,15 +130,31 @@ class EditorTableInputTest {
 
         assertTrue(coordinator.bind(EditorTableInputCoordinator.Target(first), map(first), "4", "9"))
         assertTrue(coordinator.beginComposition())
-        assertEquals(TableInputPhase.Composing(10, "4", "9"), coordinator.phase)
+        assertEquals(TableInputPhase.Composing("table", 10, "4", "9"), coordinator.phase)
         assertFalse(coordinator.bind(EditorTableInputCoordinator.Target(second), map(second), "4", "9"))
-        assertEquals(TableInputPhase.Composing(10, "4", "9"), coordinator.phase)
+        assertEquals(TableInputPhase.Composing("table", 10, "4", "9"), coordinator.phase)
         assertTrue(coordinator.invalidateBinding())
         assertTrue(coordinator.bind(EditorTableInputCoordinator.Target(second), map(second), "4", "9"))
 
         assertSame(input, coordinator.cellInput)
         assertEquals(1, coordinator.inputInstanceCountForTesting)
-        assertEquals(TableInputPhase.Bound(20, "4", "9"), coordinator.phase)
+        assertEquals(TableInputPhase.Bound("table", 20, "4", "9"), coordinator.phase)
+    }
+
+    @Test
+    fun `refresh preserves composing identity and rejects the same index in another table`() {
+        val coordinator = EditorTableInputCoordinator(input())
+        val original = binding()
+        assertTrue(coordinator.bind(EditorTableInputCoordinator.Target(original), map(original), "4", "9"))
+        assertTrue(coordinator.beginComposition())
+        val refreshed = original.copy(revision = "5", epoch = "10")
+        val shifted = map(refreshed, listOf(TableCellPositionMap.Segment(0, 6, 43)))
+        assertTrue(coordinator.refreshBinding(EditorTableInputCoordinator.Target(refreshed), shifted, "5", "10"))
+        assertEquals(TableInputPhase.Composing("table", original.cellIndex, "5", "10"), coordinator.phase)
+        assertEquals(43, requireNotNull(coordinator.positionMap).globalScalarForLocalScalar(0))
+        val foreign = refreshed.copy(tableKey = "other")
+        assertFalse(coordinator.refreshBinding(EditorTableInputCoordinator.Target(foreign), map(foreign), "5", "10"))
+        assertSame(shifted, coordinator.positionMap)
     }
 
     @Test
@@ -153,7 +170,7 @@ class EditorTableInputTest {
         assertTrue(coordinator.bind(EditorTableInputCoordinator.Target(target), segmented, "4", "9"))
         assertNull(segmented.globalScalarRange(0, 4))
         assertSame(input, coordinator.cellInput)
-        assertEquals(TableInputPhase.Bound(20, "4", "9"), coordinator.phase)
+        assertEquals(TableInputPhase.Bound("table", 20, "4", "9"), coordinator.phase)
     }
 
     @Test
@@ -200,7 +217,7 @@ class EditorTableInputTest {
             EditorTableInputCoordinator.Target(binding(20), hasExcludedContent = true)
         ).forEach { target ->
             assertFalse(coordinator.bind(target, map(target.binding), "4", "9"))
-            assertEquals(TableInputPhase.Bound(10, "4", "9"), coordinator.phase)
+            assertEquals(TableInputPhase.Bound("table", 10, "4", "9"), coordinator.phase)
             assertSame(input, coordinator.cellInput)
         }
 
@@ -225,7 +242,7 @@ class EditorTableInputTest {
             TableCellPositionMap.Segment(0, 2, Int.MAX_VALUE)
         ))
         assertFalse(coordinator.bind(EditorTableInputCoordinator.Target(binding(20)), overflowing, "4", "9"))
-        assertEquals(TableInputPhase.Bound(10, "4", "9"), coordinator.phase)
+        assertEquals(TableInputPhase.Bound("table", 10, "4", "9"), coordinator.phase)
         assertEquals(40, coordinator.positionMap?.globalScalarForLocalScalar(0))
         assertEquals("retained", input.composingTextForEditor())
         assertSame(retainedConnection, input.activeInputConnection)

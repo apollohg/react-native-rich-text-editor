@@ -5,8 +5,8 @@ import com.apollohg.editor.restoreAuthorizedTextSnapshotForEditor
 
 internal sealed interface TableInputPhase {
     data object Inactive : TableInputPhase
-    data class Bound(val cellSourcePos: Long, val revision: String, val epoch: String) : TableInputPhase
-    data class Composing(val cellSourcePos: Long, val revision: String, val epoch: String) : TableInputPhase
+    data class Bound(val tableKey: String, val cellIndex: Int, val revision: String, val epoch: String) : TableInputPhase
+    data class Composing(val tableKey: String, val cellIndex: Int, val revision: String, val epoch: String) : TableInputPhase
 }
 
 internal class EditorTableInputCoordinator(val cellInput: EditorEditText) {
@@ -45,7 +45,7 @@ internal class EditorTableInputCoordinator(val cellInput: EditorEditText) {
         cellInput.tableCellInputAuthority = authority
         cellInput.tableCellUpdateConsumer = updateConsumer
         phase = TableInputPhase.Bound(
-            target.binding.cellSourcePos,
+            target.binding.tableKey, target.binding.cellIndex,
             target.binding.revision,
             target.binding.epoch
         )
@@ -54,27 +54,27 @@ internal class EditorTableInputCoordinator(val cellInput: EditorEditText) {
 
     fun beginComposition(): Boolean {
         val bound = phase as? TableInputPhase.Bound ?: return false
-        phase = TableInputPhase.Composing(bound.cellSourcePos, bound.revision, bound.epoch)
+        phase = TableInputPhase.Composing(bound.tableKey, bound.cellIndex, bound.revision, bound.epoch)
         return true
     }
 
     fun refreshBinding(target: Target, map: TableCellPositionMap,
                        currentRevision: String, currentEpoch: String): Boolean {
         val active = phase
-        val sourcePos = when (active) {
-            is TableInputPhase.Bound -> active.cellSourcePos
-            is TableInputPhase.Composing -> active.cellSourcePos
+        val identity = when (active) {
+            is TableInputPhase.Bound -> active.tableKey to active.cellIndex
+            is TableInputPhase.Composing -> active.tableKey to active.cellIndex
             TableInputPhase.Inactive -> return false
         }
-        if (sourcePos != target.binding.cellSourcePos ||
+        if (identity != (target.binding.tableKey to target.binding.cellIndex) ||
             !canBind(target) || !map.hasValidSegments() || map.binding != target.binding ||
             !map.isCurrent(currentRevision, currentEpoch)) return false
         positionMap = map
         cellInput.tableCellPositionMap = map
         phase = if (active is TableInputPhase.Composing) {
-            TableInputPhase.Composing(target.binding.cellSourcePos, currentRevision, currentEpoch)
+            TableInputPhase.Composing(target.binding.tableKey, target.binding.cellIndex, currentRevision, currentEpoch)
         } else {
-            TableInputPhase.Bound(target.binding.cellSourcePos, currentRevision, currentEpoch)
+            TableInputPhase.Bound(target.binding.tableKey, target.binding.cellIndex, currentRevision, currentEpoch)
         }
         return true
     }
@@ -96,6 +96,7 @@ internal class EditorTableInputCoordinator(val cellInput: EditorEditText) {
 
     companion object {
         fun canBind(target: Target): Boolean =
-            !target.isSynthetic && !target.isNestedTarget && !target.hasExcludedContent
+            target.binding.tableKey.isNotEmpty() && target.binding.cellIndex >= 0 &&
+                !target.isSynthetic && !target.isNestedTarget && !target.hasExcludedContent
     }
 }

@@ -35,7 +35,8 @@ internal fun NativeEditorExpoView.currentNativeActionScope(
         hadVisibleToolbar = isNativeActionToolbarVisible(action),
         selectionAnchor = selection?.first,
         selectionHead = selection?.second,
-        cellSourcePos = input.tableCellPositionMap?.binding?.cellSourcePos,
+        cellTableKey = input.tableCellPositionMap?.binding?.tableKey,
+        cellIndex = input.tableCellPositionMap?.binding?.cellIndex,
         mentionAnchor = mentionScope?.anchor,
         mentionHead = mentionScope?.head,
         mentionQuery = mentionScope?.query
@@ -59,7 +60,8 @@ internal fun NativeEditorExpoView.isPendingNativeActionScopeCurrent(
         return false
     }
     val input = richTextView.activeTextInput
-    if (scope.cellSourcePos != input.tableCellPositionMap?.binding?.cellSourcePos) return false
+    val binding = input.tableCellPositionMap?.binding
+    if (scope.cellTableKey != binding?.tableKey || scope.cellIndex != binding?.cellIndex) return false
     val selection = input.currentScalarSelection()
     if (scope.selectionAnchor != selection?.first || scope.selectionHead != selection?.second) {
         return false

@@ -31,10 +31,9 @@ internal object EditorTableCellProjection {
         val table = index.record(tableKey) ?: return null
         val cell = table.cells.getOrNull(cellIndex) ?: return null
         if (table.readOnlyDescendants || cell.nestedTables.isNotEmpty() || cell.inputBlocks.isEmpty()) return null
-        val sourcePos = index.docStart(tableKey, cellIndex)?.toLong()?.takeIf { it <= Int.MAX_VALUE } ?: return null
         val elements = inputElements(cell.elements, cell.voidElementIndices) { relative -> index.absoluteDocPos(tableKey, cellIndex, relative) }
             ?: return null
-        val binding = TableCellPositionMap.Binding(sourcePos.toLong(), documentRevision, positionEpoch)
+        val binding = TableCellPositionMap.Binding(tableKey, cellIndex, documentRevision, positionEpoch)
         val target = EditorTableInputCoordinator.Target(binding)
         if (!EditorTableInputCoordinator.canBind(target)) return null
         val ranges = mutableMapOf<Int, Pair<Int, Int>>()

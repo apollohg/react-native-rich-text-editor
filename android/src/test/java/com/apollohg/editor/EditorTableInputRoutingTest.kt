@@ -37,7 +37,7 @@ class EditorTableInputRoutingTest {
             input.setSelection(3)
             adapter.baseDocumentRevision = 4uL
             adapter.positionEpoch = "9"
-            val binding = TableCellPositionMap.Binding(10, "4", "9")
+            val binding = TableCellPositionMap.Binding("table", 10, "4", "9")
             val map = TableCellPositionMap(binding, listOf(TableCellPositionMap.Segment(0, 5, 40)))
             assertTrue(coordinator.bind(
                 EditorTableInputCoordinator.Target(binding), map, "4", "9",
@@ -54,7 +54,7 @@ class EditorTableInputRoutingTest {
     private fun withGappedCellInput(block: (EditorEditText, FakeEditorV2Backend) -> Unit) =
         withCellInput { input, coordinator, _, backend ->
             assertTrue(coordinator.invalidateBinding())
-            val binding = TableCellPositionMap.Binding(10, "4", "9")
+            val binding = TableCellPositionMap.Binding("table", 10, "4", "9")
             val map = TableCellPositionMap(binding, listOf(
                 TableCellPositionMap.Segment(0, 2, 40),
                 TableCellPositionMap.Segment(2, 5, 50)
@@ -231,7 +231,7 @@ class EditorTableInputRoutingTest {
         input.rememberLogicalSelection(100, 100, 3, 3, "4")
         assertEquals(100 to 100, input.currentScalarSelection())
         assertTrue(coordinator.invalidateBinding())
-        val binding = TableCellPositionMap.Binding(10, "4", "9")
+        val binding = TableCellPositionMap.Binding("table", 10, "4", "9")
         val reboundMap = TableCellPositionMap(
             binding, listOf(TableCellPositionMap.Segment(0, 5, 80))
         )
@@ -263,7 +263,7 @@ class EditorTableInputRoutingTest {
             requireNotNull(adapter.currentStateJson())
             val revision = adapter.baseDocumentRevision.toString()
             val epoch = requireNotNull(adapter.positionEpoch)
-            val binding = TableCellPositionMap.Binding(10, revision, epoch)
+            val binding = TableCellPositionMap.Binding("table", 10, revision, epoch)
             val map = TableCellPositionMap(binding, listOf(TableCellPositionMap.Segment(0, 6, 40)))
             val updates = mutableListOf<String>()
             val coordinator = EditorTableInputCoordinator(input)

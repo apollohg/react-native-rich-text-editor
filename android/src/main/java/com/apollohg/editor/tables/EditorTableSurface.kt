@@ -207,7 +207,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     val isCellEditMenuVisible: Boolean get() = cellEditMenu.isVisible
     internal var onTableCellPreparedForTesting: ((Int) -> Unit)? = null
     private val cellShapes = PreparedCellShapeCatalog()
-    private data class ActiveCell(val tableId: String, val cellIndex: Int, val sourcePos: Long)
+    private data class ActiveCell(val tableId: String, val cellIndex: Int)
     private var activeCell: ActiveCell? = null
     private var applyingCellUpdate = false
     private var accessibilityKey: Triple<ULong?, Int, Int?>? = null
@@ -1145,8 +1145,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                          focus: Boolean = true): Boolean {
         val root = host.editorEditText
         val current = activeCell
-        val sourcePos = projected.target.binding.cellSourcePos
-        if (current?.sourcePos == sourcePos && current.tableId == tableId) {
+        if (current?.cellIndex == cellIndex && current.tableId == tableId) {
             activeInput?.let { input ->
                 if (focus) input.requestFocus()
                 touch?.let { input.setSelection(input.getOffsetForPosition(
@@ -1176,11 +1175,11 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val bound = coordinator?.bind(projected.target, projected.positionMap,
             adapter.baseDocumentRevision.toString(), adapter.positionEpoch ?: "",
             authority = { root.v2Driver === adapter && root.hasAuthorizedNativeTableOwner(adapter) &&
-                root.isEditable && activeCell?.sourcePos == sourcePos },
+                root.isEditable && activeCell?.tableId == tableId && activeCell?.cellIndex == cellIndex },
             updateConsumer = { update, notify, external -> applyCellUpdate(update, notify, external) }
         ) == true
         if (!bound) return false
-        activeCell = ActiveCell(tableId, cellIndex, sourcePos)
+        activeCell = ActiveCell(tableId, cellIndex)
         input.tableCellAccessibility = TableCellAccessibility(drawingView, { entries[tableId]?.surface }, cellIndex, this)
         activeAppearanceRevision = root.renderAppearanceRevision
         input.onTableCellSelectionSynced = {
@@ -1281,7 +1280,6 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val surface = entries[active.tableId]?.surface ?: return true
         val source = surface.sourceTable ?: return true
         val cell = source.cells.getOrNull(active.cellIndex) ?: return true
-        if (cellDocumentPosition(active.tableId, cell.sourceIndex)?.toLong() != active.sourcePos) return true
         val row = cell.row.toInt()
         val horizontal = keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
             keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
@@ -1388,7 +1386,12 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val coherent = rootCoherent && activeCell == active && coordinator?.positionMap === boundMap
         val selection = adapter.updateSelection(update)
         val range = selection?.let(::selectionScalarRange)
-        if (coherent && (range == null || projection(active.tableId, active.cellIndex)?.holds(range) != false)) {
+        if (rootCoherent && selection != null && range != null &&
+            adapter.cachedTablePresentation?.changes?.replacedTables?.contains(active.tableId) == true) {
+            invalidateCell()
+            return moveActiveCell(selection, range, adapter, cellWasFocused)
+        }
+        if (coherent && (range == null || projection(active.tableId, active.cellIndex)?.holds(range) == true)) {
             reconcileActiveCell(selection, localUpdate = true)
             return true
         }
@@ -1462,7 +1465,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             return
         }
         val projected = projection(active.tableId, active.cellIndex)
-        if (projected == null || projected.target.binding.cellSourcePos != active.sourcePos) {
+        if (projected == null || projected.target.binding.tableKey != active.tableId || projected.target.binding.cellIndex != active.cellIndex) {
             invalidateCell()
             return
         }
@@ -1511,10 +1514,6 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             table.cell(active.cellIndex)
         } ?: return false
         val cell = presented.cell
-        if (cellDocumentPosition(active.tableId, cell.sourceIndex)?.toLong() != active.sourcePos) {
-            invalidateCell()
-            return false
-        }
         val input = coordinator?.cellInput ?: return false
         val inset = cell.contentOrigin
         val frame = presented.surface.frameOfCell(cell)

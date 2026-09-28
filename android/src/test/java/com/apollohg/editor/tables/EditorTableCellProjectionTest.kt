@@ -106,7 +106,8 @@ internal class EditorTableCellProjectionTest {
         assertEquals(43, projection.positionMap.globalScalarForLocalUtf16(4, projection.text.toString()))
         assertEquals(44, projection.positionMap.globalScalarForLocalUtf16(5, projection.text.toString()))
         assertEquals(TableCellPositionMap.ScalarRange(40, 44), projection.positionMap.globalScalarRange(0, 4))
-        assertEquals(2L, projection.target.binding.cellSourcePos)
+        assertEquals("t0", projection.target.binding.tableKey)
+        assertEquals(0, projection.target.binding.cellIndex)
     }
 
     @Test

@@ -116,7 +116,11 @@ internal fun PreparedProseDrawingView.presentedRealCell(tableId: String, positio
     }) { "cell $position is not presented" }
 
 internal val RichTextEditorView.activeTableCellPosition: Long?
-    get() = activeTextInput.tableCellPositionMap?.binding?.cellSourcePos
+    get() {
+        val binding = activeTextInput.tableCellPositionMap?.binding ?: return null
+        val adapter = activeTextInput.v2Driver as? EditorV2Adapter ?: return null
+        return adapter.tableIndex.docStart(binding.tableKey, binding.cellIndex)?.toLong()
+    }
 
 internal fun EditorV2Adapter.applyLocalSelection(selection: JSONObject): EditorV2CallResult<String> =
     callWithEnvelope(JSONObject().put("selection", selection)) { UniffiEditorV2Backend.setSelection(editorId, it) }

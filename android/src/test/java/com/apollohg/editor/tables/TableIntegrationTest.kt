@@ -194,7 +194,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
         fixture.view.richTextView.remoteSelectionDebugSnapshotsForTesting().map { it.clientId }
 
     @Test
-    fun `remote rectangle fills its resolved cells in the peer color instead of the cursor fallback`() =
+    fun `remote rectangle resolves by index and fills cells instead of the cursor fallback`() =
         withTable(GRID_DOCUMENT) { fixture ->
             val positions = fixture.positions()
             val first = positions[GRID_FIRST]
@@ -205,6 +205,8 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             val remote = fixture.drawing.remoteTableCellSelections.single()
             assertEquals(fixture.tableId, remote.tableId)
             assertEquals(setOf(GRID_FIRST, GRID_SECOND), remote.sourceIndices)
+            assertEquals(GRID_FIRST, fixture.adapter.tableIndex.cellIndexContainingDoc(remote.tableId, first.toUInt()))
+            assertEquals(GRID_SECOND, fixture.adapter.tableIndex.cellIndexContainingDoc(remote.tableId, second.toUInt()))
             assertEquals(expectedPeerFill(FIRST_PEER_COLOR), remote.color)
             assertEquals("the rectangle must use the presented cell frames",
                 listOf(first, second).mapNotNull { fixture.visibleRect(fixture.presentedCell(it)) }.toSet(),

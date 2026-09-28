@@ -7,7 +7,8 @@ internal class TableCellPositionMap(
     segments: List<Segment>
 ) {
     data class Binding(
-        val cellSourcePos: Long,
+        val tableKey: String,
+        val cellIndex: Int,
         val revision: String,
         val epoch: String
     )
