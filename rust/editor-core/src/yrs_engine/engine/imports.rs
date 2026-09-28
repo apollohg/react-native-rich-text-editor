@@ -22,16 +22,16 @@ use crate::yrs_engine::canonical::{CanonicalArtifact, CanonicalSchemaContext};
 use crate::yrs_engine::{EditingLimits, TransactionOrigin, YrsEngineError, YrsEngineResult};
 
 #[derive(Clone)]
-pub(super) struct RootBoundValidationReport {
-    pub(super) source_root: crate::model::Node,
-    pub(super) report: DocumentValidationReport,
+pub(in crate::yrs_engine) struct RootBoundValidationReport {
+    pub(in crate::yrs_engine) source_root: crate::model::Node,
+    pub(in crate::yrs_engine) report: DocumentValidationReport,
 }
 
-pub(super) struct ValidatedImportDocument {
-    pub(super) document: Document,
-    pub(super) canonical_artifact: CanonicalArtifact,
-    pub(super) validation: RootBoundValidationReport,
-    pub(super) carry_import_encoded_state_receipt: bool,
+pub(in crate::yrs_engine) struct ValidatedImportDocument {
+    pub(in crate::yrs_engine) document: Document,
+    pub(in crate::yrs_engine) canonical_artifact: CanonicalArtifact,
+    pub(in crate::yrs_engine) validation: RootBoundValidationReport,
+    pub(in crate::yrs_engine) carry_import_encoded_state_receipt: bool,
 }
 
 impl ValidatedImportDocument {
@@ -93,7 +93,7 @@ pub(crate) fn admit_local_import_document(
     resource_limits: &ResourceLimits,
     editing_limits: &EditingLimits,
     json_input_len: Option<usize>,
-) -> YrsEngineResult<Document> {
+) -> YrsEngineResult<(Document, DocumentValidationReport)> {
     let canonical_schema = CanonicalSchemaContext::new(schema);
     let admitted = ValidatedImportDocument::new(
         document,
@@ -103,7 +103,7 @@ pub(crate) fn admit_local_import_document(
         json_input_len,
     )?;
     admit_canonical_output(&admitted.canonical_artifact, editing_limits)?;
-    Ok(admitted.document)
+    Ok((admitted.document, admitted.validation.report))
 }
 
 fn contains_reserved_public_json_forge(root: &crate::model::Node) -> bool {
@@ -228,6 +228,7 @@ impl YrsDocumentEngine {
             Some(input_len),
         )?;
         admit_canonical_output(&source.canonical_artifact, &self.editing_limits)?;
+        source.canonical_artifact.history_snapshot_retained_charge();
         Ok(source)
     }
 
@@ -424,13 +425,88 @@ impl YrsDocumentEngine {
     ) -> Result<yrs_engine::TransactionCommit, yrs_engine::RootReplacementError> {
         use yrs_engine::RootReplacementError;
         let transaction = self.root_replacement_transaction(request_id, &source, history)?;
-        let (commit, _) = self
-            .apply_typed_transaction_with_staged_context(
-                transaction,
-                false,
-                &mut OutboundUpdateSink::from_optional_outbox(outbox),
+        let mut outbound = OutboundUpdateSink::from_optional_outbox(outbox);
+        let matches_source = matches!(transaction.operations.as_slice(),
+            [yrs_engine::TypedOperation::ReplaceStructure(replacement)]
+                if source.document.root().content() == Some(replacement.content()));
+        let (commit, _) = if matches_source {
+            if source
+                .canonical_artifact
+                .history_snapshot_retained_charge()
+                .is_none_or(|charge| {
+                    charge
+                        .canonical_retained_bytes
+                        .saturating_add(charge.source_document_retained_bytes)
+                        > self.editing_limits.max_derived_output_bytes
+                })
+            {
+                source.canonical_artifact.sha256();
+            }
+            let mut rendered_text = crate::render::RenderedTextBuilder::default();
+            let render_blocks = crate::render::incremental::CachedRenderBlocks::build_validated(
+                &source.document,
+                &self.schema,
+                &self.resource_limits,
+                &self.schema_fingerprint,
+                source.validation.report.stats.node_count,
+                source.validation.report.stats.max_depth,
+                Some(&mut rendered_text),
             )
-            .map_err(RootReplacementError::Transaction)?;
+            .map_err(|error| {
+                RootReplacementError::Transaction(
+                    super::transaction_result::cached_render_operation_error(
+                        request_id,
+                        &self.resource_limits,
+                        error,
+                    ),
+                )
+            })?;
+            let admission =
+                yrs_engine::compiler::PreparedSemanticAdmission::prepare_validated_import(
+                    request_id,
+                    self.revision,
+                    self.state_revision,
+                    self.yrs_state_epoch,
+                    &self.schema,
+                    &self.resource_limits,
+                    &self.editing_limits,
+                    self.max_length,
+                    &transaction,
+                    &source,
+                    std::sync::Arc::new(render_blocks),
+                    rendered_text.finish(),
+                )
+                .map_err(RootReplacementError::Transaction)?;
+            let context = self
+                .prepare_mutation_lookup_seed(request_id)
+                .map_err(RootReplacementError::Transaction)?;
+            let mut compiled = self
+                .with_compiled_base_authority(
+                    request_id,
+                    Some(&context),
+                    |authority, txn, fragment| {
+                        self.compile_typed_transaction_with_read_view(
+                            transaction,
+                            Some((&admission, &source.document)),
+                            authority,
+                            txn,
+                            fragment,
+                        )
+                    },
+                )
+                .map_err(RootReplacementError::Transaction)?;
+            compiled.mutation_lookup_transition = None;
+            self.apply_compiled_transaction_with_history_and_context(
+                compiled,
+                false,
+                None,
+                Some(context),
+                &mut outbound,
+            )
+        } else {
+            self.apply_typed_transaction_with_staged_context(transaction, false, &mut outbound)
+        }
+        .map_err(RootReplacementError::Transaction)?;
         if history == yrs_engine::ReplacementHistory::ResetAndClear {
             self.reset_history_binding();
         }

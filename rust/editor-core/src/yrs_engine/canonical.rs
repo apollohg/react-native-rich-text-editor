@@ -260,10 +260,16 @@ impl CanonicalArtifact {
         #[cfg(test)]
         DERIVATION_COUNT.set(DERIVATION_COUNT.get().saturating_add(1));
 
-        #[cfg(test)]
-        super::observability::record_canonical_projection();
-        let value =
-            StackSafeJsonValue::new(to_prosemirror_json(document, &schema_context.0.schema));
+        let deferred = known_serialized_len.is_none() && admission_upper_bound.is_some();
+        let value = OnceLock::new();
+        if !deferred {
+            #[cfg(test)]
+            super::observability::record_canonical_projection();
+            let _ = value.set(StackSafeJsonValue::new(to_prosemirror_json(
+                document,
+                &schema_context.0.schema,
+            )));
+        }
         let serialized_len = OnceLock::new();
         let exact_len = if let Some(len) = known_serialized_len {
             let _ = serialized_len.set(len);
@@ -271,7 +277,14 @@ impl CanonicalArtifact {
         } else if admission_upper_bound.is_none() {
             #[cfg(test)]
             super::observability::record_canonical_serialization();
-            let len = serialize_json_value_stack_safe(value.as_value(), 0).len();
+            let len = serialize_json_value_stack_safe(
+                value
+                    .get()
+                    .expect("unbounded canonical source is projected")
+                    .as_value(),
+                0,
+            )
+            .len();
             let _ = serialized_len.set(len);
             #[cfg(test)]
             SERIALIZATION_COUNT.set(SERIALIZATION_COUNT.get().saturating_add(1));
@@ -282,7 +295,7 @@ impl CanonicalArtifact {
         let (text_scalar_len, text_utf8_bytes) = raw_text_metrics(document);
         let artifact = Self(Arc::new(CanonicalArtifactInner {
             source_document: document.clone(),
-            value: OnceLock::from(value),
+            value,
             retained_charge: OnceLock::new(),
             serialized_len,
             sha256: OnceLock::new(),
@@ -291,7 +304,9 @@ impl CanonicalArtifact {
             text_utf8_bytes,
             schema_context: schema_context.clone(),
         }));
-        artifact.history_snapshot_retained_charge();
+        if !deferred {
+            artifact.history_snapshot_retained_charge();
+        }
         Ok(artifact)
     }
 

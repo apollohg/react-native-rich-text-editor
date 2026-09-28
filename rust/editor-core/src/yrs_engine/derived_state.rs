@@ -447,6 +447,7 @@ impl DerivedStateCache {
                 schema_fingerprint,
                 validation.stats.node_count,
                 validation.stats.max_depth,
+                None,
             )
             .ok()?
         } else {

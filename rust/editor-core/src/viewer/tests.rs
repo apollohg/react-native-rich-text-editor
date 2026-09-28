@@ -835,3 +835,31 @@ fn viewer_enforces_editor_derived_output_limit() {
         Some(r#"{"field":"maxDerivedOutputBytes"}"#)
     );
 }
+
+#[test]
+fn viewer_reuses_import_validation_for_the_render_cache() {
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+    const ROWS: usize = 1000;
+    const COLUMNS: usize = 20;
+    let source =
+        crate::test_support::large_table_fixture::plain_table_document(ROWS, COLUMNS).to_string();
+    reset_full_pass_counts_for_test();
+    let result = viewer_compile(FfiViewerCompileRequest {
+        source_kind: FfiViewerSourceKind::Json,
+        source,
+        config_json: table_config(),
+        images_enabled: true,
+        mention_prefix: None,
+    });
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let counts = take_full_pass_counts_for_test();
+    assert_eq!(counts.document_validations, 1, "{counts:#?}");
+    assert_eq!(
+        counts.canonical_projections, 0,
+        "a viewer needs no retained canonical JSON: {counts:#?}"
+    );
+    assert_eq!(counts.render_limit_tree_scans, 0, "{counts:#?}");
+    assert_eq!(counts.table_projection_derivations, 1, "{counts:#?}");
+}

@@ -49,8 +49,7 @@ use candidate_cache::{
 #[cfg(test)]
 use history_state::history_metadata_bytes;
 pub(crate) use imports::admit_local_import_document;
-#[cfg(test)]
-use imports::ValidatedImportDocument;
+pub(in crate::yrs_engine) use imports::ValidatedImportDocument;
 #[cfg(test)]
 use outbound::OutboundUpdateSink;
 #[cfg(test)]

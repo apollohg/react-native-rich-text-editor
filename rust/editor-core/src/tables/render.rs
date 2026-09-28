@@ -208,39 +208,43 @@ impl TableRenderRecord {
     }
 }
 
-pub(crate) fn source_elements(elements: &[RenderElement]) -> Vec<&RenderElement> {
-    let mut pending: Vec<_> = elements.iter().rev().collect();
-    let mut output = Vec::new();
-    while let Some(element) = pending.pop() {
-        if let RenderElement::Table { table, .. } = element {
-            for cell in table.cells.iter().rev() {
-                pending.extend(cell.elements.iter().rev());
+pub(crate) fn all_elements(elements: &[RenderElement]) -> impl Iterator<Item = &RenderElement> {
+    let mut pending = vec![elements.iter()];
+    std::iter::from_fn(move || loop {
+        let elements = pending.last_mut()?;
+        if let Some(element) = elements.next() {
+            if let RenderElement::Table { table, .. } = element {
+                for cell in table.cells.iter().rev() {
+                    pending.push(cell.elements.iter());
+                }
             }
-        } else {
-            output.push(element);
+            return Some(element);
         }
-    }
-    output
+        pending.pop();
+    })
+}
+
+pub(crate) fn source_elements(elements: &[RenderElement]) -> impl Iterator<Item = &RenderElement> {
+    all_elements(elements).filter(|element| !matches!(element, RenderElement::Table { .. }))
 }
 
 pub(crate) fn element_count(elements: &[RenderElement]) -> usize {
-    let mut count = 0usize;
-    let mut pending = vec![elements];
-    while let Some(elements) = pending.pop() {
-        count = count.saturating_add(elements.len());
-        for element in elements {
-            if let RenderElement::Table { table, .. } = element {
-                count = count
-                    .saturating_add(table.cells.len())
-                    .saturating_add(table.structure.source_rows.len())
-                    .saturating_add(table.structure.synthetic_regions.len());
-                for cell in &table.cells {
-                    pending.push(&cell.elements);
-                }
-            }
-        }
+    all_elements(elements).fold(0usize, |count, element| {
+        count.saturating_add(element_shallow_count(element))
+    })
+}
+
+pub(crate) fn element_shallow_count(element: &RenderElement) -> usize {
+    if let RenderElement::Table { table, .. } = element {
+        table
+            .cells
+            .len()
+            .saturating_add(table.structure.source_rows.len())
+            .saturating_add(table.structure.synthetic_regions.len())
+            .saturating_add(1)
+    } else {
+        1
     }
-    count
 }
 
 pub(crate) struct TableRenderContext {

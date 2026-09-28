@@ -589,6 +589,36 @@ impl YrsDocumentEngine {
             .derived_state
             .as_ref()
             .ok_or_else(|| yrs_engine::OperationError::engine_not_ready(compiled.request_id))?;
+        if let Some(validation) = compiled.prepared_candidate_validation.as_ref() {
+            if let Some(cache) = validation.render_blocks().filter(|cache| {
+                cache.matches_identity(&compiled.preview, &self.schema_fingerprint)
+                    && compiled
+                        .canonical_artifact
+                        .as_ref()
+                        .is_some_and(|artifact| {
+                            validation.admits_context(
+                                &compiled.preview,
+                                artifact,
+                                &self.resource_limits,
+                                &self.editing_limits,
+                                self.max_length,
+                                &self.schema_fingerprint,
+                                &self.canonical_schema,
+                            )
+                        })
+            }) {
+                return Ok(crate::render::incremental::CachedRenderTransition {
+                    update: current.render_blocks.classify_transition_to(
+                        &current.document,
+                        &compiled.preview,
+                        cache,
+                        &compiled.affected_top_level_blocks,
+                    ),
+                    rerendered_new_blocks: compiled.preview.root().child_count(),
+                    cache: cache.clone(),
+                });
+            }
+        }
         let generic_transition = || {
             current.render_blocks.transition(
                 &current.document,

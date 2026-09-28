@@ -19,6 +19,7 @@ const STRUCTURAL_COMMAND_REQUEST_ID: u64 = 2;
 const LEDGER_EPOCH_OWNER: u64 = 7;
 const PROBE_FIXTURES: [(usize, usize); 2] = [(1000, 20), (100, 200)];
 const APPLY_BUDGET_MS: f64 = 0.9;
+const IMPORT_BUDGET_MS: f64 = 90.0;
 const PROBE_WARMUP_KEYSTROKES: usize = 5;
 const PROBE_MEASURED_KEYSTROKES: usize = 20;
 const PROBE_KEYSTROKES: usize = PROBE_WARMUP_KEYSTROKES + PROBE_MEASURED_KEYSTROKES;
@@ -109,7 +110,7 @@ fn position_epoch(render: &Value) -> String {
 #[test]
 #[ignore = "release-mode wall-clock probe"]
 fn large_table_keystroke_budget_probe() {
-    let mut apply_results = Vec::new();
+    let mut violations = Vec::new();
     for (rows, columns) in PROBE_FIXTURES {
         let fixture = format!("{rows}x{columns}");
         let editor_id = ffi_empty_editor();
@@ -120,6 +121,11 @@ fn large_table_keystroke_budget_probe() {
         let import_ms = elapsed_ms(start);
         ffi_value(&replaced);
         println!("PROBE {fixture} import {import_ms:.3}");
+        if import_ms > IMPORT_BUDGET_MS {
+            violations.push(format!(
+                "{fixture}: import {import_ms:.3} ms exceeds {IMPORT_BUDGET_MS} ms"
+            ));
+        }
 
         let (render, first_frame_ms) = probe_render(&editor_id);
         println!("PROBE {fixture} first_frame {first_frame_ms:.3}");
@@ -158,7 +164,11 @@ fn large_table_keystroke_budget_probe() {
         }
         let apply_median = median_ms(apply_samples);
         println!("PROBE {fixture} apply {apply_median:.3}");
-        apply_results.push((fixture.clone(), apply_median));
+        if apply_median > APPLY_BUDGET_MS {
+            violations.push(format!(
+                "{fixture}: apply median {apply_median:.3} ms exceeds {APPLY_BUDGET_MS} ms"
+            ));
+        }
         println!("PROBE {fixture} frame {:.3}", median_ms(frame_samples));
         let cell = keystroke_cell(rows, columns);
         let (row, column) = (cell / columns, cell % columns);
@@ -178,12 +188,7 @@ fn large_table_keystroke_budget_probe() {
             "the probe editor is destroyed"
         );
     }
-    for (fixture, apply_median) in apply_results {
-        assert!(
-            apply_median <= APPLY_BUDGET_MS,
-            "{fixture}: apply median {apply_median:.3} ms exceeds {APPLY_BUDGET_MS} ms"
-        );
-    }
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
 }
 
 #[test]

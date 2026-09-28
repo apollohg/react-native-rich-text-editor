@@ -917,3 +917,49 @@ fn eager_non_insert_first_mutations_do_not_materialize_base_identity() {
 }
 
 include!("import_admission/staged_authority.rs");
+
+#[test]
+fn a_table_import_performs_each_document_wide_pass_once() {
+    use crate::render::incremental::{
+        reset_cached_render_counts_for_test, take_cached_render_counts_for_test,
+    };
+    use crate::yrs_engine::observability::{
+        reset_full_pass_counts_for_test, take_full_pass_counts_for_test,
+    };
+    const ROWS: usize = 1000;
+    const COLUMNS: usize = 20;
+    const REQUEST: u64 = 120;
+    let source =
+        crate::test_support::large_table_fixture::plain_table_document(ROWS, COLUMNS).to_string();
+    let mut engine = YrsDocumentEngine::new(YrsEngineConfig {
+        schema: crate::schema::presets::prosemirror_table_schema(),
+        fragment_name: "prosemirror".into(),
+        initialization_mode: crate::yrs_engine::InitializationMode::LocalEmpty,
+        resource_limits: ResourceLimits::default(),
+        editing_limits: crate::yrs_engine::EditingLimits::default(),
+        max_length: None,
+        scope: None,
+    })
+    .unwrap();
+    reset_full_pass_counts_for_test();
+    reset_cached_render_counts_for_test();
+    engine
+        .prepare_root_replacement_json(
+            REQUEST,
+            &source,
+            crate::yrs_engine::ReplacementHistory::ResetAndClear,
+        )
+        .unwrap();
+    let counts = take_full_pass_counts_for_test();
+    let renders = take_cached_render_counts_for_test();
+    eprintln!("table import: {counts:#?}; cached renders: {renders:?}");
+    assert_eq!(counts.document_validations, 1);
+    assert_eq!(counts.rendered_text_derivations, 0);
+    assert_eq!(renders.0, 1);
+    assert!(counts.canonical_serializations <= 1, "{counts:#?}");
+    assert_eq!(counts.table_projection_derivations, 1);
+    assert_eq!(
+        engine.document_json().unwrap(),
+        serde_json::from_str::<serde_json::Value>(&source).unwrap()
+    );
+}

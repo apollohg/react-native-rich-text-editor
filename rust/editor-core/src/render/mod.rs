@@ -229,18 +229,29 @@ pub(crate) fn rendered_text(document: &Document, schema: &Schema) -> String {
     crate::yrs_engine::observability::record_rendered_text_derivation();
     let blocks = incremental::render_blocks(document, schema);
     let elements = incremental::flatten_render_blocks(&blocks);
-    let mut text = String::new();
-    let mut pending_prefix = String::new();
-    let mut started_block = false;
-
-    let begin_block = |text: &mut String, started_block: &mut bool| {
-        if *started_block {
-            text.push('\n');
-        }
-        *started_block = true;
-    };
-
+    let mut text = RenderedTextBuilder::default();
     for element in crate::tables::render::source_elements(&elements) {
+        text.push(element, schema);
+    }
+    text.finish()
+}
+
+#[derive(Default)]
+pub(crate) struct RenderedTextBuilder {
+    text: String,
+    pending_prefix: String,
+    started_block: bool,
+}
+
+impl RenderedTextBuilder {
+    fn begin_block(&mut self) {
+        if self.started_block {
+            self.text.push('\n');
+        }
+        self.started_block = true;
+    }
+
+    pub(crate) fn push(&mut self, element: &RenderElement, schema: &Schema) {
         match element {
             RenderElement::Table { .. } => unreachable!("source traversal expands tables"),
             RenderElement::BlockStart {
@@ -249,41 +260,47 @@ pub(crate) fn rendered_text(document: &Document, schema: &Schema) -> String {
                 ..
             } => {
                 if let Some(context) = list_context {
-                    pending_prefix = if context.kind.as_deref() == Some("task") {
+                    self.pending_prefix = if context.kind.as_deref() == Some("task") {
                         task_list_marker_string(context.checked.unwrap_or(false))
                     } else {
                         list_marker_string(context.ordered, context.index)
                     };
                 }
                 if schema
-                    .node(&node_type)
+                    .node(node_type)
                     .is_some_and(|spec| matches!(spec.role, NodeRole::TextBlock))
                 {
-                    begin_block(&mut text, &mut started_block);
-                    text.push_str(&pending_prefix);
-                    pending_prefix.clear();
+                    self.begin_block();
+                    self.text.push_str(&self.pending_prefix);
+                    self.pending_prefix.clear();
                 }
             }
-            RenderElement::TextRun { text: value, .. } => text.push_str(value),
-            RenderElement::VoidInline { .. } => text.push('\n'),
+            RenderElement::TextRun { text, .. } => self.text.push_str(text),
+            RenderElement::VoidInline { .. } => self.text.push('\n'),
             RenderElement::VoidBlock { .. } => {
-                begin_block(&mut text, &mut started_block);
-                text.push('\u{fffc}');
+                self.begin_block();
+                self.text.push('\u{fffc}');
             }
             RenderElement::OpaqueInlineAtom {
                 node_type, label, ..
-            } => text.push_str(&opaque_atom_visible_string(node_type, label)),
+            } => self
+                .text
+                .push_str(&opaque_atom_visible_string(node_type, label)),
             RenderElement::OpaqueBlockAtom {
                 node_type, label, ..
             } => {
-                begin_block(&mut text, &mut started_block);
-                text.push_str(&opaque_atom_visible_string(node_type, label));
+                self.begin_block();
+                self.text
+                    .push_str(&opaque_atom_visible_string(node_type, label));
             }
             RenderElement::BlockEnd => {}
         }
     }
-    text.shrink_to_fit();
-    text
+
+    pub(crate) fn finish(mut self) -> String {
+        self.text.shrink_to_fit();
+        self.text
+    }
 }
 
 /// Visible text used for an ordered or unordered list marker.

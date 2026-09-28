@@ -36,7 +36,7 @@ impl CachedRenderBlocks {
         check_forced_cached_render_error()?;
         ensure_document_render_limits(document, schema, limits)?;
         let schema_fingerprint = Arc::<str>::from(schema_fingerprint(schema));
-        Self::build_after_validation(document, schema, limits, schema_fingerprint)
+        Self::build_after_validation(document, schema, limits, schema_fingerprint, None)
     }
 
     /// Builds a cache from an exact document whose node/depth bounds and
@@ -50,6 +50,7 @@ impl CachedRenderBlocks {
         sealed_schema_fingerprint: &str,
         validated_node_count: usize,
         validated_max_depth: usize,
+        rendered_text: Option<&mut crate::render::RenderedTextBuilder>,
     ) -> Result<Self, CachedRenderError> {
         record_cached_build();
         check_forced_cached_render_error()?;
@@ -65,6 +66,7 @@ impl CachedRenderBlocks {
             schema,
             limits,
             Arc::<str>::from(sealed_schema_fingerprint),
+            rendered_text,
         )
     }
 
@@ -73,6 +75,7 @@ impl CachedRenderBlocks {
         schema: &Schema,
         limits: &ResourceLimits,
         schema_fingerprint: Arc<str>,
+        mut rendered_text: Option<&mut crate::render::RenderedTextBuilder>,
     ) -> Result<Self, CachedRenderError> {
         let table_projection_index = Arc::new(TableProjectionIndex::derive_or_fallback(
             document, schema, limits,
@@ -91,9 +94,17 @@ impl CachedRenderBlocks {
                 .child(index)
                 .ok_or(CachedRenderError::CacheInvariantViolation)?;
             let block = render_cached_block(node, schema, start_pos, &mut context)?;
-            element_count = element_count
-                .checked_add(crate::tables::render::element_count(&block.elements))
-                .ok_or(CachedRenderError::ResourceLimitExceeded)?;
+            for element in crate::tables::render::all_elements(&block.elements) {
+                if !matches!(element, RenderElement::Table { .. }) {
+                    if let Some(text) = rendered_text.as_deref_mut() {
+                        text.push(element, schema);
+                    }
+                }
+                let count = crate::tables::render::element_shallow_count(element);
+                element_count = element_count
+                    .checked_add(count)
+                    .ok_or(CachedRenderError::ResourceLimitExceeded)?;
+            }
             if element_count > max_cached_elements(limits)? {
                 return Err(CachedRenderError::ResourceLimitExceeded);
             }
@@ -121,66 +132,15 @@ impl CachedRenderBlocks {
     pub(crate) fn rendered_text(&self, schema: &Schema) -> String {
         #[cfg(test)]
         crate::yrs_engine::observability::record_rendered_text_derivation();
-        let mut text = String::new();
-        let mut pending_prefix = String::new();
-        let mut started_block = false;
+        let mut text = crate::render::RenderedTextBuilder::default();
         for element in self
             .blocks
             .iter()
             .flat_map(|block| crate::tables::render::source_elements(&block.elements))
         {
-            match element {
-                RenderElement::Table { .. } => unreachable!("source traversal expands tables"),
-                RenderElement::BlockStart {
-                    node_type,
-                    list_context,
-                    ..
-                } => {
-                    if let Some(context) = list_context {
-                        pending_prefix = if context.kind.as_deref() == Some("task") {
-                            crate::render::task_list_marker_string(context.checked.unwrap_or(false))
-                        } else {
-                            crate::render::list_marker_string(context.ordered, context.index)
-                        };
-                    }
-                    if schema
-                        .node(node_type)
-                        .is_some_and(|spec| matches!(spec.role, NodeRole::TextBlock))
-                    {
-                        if started_block {
-                            text.push('\n');
-                        }
-                        started_block = true;
-                        text.push_str(&pending_prefix);
-                        pending_prefix.clear();
-                    }
-                }
-                RenderElement::TextRun { text: value, .. } => text.push_str(value),
-                RenderElement::VoidInline { .. } => text.push('\n'),
-                RenderElement::VoidBlock { .. } => {
-                    if started_block {
-                        text.push('\n');
-                    }
-                    started_block = true;
-                    text.push('\u{fffc}');
-                }
-                RenderElement::OpaqueInlineAtom {
-                    node_type, label, ..
-                } => text.push_str(&crate::render::opaque_atom_visible_string(node_type, label)),
-                RenderElement::OpaqueBlockAtom {
-                    node_type, label, ..
-                } => {
-                    if started_block {
-                        text.push('\n');
-                    }
-                    started_block = true;
-                    text.push_str(&crate::render::opaque_atom_visible_string(node_type, label));
-                }
-                RenderElement::BlockEnd => {}
-            }
+            text.push(element, schema);
         }
-        text.shrink_to_fit();
-        text
+        text.finish()
     }
 
     pub(crate) fn materialize(&self) -> Vec<Vec<RenderElement>> {

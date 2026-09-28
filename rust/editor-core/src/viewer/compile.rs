@@ -39,10 +39,15 @@ pub(crate) fn compile(request: FfiViewerCompileRequest) -> FfiViewerCompileResul
             .preferred_text_block()
             .map(|spec| spec.name.clone())
             .unwrap_or_default();
-        let render_cache = crate::render::incremental::CachedRenderBlocks::build(
+        let schema_key = schema_fingerprint(&resolved.schema);
+        let render_cache = crate::render::incremental::CachedRenderBlocks::build_validated(
             &resolved.document,
             &resolved.schema,
             &resolved.resource_limits,
+            &schema_key,
+            resolved.validation.stats.node_count,
+            resolved.validation.stats.max_depth,
+            None,
         )
         .map_err(|_| {
             crate::boundary::BoundaryError::new(
@@ -51,20 +56,21 @@ pub(crate) fn compile(request: FfiViewerCompileRequest) -> FfiViewerCompileResul
             )
         })?;
         let mut table_records = std::collections::BTreeMap::new();
-        let elements =
-            crate::render::incremental::flatten_render_blocks(&render_cache.materialize())
-                .into_iter()
-                .filter(|element| request.images_enabled || !is_image_atom(element))
-                .map(|element| {
-                    viewer_element(
-                        element,
-                        request.mention_prefix.as_deref(),
-                        request.images_enabled,
-                        &mut table_records,
-                        0,
-                    )
-                })
-                .collect::<Vec<_>>();
+        let elements = render_cache
+            .materialize()
+            .into_iter()
+            .flatten()
+            .filter(|element| request.images_enabled || !is_image_atom(element))
+            .map(|element| {
+                viewer_element(
+                    element,
+                    request.mention_prefix.as_deref(),
+                    request.images_enabled,
+                    &mut table_records,
+                    0,
+                )
+            })
+            .collect::<Vec<_>>();
 
         let table_records = table_records.into_values().collect::<Vec<_>>();
         let table_attributes: HashMap<String, String> = render_cache
@@ -73,7 +79,7 @@ pub(crate) fn compile(request: FfiViewerCompileRequest) -> FfiViewerCompileResul
             .map(|(key, json)| (key.clone(), json.to_string()))
             .collect();
         let semantic_key = semantic_key(
-            &schema_fingerprint(&resolved.schema),
+            &schema_key,
             &elements,
             &table_records,
             &table_attributes,

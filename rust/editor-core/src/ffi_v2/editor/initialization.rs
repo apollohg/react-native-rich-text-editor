@@ -55,6 +55,7 @@ pub(crate) struct ResolvedLocalDocument {
     pub document: crate::model::Document,
     pub schema: crate::schema::Schema,
     pub resource_limits: ResourceLimits,
+    pub validation: crate::transform::DocumentValidationReport,
 }
 
 pub(crate) fn resolve_local_document(
@@ -68,7 +69,7 @@ pub(crate) fn resolve_local_document(
         FfiViewerSourceKind::Html => InputKind::Html,
     };
     let input = BoundedInput::new(source, input_kind, &config.resource_limits)?;
-    let document = match source_kind {
+    let (document, validation) = match source_kind {
         FfiViewerSourceKind::Json => {
             let depth_limit = crate::boundary::document_json_container_depth_limit(
                 config.resource_limits.max_document_depth,
@@ -118,7 +119,12 @@ pub(crate) fn resolve_local_document(
         }
     };
 
-    Ok(ResolvedLocalDocument { document, schema, resource_limits: config.resource_limits })
+    Ok(ResolvedLocalDocument {
+        document,
+        schema,
+        resource_limits: config.resource_limits,
+        validation,
+    })
 }
 
 fn resolve_local_empty_document(config_json: &str) -> Result<ResolvedLocalDocument, SessionError> {
@@ -126,7 +132,7 @@ fn resolve_local_empty_document(config_json: &str) -> Result<ResolvedLocalDocume
     let document = schema
         .default_document()
         .map_err(|error| SessionError::new(ErrorDomain::Document, "DOCUMENT_INVALID", error))?;
-    let document = crate::yrs_engine::admit_local_import_document(
+    let (document, validation) = crate::yrs_engine::admit_local_import_document(
         document,
         &schema,
         &config.resource_limits,
@@ -135,7 +141,12 @@ fn resolve_local_empty_document(config_json: &str) -> Result<ResolvedLocalDocume
     )
     .map_err(SessionError::from)?;
 
-    Ok(ResolvedLocalDocument { document, schema, resource_limits: config.resource_limits })
+    Ok(ResolvedLocalDocument {
+        document,
+        schema,
+        resource_limits: config.resource_limits,
+        validation,
+    })
 }
 
 fn resolve_local_config(
