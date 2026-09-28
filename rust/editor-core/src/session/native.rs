@@ -111,11 +111,6 @@ impl EditorSession {
             self.position_epochs
                 .install(owner_id, self.engine.client_id(), snapshot.clone())?;
         self.latest_epoch_snapshot = Some(snapshot);
-        let render_blocks = self
-            .engine
-            .cached_render_blocks()
-            .ok_or_else(engine_not_ready)?;
-        self.retain_native_render_cursor(owner_id, document_revision, render_blocks);
         Ok(epoch)
     }
 
@@ -197,10 +192,51 @@ impl EditorSession {
         self.native_render_cursors.insert(
             owner_id,
             NativeRenderCursor {
+                schema_fingerprint: self.engine.schema_fingerprint().to_owned(),
+                table_keys: crate::ffi_v2::render::table_keys(&self.engine)
+                    .expect("ready table identities"),
+                root_projection: crate::ffi_v2::render::root_projection(&self.engine)
+                    .expect("ready root projection"),
                 document_revision,
                 render_blocks,
             },
         );
+    }
+
+    pub(crate) fn seed_native_render_cursor(
+        &mut self,
+        owner_id: u64,
+        document_revision: u64,
+    ) -> Result<(), SessionError> {
+        if document_revision != self.engine.revision() {
+            return Err(SessionError::new(
+                ErrorDomain::Operation,
+                "REVISION_MISMATCH",
+                "native render cursor requires the current document revision",
+            ));
+        }
+        let limit = crate::position_epoch::PositionEpochLimits::default().max_owners;
+        if !self.native_render_cursors.contains_key(&owner_id)
+            && self.native_render_cursors.len() >= limit
+        {
+            let mut error = SessionError::new(
+                ErrorDomain::Operation,
+                "OPERATION_RESOURCE_EXHAUSTED",
+                "native render cursor owner limit exceeded",
+            );
+            error.limit = Some(limit as u64);
+            error.actual = Some(self.native_render_cursors.len() as u64 + 1);
+            return Err(error);
+        }
+        let blocks = self.engine.cached_render_blocks().ok_or_else(|| {
+            SessionError::new(
+                ErrorDomain::Operation,
+                "ENGINE_NOT_READY",
+                "the document engine is not ready",
+            )
+        })?;
+        self.retain_native_render_cursor(owner_id, document_revision, blocks);
+        Ok(())
     }
 
     pub(crate) fn native_request_outcome(

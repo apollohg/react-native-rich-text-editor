@@ -143,6 +143,10 @@ impl CachedRenderBlocks {
         text.finish()
     }
 
+    pub(crate) fn root_blocks(&self) -> impl Iterator<Item = &[RenderElement]> {
+        self.blocks.iter().map(|block| block.elements.as_slice())
+    }
+
     pub(crate) fn materialize(&self) -> Vec<Vec<RenderElement>> {
         self.blocks
             .iter()

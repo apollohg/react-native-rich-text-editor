@@ -1,39 +1,3 @@
-//! v2 render/selection/position accessor.
-//!
-//! The v2 boundary returns structured mutation outcomes (revisions, history)
-//! but no render payload, resolved selection, or position mapping, so the
-//! staging adapters derived those through a STATELESS legacy render probe
-//! (create a throwaway legacy editor, feed it the authoritative v2 document
-//! JSON, probe, destroy — on every derivation). This module is the probe's
-//! replacement: every value the probe provided is derived here directly from
-//! the live v2 session, reusing the exact legacy derivation and serialization
-//! code paths so the wire output is probe-identical:
-//!
-//! - `editor_v2_render_update` / `editor_v2_render_native` — one atomic
-//!   current-state snapshot containing authoritative render blocks or, for a
-//!   retained native owner, an owner-relative block patch,
-//!   explicitly mirrored `selection`, toolbar `activeState`, history,
-//!   document/state revisions, and the checked scalar extent.
-//! - `editor_v2_resolve_scalar_selection` — the engine-authoritative
-//!   scalar->doc selection resolution the delegate callbacks consume.
-//! - `editor_v2_doc_to_scalar` / `editor_v2_scalar_to_doc` — the lenient
-//!   position mapping helpers (clamping at the document extent, exactly the
-//!   legacy `PositionMap` semantics the probe exposed).
-//!
-//! Without a mirror the snapshot uses the engine's authoritative selection
-//! and stored marks. A mirror maps through the lenient scalar->doc mapping
-//! plus cursor normalization and replaces selection only for that snapshot.
-//!
-//! The wire shape is JSON inside the frozen `FfiJsonResult` envelope (never a
-//! new exception channel): the native views already consume the legacy update
-//! JSON shape, so the accessor emits that shape verbatim and the frozen
-//! envelope invariants are untouched.
-//!
-//! The accessor needs the session schema (render blocks and active state are
-//! schema-derived) but the engine keeps it private; the create path therefore
-//! registers the already-resolved schema per session id here, and destroy
-//! unregisters it.
-
 #![allow(
     clippy::result_large_err,
     reason = "SessionError is the established unboxed session error envelope"
@@ -333,6 +297,40 @@ fn render_snapshot_json(
     mirror_scalar_head: Option<u32>,
     owner_id: Option<u64>,
 ) -> Result<String, SessionError> {
+    snapshot_json(
+        session,
+        editor_id,
+        mirror_scalar_anchor,
+        mirror_scalar_head,
+        owner_id,
+        false,
+    )
+}
+
+pub(crate) fn root_snapshot_json(
+    session: &mut EditorSession,
+    editor_id: &str,
+    owner_id: Option<u64>,
+    mirror: Option<(u32, u32)>,
+) -> Result<String, SessionError> {
+    snapshot_json(
+        session,
+        editor_id,
+        mirror.map(|pair| pair.0),
+        mirror.map(|pair| pair.1),
+        owner_id,
+        true,
+    )
+}
+
+fn snapshot_json(
+    session: &mut EditorSession,
+    editor_id: &str,
+    mirror_scalar_anchor: Option<u32>,
+    mirror_scalar_head: Option<u32>,
+    owner_id: Option<u64>,
+    root_only: bool,
+) -> Result<String, SessionError> {
     let previous_native_render =
         owner_id.and_then(|owner_id| session.native_render_cursor(owner_id));
     let mirror = match (mirror_scalar_anchor, mirror_scalar_head) {
@@ -347,7 +345,11 @@ fn render_snapshot_json(
     let engine = &session.engine;
     let document = engine.document().ok_or_else(engine_not_ready)?;
     let position_map = engine.position_map().ok_or_else(engine_not_ready)?;
-    let schema = registered_schema(&editor_id)?;
+    let schema = if root_only {
+        engine.schema().clone()
+    } else {
+        registered_schema(&editor_id)?
+    };
     let current_render_blocks = engine.cached_render_blocks().ok_or_else(engine_not_ready)?;
     let source_ids = RenderSourceIds {
         index: engine.block_branch_index().ok_or_else(|| {
@@ -358,21 +360,23 @@ fn render_snapshot_json(
         })?,
         document,
     };
-    let mut cached_tables = Vec::new();
-    current_render_blocks.visit_table_records(&mut cached_tables);
-    let mut unique_table_ids = std::collections::HashSet::new();
-    for (table_pos, _) in cached_tables {
-        let Some(source_id) = source_ids.table_key(table_pos) else {
-            return Err(SessionError::from(YrsEngineError::new(
-                "ENGINE_INVARIANT_FAILED",
-                "render table is missing its live Yrs source identity",
-            )));
-        };
-        if !unique_table_ids.insert(source_id) {
-            return Err(SessionError::from(YrsEngineError::new(
-                "ENGINE_INVARIANT_FAILED",
-                "render tables have duplicate live Yrs source identities",
-            )));
+    if !root_only {
+        let mut cached_tables = Vec::new();
+        current_render_blocks.visit_table_records(&mut cached_tables);
+        let mut unique_table_ids = std::collections::HashSet::new();
+        for (table_pos, _) in cached_tables {
+            let Some(source_id) = source_ids.table_key(table_pos) else {
+                return Err(SessionError::from(YrsEngineError::new(
+                    "ENGINE_INVARIANT_FAILED",
+                    "render table is missing its live Yrs source identity",
+                )));
+            };
+            if !unique_table_ids.insert(source_id) {
+                return Err(SessionError::from(YrsEngineError::new(
+                    "ENGINE_INVARIANT_FAILED",
+                    "render tables have duplicate live Yrs source identities",
+                )));
+            }
         }
     }
     pause_render_snapshot_for_test(&editor_id);
@@ -414,82 +418,118 @@ fn render_snapshot_json(
     let document_is_empty = crate::editor_state::document_is_empty(document, &schema);
 
     let document_version = engine.revision();
-    let table_input_mappings =
-        super::table_input_mapping::derive(document, position_map, &current_render_blocks)
-            .map_err(|message| {
-                SessionError::from(YrsEngineError::new("ENGINE_INVARIANT_FAILED", message))
-            })?;
+    let table_input_mappings = if root_only {
+        None
+    } else {
+        super::table_input_mapping::derive(document, position_map, &current_render_blocks).map_err(
+            |message| SessionError::from(YrsEngineError::new("ENGINE_INVARIANT_FAILED", message)),
+        )?
+    };
     let mut table_records = std::collections::BTreeMap::new();
-    // Patches carry the complete current table pool, including retained blocks.
-    let _ = serialize_render_blocks(
-        &current_render_blocks.materialize(),
-        &source_ids,
-        &mut table_records,
-    );
-    let (render_blocks, render_patch) = match previous_native_render {
-        Some(previous) if previous.document_revision == document_version => (
-            Value::Null,
-            serialize_render_patch(
-                &crate::render::incremental::RenderBlocksPatch {
-                    start_index: 0,
-                    delete_count: 0,
-                    blocks: Vec::new(),
-                },
-                &source_ids,
-                previous.document_revision,
-                &mut table_records,
-            ),
-        ),
-        Some(previous) if previous.document_revision < document_version => {
-            match previous
-                .render_blocks
-                .classify_cached_transition_to(&current_render_blocks)
-            {
-                crate::render::incremental::CachedRenderTransitionUpdate::Patch(patch) => (
+    if !root_only {
+        let _ = serialize_render_blocks(
+            &current_render_blocks.materialize(),
+            &source_ids,
+            &mut table_records,
+        );
+    }
+    let (render_blocks, render_patch) = if root_only {
+        let current = if let Some(previous) = previous_native_render.as_ref().filter(|previous| {
+            previous.document_revision == document_version
+                && previous.schema_fingerprint == engine.schema_fingerprint()
+        }) {
+            previous.root_projection.clone()
+        } else {
+            root_projection(engine)?
+        };
+        match previous_native_render
+            .as_ref()
+            .filter(|previous| previous.schema_fingerprint == engine.schema_fingerprint())
+        {
+            Some(previous) => {
+                let old = &previous.root_projection;
+                let prefix = old.iter().zip(&current).take_while(|(a, b)| a == b).count();
+                let suffix = old[prefix..]
+                    .iter()
+                    .rev()
+                    .zip(current[prefix..].iter().rev())
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                (
                     Value::Null,
-                    serialize_render_patch(
-                        &patch,
-                        &source_ids,
-                        previous.document_revision,
-                        &mut table_records,
-                    ),
-                ),
-                crate::render::incremental::CachedRenderTransitionUpdate::None => (
-                    Value::Null,
-                    serialize_render_patch(
-                        &crate::render::incremental::RenderBlocksPatch {
-                            start_index: 0,
-                            delete_count: 0,
-                            blocks: Vec::new(),
-                        },
-                        &source_ids,
-                        previous.document_revision,
-                        &mut table_records,
-                    ),
-                ),
-                crate::render::incremental::CachedRenderTransitionUpdate::Full(blocks) => (
-                    serialize_render_blocks(&blocks, &source_ids, &mut table_records),
-                    Value::Null,
-                ),
+                    serde_json::json!({"baseDocumentVersion": previous.document_revision.to_string(), "startIndex": prefix, "deleteCount": old.len() - prefix - suffix, "renderBlocks": &current[prefix..current.len()-suffix]}),
+                )
             }
+            None => (Value::Array(current), Value::Null),
         }
-        _ => (
-            serialize_render_blocks(
-                &current_render_blocks.materialize(),
-                &source_ids,
-                &mut table_records,
+    } else {
+        match previous_native_render {
+            Some(previous) if previous.document_revision == document_version => (
+                Value::Null,
+                serialize_render_patch(
+                    &crate::render::incremental::RenderBlocksPatch {
+                        start_index: 0,
+                        delete_count: 0,
+                        blocks: Vec::new(),
+                    },
+                    &source_ids,
+                    previous.document_revision,
+                    &mut table_records,
+                ),
             ),
-            Value::Null,
-        ),
+            Some(previous) if previous.document_revision < document_version => {
+                match previous
+                    .render_blocks
+                    .classify_cached_transition_to(&current_render_blocks)
+                {
+                    crate::render::incremental::CachedRenderTransitionUpdate::Patch(patch) => (
+                        Value::Null,
+                        serialize_render_patch(
+                            &patch,
+                            &source_ids,
+                            previous.document_revision,
+                            &mut table_records,
+                        ),
+                    ),
+                    crate::render::incremental::CachedRenderTransitionUpdate::None => (
+                        Value::Null,
+                        serialize_render_patch(
+                            &crate::render::incremental::RenderBlocksPatch {
+                                start_index: 0,
+                                delete_count: 0,
+                                blocks: Vec::new(),
+                            },
+                            &source_ids,
+                            previous.document_revision,
+                            &mut table_records,
+                        ),
+                    ),
+                    crate::render::incremental::CachedRenderTransitionUpdate::Full(blocks) => (
+                        serialize_render_blocks(&blocks, &source_ids, &mut table_records),
+                        Value::Null,
+                    ),
+                }
+            }
+            _ => (
+                serialize_render_blocks(
+                    &current_render_blocks.materialize(),
+                    &source_ids,
+                    &mut table_records,
+                ),
+                Value::Null,
+            ),
+        }
     };
     let mut snapshot = AtomicRenderSnapshot {
-        table_attributes: (!current_render_blocks.table_attributes.is_empty()).then(|| {
-            current_render_blocks
-                .table_attributes
-                .iter()
-                .map(|(key, json)| (key.clone(), json.to_string()))
-                .collect()
-        }),
+        table_attributes: (!root_only && !current_render_blocks.table_attributes.is_empty()).then(
+            || {
+                current_render_blocks
+                    .table_attributes
+                    .iter()
+                    .map(|(key, json)| (key.clone(), json.to_string()))
+                    .collect()
+            },
+        ),
         table_records: (!table_records.is_empty()).then_some(table_records),
         table_input_mappings,
         render_blocks,
@@ -519,7 +559,13 @@ fn render_snapshot_json(
                 .to_string(),
         );
     }
-    Ok(serde_json::to_string(&snapshot).expect("atomic render snapshot serializes"))
+    let json = serde_json::to_string(&snapshot).expect("atomic render snapshot serializes");
+    if !root_only {
+        if let Some(owner) = owner_id {
+            session.retain_native_render_cursor(owner, document_version, current_render_blocks);
+        }
+    }
+    Ok(json)
 }
 
 #[uniffi::export]
@@ -587,6 +633,71 @@ pub(crate) fn serialize_render_cache_for_test(
         document,
     };
     serde_json::json!({"renderBlocks": serialize_render_blocks(&cache.materialize(), &source_ids, &mut records), "tableAttributes": attributes, "tableRecords": records}).to_string()
+}
+
+pub(crate) fn table_keys(
+    engine: &crate::yrs_engine::YrsDocumentEngine,
+) -> Result<std::collections::BTreeMap<u32, String>, SessionError> {
+    let document = engine.document().ok_or_else(engine_not_ready)?;
+    let source_ids = RenderSourceIds {
+        document,
+        index: engine.block_branch_index().ok_or_else(engine_not_ready)?,
+    };
+    let cache = engine.cached_render_blocks().ok_or_else(engine_not_ready)?;
+    let mut tables = Vec::new();
+    cache.visit_table_records(&mut tables);
+    tables
+        .into_iter()
+        .map(|(position, _)| {
+            source_ids
+                .table_key(position)
+                .map(|key| (position, key.to_owned()))
+                .ok_or_else(|| {
+                    SessionError::from(YrsEngineError::new(
+                        "ENGINE_INVARIANT_FAILED",
+                        "table source identity is missing",
+                    ))
+                })
+        })
+        .collect()
+}
+
+pub(crate) fn root_projection(
+    engine: &crate::yrs_engine::YrsDocumentEngine,
+) -> Result<Vec<Value>, SessionError> {
+    let document = engine.document().ok_or_else(engine_not_ready)?;
+    let source_ids = RenderSourceIds {
+        document,
+        index: engine.block_branch_index().ok_or_else(engine_not_ready)?,
+    };
+    let cache = engine.cached_render_blocks().ok_or_else(engine_not_ready)?;
+    cache
+        .root_blocks()
+        .map(|block| {
+            block
+                .iter()
+                .map(|element| match element {
+                    crate::render::RenderElement::Table { doc_offset, .. } => source_ids
+                        .table_key(*doc_offset)
+                        .map(|key| serde_json::json!({"type":"table", "tableId":key}))
+                        .ok_or_else(|| {
+                            SessionError::from(YrsEngineError::new(
+                                "ENGINE_INVARIANT_FAILED",
+                                "table source identity is missing",
+                            ))
+                        }),
+                    _ => Ok(serialize_render_elements(
+                        std::slice::from_ref(element),
+                        &source_ids,
+                        &mut std::collections::BTreeMap::new(),
+                        0,
+                    )[0]
+                    .clone()),
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(Value::Array)
+        })
+        .collect()
 }
 
 struct RenderSourceIds<'a> {

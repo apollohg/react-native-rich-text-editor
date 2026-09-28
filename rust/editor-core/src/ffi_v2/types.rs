@@ -373,3 +373,117 @@ mod tests {
         .is_err());
     }
 }
+
+use crate::tables::render::{
+    TableCompatibilityDiagnostic, TableRenderFailure, TableRenderSyntheticRegion,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiNativeRenderFrameResult {
+    pub frame: Option<FfiNativeRenderFrame>,
+    pub error: Option<FfiError>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiNativeRenderFrame {
+    pub snapshot_json: String,
+    pub tables: FfiTableFrame,
+}
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiTableFrameKind {
+    Full,
+    Delta,
+}
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiTableFrame {
+    pub kind: FfiTableFrameKind,
+    pub base_document_revision: Option<String>,
+    pub attributes: Vec<FfiTableAttribute>,
+    pub removed_attribute_keys: Vec<String>,
+    pub tables: Vec<FfiTableRecord>,
+    pub removed_table_keys: Vec<String>,
+    pub cell_updates: Vec<FfiTableCellUpdate>,
+    pub extents: Vec<FfiTableExtent>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiTableAttribute {
+    pub key: String,
+    pub json: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiTableRecord {
+    pub table_key: String,
+    pub host: Option<FfiTableHost>,
+    pub doc_size: u32,
+    pub rows: u32,
+    pub columns: u32,
+    pub column_widths: Vec<Option<u32>>,
+    pub direction: Option<String>,
+    pub irregular: bool,
+    pub read_only_descendants: bool,
+    pub attrs_key: String,
+    pub source_rows: Vec<FfiTableSourceRow>,
+    pub cells: Vec<FfiTableCellRecord>,
+    pub synthetic_regions: Vec<TableRenderSyntheticRegion>,
+    pub failure: Option<TableRenderFailure>,
+    pub compatibility_diagnostic: Option<TableCompatibilityDiagnostic>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiTableHost {
+    pub table_key: String,
+    pub cell_index: u32,
+}
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiTableSourceRow {
+    pub attrs_key: String,
+    pub cell_count: u32,
+}
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiTableCellRecord {
+    pub source_row: u32,
+    pub row: u32,
+    pub column: u32,
+    pub rowspan: u32,
+    pub colspan: u32,
+    pub header: bool,
+    pub attrs_key: String,
+    pub content_key: String,
+    pub doc_size: u32,
+    pub scalar_stride: u32,
+    pub elements: Vec<FfiViewerElement>,
+    pub input_blocks: Vec<FfiCellInputBlock>,
+    pub nested_tables: Vec<FfiCellNestedTable>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiCellInputBlock {
+    pub element_index: u32,
+    pub doc_start: u32,
+    pub doc_end: u32,
+    pub scalar_start: u32,
+    pub content_scalar_start: u32,
+    pub scalar_end: u32,
+    pub break_scalar_end: u32,
+    pub void: bool,
+}
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiCellNestedTable {
+    pub element_index: u32,
+    pub table_key: String,
+    pub doc_offset: u32,
+    pub doc_size: u32,
+    pub scalar_start: Option<u32>,
+    pub scalar_end: Option<u32>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiTableCellUpdate {
+    pub table_key: String,
+    pub cell_index: u32,
+    pub cell: FfiTableCellRecord,
+}
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FfiTableExtent {
+    pub table_key: String,
+    pub doc_start: u32,
+    pub doc_size: u32,
+    pub scalar_start: u32,
+    pub scalar_end: u32,
+}

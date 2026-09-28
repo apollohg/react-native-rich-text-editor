@@ -392,3 +392,82 @@ fn lower_bound_doc_start(position_map: &PositionMap, target: u32) -> usize {
     }
     low
 }
+
+pub(crate) fn scalar_range(position_map: &PositionMap, start: u32, end: u32) -> (u32, u32) {
+    table_extent(position_map, start, end).map_or_else(
+        || {
+            let block = lower_bound_doc_start(position_map, start);
+            let scalar = if block < position_map.block_count() {
+                position_map.effective_scalar_start(block)
+            } else {
+                position_map.total_scalars()
+            };
+            (scalar, scalar)
+        },
+        |extent| (extent.scalar_start, extent.scalar_end),
+    )
+}
+
+pub(crate) fn relative_cell_mapping(
+    document: &Document,
+    position_map: &PositionMap,
+    cell: &TableRenderCell,
+    cell_start: u32,
+    keys: &BTreeMap<u32, String>,
+) -> Result<
+    (
+        u32,
+        Vec<super::types::FfiCellInputBlock>,
+        Vec<super::types::FfiCellNestedTable>,
+    ),
+    &'static str,
+> {
+    let cell_end = cell_start
+        .checked_add(cell.doc_size)
+        .ok_or("cell end overflow")?;
+    let (origin, _) = scalar_range(position_map, cell_start, cell_end);
+    let mut nested = Vec::new();
+    let mut exclusions = Vec::new();
+    for (index, element) in cell.elements.iter().enumerate() {
+        if let RenderElement::Table { doc_offset, table } = element {
+            let start = cell_start + doc_offset;
+            let end = start + table.structure.doc_size;
+            let extent = table_extent(position_map, start, end);
+            nested.push(super::types::FfiCellNestedTable {
+                element_index: u32::try_from(index).map_err(|_| "element index overflow")?,
+                table_key: keys
+                    .get(&start)
+                    .ok_or("nested table identity is missing")?
+                    .clone(),
+                doc_offset: *doc_offset,
+                doc_size: table.structure.doc_size,
+                scalar_start: extent.as_ref().map(|extent| extent.scalar_start - origin),
+                scalar_end: extent.as_ref().map(|extent| extent.scalar_end - origin),
+            });
+            exclusions.push(start..end);
+        }
+    }
+    let first = lower_bound_doc_start(position_map, cell_start);
+    let end = lower_bound_doc_start(position_map, cell_end);
+    let indices: Vec<_> = (first..end)
+        .filter(|index| {
+            !exclusions
+                .iter()
+                .any(|range| range.contains(&position_map.effective_doc_start(*index)))
+        })
+        .collect();
+    let blocks = serialize_cell_blocks(document, position_map, cell, cell_start, &indices)?
+        .into_iter()
+        .map(|block| super::types::FfiCellInputBlock {
+            element_index: block.element_index,
+            doc_start: block.doc_start - cell_start,
+            doc_end: block.doc_end - cell_start,
+            scalar_start: block.scalar_start - origin,
+            content_scalar_start: block.content_scalar_start - origin,
+            scalar_end: block.scalar_end - origin,
+            break_scalar_end: block.break_scalar_end - origin,
+            void: block.void,
+        })
+        .collect();
+    Ok((origin, blocks, nested))
+}

@@ -119,3 +119,5 @@ mod registry_concurrency {
         }
     }
 }
+
+pub(crate) mod table_frame_mirror;

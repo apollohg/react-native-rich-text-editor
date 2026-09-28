@@ -13,3 +13,5 @@ pub fn viewer_compile(request: FfiViewerCompileRequest) -> FfiViewerCompileResul
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) use compile::viewer_leaf_element;

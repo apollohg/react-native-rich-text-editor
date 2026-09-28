@@ -98,7 +98,7 @@ fn native_intent_ffi_is_strict_owner_scoped_and_idempotent() {
 }
 
 #[test]
-fn external_full_render_pin_advances_the_native_patch_base() {
+fn external_full_render_pin_preserves_the_native_patch_base() {
     let document = |first: &str, third: &str| {
         json!({
             "type": "doc",
@@ -155,14 +155,18 @@ fn external_full_render_pin_advances_the_native_patch_base() {
         None,
     ));
     assert_eq!(incremental["renderBlocks"], Value::Null);
-    assert_eq!(incremental["renderPatch"]["startIndex"], 2);
-    assert_eq!(incremental["renderPatch"]["deleteCount"], 1);
+    assert_eq!(
+        incremental["renderPatch"]["baseDocumentVersion"],
+        initial["documentVersion"]
+    );
+    assert_eq!(incremental["renderPatch"]["startIndex"], 0);
+    assert_eq!(incremental["renderPatch"]["deleteCount"], 3);
     assert_eq!(
         incremental["renderPatch"]["renderBlocks"]
             .as_array()
             .unwrap()
             .len(),
-        1
+        3
     );
     destroy_handle(&id);
 }

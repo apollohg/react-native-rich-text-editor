@@ -7,3 +7,8 @@ pub mod types;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod native_frame_tests;
+
+pub(crate) mod native_frame;

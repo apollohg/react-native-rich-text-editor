@@ -210,6 +210,19 @@ fn viewer_element(
             table_records.insert(record.table_pos, record);
             FfiViewerElement::Table { table_id }
         }
+        element => viewer_leaf_element(element, mention_prefix, origin),
+    }
+}
+
+pub(crate) fn viewer_leaf_element(
+    element: RenderElement,
+    mention_prefix: Option<&str>,
+    origin: u32,
+) -> FfiViewerElement {
+    match element {
+        RenderElement::Table { .. } => {
+            unreachable!("table elements require their owning table context")
+        }
         RenderElement::TextRun { text, marks } => FfiViewerElement::TextRun {
             text,
             marks: marks.into_iter().map(viewer_mark).collect(),

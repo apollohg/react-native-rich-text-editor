@@ -82,6 +82,9 @@ struct NativeRequestLedger {
 
 #[derive(Clone)]
 pub(crate) struct NativeRenderCursor {
+    pub(crate) schema_fingerprint: String,
+    pub(crate) table_keys: std::collections::BTreeMap<u32, String>,
+    pub(crate) root_projection: Vec<serde_json::Value>,
     pub(crate) document_revision: u64,
     pub(crate) render_blocks: std::sync::Arc<crate::render::incremental::CachedRenderBlocks>,
 }
