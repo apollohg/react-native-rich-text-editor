@@ -126,6 +126,13 @@ pub(crate) fn grid_boundary_document(slots: usize) -> Value {
 }
 
 pub(crate) fn session_with_document(document: &Value) -> EditorSession {
+    session_with_document_and_editing_limits(document, EditingLimits::default())
+}
+
+pub(crate) fn session_with_document_and_editing_limits(
+    document: &Value,
+    editing_limits: EditingLimits,
+) -> EditorSession {
     let config = EditorSessionConfig::local_for_test();
     let mut session = EditorSession::new(
         YrsDocumentEngine::new(YrsEngineConfig {
@@ -133,7 +140,7 @@ pub(crate) fn session_with_document(document: &Value) -> EditorSession {
             fragment_name: FRAGMENT_NAME.into(),
             initialization_mode: InitializationMode::LocalEmpty,
             resource_limits: ResourceLimits::default(),
-            editing_limits: EditingLimits::default(),
+            editing_limits,
             max_length: None,
             scope: None,
         })

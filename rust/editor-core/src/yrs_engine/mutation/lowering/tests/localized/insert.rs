@@ -225,7 +225,7 @@ fn localized_empty_textblock_insert_creates_the_eager_text_target() {
 }
 
 #[test]
-fn localized_inline_void_and_cross_block_inputs_choose_eager_before_lowering() {
+fn localized_textblock_eligibility_respects_atom_gaps_and_block_boundaries() {
     let schema = tiptap_schema();
     let cases = [
         (
@@ -242,6 +242,7 @@ fn localized_inline_void_and_cross_block_inputs_choose_eager_before_lowering() {
             }),
             0,
             0,
+            MutationCompilerBuild::Localized,
         ),
         (
             json!({
@@ -253,6 +254,7 @@ fn localized_inline_void_and_cross_block_inputs_choose_eager_before_lowering() {
             }),
             0,
             3,
+            MutationCompilerBuild::EagerFallback,
         ),
         (
             json!({
@@ -267,9 +269,10 @@ fn localized_inline_void_and_cross_block_inputs_choose_eager_before_lowering() {
             }),
             0,
             2,
+            MutationCompilerBuild::EagerFallback,
         ),
     ];
-    for (source, block_index, extra_position) in cases {
+    for (source, block_index, extra_position, expected) in cases {
         let limits = ResourceLimits::default();
         let document = from_prosemirror_json(&source, &schema, UnknownTypeMode::Preserve).unwrap();
         let position_map = PositionMap::build(&document, &schema);
@@ -293,7 +296,7 @@ fn localized_inline_void_and_cross_block_inputs_choose_eager_before_lowering() {
             },
         )
         .unwrap();
-        assert_eq!(mode, MutationCompilerBuild::EagerFallback);
+        assert_eq!(mode, expected);
     }
 }
 

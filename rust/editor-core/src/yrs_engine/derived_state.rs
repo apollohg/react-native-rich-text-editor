@@ -519,6 +519,7 @@ impl DerivedStateCache {
             Arc::new(mutation_lookup_seed.with_canonical_artifact(&canonical_artifact));
         let validation_certificate = if let Some(validation) = admitted_validation {
             DocumentValidationCertificate::from_report(
+                &document,
                 validation,
                 &canonical_artifact,
                 resource_limits,

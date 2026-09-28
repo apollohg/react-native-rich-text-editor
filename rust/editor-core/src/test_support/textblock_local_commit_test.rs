@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 use super::large_table_fixture::{
     fixture_cell_text, keystroke_cell, multi_paragraph_cell_document, plain_table_document,
-    session_with_document,
+    session_with_document, session_with_document_and_editing_limits,
 };
 use crate::boundary::ResourceLimits;
 use crate::model::Mark;
@@ -13,7 +13,7 @@ use crate::tables::render::TableRenderRecord;
 use crate::yrs_engine::observability::{
     reset_full_pass_counts_for_test, take_full_pass_counts_for_test, FullPassCounts,
 };
-use crate::yrs_engine::ResolvedSelection;
+use crate::yrs_engine::{EditingLimits, ResolvedSelection};
 
 const OWNER_ID: u64 = 9;
 const INSERT_REQUEST_ID: u64 = 5;
@@ -40,9 +40,9 @@ const NESTED_TABLE_CELL_PARAGRAPH: [u32; 7] = [0, 2, 2, 0, 0, 0, 0];
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpectedRoute {
     Localized,
-    EagerLowering,
     Generic,
     NestedTableRefusal,
+    CellBoundaryRefusal,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -58,6 +58,10 @@ struct TextblockEditCase {
     block_path: Vec<u32>,
     offset: CaretOffset,
     route: ExpectedRoute,
+    intent: &'static str,
+    selection_len: u32,
+    replacement_text: &'static str,
+    editing_limits: EditingLimits,
 }
 
 #[derive(Debug, PartialEq)]
@@ -118,6 +122,10 @@ fn textblock_edit_cases() -> Vec<TextblockEditCase> {
         block_path: block_path.to_vec(),
         offset,
         route,
+        intent: INSERT_INTENTS[0],
+        selection_len: 0,
+        replacement_text: INSERTED_TEXT,
+        editing_limits: EditingLimits::default(),
     };
     vec![
         case(
@@ -188,7 +196,7 @@ fn textblock_edit_cases() -> Vec<TextblockEditCase> {
             multi_paragraph_cell_document(),
             &MULTI_PARAGRAPH_ATOM_PARAGRAPH,
             CaretOffset::FirstLeafEnd,
-            ExpectedRoute::EagerLowering,
+            ExpectedRoute::Localized,
         ),
         case(
             "after the inline atom",
@@ -278,14 +286,26 @@ fn commit_audit(session: &EditorSession) -> CommitAudit {
 }
 
 fn prepared_session(case: &TextblockEditCase, localized: bool) -> (EditorSession, String) {
-    let mut session = session_with_document(&case.document);
+    let mut session =
+        session_with_document_and_editing_limits(&case.document, case.editing_limits.clone());
     session.attach_collaboration_runtime();
     if !localized {
         session.engine.drop_localized_text_index_for_test();
     }
     let caret = caret_scalar(&session, &case.block_path, case.offset);
     let request = insert_request(&mut session, caret);
-    (session, request)
+    let mut request: Value = serde_json::from_str(&request).expect("request is JSON");
+    request["intent"]["type"] = json!(case.intent);
+    request["intent"]["head"] = json!(caret + case.selection_len);
+    if INSERT_INTENTS.contains(&case.intent) {
+        request["intent"]["text"] = json!(case.replacement_text);
+    } else {
+        request["intent"]
+            .as_object_mut()
+            .expect("intent is an object")
+            .remove("text");
+    }
+    (session, request.to_string())
 }
 
 fn submit_insert(session: &mut EditorSession, request: &str) -> Result<Value, SessionError> {
@@ -341,22 +361,30 @@ fn assert_route(case: &TextblockEditCase, audit: &RunAudit, passes: &FullPassCou
                 );
             }
         }
-        ExpectedRoute::EagerLowering => {
-            assert!(audit.insert.is_ok(), "{name}: {:?}", audit.insert);
-            assert_eq!(
-                passes.planner_simulations, 0,
-                "{name}: an admitted insert skips the planner: {passes:#?}"
-            );
-            assert!(
-                passes.document_validations > 0,
-                "{name}: a block holding an inline atom lowers and validates generically: {passes:#?}"
-            );
-        }
         ExpectedRoute::Generic => {
             assert!(audit.insert.is_ok(), "{name}: {:?}", audit.insert);
             assert!(
                 passes.planner_simulations > 0,
                 "{name}: a refused insert must take the generic planner: {passes:#?}"
+            );
+        }
+        ExpectedRoute::CellBoundaryRefusal => {
+            let error = audit
+                .insert
+                .as_ref()
+                .expect_err("cell boundary joins remain refused");
+            assert_eq!(error.code, "OPERATION_INVALID", "{name}: {error:?}");
+            assert_eq!(
+                error
+                    .details
+                    .as_ref()
+                    .and_then(|details| details.get("field")),
+                Some(&json!("tableCellBoundary")),
+                "{name}: {error:?}"
+            );
+            assert!(
+                !audit.after_insert.can_undo,
+                "{name}: refusal must not create history"
             );
         }
         ExpectedRoute::NestedTableRefusal => {
@@ -389,6 +417,221 @@ fn textblock_local_inserts_commit_exactly_like_the_generic_path() {
     }
 }
 
+fn textblock_range_cases() -> Vec<TextblockEditCase> {
+    let case = |name, document, block_path: Vec<u32>, offset, selection_len, intent, route| {
+        TextblockEditCase {
+            name,
+            document,
+            block_path,
+            offset,
+            selection_len,
+            intent,
+            route,
+            replacement_text: INSERTED_TEXT,
+            editing_limits: EditingLimits::default(),
+        }
+    };
+    let mut two_leaves = prose_and_table_document();
+    two_leaves["content"][0]["content"] = json!([
+        {"type": "text", "text": "ab", "marks": [{"type": "bold"}]},
+        {"type": "text", "text": "cd"}
+    ]);
+    let unicode = json!({"type": "doc", "content": [{"type": "paragraph", "content": [
+        {"type": "text", "text": "a😀", "marks": [{"type": "bold"}]},
+        {"type": "text", "text": "λcd"}
+    ]}]});
+    let mut expanding = case(
+        "growing non-BMP replacement",
+        prose_and_table_document(),
+        cell_paragraph(TEXT_CELL),
+        CaretOffset::At(MIDDLE_OFFSET),
+        1,
+        "replaceSelectionText",
+        ExpectedRoute::Localized,
+    );
+    expanding.replacement_text = "😀xy";
+    vec![
+        expanding,
+        case(
+            "delete non-BMP text across marked leaves",
+            unicode.clone(),
+            PROSE_PATH.to_vec(),
+            CaretOffset::At(1),
+            2,
+            "deleteRange",
+            ExpectedRoute::Localized,
+        ),
+        case(
+            "replace non-BMP text across marked leaves",
+            unicode,
+            PROSE_PATH.to_vec(),
+            CaretOffset::At(1),
+            2,
+            "replaceSelectionText",
+            ExpectedRoute::Localized,
+        ),
+        case(
+            "IME replaces two characters",
+            prose_and_table_document(),
+            cell_paragraph(TEXT_CELL),
+            CaretOffset::At(MIDDLE_OFFSET),
+            2,
+            "replaceSelectionText",
+            ExpectedRoute::Localized,
+        ),
+        case(
+            "backspace within a leaf",
+            prose_and_table_document(),
+            cell_paragraph(TEXT_CELL),
+            CaretOffset::At(MIDDLE_OFFSET),
+            0,
+            "deleteBackward",
+            ExpectedRoute::Localized,
+        ),
+        case(
+            "forward delete within a leaf",
+            prose_and_table_document(),
+            cell_paragraph(TEXT_CELL),
+            CaretOffset::At(MIDDLE_OFFSET),
+            0,
+            "deleteForward",
+            ExpectedRoute::Localized,
+        ),
+        case(
+            "delete across adjacent differently marked leaves",
+            two_leaves,
+            PROSE_PATH.to_vec(),
+            CaretOffset::At(1),
+            2,
+            "deleteRange",
+            ExpectedRoute::Localized,
+        ),
+        case(
+            "delete a cell range",
+            prose_and_table_document(),
+            cell_paragraph(TEXT_CELL),
+            CaretOffset::At(MIDDLE_OFFSET),
+            2,
+            "deleteRange",
+            ExpectedRoute::Localized,
+        ),
+        case(
+            "backspace at a cell start",
+            prose_and_table_document(),
+            cell_paragraph(TEXT_CELL),
+            CaretOffset::At(LEAF_START),
+            0,
+            "deleteBackward",
+            ExpectedRoute::CellBoundaryRefusal,
+        ),
+        case(
+            "delete text before an inline atom",
+            multi_paragraph_cell_document(),
+            MULTI_PARAGRAPH_ATOM_PARAGRAPH.to_vec(),
+            CaretOffset::At(MIDDLE_OFFSET),
+            2,
+            "deleteRange",
+            ExpectedRoute::Localized,
+        ),
+        case(
+            "delete covering an inline atom",
+            multi_paragraph_cell_document(),
+            MULTI_PARAGRAPH_ATOM_PARAGRAPH.to_vec(),
+            CaretOffset::FirstLeafEnd,
+            1,
+            "deleteRange",
+            ExpectedRoute::Generic,
+        ),
+        case(
+            "delete inside a nested table",
+            multi_paragraph_cell_document(),
+            NESTED_TABLE_CELL_PARAGRAPH.to_vec(),
+            CaretOffset::At(MIDDLE_OFFSET),
+            2,
+            "deleteRange",
+            ExpectedRoute::NestedTableRefusal,
+        ),
+        case(
+            "same-length text replacement",
+            prose_and_table_document(),
+            cell_paragraph(TEXT_CELL),
+            CaretOffset::At(MIDDLE_OFFSET),
+            1,
+            "replaceSelectionText",
+            ExpectedRoute::Localized,
+        ),
+        case(
+            "delete deepest text from the only paragraph",
+            json!({"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "a"}]}]}),
+            PROSE_PATH.to_vec(),
+            CaretOffset::At(LEAF_START),
+            1,
+            "deleteRange",
+            ExpectedRoute::Localized,
+        ),
+        case(
+            "delete all text leaves an empty cell",
+            prose_and_table_document(),
+            cell_paragraph(TEXT_CELL),
+            CaretOffset::At(LEAF_START),
+            u32::try_from(fixture_cell_text(0, 0).len()).unwrap(),
+            "deleteRange",
+            ExpectedRoute::Localized,
+        ),
+    ]
+}
+
+#[test]
+fn textblock_local_ranges_commit_exactly_like_the_generic_path() {
+    for case in textblock_range_cases() {
+        let (localized, passes) = run_case(&case, true, case.intent);
+        let (generic, _) = run_case(&case, false, case.intent);
+        assert_eq!(
+            localized, generic,
+            "{}: local and generic range edits diverged",
+            case.name
+        );
+        assert_route(&case, &localized, &passes);
+    }
+}
+
+#[test]
+fn textblock_local_replacement_preserves_aggregate_output_budget_rejections() {
+    const OUTPUT_BUDGETS: [usize; 3] = [1024, 2048, 4096];
+    const PROSE_SCALARS: usize = 512;
+    let mut rejected = 0;
+    let mut accepted = 0;
+    for budget in OUTPUT_BUDGETS {
+        let mut case = TextblockEditCase {
+            name: "replacement at output budget",
+            document: json!({"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "a".repeat(PROSE_SCALARS)}]}]}),
+            block_path: PROSE_PATH.to_vec(),
+            offset: CaretOffset::At(MIDDLE_OFFSET),
+            selection_len: 1,
+            intent: "replaceSelectionText",
+            replacement_text: "😀xy",
+            editing_limits: EditingLimits::default(),
+            route: ExpectedRoute::Localized,
+        };
+        case.editing_limits.max_derived_output_bytes = budget;
+        let (local, _) = run_case(&case, true, case.intent);
+        let (generic, _) = run_case(&case, false, case.intent);
+        assert_eq!(
+            local, generic,
+            "replacement diverged at output budget {budget}"
+        );
+        if local.insert.is_ok() {
+            accepted += 1;
+        } else {
+            rejected += 1;
+        }
+    }
+    assert!(
+        rejected > 0 && accepted > 0,
+        "budgets must exercise rejection and acceptance: rejected {rejected}, accepted {accepted}"
+    );
+}
+
 fn table_records(cache: &CachedRenderBlocks) -> Vec<TableRenderRecord> {
     let mut records = Vec::new();
     cache.visit_table_records(&mut records);
@@ -397,10 +640,16 @@ fn table_records(cache: &CachedRenderBlocks) -> Vec<TableRenderRecord> {
 
 #[test]
 fn localized_render_transitions_equal_a_fresh_full_render() {
-    for case in textblock_edit_cases() {
+    for case in textblock_edit_cases()
+        .into_iter()
+        .chain(textblock_range_cases())
+    {
         let (mut session, request) = prepared_session(&case, true);
         let inserted = submit_insert(&mut session, &request);
-        if case.route == ExpectedRoute::NestedTableRefusal {
+        if matches!(
+            case.route,
+            ExpectedRoute::NestedTableRefusal | ExpectedRoute::CellBoundaryRefusal
+        ) {
             assert!(inserted.is_err(), "{}: {inserted:?}", case.name);
         } else {
             assert!(inserted.is_ok(), "{}: {inserted:?}", case.name);
@@ -444,6 +693,15 @@ fn localized_render_transitions_equal_a_fresh_full_render() {
 
 #[test]
 fn a_native_insert_in_a_large_table_is_validated_locally() {
+    assert_large_table_edit_is_validated_locally(INSERT_INTENTS[0]);
+}
+
+#[test]
+fn a_native_delete_in_a_large_table_is_validated_locally() {
+    assert_large_table_edit_is_validated_locally("deleteBackward");
+}
+
+fn assert_large_table_edit_is_validated_locally(intent: &str) {
     let mut session =
         session_with_document(&plain_table_document(LARGE_TABLE_ROWS, LARGE_TABLE_COLUMNS));
     let cell = keystroke_cell(LARGE_TABLE_ROWS, LARGE_TABLE_COLUMNS);
@@ -455,6 +713,12 @@ fn a_native_insert_in_a_large_table_is_validated_locally() {
     ];
     let caret = caret_scalar(&session, &block_path, CaretOffset::At(MIDDLE_OFFSET));
     let request = insert_request(&mut session, caret);
+    let mut request: Value = serde_json::from_str(&request).expect("request is JSON");
+    request["intent"]["type"] = json!(intent);
+    if intent != INSERT_INTENTS[0] {
+        request["intent"].as_object_mut().unwrap().remove("text");
+    }
+    let request = request.to_string();
 
     reset_full_pass_counts_for_test();
     submit_insert(&mut session, &request).expect("the keystroke applies");
@@ -470,7 +734,11 @@ fn a_native_insert_in_a_large_table_is_validated_locally() {
             .document_json()
             .expect("the fixture is ready")["content"][0]["content"][row]["content"][column]
             ["content"][0]["content"][0]["text"],
-        format!("{}{INSERTED_TEXT}{}", &text[..middle], &text[middle..]),
+        if intent == INSERT_INTENTS[0] {
+            format!("{}{INSERTED_TEXT}{}", &text[..middle], &text[middle..])
+        } else {
+            format!("{}{}", &text[..middle - 1], &text[middle..])
+        },
         "the keystroke lands in the keystroke cell"
     );
     for (kind, count) in [

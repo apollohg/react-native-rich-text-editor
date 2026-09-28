@@ -298,9 +298,6 @@ impl ImportLookupMaterialization {
     }
 }
 
-/// A capability for exactly one existing-branch text insertion. Deliberately
-/// exposing no delete, format, structural, or multi-operation entry points
-/// keeps the localized lowering boundary sealed by construction.
 #[derive(Debug)]
 pub(crate) struct LocalizedInsertCompiler {
     compiler: MutationCompiler,

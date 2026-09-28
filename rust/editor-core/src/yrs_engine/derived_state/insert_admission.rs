@@ -35,15 +35,17 @@ pub(crate) struct LocalizedTextblockEdit<'edit> {
 pub(super) struct LocalizedTextblockEditPlan {
     pub(super) leaf: LocalizedTextLeafCertificate,
     pub(super) creates_leaf: bool,
+    pub(super) removed_scalars: u32,
+    pub(super) range_end: u32,
     pub(super) block_path_len: usize,
     pub(super) block_path_sha256: [u8; 32],
     pub(super) affected_top_level_index: usize,
     pub(super) inserted_scalars: u32,
     pub(super) inserted_utf8_bytes: usize,
     pub(super) inserted_utf16: u32,
-    pub(super) canonical_growth_bytes: usize,
-    pub(super) rendered_scalar_delta: u32,
-    pub(super) rendered_utf16_delta: u32,
+    pub(super) canonical_growth_bytes: isize,
+    pub(super) rendered_scalar_delta: i32,
+    pub(super) rendered_utf16_delta: i32,
     pub(super) next_raw_text_scalars: u64,
     pub(super) next_raw_text_utf8_bytes: usize,
     pub(super) next_canonical_serialized_len: usize,
@@ -205,11 +207,12 @@ impl LocalizedTextblockEditAdmission {
         max_length: Option<u32>,
         yrs_state_epoch: u64,
     ) -> Option<ValidatedLocalizedTextblockEditAdmission<'a>> {
-        let [yrs_engine::TypedOperation::InsertText { at, text, marks }] =
-            transaction.operations.as_slice()
-        else {
+        let (at, edit) = state.textblock_edit_for_transaction(transaction)?;
+        if edit.replaced.start != document_position {
             return None;
-        };
+        }
+        let text = edit.text;
+        let marks = edit.marks;
         let canonical_serialized_len = identity.map_or(
             state.validation_certificate.canonical_serialized_len,
             |identity| identity.canonical_serialized_len,
@@ -219,12 +222,7 @@ impl LocalizedTextblockEditAdmission {
             |identity| identity.canonical_fingerprint,
         );
         let plan = state.plan_localized_textblock_edit(
-            &LocalizedTextblockEdit {
-                block_path: state.localized_textblock_path(document_position)?,
-                replaced: document_position..document_position,
-                text,
-                marks,
-            },
+            &edit,
             schema,
             editing_limits,
             max_length,
@@ -238,7 +236,7 @@ impl LocalizedTextblockEditAdmission {
             && self.request_id == transaction.request_id
             && self.base_document_revision == transaction.base_document_revision
             && self.origin == transaction.origin
-            && self.inserted_at == *at
+            && self.inserted_at == at
             && self.inserted_document_position == document_position
             && self.inserted_text_sha256 == <[u8; 32]>::from(sha2::Sha256::digest(text.as_bytes()))
             && self.inserted_marks_sha256 == canonical_marks_sha256(marks)?
@@ -503,6 +501,8 @@ impl ValidatedLocalizedTextblockEditAdmission<'_> {
                 preview,
                 canonical_artifact,
                 cache_budget,
+                &derivations.position_map,
+                &derivations.rendered_text,
             )
         });
         #[cfg(test)]
@@ -550,16 +550,48 @@ impl ValidatedLocalizedTextblockEditAdmission<'_> {
                 max_length: self.admission.max_length,
                 derivation_identity_seal: Arc::clone(&derivations.identity_seal),
                 target_top_level_index: plan.affected_top_level_index,
-                inserted_scalar_delta: plan.inserted_scalars,
+                document_scalar_delta: i32::try_from(plan.inserted_scalars)
+                    .ok()?
+                    .checked_sub(i32::try_from(plan.removed_scalars).ok()?)?,
                 rendered_scalar_delta: plan.rendered_scalar_delta,
                 top_level_cardinality: self.state.document.root().child_count(),
-                operation_kind: LocalizedRenderOperationKind::TextblockInsert,
+                operation_kind: if plan.removed_scalars == 0 {
+                    LocalizedRenderOperationKind::TextblockInsert
+                } else {
+                    LocalizedRenderOperationKind::ReplaceText
+                },
             }),
         })
     }
 
     pub(crate) fn document_position(&self) -> u32 {
         self.admission.inserted_document_position
+    }
+
+    pub(crate) fn range_end_scalar(&self) -> u32 {
+        self.state
+            .position_map
+            .doc_to_scalar(self.admission.plan.range_end, &self.state.document)
+    }
+
+    pub(crate) fn range_end(&self) -> u32 {
+        self.admission.plan.range_end
+    }
+
+    pub(crate) fn base_document_node_count(&self) -> usize {
+        self.state.document_node_count
+    }
+
+    pub(crate) fn base_raw_text_scalars(&self) -> u64 {
+        self.state.validation_certificate.raw_text_scalars
+    }
+
+    pub(crate) fn base_raw_text_utf8_bytes(&self) -> usize {
+        self.state.validation_certificate.raw_text_utf8_bytes
+    }
+
+    pub(crate) fn base_rendered_scalars(&self) -> u32 {
+        self.state.rendered_scalars
     }
 
     pub(crate) fn creates_leaf(&self) -> bool {
@@ -579,10 +611,6 @@ impl ValidatedLocalizedTextblockEditAdmission<'_> {
         self.admission.plan.affected_top_level_index
     }
 
-    pub(crate) fn document_node_count(&self) -> usize {
-        self.state.document_node_count
-    }
-
     pub(crate) fn rendered_scalar_position(&self) -> u32 {
         self.state.position_map.doc_to_scalar(
             self.admission.inserted_document_position,
@@ -594,14 +622,17 @@ impl ValidatedLocalizedTextblockEditAdmission<'_> {
         &self.state.rendered_text
     }
 
+    #[cfg(test)]
     pub(crate) fn next_raw_text_scalars(&self) -> u64 {
         self.admission.plan.next_raw_text_scalars
     }
 
+    #[cfg(test)]
     pub(crate) fn next_raw_text_utf8_bytes(&self) -> usize {
         self.admission.plan.next_raw_text_utf8_bytes
     }
 
+    #[cfg(test)]
     pub(crate) fn next_rendered_scalars(&self) -> u32 {
         self.admission.plan.next_rendered_scalars
     }

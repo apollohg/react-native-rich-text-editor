@@ -134,6 +134,7 @@ fn changed_commit_survives_each_optional_index_allocation_stage() {
                 TransactionOrigin::DocumentImport,
             )
             .unwrap();
+        engine.drop_localized_text_index_for_test();
         let before_document_revision = engine.revision();
         let before_state_revision = engine.state_revision();
         let point = RevisionedPosition {

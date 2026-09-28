@@ -253,6 +253,7 @@ impl ValidatedDocumentEvidence {
 #[derive(Debug, Clone)]
 pub(crate) struct DocumentValidationCertificate {
     pub(super) stats: DocumentStats,
+    pub(super) depth_counts: Arc<[usize]>,
     pub(super) metrics: DocumentValidationMetrics,
     pub(super) resource_limits: ResourceLimits,
     pub(super) schema_fingerprint: Arc<str>,
@@ -282,6 +283,7 @@ impl PartialEq for DocumentValidationCertificate {
             false
         };
         self.stats == other.stats
+            && self.depth_counts == other.depth_counts
             && self.metrics == other.metrics
             && self.resource_limits == other.resource_limits
             && self.schema_fingerprint == other.schema_fingerprint
@@ -300,6 +302,7 @@ impl Eq for DocumentValidationCertificate {}
 impl DocumentValidationCertificate {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn from_report(
+        document: &Document,
         validation: DocumentValidationReport,
         canonical_artifact: &CanonicalArtifact,
         resource_limits: &ResourceLimits,
@@ -312,6 +315,11 @@ impl DocumentValidationCertificate {
         yrs_engine::observability::record_validation_certificate_construction();
         Self {
             stats: validation.stats,
+            depth_counts: Self::subtree_depth_counts(
+                document.root(),
+                crate::transform::DOCUMENT_ROOT_DEPTH,
+            )
+            .into(),
             metrics: validation.metrics,
             resource_limits: resource_limits.clone(),
             schema_fingerprint: Arc::from(schema_fingerprint),
@@ -348,6 +356,7 @@ impl DocumentValidationCertificate {
             DocumentValidator::validate_report(document, schema, resource_limits).ok()?;
         crate::transform::validate_canonical_marks(document, schema).ok()?;
         let mut certificate = Self::from_report(
+            document,
             validation,
             canonical_artifact,
             resource_limits,
@@ -433,6 +442,21 @@ impl DocumentValidationCertificate {
         self.state_revision = state_revision;
     }
 
+    pub(crate) fn subtree_depth_counts(node: &Node, depth: usize) -> Vec<usize> {
+        let mut counts = Vec::<usize>::new();
+        let mut pending = vec![(node, depth)];
+        while let Some((node, depth)) = pending.pop() {
+            if counts.len() <= depth {
+                counts.resize(depth + 1, 0);
+            }
+            counts[depth] += 1;
+            if let Some(content) = node.content() {
+                pending.extend(content.iter().map(|child| (child, depth + 1)));
+            }
+        }
+        counts
+    }
+
     pub(crate) fn mint_localized(
         previous: &Self,
         block_path: &[u32],
@@ -447,19 +471,27 @@ impl DocumentValidationCertificate {
         let new =
             DocumentValidator::validate_subtree_report(new_block, schema, limits, depth).ok()?;
         crate::transform::validate_subtree_marks(new_block, schema).ok()?;
-        if previous.resource_limits != *limits
-            || (new.stats.max_depth < old.stats.max_depth
-                && old.stats.max_depth >= previous.stats.max_depth)
-        {
+        if previous.resource_limits != *limits {
             return None;
         }
+        let mut depth_counts = previous.depth_counts.to_vec();
+        let old_depths = Self::subtree_depth_counts(old_block, depth);
+        let new_depths = Self::subtree_depth_counts(new_block, depth);
+        depth_counts.resize(depth_counts.len().max(new_depths.len()), 0);
+        for (depth, count) in depth_counts.iter_mut().enumerate() {
+            *count = count
+                .checked_sub(old_depths.get(depth).copied().unwrap_or_default())?
+                .checked_add(new_depths.get(depth).copied().unwrap_or_default())?;
+        }
+        let max_depth = depth_counts.iter().rposition(|count| *count > 0)?;
+        depth_counts.truncate(max_depth.checked_add(1)?);
         let stats = DocumentStats {
             node_count: previous
                 .stats
                 .node_count
                 .checked_sub(old.stats.node_count)?
                 .checked_add(new.stats.node_count)?,
-            max_depth: previous.stats.max_depth.max(new.stats.max_depth),
+            max_depth,
         };
         let metrics = DocumentValidationMetrics {
             metadata_bytes: previous
@@ -482,6 +514,7 @@ impl DocumentValidationCertificate {
         }
         Some(Self {
             stats,
+            depth_counts: depth_counts.into(),
             metrics,
             ..previous.clone()
         })

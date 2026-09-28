@@ -94,6 +94,11 @@ fn history_document_snapshots_fit_with_canonical_charge(
         before,
         after_canonical_retained_bytes,
         after_document_retained_bytes,
+        yrs_engine::derived_state::DocumentValidationCertificate::subtree_depth_counts(
+            after_document.root(),
+            crate::transform::DOCUMENT_ROOT_DEPTH,
+        )
+        .len(),
         after_derivations,
         after_render_blocks,
         after_stored_marks,
@@ -109,6 +114,7 @@ pub(super) fn history_document_snapshots_fit_with_precomputed_after_charge(
     before: &DerivedStateCache,
     after_canonical_retained_bytes: usize,
     after_document_retained_bytes: usize,
+    after_validation_depth_slots: usize,
     after_derivations: &yrs_engine::compiler::CompiledDocumentDerivations,
     after_render_blocks: &crate::render::incremental::CachedRenderBlocks,
     after_stored_marks: Option<&[crate::model::Mark]>,
@@ -133,6 +139,7 @@ pub(super) fn history_document_snapshots_fit_with_precomputed_after_charge(
         yrs_engine::derived_state::history_document_snapshot_retained_bytes_with_precomputed_document_charge(
             after_document_retained_bytes,
             after_canonical_retained_bytes,
+            after_validation_depth_slots,
             &after_derivations.position_map,
             &after_derivations.rendered_text,
             after_render_blocks,

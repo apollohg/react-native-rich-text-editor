@@ -7,7 +7,7 @@ use crate::yrs_engine::compiler::input_limits::{
 };
 #[cfg(test)]
 use crate::yrs_engine::compiler::observability::{check_atomic_failpoint, AtomicFailpoint};
-use crate::yrs_engine::compiler::positions::{resolve_position, resolve_range};
+use crate::yrs_engine::compiler::positions::resolve_range;
 use crate::yrs_engine::compiler::preview::try_localized_semantic_compilation;
 use crate::yrs_engine::compiler::selection::planned_relative_selection;
 use crate::yrs_engine::compiler::semantic::compile_transaction_impl;
@@ -111,20 +111,11 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
         context.resource_limits,
     )?;
     let localized_textblock_edit_admission = engine_view.and_then(|view| {
-        let [TypedOperation::InsertText { at, .. }] = transaction.operations.as_slice() else {
-            return None;
-        };
-        resolve_position(
-            request_id,
-            Some(0),
-            "at",
-            *at,
-            view.cached.rendered_text,
-            view.cached.position_map,
-            view.cached.document,
-        )
-        .ok()
-        .and_then(|document_position| {
+        let (_, edit) = view
+            .authority
+            .installed()
+            .textblock_edit_for_transaction(&transaction)?;
+        Some(edit.replaced.start).and_then(|document_position| {
             view.authority
                 .installed()
                 .admit_textblock_edit_with_authority(
@@ -144,19 +135,17 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
         })
     });
     let mut localized_compiler = None;
-    if let (Some(view), [TypedOperation::InsertText { at, text, marks: _ }]) =
-        (engine_view, transaction.operations.as_slice())
-    {
-        if !text.is_empty() && !matches!(transaction.selection_intent, SelectionIntent::Set(_)) {
-            if let Ok(position) = resolve_position(
-                request_id,
-                Some(0),
-                "at",
-                *at,
-                view.cached.rendered_text,
-                view.cached.position_map,
-                view.cached.document,
-            ) {
+    if let Some(view) = engine_view {
+        if !matches!(transaction.selection_intent, SelectionIntent::Set(_)) {
+            if let Some((_, edit)) = view
+                .authority
+                .installed()
+                .textblock_edit_for_transaction(&transaction)
+                .filter(|(_, edit)| {
+                    edit.replaced.is_empty() || localized_textblock_edit_admission.is_some()
+                })
+            {
+                let position = edit.replaced.start;
                 if let Some(block) = view
                     .cached
                     .position_map
@@ -308,19 +297,11 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
     let localized_semantic = if localized_compiler.is_some() {
         engine_view.and_then(|view| {
             let admission = localized_textblock_edit_admission.as_ref()?;
-            let [TypedOperation::InsertText { at, .. }] = transaction.operations.as_slice() else {
-                return None;
-            };
-            let document_position = resolve_position(
-                request_id,
-                Some(0),
-                "at",
-                *at,
-                view.cached.rendered_text,
-                view.cached.position_map,
-                view.cached.document,
-            )
-            .ok()?;
+            let (_, edit) = view
+                .authority
+                .installed()
+                .textblock_edit_for_transaction(&transaction)?;
+            let document_position = edit.replaced.start;
             let validated = admission.validate_current_with_authority(
                 view.authority.installed(),
                 &transaction,
@@ -337,7 +318,7 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
             )?;
             let localized = try_localized_semantic_compilation(context, &transaction, &validated)?;
             if let Some(prepared) = prepared_semantics {
-                if localized.preview != *prepared.expected_preview {
+                if localized.steps.back()?.preview != *prepared.expected_preview {
                     return None;
                 }
             }
@@ -456,19 +437,11 @@ pub(super) fn compile_transaction_with_yrs_impl<T: yrs::ReadTxn>(
     if compiled.localized_semantic_used {
         compiled.prepared_derived_evidence = engine_view.and_then(|view| {
             let admission = compiled.localized_textblock_edit_admission.as_ref()?;
-            let [TypedOperation::InsertText { at, .. }] = transaction.operations.as_slice() else {
-                return None;
-            };
-            let document_position = resolve_position(
-                request_id,
-                Some(0),
-                "at",
-                *at,
-                view.cached.rendered_text,
-                view.cached.position_map,
-                view.cached.document,
-            )
-            .ok()?;
+            let (_, edit) = view
+                .authority
+                .installed()
+                .textblock_edit_for_transaction(&transaction)?;
+            let document_position = edit.replaced.start;
             let validated = admission.validate_current_with_authority(
                 view.authority.installed(),
                 &transaction,

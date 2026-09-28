@@ -259,6 +259,41 @@ impl LocalizedInsertCompiler {
             .map(|(plan, _)| plan)
     }
 
+    pub(crate) fn delete_range(
+        &mut self,
+        operation_index: usize,
+        from: u32,
+        to: u32,
+    ) -> OperationResult<()> {
+        if self.compiler.delete(operation_index, from, to, &[])? != TextRangeDisposition::Applied {
+            return Err(OperationError::engine_invariant_failed(
+                self.compiler.request_id,
+                Some(operation_index),
+                "localized text range crossed a non-text boundary",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish_range(self, operation_index: usize) -> OperationResult<YrsMutationPlan> {
+        self.compiler.finish(Some(operation_index))
+    }
+
+    pub(crate) fn compile_range(
+        mut self,
+        operation_index: usize,
+        from: u32,
+        to: u32,
+        text: &str,
+        marks: &[Mark],
+    ) -> OperationResult<YrsMutationPlan> {
+        self.delete_range(operation_index, from, to)?;
+        if !text.is_empty() {
+            self.compiler.insert(operation_index, from, text, marks)?;
+        }
+        self.finish_range(operation_index)
+    }
+
     pub(crate) fn compile_with_promotion(
         mut self,
         operation_index: usize,
@@ -273,7 +308,7 @@ impl LocalizedInsertCompiler {
             matches!(
                 slot,
                 ActionSlot::Concrete(action)
-                    if matches!(action.as_ref(), YrsMutationAction::CreateText { .. })
+                    if matches!(action.as_ref(), YrsMutationAction::CreateText { .. } | YrsMutationAction::DeleteText { .. })
             )
         }) {
             return self

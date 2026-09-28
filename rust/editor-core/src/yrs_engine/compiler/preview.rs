@@ -16,6 +16,10 @@ use crate::yrs_engine::{OperationError, OperationResult, TypedOperation, TypedTr
 use std::sync::Arc;
 
 pub(super) struct LocalizedSemanticCompilation {
+    pub(super) steps: std::collections::VecDeque<LocalizedSemanticStep>,
+}
+
+pub(super) struct LocalizedSemanticStep {
     pub(super) position: u32,
     pub(super) preview: Document,
     pub(super) step_map: StepMap,
@@ -197,26 +201,15 @@ pub(super) fn try_localized_semantic_compilation(
     if FORCE_LOCALIZED_SEMANTIC_ALLOCATION_FAILURE.get() {
         return None;
     }
-    let [TypedOperation::InsertText { text, marks, .. }] = transaction.operations.as_slice() else {
-        return None;
-    };
     let position = validated.document_position();
-    let (preview, step_map) = crate::transform::apply_step(
-        context.document,
-        &Step::InsertText {
-            pos: position,
-            text: text.clone(),
-            marks: marks.clone(),
-        },
-        context.schema,
-    )
-    .ok()?;
-    let rendered_byte = scalar_byte_offset(
-        validated.rendered_text(),
-        validated.rendered_scalar_position(),
-    )?;
+    let old_block = context.document.node_at(validated.block_path())?;
+    let old_text = old_block.text_content();
+    let old_text_scalars = u64::try_from(old_text.chars().count()).ok()?;
+    let original_start_scalar = validated.rendered_scalar_position();
+    let rendered_byte = scalar_byte_offset(validated.rendered_text(), original_start_scalar)?;
+    let placeholder = crate::render::empty_text_block_placeholder_string();
+    let placeholder_scalars = u32::try_from(placeholder.chars().count()).ok()?;
     let prefix_end = if validated.creates_leaf() {
-        let placeholder = crate::render::empty_text_block_placeholder_string();
         if !validated.rendered_text()[..rendered_byte].ends_with(placeholder.as_str()) {
             return None;
         }
@@ -224,45 +217,105 @@ pub(super) fn try_localized_semantic_compilation(
     } else {
         rendered_byte
     };
-    let rendered_capacity = validated
-        .rendered_text()
-        .len()
-        .checked_sub(rendered_byte.checked_sub(prefix_end)?)?
-        .checked_add(text.len())?;
-    let mut rendered_text = String::new();
-    rendered_text.try_reserve_exact(rendered_capacity).ok()?;
-    rendered_text.push_str(&validated.rendered_text()[..prefix_end]);
-    rendered_text.push_str(text);
-    rendered_text.push_str(&validated.rendered_text()[rendered_byte..]);
-
+    let suffix_start = scalar_byte_offset(validated.rendered_text(), validated.range_end_scalar())?;
+    let removed_rendered_scalars = if validated.creates_leaf() {
+        placeholder_scalars
+    } else {
+        validated
+            .range_end_scalar()
+            .checked_sub(original_start_scalar)?
+    };
     let top_level_count = context.document.root().child_count();
     let affected_start = validated.affected_top_level_index().saturating_sub(1);
     if affected_start >= top_level_count {
         return None;
     }
-    let affected_len = top_level_count.checked_sub(affected_start)?;
-    let mut affected_top_level_blocks = Vec::new();
-    affected_top_level_blocks
-        .try_reserve_exact(affected_len)
-        .ok()?;
-    affected_top_level_blocks.extend(affected_start..top_level_count);
-
-    Some(LocalizedSemanticCompilation {
-        position,
-        preview,
-        step_map,
-        derivations: LocalizedSemanticDerivations {
-            affected_top_level_blocks,
-            rendered_text,
-            rendered_scalars: validated.next_rendered_scalars(),
-            document_text_bytes: validated.next_raw_text_utf8_bytes(),
-            document_node_count: validated
-                .document_node_count()
-                .checked_add(usize::from(validated.creates_leaf()))?,
-            raw_text_scalars: validated.next_raw_text_scalars(),
-            raw_text_utf8_bytes: validated.next_raw_text_utf8_bytes(),
-        },
-    })
+    let mut steps = std::collections::VecDeque::new();
+    steps.try_reserve(transaction.operations.len()).ok()?;
+    let mut current_document = context.document.clone();
+    for operation in &transaction.operations {
+        let (step, text) = match operation {
+            TypedOperation::InsertText { text, marks, .. } => (
+                Step::InsertText {
+                    pos: position,
+                    text: text.clone(),
+                    marks: marks.clone(),
+                },
+                text.as_str(),
+            ),
+            TypedOperation::DeleteRange { .. } => (
+                Step::DeleteRange {
+                    from: position,
+                    to: validated.range_end(),
+                },
+                "",
+            ),
+            TypedOperation::ReplaceRange { content, .. } => (
+                Step::ReplaceRange {
+                    from: position,
+                    to: validated.range_end(),
+                    content: content.clone(),
+                },
+                content.child(0)?.text_str()?,
+            ),
+            _ => return None,
+        };
+        let (preview, step_map) =
+            crate::transform::apply_step(&current_document, &step, context.schema).ok()?;
+        let block = preview.node_at(validated.block_path())?;
+        let inserted = if block.child_count() == 0 {
+            placeholder.as_str()
+        } else {
+            text
+        };
+        let rendered_capacity = validated
+            .rendered_text()
+            .len()
+            .checked_sub(suffix_start.checked_sub(prefix_end)?)?
+            .checked_add(inserted.len())?;
+        let mut rendered_text = String::new();
+        rendered_text.try_reserve_exact(rendered_capacity).ok()?;
+        rendered_text.push_str(&validated.rendered_text()[..prefix_end]);
+        rendered_text.push_str(inserted);
+        rendered_text.push_str(&validated.rendered_text()[suffix_start..]);
+        let block_text = block.text_content();
+        let raw_text_scalars = validated
+            .base_raw_text_scalars()
+            .checked_sub(old_text_scalars)?
+            .checked_add(u64::try_from(block_text.chars().count()).ok()?)?;
+        let raw_text_utf8_bytes = validated
+            .base_raw_text_utf8_bytes()
+            .checked_sub(old_text.len())?
+            .checked_add(block_text.len())?;
+        let document_node_count = validated
+            .base_document_node_count()
+            .checked_sub(old_block.child_count())?
+            .checked_add(block.child_count())?;
+        let mut affected_top_level_blocks = Vec::new();
+        affected_top_level_blocks
+            .try_reserve_exact(top_level_count.checked_sub(affected_start)?)
+            .ok()?;
+        affected_top_level_blocks.extend(affected_start..top_level_count);
+        current_document = preview.clone();
+        steps.push_back(LocalizedSemanticStep {
+            position,
+            preview,
+            step_map,
+            derivations: LocalizedSemanticDerivations {
+                affected_top_level_blocks,
+                rendered_text,
+                rendered_scalars: validated
+                    .base_rendered_scalars()
+                    .checked_sub(removed_rendered_scalars)?
+                    .checked_add(u32::try_from(inserted.chars().count()).ok()?)?,
+                document_text_bytes: raw_text_utf8_bytes,
+                document_node_count,
+                raw_text_scalars,
+                raw_text_utf8_bytes,
+            },
+        });
+    }
+    Some(LocalizedSemanticCompilation { steps })
 }
 
 #[allow(clippy::too_many_arguments)]

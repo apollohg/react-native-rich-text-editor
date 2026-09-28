@@ -348,7 +348,11 @@ fn localized_existing_textblock_targets<T: ReadTxn>(
             .is_some_and(|spec| matches!(spec.role, NodeRole::TextBlock))
         || semantic_block.content().is_none_or(|content| {
             (content.child_count() == 0 && !creates_text)
-                || content.iter().any(|child| !child.is_text())
+                || content.iter().any(|child| {
+                    !child.is_text()
+                        && !(matches!(locator, LocalizedTextblockLocator::Insert(_))
+                            && child.is_void())
+                })
         })
     {
         return Ok(None);
@@ -415,9 +419,14 @@ fn localized_existing_textblock_targets<T: ReadTxn>(
         }));
     }
     if children.is_empty()
-        || children
-            .iter()
-            .any(|child| !matches!(child, XmlOut::Text(_)))
+        || children.iter().any(|child| match child {
+            XmlOut::Text(_) => false,
+            XmlOut::Element(element) => {
+                !matches!(locator, LocalizedTextblockLocator::Insert(_))
+                    || !wire_element_is_semantic_void(element, txn, schema)
+            }
+            _ => true,
+        })
     {
         return Ok(None);
     }

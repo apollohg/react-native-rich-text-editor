@@ -61,7 +61,11 @@ fn localized_text_index_proves_same_marked_leaf_edges_and_refuses_mark_changes()
     );
     assert_eq!(
         proof.plan.next_canonical_serialized_len,
-        state.canonical_artifact.serialized_len() + proof.plan.canonical_growth_bytes
+        state
+            .canonical_artifact
+            .serialized_len()
+            .checked_add_signed(proof.plan.canonical_growth_bytes)
+            .unwrap()
     );
     assert_eq!(
         proof.plan.next_rendered_scalars,
@@ -87,7 +91,10 @@ fn localized_text_index_proves_same_marked_leaf_edges_and_refuses_mark_changes()
         .schema_context()
         .derive(&preview)
         .unwrap();
-    assert_eq!(full_artifact.text_scalar_len(), proof.plan.next_raw_text_scalars);
+    assert_eq!(
+        full_artifact.text_scalar_len(),
+        proof.plan.next_raw_text_scalars
+    );
     assert_eq!(
         full_artifact.text_utf8_bytes(),
         proof.plan.next_raw_text_utf8_bytes

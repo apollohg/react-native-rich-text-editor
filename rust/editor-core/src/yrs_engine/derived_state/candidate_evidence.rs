@@ -245,7 +245,7 @@ impl PreparedCandidateEvidence {
             document,
             schema,
             proof.target_top_level_index,
-            proof.inserted_scalar_delta,
+            i32::try_from(proof.inserted_scalar_delta).ok()?,
             resource_limits,
         ))
     }
@@ -583,6 +583,11 @@ impl PreparedCandidateValidation {
         }
         let validation_certificate = DocumentValidationCertificate {
             stats: self.validation.stats,
+            depth_counts: DocumentValidationCertificate::subtree_depth_counts(
+                document.root(),
+                crate::transform::DOCUMENT_ROOT_DEPTH,
+            )
+            .into(),
             metrics: self.validation.metrics,
             resource_limits: self.resource_limits,
             schema_fingerprint: self.schema_fingerprint,

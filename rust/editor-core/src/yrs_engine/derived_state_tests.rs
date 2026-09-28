@@ -117,6 +117,7 @@ fn precomputed_document_history_charge_matches_legacy_helper_and_checks_overflow
     let precomputed = history_document_snapshot_retained_bytes_with_precomputed_document_charge(
         charge.source_document_retained_bytes,
         charge.canonical_retained_bytes,
+        state.validation_certificate.depth_counts.len(),
         &state.position_map,
         &state.rendered_text,
         &state.render_blocks,
@@ -130,6 +131,7 @@ fn precomputed_document_history_charge_matches_legacy_helper_and_checks_overflow
         history_document_snapshot_retained_bytes_with_precomputed_document_charge(
             usize::MAX,
             charge.canonical_retained_bytes,
+            state.validation_certificate.depth_counts.len(),
             &state.position_map,
             &state.rendered_text,
             &state.render_blocks,

@@ -335,22 +335,33 @@ fn textblock_local_or_semantic_transaction(
     selection: &crate::selection::Selection,
     plan: crate::command_planner::SemanticCommandPlan,
 ) -> OperationResult<CommandPlan> {
-    let (
-        Some(state),
-        [crate::command_planner::SemanticOperation::InsertText { pos, text, marks }],
-        TransactionOrigin::LocalInput
-        | TransactionOrigin::LocalCommand
-        | TransactionOrigin::LocalApi,
-    ) = (
-        context.localized_textblock_state,
-        plan.operations.as_slice(),
-        context.origin,
-    )
-    else {
+    let Some(state) = context.localized_textblock_state else {
         return semantic_transaction(context, selection, plan);
     };
+    if !matches!(
+        context.origin,
+        TransactionOrigin::LocalInput
+            | TransactionOrigin::LocalCommand
+            | TransactionOrigin::LocalApi
+    ) {
+        return semantic_transaction(context, selection, plan);
+    }
+    let (from, to, text, marks) = match plan.operations.as_slice() {
+        [crate::command_planner::SemanticOperation::InsertText { pos, text, marks }] => {
+            (*pos, *pos, text.as_str(), marks.as_slice())
+        }
+        [crate::command_planner::SemanticOperation::DeleteRange { from, to }] => {
+            (*from, *to, "", &[][..])
+        }
+        [crate::command_planner::SemanticOperation::DeleteRange { from, to }, crate::command_planner::SemanticOperation::InsertText { pos, text, marks }]
+            if pos == from =>
+        {
+            (*from, *to, text.as_str(), marks.as_slice())
+        }
+        _ => return semantic_transaction(context, selection, plan),
+    };
     let Some(block_path) = state
-        .localized_textblock_path(*pos)
+        .localized_textblock_path(from)
         .filter(|_| plan.operations.len() <= context.editing_limits.max_operations_per_transaction)
     else {
         return semantic_transaction(context, selection, plan);
@@ -363,7 +374,7 @@ fn textblock_local_or_semantic_transaction(
     .map_err(|refusal| refusal.into_operation_error(context.request_id))?;
     let edit = LocalizedTextblockEdit {
         block_path,
-        replaced: *pos..*pos,
+        replaced: from..to,
         text,
         marks,
     };
@@ -858,7 +869,15 @@ pub(super) fn plan(
             );
         }
         TypedCommand::DeleteRange { range: requested } => {
-            let rendered = crate::render::rendered_text(context.document, context.schema);
+            let rendered = context.localized_textblock_state.map_or_else(
+                || {
+                    std::borrow::Cow::Owned(crate::render::rendered_text(
+                        context.document,
+                        context.schema,
+                    ))
+                },
+                |state| std::borrow::Cow::Borrowed(state.rendered_text.as_str()),
+            );
             let resolve = |position: RevisionedPosition, field| {
                 let scalar = crate::yrs_engine::position::editor_offset_to_scalar(
                     position.offset,
@@ -904,7 +923,7 @@ pub(super) fn plan(
                 context.position_map.scalar_to_doc(from, context.document),
                 context.position_map.scalar_to_doc(to, context.document),
             );
-            return semantic_transaction(&context, &selection, plan);
+            return textblock_local_or_semantic_transaction(&context, &selection, plan);
         }
         TypedCommand::DeleteBackward
             if matches!(
@@ -1017,7 +1036,7 @@ pub(super) fn plan(
             else {
                 return Ok(CommandPlan::NotApplicable);
             };
-            semantic_transaction(&context, &selection, plan)
+            textblock_local_or_semantic_transaction(&context, &selection, plan)
         }
         TypedCommand::SplitBlock | TypedCommand::DeleteAndSplit => {
             let delete_selection = matches!(command, TypedCommand::DeleteAndSplit);

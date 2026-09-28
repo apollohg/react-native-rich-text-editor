@@ -16,7 +16,7 @@ use crate::yrs_engine::canonical::CanonicalArtifact;
 use sha2::Digest;
 use std::sync::Arc;
 
-const LEAVES_MEETING_AT_A_POSITION: usize = 2;
+pub(super) const LEAVES_MEETING_AT_A_POSITION: usize = 2;
 
 /// A rendered text leaf identity and its exact document/scalar/UTF-16 ranges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,6 +311,8 @@ impl LocalizedTextLeafIndex {
         preview: &Document,
         canonical_artifact: &CanonicalArtifact,
         cache_budget: usize,
+        position_map: &PositionMap,
+        rendered_text: &str,
     ) -> Option<Self> {
         #[cfg(test)]
         if FORCE_LOCALIZED_INDEX_ALLOCATION_FAILURE.get() {
@@ -324,10 +326,22 @@ impl LocalizedTextLeafIndex {
         if forced_localized_index_allocation_stage(LocalizedIndexAllocationStage::PromotionClone) {
             return None;
         }
-        let promoted_len = self
+        let range_slots = self
             .leaves
-            .len()
-            .checked_add(usize::from(plan.creates_leaf))?;
+            .partition_point(|leaf| leaf.block_index < plan.leaf.block_index)
+            ..self
+                .leaves
+                .partition_point(|leaf| leaf.block_index <= plan.leaf.block_index);
+        let promoted_len = if plan.removed_scalars > 0 {
+            self.leaves
+                .len()
+                .checked_sub(range_slots.len())?
+                .checked_add(preview.node_at(block_path)?.child_count())?
+        } else {
+            self.leaves
+                .len()
+                .checked_add(usize::from(plan.creates_leaf))?
+        };
         let required_bytes =
             promoted_len.checked_mul(std::mem::size_of::<LocalizedTextLeafCertificate>())?;
         let available_bytes = cache_budget.checked_sub(self.retained_bytes)?;
@@ -346,53 +360,103 @@ impl LocalizedTextLeafIndex {
         if forced_localized_index_allocation_stage(LocalizedIndexAllocationStage::PromotionGrowth) {
             return None;
         }
-        let target = if plan.creates_leaf {
-            let slot = self.leaf_slot(admission.inserted_document_position);
-            leaves.extend_from_slice(&self.leaves[..slot]);
-            leaves.push(plan.leaf);
-            leaves.extend_from_slice(&self.leaves[slot..]);
-            slot
-        } else {
-            leaves.extend_from_slice(&self.leaves);
-            let target = self.joined_leaf(
+        if plan.removed_scalars > 0 {
+            leaves.extend_from_slice(&self.leaves[..range_slots.start]);
+            let block = position_map.block(plan.leaf.block_index)?;
+            let mut cursor = RenderedCursor::new(rendered_text);
+            let mut range_retained_bytes = retained_bytes;
+            collect_localized_text_leaves_streamed(
+                position_map,
+                preview.node_at(block_path)?,
+                block.doc_start,
+                block.scalar_start.checked_add(block.scalar_prefix_len)?,
                 plan.leaf.block_index,
-                admission.inserted_document_position,
-                plan.leaf.marks_sha256,
+                &mut leaves,
+                &mut cursor,
+                &mut range_retained_bytes,
+                available_bytes,
+                0,
             )?;
-            if leaves.get(target)? != &plan.leaf {
+            let suffix = leaves.len();
+            leaves.extend_from_slice(&self.leaves[range_slots.end..]);
+            let doc_delta = i32::try_from(plan.inserted_scalars)
+                .ok()?
+                .checked_sub(i32::try_from(plan.removed_scalars).ok()?)?;
+            for leaf in leaves.iter_mut().skip(suffix) {
+                leaf.doc_start = leaf.doc_start.checked_add_signed(doc_delta)?;
+                leaf.doc_end = leaf.doc_end.checked_add_signed(doc_delta)?;
+                leaf.scalar_start = leaf
+                    .scalar_start
+                    .checked_add_signed(plan.rendered_scalar_delta)?;
+                leaf.scalar_end = leaf
+                    .scalar_end
+                    .checked_add_signed(plan.rendered_scalar_delta)?;
+                leaf.utf16_start = leaf
+                    .utf16_start
+                    .checked_add_signed(plan.rendered_utf16_delta)?;
+                leaf.utf16_end = leaf
+                    .utf16_end
+                    .checked_add_signed(plan.rendered_utf16_delta)?;
+            }
+        } else {
+            let target = if plan.creates_leaf {
+                let slot = self.leaf_slot(admission.inserted_document_position);
+                leaves.extend_from_slice(&self.leaves[..slot]);
+                leaves.push(plan.leaf);
+                leaves.extend_from_slice(&self.leaves[slot..]);
+                slot
+            } else {
+                leaves.extend_from_slice(&self.leaves);
+                let target = self.joined_leaf(
+                    plan.leaf.block_index,
+                    admission.inserted_document_position,
+                    plan.leaf.marks_sha256,
+                )?;
+                if leaves.get(target)? != &plan.leaf {
+                    return None;
+                }
+                target
+            };
+            #[cfg(test)]
+            if forced_localized_index_allocation_stage(
+                LocalizedIndexAllocationStage::PromotionUpdate,
+            ) {
                 return None;
             }
-            target
-        };
-        #[cfg(test)]
-        if forced_localized_index_allocation_stage(LocalizedIndexAllocationStage::PromotionUpdate) {
-            return None;
-        }
-        let block = preview.node_at(block_path)?;
-        let next_leaf = block
-            .content()?
-            .child(usize::try_from(plan.leaf.child_ordinal).ok()?)?;
-        let next_text = next_leaf.text_str()?;
-        let inserted_scalars = plan.inserted_scalars;
-        let inserted_utf16 = plan.inserted_utf16;
-        let target_leaf = leaves.get_mut(target)?;
-        target_leaf.doc_end = target_leaf.doc_end.checked_add(inserted_scalars)?;
-        target_leaf.scalar_end = target_leaf.scalar_end.checked_add(inserted_scalars)?;
-        target_leaf.utf16_end = target_leaf.utf16_end.checked_add(inserted_utf16)?;
-        target_leaf.text_scalars = target_leaf.text_scalars.checked_add(inserted_scalars)?;
-        target_leaf.text_utf16 = target_leaf.text_utf16.checked_add(inserted_utf16)?;
-        target_leaf.text_utf8_bytes = target_leaf
-            .text_utf8_bytes
-            .checked_add(plan.inserted_utf8_bytes)?;
-        target_leaf.text_sha256 = sha2::Sha256::digest(next_text.as_bytes()).into();
-        target_leaf.marks_sha256 = canonical_marks_sha256(next_leaf.marks())?;
-        for leaf in leaves.iter_mut().skip(target + 1) {
-            leaf.doc_start = leaf.doc_start.checked_add(inserted_scalars)?;
-            leaf.doc_end = leaf.doc_end.checked_add(inserted_scalars)?;
-            leaf.scalar_start = leaf.scalar_start.checked_add(plan.rendered_scalar_delta)?;
-            leaf.scalar_end = leaf.scalar_end.checked_add(plan.rendered_scalar_delta)?;
-            leaf.utf16_start = leaf.utf16_start.checked_add(plan.rendered_utf16_delta)?;
-            leaf.utf16_end = leaf.utf16_end.checked_add(plan.rendered_utf16_delta)?;
+            let block = preview.node_at(block_path)?;
+            let next_leaf = block
+                .content()?
+                .child(usize::try_from(plan.leaf.child_ordinal).ok()?)?;
+            let next_text = next_leaf.text_str()?;
+            let inserted_scalars = plan.inserted_scalars;
+            let inserted_utf16 = plan.inserted_utf16;
+            let target_leaf = leaves.get_mut(target)?;
+            target_leaf.doc_end = target_leaf.doc_end.checked_add(inserted_scalars)?;
+            target_leaf.scalar_end = target_leaf.scalar_end.checked_add(inserted_scalars)?;
+            target_leaf.utf16_end = target_leaf.utf16_end.checked_add(inserted_utf16)?;
+            target_leaf.text_scalars = target_leaf.text_scalars.checked_add(inserted_scalars)?;
+            target_leaf.text_utf16 = target_leaf.text_utf16.checked_add(inserted_utf16)?;
+            target_leaf.text_utf8_bytes = target_leaf
+                .text_utf8_bytes
+                .checked_add(plan.inserted_utf8_bytes)?;
+            target_leaf.text_sha256 = sha2::Sha256::digest(next_text.as_bytes()).into();
+            target_leaf.marks_sha256 = canonical_marks_sha256(next_leaf.marks())?;
+            for leaf in leaves.iter_mut().skip(target + 1) {
+                leaf.doc_start = leaf.doc_start.checked_add(inserted_scalars)?;
+                leaf.doc_end = leaf.doc_end.checked_add(inserted_scalars)?;
+                leaf.scalar_start = leaf
+                    .scalar_start
+                    .checked_add_signed(plan.rendered_scalar_delta)?;
+                leaf.scalar_end = leaf
+                    .scalar_end
+                    .checked_add_signed(plan.rendered_scalar_delta)?;
+                leaf.utf16_start = leaf
+                    .utf16_start
+                    .checked_add_signed(plan.rendered_utf16_delta)?;
+                leaf.utf16_end = leaf
+                    .utf16_end
+                    .checked_add_signed(plan.rendered_utf16_delta)?;
+            }
         }
         Some(Self {
             leaves,

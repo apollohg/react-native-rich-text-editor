@@ -312,7 +312,14 @@ fn localized_render_transition_matches_generic_for_supported_insert_shapes() {
         let affected = target.saturating_sub(1)..old.root().child_count();
         let affected = affected.collect::<Vec<_>>();
         let specialized = cache
-            .transition_localized_textblock(&old, &new, &schema, target, inserted_scalars, &limits)
+            .transition_localized_textblock(
+                &old,
+                &new,
+                &schema,
+                target,
+                i32::try_from(inserted_scalars).unwrap(),
+                &limits,
+            )
             .unwrap();
         let generic = cache.transition(&old, &new, &schema, &[], &limits).unwrap();
         assert_eq!(specialized.update, generic.update);

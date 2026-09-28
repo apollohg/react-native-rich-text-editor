@@ -581,6 +581,11 @@ impl YrsDocumentEngine {
             state,
             evidence.canonical_retained_bytes,
             evidence.source_document_retained_bytes,
+            yrs_engine::derived_state::DocumentValidationCertificate::subtree_depth_counts(
+                expected_document.root(),
+                crate::transform::DOCUMENT_ROOT_DEPTH,
+            )
+            .len(),
             &evidence.candidate_derivations,
             &candidate_render.cache,
             state.stored_marks.as_deref(),

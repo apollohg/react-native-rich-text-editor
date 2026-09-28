@@ -24,8 +24,8 @@ pub(super) struct LocalizedRenderTransitionProof {
     pub(super) max_length: Option<u32>,
     pub(super) derivation_identity_seal: Arc<()>,
     pub(super) target_top_level_index: usize,
-    pub(super) inserted_scalar_delta: u32,
-    pub(super) rendered_scalar_delta: u32,
+    pub(super) document_scalar_delta: i32,
+    pub(super) rendered_scalar_delta: i32,
     pub(super) top_level_cardinality: usize,
     pub(super) operation_kind: LocalizedRenderOperationKind,
 }
@@ -33,6 +33,7 @@ pub(super) struct LocalizedRenderTransitionProof {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LocalizedRenderOperationKind {
     TextblockInsert,
+    ReplaceText,
     #[cfg(test)]
     Unsupported,
 }
@@ -129,7 +130,7 @@ impl PreparedDerivedEvidence {
                 proof.target_top_level_index = proof.target_top_level_index.saturating_add(1)
             }
             "scalarDelta" => {
-                proof.inserted_scalar_delta = proof.inserted_scalar_delta.saturating_add(1)
+                proof.document_scalar_delta = proof.document_scalar_delta.saturating_add(1)
             }
             "renderedDelta" => {
                 proof.rendered_scalar_delta = proof.rendered_scalar_delta.saturating_add(1)
@@ -163,10 +164,10 @@ impl PreparedDerivedEvidence {
         let proof = self.localized_render_transition_proof.as_ref()?;
         let base_raw_scalars = state.validation_certificate.raw_text_scalars;
         let expected_raw_scalars =
-            base_raw_scalars.checked_add(u64::from(proof.inserted_scalar_delta))?;
+            base_raw_scalars.checked_add_signed(i64::from(proof.document_scalar_delta))?;
         let expected_rendered_scalars = state
             .rendered_scalars
-            .checked_add(proof.rendered_scalar_delta)?;
+            .checked_add_signed(proof.rendered_scalar_delta)?;
         let expected_affected_start = proof.target_top_level_index.saturating_sub(1);
         let expected_affected_len = proof
             .top_level_cardinality
@@ -195,8 +196,13 @@ impl PreparedDerivedEvidence {
             || proof.max_undo_retained_units != editing_limits.max_undo_retained_units
             || proof.max_length != max_length
             || !Arc::ptr_eq(&proof.derivation_identity_seal, &derivations.identity_seal)
-            || proof.operation_kind != LocalizedRenderOperationKind::TextblockInsert
-            || proof.inserted_scalar_delta == 0
+            || !matches!(
+                proof.operation_kind,
+                LocalizedRenderOperationKind::TextblockInsert
+                    | LocalizedRenderOperationKind::ReplaceText
+            )
+            || (proof.operation_kind == LocalizedRenderOperationKind::TextblockInsert
+                && proof.document_scalar_delta <= 0)
             || state.document.root().child_count() != proof.top_level_cardinality
             || preview.root().child_count() != proof.top_level_cardinality
             || !affected_range_matches
@@ -221,7 +227,7 @@ impl PreparedDerivedEvidence {
             preview,
             schema,
             proof.target_top_level_index,
-            proof.inserted_scalar_delta,
+            proof.document_scalar_delta,
             resource_limits,
         ))
     }

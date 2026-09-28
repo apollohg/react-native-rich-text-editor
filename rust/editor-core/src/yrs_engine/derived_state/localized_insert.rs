@@ -4,6 +4,7 @@ use super::insert_admission::{
 };
 use super::localized_index::{
     canonical_marks_sha256, node_path_sha256, LocalizedTextLeafCertificate,
+    LEAVES_MEETING_AT_A_POSITION,
 };
 #[cfg(test)]
 use super::observability::LOCALIZED_INSERT_ADMISSION_WORK;
@@ -13,6 +14,7 @@ use crate::boundary::ResourceLimits;
 use crate::model::Mark;
 use crate::model::{Fragment, Node};
 use crate::schema::{NodeRole, Schema};
+use crate::transform::Step;
 use crate::transform::{DocumentValidator, DOCUMENT_ROOT_DEPTH};
 use crate::yrs_engine;
 use crate::yrs_engine::{scalar_offset_to_utf16, ResolvedPoint, ResolvedSelection};
@@ -26,12 +28,66 @@ struct TextblockEditTarget {
     scalar_at: u32,
     utf16_at: u32,
     creates_leaf: bool,
-    canonical_growth_bytes: usize,
-    rendered_scalar_delta: u32,
-    rendered_utf16_delta: u32,
+    canonical_growth_bytes: isize,
+    rendered_scalar_delta: i32,
+    rendered_utf16_delta: i32,
+    removed_scalars: u32,
+    removed_utf8_bytes: usize,
+    removed_utf16: u32,
+    empty_after: bool,
 }
 
 impl DerivedStateCache {
+    pub(crate) fn textblock_edit_for_transaction<'a>(
+        &'a self,
+        transaction: &'a yrs_engine::TypedTransaction,
+    ) -> Option<(yrs_engine::RevisionedPosition, LocalizedTextblockEdit<'a>)> {
+        let (at, end, text, marks) = match transaction.operations.as_slice() {
+            [yrs_engine::TypedOperation::InsertText { at, text, marks }] => {
+                (*at, *at, text.as_str(), marks.as_slice())
+            }
+            [yrs_engine::TypedOperation::DeleteRange { range }, yrs_engine::TypedOperation::InsertText { at, text, marks }]
+                if *at == range.from =>
+            {
+                (range.from, range.to, text.as_str(), marks.as_slice())
+            }
+            [yrs_engine::TypedOperation::DeleteRange { range }] => {
+                (range.from, range.to, "", &[][..])
+            }
+            [yrs_engine::TypedOperation::ReplaceRange { range, content }] => {
+                let node = content.child(0)?;
+                if content.child_count() != 1 {
+                    return None;
+                }
+                (range.from, range.to, node.text_str()?, node.marks())
+            }
+            _ => return None,
+        };
+        let resolve = |point: yrs_engine::RevisionedPosition| {
+            yrs_engine::editor_offset_to_doc_pos(
+                point.offset,
+                point.kind,
+                &self.rendered_text,
+                &self.position_map,
+                &self.document,
+            )
+        };
+        let from = resolve(at)?;
+        let to = resolve(end)?;
+        if from > to {
+            return None;
+        }
+        Some((
+            at,
+            LocalizedTextblockEdit {
+                block_path: self.localized_textblock_path(from)?,
+                replaced: from..to,
+                text,
+                marks,
+            },
+        ))
+    }
+
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn localized_insert_admission_for_test(
@@ -142,23 +198,17 @@ impl DerivedStateCache {
         {
             return None;
         }
-        let [yrs_engine::TypedOperation::InsertText { at, text, marks }] =
-            transaction.operations.as_slice()
-        else {
+        let (at, edit) = self.textblock_edit_for_transaction(transaction)?;
+        if edit.replaced.start != document_position {
             return None;
-        };
+        }
         self.build_localized_textblock_edit_admission(
             LocalizedTextblockEditAdmissionRequest {
                 request_id: transaction.request_id,
                 base_document_revision: transaction.base_document_revision,
                 origin: transaction.origin,
-                inserted_at: *at,
-                edit: LocalizedTextblockEdit {
-                    block_path: self.localized_textblock_path(document_position)?,
-                    replaced: document_position..document_position,
-                    text,
-                    marks,
-                },
+                inserted_at: at,
+                edit,
                 selection_intent: transaction.selection_intent.clone(),
                 history_policy: transaction.history_policy,
             },
@@ -285,7 +335,7 @@ impl DerivedStateCache {
         canonical_serialized_len: usize,
     ) -> Option<LocalizedTextblockEditPlan> {
         let document_position = edit.replaced.start;
-        if edit.text.is_empty() || !edit.replaced.is_empty() {
+        if edit.text.is_empty() && edit.replaced.is_empty() {
             return None;
         }
         let block_index = self.textblock_index_at(document_position)?;
@@ -301,9 +351,7 @@ impl DerivedStateCache {
         .ok()?;
         let inserted_scalars = u32::try_from(edit.text.chars().count()).ok()?;
         let inserted_utf16 = u32::try_from(edit.text.encode_utf16().count()).ok()?;
-        let escaped_limit = editing_limits
-            .max_derived_output_bytes
-            .checked_sub(canonical_serialized_len)?;
+        let escaped_limit = editing_limits.max_derived_output_bytes;
         let target = self.textblock_edit_target(
             block_index,
             edit,
@@ -315,6 +363,7 @@ impl DerivedStateCache {
         let next_raw_text_scalars = self
             .validation_certificate
             .raw_text_scalars
+            .checked_sub(u64::from(target.removed_scalars))?
             .checked_add(u64::from(inserted_scalars))?;
         if max_length.is_some_and(|limit| next_raw_text_scalars > u64::from(limit)) {
             return None;
@@ -322,24 +371,36 @@ impl DerivedStateCache {
         let next_raw_text_utf8_bytes = self
             .validation_certificate
             .raw_text_utf8_bytes
+            .checked_sub(target.removed_utf8_bytes)?
             .checked_add(edit.text.len())?;
         let next_canonical_serialized_len =
-            canonical_serialized_len.checked_add(target.canonical_growth_bytes)?;
+            canonical_serialized_len.checked_add_signed(target.canonical_growth_bytes)?;
         if next_canonical_serialized_len > editing_limits.max_derived_output_bytes {
             return None;
         }
-        let history_undo_units = u64::from(inserted_utf16);
+        let history_undo_units =
+            u64::from(inserted_utf16).checked_add(u64::from(target.removed_utf16))?;
         if history_undo_units > editing_limits.max_undo_retained_units {
             return None;
         }
         let next_point = ResolvedPoint {
             document: document_position.checked_add(inserted_scalars)?,
-            scalar: target.scalar_at.checked_add(target.rendered_scalar_delta)?,
-            utf16: target.utf16_at.checked_add(target.rendered_utf16_delta)?,
+            scalar: target
+                .scalar_at
+                .checked_add(inserted_scalars)?
+                .checked_add(u32::from(target.empty_after))?
+                .checked_sub(u32::from(target.creates_leaf))?,
+            utf16: target
+                .utf16_at
+                .checked_add(inserted_utf16)?
+                .checked_add(u32::from(target.empty_after))?
+                .checked_sub(u32::from(target.creates_leaf))?,
         };
         Some(LocalizedTextblockEditPlan {
             leaf: target.leaf,
             creates_leaf: target.creates_leaf,
+            removed_scalars: target.removed_scalars,
+            range_end: edit.replaced.end,
             block_path_len: edit.block_path.len(),
             block_path_sha256: node_path_sha256(edit.block_path),
             affected_top_level_index: usize::try_from(*edit.block_path.first()?).ok()?,
@@ -354,7 +415,7 @@ impl DerivedStateCache {
             next_canonical_serialized_len,
             next_rendered_scalars: self
                 .rendered_scalars
-                .checked_add(target.rendered_scalar_delta)?,
+                .checked_add_signed(target.rendered_scalar_delta)?,
             operation_result: ResolvedSelection::Text {
                 anchor: next_point,
                 head: next_point,
@@ -391,6 +452,17 @@ impl DerivedStateCache {
             .position_map
             .doc_to_scalar(document_position, &self.document);
         let utf16_at = scalar_offset_to_utf16(&self.rendered_text, scalar_at)?;
+        if !edit.replaced.is_empty() {
+            return self.textblock_range_target(
+                block_index,
+                edit,
+                schema,
+                scalar_at,
+                utf16_at,
+                inserted_scalars,
+                inserted_utf16,
+            );
+        }
         if let Some(leaf_index) = index.joined_leaf(block_index, document_position, marks_sha256) {
             let leaf = *index.leaves().get(leaf_index)?;
             let live_leaf = leaf.resolve(&self.document, &self.position_map)?;
@@ -406,9 +478,17 @@ impl DerivedStateCache {
                 scalar_at,
                 utf16_at,
                 creates_leaf: false,
-                canonical_growth_bytes: checked_json_string_body_len(edit.text, escaped_limit)?,
-                rendered_scalar_delta: inserted_scalars,
-                rendered_utf16_delta: inserted_utf16,
+                canonical_growth_bytes: isize::try_from(checked_json_string_body_len(
+                    edit.text,
+                    escaped_limit,
+                )?)
+                .ok()?,
+                rendered_scalar_delta: i32::try_from(inserted_scalars).ok()?,
+                rendered_utf16_delta: i32::try_from(inserted_utf16).ok()?,
+                removed_scalars: 0,
+                removed_utf8_bytes: 0,
+                removed_utf16: 0,
+                empty_after: false,
             });
         }
         let block = self.position_map.block(block_index)?;
@@ -465,9 +545,116 @@ impl DerivedStateCache {
             scalar_at,
             utf16_at,
             creates_leaf: true,
-            canonical_growth_bytes,
-            rendered_scalar_delta: inserted_scalars.checked_sub(placeholder_scalars)?,
-            rendered_utf16_delta: inserted_utf16.checked_sub(placeholder_utf16)?,
+            canonical_growth_bytes: isize::try_from(canonical_growth_bytes).ok()?,
+            rendered_scalar_delta: i32::try_from(
+                inserted_scalars.checked_sub(placeholder_scalars)?,
+            )
+            .ok()?,
+            rendered_utf16_delta: i32::try_from(inserted_utf16.checked_sub(placeholder_utf16)?)
+                .ok()?,
+            removed_scalars: 0,
+            removed_utf8_bytes: 0,
+            removed_utf16: 0,
+            empty_after: false,
+        })
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn textblock_range_target(
+        &self,
+        block_index: usize,
+        edit: &LocalizedTextblockEdit<'_>,
+        schema: &Schema,
+        scalar_at: u32,
+        utf16_at: u32,
+        inserted_scalars: u32,
+        inserted_utf16: u32,
+    ) -> Option<TextblockEditTarget> {
+        let block = self.position_map.block(block_index)?;
+        if edit.replaced.end > block.doc_end {
+            return None;
+        }
+        let old = self.document.node_at(edit.block_path)?;
+        let mut position = block.doc_start;
+        let mut removed = String::new();
+        for child in old.content()?.iter() {
+            let end = position.checked_add(child.node_size())?;
+            let from = position.max(edit.replaced.start);
+            let to = end.min(edit.replaced.end);
+            if from < to {
+                let text = child.text_str()?;
+                removed.extend(
+                    text.chars()
+                        .skip(usize::try_from(from - position).ok()?)
+                        .take(usize::try_from(to - from).ok()?),
+                );
+            }
+            position = end;
+        }
+        let removed_scalars = edit.replaced.end.checked_sub(edit.replaced.start)?;
+        if u32::try_from(removed.chars().count()).ok()? != removed_scalars {
+            return None;
+        }
+        crate::transform::validate_input_mark_set(edit.marks, schema).ok()?;
+        if super::canonical_marks(edit.marks, schema) != edit.marks {
+            return None;
+        }
+        let step = if edit.text.is_empty() {
+            Step::DeleteRange {
+                from: edit.replaced.start,
+                to: edit.replaced.end,
+            }
+        } else {
+            Step::ReplaceRange {
+                from: edit.replaced.start,
+                to: edit.replaced.end,
+                content: Fragment::from(vec![Node::text(
+                    edit.text.to_owned(),
+                    edit.marks.to_vec(),
+                )]),
+            }
+        };
+        let (preview, _) = crate::transform::apply_step(&self.document, &step, schema).ok()?;
+        let new = preview.node_at(edit.block_path)?;
+        if old.node_type() != new.node_type() || old.attrs() != new.attrs() {
+            return None;
+        }
+        let depth = DOCUMENT_ROOT_DEPTH.checked_add(edit.block_path.len())?;
+        let limits = &self.validation_certificate.resource_limits;
+        DocumentValidator::validate_subtree_report(new, schema, limits, depth).ok()?;
+        crate::transform::validate_subtree_marks(new, schema).ok()?;
+        let empty_after = new.content()?.child_count() == 0;
+        let removed_utf16 = u32::try_from(removed.encode_utf16().count()).ok()?;
+        let index = self.localized_text_index.as_ref()?;
+        let leaf = *index
+            .leaves()
+            .iter()
+            .skip(index.leaf_slot(edit.replaced.start))
+            .take(LEAVES_MEETING_AT_A_POSITION)
+            .find(|leaf| {
+                leaf.block_index == block_index
+                    && leaf.doc_start <= edit.replaced.start
+                    && edit.replaced.start < leaf.doc_end
+            })?;
+        Some(TextblockEditTarget {
+            leaf,
+            scalar_at,
+            utf16_at,
+            creates_leaf: false,
+            canonical_growth_bytes: isize::try_from(canonical_json_len(new, schema))
+                .ok()?
+                .checked_sub(isize::try_from(canonical_json_len(old, schema)).ok()?)?,
+            rendered_scalar_delta: i32::try_from(inserted_scalars)
+                .ok()?
+                .checked_sub(i32::try_from(removed_scalars).ok()?)?
+                .checked_add(i32::from(empty_after))?,
+            rendered_utf16_delta: i32::try_from(inserted_utf16)
+                .ok()?
+                .checked_sub(i32::try_from(removed_utf16).ok()?)?
+                .checked_add(i32::from(empty_after))?,
+            removed_scalars,
+            removed_utf8_bytes: removed.len(),
+            removed_utf16,
+            empty_after,
         })
     }
 }

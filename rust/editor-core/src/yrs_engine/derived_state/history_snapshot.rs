@@ -349,6 +349,11 @@ pub(crate) fn history_document_snapshot_retained_bytes(
     history_document_snapshot_retained_bytes_with_precomputed_document_charge(
         retained_charge.source_document_retained_bytes,
         retained_charge.canonical_retained_bytes,
+        DocumentValidationCertificate::subtree_depth_counts(
+            input.document.root(),
+            crate::transform::DOCUMENT_ROOT_DEPTH,
+        )
+        .len(),
         input.position_map,
         input.rendered_text,
         input.render_blocks,
@@ -373,6 +378,11 @@ pub(crate) fn history_document_snapshot_retained_bytes_with_canonical_charge(
     history_document_snapshot_retained_bytes_with_precomputed_document_charge(
         document.history_snapshot_retained_bytes()?,
         canonical_retained_bytes,
+        DocumentValidationCertificate::subtree_depth_counts(
+            document.root(),
+            crate::transform::DOCUMENT_ROOT_DEPTH,
+        )
+        .len(),
         position_map,
         rendered_text,
         render_blocks,
@@ -386,6 +396,7 @@ pub(crate) fn history_document_snapshot_retained_bytes_with_canonical_charge(
 pub(crate) fn history_document_snapshot_retained_bytes_with_precomputed_document_charge(
     document_retained_bytes: usize,
     canonical_retained_bytes: usize,
+    validation_depth_slots: usize,
     position_map: &PositionMap,
     rendered_text: &String,
     render_blocks: &crate::render::incremental::CachedRenderBlocks,
@@ -393,11 +404,6 @@ pub(crate) fn history_document_snapshot_retained_bytes_with_precomputed_document
     fragment_name: &str,
     scope: Option<&yrs_engine::DocumentScope>,
 ) -> Option<HistoryDocumentSnapshotRetainedBytes> {
-    // These immutable payloads are shallow-cloned into the snapshot and may
-    // otherwise become unreachable after the next edit. Each helper walks the
-    // complete owned capacity recursively with checked arithmetic. Shared node
-    // roots are deliberately overcounted across the three payloads; that keeps
-    // admission conservative without allocator-identity bookkeeping.
     let shared_payload_bytes = document_retained_bytes
         .checked_add(canonical_retained_bytes)?
         .checked_add(render_blocks.history_snapshot_retained_bytes()?)?;
@@ -420,6 +426,9 @@ pub(crate) fn history_document_snapshot_retained_bytes_with_precomputed_document
         .checked_add(rendered_text.capacity())?
         .checked_add(schema_arc_bytes)?
         .checked_add(validation_schema_arc_bytes)?
+        .checked_add(arc_allocation_bound(
+            validation_depth_slots.checked_mul(std::mem::size_of::<usize>())?,
+        )?)?
         .checked_add(fragment_arc_bytes)?
         .checked_add(scope_string_bytes)?
         .checked_add(shared_payload_bytes)
