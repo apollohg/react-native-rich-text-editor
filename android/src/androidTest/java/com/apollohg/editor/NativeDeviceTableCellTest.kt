@@ -502,8 +502,7 @@ class NativeDeviceTableCellTest {
                 val host = requireNotNull(tableHostOrNull())
                 val block = requireNotNull(host.preparedLayout).blocks.single { it.tableSurface != null }
                 val surface = requireNotNull(block.tableSurface)
-                val source = requireNotNull(surface.sourceTable).cells[index].sourcePos.toInt()
-                val frame = surface.cells.single { it.sourcePosition == source }.frame
+                val frame = requireNotNull(surface.frameOfCell(index))
                 val bounds = requireNotNull(block.tableBounds)
                 val location = IntArray(2)
                 host.getLocationOnScreen(location)

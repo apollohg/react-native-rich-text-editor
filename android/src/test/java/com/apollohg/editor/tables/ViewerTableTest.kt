@@ -73,6 +73,67 @@ import uniffi.editor_core.TableRenderFailure
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class ViewerTableTest {
+    @Test fun testSurfaceSourceFromViewerTableKeepsSourceOrder() {
+        val document = compileWithRust(ProseViewerRequest(
+            ProseViewerSource.Json(PlainTableFixture.document(2, 2)),
+            ProseViewerConfiguration(CONFIG, imagesEnabled = true)
+        ))
+        val table = document.blocks.first { it.table != null }.table!!
+        val source = TableSurfaceSource.from(table)
+        assertEquals(table.cells.indices.toList(), source.cells.map { it.sourceIndex })
+        assertTrue(table.cells.map { it.sourcePos.toInt() } != source.cells.map { it.sourceIndex })
+        assertEquals(table.cells.map { it.contentKey }, source.cells.map { it.contentKey })
+        assertEquals(table.cells.map { it.elements }, source.cells.map { it.elements })
+        assertEquals(table.cells.map { it.header }, source.cells.map { it.header })
+        assertEquals(table.syntheticRegions, source.syntheticRegions)
+    }
+
+    @Test fun identicalCellsInSeparateTablesHaveDistinctDocumentIdentities() {
+        val source = JSONObject(PlainTableFixture.document(1, 1))
+        val blocks = source.getJSONArray("content")
+        blocks.put(JSONObject(blocks.getJSONObject(0).toString()))
+        val document = compileWithRust(ProseViewerRequest(
+            ProseViewerSource.Json(source.toString()), ProseViewerConfiguration(CONFIG, imagesEnabled = true)
+        ))
+        val tables = document.blocks.mapNotNull { it.table }
+        assertEquals(2, tables.size)
+        val cells = tables.map { table ->
+            document.cellDocument(TableSurfaceSource.from(table).cells.single(), "t${table.tablePos}")
+        }
+        assertTrue(cells[0].semanticKey != cells[1].semanticKey)
+        val surfaces = prepare(document).blocks.mapNotNull { it.tableSurface }
+        assertEquals(listOf(0, 0), surfaces.map { it.cells.single().sourceIndex })
+        assertTrue(surfaces[0].cells.single().content.key.semanticKey != surfaces[1].cells.single().content.key.semanticKey)
+    }
+
+    @Test fun testCellFramesFollowRowOffsets() {
+        val document = compileWithRust(ProseViewerRequest(
+            ProseViewerSource.Json(PlainTableFixture.document(2, 1)),
+            ProseViewerConfiguration(CONFIG, imagesEnabled = true)
+        ))
+        val engine = StaticLayoutAndroidProseLayoutEngine()
+        var preparations = 0
+        engine.tableCellPreparationObserver = { preparations++ }
+        val original = prepare(document, engine = engine).blocks.first { it.tableSurface != null }.tableSurface!!
+        assertTrue(preparations > 0)
+        preparations = 0
+        val translation = 100f
+        val shifted = ViewerTableSurface(
+            identity = original.identity, hostViewportWidth = original.hostViewportWidth,
+            style = original.style, isRightToLeft = original.isRightToLeft,
+            layout = original.layout.copy(
+                rowOffsets = original.layout.rowOffsets.mapIndexed { index, value -> if (index == 0) value else value + translation },
+                contentHeight = original.layout.contentHeight + translation
+            ),
+            cells = original.cells, preparationError = null
+        )
+        assertTrue(original.cell(1)!!.content === shifted.cell(1)!!.content)
+        val frame = shifted.frameOfCell(1)!!
+        assertEquals(original.frameOfCell(1)!!.top + translation, frame.top, 0.01f)
+        assertEquals(listOf(1), shifted.visibleCells(RectF(frame.left, frame.top, frame.left + frame.width, frame.top + frame.height)).map { it.sourceIndex })
+        assertEquals(0, preparations)
+    }
+
     @Test
     fun `viewer input traversal detects and releases a temporary editor child`() {
         val root = FrameLayout(RuntimeEnvironment.getApplication())
@@ -173,14 +234,14 @@ class ViewerTableTest {
                     val imageCell = table.cells.single { candidate ->
                         candidate.content.imageAttachments.any { it.id == attachment.id }
                     }
-                    val imageSource = sourceTable.cells[requireNotNull(imageCell.sourceCellIndex)]
-                    assertEquals(0u, imageSource.row)
+                    val imageSource = sourceTable.cells[requireNotNull(imageCell.sourceIndex)]
+                    assertEquals(0, imageSource.row)
                     assertEquals(attachment.id, imageCell.content.imageAttachments.single().id)
                     val footerCell = table.cells.single { candidate ->
-                        sourceTable.cells[requireNotNull(candidate.sourceCellIndex)].row == 1u
+                        sourceTable.cells[requireNotNull(candidate.sourceIndex)].row == 1
                     }
                     val rowHeight = table.layout.rowOffsets[1] - table.layout.rowOffsets[0]
-                    return TableGeometry(imageCell.frame.height, rowHeight, footerCell.frame.height, artifact.heightPx)
+                    return TableGeometry(table.frameOfCell(imageCell).height, rowHeight, table.frameOfCell(footerCell).height, artifact.heightPx)
                 }
 
                 val replacementSidecar = requireNotNull(FabricAttachmentSidecars.state(secondGeneration))
@@ -356,28 +417,28 @@ class ViewerTableTest {
 
             val authoredReplacement = compileWithRust(replacementRequest)
             val authoredTable = requireNotNull(authoredReplacement.blocks.single { it.table != null }.table)
-            val authoredAtoms = authoredTable.cells.flatMap { cell ->
-                authoredReplacement.cellDocument(cell).blocks.flatMap { block ->
+            val authoredAtoms = TableSurfaceSource.from(authoredTable).cells.flatMap { cell ->
+                authoredReplacement.cellDocument(cell, "t${authoredTable.tablePos}").blocks.flatMap { block ->
                     block.inlines.filterIsInstance<ViewerInline.Atom>()
                 }
             }
             val authoredCard = authoredAtoms.single { it.nodeType == "card" }
             val authoredImage = authoredAtoms.single { it.nodeType == "image" }
             val expectedImageId = "${authoredImage.docPos}:https://example.test/reuse.png"
-            val expectedSourcePositions = mutableListOf<Int>()
-            fun appendSourcePositions(table: uniffi.editor_core.FfiViewerTable) {
-                table.cells.forEach { cell ->
-                    expectedSourcePositions += cell.sourcePos.toInt()
+            val expectedSourceIndices = mutableListOf<Int>()
+            fun appendSourceIndices(table: uniffi.editor_core.FfiViewerTable) {
+                table.cells.forEachIndexed { index, cell ->
+                    expectedSourceIndices += index
                     cell.elements.filterIsInstance<FfiViewerElement.Table>().forEach { nested ->
-                        appendSourcePositions(requireNotNull(authoredReplacement.tableRecords[nested.tableId]))
+                        appendSourceIndices(requireNotNull(authoredReplacement.tableRecords[nested.tableId]))
                     }
                 }
             }
-            appendSourcePositions(authoredTable)
+            appendSourceIndices(authoredTable)
             assertTrue(authoredReplacement.semanticKey != initial.key.semanticKey)
             assertTrue(authoredCard.docPos != initialAtom.atom.docPos)
             assertTrue(expectedImageId != initialImage.id)
-            assertTrue(expectedSourcePositions != initialSnapshot.cells.map { it.sourcePosition })
+            assertEquals(expectedSourceIndices, initialSnapshot.cells.map { it.sourceIndex })
 
             registry.activateFabricGeneration(replacementGeneration)
             registry.prepareFinalLayout(replacementRequest, 390, 1f, 0, 0, surface, leaseHandle)
@@ -400,7 +461,7 @@ class ViewerTableTest {
             assertEquals("https://cell.example/link", replacementLink.interaction.href)
             assertTrue(replacementLink.sourceIdentity.startsWith("${authoredReplacement.semanticKey}:"))
             assertTrue(replacementLink.sourceIdentity != initialLink.sourceIdentity)
-            assertEquals(expectedSourcePositions, replacementSnapshot.cells.map { it.sourcePosition })
+            assertEquals(expectedSourceIndices, replacementSnapshot.cells.map { it.sourceIndex })
             assertEquals(
                 initialSnapshot.accessibilityNodes.map { it.node.role to it.node.label },
                 replacementSnapshot.accessibilityNodes.map { it.node.role to it.node.label }
@@ -443,7 +504,7 @@ class ViewerTableTest {
 
         val initial = registry.measure(initialRequest, 390, 1f)
         val initialTable = requireNotNull(initial.blocks.single { it.tableSurface != null }.tableSurface)
-        val initialSibling = initialTable.cells.last().frame
+        val initialSibling = initialTable.frameOfCell(initialTable.cells.last())
         val initialChangedShape = initialTable.cells.first().content.cellShape
         val initialNestedShape = initialTable.cells.first().content.blocks.single {
             it.tableSurface != null
@@ -456,7 +517,7 @@ class ViewerTableTest {
 
         assertEquals(3, initialPreparations)
         assertEquals(initialPreparations + 1, preparations.size)
-        assertEquals(replacementTable.cells.first().sourcePosition, preparations.last())
+        assertEquals(replacementTable.cells.first().sourceIndex, preparations.last())
         assertEquals("linked cells", replacementTable.cells.first().content.interactions.single().visibleText)
         assertNotSame(initialChangedShape, replacementTable.cells.first().content.cellShape)
         assertSame(
@@ -465,7 +526,7 @@ class ViewerTableTest {
                 .tableSurface!!.cells.single().content.cellShape
         )
         assertSame(initialSiblingShape, replacementTable.cells.last().content.cellShape)
-        assertEquals(initialSibling, replacementTable.cells.last().frame)
+        assertEquals(initialSibling, replacementTable.frameOfCell(replacementTable.cells.last()))
         assertEquals(initialTable.layout.rowOffsets, replacementTable.layout.rowOffsets)
     }
 
@@ -490,7 +551,7 @@ class ViewerTableTest {
         val initialNested = initialTable.cells.first().content.blocks.single { it.tableSurface != null }
             .tableSurface!!.cells.first().content.cellShape
         val initialSibling = initialTable.cells.last().content.cellShape
-        val initialLater = initialTable.cells.first { it.frame.top > 0f }
+        val initialLater = initialTable.cells.first { initialTable.frameOfCell(it).top > 0f }
         val initialCount = preparations.size
         val image = initial.imageAttachments.single()
 
@@ -507,10 +568,10 @@ class ViewerTableTest {
         )
         assertSame(initialSibling, replacementTable.cells.last().content.cellShape)
         assertTrue(replacementTable.layout.contentHeight > initialTable.layout.contentHeight)
-        val replacementLater = replacementTable.cells.first { it.frame.top > 0f }
+        val replacementLater = replacementTable.cells.first { replacementTable.frameOfCell(it).top > 0f }
         assertSame(initialLater.content.cellShape, replacementLater.content.cellShape)
-        assertTrue(replacementLater.frame.top > initialLater.frame.top)
-        assertEquals(initialLater.frame.height, replacementLater.frame.height, 0f)
+        assertTrue(replacementTable.frameOfCell(replacementLater).top > initialTable.frameOfCell(initialLater).top)
+        assertEquals(initialTable.frameOfCell(initialLater).height, replacementTable.frameOfCell(replacementLater).height, 0f)
     }
 
     @Test
@@ -597,7 +658,7 @@ class ViewerTableTest {
         assertNotSame(first, second)
         assertEquals("same link", first.interactions.single().visibleText)
         assertEquals("same link", second.interactions.single().visibleText)
-        assertTrue(cells[0].sourcePosition != cells[1].sourcePosition)
+        assertTrue(cells[0].sourceIndex != cells[1].sourceIndex)
         val links = ViewerTablePresentation.project(
             layout,
             ViewerTablePresentationOwner(),
@@ -655,7 +716,7 @@ class ViewerTableTest {
         )
         val authored = compileWithRust(probe)
         val authoredTable = requireNotNull(authored.blocks.single { it.table != null }.table)
-        val atomPosition = authored.cellDocument(authoredTable.cells.first()).blocks.single {
+        val atomPosition = authored.cellDocument(TableSurfaceSource.from(authoredTable).cells.first(), "t${authoredTable.tablePos}").blocks.single {
             (it.inlines.singleOrNull() as? ViewerInline.Atom)?.nodeType == "card"
         }.inlines.single() as ViewerInline.Atom
         val probeTheme = viewerAtomTheme("probe", atomPosition.docPos, 36, 0)
@@ -784,7 +845,7 @@ class ViewerTableTest {
         assertTrue(surface.bounds.width() > surface.hostViewportWidth)
         val childLayouts = surface.cells.map { it.content }
         assertEquals(surface.cells.size, childLayouts.map { it.key.semanticKey }.toSet().size)
-        assertEquals(surface.cells.map { it.sourcePosition }.toSet(), cellPreparations.toSet())
+        assertEquals(surface.cells.map { it.sourceIndex }.toSet(), cellPreparations.toSet())
         val preparedInitially = cellPreparations.size
         assertTrue(preparedInitially > 0)
 
@@ -1308,7 +1369,7 @@ class ViewerTableTest {
             assertTrue("the table must start below root prose", table.tableBounds!!.top > 0)
             assertEquals(
             surface.style.headerBackgroundColor,
-            rendered.getPixel(table.tableBounds!!.left + header.frame.left.toInt() + 2, table.tableBounds!!.top + header.frame.top.toInt() + 2)
+            rendered.getPixel(table.tableBounds!!.left + surface.frameOfCell(header).left.toInt() + 2, table.tableBounds!!.top + surface.frameOfCell(header).top.toInt() + 2)
         )
             assertEquals(
             nestedHeader.surface.style.headerBackgroundColor,
@@ -1489,14 +1550,14 @@ class ViewerTableTest {
         val header = surface.cells.first { it.isHeader }
         val frame = table.tableBounds!!
         assertEquals(surface.style.headerBackgroundColor, before.getPixel(
-            frame.left + header.frame.left.toInt() + 2,
-            frame.top + header.frame.top.toInt() + 2
+            frame.left + surface.frameOfCell(header).left.toInt() + 2,
+            frame.top + surface.frameOfCell(header).top.toInt() + 2
         ))
         assertTrue("adjacent prose remains in the same prepared artifact", layout.blocks.any { it !== table && it.fragments.isNotEmpty() })
 
         assertTrue(surface.bounds.width() > surface.hostViewportWidth)
-        val headerX = frame.left + header.frame.left.toInt() + 100
-        val headerY = frame.top + header.frame.top.toInt() + 2
+        val headerX = frame.left + surface.frameOfCell(header).left.toInt() + 100
+        val headerY = frame.top + surface.frameOfCell(header).top.toInt() + 2
         left.setTableLogicalOffset(surface.identity, surface.bounds.width())
         assertEquals(1, geometryChanges)
         assertTrue(left.tablePhysicalOffsetForTesting(surface.identity) > 0f)
@@ -1508,7 +1569,7 @@ class ViewerTableTest {
         assertEquals(0f, right.tablePhysicalOffsetForTesting(surface.identity), 0f)
         assertEquals("right mounted owner keeps its own offset", surface.style.headerBackgroundColor, unchanged.getPixel(headerX, headerY))
         val projected = ViewerTablePresentation.project(layout, ViewerTablePresentationOwner(), ViewerTablePresentationViewport.Unknown)
-        val sourcePoint = projected.cells.first { it.sourcePosition == first.sourcePosition }.contentBounds
+        val sourcePoint = projected.cells.first { it.sourceIndex == first.sourceIndex }.contentBounds
         assertTrue(sourcePoint.width() > 0f && sourcePoint.height() > 0f)
     }
     @Test
@@ -1569,8 +1630,8 @@ class ViewerTableTest {
         val source = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[100]},"content":[{"type":"card"}]},{"type":"table_cell","attrs":{"colwidth":[100]},"content":[{"type":"card"}]}]}]}]}"""
         val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(source), ProseViewerConfiguration(CONFIG)))
         val table = document.blocks.single().table!!
-        val atomPositions = table.cells.map { cell ->
-            (document.cellDocument(cell).blocks.single().inlines.single() as ViewerInline.Atom).docPos
+        val atomPositions = TableSurfaceSource.from(table).cells.map { cell ->
+            (document.cellDocument(cell, "t${table.tablePos}").blocks.single().inlines.single() as ViewerInline.Atom).docPos
         }
 
         assertEquals(1, table.cells.map { it.contentKey }.distinct().size)
@@ -1586,9 +1647,9 @@ class ViewerTableTest {
 
         assertEquals(listOf(20, 100), surface.cells.map { it.content.viewerAtoms.single().bounds.height() })
         surface.cells.forEach { cell ->
-            assertTrue(cell.frame.height >= cell.content.heightPx + chrome)
+            assertTrue(surface.frameOfCell(cell).height >= cell.content.heightPx + chrome)
         }
-        assertTrue(surface.cells.single { it.content.heightPx == 100 }.frame.height >= 100 + chrome)
+        assertTrue(surface.frameOfCell(surface.cells.single { it.content.heightPx == 100 }).height >= 100 + chrome)
     }
 
     @Test
@@ -1596,8 +1657,9 @@ class ViewerTableTest {
         val source = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"card"}]},{"type":"table_cell","attrs":{"colwidth":[600]},"content":[{"type":"card"}]}]}]}]}"""
         val theme = """{"viewerAtoms":{"generation":"table-events","revision":"1","nodeTypes":["card"],"estimatedHeights":{"card":40}}}"""
         val document = compileWithRust(ProseViewerRequest(ProseViewerSource.Json(source), ProseViewerConfiguration(CONFIG, themeJson = theme)))
-        val expectedAtoms = document.blocks.single().table!!.cells.map { cell ->
-            document.cellDocument(cell).blocks.single().inlines.single() as ViewerInline.Atom
+        val table = document.blocks.single().table!!
+        val expectedAtoms = TableSurfaceSource.from(table).cells.map { cell ->
+            document.cellDocument(cell, "t${table.tablePos}").blocks.single().inlines.single() as ViewerInline.Atom
         }
         val key = ProseLayoutKey(document.semanticKey, 320, "events", 0, 0, 1L, 0, "events")
         val layout = StaticLayoutAndroidProseLayoutEngine().prepare(document, key, PreparedProseTheme.resolve(theme, 1f), 320, 1f, false)
@@ -1845,8 +1907,8 @@ class ViewerTableTest {
         val local = cell.content.imageAttachments.single()
         val parent = layout.imageAttachments.single()
         val frame = table.tableBounds!!
-        assertEquals(frame.left + cell.frame.left.toInt() + cell.contentOrigin.first + local.bounds.left, parent.bounds.left)
-        assertEquals(frame.top + cell.frame.top.toInt() + cell.contentOrigin.second + local.bounds.top, parent.bounds.top)
+        assertEquals(frame.left + surface.frameOfCell(cell).left.toInt() + cell.contentOrigin.first + local.bounds.left, parent.bounds.left)
+        assertEquals(frame.top + surface.frameOfCell(cell).top.toInt() + cell.contentOrigin.second + local.bounds.top, parent.bounds.top)
     }
 
     @Test
@@ -1953,13 +2015,13 @@ class ViewerTableTest {
         assertEquals(listOf(local.id), layout.imageAttachments.map { it.id })
         assertEquals(listOf(0), layout.imageAttachments.map { it.ordinal })
         assertEquals(
-            outerFrame.left + outerCell.frame.left.toInt() + outerCell.contentOrigin.first +
-                innerFrame.left + innerCell.frame.left.toInt() + innerCell.contentOrigin.first + local.bounds.left,
+            outerFrame.left + outerTable.tableSurface!!.frameOfCell(outerCell).left.toInt() + outerCell.contentOrigin.first +
+                innerFrame.left + innerTable.tableSurface!!.frameOfCell(innerCell).left.toInt() + innerCell.contentOrigin.first + local.bounds.left,
             parent.bounds.left
         )
         assertEquals(
-            outerFrame.top + outerCell.frame.top.toInt() + outerCell.contentOrigin.second +
-                innerFrame.top + innerCell.frame.top.toInt() + innerCell.contentOrigin.second + local.bounds.top,
+            outerFrame.top + outerTable.tableSurface!!.frameOfCell(outerCell).top.toInt() + outerCell.contentOrigin.second +
+                innerFrame.top + innerTable.tableSurface!!.frameOfCell(innerCell).top.toInt() + innerCell.contentOrigin.second + local.bounds.top,
             parent.bounds.top
         )
     }
@@ -1987,7 +2049,7 @@ class ViewerTableTest {
             val mirrored = surface(undeclared)
             assertTrue("an RTL platform mirrors an undeclared table even after an LTR layout was cached",
                 mirrored.isRightToLeft)
-            val (first, second) = mirrored.cells.sortedBy { it.sourcePosition }.map { it.frame }
+            val (first, second) = mirrored.cells.sortedBy { it.sourceIndex }.map { mirrored.frameOfCell(it) }
             assertTrue("logical column 0 renders at the right", second.left + second.width <= first.left + 0.5f)
             assertFalse("a declared direction outranks the platform", surface(declaredLtr).isRightToLeft)
         } finally {
@@ -2035,7 +2097,7 @@ class ViewerTableTest {
 
         val firstOwner = ViewerTablePresentationOwner()
         val full = ViewerTablePresentation.project(layout, firstOwner, ViewerTablePresentationViewport.Unknown)
-        assertEquals(surface.layout.sourceOrder, full.cells.filter { it.surface === surface }.map { it.sourcePosition })
+        assertEquals(surface.layout.sourceOrder, full.cells.filter { it.surface === surface }.map { it.sourceIndex })
         assertEquals(surface.cells.size, full.mountedCells.count { it.surface === surface })
         assertEquals(2, full.images.size)
         assertEquals(1, full.atoms.size)
@@ -2044,7 +2106,7 @@ class ViewerTableTest {
         val first = full.cells.first()
         assertEquals(first.clip.right, first.bounds.right)
         val nestedCell = full.cells.first { it.surface !== surface }
-        val containingCell = full.cells.first { it.surface === surface && it.sourcePosition == surface.layout.sourceOrder[1] }
+        val containingCell = full.cells.first { it.surface === surface && it.sourceIndex == surface.layout.sourceOrder[1] }
         val nestedBlock = full.blocks.first { it.layout === containingCell.content && it.block.tableSurface != null }
         val nestedSurface = nestedBlock.block.tableSurface!!
         val nestedFrame = nestedBlock.block.tableBounds!!
@@ -2081,7 +2143,7 @@ class ViewerTableTest {
             secondOwner,
             ViewerTablePresentationViewport.Known(Rect(table.tableBounds!!.left, table.tableBounds!!.top, table.tableBounds!!.left + 100, table.tableBounds!!.top + 100))
         )
-        assertEquals(surface.layout.sourceOrder.takeLast(2), known.mountedCells.filter { it.surface === surface }.map { it.sourcePosition })
+        assertEquals(surface.layout.sourceOrder.takeLast(2), known.mountedCells.filter { it.surface === surface }.map { it.sourceIndex })
         assertEquals(0, ViewerTablePresentation.project(layout, secondOwner, ViewerTablePresentationViewport.Known(Rect())).mountedCells.size)
         assertEquals(0, ViewerTablePresentation.project(layout, secondOwner, ViewerTablePresentationViewport.Known(Rect(100_000, 100_000, 100_020, 100_020))).mountedCells.size)
 
@@ -2104,9 +2166,9 @@ class ViewerTableTest {
         val verticalBlock = vertical.blocks.first { it.tableSurface != null }
         val verticalSurface = verticalBlock.tableSurface!!
         val middle = verticalSurface.cells[1]
-        val verticalWindow = Rect(verticalBlock.tableBounds!!.left, verticalBlock.tableBounds!!.top + middle.frame.top.toInt(), verticalBlock.tableBounds!!.left + 20, verticalBlock.tableBounds!!.top + middle.frame.top.toInt() + middle.frame.height.toInt())
+        val verticalWindow = Rect(verticalBlock.tableBounds!!.left, verticalBlock.tableBounds!!.top + verticalSurface.frameOfCell(middle).top.toInt(), verticalBlock.tableBounds!!.left + 20, verticalBlock.tableBounds!!.top + verticalSurface.frameOfCell(middle).top.toInt() + verticalSurface.frameOfCell(middle).height.toInt())
         val verticalSnapshot = ViewerTablePresentation.project(vertical, ViewerTablePresentationOwner(), ViewerTablePresentationViewport.Known(verticalWindow))
-        assertEquals(verticalSurface.layout.sourceOrder.take(3), verticalSnapshot.mountedCells.map { it.sourcePosition })
+        assertEquals(verticalSurface.layout.sourceOrder.take(3), verticalSnapshot.mountedCells.map { it.sourceIndex })
     }
 
     @Test

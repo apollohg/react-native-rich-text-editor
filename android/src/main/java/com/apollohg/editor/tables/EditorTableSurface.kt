@@ -70,7 +70,6 @@ import com.apollohg.editor.viewer.StaticLayoutAndroidProseLayoutEngine
 import com.apollohg.editor.viewer.ViewerBlock
 import com.apollohg.editor.viewer.ViewerDocument
 import org.json.JSONObject
-import uniffi.editor_core.FfiViewerTableCell
 
 internal class RootTableHeightSpan(val heightPx: Int) : ReplacementSpan() {
     override fun getSize(paint: Paint, text: CharSequence?, start: Int, end: Int,
@@ -134,6 +133,12 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     private data class Entry(val surface: ViewerTableSurface, val localBounds: Rect,
                              val occupiedHeight: Int, val minimumColumnWidth: Int, val appearance: String)
 
+    private fun cellDocumentPosition(tableId: String, sourceIndex: Int): Int? {
+        val adapter = host.editorEditText.v2Driver as? EditorV2Adapter ?: return null
+        val cell = adapter.cachedTableRecords[tableId]?.optJSONArray("cells")?.optJSONObject(sourceIndex) ?: return null
+        return exactV2ScalarInt(cell.opt("sourcePos") as? Number)
+    }
+
     private class ReusableCellContents(entry: Entry?, appearance: String) {
         private data class Key(val contentKey: String, val header: Boolean, val attributesKey: String, val widthPx: Int)
 
@@ -143,7 +148,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             val reusable = entry?.takeIf { it.appearance == appearance }
             val source = reusable?.surface?.sourceTable
             reusable?.surface?.cells?.forEach { cell ->
-                val sourceCell = cell.sourceCellIndex?.let { source?.cells?.getOrNull(it) }
+                val sourceCell = source?.cells?.getOrNull(cell.sourceIndex)
                 if (sourceCell != null && isPositionFree(cell.content)) {
                     contents.getOrPut(Key(sourceCell.contentKey, sourceCell.header, sourceCell.attrsKey,
                         cell.content.key.widthPx)) { ArrayDeque() }.addLast(cell.content)
@@ -151,7 +156,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             }
         }
 
-        fun take(cell: FfiViewerTableCell, widthPx: Int): PreparedProseLayout? =
+        fun take(cell: TableSurfaceCell, widthPx: Int): PreparedProseLayout? =
             contents[Key(cell.contentKey, cell.header, cell.attrsKey, widthPx)]?.removeFirstOrNull()
 
         private fun isPositionFree(layout: PreparedProseLayout): Boolean =
@@ -174,6 +179,10 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         linkInteractionsEnabled = false
         mentionInteractionsEnabled = false
         tableAccessibilityEditing = this@EditorTableSurface
+        tableCellDocumentPosition = ::cellDocumentPosition
+        tableDocumentPosition = { tableId ->
+            (host.editorEditText.v2Driver as? EditorV2Adapter)?.cachedTableRecords?.get(tableId)?.let { exactV2ScalarInt(it.opt("tablePos") as? Number) }
+        }
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
         onTableGeometryChanged = {
             positionActiveInput()
@@ -396,8 +405,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             host.editorEditText.hasPendingCompositionForExternalRefresh() ||
             drawingView.ownsHorizontalTableGesture) return null
         val (tableId, anchor, head) = cellEditMenuSelection() ?: return null
-        val sourcePositions = drawingView.selectedTableCellSourcePositions[tableId] ?: return null
-        return TableCellDragSource(tableId, anchor, head, sourcePositions)
+        val sourceIndices = drawingView.selectedTableCellSourceIndices[tableId] ?: return null
+        return TableCellDragSource(tableId, anchor, head, sourceIndices)
     }
 
     fun startCellDrag(x: Float, y: Float): TableCellDragState? {
@@ -459,13 +468,13 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val root = host.editorEditText
         val x = event.x + root.left - drawingView.left
         val y = event.y + root.top - drawingView.top
-        val (tableId, presented) = rootCellAt(x, y)?.takeIf { it.second.cell.sourceCellIndex != null }
+        val (tableId, presented) = rootCellAt(x, y)
             ?: return if (drawingView.hasTableAt(x, y)) TableCellDropResolution.Refused else null
-        val target = TableCellDropTarget(tableId, presented.sourcePosition)
+        val target = TableCellDropTarget(tableId, presented.sourceIndex)
         val dragged = event.localState as? TableCellDragState
         val sameEditor = dragged?.takeIf { it.editorId == root.editorId && it.adapter === root.v2Driver }
         if (sameEditor != null && sameEditor.source.tableId == tableId &&
-            target.sourcePosition in sameEditor.source.sourcePositions) return TableCellDropResolution.SelfDrop
+            target.sourceIndex in sameEditor.source.sourceIndices) return TableCellDropResolution.SelfDrop
         if (root.pasteMode == EditorPasteMode.DISABLED) return TableCellDropResolution.Refused
         val (adapter) = tableMutationContext(tableId) ?: return TableCellDropResolution.Refused
         val revision = adapter.baseDocumentRevision
@@ -475,7 +484,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             sameEditor.source
         } else null
         val pastesIntoSelection = sameEditor == null &&
-            drawingView.selectedTableCellSourcePositions[tableId]?.contains(target.sourcePosition) == true &&
+            drawingView.selectedTableCellSourceIndices[tableId]?.contains(target.sourceIndex) == true &&
             root.isEditable && root.canMutateSelectedTableCells()
         return TableCellDropResolution.Accepted(target, adapter, revision, dragged, moved, pastesIntoSelection)
     }
@@ -492,7 +501,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val update = if (drop.pastesIntoSelection) {
             drop.adapter.pasteAtEngineSelection(payload.fragment, payload.html, payload.text, plainText)
         } else {
-            drop.adapter.pasteIntoTableCell(payload, plainText, drop.target.sourcePosition,
+            drop.adapter.pasteIntoTableCell(payload, plainText,
+                cellDocumentPosition(drop.target.tableId, drop.target.sourceIndex) ?: return false,
                 drop.moved?.let { it.anchor to it.head })
         } ?: return false
         return applyTableMutationUpdate(update)
@@ -751,7 +761,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         discardActiveDrag()
         resizeCandidate = null
         invalidateCell()
-        drawingView.selectedTableCellSourcePositions = emptyMap()
+        drawingView.selectedTableCellSourceIndices = emptyMap()
         drawingView.selectedTableCellEndpoints = null
         entries = emptyMap()
         key = null
@@ -781,7 +791,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val selection = adapter.cachedAtomicRenderSelection() ?: return null
         val cells = resolveEditorCellSelection(selection, adapter.cachedTableRecords)
             as? EditorCellSelection.Drawable ?: return null
-        if (cells.tableId !in drawingView.selectedTableCellSourcePositions) return null
+        if (cells.tableId !in drawingView.selectedTableCellSourceIndices) return null
         val (anchor, head) = cellSelectionEndpoints(selection) ?: return null
         return Triple(cells.tableId, anchor, head)
     }
@@ -798,9 +808,9 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         rects?.mapNotNull { rect -> RectF(rect).takeIf { it.intersect(viewport) } }
 
     private fun toolbarAnchorCells(): Pair<String, Set<Int>>? {
-        drawingView.selectedTableCellSourcePositions.entries.firstOrNull()?.let { return it.key to it.value }
+        drawingView.selectedTableCellSourceIndices.entries.firstOrNull()?.let { return it.key to it.value }
         val active = activeCell ?: return null
-        return active.tableId to setOf(active.sourcePos.toInt())
+        return active.tableId to setOf(active.cellIndex)
     }
 
     private fun cellEditMenuAnchor(): Rect? {
@@ -899,7 +909,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             if (entries.isNotEmpty() || drawingView.parent != null) clear()
             else {
                 invalidateCell()
-                drawingView.selectedTableCellSourcePositions = emptyMap()
+                drawingView.selectedTableCellSourceIndices = emptyMap()
                 drawingView.selectedTableCellEndpoints = null
             }
             if (restoreCellSelectionFocus) input.requestFocus()
@@ -977,7 +987,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         }
         reserve(entries.mapValues { it.value.occupiedHeight })
         if (entries.isEmpty()) {
-            drawingView.selectedTableCellSourcePositions = emptyMap()
+            drawingView.selectedTableCellSourceIndices = emptyMap()
             drawingView.selectedTableCellEndpoints = null
             drawingView.install(null)
             (drawingView.parent as? ViewGroup)?.removeView(drawingView)
@@ -990,8 +1000,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 topLeftFrameParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
         updateGeometry()
-        drawingView.selectedTableCellSourcePositions = when (cellSelection) {
-            is EditorCellSelection.Drawable -> mapOf(cellSelection.tableId to cellSelection.sourcePositions)
+        drawingView.selectedTableCellSourceIndices = when (cellSelection) {
+            is EditorCellSelection.Drawable -> mapOf(cellSelection.tableId to cellSelection.sourceIndices)
             else -> emptyMap()
         }
         drawingView.selectedTableCellEndpoints = displayedCellSelection(adapter)?.takeIf { (tableId) ->
@@ -1038,13 +1048,13 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val adapter = host.editorEditText.v2Driver as? EditorV2Adapter ?: return null
         val documentRevision = adapter.cachedAtomicRenderDocumentRevision ?: return null
         val layoutEpoch = canonicalV2U64(adapter.positionEpoch) ?: return null
-        val (tableId, sourcePositions) = toolbarAnchorCells() ?: return null
+        val (tableId, sourceIndices) = toolbarAnchorCells() ?: return null
         val tablePos = exactV2U32(adapter.cachedTableRecords[tableId]?.opt("tablePos") as? Number)
             ?: return null
         val visible = Rect()
         if (drawingView.windowToken == null || !drawingView.getLocalVisibleRect(visible)) return null
         val viewport = RectF(visible)
-        val cellRects = clipped(drawingView.tableCellRects(tableId, sourcePositions), viewport) ?: return null
+        val cellRects = clipped(drawingView.tableCellRects(tableId, sourceIndices), viewport) ?: return null
         val origin = IntArray(2).also(drawingView::getLocationInWindow)
         val density = drawingView.resources.displayMetrics.density
         fun windowRect(rect: RectF) = RectF(
@@ -1088,7 +1098,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
 
     private fun hitCell(x: Float, y: Float): Pair<String, Int>? {
         val (tableId, presented) = rootCellAt(x, y) ?: return null
-        return tableId to (presented.cell.sourceCellIndex ?: return null)
+        return tableId to presented.cell.sourceIndex
     }
 
     private fun projection(tableId: String, cellIndex: Int): EditorTableCellProjection.Projection? {
@@ -1191,7 +1201,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
                 root.authoritativeCellSelectionActive = false
                 root.cellSelectionRootTouchPending = false
                 root.updateAtomBoundaryCursorVisibility()
-                drawingView.selectedTableCellSourcePositions = emptyMap()
+                drawingView.selectedTableCellSourceIndices = emptyMap()
             }
             reconcileActiveCell()
         }
@@ -1202,7 +1212,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             (input.parent as? ViewGroup)?.removeView(input)
             host.editorContentFrame.addView(input, topLeftFrameParams(1, 1))
         }
-        drawingView.suppressedTableCellSourcePosition = sourcePos.toInt()
+        drawingView.suppressedTableCell = tableId to cellIndex
         if (!positionActiveInput()) {
             invalidateCell()
             return false
@@ -1279,7 +1289,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val surface = entries[active.tableId]?.surface ?: return true
         val source = surface.sourceTable ?: return true
         val cell = source.cells.getOrNull(active.cellIndex) ?: return true
-        if (cell.sourcePos.toLong() != active.sourcePos) return true
+        if (cellDocumentPosition(active.tableId, cell.sourceIndex)?.toLong() != active.sourcePos) return true
         val row = cell.row.toInt()
         val horizontal = keyCode == KeyEvent.KEYCODE_DPAD_LEFT ||
             keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
@@ -1291,19 +1301,21 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             val targetRow = if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
                 row + cell.rowspan.toInt()
             } else row - 1
-            val activeFrame = surface.cells.firstOrNull { it.sourceCellIndex == active.cellIndex }
+            val activeFrame = surface.cell(active.cellIndex)
                 ?: return true
-            val x = (activeFrame.frame.left + activeFrame.contentOrigin.first +
+            val activeBounds = surface.frameOfCell(activeFrame)
+            val x = (activeBounds.left + activeFrame.contentOrigin.first +
                 currentLayout.getPrimaryHorizontal(offset)).coerceIn(
-                    activeFrame.frame.left + 0.5f,
-                    activeFrame.frame.left + activeFrame.frame.width - 0.5f
+                    activeBounds.left + 0.5f,
+                    activeBounds.left + activeBounds.width - 0.5f
                 )
             surface.cells.mapNotNull { candidate ->
-                val index = candidate.sourceCellIndex ?: return@mapNotNull null
+                val index = candidate.sourceIndex
                 val sourceCell = source.cells.getOrNull(index) ?: return@mapNotNull null
+                val candidateBounds = surface.frameOfCell(candidate)
                 if (sourceCell.row.toInt() <= targetRow &&
                     targetRow < sourceCell.row.toInt() + sourceCell.rowspan.toInt() &&
-                    x >= candidate.frame.left && x < candidate.frame.left + candidate.frame.width
+                    x >= candidateBounds.left && x < candidateBounds.left + candidateBounds.width
                 ) index else null
             }
         }
@@ -1509,18 +1521,18 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     private fun positionActiveInput(): Boolean {
         val active = activeCell ?: return false
         val presented = drawingView.presentedTableCell(active.tableId) { table ->
-            listOfNotNull(table.cellAtSourceIndex(active.cellIndex), table.cellAtSourcePosition(active.sourcePos.toInt()))
-                .minByOrNull { it.sourcePosition }
+            table.cell(active.cellIndex)
         } ?: return false
         val cell = presented.cell
-        if (cell.sourcePosition.toLong() != active.sourcePos) {
+        if (cellDocumentPosition(active.tableId, cell.sourceIndex)?.toLong() != active.sourcePos) {
             invalidateCell()
             return false
         }
         val input = coordinator?.cellInput ?: return false
         val inset = cell.contentOrigin
-        val width = (cell.frame.width - 2f * inset.first).toInt().coerceAtLeast(1)
-        val height = (cell.frame.height - 2f * inset.second).toInt().coerceAtLeast(1)
+        val frame = presented.surface.frameOfCell(cell)
+        val width = (frame.width - 2f * inset.first).toInt().coerceAtLeast(1)
+        val height = (frame.height - 2f * inset.second).toInt().coerceAtLeast(1)
         val params = topLeftFrameParams(width, height).apply {
             leftMargin = presented.contentBounds.left.toInt()
             topMargin = presented.contentBounds.top.toInt()
@@ -1552,7 +1564,7 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
             input.clearFocus()
             (input.parent as? ViewGroup)?.removeView(input)
         }
-        drawingView.suppressedTableCellSourcePosition = null
+        drawingView.suppressedTableCell = null
         selectionGeometryMayChange()
     }
 
@@ -1570,8 +1582,8 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
     }
 
     private fun ownsAccessibilitySelection(tableId: String, cell: TableAccessibilityCell): Boolean {
-        activeCell?.let { return it.tableId == tableId && it.cellIndex == cell.sourceCellIndex }
-        return drawingView.selectedTableCellSourcePositions[tableId]?.contains(cell.sourcePosition) == true
+        activeCell?.let { return it.tableId == tableId && it.cellIndex == cell.sourceIndex }
+        return drawingView.selectedTableCellSourceIndices[tableId]?.contains(cell.sourceIndex) == true
     }
 
     private fun applyTableMutationUpdate(update: String): Boolean {
@@ -1602,12 +1614,12 @@ internal class EditorTableSurface(private val host: RichTextEditorView) : TableA
         val presented = drawingView.presentedAccessibilityCell(cell) ?: return false
         val visible = RectF(presented.bounds)
         if (!visible.intersect(presented.clip)) return false
-        return activateCell(tableId, cell.sourceCellIndex, visible.centerX(), visible.centerY())
+        return activateCell(tableId, cell.sourceIndex, visible.centerX(), visible.centerY())
     }
 
     override fun activeTableAccessibilityInput(cell: TableAccessibilityCell): EditorEditText? {
         val active = activeCell ?: return null
-        if (active.tableId != tableIdFor(cell.surface) || active.cellIndex != cell.sourceCellIndex) return null
+        if (active.tableId != tableIdFor(cell.surface) || active.cellIndex != cell.sourceIndex) return null
         return activeInput
     }
 

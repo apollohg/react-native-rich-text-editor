@@ -150,7 +150,7 @@ class NativeTableHostTest {
                 val head = handles.single { it.role ==
                     com.apollohg.editor.viewer.TableSelectionHandleRole.HEAD }
                 targetOpening = cells.getJSONObject(4).getInt("sourcePos")
-                val target = drawing.presentedTableCells().single { it.sourcePosition == targetOpening }
+                val target = drawing.presentedTableCells().single { it.sourceIndex == 4 }
                 val location = IntArray(2)
                 drawing.getLocationOnScreen(location)
                 fromX = location[0] + head.x
@@ -317,8 +317,7 @@ class NativeTableHostTest {
             val host = tableHosts(activity.richTextView).single()
             val block = requireNotNull(host.preparedLayout).blocks.single { it.tableSurface != null }
             val table = requireNotNull(block.tableSurface)
-            val sourcePosition = requireNotNull(table.sourceTable).cells[cellIndex].sourcePos.toInt()
-            val frame = table.cells.single { it.sourcePosition == sourcePosition }.frame
+            val frame = requireNotNull(table.frameOfCell(cellIndex))
             val origin = requireNotNull(block.tableBounds)
             val location = IntArray(2)
             host.getLocationOnScreen(location)
@@ -482,8 +481,8 @@ class NativeTableHostTest {
         assertTrue(surface.cells.any { !it.isHeader })
         val sourceCells = requireNotNull(surface.sourceTable).cells
         assertEquals(2, sourceCells.count { it.header })
-        assertTrue(sourceCells.any { it.rowspan == 2u })
-        assertTrue(sourceCells.any { it.colspan == 2u })
+        assertTrue(sourceCells.any { it.rowspan == 2 })
+        assertTrue(sourceCells.any { it.colspan == 2 })
         val frames = surface.layout.rectangles.values.toList()
         assertEquals(6, frames.size)
         frames.forEach { frame -> assertTrue(frame.width > 0f && frame.height > 0f) }

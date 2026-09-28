@@ -506,9 +506,9 @@ private fun lowerElements(
 
 }
 
-internal fun ViewerDocument.cellDocument(cell: uniffi.editor_core.FfiViewerTableCell): ViewerDocument =
+internal fun ViewerDocument.cellDocument(cell: com.apollohg.editor.tables.TableSurfaceCell, tableId: String): ViewerDocument =
     copy(
-        semanticKey = "$semanticKey:${cell.sourcePos}:${cell.contentKey}",
+        semanticKey = "$semanticKey:$tableId:${cell.sourceIndex}:${cell.contentKey}",
         blocks = lowerElements(cell.elements, preferredTextBlockName, tableRecords, cell.elements.isEmpty()),
         isEmpty = cell.elements.isEmpty(),
         retainedBytes = 0,

@@ -149,7 +149,7 @@ class NativeTableAcceptanceTest {
 
         fun rowWidths(): List<Int> = grid().map { row -> row.sumOf { it.colspan } }
 
-        fun selectedCells(): Set<Int> = drawing.selectedTableCellSourcePositions[tableId()].orEmpty()
+        fun selectedCells(): Set<Int> = drawing.selectedTableCellSourceIndices[tableId()].orEmpty()
 
         fun presentedCell(position: Int): ViewerTablePresentedCell = drawing.presentedRealCell(tableId(), position)
 
@@ -383,8 +383,7 @@ class NativeTableAcceptanceTest {
                     harness.onMain { harness.view.tableDirection = direction; harness.view.requestLayout() }
                     harness.onMain {
                         val editorCells = harness.drawing.presentedTableCells()
-                            .filter { it.cell.sourceCellIndex != null }
-                            .associate { it.sourcePosition to it.bounds }
+                            .associate { it.sourceIndex to it.bounds }
                         val viewerCells = viewerCellFrames(harness, document, direction)
                         assertEquals("$direction", viewerCells.keys.sorted(), editorCells.keys.sorted())
                         val editorGeometry = normalized(editorCells)
@@ -464,8 +463,8 @@ class NativeTableAcceptanceTest {
         val layout = StaticLayoutAndroidProseLayoutEngine().prepare(document, key, theme, width, density, false)
         val surface = requireNotNull(layout.blocks.firstNotNullOfOrNull { it.tableSurface })
         return surface.cells.associate { cell ->
-            cell.sourcePosition to RectF(cell.frame.left, cell.frame.top, cell.frame.left + cell.frame.width,
-                cell.frame.top + cell.frame.height)
+            val frame = surface.frameOfCell(cell)
+            cell.sourceIndex to RectF(frame.left, frame.top, frame.left + frame.width, frame.top + frame.height)
         }
     }
 
@@ -651,7 +650,7 @@ class NativeTableAcceptanceTest {
             harness.view.getLocationOnScreen(viewLocation)
             val drawingLocation = IntArray(2)
             harness.drawing.getLocationOnScreen(drawingLocation)
-            val cell = harness.drawing.presentedTableCells().firstOrNull { it.sourcePosition == lastCell }
+            val cell = harness.drawing.presentedTableCells().firstOrNull { harness.drawing.tableCellDocumentPosition?.invoke(it.surface.editorTableId!!, it.sourceIndex) == lastCell }
             val cellBottom = cell?.let { drawingLocation[1] + it.bounds.bottom }
             assertTrue("the active cell must have scrolled out of the viewport: bottom $cellBottom, viewport top ${viewLocation[1]}",
                 cellBottom == null || cellBottom <= viewLocation[1])

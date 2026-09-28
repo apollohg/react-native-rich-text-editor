@@ -169,10 +169,8 @@ internal class EditorCellSelectionAdmissionTest {
             val anchor = handles.single { it.role == TableSelectionHandleRole.ANCHOR }
             val head = handles.single { it.role == TableSelectionHandleRole.HEAD }
             assertNotEquals(anchor.x, head.x)
-            val first = drawing.presentedTableCells().first { it.sourcePosition ==
-                openings.getJSONObject(0).getInt("sourcePos") }
-            val second = drawing.presentedTableCells().first { it.sourcePosition ==
-                openings.getJSONObject(1).getInt("sourcePos") }
+            val first = drawing.presentedTableCells().first { it.sourceIndex == 0 }
+            val second = drawing.presentedTableCells().first { it.sourceIndex == 1 }
             val beforeDocument = adapter.documentJson()
             val beforeRevision = adapter.baseDocumentRevision
             val beforeEpoch = adapter.positionEpoch
@@ -229,7 +227,7 @@ internal class EditorCellSelectionAdmissionTest {
             val selection = engineSelection(adapter)
             val resolved = resolveEditorCellSelection(selection, adapter.cachedTableRecords)
                 as EditorCellSelection.Drawable
-            assertEquals(4, resolved.sourcePositions.size)
+            assertEquals(4, resolved.sourceIndices.size)
             val handles = drawing.selectionHandles()
             assertEquals(2, handles.size)
             val cells = drawing.presentedTableCells()
@@ -248,7 +246,7 @@ internal class EditorCellSelectionAdmissionTest {
             val anchor = cells.getJSONObject(0).getInt("sourcePos")
             val target = cells.getJSONObject(3).getInt("sourcePos")
             val head = drawing.selectionHandles().single { it.role == TableSelectionHandleRole.HEAD }
-            val cell = drawing.presentedTableCells().first { it.sourcePosition == target }
+            val cell = drawing.presentedTableCells().first { it.sourceIndex == 3 }
             backend.selections.clear()
 
             dragHandle(view, head.x + drawing.left, head.y + drawing.top,
@@ -289,8 +287,8 @@ internal class EditorCellSelectionAdmissionTest {
             val nestedOnly = openings.getJSONObject(1).getInt("sourcePos")
             val head = drawing.selectionHandles().single { it.role == TableSelectionHandleRole.HEAD }
             val target = drawing.presentedTableCells().first {
-                it.surface.sourceTable?.tablePos == outer.getInt("tablePos").toUInt() &&
-                    it.sourcePosition == nestedOnly
+                it.surface.editorTableId == "t${outer.getInt("tablePos")}" &&
+                    it.sourceIndex == 1
             }
             val before = adapter.documentJson()
             dragHandle(view, head.x + drawing.left, head.y + drawing.top,
@@ -317,7 +315,7 @@ internal class EditorCellSelectionAdmissionTest {
             assertEquals(cells.getJSONObject(0).getInt("sourcePos"), anchor.sourcePosition)
             assertEquals(cells.getJSONObject(3).getInt("sourcePos"), head.sourcePosition)
             val target = drawing.presentedTableCells().first {
-                it.sourcePosition == cells.getJSONObject(1).getInt("sourcePos")
+                it.sourceIndex == 1
             }
             dragHandle(view, head.x + drawing.left, head.y + drawing.top,
                 target.bounds.centerX() + drawing.left, target.bounds.centerY() + drawing.top)
@@ -338,10 +336,10 @@ internal class EditorCellSelectionAdmissionTest {
             val selection = engineSelection(adapter)
             val resolved = resolveEditorCellSelection(selection, adapter.cachedTableRecords)
                 as EditorCellSelection.Drawable
-            assertEquals(3, resolved.sourcePositions.size)
+            assertEquals(3, resolved.sourceIndices.size)
             assertEquals(2, drawing.selectionHandles().size)
-            assertEquals(resolved.sourcePositions,
-                drawing.presentedTableCells().map { it.sourcePosition }.toSet())
+            assertEquals(resolved.sourceIndices,
+                drawing.presentedTableCells().map { it.sourceIndex }.toSet())
         }
     }
 
@@ -355,10 +353,8 @@ internal class EditorCellSelectionAdmissionTest {
             val record = adapter.cachedTableRecords.values.single()
             assertTrue(record.getJSONArray("syntheticRegions").length() > 0)
             val cells = drawing.presentedTableCells()
-            val upperRight = cells.first { it.sourcePosition ==
-                record.getJSONArray("cells").getJSONObject(1).getInt("sourcePos") }
-            val lowerLeft = cells.first { it.sourcePosition ==
-                record.getJSONArray("cells").getJSONObject(2).getInt("sourcePos") }
+            val upperRight = cells.first { it.sourceIndex == 1 }
+            val lowerLeft = cells.first { it.sourceIndex == 2 }
             val x = upperRight.bounds.centerX()
             val y = lowerLeft.bounds.centerY()
             assertNull(drawing.selectedTableCellAt(x, y, "t${record.getInt("tablePos")}"))
@@ -380,12 +376,12 @@ internal class EditorCellSelectionAdmissionTest {
             val selection = engineSelection(adapter)
             val selected = resolveEditorCellSelection(selection, adapter.cachedTableRecords)
                 as EditorCellSelection.Drawable
-            assertEquals(3, selected.sourcePositions.size)
+            assertEquals(3, selected.sourceIndices.size)
             val handles = drawing.selectionHandles()
             assertEquals(2, handles.size)
             assertTrue(handles.all { handle ->
                 drawing.presentedTableCells().any { cell ->
-                    cell.sourcePosition in selected.sourcePositions &&
+                    cell.sourceIndex in selected.sourceIndices &&
                         cell.bounds.contains(handle.x, handle.y)
                 }
             })
@@ -416,7 +412,7 @@ internal class EditorCellSelectionAdmissionTest {
                 view.editorContentFrame.dispatchTouchEvent(up)
             } finally { move.recycle(); up.recycle() }
             assertEquals(after, adapter.documentJson())
-            assertNotEquals(third.sourcePosition, engineSelection(adapter).optInt("headCell", -1))
+            assertNotEquals(drawing.tableCellDocumentPosition!!.invoke(third.surface.editorTableId!!, third.sourceIndex), engineSelection(adapter).optInt("headCell", -1))
         }
 
     @Test
@@ -523,7 +519,7 @@ internal class EditorCellSelectionAdmissionTest {
                 try { assertTrue(view.editorContentFrame.dispatchTouchEvent(motion)) }
                 finally { motion.recycle() }
             }
-            assertEquals(third.sourcePosition, engineSelection(adapter).getInt("headCell"))
+            assertEquals(drawing.tableCellDocumentPosition!!.invoke(third.surface.editorTableId!!, third.sourceIndex), engineSelection(adapter).getInt("headCell"))
         }
 
     @Test
@@ -731,7 +727,7 @@ internal class EditorCellSelectionAdmissionTest {
                 dragHandle(view, head.x + drawing.left, haloY + drawing.top,
                     target.bounds.centerX() + drawing.left,
                     target.bounds.centerY() + drawing.top)
-                assertEquals(target.sourcePosition, engineSelection(adapter).getInt("headCell"))
+                assertEquals(drawing.tableCellDocumentPosition!!.invoke(target.surface.editorTableId!!, target.sourceIndex), engineSelection(adapter).getInt("headCell"))
                 assertEquals(before, adapter.documentJson())
                 val movedHead = drawing.selectionHandles().single {
                     it.role == TableSelectionHandleRole.HEAD
@@ -936,13 +932,13 @@ internal class EditorCellSelectionAdmissionTest {
             val selection = JSONObject(raw).getJSONObject("selection")
             val record = adapter.cachedTableRecords.values.single()
             val realCells = record.getJSONArray("cells")
-            val expected = (0 until realCells.length()).map { realCells.getJSONObject(it).getInt("sourcePos") }.toSet()
+            val expected = (0 until realCells.length()).toSet()
             assertEquals(5, expected.size)
             assertEquals(expected, (resolveEditorCellSelection(selection, adapter.cachedTableRecords)
-                as EditorCellSelection.Drawable).sourcePositions)
+                as EditorCellSelection.Drawable).sourceIndices)
             val rtl = JSONObject(record.toString()).put("direction", "rtl")
             assertEquals(expected, (resolveEditorCellSelection(selection, mapOf("t0" to rtl))
-                as EditorCellSelection.Drawable).sourcePositions)
+                as EditorCellSelection.Drawable).sourceIndices)
             val unavailable = JSONObject(record.toString()).put("failure", "invalidStructure")
             assertTrue(resolveEditorCellSelection(selection, mapOf("t0" to unavailable))
                 is EditorCellSelection.Unavailable)
@@ -1059,8 +1055,8 @@ internal class EditorCellSelectionAdmissionTest {
                 val block = drawing.preparedLayout!!.blocks.single()
                 val bounds = block.tableBounds!!
                 val samples = block.tableSurface!!.cells.map { cell ->
-                    bitmap.getPixel((bounds.left + cell.frame.left + cell.frame.width - 20).toInt(),
-                        (bounds.top + cell.frame.top + cell.frame.height / 2).toInt())
+                    bitmap.getPixel((bounds.left + block.tableSurface!!.frameOfCell(cell).left + block.tableSurface!!.frameOfCell(cell).width - 20).toInt(),
+                        (bounds.top + block.tableSurface!!.frameOfCell(cell).top + block.tableSurface!!.frameOfCell(cell).height / 2).toInt())
                 }
                 bitmap.recycle()
                 return samples
@@ -1071,7 +1067,7 @@ internal class EditorCellSelectionAdmissionTest {
             val selectedDrawing = (0 until view.editorContentFrame.childCount)
                 .map { view.editorContentFrame.getChildAt(it) }
                 .filterIsInstance<PreparedProseDrawingView>().single()
-            assertEquals(2, selectedDrawing.selectedTableCellSourcePositions.values.single().size)
+            assertEquals(2, selectedDrawing.selectedTableCellSourceIndices.values.single().size)
             val after = paint()
             assertEquals(3, after.size)
             assertNotEquals("first selected frame unchanged", before[0], after[0])
@@ -1099,8 +1095,8 @@ internal class EditorCellSelectionAdmissionTest {
             val block = drawing.preparedLayout!!.blocks.single()
             val table = block.tableSurface!!
             val bounds = block.tableBounds!!
-            val second = table.cells[1].frame
-            val third = table.cells[2].frame
+            val second = table.frameOfCell(1)!!
+            val third = table.frameOfCell(2)!!
             val fromX = bounds.left + second.left + second.width - 8f
             val fromY = bounds.top + second.top + second.height - 8f
             val toX = bounds.left + third.left + third.width / 2f
@@ -1150,8 +1146,8 @@ internal class EditorCellSelectionAdmissionTest {
             val block = drawing.preparedLayout!!.blocks.single()
             val cell = block.tableSurface!!.cells.first()
             val bounds = block.tableBounds!!
-            val x = bounds.left + cell.frame.left + cell.contentOrigin.first + 8f
-            val y = bounds.top + cell.frame.top + cell.contentOrigin.second + 8f
+            val x = bounds.left + block.tableSurface!!.frameOfCell(cell).left + cell.contentOrigin.first + 8f
+            val y = bounds.top + block.tableSurface!!.frameOfCell(cell).top + cell.contentOrigin.second + 8f
             val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
             val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
             try {
@@ -1207,8 +1203,8 @@ internal class EditorCellSelectionAdmissionTest {
             val block = drawing.preparedLayout!!.blocks.single()
             val cell = block.tableSurface!!.cells.last()
             val bounds = block.tableBounds!!
-            val x = bounds.left + cell.frame.left + cell.contentOrigin.first + 8f
-            val y = bounds.top + cell.frame.top + cell.contentOrigin.second + 8f
+            val x = bounds.left + block.tableSurface!!.frameOfCell(cell).left + cell.contentOrigin.first + 8f
+            val y = bounds.top + block.tableSurface!!.frameOfCell(cell).top + cell.contentOrigin.second + 8f
             val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
             val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
             try {
@@ -1221,7 +1217,7 @@ internal class EditorCellSelectionAdmissionTest {
             assertTrue(view.activeTextInput !== view.editorEditText)
             assertEquals("text", JSONObject(requireNotNull(adapter.selectionJson())).optString("type", ""))
             assertFalse(view.editorEditText.authoritativeCellSelectionActive)
-            assertTrue(drawing.selectedTableCellSourcePositions.isEmpty())
+            assertTrue(drawing.selectedTableCellSourceIndices.isEmpty())
 
             val before = adapter.documentJson()
             selectCells(adapter)

@@ -414,8 +414,7 @@ internal class EditorTableClipboardTest {
 
     private fun cellCenter(fixture: Fixture, cell: Int): Pair<Float, Float> {
         val drawing = drawing(fixture)
-        val opening = fixture.openings()[cell]
-        val presented = drawing.presentedTableCells().single { it.sourcePosition == opening }
+        val presented = drawing.presentedTableCells().single { it.sourceIndex == cell }
         return presented.bounds.centerX() + drawing.left to presented.bounds.centerY() + drawing.top
     }
 
@@ -583,7 +582,7 @@ internal class EditorTableClipboardTest {
             val before = fixture.adapter.documentJson()
             val drawing = drawing(fixture)
             val selected = requireNotNull(drawing.selectedTableCellRects(
-                drawing.selectedTableCellSourcePositions.keys.single())).single()
+                drawing.selectedTableCellSourceIndices.keys.single())).single()
             val center = selected.centerX() + drawing.left to selected.centerY() + drawing.top
             dispatchFrameTouches(fixture, listOf(MotionEvent.ACTION_DOWN to center, MotionEvent.ACTION_UP to center))
             awaitDoubleTapTimeout()
@@ -742,7 +741,7 @@ internal class EditorTableClipboardTest {
     }
 
     private fun dropTarget(fixture: Fixture, cell: Int) =
-        TableCellDropTarget(fixture.adapter.cachedTableRecords.keys.single(), fixture.openings()[cell])
+        TableCellDropTarget(fixture.adapter.cachedTableRecords.keys.single(), cell)
 
     @Test
     fun `a long press inside the selection lifts the copy flavours as a system drag`() =
@@ -949,13 +948,13 @@ internal class EditorTableClipboardTest {
             fixture.relayout(stale)
             assertTrue(stale.editorEditText.requestFocus())
             val staleDrawing = stale.editorTableSurface.drawingView
-            val presented = staleDrawing.presentedTableCells().single { it.sourcePosition == openings[FIRST_CELL] }
+            val presented = staleDrawing.presentedTableCells().single { it.sourceIndex == FIRST_CELL }
             val before = fixture.adapter.documentJson()
 
             val state = requireNotNull(stale.editorTableSurface.startCellDrag(
                 presented.bounds.centerX(), presented.bounds.centerY()))
             assertFalse("a non-owner can only copy", state.movable)
-            val target = staleDrawing.presentedTableCells().single { it.sourcePosition == openings[THIRD_CELL] }
+            val target = staleDrawing.presentedTableCells().single { it.sourceIndex == THIRD_CELL }
             assertFalse(sendDrag(stale.editorEditText, DragEvent.ACTION_DROP,
                 target.bounds.centerX() + staleDrawing.left to target.bounds.centerY() + staleDrawing.top,
                 liftedClip(), state))
@@ -972,12 +971,12 @@ internal class EditorTableClipboardTest {
             val clip = liftedClip()
             val drawing = drawing(fixture)
             val openings = fixture.openings()
-            val wide = drawing.presentedTableCells().single { it.sourcePosition == openings[IRREGULAR_WIDE_CELL] }
-            val later = drawing.presentedTableCells().single { it.sourcePosition == openings[IRREGULAR_LATER_CELL] }
+            val wide = drawing.presentedTableCells().single { it.sourceIndex == IRREGULAR_WIDE_CELL }
+            val later = drawing.presentedTableCells().single { it.sourceIndex == IRREGULAR_LATER_CELL }
             val gap = (later.bounds.right + wide.bounds.right) / 2f + drawing.left to later.bounds.centerY() + drawing.top
             assertTrue("the gap lies inside the table", drawing.hasTableAt(gap.first - drawing.left, gap.second - drawing.top))
             assertTrue("the gap holds no real cell", drawing.presentedTableCells().none {
-                it.cell.sourceCellIndex != null && it.bounds.contains(gap.first - drawing.left, gap.second - drawing.top)
+                it.bounds.contains(gap.first - drawing.left, gap.second - drawing.top)
             })
             val before = fixture.adapter.documentJson()
 

@@ -186,7 +186,7 @@ class RemoteSelectionOverlayView @JvmOverloads constructor(
                 as? EditorCellSelection.Drawable ?: return@mapNotNull null
             selection.clientId to RemoteTableCellSelection(
                 cells.tableId,
-                cells.sourcePositions,
+                cells.sourceIndices,
                 withAlpha(selection.color, SELECTION_ALPHA)
             )
         }

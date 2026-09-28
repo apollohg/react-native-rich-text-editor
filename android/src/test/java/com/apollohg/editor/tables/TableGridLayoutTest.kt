@@ -8,6 +8,19 @@ import com.apollohg.editor.viewer.PreparedProseLayout
 import com.apollohg.editor.viewer.ProseLayoutKey
 
 class TableGridLayoutTest {
+    @Test fun testLayoutRectanglesAreKeyedBySourceIndex() {
+        val cells = listOf(
+            TableGridCell(sourceIndex = 1, row = 0, column = 1, contentKey = "second"),
+            TableGridCell(sourceIndex = 0, row = 0, column = 0, contentKey = "first")
+        )
+        val layout = TableGridLayout().layout(record(cells = cells), 160f, TableStyle(), false) { _, _ -> 20f }
+        assertEquals(setOf(0, 1), layout.rectangles.keys)
+        assertEquals(listOf(0, 1), layout.sourceOrder)
+        assertEquals(listOf(0f, 80f, 160f), layout.columnOffsets)
+        assertEquals(0f, layout.rectangles.getValue(0).left)
+        assertEquals(80f, layout.rectangles.getValue(1).left)
+    }
+
     @Test fun `physical table adapter scales declared widths and chrome once`() {
         val source = TableGridRecord("density", 2, 1, listOf(100f, 100f), listOf(
             TableGridCell(1, 0, 0, contentKey = "one"), TableGridCell(2, 0, 1, contentKey = "two")
@@ -29,7 +42,7 @@ class TableGridLayoutTest {
             artifact(width.toInt(), 20, cell.contentKey)
         }
 
-        assertEquals(listOf(10, 20), surface.cells.map { it.sourcePosition })
+        assertEquals(listOf(10, 20), surface.cells.map { it.sourceIndex })
         assertEquals(2, surface.visibleCells(surface.bounds).size)
         assertTrue(surface.layout.contentHeight.isFinite())
     }
@@ -39,12 +52,12 @@ class TableGridLayoutTest {
         val preparedSources = mutableListOf<Int>()
         val preparedContentKeys = mutableListOf<String>()
         val surface = ViewerTableSurface("t1", TableGridRecord("viewer", 2, 1, listOf(null, null), cells), 160f, TableStyle(), false) { cell, width ->
-            preparedSources += cell.sourcePosition
+            preparedSources += cell.sourceIndex
             preparedContentKeys += cell.contentKey
-            artifact(width.toInt(), 20, "${cell.sourcePosition}")
+            artifact(width.toInt(), 20, "${cell.sourceIndex}")
         }
 
-        assertEquals(listOf(10, 20), surface.cells.map { it.sourcePosition })
+        assertEquals(listOf(10, 20), surface.cells.map { it.sourceIndex })
         assertEquals(listOf("10", "20"), surface.cells.map { it.content.key.semanticKey })
         assertEquals(listOf(10, 20), preparedSources)
         assertEquals(listOf("same", "same"), preparedContentKeys)
@@ -68,7 +81,7 @@ class TableGridLayoutTest {
         val cells = listOf(TableGridCell(10, 0, 0, 2, 1, "a"), TableGridCell(20, 0, 1, contentKey = "b"), TableGridCell(30, 1, 1, contentKey = "c"))
         val result = TableGridLayout().layout(record(rows = 2, cells = cells), 160f, TableStyle(), false) { cell, width ->
             assertEquals(62f, width)
-            if (cell.sourcePosition == 10) 80f else 20f
+            if (cell.sourceIndex == 10) 80f else 20f
         }
         assertEquals(listOf(0f, 38f, 98f), result.rowOffsets)
         assertEquals(98f, result.rectangles[10]?.height)
@@ -134,7 +147,7 @@ class TableGridLayoutTest {
             TableGridCell(30, 1, 2, contentKey = "later")
         )
         val result = TableGridLayout().layout(record(columns = 3, rows = 2, widths = listOf(80f, 80f, 80f), cells = cells), 240f, TableStyle(), false) { cell, _ ->
-            when (cell.sourcePosition) {
+            when (cell.sourceIndex) {
                 10 -> 102f
                 20 -> 20f
                 else -> 60f
@@ -144,7 +157,7 @@ class TableGridLayoutTest {
         assertEquals(160f, result.rectangles[20]?.width)
         assertEquals(listOf(0f, 38f, 120f), result.rowOffsets)
         assertEquals(cells.size, result.rectangles.size)
-        assertEquals(cells.map { it.sourcePosition }.toSet(), result.rectangles.keys)
+        assertEquals(cells.map { it.sourceIndex }.toSet(), result.rectangles.keys)
         assertEquals(listOf(10, 20, 30), result.sourceOrder)
     }
 
@@ -156,7 +169,7 @@ class TableGridLayoutTest {
         fun layout(width: Float = 100f, theme: String = "theme", fontRevision: Long = 1L): TableLayoutResult =
             grid.layout(record(columns = 1, rows = 2, widths = listOf(width), cells = cells), width, TableStyle(), false, theme, fontRevision) { cell, _ ->
                 calls += 1
-                measuredPositions += cell.sourcePosition
+                measuredPositions += cell.sourceIndex
                 20f
             }
 

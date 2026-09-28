@@ -325,14 +325,14 @@ internal class TableInteractionTest {
     fun `synthetic gap inside overflowing table can start scrolling without a cell target`() {
         mounted(layout = prepare(source = GAP_SOURCE)) { host, drawing, layout ->
             val surface = requireNotNull(layout.blocks.single().tableSurface)
-            val first = surface.cells.first { it.frame.top == 0f }
+            val first = surface.cells.first { surface.frameOfCell(it).top == 0f }
             val x = surface.hostViewportWidth / 2f
-            val y = first.frame.top + first.frame.height / 4f
-            assertTrue("x=$x viewport=${surface.hostViewportWidth} widths=${surface.layout.columnWidths} cells=${surface.cells.map { it.frame }}",
+            val y = surface.frameOfCell(first).top + surface.frameOfCell(first).height / 4f
+            assertTrue("x=$x viewport=${surface.hostViewportWidth} widths=${surface.layout.columnWidths} cells=${surface.cells.map { surface.frameOfCell(it) }}",
                 x < surface.hostViewportWidth)
             assertTrue(surface.cells.none { cell ->
-                x >= cell.frame.left && x < cell.frame.left + cell.frame.width &&
-                    y >= cell.frame.top && y < cell.frame.top + cell.frame.height
+                x >= surface.frameOfCell(cell).left && x < surface.frameOfCell(cell).left + surface.frameOfCell(cell).width &&
+                    y >= surface.frameOfCell(cell).top && y < surface.frameOfCell(cell).top + surface.frameOfCell(cell).height
             })
             dispatchPoints(host, listOf(x to y, (x - 80f) to y, (x - 80f) to y))
             assertEquals(80f, drawing.tablePhysicalOffsetForTesting(surface.identity), 0.01f)

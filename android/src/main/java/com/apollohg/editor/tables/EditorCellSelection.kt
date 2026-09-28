@@ -6,7 +6,7 @@ import org.json.JSONObject
 internal sealed interface EditorCellSelection {
     val tableId: String
 
-    data class Drawable(override val tableId: String, val sourcePositions: Set<Int>) : EditorCellSelection
+    data class Drawable(override val tableId: String, val sourceIndices: Set<Int>) : EditorCellSelection
     data class Unavailable(override val tableId: String) : EditorCellSelection
 }
 
@@ -27,7 +27,7 @@ internal fun resolveEditorCellSelection(
     head: Long,
     records: Map<String, JSONObject>
 ): EditorCellSelection? {
-    data class Cell(val position: Int, val row: Int, val column: Int, val rowEnd: Int, val columnEnd: Int) {
+    data class Cell(val sourceIndex: Int, val position: Int, val row: Int, val column: Int, val rowEnd: Int, val columnEnd: Int) {
         fun intersects(top: Int, left: Int, bottom: Int, right: Int): Boolean =
             row < bottom && rowEnd > top && column < right && columnEnd > left
     }
@@ -56,7 +56,7 @@ internal fun resolveEditorCellSelection(
             if (rowspan == 0L || colspan == 0L || row + rowspan > rowCount.toLong() ||
                 column + colspan > columnCount.toLong() || position.toLong() !in tableStart until tableEnd
             ) return@mapNotNull null
-            Cell(position, row.toInt(), column.toInt(), (row + rowspan).toInt(), (column + colspan).toInt())
+            Cell(index, position, row.toInt(), column.toInt(), (row + rowspan).toInt(), (column + colspan).toInt())
         }
         val first = cells.singleOrNull { it.position.toLong() == anchor } ?: return@mapNotNull null
         val last = cells.singleOrNull { it.position.toLong() == head } ?: return@mapNotNull null
@@ -75,7 +75,7 @@ internal fun resolveEditorCellSelection(
             if (prior == listOf(top, left, bottom, right)) break
         }
         val selected = cells.filter { it.intersects(top, left, bottom, right) }
-            .map { it.position }.toSet()
+            .map { it.sourceIndex }.toSet()
         (tableEnd - tableStart) to EditorCellSelection.Drawable(id, selected)
     }
     val drawable = candidates.mapNotNull { it.second as? EditorCellSelection.Drawable }

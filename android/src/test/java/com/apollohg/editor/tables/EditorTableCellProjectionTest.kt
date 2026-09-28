@@ -28,7 +28,7 @@ import org.robolectric.annotation.Config
 internal class EditorTableCellProjectionTest {
     private fun table(elements: JSONArray, sourcePos: Int = 2, nested: Boolean = false): JSONObject {
         val key = "a".repeat(64)
-        return JSONObject().put("tablePos", 0).put("sourceEnd", 32).put("rows", 1)
+        return JSONObject().put("tablePos", 0).put("sourceId", "y1-0").put("sourceEnd", 32).put("rows", 1)
             .put("columns", 1).put("columnWidths", JSONArray().put(JSONObject.NULL))
             .put("direction", JSONObject.NULL).put("irregular", false)
             .put("readOnlyDescendants", nested).put("attrsKey", key)

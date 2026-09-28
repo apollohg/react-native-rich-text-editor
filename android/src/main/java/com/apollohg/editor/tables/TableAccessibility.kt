@@ -76,7 +76,6 @@ internal data class TableAccessibilityAction(
 internal data class TableAccessibilityCell(
     val surface: ViewerTableSurface,
     val cell: PreparedViewerTableCell,
-    val sourceCellIndex: Int,
     val row: Int,
     val column: Int,
     val rowSpan: Int,
@@ -84,7 +83,7 @@ internal data class TableAccessibilityCell(
     val isHeader: Boolean,
     val label: String
 ) {
-    val sourcePosition: Int get() = cell.sourcePosition
+    val sourceIndex: Int get() = cell.sourceIndex
 
     fun coversRow(index: Int): Boolean = index in row until row + rowSpan
     fun coversColumn(index: Int): Boolean = index in column until column + columnSpan
@@ -99,7 +98,6 @@ internal class TableAccessibilityTable(
     enum class Frame { EMPTY, FAILED }
 
     val tableId: String? get() = surface.editorTableId
-    val tablePos: Int? get() = surface.sourceTable?.tablePos?.toInt()
 
     val frame: Frame?
         get() {
@@ -190,10 +188,10 @@ internal object TableAccessibility {
     private fun table(surface: ViewerTableSurface): TableAccessibilityTable {
         val source = surface.sourceTable
         val accessibleCells = surface.cells.mapNotNull { cell ->
-            val index = cell.sourceCellIndex ?: return@mapNotNull null
+            val index = cell.sourceIndex
             val sourceCell = source?.cells?.getOrNull(index) ?: return@mapNotNull null
             TableAccessibilityCell(
-                surface, cell, index, sourceCell.row.toInt(), sourceCell.column.toInt(),
+                surface, cell, sourceCell.row.toInt(), sourceCell.column.toInt(),
                 sourceCell.rowspan.toInt(), sourceCell.colspan.toInt(), sourceCell.header,
                 text(cell.content).joinToString(LABEL_SEPARATOR)
             )
@@ -241,7 +239,7 @@ internal object TableAccessibility {
     }
 
     private fun headerTitle(view: View, headers: List<TableAccessibilityCell>, cell: TableAccessibilityCell): String? =
-        headers.distinct().filter { it.sourcePosition != cell.sourcePosition }
+        headers.distinct().filter { it.sourceIndex != cell.sourceIndex }
             .joinToString(LABEL_SEPARATOR) { cellLabel(view, it) }.takeIf { it.isNotEmpty() }
 
     fun cellLabel(view: View, cell: TableAccessibilityCell): String =
@@ -257,11 +255,11 @@ internal object TableAccessibility {
 internal class TableCellAccessibility(
     private val drawing: PreparedProseDrawingView,
     private val surface: () -> ViewerTableSurface?,
-    private val sourceCellIndex: Int,
+    private val sourceIndex: Int,
     private val editing: TableAccessibilityEditing
 ) {
     private fun located(): TableAccessibilityLocation? =
-        surface()?.let { drawing.tableAccessibilityLocation(it, sourceCellIndex) }
+        surface()?.let { drawing.tableAccessibilityLocation(it, sourceIndex) }
 
     fun isPlacedInTable(): Boolean = located() != null
 
@@ -305,9 +303,9 @@ internal class TableAccessibilityNodes(
         val tableIndexes: Map<String, Int> = entries.indices.filter { entries[it] is Entry.Table }
             .associateBy { (entries[it] as Entry.Table).table.surface.identity }
         val cellIndexes: Map<Pair<String, Int>, Int> = entries.indices.filter { entries[it] is Entry.Cell }
-            .associateBy { index -> (entries[index] as Entry.Cell).let { it.table.surface.identity to it.cell.sourceCellIndex } }
+            .associateBy { index -> (entries[index] as Entry.Cell).let { it.table.surface.identity to it.cell.sourceIndex } }
     }
-    private data class Identity(val table: String, val sourcePosition: Int?)
+    private data class Identity(val table: String, val sourceIndex: Int?)
     private data class Focused(val virtualId: Int, val identity: Identity)
 
     private val accessibilityManager = host.context.getSystemService(AccessibilityManager::class.java)
@@ -333,7 +331,7 @@ internal class TableAccessibilityNodes(
 
     private fun identity(entry: Entry) = when (entry) {
         is Entry.Table -> Identity(entry.table.surface.identity, null)
-        is Entry.Cell -> Identity(entry.table.surface.identity, entry.cell.sourcePosition)
+        is Entry.Cell -> Identity(entry.table.surface.identity, entry.cell.sourceIndex)
         is Entry.Detached -> Identity(entry.frame.tableId, null)
     }
 
@@ -354,7 +352,7 @@ internal class TableAccessibilityNodes(
             when (item) {
                 is TableAccessibilityItem.Node -> nodeId(item.node)?.let { children += it }
                 is TableAccessibilityItem.Table -> {
-                    flushDetached(item.table.tablePos ?: Int.MAX_VALUE)
+                    flushDetached(item.table.tableId?.let { drawing.tableDocumentPosition?.invoke(it) } ?: Int.MAX_VALUE)
                     children += idOf(snapshot, item.table)
                 }
             }
@@ -368,9 +366,9 @@ internal class TableAccessibilityNodes(
 
     private fun presentedCell(entry: Entry.Cell): ViewerTablePresentedCell? = presentedCell(entry.cell)
 
-    fun locate(surface: ViewerTableSurface, sourceCellIndex: Int): TableAccessibilityLocation? {
+    fun locate(surface: ViewerTableSurface, sourceIndex: Int): TableAccessibilityLocation? {
         val snapshot = snapshot()
-        val index = snapshot.cellIndexes[surface.identity to sourceCellIndex] ?: return null
+        val index = snapshot.cellIndexes[surface.identity to sourceIndex] ?: return null
         val cell = snapshot.entries[index] as Entry.Cell
         if (cell.table.surface !== surface) return null
         return TableAccessibilityLocation(idOf(snapshot, cell.table), FIRST_TABLE_NODE_ID + index, cell.table, cell.cell)

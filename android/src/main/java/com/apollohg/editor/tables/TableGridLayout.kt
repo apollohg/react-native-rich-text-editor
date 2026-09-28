@@ -2,7 +2,6 @@ package com.apollohg.editor.tables
 
 import android.text.TextUtils
 import android.view.View
-import uniffi.editor_core.FfiViewerTable
 import uniffi.editor_core.TableCompatibilityDiagnostic
 import uniffi.editor_core.TableRenderFailure
 import java.util.Locale
@@ -33,7 +32,7 @@ internal enum class TableLayoutDirection {
 internal fun tablePhysicalX(logicalX: Float, width: Float, totalWidth: Float, rtl: Boolean): Float =
     if (rtl) totalWidth - logicalX - width else logicalX
 
-data class TableGridCell(val sourcePosition: Int, val row: Int, val column: Int, val rowspan: Int = 1, val colspan: Int = 1, val contentKey: String, val attachmentRevision: Long = 0)
+data class TableGridCell(val sourceIndex: Int, val row: Int, val column: Int, val rowspan: Int = 1, val colspan: Int = 1, val contentKey: String, val attachmentRevision: Long = 0)
 
 enum class TableLayoutFailure { GRID_LIMIT, WORK_LIMIT, ALLOCATION, INVALID_STRUCTURE, INVALID_ATTRIBUTES }
 
@@ -44,9 +43,9 @@ data class TableGridRecord(
     val typedFailure: TableRenderFailure? = null
 ) {
     companion object {
-        fun from(table: FfiViewerTable, documentOwner: String) = TableGridRecord(
-            documentOwner, table.columns.toInt(), table.rows.toInt(), table.columnWidths.map { it?.toFloat() },
-            table.cells.map { TableGridCell(it.sourcePos.toInt(), it.row.toInt(), it.column.toInt(), it.rowspan.toInt(), it.colspan.toInt(), it.contentKey) },
+        fun from(table: TableSurfaceSource, documentOwner: String) = TableGridRecord(
+            documentOwner, table.columns, table.rows, table.columnWidths,
+            table.cells.map { TableGridCell(it.sourceIndex, it.row, it.column, it.rowspan, it.colspan, it.contentKey) },
             table.failure?.let { TableLayoutFailure.valueOf(it.name) }, table.compatibilityDiagnostic, table.failure
         )
     }
@@ -59,7 +58,7 @@ internal fun TableGridRecord.physical(scale: Float): TableGridRecord {
 
 data class TableCellRect(val left: Float, val top: Float, val width: Float, val height: Float)
 data class TableLayoutResult(
-    val columnWidths: List<Float>, val rowOffsets: List<Float>, val rectangles: Map<Int, TableCellRect>,
+    val columnWidths: List<Float>, val columnOffsets: List<Float>, val rowOffsets: List<Float>, val rectangles: Map<Int, TableCellRect>,
     val sourceOrder: List<Int>, val contentWidth: Float, val contentHeight: Float,
     val failure: TableLayoutFailure?, val compatibilityDiagnostic: TableCompatibilityDiagnostic?, val typedFailure: TableRenderFailure?
 )
@@ -94,7 +93,7 @@ class TableGridLayout(private val displayScale: Float = 1f, private val cache: T
             xOffsets += offset
         }
         val heights = MutableList(record.rows) { minimumRow }
-        val ordered = record.cells.sortedBy { it.sourcePosition }
+        val ordered = record.cells.sortedBy { it.sourceIndex }
         if (!ordered.all { valid(it, record) }) {
             return fallback(TableLayoutFailure.INVALID_STRUCTURE, record, fallbackWidth, fallbackHeight)
         }
@@ -138,13 +137,13 @@ class TableGridLayout(private val displayScale: Float = 1f, private val cache: T
         val total = xOffsets.last()
         val rectangles = ordered.filter { valid(it, record) }.associate { cell ->
             val logical = xOffsets[cell.column]; val width = xOffsets[cell.column + cell.colspan] - logical
-            cell.sourcePosition to TableCellRect(tablePhysicalX(logical, width, total, rtl), rows[cell.row], width, rows[cell.row + cell.rowspan] - rows[cell.row])
+            cell.sourceIndex to TableCellRect(tablePhysicalX(logical, width, total, rtl), rows[cell.row], width, rows[cell.row + cell.rowspan] - rows[cell.row])
         }
-        return TableLayoutResult(widths, rows, rectangles, ordered.map { it.sourcePosition }, total, rows.last(), null, record.compatibilityDiagnostic, null)
+        return TableLayoutResult(widths, xOffsets, rows, rectangles, ordered.map { it.sourceIndex }, total, rows.last(), null, record.compatibilityDiagnostic, null)
     }
 
     private fun fallback(failure: TableLayoutFailure, record: TableGridRecord, width: Float, height: Float) =
-        TableLayoutResult(emptyList(), listOf(0f, height), emptyMap(), emptyList(), width, height, failure, record.compatibilityDiagnostic, record.typedFailure)
+        TableLayoutResult(emptyList(), listOf(0f), listOf(0f, height), emptyMap(), emptyList(), width, height, failure, record.compatibilityDiagnostic, record.typedFailure)
 
     private fun valid(cell: TableGridCell, record: TableGridRecord) = cell.row >= 0 && cell.column >= 0 && cell.rowspan > 0 && cell.colspan > 0 && cell.rowspan <= record.rows - cell.row && cell.colspan <= record.columns - cell.column
     private fun scale() = if (displayScale.isFinite() && displayScale > 0f) displayScale else 1f

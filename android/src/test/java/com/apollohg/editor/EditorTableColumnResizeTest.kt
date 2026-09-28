@@ -96,8 +96,8 @@ internal class EditorTableColumnResizeTest {
         val selections = mutableListOf<Pair<Int, Int>>()
 
         fun cell(index: Int): ViewerTablePresentedCell = drawing.presentedTableCells().first {
-            it.surface.sourceTable?.tablePos?.let { position -> "t$position" } == tableId &&
-                it.sourcePosition == positions[index]
+            it.surface.editorTableId == tableId &&
+                it.sourceIndex == index
         }
 
         fun trailingEdge(index: Int): Pair<Float, Float> {
@@ -666,8 +666,7 @@ internal class EditorTableColumnResizeTest {
         val nested = """{"type":"doc","content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","attrs":{"colwidth":[200]},"content":[{"type":"table","content":[{"type":"table_row","content":[{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"in"}]}]},{"type":"table_cell","content":[{"type":"paragraph","content":[{"type":"text","text":"ner"}]}]}]}]}]},{"type":"table_cell","attrs":{"colwidth":[120]},"content":[{"type":"paragraph","content":[{"type":"text","text":"outer"}]}]}]}]}]}"""
         withMountedTable(nested) { fixture ->
             val nestedCells = fixture.drawing.presentedTableCells().filter {
-                it.surface.sourceTable?.tablePos?.let { position -> "t$position" } != fixture.tableId &&
-                    it.cell.sourceCellIndex != null
+                it.surface.editorTableId != fixture.tableId
             }
             assertEquals(2, nestedCells.size)
             val inner = nestedCells.minBy { it.bounds.left }
@@ -759,7 +758,7 @@ internal class EditorTableColumnResizeTest {
             listOf(Triple("d", 1, 1), Triple("e", 1, 1)))
         withMountedTable(document, cellSelection = 4 to 2) { fixture ->
             assertTrue("the merged cell must grow the drawn rectangle to the first row",
-                fixture.positions[0] in fixture.drawing.selectedTableCellSourcePositions[fixture.tableId].orEmpty())
+                fixture.positions[0] in fixture.drawing.selectedTableCellSourceIndices[fixture.tableId].orEmpty())
             listOf(2, 3).forEach { index ->
                 val edge = fixture.trailingEdge(index)
                 assertNull("body cell $index: endpoints below the first row do not make a column selection",

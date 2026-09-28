@@ -41,13 +41,12 @@ import com.apollohg.editor.tables.ViewerTablePresentedCell
 import com.apollohg.editor.tables.ViewerTablePresentedSurface
 import com.apollohg.editor.tables.ViewerTablePresentationSnapshot
 import com.apollohg.editor.tables.ViewerTableSurface
-import com.apollohg.editor.tables.editorTableId
 import kotlin.math.pow
 import java.util.Collections
 import java.util.IdentityHashMap
 import org.json.JSONArray
 import org.json.JSONObject
-import uniffi.editor_core.FfiViewerTable
+import com.apollohg.editor.tables.TableSurfaceSource
 
 internal enum class TableSelectionHandleRole { ANCHOR, HEAD }
 
@@ -59,11 +58,11 @@ internal data class TableSelectionHandle(
     val y: Float
 )
 
-internal data class RemoteTableCellSelection(val tableId: String, val sourcePositions: Set<Int>, val color: Int)
+internal data class RemoteTableCellSelection(val tableId: String, val sourceIndices: Set<Int>, val color: Int)
 
 internal data class TableResizeEdge(val tableId: String, val column: Int)
 
-internal data class TableCellDropTarget(val tableId: String, val sourcePosition: Int)
+internal data class TableCellDropTarget(val tableId: String, val sourceIndex: Int)
 
 /** Rendering-only consumer of fully prepared StaticLayout and geometry fragments. */
 internal class PreparedProseDrawingView @JvmOverloads constructor(
@@ -85,13 +84,15 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     internal var onMountedTableCellsDrawnForTesting: ((Int) -> Unit)? = null
     internal var onTableChromeDrawnForTesting: ((Int) -> Unit)? = null
     internal var onTableRichFragmentDrawnForTesting: (() -> Unit)? = null
-    internal var suppressedTableCellSourcePosition: Int? = null
+    internal var tableDocumentPosition: ((String) -> Int?)? = null
+    internal var tableCellDocumentPosition: ((String, Int) -> Int?)? = null
+    internal var suppressedTableCell: Pair<String, Int>? = null
         set(value) {
             if (field == value) return
             field = value
             invalidate()
         }
-    internal var selectedTableCellSourcePositions: Map<String, Set<Int>> = emptyMap()
+    internal var selectedTableCellSourceIndices: Map<String, Set<Int>> = emptyMap()
         set(value) {
             if (field == value) return
             field = value
@@ -428,7 +429,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
             val rowOffsets = table.surface.layout.rowOffsets
             val selectedColumns = selectedWholeColumns(tableId, sourceTable)
             snapshot.cells.filter { it.surface === table.surface }.forEach { cell ->
-                val source = cell.cell.sourceCellIndex?.let(sourceCells::getOrNull) ?: return@forEach
+                val source = sourceCells.getOrNull(cell.sourceIndex) ?: return@forEach
                 if (y < cell.bounds.top || y >= cell.bounds.bottom) return@forEach
                 val column = (source.column + source.colspan).toInt() - 1
                 val row = source.row.toInt()
@@ -450,15 +451,15 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         return best?.first
     }
 
-    private fun selectedWholeColumns(tableId: String, table: FfiViewerTable): IntRange {
+    private fun selectedWholeColumns(tableId: String, table: TableSurfaceSource): IntRange {
         val (selectedTableId, anchor, head) = selectedTableCellEndpoints ?: return IntRange.EMPTY
-        val positions = selectedTableCellSourcePositions[tableId]
+        val positions = selectedTableCellSourceIndices[tableId]
         if (selectedTableId != tableId || positions == null) return IntRange.EMPTY
         val endpoints = listOf(anchor, head).map { position ->
-            table.cells.firstOrNull { it.sourcePos.toInt() == position } ?: return IntRange.EMPTY
+            table.cells.firstOrNull { tableCellDocumentPosition?.invoke(tableId, it.sourceIndex) == position } ?: return IntRange.EMPTY
         }
-        val selected = table.cells.filter { it.sourcePos.toInt() in positions }
-        if (selected.isEmpty() || endpoints.minOf { it.row } != 0u ||
+        val selected = table.cells.filter { it.sourceIndex in positions }
+        if (selected.isEmpty() || endpoints.minOf { it.row } != 0 ||
             endpoints.maxOf { it.row + it.rowspan } != table.rows) return IntRange.EMPTY
         return selected.minOf { it.column }.toInt() until selected.maxOf { it.column + it.colspan }.toInt()
     }
@@ -471,23 +472,23 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     private fun selectionHandles(snapshot: ViewerTablePresentationSnapshot): List<TableSelectionHandle> {
         val (tableId, anchor, head) = selectedTableCellEndpoints ?: return emptyList()
         val surface = snapshot.tableWithId(tableId) ?: return emptyList()
-        val positions = selectedTableCellSourcePositions[tableId].orEmpty()
-        val cells = snapshot.cells.filter { it.surface === surface.surface && it.sourcePosition in positions }
-        val selected = positions.sorted().mapNotNull(surface.surface::cellAtSourcePosition)
-        if (selected.none { it.sourcePosition == anchor } || selected.none { it.sourcePosition == head }) {
+        val positions = selectedTableCellSourceIndices[tableId].orEmpty()
+        val cells = snapshot.cells.filter { it.surface === surface.surface && it.sourceIndex in positions }
+        val selected = positions.sorted().mapNotNull(surface.surface::cell)
+        if (selected.none { tableCellDocumentPosition?.invoke(tableId, it.sourceIndex) == anchor } || selected.none { tableCellDocumentPosition?.invoke(tableId, it.sourceIndex) == head }) {
             return emptyList()
         }
         val inset = HANDLE_INSET_DP * resources.displayMetrics.density
         val forward = anchor <= head
         val rtl = surface.surface.isRightToLeft
         val firstCell = ViewerTablePresentation.present(
-            selected.minWith(compareBy<PreparedViewerTableCell> { it.frame.top }
-                .thenBy { if (rtl) -(it.frame.left + it.frame.width) else it.frame.left }),
+            selected.minWith(compareBy<PreparedViewerTableCell> { surface.surface.frameOfCell(it).top }
+                .thenBy { surface.surface.frameOfCell(it).let { frame -> if (rtl) -(frame.left + frame.width) else frame.left } }),
             surface, tablePresentationOwner
         )
         val lastCell = ViewerTablePresentation.present(
-            selected.maxWith(compareBy<PreparedViewerTableCell> { it.frame.top + it.frame.height }
-                .thenBy { if (rtl) -it.frame.left else it.frame.left + it.frame.width }),
+            selected.maxWith(compareBy<PreparedViewerTableCell> { surface.surface.frameOfCell(it).let { frame -> frame.top + frame.height } }
+                .thenBy { surface.surface.frameOfCell(it).let { frame -> if (rtl) -frame.left else frame.left + frame.width } }),
             surface, tablePresentationOwner
         )
         val firstX = if (rtl) firstCell.bounds.right - inset else firstCell.bounds.left + inset
@@ -529,7 +530,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         val surface = snapshot.tableWithId(tableId) ?: return null
         return snapshot.cells.firstOrNull {
             it.surface === surface.surface && it.bounds.contains(x, y) && it.clip.contains(x, y)
-        }?.sourcePosition
+        }?.sourceIndex?.let { tableCellDocumentPosition?.invoke(tableId, it) }
     }
 
     internal fun scrollSelectedTablePhysical(tableId: String, delta: Float): Float {
@@ -545,13 +546,13 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
         presentationSnapshot()?.tableWithId(tableId)?.clip
 
     internal fun selectedTableCellRects(tableId: String): List<RectF>? =
-        tableCellRects(tableId, selectedTableCellSourcePositions[tableId].orEmpty())
+        tableCellRects(tableId, selectedTableCellSourceIndices[tableId].orEmpty())
 
-    internal fun tableCellRects(tableId: String, sourcePositions: Set<Int>): List<RectF>? {
+    internal fun tableCellRects(tableId: String, sourceIndices: Set<Int>): List<RectF>? {
         val snapshot = presentationSnapshot() ?: return null
         val table = snapshot.tableWithId(tableId) ?: return null
-        return snapshot.cells.filter { it.surface === table.surface && isRealTableCell(it, sourcePositions) }
-            .sortedBy { it.sourcePosition }
+        return snapshot.cells.filter { it.surface === table.surface && isRealTableCell(it, sourceIndices) }
+            .sortedBy { it.sourceIndex }
             .mapNotNull { cell ->
                 RectF(cell.bounds).takeIf { it.intersect(cell.clip) }
                     ?.apply { offset(contentOriginXPx.toFloat(), contentOriginYPx.toFloat()) }
@@ -560,11 +561,11 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
 
     private fun isSelectedTableCell(cell: ViewerTablePresentedCell): Boolean {
         val tableId = cell.surface.editorTableId ?: return false
-        return isRealTableCell(cell, selectedTableCellSourcePositions[tableId].orEmpty())
+        return isRealTableCell(cell, selectedTableCellSourceIndices[tableId].orEmpty())
     }
 
-    private fun isRealTableCell(cell: ViewerTablePresentedCell, sourcePositions: Set<Int>): Boolean =
-        cell.cell.sourceCellIndex != null && cell.sourcePosition in sourcePositions
+    private fun isRealTableCell(cell: ViewerTablePresentedCell, sourceIndices: Set<Int>): Boolean =
+        cell.sourceIndex in sourceIndices
 
     internal fun atomLayoutsJson(density: Float): String {
         val artifact = preparedLayout ?: return "[]"
@@ -690,7 +691,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                 drawHierarchicalBackgrounds(canvas, artifact, snapshot, mountedLayouts, paintClip)
                 remoteTableCellSelections.forEach { remote ->
                     snapshot.mountedCells.filter {
-                        it.surface.editorTableId == remote.tableId && isRealTableCell(it, remote.sourcePositions)
+                        it.surface.editorTableId == remote.tableId && isRealTableCell(it, remote.sourceIndices)
                     }.forEach { fillTableCell(canvas, it, remote.color) }
                 }
                 snapshot.mountedCells.filter(::isSelectedTableCell).forEach {
@@ -699,7 +700,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                 tableCellDropTarget?.let { target ->
                     snapshot.mountedCells.filter {
                         it.surface.editorTableId == target.tableId &&
-                            isRealTableCell(it, setOf(target.sourcePosition))
+                            isRealTableCell(it, setOf(target.sourceIndex))
                     }.forEach { fillTableCell(canvas, it, it.surface.style.selectionColor) }
                 }
                 snapshot.mountedCells.forEach { drawTableChromeBorder(canvas, it) }
@@ -709,7 +710,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
                     image.block?.let { block -> block to image.attachment }
                 }.toMap()
                 val activeCellContent = snapshot.mountedCells.firstOrNull {
-                    it.sourcePosition == suppressedTableCellSourcePosition
+                    (it.surface.editorTableId to it.sourceIndex) == suppressedTableCell
                 }?.content
                 visible.filter { it.layout !== activeCellContent }.forEach { presented ->
                     drawPresented(canvas, presented, snapshot) {
@@ -822,7 +823,7 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     }
 
     private fun drawTableChromeBorder(canvas: Canvas, cell: ViewerTablePresentedCell) {
-        onTableChromeDrawnForTesting?.invoke(cell.sourcePosition)
+        onTableChromeDrawnForTesting?.invoke(cell.sourceIndex)
         val saved = canvas.save()
         canvas.clipRect(cell.clip)
         paint.style = Paint.Style.STROKE
@@ -1238,8 +1239,8 @@ internal class PreparedProseDrawingView @JvmOverloads constructor(
     internal fun presentedAccessibilityCell(cell: TableAccessibilityCell): ViewerTablePresentedCell? =
         tableAccessibility.presentedCell(cell)
 
-    internal fun tableAccessibilityLocation(surface: ViewerTableSurface, sourceCellIndex: Int): TableAccessibilityLocation? =
-        tableAccessibility.locate(surface, sourceCellIndex)
+    internal fun tableAccessibilityLocation(surface: ViewerTableSurface, sourceIndex: Int): TableAccessibilityLocation? =
+        tableAccessibility.locate(surface, sourceIndex)
 
     internal fun revealTableAccessibilityCell(cell: TableAccessibilityCell) {
         val presented = tableAccessibility.presentedCell(cell) ?: return

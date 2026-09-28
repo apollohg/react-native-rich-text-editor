@@ -85,7 +85,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             RectF(cell.bounds).takeIf { it.intersect(cell.clip) }
 
         fun remoteRects(selection: RemoteTableCellSelection): List<RectF> =
-            requireNotNull(drawing.tableCellRects(selection.tableId, selection.sourcePositions))
+            requireNotNull(drawing.tableCellRects(selection.tableId, selection.sourceIndices))
 
         fun activeCellPosition(): Long? = view.richTextView.activeTableCellPosition
 
@@ -188,7 +188,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
 
             val remote = fixture.drawing.remoteTableCellSelections.single()
             assertEquals(fixture.tableId, remote.tableId)
-            assertEquals(setOf(first, second), remote.sourcePositions)
+            assertEquals(setOf(GRID_FIRST, GRID_SECOND), remote.sourceIndices)
             assertEquals(expectedPeerFill(FIRST_PEER_COLOR), remote.color)
             assertEquals("the rectangle must use the presented cell frames",
                 listOf(first, second).mapNotNull { fixture.visibleRect(fixture.presentedCell(it)) }.toSet(),
@@ -233,7 +233,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             val mergedRecord = (0 until cells.length()).map(cells::getJSONObject).single { it.getInt("sourcePos") == first }
             assertEquals("the remote merge must land", MERGED_COLSPAN, mergedRecord.getInt("colspan"))
             val remote = fixture.drawing.remoteTableCellSelections.single()
-            assertEquals(setOf(first), remote.sourcePositions)
+            assertEquals(setOf(GRID_FIRST), remote.sourceIndices)
             val rect = fixture.remoteRects(remote).single()
             assertEquals(fixture.visibleRect(fixture.presentedCell(first)), rect)
             assertEquals("the rectangle follows the merged cell", firstWidth + secondWidth, rect.width(), GEOMETRY_TOLERANCE)
@@ -248,12 +248,12 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             val firstPeer = Peer(FIRST_PEER, FIRST_PEER_COLOR, first, first, first to first)
             val secondPeer = Peer(SECOND_PEER, SECOND_PEER_COLOR, last, last, last to last)
             fixture.setPeers(listOf(firstPeer, secondPeer))
-            assertEquals(listOf(setOf(first), setOf(last)),
-                fixture.drawing.remoteTableCellSelections.map { it.sourcePositions })
+            assertEquals(listOf(setOf(positions.indexOf(first)), setOf(positions.indexOf(last))),
+                fixture.drawing.remoteTableCellSelections.map { it.sourceIndices })
 
             fixture.setPeers(listOf(secondPeer))
 
-            assertEquals(listOf(setOf(last)), fixture.drawing.remoteTableCellSelections.map { it.sourcePositions })
+            assertEquals(listOf(setOf(positions.indexOf(last))), fixture.drawing.remoteTableCellSelections.map { it.sourceIndices })
             assertEquals(expectedPeerFill(SECOND_PEER_COLOR), fixture.drawing.remoteTableCellSelections.single().color)
 
             fixture.setPeers(emptyList())
@@ -387,7 +387,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             fixture.view.setEditorId(fixture.token)
             fixture.relayout()
             val restored = fixture.drawing.remoteTableCellSelections.single()
-            assertEquals(setOf(first), restored.sourcePositions)
+            assertEquals(setOf(GRID_FIRST), restored.sourceIndices)
             assertEquals(1, fixture.remoteRects(restored).size)
 
             val created = UniffiEditorV2Backend.create(TABLE_CONFIG, null) as EditorV2CallResult.Ok
@@ -497,15 +497,15 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             val gap = RectF(laterCell.bounds.right, laterCell.bounds.top, wideCell.bounds.right, laterCell.bounds.bottom)
                 .apply { inset(1f, 1f) }
             assertFalse("the gap sits after the last real cell of the second row", gap.isEmpty)
-            val rectangle = setOf(wide, later)
-            assertEquals(rectangle, fixture.drawing.selectedTableCellSourcePositions[fixture.tableId])
+            val rectangle = setOf(WIDE_CELL, LATER_CELL)
+            assertEquals(rectangle, fixture.drawing.selectedTableCellSourceIndices[fixture.tableId])
             val selectedRects = requireNotNull(fixture.drawing.selectedTableCellRects(fixture.tableId))
             assertEquals(rectangle.size, selectedRects.size)
             assertFalse("the gap slot is never selected", selectedRects.any { RectF.intersects(it, gap) })
 
             fixture.setPeers(listOf(Peer(FIRST_PEER, FIRST_PEER_COLOR, wide, later, wide to later)))
             val remote = fixture.drawing.remoteTableCellSelections.single()
-            assertEquals("presence shares the local effective rectangle", rectangle, remote.sourcePositions)
+            assertEquals("presence shares the local effective rectangle", rectangle, remote.sourceIndices)
             assertFalse(fixture.remoteRects(remote).any { RectF.intersects(it, gap) })
 
             assertTrue(fixture.root.dispatchKeyEvent(
@@ -540,7 +540,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
                 sameJson(JSONObject(beforeCut), JSONObject(requireNotNull(fixture.adapter.documentJson()))))
             assertTrue("the composition entry remains", requireNotNull(fixture.adapter.historyCanUndo()))
             fixture.relayout()
-            assertEquals(rectangle, fixture.drawing.selectedTableCellSourcePositions[fixture.tableId])
+            assertEquals(rectangle, fixture.drawing.selectedTableCellSourceIndices[fixture.tableId])
         }
 
     @Test
@@ -564,7 +564,7 @@ internal class TableIntegrationTest : NativeEditorExpoViewTestSupport() {
             assertTrue("the remote peer deleted the table", fixture.adapter.cachedTableRecords.isEmpty())
             assertEquals("only the remote change was applied", revision + 1u, fixture.adapter.baseDocumentRevision)
             assertFalse(fixture.root.authoritativeCellSelectionActive)
-            assertTrue(fixture.drawing.selectedTableCellSourcePositions.isEmpty())
+            assertTrue(fixture.drawing.selectedTableCellSourceIndices.isEmpty())
             assertFalse("the menu closes with its selection", fixture.surface.isCellEditMenuVisible)
             assertTrue("the dead rectangle is removed", fixture.drawing.remoteTableCellSelections.isEmpty())
             assertEquals("the peer keeps its ordinary cursor", listOf(FIRST_PEER), fallbackClients(fixture))

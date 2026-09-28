@@ -934,8 +934,8 @@ internal class NativeEditorExpoViewTableCellTest : NativeEditorExpoViewTestSuppo
             val canvas = (0 until view.richTextView.editorContentFrame.childCount)
                 .map { view.richTextView.editorContentFrame.getChildAt(it) }
                 .filterIsInstance<PreparedProseDrawingView>().single()
-            val cells = requireNotNull(canvas.preparedLayout?.blocks?.singleOrNull()?.tableSurface).cells
-            assertTrue(cells[0].frame.left > cells[1].frame.left)
+            val surface = requireNotNull(canvas.preparedLayout?.blocks?.singleOrNull()?.tableSurface)
+            assertTrue(surface.frameOfCell(0)!!.left > surface.frameOfCell(1)!!.left)
             assertTrue(pressTab(input))
             assertSame(input, view.richTextView.activeTextInput)
             assertEquals("Second", input.text.toString())

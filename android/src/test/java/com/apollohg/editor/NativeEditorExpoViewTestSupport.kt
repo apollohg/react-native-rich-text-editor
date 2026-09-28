@@ -23,8 +23,8 @@ abstract class NativeEditorExpoViewTestSupport {
         val bounds = requireNotNull(table.tableBounds)
         val canvasOrigin = Rect(0, 0, 1, 1)
         view.richTextView.offsetDescendantRectToMyCoords(canvas, canvasOrigin)
-        val x = canvasOrigin.left + bounds.left + cell.frame.left + cell.contentOrigin.first + 8f
-        val y = canvasOrigin.top + bounds.top + cell.frame.top + cell.contentOrigin.second + 8f
+        val x = canvasOrigin.left + bounds.left + table.tableSurface!!.frameOfCell(cell).left + cell.contentOrigin.first + 8f
+        val y = canvasOrigin.top + bounds.top + table.tableSurface!!.frameOfCell(cell).top + cell.contentOrigin.second + 8f
         val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
         val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
         try {

@@ -108,7 +108,7 @@ internal fun EditorV2Adapter.tableCellPositions(tableId: String): List<Int> {
 
 internal fun PreparedProseDrawingView.presentedRealCell(tableId: String, position: Int): ViewerTablePresentedCell =
     requireNotNull(presentedTableCell(tableId) { surface ->
-        surface.cellAtSourcePosition(position)?.takeIf { it.sourceCellIndex != null }
+        surface.cells.firstOrNull { tableCellDocumentPosition?.invoke(tableId, it.sourceIndex) == position }
     }) { "cell $position is not presented" }
 
 internal val RichTextEditorView.activeTableCellPosition: Long?

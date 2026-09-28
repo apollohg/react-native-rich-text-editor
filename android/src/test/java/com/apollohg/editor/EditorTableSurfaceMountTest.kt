@@ -222,8 +222,8 @@ internal class EditorTableSurfaceMountTest {
         val block = requireNotNull(canvas.preparedLayout?.blocks?.singleOrNull())
         val cell = requireNotNull(block.tableSurface?.cells?.getOrNull(cellIndex))
         val bounds = requireNotNull(block.tableBounds)
-        val x = bounds.left + cell.frame.left + cell.contentOrigin.first + 8f
-        val y = bounds.top + cell.frame.top + cell.contentOrigin.second + 8f
+        val x = bounds.left + block.tableSurface!!.frameOfCell(cell).left + cell.contentOrigin.first + 8f
+        val y = bounds.top + block.tableSurface!!.frameOfCell(cell).top + cell.contentOrigin.second + 8f
         val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
         val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
         try {
@@ -458,8 +458,8 @@ internal class EditorTableSurfaceMountTest {
         val block = requireNotNull(canvas.preparedLayout?.blocks?.singleOrNull())
         val cell = requireNotNull(block.tableSurface?.cells?.first())
         val frame = requireNotNull(block.tableBounds)
-        val x = frame.left + cell.frame.left + cell.contentOrigin.first + 8f
-        val y = frame.top + cell.frame.top + cell.contentOrigin.second + 8f
+        val x = frame.left + block.tableSurface!!.frameOfCell(cell).left + cell.contentOrigin.first + 8f
+        val y = frame.top + block.tableSurface!!.frameOfCell(cell).top + cell.contentOrigin.second + 8f
         val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
         val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
         try {
@@ -480,7 +480,7 @@ internal class EditorTableSurfaceMountTest {
         assertTrue(requireNotNull(cellInput.onCreateInputConnection(EditorInfo())).commitText(TYPED, 1))
         measure(view, 600)
 
-        println("typing into cell ${cell.sourcePosition} prepared cells $prepared of $GRID_CELLS")
+        println("typing into cell ${cell.sourceIndex} prepared cells $prepared of $GRID_CELLS")
         assertEquals("the keystroke lands in the tapped cell", GRID_TEXT + TYPED, firstCellText(adapter))
         assertEquals("only the edited cell is measured again: $prepared", 1, prepared.size)
     }
@@ -508,9 +508,9 @@ internal class EditorTableSurfaceMountTest {
         val cell = requireNotNull(block.tableSurface?.cells?.singleOrNull())
         val frame = requireNotNull(block.tableBounds)
         assertTrue("canvas ${canvas.width}x${canvas.height}", canvas.width > 0)
-        assertNotNull("source cell index", cell.sourceCellIndex)
-        val x = frame.left + cell.frame.left + cell.contentOrigin.first + 8f
-        val y = frame.top + cell.frame.top + cell.contentOrigin.second + 8f
+        assertNotNull("source cell index", cell.sourceIndex)
+        val x = frame.left + block.tableSurface!!.frameOfCell(cell).left + cell.contentOrigin.first + 8f
+        val y = frame.top + block.tableSurface!!.frameOfCell(cell).top + cell.contentOrigin.second + 8f
         val rootConnection = requireNotNull(view.editorEditText.onCreateInputConnection(EditorInfo()))
         val beforeTap = adapter.documentJson()
         val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
@@ -566,8 +566,8 @@ internal class EditorTableSurfaceMountTest {
         val block = requireNotNull(canvas.preparedLayout?.blocks?.singleOrNull())
         val cell = requireNotNull(block.tableSurface?.cells?.singleOrNull())
         val bounds = requireNotNull(block.tableBounds)
-        val x = bounds.left + cell.frame.left + cell.contentOrigin.first + 8f
-        val y = bounds.top + cell.frame.top + cell.contentOrigin.second + 8f
+        val x = bounds.left + block.tableSurface!!.frameOfCell(cell).left + cell.contentOrigin.first + 8f
+        val y = bounds.top + block.tableSurface!!.frameOfCell(cell).top + cell.contentOrigin.second + 8f
         val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, x, y, 0)
         val up = MotionEvent.obtain(0, 10, MotionEvent.ACTION_UP, x, y, 0)
         try {

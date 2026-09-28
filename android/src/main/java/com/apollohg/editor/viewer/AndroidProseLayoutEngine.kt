@@ -35,7 +35,8 @@ import com.apollohg.editor.tables.TableLayoutDirection
 import com.apollohg.editor.tables.physical
 import com.apollohg.editor.tables.ViewerTableSurface
 import java.text.Bidi
-import uniffi.editor_core.FfiViewerTableCell
+import com.apollohg.editor.tables.TableSurfaceCell
+import com.apollohg.editor.tables.TableSurfaceSource
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
@@ -206,7 +207,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
     internal var staticLayoutsBuilt: Int = 0
         private set
     internal var tableCellPreparationObserver: ((Int) -> Unit)? = null
-    internal var reusableTableCellContent: ((FfiViewerTableCell, Int) -> PreparedProseLayout?)? = null
+    internal var reusableTableCellContent: ((TableSurfaceCell, Int) -> PreparedProseLayout?)? = null
 
     override fun prepare(
         document: ViewerDocument,
@@ -412,7 +413,7 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             val blockCursorY = cursorY + outer.top.toInt()
             if (block.table != null) {
                 val table = block.table!!
-                val cellsByPosition = table.cells.associateBy { it.sourcePos.toInt() }
+                val surfaceSource = TableSurfaceSource.from(table)
                 val placement = listPlacement(
                     block,
                     markers,
@@ -428,26 +429,27 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
                 }
                 val surface = ViewerTableSurface(
                     document.tablePresentationIdentity(table),
-                    TableGridRecord.from(table, document.semanticKey).physical(density),
+                    TableGridRecord.from(surfaceSource, document.semanticKey).physical(density),
                     tableWidth.toFloat(),
                     theme.tableStyle.physical(density),
                     TableLayoutDirection.isRightToLeft(table.direction, theme.tableDirection),
                     displayScale = 1f,
-                    sourceTable = table,
+                    sourceTable = surfaceSource,
+                    editorTableId = "t${table.tablePos}",
                     sourceAttributes = document.tableAttributes
                 ) { cell, cellWidth ->
-                    val source = cellsByPosition[cell.sourcePosition]
+                    val source = surfaceSource.cells.getOrNull(cell.sourceIndex)
                     val childWidth = cellWidth.toInt().coerceAtLeast(1)
                     if (!cellMode) {
                         source?.let { reusableTableCellContent?.invoke(it, childWidth) }?.let { return@ViewerTableSurface it }
                     }
-                    val child = source?.let { document.cellDocument(it) }
+                    val child = source?.let { document.cellDocument(it, "t${table.tablePos}") }
                     if (child == null) return@ViewerTableSurface PreparedProseLayout.error(
                         key, cellWidth.toInt(), ProseViewerError.layout("Invalid table cell.")
                     )
                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
                     val build = {
-                        tableCellPreparationObserver?.invoke(cell.sourcePosition)
+                        tableCellPreparationObserver?.invoke(cell.sourceIndex)
                         prepare(
                             child, childKey, childTheme, childWidth, density, false,
                             warningSemanticGeneration, true, cellShapeContext
@@ -791,30 +793,31 @@ internal class StaticLayoutAndroidProseLayoutEngine : AndroidProseLayoutEngine {
             if (atomIndex != sourceAtoms.size) return null
             val tableSurface = current.table?.let { table ->
                 val tableBounds = localBlock.tableBounds ?: return null
-                val cellsByPosition = table.cells.associateBy { it.sourcePos.toInt() }
+                val surfaceSource = TableSurfaceSource.from(table)
                 val childTheme = theme.copy(insetTopPx = 0, insetRightPx = 0, insetBottomPx = 0, insetLeftPx = 0)
                 val shapeStyleDigest by lazy {
                     cellShapeStyleDigest(childTheme, key.nativeFontRevision, key.fontEnvironmentRevision)
                 }
                 val surface = ViewerTableSurface(
                     document.tablePresentationIdentity(table),
-                    TableGridRecord.from(table, document.semanticKey).physical(density),
+                    TableGridRecord.from(surfaceSource, document.semanticKey).physical(density),
                     tableBounds.width().toFloat(),
                     theme.tableStyle.physical(density),
                     TableLayoutDirection.isRightToLeft(table.direction, theme.tableDirection),
                     displayScale = 1f,
-                    sourceTable = table,
+                    sourceTable = surfaceSource,
+                    editorTableId = "t${table.tablePos}",
                     sourceAttributes = document.tableAttributes
                 ) { cell, cellWidth ->
-                    val source = cellsByPosition[cell.sourcePosition] ?: return@ViewerTableSurface PreparedProseLayout.error(
+                    val source = surfaceSource.cells.getOrNull(cell.sourceIndex) ?: return@ViewerTableSurface PreparedProseLayout.error(
                         key, cellWidth.toInt(), ProseViewerError.layout("Invalid table cell.")
                     )
-                    val child = document.cellDocument(source)
+                    val child = document.cellDocument(source, "t${table.tablePos}")
                     val childWidth = cellWidth.toInt().coerceAtLeast(1)
                     val childKey = key.copy(semanticKey = child.semanticKey, widthPx = childWidth)
                     val childShapeKey = cellShapeKey(cell.contentKey, child, childWidth, childTheme, density, shapeStyleDigest)
                     context.resolve(childShapeKey, {
-                        tableCellPreparationObserver?.invoke(cell.sourcePosition)
+                        tableCellPreparationObserver?.invoke(cell.sourceIndex)
                         prepare(
                             child, childKey, childTheme, childWidth, density, false,
                             warningSemanticGeneration, true, context

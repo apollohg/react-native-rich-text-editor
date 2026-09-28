@@ -53,24 +53,28 @@ internal fun cellShapeKey(
         current.blocks.forEach { block ->
             val custom = block.inlines.singleOrNull() as? ViewerInline.Atom
             if (block.isBlockAtom && custom != null && theme.viewerAtoms?.nodeTypes?.contains(custom.nodeType) == true) {
-                // Resolve by current source position, but keep only local
-                // geometry in the digest so an outer prose shift still hits.
                 add(
                     "${custom.nodeType}:${theme.viewerAtoms.measurements[custom.docPos.toString()]}:" +
                         theme.viewerAtoms.estimatedHeights[custom.nodeType]
                 )
             }
-            block.table?.cells?.forEach { addAll(atomGeometry(current.cellDocument(it))) }
+            block.table?.let { table ->
+                com.apollohg.editor.tables.TableSurfaceSource.from(table).cells.forEach {
+                    addAll(atomGeometry(current.cellDocument(it, "t${table.tablePos}")))
+                }
+            }
         }
     }
     fun imageGeometry(current: ViewerDocument): List<String> = buildList {
         current.blocks.forEach { block ->
             ViewerImageAttachment.sourceAndDeclaredSize(block)?.let { (id, source, declared) ->
-                // The source-qualified ID is only a lookup handle. Its document
-                // position must not participate in a reusable shape identity.
                 add("$source:${declared ?: ViewerImageIntrinsicStore.shared.size(id)}")
             }
-            block.table?.cells?.forEach { addAll(imageGeometry(current.cellDocument(it))) }
+            block.table?.let { table ->
+                com.apollohg.editor.tables.TableSurfaceSource.from(table).cells.forEach {
+                    addAll(imageGeometry(current.cellDocument(it, "t${table.tablePos}")))
+                }
+            }
         }
     }
     return PreparedCellShapeKey(

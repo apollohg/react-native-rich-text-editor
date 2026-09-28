@@ -499,8 +499,8 @@ class NativeDeviceTableScrollTest {
             .tableSurface!!
         val source = requireNotNull(surface.sourceTable).cells.single {
             it.row.toInt() == row && it.column.toInt() == column
-        }.sourcePos.toInt()
-        return host.presentedTableCells().single { it.sourcePosition == source }
+        }.sourceIndex
+        return host.presentedTableCells().single { it.sourceIndex == source }
     }
 
     private fun visibleTablePoint(host: PreparedProseDrawingView): Point {

@@ -14,7 +14,7 @@ internal data class TableCellDragSource(
     val tableId: String,
     val anchor: Int,
     val head: Int,
-    val sourcePositions: Set<Int>
+    val sourceIndices: Set<Int>
 )
 
 internal class TableCellDragState(

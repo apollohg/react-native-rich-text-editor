@@ -100,19 +100,19 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
                 visible.bottom / density)
         }
 
-        fun expectedRects(sourcePositions: Set<Int>? = null): List<RectF> {
+        fun expectedRects(sourceIndices: Set<Int>? = null): List<RectF> {
             val visible = Rect()
             assertTrue(drawing.getLocalVisibleRect(visible))
-            val selected = sourcePositions ?: requireNotNull(drawing.selectedTableCellSourcePositions[tableId])
+            val selected = sourceIndices ?: requireNotNull(drawing.selectedTableCellSourceIndices[tableId])
             return drawing.presentedTableCells().filter {
-                it.surface.sourceTable?.tablePos?.toInt() == tablePos && it.sourcePosition in selected
+                it.surface.editorTableId == "t$tablePos" && it.sourceIndex in selected
             }.mapNotNull { cell ->
                 RectF(cell.bounds).takeIf { it.intersect(cell.clip) && it.intersect(RectF(visible)) }
             }.map(::windowRect)
         }
 
         fun cellWindowRect(index: Int): RectF = windowRect(RectF(drawing.presentedTableCells().first {
-            it.surface.sourceTable?.tablePos?.toInt() == tablePos && it.sourcePosition == positions[index]
+            it.surface.editorTableId == "t$tablePos" && it.sourceIndex == index
         }.bounds))
     }
 
@@ -460,7 +460,7 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         assertNotSame("the tapped cell owns the cell input", fixture.view.richTextView.editorEditText, input)
         assertTrue(input.hasFocus())
         assertEquals("activation leaves a caret", input.selectionStart, input.selectionEnd)
-        assertTrue("a caret draws no cell rectangle", fixture.drawing.selectedTableCellSourcePositions.isEmpty())
+        assertTrue("a caret draws no cell rectangle", fixture.drawing.selectedTableCellSourceIndices.isEmpty())
         fixture.nextFrame()
 
         assertEquals("${fixture.payloads}", 1, fixture.payloads.size)
@@ -468,7 +468,7 @@ internal class TableSelectionGeometryExpoViewTest : NativeEditorExpoViewTestSupp
         assertEquals(fixture.adapter.editorId, payload["editorId"])
         assertEquals(fixture.tablePos.toLong(), payload["tablePos"])
         assertRects("the active cell anchors the table toolbar",
-            fixture.expectedRects(setOf(fixture.positions[1])), rects(payload))
+            fixture.expectedRects(setOf(1)), rects(payload))
 
         fixture.view.richTextView.editorTableSurface.invalidateCell()
         fixture.nextFrame()

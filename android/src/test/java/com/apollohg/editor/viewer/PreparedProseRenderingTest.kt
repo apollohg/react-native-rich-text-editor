@@ -42,7 +42,7 @@ class PreparedProseRenderingTest {
         )
         assertEquals(1, document.copy().tableRecords[nestedId]?.cells?.size)
 
-        val cellDocument = document.cellDocument(requireNotNull(outer).cells.first())
+        val cellDocument = document.cellDocument(com.apollohg.editor.tables.TableSurfaceSource.from(requireNotNull(outer)).cells.first(), "t${outer.tablePos}")
         assertEquals(listOf("table"), cellDocument.blocks.map { it.nodeType })
         assertEquals(nested.tablePos, cellDocument.blocks.single().table?.tablePos)
         assertEquals(1, cellDocument.tableRecords[nestedId]?.cells?.size)
