@@ -447,6 +447,7 @@ pub(crate) fn boundary_anchors_at_doc_positions<T: ReadTxn>(
         let target = targets.binary_search(doc_pos).ok()?;
         boundaries.push(walk.anchors[target].clone());
     }
+    walk.ancestors.shrink_to_fit();
     Some(EpochBoundaries {
         anchors: boundaries,
         ancestors: walk.ancestors,

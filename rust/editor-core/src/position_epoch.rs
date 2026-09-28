@@ -302,9 +302,15 @@ impl PositionEpochStore {
 
 fn retained_bytes(boundaries: &EpochBoundaries) -> Result<usize, SessionError> {
     let overflow = || limit_error("maxPositionEpochRetainedBytes", usize::MAX, usize::MAX);
-    let fixed = std::mem::size_of_val(boundaries.anchors.as_slice())
-        .checked_add(std::mem::size_of_val(boundaries.ancestors.as_slice()))
-        .and_then(|total| total.checked_add(std::mem::size_of_val(boundaries.cells.as_slice())))
+    fn allocated<T>(values: &Vec<T>) -> Option<usize> {
+        values.capacity().checked_mul(std::mem::size_of::<T>())
+    }
+    let fixed = allocated(&boundaries.anchors)
+        .zip(allocated(&boundaries.ancestors))
+        .zip(allocated(&boundaries.cells))
+        .and_then(|((anchors, ancestors), cells)| {
+            anchors.checked_add(ancestors)?.checked_add(cells)
+        })
         .ok_or_else(overflow)?;
     boundaries
         .anchors
