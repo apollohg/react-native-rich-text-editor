@@ -1,5 +1,4 @@
 use serde_json::{json, Value};
-use yrs::GetString;
 
 use super::large_table_fixture::{
     fixture_cell_text, keystroke_cell, multi_paragraph_cell_document, plain_table_document,
@@ -21,6 +20,7 @@ const INSERT_REQUEST_ID: u64 = 5;
 const UNDO_REQUEST_ID: u64 = 6;
 const REDO_REQUEST_ID: u64 = 7;
 const INSERTED_TEXT: &str = "x";
+const INSERT_INTENTS: [&str; 2] = ["insertText", "replaceSelectionText"];
 const PROSE_TEXT: &str = "Prose";
 const TABLE_SIZE: usize = 3;
 const EMPTY_CELL: (usize, usize) = (1, 1);
@@ -61,15 +61,9 @@ struct TextblockEditCase {
 }
 
 #[derive(Debug, PartialEq)]
-struct YrsStructure {
-    fragment: String,
-    sorted_clocks: Vec<u32>,
-}
-
-#[derive(Debug, PartialEq)]
 struct CommitAudit {
     document_json: Value,
-    encoded_structure: YrsStructure,
+    encoded_state: Vec<u8>,
     document_revision: u64,
     state_revision: u64,
     selection: Option<ResolvedSelection>,
@@ -262,30 +256,13 @@ fn insert_request(session: &mut EditorSession, caret: u32) -> String {
     .to_string()
 }
 
-fn yrs_structure(session: &EditorSession) -> YrsStructure {
-    session
-        .engine
-        .read_fragment_for_test(|txn, fragment| {
-            let mut sorted_clocks: Vec<u32> = yrs::ReadTxn::state_vector(txn)
-                .iter()
-                .map(|(_, clock)| *clock)
-                .collect();
-            sorted_clocks.sort_unstable();
-            YrsStructure {
-                fragment: fragment.get_string(txn),
-                sorted_clocks,
-            }
-        })
-        .expect("the fixture has a fragment")
-}
-
 fn commit_audit(session: &EditorSession) -> CommitAudit {
     CommitAudit {
         document_json: session
             .engine
             .document_json()
             .expect("the fixture is ready"),
-        encoded_structure: yrs_structure(session),
+        encoded_state: session.engine.encoded_state().expect("the fixture encodes"),
         document_revision: session.engine.revision(),
         state_revision: session.engine.state_revision(),
         selection: session.engine.resolved_selection().cloned(),
@@ -317,8 +294,12 @@ fn submit_insert(session: &mut EditorSession, request: &str) -> Result<Value, Se
         .map(|outcome| serde_json::from_str(&outcome).expect("native outcomes are JSON"))
 }
 
-fn run_case(case: &TextblockEditCase, localized: bool) -> (RunAudit, FullPassCounts) {
+fn run_case(case: &TextblockEditCase, localized: bool, intent: &str) -> (RunAudit, FullPassCounts) {
+    let _clients = super::deterministic_clients::DeterministicClients::new();
     let (mut session, request) = prepared_session(case, localized);
+    let mut request: Value = serde_json::from_str(&request).expect("request is JSON");
+    request["intent"]["type"] = json!(intent);
+    let request = request.to_string();
     reset_full_pass_counts_for_test();
     let insert = submit_insert(&mut session, &request);
     let passes = take_full_pass_counts_for_test();
@@ -390,19 +371,21 @@ fn assert_route(case: &TextblockEditCase, audit: &RunAudit, passes: &FullPassCou
 
 #[test]
 fn textblock_local_inserts_commit_exactly_like_the_generic_path() {
-    for case in textblock_edit_cases() {
-        let (localized, localized_passes) = run_case(&case, true);
-        let (generic, _) = run_case(&case, false);
-        eprintln!(
-            "{}: route {:?}, localized passes {localized_passes:?}",
-            case.name, case.route
-        );
-        assert_route(&case, &localized, &localized_passes);
-        assert_eq!(
-            localized, generic,
-            "{}: the localized and generic runs diverged",
-            case.name
-        );
+    for intent in INSERT_INTENTS {
+        for case in textblock_edit_cases() {
+            let (localized, localized_passes) = run_case(&case, true, intent);
+            let (generic, _) = run_case(&case, false, intent);
+            eprintln!(
+                "{intent} {}: route {:?}, localized passes {localized_passes:?}",
+                case.name, case.route
+            );
+            assert_route(&case, &localized, &localized_passes);
+            assert_eq!(
+                localized, generic,
+                "{intent} {}: the localized and generic runs diverged",
+                case.name
+            );
+        }
     }
 }
 

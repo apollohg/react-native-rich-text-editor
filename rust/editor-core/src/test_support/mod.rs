@@ -16,6 +16,7 @@ mod collaboration_awareness_test;
 mod collaboration_outbox_test;
 mod collaboration_protocol_test;
 mod collaboration_transport_state_test;
+pub(crate) mod deterministic_clients;
 mod ffi_v2_test;
 mod large_table_budget_test;
 mod large_table_fixture;

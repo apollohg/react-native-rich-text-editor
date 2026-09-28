@@ -334,6 +334,12 @@ pub(super) fn utf16_doc() -> Doc {
         skip_gc: true,
         ..Options::default()
     };
+    #[cfg(test)]
+    let options = Options {
+        client_id: crate::test_support::deterministic_clients::next_client_id()
+            .unwrap_or(options.client_id),
+        ..options
+    };
     Doc::with_options(options)
 }
 
